@@ -46,6 +46,7 @@ type Row = {
   seat: string | null;
   thread: string | null;
   board: number;
+  follow_through: number;
   spent_ms: number;
   cards: string;
   wakes: string;
@@ -123,7 +124,7 @@ function queueRows(now: number) {
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
     (select json_group_array(request) from (${jobs.openCards('j.id')})) cards,
     (select json_group_array(json_object('kind', kind, 'arg', arg)) from wakes where job = j.id and met is null) wakes,
-    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board`;
+    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through`;
   const inReview = `select w.id from prs p cross join jobs w on w.branch = p.branch where p.status in ${jobs.OPEN_PRS}
     union select cast(substr(p.branch, 5) as integer) from prs p where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
   const rows = db
@@ -173,6 +174,7 @@ function windowsOf() {
 const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
   ...{ kind: 'work', origin: 'work', status: 'queued', for_seat: null, downtime: 0, request: null, not_before: 0 },
   ...{
+    follow_through: 0,
     held_by: null,
     finished: null,
     branch: null,
@@ -228,6 +230,7 @@ function unplanned(row: Row): QueuedJob {
     ...{ engine: row.engine, for_seat: row.for_seat, downtime: row.downtime },
     ...{ created: Date.parse(row.created), finished: row.finished === null ? null : Date.parse(row.finished) },
     ...{ notBefore: row.held_by ? 0 : row.not_before, seat: row.seat, pr: row.pr, board: row.board },
+    ...(row.follow_through ? { followThrough: true } : {}),
     spentMs: wholeSeconds(row.spent_ms),
     ...{ after: 'released', waitsFor: [], cards: [], wakes: [], due: null, review: null, reasons: [] },
     thread: row.thread,

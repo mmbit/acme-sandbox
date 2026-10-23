@@ -237,7 +237,7 @@ export function processesOfUids(uids: Set<number>) {
 export const CLI_PROGRAMS = new Set(['claude', 'codex', 'codex-linux-san', 'codex-code-mode']);
 // What a run's uid has running besides its CLI: each command's own program (the first one under the CLI that isn't a
 // shell or the CLI's own), with how long it has run, oldest first. Its next run hears these when a stop cuts them.
-const WRAPPERS = new Set(['sh', 'bash', 'dash', 'zsh', ...CLI_PROGRAMS]);
+export const WRAPPERS = new Set(['sh', 'bash', 'dash', 'zsh', ...CLI_PROGRAMS]);
 export function processesOf(uid: number, cli: number, max = 10) {
   const ps = new Map<number, ProcStat & { args: string }>();
   for (const p of processesOfUids(new Set([uid]))) {

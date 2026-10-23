@@ -343,14 +343,13 @@ test('a rejected ruling keeps its own reports when its round restarts on the sam
       status: 'open',
     },
   );
-  const [latest, ...remaining] = await claim(n, 'review');
-  await end(latest, { findings: [reported(100, 'The refund counts the fee twice.', 'blocking')] });
-  for (const run of remaining) await end(run);
+  assert.deepEqual(queued(n, 'review'), [], 'a push of the commit its panel read leaves the round as it is');
   const [ruling] = await claim(n, 'consolidate');
   assert.ok(ruling, 'the new reports still need their own ruling');
   await end(ruling, { decision: 'merge', finding_sources: true, blocking: [] });
-  assert.deepEqual(await listed(latest.id), [
-    { issue: 'The refund counts the fee twice.', blocking: true, fate: 'dropped' },
+  assert.deepEqual(await listed(fresh.id), [
+    { issue: 'The fee is counted twice.', blocking: true, fate: 'dropped' },
+    { issue: 'The total rounds down.', blocking: true, fate: 'dropped' },
   ]);
 });
 

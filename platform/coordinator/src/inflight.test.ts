@@ -375,7 +375,8 @@ test('a job --after request:<id> starts once the board answers the card, the ans
   const live = await afterCard(lark.token, domain, 'Go live'), announce = await afterCard(lark.token, approval, 'Announce it');
   assert.equal(await live.claim(), null, 'both cards are on the desk phone');
   assert.equal((await open(lark.token, live.id)).line, `${named(live.id)} kit, queued until card #${domain} is answered: Go live`);
-  assert.deepEqual(h.job(live.id).cards, [{ id: domain, title: 'Buy example.test', shown: true }]);
+  // (holds)
+  assert.deepEqual(h.job(live.id).cards, [{ id: domain, title: 'Buy example.test', shown: true, holds: [] }]);
 
   await h.answer(approval, 'Approved.');   // the asker still runs: it reads the answer itself, and so does the waiting job
   assert.ok((await announce.claim())!.prompt.endsWith(`Announce it.\n\n(Assigned by lark.)\n\nThe board answered card #${approval} ("Approve the site"), which this job waited for, on its desk phone: Approved.`));

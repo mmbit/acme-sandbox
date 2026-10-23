@@ -5,17 +5,25 @@ import type { OrderingSnapshot, QueuedJob, Size } from './eta.ts';
 export const PAUSE_MS = 6 * 60_000;
 export const ROOM_AFTER_MS = 30_000;
 export type Dependency = { job: number; until: 'done' | 'merged'; lag?: number };
+// missed: every window the job serves had passed when the pass ran (backward), so its latest start is a missed one's.
 export type Order = {
   id: number;
   orderId?: number;
   created?: number;
   board: number | boolean;
   latestStart: number | null;
+  missed?: boolean;
 };
 export type Timing = Order & { latestFinish: number | null; duration: number };
 
+// The lane, then work with a window still open, then work whose windows have all passed, then work with none; within
+// each, the earliest latest start, then the oldest. A passed window keeps its work ahead of undated work, but no longer
+// ahead of work that can still be on time: the further it's missed, the earlier its latest start, so it would otherwise
+// go before every window still to come.
+const tier = (o: Order) => (o.latestStart === null ? 2 : o.missed ? 1 : 0);
 export function compare(a: Order, b: Order) {
   if (!!a.board !== !!b.board) return a.board ? -1 : 1;
+  if (tier(a) !== tier(b)) return tier(a) - tier(b);
   const x = a.latestStart ?? Infinity,
     y = b.latestStart ?? Infinity;
   return x === y ? (a.orderId ?? a.id) - (b.orderId ?? b.id) : x < y ? -1 : 1;
@@ -27,6 +35,12 @@ export const spareOnly = (row: { downtime: number }, order: Order) =>
 // to start before the week turns over to keep its window. Undated work, spare downtime work with it, waits for the reset.
 export const pacedTakes = (order: Order, until: number | undefined) =>
   until === undefined || !!order.board || (order.latestStart !== null && order.latestStart < until);
+
+// A run a pause may stop (pauseVictim, reviewroom.ts victim): work, neither the board's nor the CEO's follow-through
+// check. The check runs its few minutes to its end: paused, it went back behind the work it made room for, in the jam
+// it's there to see.
+export type Pausable = { kind: string; board: number | boolean; followThrough?: number | boolean };
+export const pausable = (run: Pausable) => run.kind === 'work' && !run.board && !run.followThrough;
 
 export function victimOrder(a: Order, b: Order) {
   return compare(b, a);
@@ -97,17 +111,26 @@ export function backward(
       const prior = dependencyRun(edge, terminals);
       followers.set(prior, [...(followers.get(prior) ?? []), { id: row.id, lag: edge.lag ?? 0 }]);
     }
+  // (each job's latest finish twice: from the windows still open at the pass's now, and from every window, which only
+  // orders work that serves no open one: compare's missed.)
   const timings = new Map<number, Timing>(),
+    everyWindow = new Map<number, number>(),
     visiting = new Set<number>();
   const visit = (id: number): Timing => {
     if (timings.has(id)) return timings.get(id)!;
     if (visiting.has(id)) throw new Error(`Job precedence has a cycle at #${id}`);
     visiting.add(id);
     const row = rows.get(id)!;
-    let finish = row.due === null ? Infinity : row.due - snapshot.deployLagMs;
-    for (const follower of followers.get(id) ?? [])
-      finish = Math.min(finish, (visit(follower.id).latestStart ?? Infinity) - follower.lag);
+    const own = row.due === null ? Infinity : row.due - snapshot.deployLagMs;
+    let open = row.due !== null && row.due >= snapshot.now ? own : Infinity,
+      any = own;
+    for (const follower of followers.get(id) ?? []) {
+      const next = visit(follower.id);
+      if (!next.missed) open = Math.min(open, (next.latestStart ?? Infinity) - follower.lag);
+      any = Math.min(any, everyWindow.get(follower.id)! - follower.lag);
+    }
     const duration = row.status === 'done' || row.kind === 'resolution' ? 0 : remaining(row, sizes.get(id)!) + PAUSE_MS;
+    const finish = open === Infinity ? any : open;
     const timing = {
       id,
       orderId: row.orderId,
@@ -116,8 +139,10 @@ export function backward(
       latestStart: finish === Infinity ? null : finish - duration,
       latestFinish: finish === Infinity ? null : finish,
       duration,
+      ...(open === Infinity && any !== Infinity && { missed: true }),
     };
     visiting.delete(id);
+    everyWindow.set(id, any === Infinity ? Infinity : any - duration);
     timings.set(id, timing);
     return timing;
   };
@@ -129,7 +154,7 @@ export function backward(
 // work is in the way of any work that isn't spare itself, wherever its id puts it.
 export function pauseVictim(
   waiting: Order & { downtime?: number },
-  running: (Order & { kind: string; downtime: number; engine: string })[],
+  running: (Order & Pausable & { downtime: number; engine: string })[],
   now: number,
   engine?: string,
 ) {
@@ -138,8 +163,7 @@ export function pauseVictim(
   return running
     .filter(
       v =>
-        v.kind === 'work' &&
-        !v.board &&
+        pausable(v) &&
         (!engine || v.engine === engine) &&
         (compare(waiting, v) < 0 || spareOnly(v, v)) &&
         (waiting.board || (waiting.latestStart !== null && waiting.latestStart <= now + PAUSE_MS) || spareOnly(v, v)),

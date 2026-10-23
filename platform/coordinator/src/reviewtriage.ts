@@ -7,6 +7,7 @@ import * as panel from './panel.ts';
 import * as findings from './findings.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as engineOnly from './engineonly.ts';
+import * as visual from './visual.ts';
 import { TRUST_RULE } from './trust.ts';
 import { inFoundation } from './coming.ts';
 
@@ -16,11 +17,12 @@ export type Selection = {
   reason: string;
   consolidator: string;
   reviewers: Read[];
+  looker: string | null;
   exceptions?: { agent: string; reason: string }[];
 };
 
 export function brief(pr: number, branch: string, files: string[], links: string[], base: string | null) {
-  const excluded = panel.authorsOf(pr);
+  const excluded = panel.excludedAuthors(pr);
   const candidates = org().departments.flatMap(
     (department: { id: string; agents?: { id: string; role: string; engine: string }[] }) =>
       (department.agents ?? [])
@@ -34,8 +36,9 @@ Read company/playbooks/review-panel.md and the actual diff: git diff ${base ? `$
 ${base ? 'Only the changes since that ruled commit and the open blocking findings are in scope. Exclude changes brought from main.' : 'Read the change against main.'}
 Files reported by the worker: ${JSON.stringify(files)}. Changed links: ${JSON.stringify(links)}.
 Thread context: ${JSON.stringify(context)}.
-Eligible staff (authors excluded): ${JSON.stringify(candidates)}.
-General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify([...new Set([...roles().consolidators, panel.consolidator(pr)])].filter(agent => !excluded.has(agent)))}.
+Eligible staff (sole author excluded, co-authors eligible): ${JSON.stringify(candidates)}.
+A sole author cannot review or rule on their own work. Co-authors may review and rule on work they wrote together.
+General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify(panel.consolidators(pr))}.
 Engine availability: ${JSON.stringify(seats)}. Mandatory engine constraints: ${JSON.stringify(engineOnly.rules())}. Availability never excuses a required independent security read.
 
 Judge what the code does, not its folder, filename, line count or a fixed seat table. What can hurt users, money,
@@ -43,6 +46,7 @@ secrets, sign-in, outside data or the review machinery? Which domain owner needs
 need only one domain read. Security joins for a concrete risk in how HTML is built or escaped, scripts, credentials,
 external data or other dangerous behavior. Keep Codex for security and general independent reads where needed.
 Prefer Claude for visual and domain reads and low-risk rulings when an eligible Claude consolidator can do them.
+${LENSES}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below.
 You may explicitly replace that list, but name a reason in "exceptions" for each finder omitted. Every added reader
@@ -59,11 +63,20 @@ Write .hq/review.json, then end with exactly the same JSON and stop:
 {"decision":"review" | "escalate", "reason":"why this scope, panel and consolidator, or the owner decision needed",
 "consolidator":"eligible consolidator id", "reviewers":[{"agent":"eligible staff id", "reason":"why needed",
 "files":["assigned paths"], "domain":"discipline", "security":false}],
+"looker":"the one reader who renders and opens the previews" | null,
 "exceptions":[{"agent":"omitted finder id", "reason":"why this finder cannot or need not recheck"}]}.
 A nonempty reviewers list must collectively cover every file reported above.
 An empty reviewers list gives the whole assigned read to the independent consolidator. Omit reviewers only on a
 re-review to retain the finders. Triage is no merge approval.${scope(pr, base)}`;
 }
+
+// Each reader's one discipline, and the one reader at most who sees what the change shows
+const LENSES = `Each reader looks through one lens, the discipline their role names: give it as their "domain", and keep their
+reason to it. A lens on the code (readability, structure, security) reads the diff alone. Seeing what the change shows
+(its previews, screenshots, a page check) is one reader's, named in "looker", and only when the change needs a visual
+eye: a reader above whose files include what shows, or the consolidator when it reads alone. Otherwise "looker" is null
+and nobody renders anything. If engine constraints move all of the chosen reader's visual files away, the look follows
+those files to their reader.`;
 
 function roundOf(pr: number) {
   return (db.prepare('select round from prs where number = ?').get(pr) as { round: number }).round;
@@ -81,7 +94,7 @@ export function blockers(pr: number) {
 }
 
 function finders(pr: number, files: string[]): Read[] {
-  const excluded = panel.authorsOf(pr),
+  const excluded = panel.excludedAuthors(pr),
     chosen = new Map<string, Read>();
   for (const finding of blockers(pr))
     for (const { agent } of finding.by) {
@@ -114,31 +127,46 @@ export function read(job: number): Selection | string {
   if (!report || !['review', 'escalate'].includes(report.decision) || !words(report.reason))
     return 'missing decision or reason';
   const eligible = eligibleFor(row.pr);
-  if (
-    !eligible(report.consolidator) ||
-    ![...roles().consolidators, panel.consolidator(row.pr)].includes(report.consolidator)
-  )
-    return 'ineligible consolidator';
+  if (!panel.consolidators(row.pr).includes(report.consolidator)) return 'ineligible consolidator';
   if (report.decision === 'escalate')
-    return { decision: report.decision, reason: report.reason, consolidator: report.consolidator, reviewers: [] };
+    return {
+      decision: report.decision,
+      reason: report.reason,
+      consolidator: report.consolidator,
+      reviewers: [],
+      looker: null,
+    };
   const files = JSON.parse(row.judges) as string[];
   const reviewers = readersOf(row.pr, report, eligible, files);
   if (typeof reviewers === 'string') return reviewers;
   const assigned = constrained(row.pr, reviewers);
   const covered = new Set(assigned.flatMap(reader => reader.files));
   if (assigned.length && files.some(file => !covered.has(file))) return 'reviewers must cover every assigned file';
+  const looker = lookerOf(report.looker ?? null, reviewers, assigned, report.consolidator);
+  if (looker === undefined) return 'the looker must be a reader of files that show';
   const keeper = keeperSeat(row.pr, files, eligible);
   return {
     decision: report.decision,
     reason: report.reason,
     consolidator: report.consolidator,
     reviewers: keeper && !assigned.some(reader => reader.agent === keeper.agent) ? [...assigned, keeper] : assigned,
+    looker,
     exceptions: report.exceptions ?? [],
   };
 }
 
+function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], consolidator: string) {
+  if (chosen === null) return null;
+  if (!assigned.length) return chosen === consolidator ? chosen : undefined;
+  const lookers = assigned.filter(reader => visual.visualFor(reader.files).length);
+  if (lookers.some(reader => reader.agent === chosen)) return chosen;
+  const original = readers.find(reader => reader.agent === chosen);
+  const files = visual.visualFor(original?.files ?? []).flatMap(check => check.files);
+  return lookers.find(reader => reader.files.some(file => files.includes(file)))?.agent;
+}
+
 // The foundation keeper (org.yaml's roles.foundation) reads every first round that touches the foundation's paths, on
-// those files and its one question, whoever else triage chose; never on its own work (eligible leaves authors out).
+// those files and its one question, whoever else triage chose. The sole-author exclusion applies to this seat too.
 function keeperSeat(pr: number, files: string[], eligible: (agent: unknown) => boolean): Read | undefined {
   const keeper = roles().foundation,
     paths = files.filter(inFoundation),
@@ -154,7 +182,7 @@ the generic form it would take (docs/foundation.md). A plug-in point nobody need
 security and style to the other readers`;
 
 function eligibleFor(pr: number) {
-  const excluded = panel.authorsOf(pr);
+  const excluded = panel.excludedAuthors(pr);
   const staff = new Set(
     org().departments.flatMap((department: { agents?: { id: string }[] }) =>
       (department.agents ?? []).map(agent => agent.id),
@@ -254,6 +282,14 @@ Another instance of an existing bug keeps "earlier": its finding ID. Other unrel
       : ''
   }
 ${findings.earlierNote(pr, (db.prepare('select branch from prs where number = ?').get(pr) as { branch: string }).branch, '', reviewinbox.reports(pr))}`;
+}
+
+// The round's recorded selection for its commit: who reads, and the one of them who looks at the previews
+export function selected(pr: number, round: number, sha: string | null): Selection | undefined {
+  const row = db
+    .prepare('select selection from review_triage where pr = ? and round = ? and sha is ? order by job desc limit 1')
+    .get(pr, round, sha) as { selection: string } | undefined;
+  return row && JSON.parse(row.selection);
 }
 
 export const recorded = (job: number) => !!db.prepare('select 1 from review_triage where job = ?').get(job);

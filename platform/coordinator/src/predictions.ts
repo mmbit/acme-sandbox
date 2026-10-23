@@ -163,21 +163,21 @@ export function heldTo(usual: Outlook, slow: Outlook) {
 // only, the review runs' times, and work without a stored prediction sized on
 // the spot on done work, a scan of every done job: a job just queued, done work still in review, which the sweep never
 // sizes, or a drawn thread with no task yet (`drawn`). The server keeps each spot size for the hour (keepSpotSizes, at
-// its start: forecast.ts), so a play doesn't size the same work again; a test or a one-off keeps it for the play.
+// its start: forecast.ts), and the done work it read with them, so a play doesn't size the same work again, nor read
+// every done job again for a job just queued; a test or a one-off keeps them for the play.
 type FromRecord = ReturnType<typeof recordFor>;
 const SPOT_KEPT_MS = 3600_000;
-let spotKept: Map<string, Prediction> | undefined,
+let spotKept: { made: Map<string, Prediction>; pool?: PastJob[] } | undefined,
   spotFrom = 0;
-export const keepSpotSizes = () => void (spotKept ??= new Map());
+export const keepSpotSizes = () => void (spotKept ??= { made: new Map() });
 export function recordFor(now: number, jobs: Pick<QueuedJob, 'id'>[]) {
   const ids = jobs.flatMap(job => (job.id > 0 ? [job.id] : []));
   const stored = storedSizes(ids);
-  if (spotKept && now - spotFrom >= SPOT_KEPT_MS) [spotKept, spotFrom] = [new Map(), now];
-  const made = spotKept ?? new Map<string, Prediction>();
-  let pool: PastJob[] | undefined;
+  if (spotKept && now - spotFrom >= SPOT_KEPT_MS) [spotKept, spotFrom] = [{ made: new Map() }, now];
+  const spot = spotKept ?? { made: new Map<string, Prediction>() };
   const kept = (key: string, work: () => Work) => {
-    if (!made.has(key)) made.set(key, predict(work(), (pool ??= pastJobs())));
-    return made.get(key)!;
+    if (!spot.made.has(key)) spot.made.set(key, predict(work(), (spot.pool ??= pastJobs())));
+    return spot.made.get(key)!;
   };
   const predicted = (job: QueuedJob) =>
     kept(`${job.id}\n${job.agent}\n${job.origin}\n${job.title}`, () => ({

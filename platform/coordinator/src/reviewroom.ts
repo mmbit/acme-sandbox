@@ -1,7 +1,7 @@
 // A seat with multiple run places shares them between ready reviews and ordinary work.
 import type { Wait } from './eta.ts';
 import type { Seat } from './playseats.ts';
-import { pauseVictim, spareOnly, victimOrder, type Order } from './planner.ts';
+import { pausable, pauseVictim, spareOnly, victimOrder, type Order, type Pausable } from './planner.ts';
 
 type Candidate = { kind: string; board: boolean | number };
 export const reviewing = (row: { kind: string }) => row.kind === 'review' || row.kind === 'consolidate';
@@ -33,7 +33,7 @@ export const reviewCapped = (waiting: { kind: string }, seat: Seat | Wait) =>
 
 export function roomVictim(
   waiting: Order & { kind: string; downtime: number },
-  running: (Order & { kind: string; downtime: number; engine: string })[],
+  running: (Order & Pausable & { downtime: number; engine: string })[],
   now: number,
   room: { limit: number; capped: boolean; needsReview: boolean },
   engine?: string,
@@ -42,6 +42,6 @@ export function roomVictim(
   return pauseVictim(waiting, running, now, engine);
 }
 
-function victim<T extends Order & { kind: string }>(running: T[]) {
-  return running.filter(row => row.kind === 'work' && !row.board).sort(victimOrder)[0];
+function victim<T extends Order & Pausable>(running: T[]) {
+  return running.filter(pausable).sort(victimOrder)[0];
 }

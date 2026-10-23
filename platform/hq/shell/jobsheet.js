@@ -58,9 +58,7 @@ function frontOf(j, row) {
     lit = forBoard(card ?? j),
     asks = lit ? (card?.asks ?? asksOf([j])) : [];
   const before = [
-    ...(j.after_state
-      ? [{ id: j.after, agent: j.after_agent, title: j.after_title, naming: j.after_naming, state: j.after_state }]
-      : []),
+    ...(j.after_state ? [{ id: j.after, agent: j.after_agent, title: j.after_title, state: j.after_state }] : []),
     ...(j.waits ?? []).filter(w => w.id !== j.after),
   ];
   // (a job waiting on others names each in its list, not in a sentence)

@@ -573,10 +573,10 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   ]);
   assert.deepEqual(r.body.groups, { recurring: { cover: 'covers/recurring.png' } }, 'the side groups as declared');
   const game = r.body.projects[0];
-  // (its names the board's, still being made: plainnames.test.ts.)
+  // (its names the board's, the agent's words until they're made: plainnames.test.ts.)
   assert.deepEqual(
     [game.name, game.naming, game.owner, game.business, game.sentence.text, game.sentence.naming, game.sentence.by],
-    [null, { name: null }, 'wren', 'play', null, { text: null }, 'wren'],
+    ['The game', undefined, 'wren', 'play', 'Levels play.', undefined, 'wren'],
   );
   assert.equal(game.sentence.since, 0);
   assert.deepEqual([r.body.projects[1].product, r.body.projects[1].business], ['shop', 'trade']);
@@ -611,7 +611,7 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   const shown = game.threads[0];
   assert.deepEqual(
     [shown.name, shown.goal, shown.naming, shown.owner, shown.status],
-    [null, null, { name: null, goal: null }, 'wren', 'open'],
+    ['Thread levels', 'It works', undefined, 'wren', 'open'],
   );
   assert.deepEqual(
     shown.jobs.map((j: { id: number }) => j.id),

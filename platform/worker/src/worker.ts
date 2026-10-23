@@ -35,7 +35,7 @@ import { applyList, carryOut, off, type Listed, type SeatAction } from './seatli
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
-import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
+import { cliProcesses, commandOf, processesFor, overShare, slowDown, stopRun, tally, type Block, type JobUse, type ProcessSnapshot } from './shares.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks, ResponseError } from './handback.ts';
 import { openPullRequest as openOn } from './pulls.ts';
@@ -103,13 +103,13 @@ const lastClaimAt = new Map<string, number>();   // when each Codex seat last cl
 // sets aside memory for jobs still starting and held meeting seats. Jobs started in the last minute reserve JOB_MB
 // each until they reach their full size. Usage limits are watched per seat (drainUntil in downtime.ts), and a Codex
 // seat carries SEAT_RUNS at most.
-// Below FREE_MB a slot may still claim a job whose measured memory fits what's free, one claim a minute for each
+// Below a full starting allowance a slot may claim a job whose measured memory fits above FREE_MB, once a minute for each
 // engine's slots: the claim carries that room (the coordinator's claim `room`, room.ts measuredMb). Undefined: no claim
 // now.
 const SHORT_EVERY_MS = 60_000;
 const shortAskedAt = new Map<string, number>();
 function shortClaim(engine: string) {
-  const free = Math.round(freeMb());
+  const free = reserve.claimMb(availableMb());
   if (Date.now() - (shortAskedAt.get(engine) ?? 0) < SHORT_EVERY_MS || free <= 0) return undefined;
   shortAskedAt.set(engine, Date.now());
   return free;
@@ -141,11 +141,13 @@ const freeMb = (young = true) => reserve.freeMb(availableMb(), young);
 const room = (young = true) => reserve.room(availableMb(), young);
 
 // --- Each job's share ---
-// Each job's share of the room (shares.ts): past JOB_MOST_MB in all a job loses its
-// biggest process, and past JOB_SHARE_MB too once no slot could start for STARVED_MS while work waits (HQ says so, and
-// tells the CEO once: the coordinator's room.ts); past half the cores its processes get nice 10. Looked at every SHARES_MS,
-// reported to HQ every REPORT_MS.
+// Each job's share of the room (shares.ts): past JOB_MOST_MB in all a job has its heavy run blocked (blockRun), and past
+// JOB_SHARE_MB too once no slot could start for STARVED_MS while work waits (HQ says so, and tells the CEO once: the
+// coordinator's room.ts); so does a job running more than JOB_PROCESSES processes. Past half the cores its processes get
+// nice 10, and past them for JOB_HOT_MS its busiest run is blocked. Looked at every SHARES_MS, reported to HQ every
+// REPORT_MS. (The defaults suit this server's worker; the offload machine has caps of its own: org.yaml's runs.)
 const JOB_MOST_MB = Number(process.env.JOB_MOST_MB ?? 2560), JOB_SHARE_MB = Number(process.env.JOB_SHARE_MB ?? 1536);
+const JOB_PROCESSES = Number(process.env.JOB_PROCESSES ?? 400), JOB_HOT_MS = Number(process.env.JOB_HOT_MINUTES ?? 10) * 60_000;
 const JOB_CORES = Math.max(2, availableParallelism() / 2), STARVED_MS = 5 * 60_000, SHARES_MS = 15_000, REPORT_MS = 60_000;
 const ROOM_REQUEST_MS = 10_000, ROOM_FRESH_MS = 3 * REPORT_MS;
 const { samples: CAPACITY_SAMPLES, job: CAPACITY_JOB } = JSON.parse(readFileSync(new URL('../capacity.json', import.meta.url), 'utf8')) as { samples: number; job: number };
@@ -160,6 +162,7 @@ type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; ans
 async function watchShares() {
   const watch: RoomWatch = { waiting: 0, reportedAt: 0, answeredAt: 0, reporting: false };
   let before: ProcessSnapshot[] = [], at = Date.now(), pending = new Set<string>();   // (the session groups asked for: overShare)
+  const hotSince = new Map<number, number>();   // each job (uid) past the cores, since when
   while (!shuttingDown) {
     await sleep(SHARES_MS);
     try {
@@ -171,11 +174,15 @@ async function watchShares() {
       if (!watch.reporting && t - watch.reportedAt >= REPORT_MS) void reportRoom(watch, jobs, uses, short, t);
       const starved = watch.shortSince !== undefined && t - watch.shortSince >= STARVED_MS && t - watch.answeredAt <= ROOM_FRESH_MS && watch.waiting > 0;
       const cli = new Set(jobs.flatMap(j => j.launch ? [...cliProcesses(procs, j.launch)] : []));
-      const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, starved, workerSessionId: SESSION };
-      const { stop, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
+      for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
+      for (const [uid, use] of uses) if (use.cores > JOB_CORES && !hotSince.has(uid)) hotSince.set(uid, t);
+      const hot = new Set([...hotSince].filter(([, since]) => t - since >= JOB_HOT_MS).map(([uid]) => uid));
+      const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, processes: JOB_PROCESSES, starved, hot, workerSessionId: SESSION };
+      const { block, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
       pending = still;
-      const owner = stop && jobs.find(j => j.uid === stop.uid);
-      if (stop && owner) stopProcess(owner, stop, procs);
+      const owner = block && jobs.find(j => j.uid === block.uid);
+      if (block && owner) await blockRun(owner, block, procs);
+      if (block?.measure === 'cores') hotSince.delete(block.uid);
       await slowDown(jobs, slow, groups);
       capacityTrial.record(() => sampleCapacity(jobs, uses, intervalMs, t));
     } catch (err) { log('shares:', err); capacityTrial.note(`Shares failed: ${err}`); }
@@ -224,9 +231,8 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
   finally { watch.reporting = false; }
 }
 function plannerCapacity() {
-  const free = freeMb(),
+  const starts = reserve.starts(availableMb()),
     occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
-  const starts = free >= FREE_MB ? 1 + Math.floor((free - FREE_MB) / JOB_MB) : 0;
   const slots = Object.fromEntries(ENGINES.map(engine => [engine, WORK_SLOTS.length]));
   const room = Math.min(WORK_SLOTS.length - holding.size, occupied + starts);
   return { slots, seatRuns: SEAT_RUNS, room };
@@ -236,25 +242,28 @@ const memoryClaims = () => allSlotsTaken([...inSlot.keys()]) ? [] : ENGINES.flat
   return seat ? [claimOn(seat, engine)] : [];
 });
 
-// A job's process past its share is stopped if it's still the one looked at, and said: in the worker's log, the job's own
-// log in HQ, and to the push check it belongs to (check), which then can't complete.
-function stopProcess(owner: SlotJob, stop: { memoryMb: number; process: ProcessSnapshot }, procs: ProcessSnapshot[]) {
-  try {
-    if (procStat(stop.process.pid)?.start !== stop.process.start) return;
-    process.kill(stop.process.pid, 'SIGKILL');
-  } catch { return; /* ended meanwhile */ }
-  // (resident: its PSS couldn't be read, so what it shares counts in full)
-  const mb = `${Math.round(stop.process.memoryMb)} MB${stop.process.memoryMeasure === 'rss' ? ' resident' : ''}`, all = Math.round(stop.memoryMb);
-  const why = all > JOB_MOST_MB ? `past a job's share of ${JOB_MOST_MB} MB` : `past ${JOB_SHARE_MB} MB while no job could start`;
-  const stopped = `job #${owner.job.id}: stopped its process ${stop.process.pid} (${mb} of its ${all} MB, ${why})`;
+// A job's run past its share is blocked (shares.ts stopRun), if it's still the one looked at: frozen at once (SIGSTOP: it
+// neither grows nor starts anything while HQ is asked, again while it can't be reached: insist), told in its own output
+// what to do instead (HQ's words, the coordinator's blocks.ts: the deployment's offload machine, or what to do without
+// one), then every process of it stopped. Its command ends Killed with those words before it, or with none if HQ never
+// answered (the shares loop logs why): only HQ counts the job's blocks. Said in the worker's log, the job's log in HQ
+// (blocks.ts), and to the push check it belongs to (checking), which then can't complete.
+const BLOCK_ASK_MS = 5_000;
+async function blockRun(owner: SlotJob, block: Block, procs: ProcessSnapshot[]) {
+  const live = block.run.filter(p => procStat(p.pid)?.start === p.start);
+  if (!live.includes(block.root)) return;   // (ended meanwhile)
+  const command = commandOf(live), used = shareWords(block.measure, block.used), share = shareWords(block.measure, block.share);
+  await stopRun(live, { uid: owner.uid, gid: owner.gid }, block.root, () => insist('blocked',
+    { job: owner.job.id, measure: block.measure, used: block.used, share: block.share, command }, BLOCK_ASK_MS));
+  const stopped = `job #${owner.job.id}: blocked its run ${block.root.pid} (${live.length} processes), ${used} past ${share}`;
   log(stopped);
   capacityTrial.note(stopped);
   const parent = new Map(procs.map(p => [p.pid, p.ppid]));
-  for (let pid: number | undefined = stop.process.pid; pid !== undefined; pid = parent.get(pid))
-    checking.get(pid)?.push(`the worker stopped its process ${stop.process.pid} (${mb} of the job's ${all} MB, ${why})`);
-  // (its command ends Killed; the job's log says which, and the briefing why)
-  agentApi(owner.job.token, 'event', { type: 'log', text: preview(redact(`The worker stopped process #${stop.process.pid} (${mb} of my ${all} MB, ${why})`), 200), guarded: true });
+  for (let pid: number | undefined = block.root.pid; pid !== undefined; pid = parent.get(pid))
+    checking.get(pid)?.push(`the worker blocked its run ${block.root.pid} (the job's ${used}, past a job's share of ${share})`);
 }
+const shareWords = (measure: Block['measure'], n: number) =>
+  measure === 'memory' ? `${Math.round(n)} MB` : measure === 'cores' ? `${Math.round(n * 10) / 10} cores` : `${n} processes`;
 // Which engine a free slot claims for: each in turn (roomturns.ts).
 const turns = roomTurns();
 const pct = (s: Seat) => s.util === undefined ? 'not measured yet' : `${Math.round(s.util * 100)}%`;
@@ -314,9 +323,10 @@ async function api(path: string, body: unknown = {}, signal?: AbortSignal) {
 // finished run as failed (an intercom reply lost, its turn tried again). So one that can't reach it (fetch throws) is
 // sent again for two minutes; a second report of a finished run changes nothing (jobs.ts finish). Whether a job holds a
 // customer's details at its run's end is asked the same way (holdsCustomerData), and so is the mask (masked).
-async function insist(path: string, body: Record<string, unknown>) {
+// (ms: each try's own limit, for an ask something waits on: blockRun)
+async function insist(path: string, body: Record<string, unknown>, ms?: number) {
   for (let wait = 1000; ; wait *= 2) {
-    try { return await api(path, body); }
+    try { return await api(path, body, ms ? AbortSignal.timeout(ms) : undefined); }
     catch (err) { if (!(err instanceof TypeError) || wait > 64_000) throw err; await sleep(wait); }
   }
 }
@@ -1142,9 +1152,11 @@ How work happens here:
   shows whether it arrived.
   Run \`hq\` without arguments for details.
 - Available tools include node, git, ffmpeg, Playwright with Chromium, ImageMagick, python3 and sqlite3.
-- Every job shares the worker's memory and cores. Run heavy work (many-seed simulations, long renders) in small
-  batches, one at a time, never left running in the background, and commit a short summary of the results, never the
-  raw output. A job past its share has its biggest process stopped (the command ends Killed).
+- Every job shares the worker's memory and cores. Send heavy work (many-seed simulations, long renders) off it with
+  \`hq run\` (\`hq run helper\` shows the machines that take it), even when that's slower; what runs here goes in small
+  batches, one at a time, never left running in the background. Commit a short summary of the results, never the raw
+  output. A job past its share (memory, cores or processes) has that run blocked: the command ends Killed, after HQ's
+  words on where to run it instead. Don't run it here again.
 - Never push to or merge into main yourself, never put secrets in files or command arguments (other jobs can read
   those; pass keys through the environment or stdin), and never contact people outside the company. To ask a named
   outside colleague for documents, answers or tasks, write them a checklist (\`hq guest <name> "title" <file.json>\`,
@@ -2543,7 +2555,7 @@ function slotsIsolated() {
 }
 
 const capacitySettings = JSON.stringify({ freeMb: FREE_MB, jobMb: JOB_MB, seatMb: SEAT_MB, shareMb: JOB_SHARE_MB, mostMb: JOB_MOST_MB,
-  jobCores: JOB_CORES, sampleMs: SHARES_MS, captureSamples: CAPACITY_SAMPLES, startReservationMs: STARTING_MS, workSlots: WORK_SLOTS.length, seatRuns: SEAT_RUNS });
+  jobCores: JOB_CORES, jobProcesses: JOB_PROCESSES, jobHotMs: JOB_HOT_MS, sampleMs: SHARES_MS, captureSamples: CAPACITY_SAMPLES, startReservationMs: STARTING_MS, workSlots: WORK_SLOTS.length, seatRuns: SEAT_RUNS });
 log('capacity settings:', capacitySettings);
 capacityTrial.note(`Capacity settings: ${capacitySettings}`);
 // (its container's limits as the kernel holds them, beside what compose.yaml declares: memory.max and memory.swap.max;

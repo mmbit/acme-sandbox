@@ -75,8 +75,9 @@ function runsOn(filters: string, branch: string) {
   return !has('tags') && !has('tags-ignore');
 }
 
-// The Markdown files on the Library's shelves (company.ts library() and gazette()): the handbook, playbooks and
-// departments, the knowledge base's notes by topic and the shared craft library (no READMEs), and the newsletter's posts.
+// The Markdown files on the Library's shelves (the coordinator's library.ts library() and company.ts gazette()): the
+// handbook, playbooks and departments, the knowledge base's notes by topic and the shared craft library (no READMEs),
+// and the newsletter's posts.
 export const SHELVES =
   /^(company\/(playbooks\/|departments\/)?|knowledge\/notes\/[^/]+\/|shared\/craft\/)(?!README\.md$)[^/]+\.md$|^knowledge\/posts\/[^/]+\/index\.md$/;
 // The company's settings: its plain config files at the top of company/ (infra.env, schedule.yaml, models.yaml, org.yaml…),

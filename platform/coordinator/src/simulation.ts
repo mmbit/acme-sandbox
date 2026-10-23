@@ -28,7 +28,7 @@ export type Run = {
   needs: ReturnType<typeof precedence>;
   order: Timing;
   // (its order with what the pause rules read of it, planner.ts pauseVictim)
-  standing: Timing & { kind: string; downtime: number; engine: string };
+  standing: Timing & { kind: string; downtime: number; engine: string; followThrough?: boolean };
   state: 'waiting' | 'running' | 'pausing' | 'done';
   readyAt: number;
   start: number | null;
@@ -120,7 +120,13 @@ function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLag
     row,
     needs: precedence(row, deployLagMs),
     order,
-    standing: { ...order, kind: row.kind, downtime: row.downtime, engine: row.engine },
+    standing: {
+      ...order,
+      kind: row.kind,
+      downtime: row.downtime,
+      engine: row.engine,
+      followThrough: row.followThrough,
+    },
     state,
     readyAt: row.notBefore,
     start: state === 'running' ? now : null,

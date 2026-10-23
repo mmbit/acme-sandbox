@@ -100,6 +100,7 @@
        "after_agent": "kit",
        "after_title": "Pick a domain for the sticker shop",
        "after_state": "board",
+       "after_code": "SH-DOMAIN",
        "seat": null,
        "finished": null,
        "id": 47,
@@ -392,7 +393,14 @@
         {
          "id": 97,
          "title": "Which printer for the price tags?",
-         "shown": false
+         "shown": false,
+         "holds": [
+          {
+           "id": 47,
+           "code": "SH-PHOTOS",
+           "agent": "vera"
+          }
+         ]
         }
        ],
        "wakes": [],
@@ -945,6 +953,20 @@
    ],
    "done": [
     {
+     "id": "news/old-card",
+     "project": "news",
+     "name": "Old card: the newsletter's sign-up line",
+     "owner": "juno",
+     "goal": "The board answered the card.",
+     "status": "done",
+     "created": "2026-09-22T10:00:00Z",
+     "by": null,
+     "jobs": 0,
+     "done": 0,
+     "finished": "2026-09-23T10:00:00Z",
+     "lines": null
+    },
+    {
      "id": "news/launch",
      "project": "news",
      "name": "The first issue",
@@ -1192,6 +1214,103 @@
    "status": "failed",
    "created": "2026-09-25T07:00:00Z",
    "code": "FD-TEMPLATE"
+  }
+ ],
+ "meetings": [
+  {
+   "id": 81,
+   "agent": "juno",
+   "kind": "meeting",
+   "status": "queued",
+   "title": "Meeting #4: Kit seams",
+   "engine": "claude",
+   "ready": 0,
+   "until": 1792800000000,
+   "waits": [],
+   "cards": [],
+   "created": "2026-10-20T07:00:00Z",
+   "finished": null,
+   "code": "FD-SEAMS",
+   "meeting": {
+    "id": 4,
+    "topic": "How the line-art kit fits together"
+   }
+  },
+  {
+   "id": 82,
+   "agent": "kit",
+   "kind": "meeting",
+   "status": "queued",
+   "title": "Meeting #4: Kit seams",
+   "engine": "claude",
+   "ready": 0,
+   "until": 1792800000000,
+   "waits": [],
+   "cards": [],
+   "created": "2026-10-20T07:00:00Z",
+   "finished": null,
+   "code": "FD-SEAMS",
+   "meeting": {
+    "id": 4,
+    "topic": "How the line-art kit fits together"
+   }
+  },
+  {
+   "id": 83,
+   "agent": "penny",
+   "kind": "meeting",
+   "status": "queued",
+   "title": "Meeting #4: Kit seams",
+   "engine": "claude",
+   "ready": 0,
+   "until": 1792800000000,
+   "waits": [],
+   "cards": [],
+   "created": "2026-10-20T07:00:00Z",
+   "finished": null,
+   "code": "FD-SEAMS",
+   "meeting": {
+    "id": 4,
+    "topic": "How the line-art kit fits together"
+   }
+  },
+  {
+   "id": 71,
+   "agent": "juno",
+   "kind": "meeting",
+   "status": "done",
+   "title": "Meeting #3: Looks",
+   "engine": "claude",
+   "ready": 0,
+   "until": null,
+   "waits": [],
+   "cards": [],
+   "created": "2026-10-20T07:00:00Z",
+   "finished": "2026-10-21T09:00:00Z",
+   "code": "FD-LOOKS",
+   "meeting": {
+    "id": 3,
+    "topic": "The three looks, side by side"
+   }
+  },
+  {
+   "id": 72,
+   "agent": "wren",
+   "kind": "meeting",
+   "status": "done",
+   "title": "Meeting #3: Looks",
+   "engine": "claude",
+   "ready": 0,
+   "until": null,
+   "waits": [],
+   "cards": [],
+   "created": "2026-10-20T07:00:00Z",
+   "finished": "2026-10-21T09:00:00Z",
+   "code": "FD-LOOKS",
+   "meeting": {
+    "id": 3,
+    "topic": "The three looks, side by side"
+   }
   }
  ]
 }

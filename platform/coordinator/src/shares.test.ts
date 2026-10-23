@@ -1153,7 +1153,7 @@ test('notes not yet sent get an early look about hourly; a fix it made thanks th
   assert.notEqual(next.id, look.id);
   assert.match(next.prompt, new RegExp(`## Note #${total} `));
   assert.doesNotMatch(next.prompt, /Pay does nothing|pink/);
-  // the look marks what it fixed (hq note <id> fixed): its own notes only, in a line
+  // the look marks what it fixed (hq note <id> fixed): its agent's notes only, in a line
   db.prepare("update jobs set engine = 'test' where id = ?").run(look.id);
   const claimed = await call('/api/worker/claim', {
     body: { seat: 'seat-look', engine: 'test' },
@@ -1169,7 +1169,11 @@ test('notes not yet sent get an early look about hourly; a fix it made thanks th
     how: 'Pay stayed disabled\nafter the address was filled: fixed',
   });
   assert.deepEqual(fixed.json(), { id: broken, job: look.id });
-  assert.equal((await agent('note-fixed', { id: total, how: 'x' })).status, 409);
+  assert.equal(
+    (await agent('note-fixed', { id: await note('/', 'Lovely too'), how: 'x' })).status,
+    409,
+    'no look has it yet',
+  );
   assert.equal((await agent('note-fixed', { id: taste, how: ' ' })).status, 409);
   assert.equal((await agent('note-fixed', { id: taste, how: 'Fixed', by: 999_999 })).status, 409, 'no such job');
   const older = (db.prepare("select id from jobs where kind = 'work' and id < ? order by id desc").get(look.id) as any)

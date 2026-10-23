@@ -92,8 +92,12 @@ services:
     # No setuid binary raises a job's slot user to more (su, mount): the worker switches users itself, as root, and jobs'
     # git, npm and Chromium run without them
     security_opt: [no-new-privileges:true]
-    mem_limit: 7168m                    # agent jobs: capped, no swap, so they can never starve HQ, calls or the products
-    memswap_limit: 7168m                # (16 GB: the rest holds a call's peak, speech-to-text, HQ and the products)
+    # Admission charges each start above the free-memory reserve, within host availability and this kernel ceiling.
+    # WORKER_MEMORY reserves host RAM for HQ, calls, speech-to-text and products (company/infra.env).
+    # The parent forbids swap from startup, including after Docker or host restarts.
+    mem_limit: ${WORKER_MEMORY:-7168m}
+    memswap_limit: ${WORKER_MEMORY:-7168m}
+    cgroup_parent: ${SERVER_NAME}-worker.slice
     env_file: /etc/${SERVER_NAME}/env   # REPO, BRANCH, GITHUB_TOKEN
     environment:
       WORKER_TOKEN: ${WORKER_TOKEN}

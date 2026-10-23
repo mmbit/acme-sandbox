@@ -9,7 +9,7 @@ import { compare, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity } from './room.ts';
 import { db, inOneStep, mergePending, once, planChange, prepared, scrub } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
-import { publish, status } from './events.ts';
+import { publish, redact, redactJob, status, type RunningJob } from './events.ts';
 import { createHash, randomBytes } from 'node:crypto';
 import { org, brand, ceo, companyTime, names, infra, roles, reads, yamlFile, titleOf, voiceOf } from './company.ts';
 import { unshelvedProblem } from './library.ts';
@@ -99,30 +99,54 @@ const SNAG_WAIT_MS = 5 * 60_000,
 
 // An agent's card shows one state, and an agent can have more than one job running (the intercom and a job, a job and
 // a pull request's fixes): it's idle (or paused, or waiting for the board) only once none of its jobs is running; until
-// then its card shows the newest one at work. A restart forgets every state (events.ts status), so an agent with a job
-// running is at work on it from the start.
+// then its card shows the newest one at work, and its panel each of them. A restart forgets every state (events.ts
+// status), so an agent with a job running is at work on it from the start.
 // (step, round: its name, nameOf.)
-const runningFor = (agent: string, except = 0) =>
-  db
-    .prepare(
-      `select title, step, round, started from jobs where agent = ? and status = 'running'
-  and id != ? order by started desc, id desc limit 1`,
-    )
-    .get(agent, except) as
-    { title: string; step: string | null; round: number | null; started: string | null } | undefined;
+// (the project and thread each serves, for the panel.)
+const runningJobs = (agent: string, except = 0): RunningJob[] =>
+  (
+    db
+      .prepare(
+        `select j.id, j.title, j.step, j.round, j.started, t.name thread, p.name project
+  from jobs j left join threads t on t.id = j.thread left join projects p on p.id = t.project
+  where j.agent = ? and j.status = 'running' and j.id != ? order by j.started desc, j.id desc`,
+      )
+      .all(agent, except) as (Named & { id: number; started: string | null; thread: string | null; project: string })[]
+  ).map(j => ({
+    id: j.id,
+    task: nameOf(j),
+    since: j.started ?? undefined,
+    ...(j.thread && { project: j.project, thread: j.thread }),
+  }));
 function settle(job: Pick<Job, 'id' | 'agent'>, state: string, text?: string) {
-  const other = runningFor(job.agent, job.id);
+  const jobs = runningJobs(job.agent, job.id);
   publish({
     type: 'status',
     agent: job.agent,
-    ...(other ? { state: 'working', text: nameOf(other) } : { state, text }),
+    // (job: the one it's of)
+    ...(jobs.length
+      ? { state: 'working', job: jobs[0].id, text: jobs[0].task, since: jobs[0].since, jobs }
+      : { state, text }),
+  });
+}
+// A job claimed: its agent at work on it, its clock from the job's own start, not this run's, so it goes on across runs
+function atWork(job: Job) {
+  const jobs = runningJobs(job.agent);
+  publish({
+    type: 'status',
+    agent: job.agent,
+    state: 'working',
+    job: job.id,
+    text: nameOf(job),
+    since: jobs.find(j => j.id === job.id)?.since,
+    jobs,
   });
 }
 for (const { agent } of db.prepare("select distinct agent from jobs where status = 'running'").all() as {
   agent: string;
 }[]) {
-  const j = runningFor(agent)!;
-  if (!status.has(agent)) status.set(agent, { state: 'working', task: nameOf(j), since: j.started ?? undefined });
+  const jobs = runningJobs(agent).map(redactJob);
+  if (!status.has(agent)) status.set(agent, { state: 'working', task: jobs[0].task, since: jobs[0].since, jobs });
 }
 
 // The engine and CLI an agent's work runs on: the board's main model, else org.yaml's engine (models.ts asPicked).
@@ -408,6 +432,12 @@ function fromLoop(column: 'thread' | 'code', j: { branch?: string; pr?: number }
   );
 }
 
+// When a job started, its first run (claim's coalesce keeps it across the later ones): the clock of an agent at work on
+// it counts from there.
+export const startedOf = (job: number) =>
+  (prepared('select started from jobs where id = ?').get(job) as { started: string | null } | undefined)?.started ??
+  undefined;
+
 // A customer's own details (charter rule 7) stay where they came in, and only there (the board, 2026-10-06: the topic,
 // the job, its title and its outcome aren't secret, and the board sees everything). A job holds them when a tool puts
 // them in its prompt (createJob customers) or it reads them (hq mail, hq orders, a Care case, a customer card's text or
@@ -605,6 +635,8 @@ type Claimable = { id: number; kind: string; downtime: number; board: number | b
 // The job a board's call left to follow it up (ledger.ts: calls.job), or a check routing the notes it sent (routing.ts)
 export const BOARD_CALL = (job: string) =>
   `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id))`;
+// The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
+export const FOLLOW_THROUGH = (job: string) => `exists (select 1 from followthrough_checks f where f.job = ${job}.id)`;
 export const outstandingWaits = (job: number) =>
   prepared(redraws.query(`select * from jobs where id in (${outstanding('$job')}) order by id`, '$job')).all({ job });
 // A planner snapshot reads the wait edges once against the same resolved redraw relation.
@@ -1002,6 +1034,7 @@ export const findJob = (id: number, t = now()) =>
 // (values)
 // Each names its code, as its after and each of its waits do.
 // Each card it waits on, and its own (request_shown), says whether it's on the desk phone now (shown).
+// and, held, the work it waits to go live (holds; its own: request_holds).
 type Listed = {
   engine: string;
   stage: string | null;
@@ -1015,6 +1048,7 @@ type Listed = {
   waits: string;
   cards: string;
   request_shown: string | null;
+  request_holds: string | null;
   thread: string | null;
   downtime: number;
   paused_with: string | null;
@@ -1037,9 +1071,7 @@ export function jobRows(where: string, t = now(), values: Record<string, string 
     a.agent after_agent, a.title after_title, a.code after_code, ${whereIs('a')} after_state,
     (select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent, 'title', w.title, 'state', ${WAIT_STATE})) from jobs w
       where w.id in (${outstanding('j.id')})) waits,
-    (select json_group_array(json_object('id', c.id, 'title', c.title, 'shown', ${shownJson('c')})) from requests c
-      where c.id in (${openCards('j.id')})) cards,
-    case when q.id is not null then ${shownJson('q')} end request_shown
+    ${CARD_COLUMNS}
   from jobs j left join requests q on q.id = j.request left join jobs a on a.id = j.after
   -- listJobs: the latest finished from the newest down (+status: not through the state's index, which holds every done job)
   where ${where}
@@ -1068,6 +1100,7 @@ export function jobRows(where: string, t = now(), values: Record<string, string 
     waits: JSON.parse(row.waits),
     cards: JSON.parse(row.cards),
     request_shown: row.request_shown && JSON.parse(row.request_shown),
+    request_holds: row.request_holds && JSON.parse(row.request_holds),
     wakes: row.status === 'queued' ? [...wakes.pending(row.id), ...heldBy(row)] : [],
     ...(places.get(row.id) ?? { start: null, rank: null }),
   }));
@@ -1129,6 +1162,22 @@ export function openCards(job: string) {
 // Whether a card (`card`, a requests row's alias) is on the desk phone at the query's $iso, as JSON true or false: a
 // card held or hidden for later is open but not there yet.
 const shownJson = (card: string) => `json(case when ${shownCard(card, '$iso')} then 'true' else 'false' end)`;
+// The work a card (`card`, a requests row's alias) is held for until it's live (later.ts holdsFor), as a JSON array: each
+// job by id, code and agent, a pull request by the latest task on its branch (not a review loop's round: those carry
+// jobs.pr); empty for a card that isn't held.
+const holdsJson = (
+  card: string,
+) => `json((select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent))
+  from request_holds h join jobs w on w.id = case when h.work like 'pr:%'
+    then (select max(p.id) from jobs p join prs r on r.branch = coalesce(p.branch, 'job/' || p.id)
+      where r.number = cast(substr(h.work, 4) as integer) and p.kind = 'work' and p.stage is null)
+    else cast(h.work as integer) end
+  where h.request = ${card}.id))`;
+// jobRows' columns for the cards a job waits on, and its own (q).
+const CARD_COLUMNS = `(select json_group_array(json_object('id', c.id, 'title', c.title, 'shown', ${shownJson('c')},
+      'holds', ${holdsJson('c')})) from requests c where c.id in (${openCards('j.id')})) cards,
+    case when q.id is not null then ${shownJson('q')} end request_shown,
+    case when q.id is not null then ${holdsJson('q')} end request_holds`;
 
 // Give a seat the first job in the shared order it can run (only chats, for the slot kept free for the intercom); spare
 // downtime work only when there's nothing else. `util`: the share of the seat's window used so far (the fuller of the
@@ -1193,7 +1242,7 @@ export function claim(
   // A task in its thread's order runs on the thread's branch, and its briefing says where it is (the worker's inThread).
   const inThread = threadorder.claimed(job);
   const moved = moveToSeat(job, seat, engine, cli);
-  publish({ type: 'status', agent: job.agent, state: 'working', text: nameOf(job) });
+  atWork(job);
   return claimed(job, token, moved, inThread);
 }
 
@@ -1552,7 +1601,7 @@ function readModels(): Record<string, { model?: string; effort?: string; autocom
 // when it's one of them, for the work it answers (undefined: it runs on). Every run's heartbeat carries the same report,
 // so each picks the same runs.
 type InTheWay = { short: boolean; capped: string[] };
-type RoomRun = Claimable & Order & { engine: string; seat: string };
+type RoomRun = Claimable & Order & { engine: string; seat: string; followThrough: number };
 type RoomWaiter = Claimable & Order & { engine: string; seats: string[]; created: number };
 function makesRoom(id: number, room: InTheWay) {
   const t = now();
@@ -1577,9 +1626,18 @@ function makesRoom(id: number, room: InTheWay) {
   const running = (
     db
       .prepare(
-        `select j.id, j.kind, j.downtime, j.engine, j.seat, ${BOARD_CALL('j')} board from jobs j where j.status = 'running'`,
+        `select j.id, j.kind, j.downtime, j.engine, j.seat, ${BOARD_CALL('j')} board, ${FOLLOW_THROUGH('j')} followThrough
+        from jobs j where j.status = 'running'`,
       )
-      .all() as { id: number; kind: string; downtime: number; engine: string; seat: string; board: number }[]
+      .all() as {
+      id: number;
+      kind: string;
+      downtime: number;
+      engine: string;
+      seat: string;
+      board: number;
+      followThrough: number;
+    }[]
   ).map(v => ({ ...v, ...key(v) }));
   const ahead = waiting
     .filter(w => plan.eligible(w.id))
@@ -1632,7 +1690,9 @@ function roomVictims(waiting: RoomWaiter[], running: RoomRun[], room: InTheWay, 
 export function heartbeat(id: number, o: { util?: number; probe?: boolean } & Partial<InTheWay> = {}) {
   db.prepare("update jobs set heartbeat = ? where id = ? and status = 'running'").run(now(), id);
   const job = db
-    .prepare(`select downtime, kind, thread, stopping, suspending, ${BOARD_CALL('j')} board from jobs j where id = ?`)
+    .prepare(
+      `select downtime, kind, thread, stopping, suspending, off_worker, ${BOARD_CALL('j')} board from jobs j where id = ?`,
+    )
     .get(id) as
     | {
         downtime: number;
@@ -1640,12 +1700,15 @@ export function heartbeat(id: number, o: { util?: number; probe?: boolean } & Pa
         thread: string | null;
         stopping: string | null;
         suspending: string | null;
+        off_worker: number;
         board: number;
       }
     | undefined;
   if (job?.stopping) return { ok: true, stop: job.stopping };
-  // (a review or ruling paused with its thread stops at its next step while the pause holds: suspendReview)
-  if (job?.suspending && pausedOn(job.thread)) return { ok: true, yield: 'paused' };
+  // (a review or ruling paused with its thread stops at its next step while the pause holds: suspendReview; one HQ takes
+  // off the worker for its room yields with or without a pause: offWorker)
+  if (job?.suspending && (job.off_worker || pausedOn(job.thread)))
+    return { ok: true, yield: job.off_worker ? 'waiting' : 'paused' };
   if (job?.kind !== 'work') return { ok: true };
   const { paused: isPaused, allow, prs } = letsParams();
   if (
@@ -1722,6 +1785,18 @@ function suspendReview(
   db.prepare('update jobs set suspending = ? where id = ?').run(`${by}: ${why}`, job.id);
   publish({ type: 'log', agent: by, text: `Pausing #${job.id} (${job.agent}: ${nameOf(job)}) with ${target}: ${why}` });
   return { ok: true, running: true, paused: target };
+}
+// A job HQ takes off the worker for its room (blocks.ts, jam.ts). Work is stopped (stopJob). A review or ruling can't end
+// early (suspendReview), so it yields at its next step instead, back in the queue in its session, and starts again only
+// when the worker has room for its claim. What's not running is left as it is, said so.
+export function offWorker(id: number, why: string) {
+  const job = db.prepare('select kind, status from jobs where id = ?').get(id) as
+    { kind: string; status: string } | undefined;
+  if (job?.kind !== 'review' && job?.kind !== 'consolidate') return stopJob(id, ceo(), why);
+  if (job.status !== 'running') return `#${id} isn't running (${job.status})`;
+  db.prepare('update jobs set suspending = ?, off_worker = 1 where id = ?').run(`${ceo()}: ${why}`, id);
+  publish({ type: 'log', agent: ceo(), text: `Taking #${id} off the worker until it has room: ${why}` });
+  return { ok: true, running: true, yields: true };
 }
 
 // In one transaction, so its dozen writes cost one disk sync, and a hand-off that throws leaves the job running for the
@@ -1810,7 +1885,7 @@ function finishJob(id: number, r: RunEnd) {
   const profile = job.kind === 'work' ? r.profile : undefined;
   if (profile) startReview(profile.pr, profile.branch, job.agent, profile.files, profile.sha);
   // A suspension lasts one run. A resumed review runs to its end.
-  if (job.suspending) db.prepare('update jobs set suspending = null where id = ?').run(id);
+  if (job.suspending) db.prepare('update jobs set suspending = null, off_worker = 0 where id = ?').run(id);
 
   // The board's words are never dropped: a run cut off by a limit or a restart keeps the note it started with (what
   // the board said, a call's transcript) and gets it again, and a failed intercom turn is tried again twice before
@@ -2587,7 +2662,14 @@ function keysAnswered(req: any, secrets: Record<string, unknown>, address: { use
   const { saved, refused } = saveOutcome,
     missing = names.filter(n => !stored([n]).length),
     refusedNames = Object.keys(refused);
-  if (saved.length) scrub(); // a key said on a call or pasted in the intercom before it was saved leaves that text now (secrets.ts redact)
+  if (saved.length) {
+    scrub();
+    // The current status uses the newly saved keys too
+    for (const current of status.values()) {
+      current.task = redact(current.task);
+      if (current.jobs) current.jobs = current.jobs.map(redactJob);
+    }
+  }
   // some keys still to come, or refused (each with why, for the desk phone): the
   // request stays on the desk phone with what's saved
   if (missing.length || refusedNames.length) {

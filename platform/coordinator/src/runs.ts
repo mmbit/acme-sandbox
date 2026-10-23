@@ -151,6 +151,9 @@ function runSettings() {
     helper: typeof given.helper === 'string' && given.helper ? given.helper : 'the helper',
     maxMinutes: whole(given.maxMinutes, 240),
     takeMinutes: whole(given.takeMinutes, 3),
+    // the memory a lent machine's runs may hold in all, in GB (0: no cap but each kind's): the offload machine's own cap,
+    // sized to it, apart from this server's worker
+    machineMemoryGb: whole(given.machineMemoryGb, 0),
     kinds,
     leftOut,
   };
@@ -508,6 +511,7 @@ const machineState = (settings: ReturnType<typeof runSettings>) => ({
   lent: machines.listMachines().length,
   takeMinutes: settings.takeMinutes,
   maxMinutes: settings.maxMinutes,
+  machineMemoryGb: settings.machineMemoryGb,
 });
 
 // The lent machines' helpers of that kind (on the machines the board hasn't paused), or this server's: whether one is
@@ -848,6 +852,7 @@ function mayTake(helper: Helper, kind: Kind, row: RunRow) {
     return (
       (!row.passed || !serverTakes(kind)) &&
       !machines.findMachine(helper.machine)?.paused &&
+      fitsMachine(helper.machine, kind) &&
       firstInLine(helper.machine, kind, row)
     );
   if (!serverTakes(kind)) return false;
@@ -872,6 +877,40 @@ function firstInLine(machine: number, kind: Kind, row: RunRow) {
 }
 
 const waited = (row: RunRow) => Date.now() - Date.parse(row.created);
+
+// A lent machine takes a run only while it fits the memory its runs may hold in all (runs.machineMemoryGb), each running
+// run counted at its kind's memoryGb: its helpers of several kinds, each capped alone, never ask more of it together.
+function fitsMachine(machine: number, kind: Kind) {
+  const settings = runSettings();
+  if (!settings.machineMemoryGb) return true;
+  const memoryOf = new Map(settings.kinds.map(declared => [declared.name, declared.memoryGb]));
+  const held = openRuns('running')
+    .filter(running => running.machine === machine)
+    .reduce((sum, running) => sum + (memoryOf.get(running.kind ?? '') ?? 0), 0);
+  return held + kind.memoryGb <= settings.machineMemoryGb;
+}
+
+// Where a run blocked on the worker can go instead (blocks.ts): the lent machines the board hasn't paused, each with its
+// size (its runs' memory cap, else its biggest helper's) and the kinds whose helper is there now; and each kind, whether
+// this server's own helper takes it now.
+export function offloadPlaces() {
+  const settings = runSettings();
+  return {
+    machines: lentMachines()
+      .filter(machine => !machine.paused)
+      .map(({ name, cpus, memoryGb, kinds }) => ({
+        name,
+        cpus,
+        memoryGb: settings.machineMemoryGb || memoryGb,
+        kinds,
+      })),
+    kinds: settings.kinds.map(kind => ({
+      name: kind.name,
+      about: kind.about,
+      server: serverTakes(kind) && presence('server', kind.name).present,
+    })),
+  };
+}
 
 const serverTakes = (kind: Kind) => !kind.lentOnly && (!kind.serverAfterLent || lentFinished(kind.name));
 

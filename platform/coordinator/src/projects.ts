@@ -11,6 +11,7 @@ import { inBoardOrder } from './projectorder.ts';
 import { routines } from './schedule.ts';
 import { boardJobs, boardProject, boardSentence, boardThread } from './boardnames.ts';
 import { withFindings } from './reviewrows.ts';
+import { meetingSeats } from './meetingboard.ts';
 
 // The threads table is in db.ts: the claim reads it.
 db.exec(
@@ -322,7 +323,8 @@ export function listProjectBoard(t = Date.now()) {
     groups: projects().groups,
     projects: inBoardOrder(listed),
     completed,
-    unsorted: loose,
+    unsorted: loose.filter(j => j.kind !== 'meeting'),
+    meetings: meetingSeats(loose, t),
   };
 }
 
@@ -354,13 +356,14 @@ const completedProjects = (threads: Thread[]) =>
       .map(th => ({ ...boardThread(th), owner: p.owner, ...tally(th) })),
   }));
 
-// The latest RECENT finished jobs outside known threads, newest first.
+// The latest RECENT finished jobs outside known threads, newest first, but for meetings' seats (meetingSeats has
+// those).
 const RECENT = 10;
 function recentLoose(known: Set<string>, t: number) {
   const kept = db
     .prepare(
-      `select id from jobs where status not in ${OPEN_JOBS} and (thread is null or thread not in (select value from
-      json_each(?))) order by id desc limit ${RECENT}`,
+      `select id from jobs where status not in ${OPEN_JOBS} and kind != 'meeting' and (thread is null or thread not in
+      (select value from json_each(?))) order by id desc limit ${RECENT}`,
     )
     .all(JSON.stringify([...known])) as { id: number }[];
   return kept.length ? boardJobs(jobRows(`j.id in (${kept.map(j => j.id).join(', ')})`, t)) : [];

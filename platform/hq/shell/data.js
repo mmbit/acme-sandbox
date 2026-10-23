@@ -412,7 +412,7 @@ export const loadJobs = dev => dev ? mockList('jobs') : get('/api/jobs');
 export async function loadJob(dev, id) {
   if (!dev) return (await get(`/api/jobs/find?id=${Number(id)}`)).job;
   const board = await mockList('projects'),
-    all = [...await mockList('jobs'), ...board.projects.flatMap(p => p.threads.flatMap(t => t.jobs)), ...board.unsorted];
+    all = [...await mockList('jobs'), ...board.projects.flatMap(p => p.threads.flatMap(t => t.jobs)), ...board.unsorted, ...(board.meetings ?? [])];
   return all.find(j => j.id === Number(id)) ?? null;
 }
 // no jobs start for memory, while it lasts: a line, or null (the coordinator's room.ts)

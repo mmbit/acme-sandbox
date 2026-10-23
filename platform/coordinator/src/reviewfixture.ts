@@ -86,6 +86,11 @@ export function leftoverJobs(db: DatabaseSync) {
       .run(new Date().toISOString(), first);
 }
 
+// A retry the coordinator recorded with its wait, made runnable now
+export function retryNow(db: DatabaseSync, job: number) {
+  db.prepare('update jobs set not_before = 0 where id = ?').run(job);
+}
+
 // A deploy record as infra/deploys.py writes it, taken in through the coordinator's reader.
 export async function recordedDeploy(
   dataDir: string,
@@ -158,6 +163,7 @@ export async function completeTriage(
   h: Awaited<ReturnType<typeof import('./harness.ts').harness>>,
   pr: number,
   agents?: string[],
+  looker: string | null = null,
 ) {
   const queued = h.db
     .prepare(
@@ -172,7 +178,7 @@ export async function completeTriage(
     fixes_from: string | null;
   };
   const selected = (agents ?? (row.fixes_from ? [] : panel.reviewers(pr).slice(0, 1))).filter(
-    agent => !panel.authorsOf(pr).has(agent),
+    agent => !panel.excludedAuthors(pr).has(agent),
   );
   const run = await claimTriage(h, queued);
   await h.finish(run!, {
@@ -187,6 +193,7 @@ export async function completeTriage(
         domain: 'general',
         security: false,
       })),
+      looker,
       exceptions: triage
         .blockers(pr)
         .flatMap(finding =>

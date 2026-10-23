@@ -1,7 +1,7 @@
 // The projects view's read model: each job's state in a word, the cards a thread's jobs make (a review or fix folds
 // under its job), and one rule for what waits on the board, the same at every level (business, project, thread, job),
 // which lights it in the accent.
-import { state as jobState, CHIP, nameHtml } from './jobs.js';
+import { state as jobState, CHIP } from './jobs.js';
 import { clockWhen } from '../world/clock.js';
 import { cap } from '../util.js';
 import { withJobLinks } from './prose.js';
@@ -111,6 +111,19 @@ export const sorted = jobs =>
       (a, b) =>
         forBoard(b) - forBoard(a) || ORDER[stateOf(a)] - ORDER[stateOf(b)] || rankOf(a) - rankOf(b) || a.id - b.id,
     );
+// A thread's tasks in time order, for its list: those whose own work ended as they ended (in review or not), those at
+// work, then the rest by when the play starts them (those it has no start for last), in sorted's order where that's
+// level; so work that waits on other work lists below it.
+export const inTimeOrder = jobs =>
+  sorted(jobs)
+    .map(j => [timePlace(j), j])
+    .sort(([a], [b]) => a[0] - b[0] || a[1] - b[1])
+    .map(([, j]) => j);
+function timePlace(j) {
+  const s = rowState(j);
+  if (s === 'done' || s === 'ended') return [0, Date.parse(j.finished) || 0];
+  return s === 'working' ? [1, 0] : [2, j.estimate?.start ?? Number.MAX_SAFE_INTEGER];
+}
 export const count = (jobs, s) => jobs.filter(j => stateOf(j) === s).length;
 
 // ---------------------------------------------------------------- a task as its row shows it
@@ -134,10 +147,9 @@ export const planned = j => ({
 // A task's title under its thread, without the thread's name in front: "The shop's checkout: gift wrap" under
 // "The shop's own checkout" reads "Gift wrap". The name counts with or without a leading "The", an "own" after a
 // possessive, and what follows its own colon.
-// (while either has no plain name yet, jobs.js nameHtml) Its job numbers are linked.
-export const taskHtml = (j, t) => (j.title == null ? nameHtml(j) : withJobLinks(taskTitle(j.title, t)));
+// Its job numbers are linked.
+export const taskHtml = (j, t) => withJobLinks(taskTitle(j.title, t));
 function taskTitle(title, t) {
-  if (t.name == null) return title;
   const names = nameForms(t.name);
   for (let at = title.indexOf(': '); at > 0; at = title.indexOf(': ', at + 1)) {
     const rest = title.slice(at + 2).trim();
@@ -182,10 +194,12 @@ function cardsWaitedOn(jobs) {
   for (const x of jobs) {
     const own =
       x.status === 'blocked' && x.request
-        ? [{ id: x.request, title: x.request_title, shown: x.request_shown !== false }]
+        ? [{ id: x.request, title: x.request_title, shown: x.request_shown !== false, holds: x.request_holds }]
         : [];
+    // (holds: the work a held one waits to go live, coordinator jobs.ts holdsJson.)
     for (const c of [...own, ...(x.cards ?? [])])
-      if (!cards.has(c.id)) cards.set(c.id, { id: c.id, title: c.title, shown: c.shown !== false, job: x });
+      if (!cards.has(c.id))
+        cards.set(c.id, { id: c.id, title: c.title, shown: c.shown !== false, holds: c.holds ?? [], job: x });
   }
   return [...cards.values()];
 }

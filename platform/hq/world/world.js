@@ -90,7 +90,7 @@ export function setOrg(org, mock = dev) {
   rooms = []; agents.clear();
   const room = (id, name, r = {}, people, extra) => {
     rooms.push({ id, name, kind: r.kind || 'office', size: r.size || 'm', features: [], agentIds: people.map(a => a.id), board: false, deptId: null, asleep: false, ...extra });
-    for (const a of people) agents.set(a.id, Object.assign(known.get(a.id) || { id: a.id, state: a.status?.state || 'idle', task: a.status?.task, since: Date.parse(a.status?.since) || undefined, lines: a.status?.lines, tokens: a.status?.tokens, logs: [], emote: null }, { data: a, roomId: id }));
+    for (const a of people) agents.set(a.id, Object.assign(known.get(a.id) || { id: a.id, state: a.status?.state || 'idle', task: a.status?.task, since: Date.parse(a.status?.since) || undefined, lines: a.status?.lines, tokens: a.status?.tokens, jobs: a.status?.jobs, logs: [], emote: null }, { data: a, roomId: id }));
   };
   if (org.board) room('board', 'The Board', org.board.room || { kind: 'boardroom' },
     members.map(m => ({ role: 'Board', engine: m.human ? 'human' : m.engine, look: 'suit, tie, gold star pin', ...m, board: true })), { board: true });
@@ -110,20 +110,27 @@ function sleepCheck() {
 
 // ---- events from the company
 const STATUS_LOG = { working: 'Working', waiting: 'Queuing for a seat', sleeping: 'Went to sleep', idle: 'Idle' };
+const statusLine = (state, text) => `${STATUS_LOG[state] || state}${text ? ': ' + text : ''}`;
 // A: the agent, B: whom they spoke to. unknown: the event names someone the org chart doesn't have yet (the
 // shell reads the org again). Two feelings follow from events on their own: a job finished (working to idle) is happy,
 // a post of one's own a celebration.
 export function apply(ev) {
   const A = agents.get(ev.agent), B = agents.get(ev.to), was = A?.state;
   const log = (X, type, txt) => { if (!X) return; X.logs.push({ ts: ev.ts || Date.now(), type, text: txt }); if (X.logs.length > LOG_MAX) X.logs.shift(); };
-  if (ev.type === 'status' && A) {
+  // (the feed's replay on (re)connecting: what was, for the logs; its current statuses follow.)
+  if (ev.type === 'status' && A && ev.history) log(A, 'status', statusLine(ev.state || A.state, ev.text));
+  else if (ev.type === 'status' && A) {
     const task = A.task;
     A.heard = Date.now();
     if (ev.state) A.state = ev.state;
     A.task = ev.text || (ev.state === 'idle' ? '' : A.task);
-    if (A.state === 'working' && (was !== 'working' || A.task !== task)) A.since = Date.parse(ev.ts) || Date.now();
+    // (since: a job's own start, when the status gives one: its clock goes on across its runs.)
+    if (A.state === 'working' && (ev.since || was !== 'working' || A.task !== task)) A.since = Date.parse(ev.since ?? ev.ts) || Date.now();
     if (A.state !== 'working') A.lines = A.tokens = undefined;   // (a job's lines and tokens stay with it while it's at work)
-    log(A, 'status', `${STATUS_LOG[A.state] || A.state}${ev.text ? ': ' + ev.text : ''}`);
+    A.jobs = A.state !== 'working' ? undefined : ev.jobs ?? said(A.jobs, ev);
+    const of = A.jobs?.find(j => j.id === ev.job);   // (with its jobs, the lines of the one it's of.)
+    if (of) A.lines = of.lines;
+    log(A, 'status', statusLine(A.state, ev.text));
     sleepCheck();
     emit('status', { agent: A.id, was });
     if (was === 'working' && A.state === 'idle') emote(A.id, 'happy');
@@ -142,6 +149,8 @@ export function apply(ev) {
     emit('log', { agent: A.id, text: ev.text, tests: ev.tests || 0 });
   } else if (ev.type === 'lines' && A) {   // the lines their job's branch changes so far (the worker reads its clone)
     A.lines = { add: ev.add || 0, del: ev.del || 0 };
+    const running = A.jobs?.find(j => j.id === ev.job);
+    if (running) running.lines = A.lines;
     emit('lines', { agent: A.id });
   } else if (ev.type === 'tokens' && A) {   // what its job has written so far (a new job starts again from its first reading)
     const at = Date.parse(ev.ts) || Date.now(), kept = (A.tokens ?? []).filter(([t, n]) => t > at - TOKENS_KEPT_MS && n <= ev.total);
@@ -150,19 +159,42 @@ export function apply(ev) {
   } else if (ev.type === 'feel') emote(ev.agent, ev.emote);
   else if (ev.type === 'machines') setMachines(ev.machines);
   else if (ev.type === 'studio') setStudio(ev.studio);
+  else if (ev.type === 'statuses') hydrate(ev.statuses);
   return { unknown: (ev.agent && !A && ev.agent !== 'board') || (ev.to && !B && ev.to !== 'board') };
 }
+// An agent's running jobs (the coordinator's events.ts RunningJob: id, task, project, thread, since, lines), newest
+// first, once it said what it's doing in one of them: that one reads its words.
+const said = (jobs, ev) => jobs?.map(j => (j.id === ev.job && ev.text ? { ...j, task: ev.text } : j));
 // Who is at work, as the org's read has it (the coordinator's status of each): the feed alone misses what happened while
 // it was cut off (a tablet asleep, a reconnect that replays only the latest events), and the ring and the order would
-// keep that for good. asked: when the read was asked for; a status the feed brought since is newer and stays.
+// keep that for good. asked: when the read was asked for; a status the feed brought since is newer and stays. One still at
+// work takes the read's task and jobs too: the feed misses one job ending and the next starting just the same (the
+// board's picture #67.)
 export function setStatuses(org, asked) {
   for (const d of org.departments || []) for (const a of d.agents || []) {
     const A = agents.get(a.id), s = a.status;
-    if (!A || !s?.state || A.state === s.state || (A.heard ?? 0) > asked) continue;
-    const was = A.state;
-    Object.assign(A, { state: s.state, task: s.task ?? '', since: Date.parse(s.since) || undefined, lines: s.lines, tokens: s.tokens });
-    sleepCheck();
-    emit('status', { agent: A.id, was });
+    if (!A || !s?.state || (A.heard ?? 0) > asked) continue;
+    take(A, s);
+  }
+  emit('read', { asked });
+}
+// One's status as the coordinator has it now, whole (events.ts Status)
+function take(A, s) {
+  const was = A.state, now = { state: s.state, task: s.task ?? '', since: Date.parse(s.since) || undefined, jobs: s.jobs };
+  if (JSON.stringify(now) === JSON.stringify({ state: A.state, task: A.task ?? '', since: A.since, jobs: A.jobs })) return;
+  Object.assign(A, now, { lines: s.lines, tokens: s.tokens });
+  sleepCheck();
+  emit('status', { agent: A.id, was });
+}
+// Who's at work as the feed opens, after its replay (the coordinator's status of each, as the org's read gives it: one
+// it has none of is idle, a team member as its lead's session last said, the board as it is): as new as any status the feed brings, so
+// newer than an org read asked before.
+function hydrate(statuses) {
+  for (const A of agents.values()) {
+    const s = statuses[A.id] ?? (A.data.temp || A.data.board ? null : { state: 'idle' });
+    if (!s) continue;
+    A.heard = Date.now();
+    take(A, s);
   }
 }
 export function setRequests(n) { requests = n; }

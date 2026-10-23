@@ -7,7 +7,7 @@ import { paceChange, pacingLifts } from '../../worker/src/pace.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/plan-test-`);
-const { threadOutlooks } = await import('./forecast.ts');
+const { threadOutlooks, standing, undrawnWords } = await import('./forecast.ts');
 const MINUTE = 60_000;
 const work = (id: number, extra: Partial<QueuedJob> = {}): QueuedJob => ({
   id,
@@ -168,6 +168,33 @@ test('a later id inherits a dependent window through every predecessor and runs 
   assert.equal(seen.get(3)!.start, 0);
   assert.equal(seen.get(5)!.merged, 30 * MINUTE);
   assert.ok(seen.get(1)!.start! > seen.get(2)!.start!);
+});
+
+test('a window that has passed goes after every window still open, and before work with none', () => {
+  const input = snapshot(
+    [
+      work(1, { due: 60 * MINUTE }),
+      work(2, { due: 600 * MINUTE }),
+      work(3),
+      work(4, { due: 30 * MINUTE }),
+      work(5, { after: 4, due: 700 * MINUTE }),
+    ],
+    { now: 300 * MINUTE },
+  );
+  const seen = play(
+    input,
+    sizes([
+      [1, 10],
+      [2, 10],
+      [3, 10],
+      [4, 10],
+      [5, 10],
+    ]),
+  );
+  const start = (id: number) => seen.get(id)!.start!;
+  assert.ok(start(2) < start(1), 'missed by four hours, it no longer goes before a window still to come');
+  assert.ok(start(4) < start(1), 'its own window passed, but work with an open one waits for it');
+  assert.ok(start(1) < start(3), 'ahead of work with no window');
 });
 
 test('reviewers and rulings occupy slots, fix runs have their own engine, and merge edges await the last run', () => {
@@ -366,6 +393,42 @@ test('thread slack counts deploy lag, and a card and a wake remain explicit prer
   const thread = threadOutlooks(input, seen, seen, sized).get('project/thread')!;
   assert.equal(thread.finish, 35 * MINUTE);
   assert.equal(thread.slack, 25 * MINUTE);
+});
+
+test('a windowed thread with no task drawn misses its window, and a thread it needs too', () => {
+  const window = { deadline: 60 * MINUTE, aim: 60 * MINUTE };
+  const bare = work(-1000, { thread: 'project/bare', placeholder: true });
+  const sized = sizes([
+    [-1000, 10],
+    [1, 10],
+  ]);
+  const alone = snapshot([bare], { windows: { 'project/bare': window } });
+  const own = threadOutlooks(alone, play(alone, sized), play(alone, sized), sized).get('project/bare')!;
+  assert.equal(play(alone, sized).get(-1000)!.merged, 10 * MINUTE, 'the placeholder still plays');
+  assert.deepEqual([own.eta, own.finish, own.slack, own.held], [null, null, null, null]);
+  assert.equal(standing(own), 'misses');
+  assert.equal(undrawnWords(own), 'no task drawn: nobody is building it');
+
+  const needing = snapshot([bare, work(1, { thread: 'project/ui', needs: [-1000] })], {
+    windows: { 'project/ui': window },
+  });
+  const seen = play(needing, sized);
+  assert.ok(seen.get(1)!.start! >= seen.get(-1000)!.merged!, "other threads' ETAs still count the placeholder");
+  const threads = threadOutlooks(needing, seen, seen, sized);
+  const [ui, needed] = [threads.get('project/ui')!, threads.get('project/bare')!];
+  assert.deepEqual([ui.eta, ui.finish, standing(ui)], [null, null, 'misses']);
+  assert.equal(undrawnWords(ui), 'it needs project/bare, with no task drawn: nobody is building it');
+  assert.deepEqual([needed.eta, needed.finish, standing(needed)], [null, null, null]);
+  assert.equal(undrawnWords(needed), 'no task drawn: nobody is building it');
+});
+
+test('a thread with no task drawn and no window at stake keeps its placeholder finish', () => {
+  const input = snapshot([work(-1000, { thread: 'project/bare', placeholder: true })]);
+  const sized = sizes([[-1000, 10]]),
+    seen = play(input, sized);
+  const thread = threadOutlooks(input, seen, seen, sized).get('project/bare')!;
+  assert.deepEqual([thread.eta, thread.finish, thread.undrawn], [10 * MINUTE, 10 * MINUTE, []]);
+  assert.equal(undrawnWords(thread), null);
 });
 
 test('ready work consumes the reported week now and waits only at the actual stop', () => {

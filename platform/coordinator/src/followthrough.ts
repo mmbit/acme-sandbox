@@ -289,7 +289,7 @@ function lastPart(last: Check | undefined) {
 const currentAlarm = () => JSON.parse(setting(ALARM) ?? 'null') as Alarm | null;
 
 // The check's own text, every company's. The company's own words for it (org.yaml's followThrough.prompt) come after
-// it, as a routine's additions do (schedule.ts).
+// it, as a routine's additions do (schedule.ts). (Acting from the run when the way out is itself held.)
 const PROMPT = `HQ's hourly check: it sets what the board agreed and what threatens the plan against the work actually
 running, to make sure work gets done. HQ queues it while the board's agreements stand or the summary has something in
 it. It is a short read, not a report: the board hears nothing from it unless something needs its judgment.
@@ -324,8 +324,15 @@ it. It is a short read, not a report: the board hears nothing from it unless som
      failed agreed work back (\`hq followthrough requeue <failed job> "what was off"\`: the agent whose call it is takes
      it over).
    - A repair fixes the cause: never another flag, rule or reminder on top of it.
+   Before you act, ask whether the way you reach for is itself held by what's wrong: a job you queue waits for the same
+   seats, room and queue as the work it should free, so behind a jammed worker or a stuck queue it does nothing. Then act
+   from this run: stop or cut what's in the way yourself, and what only the outside can do goes out on the two lines
+   that never stick behind HQ: the Overseer (\`hq overseer\`, let out when this run ends) and the board on the desk
+   phone, one or both. After you act, think on: what happens next, and what if it doesn't work? Tell the Overseer ahead
+   so it watches, and put a card to the board early when the Overseer can't act.
    When you can't see the fix, take it to the board on the desk phone. Then \`hq followthrough acted "what was off and
-   what you did, in one line"\`: the next check reads it.
+   what you did, in one line"\`: the next check reads it. After a note to the Overseer, end the run at once after that
+   line: your notes go out when it ends.
 
 Keep it short: it runs every hour, so it spends little when all is on track.`;
 // org.yaml's followThrough.prompt (template/company/org.yaml documents it): what the check is for to the company's

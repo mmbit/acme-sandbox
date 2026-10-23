@@ -223,6 +223,94 @@ test('a pull request closed unmerged is redone by nobody: the job after it start
   assert.equal(listed(also).ready, 0, 'and it holds until then');
 });
 
+test('an exhausted consolidator roster still closes work, reopens call items and hands on waits and follow-ups', async () => {
+  const n = 9198;
+  const { job: work, item } = await itemJob(n);
+  const after = h.queue({ agent: 'bolt', title: 'Use the work', after: work.id });
+  const waiting = h.queue({ agent: 'bolt', title: 'Needs the merged work', queuedBy: 'bolt' });
+  assert.equal((await h.agent('waits', work.token, { id: waiting, to: work.id })).status, 200);
+  await submit(n, {}, work);
+  for (const reader of await claim(n, j => j.kind === 'review')) await end(reader);
+  const [ruler] = await claim(n, j => j.kind === 'consolidate');
+  const existing = new Set(h.jobs.listJobs().map(j => j.id));
+  await withExhaustedRoster(async () => {
+    const panel = await import('./panel.ts');
+    assert.deepEqual(panel.consolidators(n), []);
+    assert.throws(() => panel.consolidator(n));
+    await end(ruler, {
+      output: JSON.stringify({
+        decision: 'close',
+        summary: 'Redraw the work',
+        pre_existing: [{ file: 'products/old/play.ts', line: 1, issue: 'An old loop', fix: 'Simplify the loop' }],
+      }),
+    });
+    assert.deepEqual(prs(n), { round: 1, status: 'closed' });
+    assert.equal(github.pr(n).state, 'closed');
+    assert.deepEqual(itemStatus(item), { status: 'open', closed_at: null });
+    assert.equal(h.job(after).ready, 1);
+    assert.equal(h.job(waiting).ready, 0);
+    const handoffs = h.jobs.listJobs().filter(j => !existing.has(j.id) && j.kind === 'work');
+    assert.ok(
+      handoffs.some(
+        j =>
+          j.agent === 'bolt' &&
+          (db.prepare('select prompt from jobs where id = ?').get(j.id) as { prompt: string }).prompt.includes(
+            `hq waits ${waiting} move ${work.id}`,
+          ),
+      ),
+    );
+    const bundled = () =>
+      db
+        .prepare(
+          `select p.agent from proposals p join review_followups u on u.proposal = p.id
+      join findings f on f.id = u.finding where f.pr = ?`,
+        )
+        .get(n);
+    await until(() => !!bundled(), 'review follow-ups to reach their owner');
+    assert.equal(bundled()!.agent, ruler.agent);
+    const followups = await import('./followups.ts');
+    await followups.upstream({ id: ruler.id, pr: n }, 'The brief left the ending undefined');
+    const upstream = db
+      .prepare(
+        `select p.agent from proposals p join review_upstream u on u.proposal = p.id
+      where u.ruling = ?`,
+      )
+      .get(ruler.id);
+    assert.equal(upstream!.agent, ruler.agent);
+    const closed = (await h.feed()).find(event => event.text?.startsWith(`Closed PR #${n}:`));
+    assert.equal(closed?.agent, ruler.agent);
+    assert.throws(() => panel.consolidator(n), 'attribution does not appoint an eligible reviewer');
+  });
+});
+
+test('withdrawal and a GitHub close before any ruling finish with an exhausted roster', async () => {
+  const author = h.ended({ agent: 'bolt' });
+  const withdrawn = 9199,
+    closed = 9200;
+  h.storedPr(withdrawn, author, 'open', FILES);
+  h.storedPr(closed, author, 'stuck', FILES);
+  github.pr(closed).state = 'closed';
+  await withThreadPlanning(async () => {
+    await withExhaustedRoster(async () => {
+      const panel = await import('./panel.ts');
+      assert.throws(() => panel.consolidator(withdrawn));
+      await review.withdrawn(withdrawn);
+      assert.equal(prs(withdrawn).status, 'closed');
+      assert.throws(() => panel.consolidator(closed));
+      await review.settleStuck();
+      assert.equal(prs(closed).status, 'closed');
+      const inbox = await import('./reviewinbox.ts');
+      assert.equal(inbox.get(closed)?.decision, 'close');
+      assert.equal(inbox.get(closed)?.agent, 'bolt');
+      const logs = (await h.feed()).filter(
+        event => event.text?.startsWith(`Closed PR #${withdrawn}:`) || event.text?.startsWith(`Closed PR #${closed}:`),
+      );
+      assert.equal(logs.length, 2);
+      assert.ok(logs.every(event => event.agent === 'bolt'));
+    });
+  });
+});
+
 test("a pull request of only the office's records (its author's own profile, the decision log, briefs, notes) merges without a review; one with anything else, or someone else's profile, gets one", async () => {
   const n = 106;
   await submit(n, { files: ['company/people/bolt.md', 'company/DECISIONS.md', 'company/briefs/2026-10-17-plan.md', 'knowledge/notes/platform/server.md'] });
@@ -328,7 +416,7 @@ test('a review that fails to run runs once more, a few minutes later, on the sam
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
 });
 
-test('only a second failure leaves the pull request stuck, and a run of an older head never retries', async () => {
+test('only a second failure leaves the pull request stuck, and a push while a reader reads waits: its retry is on the head it read', async () => {
   const n = 141;
   await submit(n);
   const [first, ...rest] = await claim(n);
@@ -341,10 +429,13 @@ test('only a second failure leaves the pull request stuck, and a run of an older
   const m = 142;
   await submit(m);
   const [old] = await claim(m, j => j.agent === 'rook');
-  await submit(m);
   const panel = queued(m).map(j => j.id);
+  await submit(m);
+  assert.deepEqual(queued(m).map(j => j.id), panel, 'the push waits for the round its panel reads');
   await end(old, FAILED);
-  assert.deepEqual(queued(m).map(j => j.id), panel, 'the old head is not retried');
+  await review.actOnRulings();
+  const [retry] = queued(m).filter(j => !panel.includes(j.id));
+  assert.equal((db.prepare('select sha from jobs where id = ?').get(retry.id) as { sha: string }).sha, old.sha);
   assert.deepEqual(prs(m), { round: 1, status: 'open' });
 });
 
@@ -784,18 +875,135 @@ test('a push over a round nobody ruled on gets that round again: quick pushes ne
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
 
-test('a superseded ruling on the same head cannot consume the restarted round', async () => {
+test("a round whose panel has started is ruled on the commit it read: the thread's later pushes wait for that ruling, then the last one gets the next round", async () => {
+  const n = 1865;
+  await submit(n, { triage: ['rook', 'tally', 'nib', 'flint'] });
+  const first = heads.get(n)!;
+  const panel = await claim(n, j => j.kind === 'review');
+  assert.equal(panel.length, 4);
+  for (const run of panel.slice(0, 3)) await end(run);
+  // while one reader reads: the next task's push, one the gates would send back, and a third task's push
+  await submit(n, { files: [...FILES, ONE_FILE], pushedSince: { sha: first, files: [ONE_FILE] } });
+  await submit(n, { files: [...FILES, ONE_FILE], gates: { passed: false, report: 'a.ts:1: x is never used' } });
+  await submit(n, { files: [...FILES, ONE_FILE, 'platform/coordinator/src/panel.ts'] });
+  const last = heads.get(n)!;
+  assert.deepEqual(queued(n), [], 'no triage, no new panel, nothing sent back: the pushes wait');
+  await end(panel[3]);
+  const [ruling] = await claim(n, j => j.kind === 'consolidate');
+  assert.deepEqual([ruling.stage, ruling.sha, ruling.round], ['ruling', first, 1], 'the panel that reported is ruled');
+  await end(ruling, verdict('merge'));
+  assert.equal(github.pr(n).state, 'open', 'the passed commit is not merged: the branch moved on');
+  assert.deepEqual(prs(n), { round: 2, status: 'open' });
+  const [triage] = queued(n);
+  assert.deepEqual([triage.step, triage.round], ['Choosing the reviewers', 2]);
+  assert.equal((db.prepare('select sha from jobs where id = ?').get(triage.id) as { sha: string }).sha, last, 'on the latest push');
+});
+
+test('a round that goes stuck while a push waits for it gives that push the round at once', async () => {
+  const n = 1866;
+  await submit(n);
+  const [reader] = await claim(n, j => j.kind === 'review');
+  await submit(n);
+  const last = heads.get(n)!;
+  await end(reader, FAILED);
+  later(n);
+  await end((await claim(n))[0], FAILED);
+  assert.deepEqual(prs(n), { round: 1, status: 'open' });
+  const [triage] = queued(n);
+  assert.equal(triage.step, 'Choosing the reviewers');
+  assert.equal((db.prepare('select sha from jobs where id = ?').get(triage.id) as { sha: string }).sha, last);
+});
+
+// The thread's next task changed nothing: the worker pushes the same head (it pushes whenever the branch is ahead of main)
+test('a push of the commit a round\'s panel reads leaves that panel be: its reports are ruled, not read again', async () => {
+  const n = 1867;
+  await submit(n, { triage: ['rook', 'tally'] });
+  const first = heads.get(n)!;
+  const panel = await claim(n, j => j.kind === 'review');
+  await end(panel[0]);
+  await submit(n, { sha: first });
+  assert.deepEqual(queued(n), [], 'no triage again, no new panel');
+  await end(panel[1]);
+  const [ruling] = await claim(n, j => j.kind === 'consolidate');
+  assert.deepEqual([ruling.stage, ruling.sha, ruling.round], ['ruling', first, 1]);
+  await end(ruling, verdict('merge'));
+  assert.deepEqual(prs(n), { round: 1, status: 'merged' });
+});
+
+// The round's own transitions still run while a push waits for its ruling (review-panel.md, "How it runs")
+test('while a push waits, a ruling that fails to run or decides nothing runs again on the commit read, then the push gets the next round', async () => {
+  for (const [n, report] of [[1868, FAILED], [1869, { output: 'No clear verdict, sorry.' }]] as const) {
+    await submit(n);
+    const first = heads.get(n)!;
+    const panel = await claim(n, j => j.kind === 'review');
+    await submit(n);
+    const last = heads.get(n)!;
+    for (const run of panel) await end(run);
+    const [ruling] = await claim(n, j => j.kind === 'consolidate');
+    await end(ruling, report);
+    assert.deepEqual(queued(n).map(j => j.stage), ['ruling'], 'nothing of the push yet');
+    later(n);
+    const [again] = await claim(n);
+    assert.deepEqual([again.stage, again.sha, again.round], ['ruling', first, 1]);
+    await end(again, verdict('merge'));
+    const [triage] = await claim(n);
+    assert.deepEqual([triage.stage, triage.sha, triage.round], ['triage', last, 2]);
+  }
+});
+
+test("a triage that fails to run, or whose answer can't be read, runs again on its round and commit, and its retry sends the panel", async () => {
+  for (const [n, report] of [[1871, FAILED], [1872, { output: 'Rook and Tally, I think.' }]] as const) {
+    await submit(n);
+    const panel = await claim(n, j => j.kind === 'review');
+    await submit(n);
+    const last = heads.get(n)!;
+    for (const run of panel) await end(run);
+    await end((await claim(n, j => j.kind === 'consolidate'))[0], verdict('merge'));
+    const [triage] = await claim(n);
+    await end(triage, report);
+    later(n);
+    assert.deepEqual(queued(n).map(j => [j.stage, j.round]), [['triage', 2]]);
+    await completeTriage(h, n, ['rook']);
+    await settled();
+    const [read] = await claim(n);
+    assert.deepEqual([read.kind, read.agent, read.sha, read.round], ['review', 'rook', last, 2]);
+  }
+});
+
+test('a merge check that fails to run runs again on the commit it checks, while a push waits for it', async () => {
+  const n = 1870;
+  await submit(n);
+  github.pr(n).mergeable = false;
+  await decide(n, 'merge');
+  github.pr(n).mergeable = true;
+  await submit(n);
+  const checked = heads.get(n)!;
+  const [check] = await claim(n);
+  assert.equal(check.stage, 'merge');
+  await submit(n);
+  const last = heads.get(n)!;
+  await end(check, FAILED);
+  later(n);
+  const [again] = await claim(n);
+  assert.deepEqual([again.stage, again.sha, again.round], ['merge', checked, 1]);
+  await end(again, verdict('merge'));
+  assert.equal(github.pr(n).merged, false, 'the checked commit is not the branch any more');
+  const [triage] = await claim(n);
+  assert.deepEqual([triage.stage, triage.sha, triage.round], ['triage', last, 2], 'new work after the check: a round of its own');
+});
+
+test('a push of the same head while its ruling runs leaves that ruling standing: the push after it is the next round', async () => {
   const n = 3784;
   await submit(n);
   const sha = heads.get(n);
   for (const run of await claim(n)) await end(run);
-  const [old] = await claim(n);
-  assert.equal(old.stage, 'ruling');
+  const [ruling] = await claim(n);
+  assert.equal(ruling.stage, 'ruling');
   await submit(n, { sha });
-  await end(old, verdict('changes'));
+  await end(ruling, verdict('changes'));
+  assert.deepEqual(doing(n), ['Fixing review notes']);
   await submit(n);
-  assert.deepEqual(prs(n), { round: 1, status: 'open' });
-  assert.equal(reviewers(n).length, 1);
+  assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
 
 test('a pass whose branch moved before the merge counts like a merge that could not happen: at the last round, the push is a merge check, not a close', async () => {
@@ -922,13 +1130,16 @@ test('a push of the same head after the round got stuck gets the round from scra
   }
 });
 
-test("a push cancels the runs still queued for the head before it: they'd never decide anything", async () => {
+test("a push cancels the runs still queued for the head before it while none has run; once one has, a failed one too, it waits", async () => {
   const n = 146;
   await submit(n);
-  await end((await claim(n, j => j.agent === 'rook'))[0], FAILED);   // its retry waits a few minutes
   const before = queued(n).map(j => j.id);
   await submit(n);
-  assert.ok(queued(n).length && !queued(n).some(j => before.includes(j.id)));
+  assert.ok(queued(n).length && !queued(n).some(j => before.includes(j.id)), "they'd never decide anything");
+  await end((await claim(n, j => j.agent === 'rook'))[0], FAILED);   // its retry waits a few minutes
+  const panel = queued(n).map(j => j.id);
+  await submit(n);
+  assert.deepEqual(queued(n).map(j => j.id), panel, 'the push waits for the round its retry reads');
 });
 
 test('hq review: a stuck pull request goes back to the panel on its commit and round, only the runs that failed run again', async () => {
@@ -1360,17 +1571,20 @@ test('the check covers every route, and a pull request mid-review keeps its roun
   assert.ok(queued(n).some(j => j.kind === 'consolidate'), 'triage assigned the fix check');
 });
 
-test('a round running on an earlier commit ends at a push that goes back, as at any push; the next push gets that round again', async () => {
+test('a push that goes back, while a round reads the commit before it, waits for that ruling; then it goes back, and the next push is new work', async () => {
   const n = 953;
   await submit(n);
   const panel = await claim(n);
   await submit(n, { files: [...FILES, NOTE], frontmatter: note('title: A: B') });
-  // the reviews of the old commit that finish now decide nothing
+  assert.deepEqual(queued(n), [], 'nothing goes back while the panel reads');
   for (const run of panel) await end(run);
-  assert.deepEqual(queued(n).map(j => j.kind), ['work']);
+  const [ruling] = await claim(n, j => j.kind === 'consolidate');
+  await end(ruling, verdict('merge'));
+  assert.equal(github.pr(n).state, 'open', 'the passed commit is not the branch any more');
+  assert.deepEqual(doing(n), ['Fixing documents']);
   await submit(n, { files: [...FILES, NOTE], frontmatter: note('title: "A: B"') });
-  assert.deepEqual(prs(n), { round: 1, status: 'open' });
-  assert.ok(queued(n).every(j => j.kind === 'review'));
+  assert.deepEqual(prs(n), { round: 2, status: 'open' });
+  assert.ok(queued(n).length && queued(n).every(j => j.kind === 'review'), 'new work after a pass: a panel of its own, not a merge check');
 });
 
 test('a document send-back names every malformed document and missing file', async () => {
@@ -1884,6 +2098,14 @@ test("the merge check and the panel's ruling never block on the author's own pro
 
 
 
+async function withExhaustedRoster(run: () => Promise<void>) {
+  const configured = parse(readFileSync(`${h.repo}/company/org.yaml`, 'utf8'));
+  for (const department of configured.departments)
+    for (const agent of department.agents ?? []) agent.engine = agent.id === 'bolt' ? 'claude' : 'api';
+  configured.roles.ceo = 'bolt';
+  await withSetting(JSON.stringify(configured), run);
+}
+
 async function withSetting(yaml: string, run: () => Promise<void>) {
   const file = `${h.repo}/company/org.yaml`, before = readFileSync(file, 'utf8');
   const document = parseDocument(before);
@@ -2336,7 +2558,7 @@ test("a ruling touches up nothing while a thread's next task works on the branch
   await h.finish(task);
 });
 
-test('a kept security touch-up requires an independent solo ruling in the same round', async () => {
+test('a kept security touch-up permits its co-author to rule in the same round', async () => {
   const n = 1502, head = newSha(), file = AUTH;
   await pushFix(n, [file]);
   await ruleWithTouchups(n, { decision: 'changes', blocking: [] }, { sha: head, files: [file] });
@@ -2348,7 +2570,7 @@ test('a kept security touch-up requires an independent solo ruling in the same r
   assert.equal(github.pr(n).merged, false);
   const [independent] = await claim(n);
   assert.equal(independent.stage, 'ruling');
-  assert.notEqual(independent.agent, 'quill', 'the editor cannot approve its own security change');
+  assert.equal(independent.agent, 'quill', 'the editor is eligible on co-authored work');
   assert.ok(independent.prompt.includes(head));
   await end(independent, verdict('merge'));
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
@@ -2365,7 +2587,7 @@ test('a ruling that lists touch-ups is a "changes" even when it says merge, and 
   await pushAt(n, [PAGE], newSha(), head, [PAGE]);
   const [quill] = await claim(n);
   assert.equal(quill.stage, 'ruling');
-  assert.notEqual(quill.agent, 'quill', 'a successful editor cannot rule on its own touch-up');
+  assert.equal(quill.agent, 'quill', 'a co-author can rule on the fix to its touch-up');
   assert.ok(quill.prompt.includes(`back from Quill's "changes" ruling`), quill.prompt);
   assert.match(quill.prompt, new RegExp(`Commit ${head} in it is Quill's\\s+touch-up`));
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
@@ -2404,6 +2626,25 @@ test('a kept touch-up after an expanded triage reviews only the new edits in the
   const panel = await claim(n);
   assert.equal(panel.length, 1, 'the earlier recall ended with its ruling');
   assert.ok(panel[0].prompt.includes(head), 'the read names the touch-up commit');
+});
+
+test('touch-ups returned unchanged get their independent read in the same round, and a push while it reads waits for its ruling', async () => {
+  const n = 1516, file = 'platform/web/src/x.ts', head = newSha(), last = newSha();
+  await pushFix(n, [file]);
+  await ruleWithTouchups(n, { decision: 'changes', blocking: [] }, { sha: head, files: [file] });
+  await pushAt(n, [file], head, head, [], ['rook']);
+  assert.deepEqual(prs(n), { round: 1, status: 'open' });
+  const [read] = await claim(n);
+  assert.deepEqual([read.kind, read.agent, read.sha], ['review', 'rook', head]);
+  await pushAt(n, [file], last, head, [file]);
+  assert.deepEqual(queued(n), [], 'the push waits for the touch-up check');
+  await end(read);
+  const [ruling] = await claim(n);
+  assert.deepEqual([ruling.stage, ruling.sha, ruling.round], ['ruling', head, 1]);
+  await end(ruling, verdict('merge'));
+  assert.equal(github.pr(n).merged, false);
+  const [triage] = await claim(n);
+  assert.deepEqual([triage.stage, triage.sha, triage.round], ['triage', last, 2]);
 });
 
 test('a failed same-round touch-up check retries against its ruling and leaves author changes for a new round', async () => {
@@ -2633,9 +2874,10 @@ test('a changes ruling reaches the project owner once and only the last named fi
 });
 
 test("the sweep holds records-only work for its owner's blocking ruling, including an inbox migrated across restarts", async () => {
+  const work = await h.start({ agent: 'bolt', branch: 'review/8084', thread: h.dueThread() });
   await withThreadPlanning(async () => {
     const n = 8084, file = 'products/game/world.ts', records = ['company/DECISIONS.md'];
-    await submit(n, { files: [file, ...records] });
+    await submit(n, { files: [file, ...records] }, work);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
     await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'The decision is incorrect', blocking: [
@@ -2663,6 +2905,28 @@ test("the sweep holds records-only work for its owner's blocking ruling, includi
         assert.equal(saved.action, null, 'the sweep waits for the owner instead of merging records');
       }
     }
+  });
+});
+
+test('a changes ruling on work with no thread queues its author\'s fix at once, with no inbox step', async () => {
+  await withThreadPlanning(async () => {
+    const n = 8085, files = ['products/game/world.ts'];
+    await submit(n, { files });
+    for (const run of await claim(n)) await end(run);
+    const [ruler] = await claim(n);
+    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'Movement needs a fix', blocking: [
+      { file: files[0], line: 1, issue: 'Movement cannot finish', fix: 'Complete movement' }
+    ] }) });
+    const inbox = await import('./reviewinbox.ts');
+    await until(() => queued(n).some(job => job.kind === 'work'), "the author's fix to be queued");
+    const [fix] = queued(n).filter(job => job.kind === 'work');
+    assert.equal(inbox.get(n), undefined, 'nothing waits in an inbox');
+    const [run] = await claim(n, job => job.id === fix.id);
+    assert.equal(run.agent, 'bolt', 'its author');
+    assert.equal(run.branch, `review/${n}`);
+    assert.match(run.prompt, /Movement cannot finish/);
+    await submit(n, { files, pushedSince: { sha: ruler.sha, files } }, run);
+    assert.equal(prs(n).round, 2, "the author's push starts the next round");
   });
 });
 

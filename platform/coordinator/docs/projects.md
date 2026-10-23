@@ -7,12 +7,14 @@ reviews and fixes, the job for a card's answer, the job a message becomes. HQ's 
 agents view: the desktop's Projects app opens it, and the way out in the HUD's tools goes back to the building. It reads
 `GET /api/projects` (`platform/hq/shell/projects.js`, its looks in `style.css` and the skins, checked by
 `platform/hq/projects-check.mjs`). On top it puts the businesses `projects.yaml` groups the projects under, then
-Recurring (the routines' projects) and the work being placed with its latest finished runs. A project lists its done threads on a
+Recurring (the routines' projects), the work being placed with its latest finished runs, and the meetings, a tile each with
+everyone at it and its topic put plainly (`meetingboard.ts`). A project lists its done threads on a
 tap, and a done thread opens with its jobs (`GET /api/projects/thread`). Each level shows more on each card: a business's picture of the
 work running in it and its owner (`projects.yaml`'s `owner:`), a project's deliverables up next with the play's times, a
-thread's lines changed (its pull requests') and time, and a thread's tasks as a list with each one's size, what it waits
-on and its code (`jobs.code`, the name the board reads instead of a number). The board sorts a grid's projects by
-dragging (`POST /api/projects/order`), and every device follows that order.
+thread's lines changed (its pull requests') and time, and a thread's tasks as a list in time order with each one's size,
+what it waits on (the tasks by their codes behind an hourglass) and its code (`jobs.code`, the name the board reads instead
+of a number); a card held off the desk phone sits under the task whose work it waits on to go live. The board sorts a
+grid's projects by dragging (`POST /api/projects/order`), and every device follows that order.
 
 A task's code is its project's prefix and a word for what it does (`HQ-COVERS`), easy to say on a call. The prefix is
 the project's, two or three capitals given as the CEO makes it (`hq project new --code`, or once for an older project:
@@ -84,10 +86,10 @@ board can read with words not yet put plainly is due, open work first, so a new 
 tool is, and every name already there. The worker claims a thread's or a project's names at a time (`POST
 /api/worker/names/claim` and `/answer`, worker.ts `namesLoop`). The agent's words stay on their row, for the agents and
 their tools. The board's views (`GET /api/projects`, `/api/projects/thread`, `/api/jobs`, `/api/jobs/find`, `/api/work`)
-show the plain version while the words it was made from stand (`boardnames.ts`). Until then the name is null and the
-thing's `naming` says so for it (`{ "title": null }`: being named; a string: why its latest naming failed, a failed call
-or a wrong answer, logged as an error too), and HQ shows that in its place, never the agent's words. A failed name is
-asked again ten minutes after its call, as often as it takes.
+show the plain version while the words it was made from stand (`boardnames.ts`). Until then, or once the words
+change, they show the agent's own words in the same field, and the plain version replaces them when it comes. Why a
+naming failed (a failed call or a wrong answer) stays on its `board_names` row for the agents and is logged as an
+error; the board's views don't carry it. A failed name is asked again ten minutes after its call, as often as it takes.
 
 No two levels share a name: a thread drawn or renamed to the name of a project or another open thread in its product,
 a project made or renamed to one its product has, and a task titled as its thread or its project are refused, naming
@@ -175,7 +177,9 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
   follows those that did (`inTurn`). The claim and the play read both as edges of
   `planner.ts` precedence (`follows`, until done; `needs`, until merged), which `backlog.ts` puts on the queue; a thread
   edge closing a loop with jobs' own waits is dropped and its task stalls saying so. A drawn thread with no task yet
-  plays as one placeholder of its owner's, sized on its name and "done when" (`predictions.ts prepared`). `hq jobs`
+  plays as one placeholder of its owner's, sized on its name and "done when" (`predictions.ts prepared`); while a window
+  is at stake for it (its own, or one of a thread that needs it) it has no ETA, "no task drawn: nobody is building
+  it", and so do the windowed threads that need it, which miss their window (`forecast.ts undrawnUnder`). `hq jobs`
   shows what holds a task ("after #n in its thread", "until <thread> merges", "until #n on its thread's pull request
   ends").
 - **The branch.** The first task to push work (a commit, a pull request) makes its `job/<id>` the thread's
@@ -224,7 +228,7 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
    maybe with a `product`, a `products/<slug>`) is lifted into HQ as the file is read, each id HQ hasn't got yet, and
    then leaves the file: from there the projects are HQ's. The file keeps `requireThread: false` until step 4. `businesses` lists those in the board's order, each an `id`, a `name` and
    maybe a `cover` (a picture under `theme/hq/`); `groups` can give Recurring and the work being placed
-   (`recurring`, `unsorted`) a `cover` the same way. With no businesses, the projects come first. The routines'
+   (`recurring`, `unsorted`), and the meetings (`meetings`), a `cover` the same way. With no businesses, the projects come first. The routines'
    projects (`company/schedule.yaml`) show under Recurring.
 2. **Draw the plans.** Once that's merged, each project's owner draws its threads (`hq plan thread`). The job's
    agent, the CEO or Process places unthreaded work in them (`hq job move <job> <project>/<slug>`, its reviews and fixes

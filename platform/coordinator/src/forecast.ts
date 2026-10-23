@@ -55,6 +55,10 @@ export type ThreadOutlook = {
   chain: Link[];
   // the job that goes on next: a running one, else the first to start in the play
   next: number | null;
+  // the threads with no task drawn that its finish rests on while a window is at stake (its own, or one of a thread that
+  // needs it): itself, or the ones it needs. Each still plays as its placeholder for other threads' ETAs, but this one
+  // has no ETA or finish, so a window it holds counts as missed.
+  undrawn: string[];
 };
 export type Forecast = {
   now: number;
@@ -197,13 +201,15 @@ export function threadOutlooks(
   const groups = new Map<string, QueuedJob[]>();
   for (const job of snapshot.jobs)
     if (job.thread && (job.id > 0 || job.placeholder)) groups.set(job.thread, [...(groups.get(job.thread) ?? []), job]);
+  const undrawnBy = undrawnUnder(snapshot, groups, byId);
   const threads = new Map<string, ThreadOutlook>();
   for (const [thread, all] of groups) {
     const work = all.filter(j => j.kind === 'work' && usual.has(j.id));
     if (!work.length) continue;
     const runs = all.filter(j => j.kind !== 'work');
     const seen = work.map(j => ({ job: j, usual: usual.get(j.id)!, slow: slow.get(j.id) }));
-    const stalled = seen.some(s => s.usual.merged === null);
+    const undrawn = undrawnBy.get(thread) ?? [];
+    const stalled = undrawn.length > 0 || seen.some(s => s.usual.merged === null);
     const eta = stalled ? null : Math.max(...seen.map(s => s.usual.merged!));
     const held = stalled ? null : Math.max(...seen.map(s => (s.slow ? heldTo(s.usual, s.slow) : s.usual.merged)!));
     const runLeft = runs.reduce((sum, r) => sum + Math.max((sizes.get(r.id)?.agent_ms ?? 0) - r.spentMs, 0), 0);
@@ -227,9 +233,40 @@ export function threadOutlooks(
       ),
       chain: chainOf(last.job, usual, byId),
       next: nextOf(seen),
+      undrawn,
     });
   }
   return threads;
+}
+
+// Each thread a window is at stake for (one with a deadline, and every thread it needs, through their needs), with the
+// threads among it and those it needs that have no task drawn: their only work is the placeholder their owner would
+// draw (threadorder.ts placeholders), which nobody is building.
+function undrawnUnder(snapshot: Snapshot, groups: Map<string, QueuedJob[]>, byId: Map<number, QueuedJob>) {
+  const isUndrawn = (thread: string) => groups.get(thread)!.every(j => j.placeholder);
+  const needed = (thread: string) => {
+    const reached = new Set([thread]);
+    for (const at of reached)
+      for (const job of groups.get(at) ?? [])
+        for (const need of job.needs ?? []) {
+          const other = byId.get(need)?.thread;
+          if (other && groups.has(other)) reached.add(other);
+        }
+    return reached;
+  };
+  const stake = new Set(
+    Object.entries(snapshot.windows ?? {}).flatMap(([thread, w]) =>
+      w.deadline !== null && groups.has(thread) ? [...needed(thread)] : [],
+    ),
+  );
+  return new Map([...stake].map(thread => [thread, [...needed(thread)].filter(isUndrawn)]));
+}
+
+// Why a thread a window is at stake for has no finish: no task drawn, in it or in a thread it needs.
+export function undrawnWords(o: Pick<ThreadOutlook, 'thread' | 'undrawn'>) {
+  if (!o.undrawn.length) return null;
+  const nobody = 'no task drawn: nobody is building it';
+  return o.undrawn.includes(o.thread) ? nobody : `it needs ${o.undrawn.join(', ')}, with ${nobody}`;
 }
 
 // Where a thread stands against its window: it misses (its planned finish past the deadline, or none in sight), gives

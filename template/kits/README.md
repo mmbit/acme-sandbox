@@ -102,8 +102,8 @@ export function numbers(d, view, hq) { return { html, wire(el) {} }; }   // opti
 An app can add its own category to HQ's search (`/` on HQ's home, `platform/hq/shell/finder.js`) with `finds`: a chip
 named `name`, a prefix to type (`t:`, unless HQ or another app has it), and the things its own screen lists, each
 `{ key, title, sub, codes, at, open }`. Words match `title` and `codes` first (a reference such as `H-1001`), then `sub`;
-`at` (optional) is when it came or was answered, and one older than a week waits behind the category's "n more" while
-fresher ones match; one still waiting for the board has none, so it's never old. A part of the list that couldn't load
+`at` (optional) is when it came, was answered or was done, and one older than a week waits behind the category's "n more"
+while fresher ones match; one still waiting for the board has none, so it's never old. A part of the list that couldn't load
 is an item `{ missed: its name }`, and the field names it. `open()` shows it in the app (`hq.open`). List only what the
 app's screen shows the board, by that screen's rules.
 

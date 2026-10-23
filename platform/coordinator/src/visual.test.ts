@@ -17,10 +17,15 @@ const h = await harness('visual', {
     ),
 });
 const { db } = h;
+// Each pull request's readers and the one of them who looks at the previews (rook alone, by default)
+const panels = new Map<number, { readers: string[]; looker: string | null }>();
 const finish = h.finish;
 h.finish = async (job, report = { status: 'done' }) => {
   const reply = await finish(job, report);
-  if (typeof report.pr === 'number') await completeTriage(h, report.pr, ['rook']);
+  if (typeof report.pr === 'number') {
+    const { readers, looker } = panels.get(report.pr) ?? { readers: ['rook'], looker: 'rook' };
+    await completeTriage(h, report.pr, readers, looker);
+  }
   return reply;
 };
 
@@ -87,29 +92,52 @@ test('a push that changes what two checks cover owes both records, and gets both
   );
 });
 
-test("every reviewer and the ruling get the previews' step, and a review naming no picture it opened runs again", async () => {
+test("only the reader triage chose to look gets the previews' step, its review naming no picture runs again, and the ruling weighs what it saw", async () => {
+  panels.set(602, { readers: ['rook', 'tally'], looker: 'rook' });
   const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/room' });
   await h.finish(run, { pr: 602, branch: 'job/room', files: [ROOM, RECORD], sha: 'b'.repeat(40) });
   const reviews = onPr(602);
-  assert.ok(reviews.length && reviews.every(j => j.kind === 'review' && j.prompt.includes('node preview.mjs')));
-  const [first] = reviews;
-  const seat = await h.claim(first.engine);
-  assert.equal(seat?.id, first.id);
-  await h.finish(seat!, { output: '{"findings": [], "summary": "fine"}' });
-  await sleep(50);
-  const again = onPr(602).filter(j => j.kind === 'review' && j.agent === first.agent);
-  assert.equal(again.length, 1, 'its review runs again');
-  db.prepare('update jobs set not_before = 0 where id = ?').run(again[0].id);
-  for (const j of onPr(602).filter(j => j.kind === 'review')) {
-    const r = await h.claim(j.engine);
-    await h.finish(r!, { output: SAW });
+  const rook = reviews.find(j => j.agent === 'rook')!,
+    tally = reviews.find(j => j.agent === 'tally')!;
+  assert.ok(rook.prompt.includes('node preview.mjs') && !tally.prompt.includes('node preview.mjs'));
+  for (const j of [rook, tally]) {
+    const seat = await h.claim(j.engine);
+    await h.finish(seat!, { output: '{"findings": [], "summary": "fine"}' });
   }
   await sleep(50);
+  const again = onPr(602).filter(j => j.kind === 'review');
+  assert.deepEqual(
+    again.map(j => j.agent),
+    ['rook'],
+    "the looker's review runs again, the other reader's stands",
+  );
+  db.prepare('update jobs set not_before = 0 where id = ?').run(again[0].id);
+  const r = await h.claim(again[0].engine);
+  await h.finish(r!, { output: SAW });
+  await sleep(50);
   const [ruling] = onPr(602).filter(j => j.kind === 'consolidate');
-  assert.ok(ruling?.prompt.includes('node preview.mjs'), 'the ruling opens them too');
+  assert.ok(ruling?.prompt.includes('## The previews'), 'the ruling weighs what rook saw');
+  assert.ok(!ruling.prompt.includes('node preview.mjs'), "and doesn't render them again");
+});
+
+test('a change people see that triage gives no visual eye gets no previews step from anyone', async () => {
+  panels.set(605, { readers: ['rook'], looker: null });
+  const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/quiet' });
+  await h.finish(run, { pr: 605, branch: 'job/quiet', files: [ROOM, 'qa/previews/job-quiet.md'], sha: 'f'.repeat(40) });
+  const [review] = onPr(605);
+  assert.ok(review.kind === 'review' && !review.prompt.includes('node preview.mjs'));
+  const seat = await h.claim(review.engine);
+  await h.finish(seat!, { output: '{"findings": [], "summary": "fine"}' });
+  await sleep(50);
+  const [ruling] = onPr(605).filter(j => j.kind === 'consolidate');
+  assert.ok(
+    ruling && !ruling.prompt.includes('node preview.mjs'),
+    'a report without pictures stands and goes to the ruling',
+  );
 });
 
 test('a push of anything else, or of what a check excepts, needs no record', async () => {
+  panels.set(603, { readers: ['rook'], looker: null });
   const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/shell' });
   const files = ['platform/hq/shell/panel.js', 'platform/hq/renderers/brownstone/layout.test.js'];
   await h.finish(run, { pr: 603, branch: 'job/shell', files, sha: 'c'.repeat(40) });
@@ -119,6 +147,7 @@ test('a push of anything else, or of what a check excepts, needs no record', asy
 
 test('a drawing the pull request puts back as main has it owes no record any more', async () => {
   const SHELL = 'platform/hq/shell/panel.js';
+  panels.set(604, { readers: ['rook'], looker: null });
   const run = await h.start({ agent: 'bolt', engine: 'claude', branch: 'job/undo' });
   await h.finish(run, { pr: 604, branch: 'job/undo', files: [ROOM, SHELL], sha: 'd'.repeat(40) });
   assert.deepEqual(

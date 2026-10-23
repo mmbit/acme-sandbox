@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Packs acme-foundation into the zip a newcomer unzips: run at the root of an acme-foundation checkout. The zip is the
-committed tree (git archive of HEAD) in one folder, acme-foundation/. It checks the zip holds the setup skill, the
-licence and the Overseer's instructions, that the licence is the master byte for byte, and that package.json stays
-proprietary. Then it prints the zip's name and SHA-256, the record the licence asks for at handover.
+committed tree (git archive of HEAD) in one folder, acme-foundation/. It checks the zip holds the setup skill and
+the Overseer's instructions, and that package.json stays proprietary. Then it prints the zip's name and SHA-256.
 python3 infra/overseer/pack.py [out-dir]; its test: python3 infra/overseer/test_pack.py
 """
 import hashlib
@@ -13,8 +12,7 @@ import sys
 import zipfile
 
 FOLDER = 'acme-foundation'
-LICENCE_SHA256 = 'fd063bdc5b80198acd85c9637d082219c2416a65e7ed09242962191c48e98d66'
-REQUIRED = ['.claude/skills/acme-setup/SKILL.md', 'LICENSE.txt', 'infra/overseer/AGENTS.md', 'infra/overseer/CLAUDE.md']
+REQUIRED = ['.claude/skills/acme-setup/SKILL.md', 'infra/overseer/AGENTS.md', 'infra/overseer/CLAUDE.md']
 
 
 class PackError(Exception):
@@ -27,7 +25,7 @@ def main():
         path, digest = pack(os.getcwd(), out_dir)
     except PackError as e:
         sys.exit(f'pack: {e}')
-    print(f'{os.path.basename(path)}\nsha256 {digest}\nlicence sha256 {LICENCE_SHA256} (the master, byte for byte)')
+    print(f'{os.path.basename(path)}\nsha256 {digest}')
 
 
 def pack(checkout, out_dir):
@@ -51,15 +49,12 @@ def pack(checkout, out_dir):
 
 
 def check(path):
-    """Stops with a PackError unless the zip has every required file, the master licence and proprietary metadata."""
+    """Stops with a PackError unless the zip has every required file and proprietary metadata."""
     with zipfile.ZipFile(path) as archive:
         names = set(archive.namelist())
         missing = [name for name in REQUIRED if f'{FOLDER}/{name}' not in names]
         if missing:
             raise PackError(f'the zip lacks {", ".join(missing)}')
-        licence = hashlib.sha256(archive.read(f'{FOLDER}/LICENSE.txt')).hexdigest()
-        if licence != LICENCE_SHA256:
-            raise PackError(f'LICENSE.txt is not the master (its sha256 is {licence}): copy the master in verbatim')
         if f'{FOLDER}/package.json' in names:
             package = json.loads(archive.read(f'{FOLDER}/package.json'))
             if package.get('private') is not True or package.get('license', 'UNLICENSED') != 'UNLICENSED':

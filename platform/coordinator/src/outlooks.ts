@@ -5,7 +5,7 @@ import { db } from './db.ts';
 import { findThread, ownerOf, type Thread } from './projects.ts';
 import { findAgent, findJob, isOpenJob, nameOf } from './jobs.ts';
 import { codeOf } from './jobcodes.ts';
-import { standing, type Forecast, type ThreadOutlook } from './forecast.ts';
+import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
 import type { Wait } from './eta.ts';
 import { HORIZON_DAYS } from './simulation.ts';
 import { alike, scores, wordsOf } from './matching.ts';
@@ -23,8 +23,11 @@ export function outlookOf(id: string, f: Forecast) {
   };
 }
 
-// What stops a thread without an ETA: a stall the play sees, or nothing merging within its horizon.
+// What stops a thread without an ETA: no task drawn while a window is at stake, a
+// stall the play sees, or nothing merging within its horizon.
 function stallOf(o: ThreadOutlook) {
+  const undrawn = undrawnWords(o);
+  if (undrawn) return undrawn;
   const stalled = o.chain.flatMap(l => l.causes).find(w => w.on === 'stalled') as
     Extract<Wait, { on: 'stalled' }> | undefined;
   if (stalled) return stalled.why;

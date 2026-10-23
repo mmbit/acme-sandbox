@@ -1644,6 +1644,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
 }
 @media (prefers-reduced-motion: reduce) {
   .wire .avatar svg,
+  #projects .pj-face.on::after,
   .wire .state i,
   .wire .log li:last-child {
     animation: none;
@@ -1703,7 +1704,8 @@ body.wire-dark #projects {
 #projects .pj-business {
   border-radius: 28px;
 }
-/* (a level's head: the big key's lettering, its keys a shade off the panel like the big key's close.) */
+/* (a level's head: the big key's lettering, its keys white on the panel as the brand guide's are.
+  .) */
 .pj-tile b,
 .pj-where h1,
 .pj-card h2 {
@@ -1713,8 +1715,22 @@ body.wire-dark #projects {
 .pj-where h1 {
   font-size: 30px;
 }
-#projects :is(.pj-head, .pj-card-keys) .pj-key:not(.on, [aria-pressed='true']) {
-  background: var(--key-panel-bg);
+/* (a thread's estimate is information, not a key: a flat chip with no lip that doesn't go down, its sums still
+   under a tap.) */
+#projects .pj-eta > summary.pj-key,
+#projects .pj-eta > summary.pj-key:is(:hover, :active) {
+  transform: none;
+  background: var(--pj-ground);
+  box-shadow: none;
+}
+/* (a task's code a quiet tag in the words' type, as the design system's state words are.) */
+#projects .pj-code {
+  padding: 3px 9px 2px;
+  border-radius: var(--pj-pill);
+  background: color-mix(in srgb, var(--k-ink) 9%, transparent);
+  color: var(--k-muted);
+  font: 650 12.5px/1.2 var(--font);
+  letter-spacing: 0;
 }
 :is(.pj-business, [data-project])::before {
   content: none;
@@ -1731,6 +1747,30 @@ body.wire-dark #projects {
 }
 .pj-tile.lit .pj-tile-top .pj-face {
   box-shadow: 0 0 0 2px var(--k-accent);
+}
+/* (a face at work on a tile: the agents view's turning ring, over its rim, so a row of faces clips none of it.
+  .) */
+#projects .pj-face.on {
+  position: relative;
+}
+#projects .pj-face.on::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border: 2px solid transparent;
+  border-top-color: var(--k-ink);
+  border-right-color: var(--k-ink);
+  border-radius: 50%;
+  animation: wire-spin 6s linear infinite;
+}
+/* (a mark on a tile big enough for its drawing to breathe: the desk phone's handset, body and dial.) */
+.pj-mark {
+  width: 34px;
+  height: 34px;
+}
+.pj-mark svg {
+  width: 20px;
+  height: 20px;
 }
 /* (the pulse's bars rounded and eased.) */
 .pj-live {

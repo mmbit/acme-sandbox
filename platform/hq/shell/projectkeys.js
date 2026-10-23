@@ -51,12 +51,17 @@ export const GROUPS = {
     name: 'Outside projects',
     icon: icon('group-unsorted', 'pj-icon'),
   },
+  // The meetings, a tile each with everyone at it, there while there are some (projects.ts meetingSeats).
+  meetings: {
+    name: 'Meetings',
+    icon: icon('app-people', 'pj-icon'),
+  },
 };
 // A group as the view shows it, with the company's name (projects.yaml groups) where it gives one
 export const named = (key, set) => ({
   ...GROUPS[key],
   name: set?.name ?? GROUPS[key].name,
-  standing: key !== 'unsorted' || Boolean(set?.name),
+  standing: key === 'recurring' || (key === 'unsorted' && Boolean(set?.name)),
 });
 
 // ---------------------------------------------------------------- the tiles
@@ -65,7 +70,7 @@ export const named = (key, set) => ({
 export function businessTile(b, projects) {
   const state = businessState(projects),
     threads = projects.flatMap(p => p.threads);
-  const owner = b.owner ? [person(b.owner, true)] : [];
+  const owner = b.owner ? [person(b.owner, true, atWork(threads).includes(b.owner))] : [];
   return `<button class="pj-tile pj-business${state.lit ? ' lit' : ''}" data-business="${esc(b.id)}">
     ${art(b.cover, b.name, owner, state, running(threads))}<span class="pj-tile-body"><b>${esc(b.name)}</b></span></button>`;
 }
@@ -74,7 +79,8 @@ export function businessTile(b, projects) {
 // (data-sort, sorting.js).
 export function projectTile(p) {
   const state = projectState(p),
-    people = [p.owner, ...atWork(p.threads).filter(a => a !== p.owner)].map((a, i) => person(a, i === 0));
+    on = atWork(p.threads),
+    people = [p.owner, ...on.filter(a => a !== p.owner)].map((a, i) => person(a, i === 0, on.includes(a)));
   return `<button class="pj-tile pj-project${state.lit ? ' lit' : ''}" data-project="${esc(p.id)}" data-sort="${esc(p.id)}">
     ${art(p.cover, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}</button>`;
 }
@@ -92,16 +98,22 @@ export function threadTile(t, p) {
     attrs: `data-thread="${esc(t.id)}"`,
     label: nameText(t, 'name'),
     state,
-    top: faces(people),
+    top: faces(people, on),
     name: nameHtml(t, 'name'),
     rows: rows.length ? `<ul class="pj-next pj-now">${rows.join('')}</ul>` : '',
     foot: lines(t.lines) + (state.finish ? `<span class="pj-when">${esc(fromNow(state.finish))}</span>` : ''),
   });
 }
 // A done thread, quieter: its owner, its name and how many of its jobs were done (projects.ts tally), or while it's
-// being opened, how that goes (opening: projects.js's, for one of the project's done threads)
+// being opened, how that goes (opening: projects.js's, for one of the project's done threads). One closed with no
+// jobs in it says so.
 export function doneThreadTile(t, opening) {
-  const words = opening?.id === t.id ? opening.words : `Done · ${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'}`;
+  const words =
+    opening?.id === t.id
+      ? opening.words
+      : t.jobs
+        ? `Done · ${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'}`
+        : 'Closed with no jobs';
   return tile({
     attrs: `data-thread="${esc(t.id)}"`,
     label: `${nameText(t, 'name')}, ${words}`,
@@ -121,20 +133,21 @@ function jobTile(j, t) {
   const s = stateOf(j),
     kind = kindOf(j),
     steps = stepsOf(j, t).filter(x => !finished(x)).length;
-  const what = s === 'you' ? '' : (j.asks ?? asksOf([j])).length ? 'After your answer' : waitWord(j.lead ?? j);
+  const what = s === 'you' ? '' : (j.asks ?? asksOf([j])).length ? 'After your answer' : null;
+  // (a wait in words in the label, with its hourglass on the tile: waitOf.)
   const where = [
-    what,
+    what ?? waitOf(j.lead ?? j),
     j.review ? doingOf(j) : kind !== 'work' ? kind : '',
     steps && kind === 'work' && s !== 'you' ? `${steps === 1 ? 'a review' : `${steps} reviews`} open` : '',
   ].filter(Boolean);
   return tile({
     attrs: `data-job="${Number(j.id)}"`,
-    label: [nameText(j), ...where].join(', '),
+    label: [nameText(j), ...where.map(x => x.text ?? x)].join(', '),
     state: { lit: s === 'you', words: 'Waits for you' },
     top: whoTop(j.agent),
     name: nameHtml(j),
     rows: where.length
-      ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}${withJobLinks(where.join(' · '))}</span>`
+      ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span>`
       : '',
     foot: (size(j) ? `<span class="pj-size">${esc(size(j))}</span>` : '') + code(j),
   });
@@ -148,11 +161,16 @@ export function groupTile(key, rows, done, set, on) {
   return `<button class="pj-tile pj-business" data-group="${key}">
     ${art(set?.cover, group.name, [], {}, on, group.icon)}<span class="pj-tile-body"><b>${esc(group.name)}</b></span></button>`;
 }
-// Where a job is in a word, or for one waiting on others whom it waits on first, so two that start together and a
-// chain read apart at a glance
-export function waitWord(j) {
-  const first = j.after_state ? j.after_agent : stateOf(j) === 'waits' ? j.waits?.[0]?.agent : null;
-  return first ? `Waiting on ${who(first)}` : cap(word(j));
+// Where a job is in a word, or for one waiting on others what it waits on: the code of each task it follows (its
+// --after, then the others it waits on), one without a code by its agent, and each card it waits on that isn't on the
+// desk phone yet (held), quoted; so two that start together and a chain read apart at a glance. As words (text) and as
+// HTML with an hourglass for the waits (html).
+export function waitOf(j, held = []) {
+  const jobs = [j.after_state && { code: j.after_code, agent: j.after_agent }, ...(j.waits ?? [])].filter(Boolean);
+  const on = [...new Set([...jobs.map(w => w.code ?? who(w.agent)), ...held.map(c => `“${c.title}”`)])].join(', ');
+  return on
+    ? { text: `Waits on ${on}`, html: `<span class="pj-wait">${icon('hourglass', '', 'Waits on')}${esc(on)}</span>` }
+    : { text: cap(word(j)), html: esc(cap(word(j))) };
 }
 // ---------------------------------------------------------------- the heads
 // Where the board is, one strip at the top of the view at every level: a key back up (at home the view's own mark in
@@ -223,8 +241,9 @@ const tile = ({ attrs = '', label, state = {}, top, name, rows = '', foot = '', 
     label,
     `<span class="pj-tile-top">${top}${mark(state)}</span><b>${name}</b><span class="pj-tile-rows">${rows}</span><span class="pj-foot"${live ? ' aria-live="polite"' : ''}>${foot}</span>`,
   );
-// Faces in a row
-const faces = ids => (ids.length ? `<span class="pj-faces">${ids.map(a => face(a)).join('')}</span>` : '');
+// Faces in a row, those of the agents in on at work marked so
+const faces = (ids, on = []) =>
+  ids.length ? `<span class="pj-faces">${ids.map(a => face(a, on.includes(a) ? 'on' : '')).join('')}</span>` : '';
 // One person's face and name, a group's job's
 const whoTop = id => `${face(id)}<span class="pj-who-line">${esc(who(id))}</span>`;
 // ----
@@ -243,9 +262,9 @@ const mark = state =>
       : state.waits
         ? `<span class="pj-mark" title="${esc(state.words)}">${icon('hourglass', '', esc(state.words))}</span>`
         : '';
-// Someone's face with their name on hover, an owner with a crown
-const person = (id, owner = false) =>
-  `<span class="pj-person${owner ? ' pj-owner' : ''}" data-name="${esc(who(id))}${owner ? ', owner' : ''}">${owner ? icon('crown', 'pj-crown') : ''}${face(id)}</span>`;
+// Someone's face with their name on hover, an owner with a crown, one at work marked so
+const person = (id, owner = false, on = false) =>
+  `<span class="pj-person${owner ? ' pj-owner' : ''}" data-name="${esc(who(id))}${owner ? ', owner' : ''}">${owner ? icon('crown', 'pj-crown') : ''}${face(id, on ? 'on' : '')}</span>`;
 // A project's deliverables, after a routine's interval and next run: those with work running (their bars first), then
 // those up next, each in its page's order (inEtaOrder), with when (the planner's), at least three; or its two latest
 // done ones, the last finished first (projects.ts tally's finished).
@@ -278,11 +297,11 @@ const lines = l =>
     : '';
 const openCards = t => cardsOf(t).filter(j => !finished(j));
 export const code = j => (j.code ? `<span class="pj-code">${esc(j.code)}</span>` : ''); // (none for a job without one)
-// The live sign of work under way: each job running a voice of three bars moving as one, each voice on a beat of its
-// own, so where more runs, more moves.
+// The live sign of work under way: each job running a voice of three bars, each bar on an uneven run of its own like a
+// level meter's, each voice at its own point in the run, so where more runs, more moves.
 // The beat is set from the clock, so the view's repaints every 20 s carry on its rhythm instead of starting it over.
 // BEAT_MS is the looks' .pj-live animation's length.
-const BEAT_MS = 1200;
+const BEAT_MS = 2400;
 export function pulse(n) {
   if (!n) return '';
   const now = Date.now(),
@@ -315,4 +334,37 @@ export function face(id, cls = '') {
   }
   const url = portraits.get(key) ?? '';
   return `<i class="pj-face ${cls}" title="${esc(who(id))}${cls === 'on' ? ', at work' : ''}"${url ? ` style="background-image:url(${url})"` : ''}>${url ? '' : esc(who(id)[0])}</i>`;
+}
+// ---------------------------------------------------------------- meetings
+// The meetings group's tiles: a meeting each (its seats, projects.ts meetingSeats), the ended ones only when shown
+// (done), the latest first.
+export function meetingTiles(seats, done) {
+  const tiles = meetingsOf(seats)
+    .filter(m => done || !m.ended)
+    .map(meetingTile);
+  return tiles.join('') || '<p class="pj-none">No meetings right now.</p>';
+}
+// How many meetings ended, for the group's Done key
+export const endedMeetings = seats => meetingsOf(seats).filter(m => m.ended).length;
+const meetingsOf = seats => {
+  const by = new Map();
+  for (const j of seats) by.set(j.meeting.id, [...(by.get(j.meeting.id) ?? []), j]);
+  return [...by.values()]
+    .map(all => ({ ...all[0].meeting, seats: all.sort((a, b) => a.id - b.id), ended: all.every(finished) }))
+    .sort((a, b) => b.id - a.id);
+};
+// A meeting: everyone at it, its topic as the board reads it, where it is (in session, when it starts, or ended), and
+// its code. It opens its first seat's job, the caller's.
+function meetingTile(m) {
+  const live = m.seats.some(j => stateOf(j) === 'working'),
+    first = m.seats[0],
+    starts = m.seats.map(j => j.until ?? j.estimate?.start).find(Boolean);
+  const where = live ? 'In session' : m.ended ? 'Ended' : starts ? `Starts ${fromNow(starts)}` : cap(word(first));
+  return tile({
+    attrs: `data-job="${Number(first.id)}"`,
+    top: faces(m.seats.map(j => j.agent)),
+    name: nameHtml(m, 'topic'),
+    rows: `<span class="pj-state">${live ? pulse(1) : ''}${esc(where)}</span>`,
+    foot: code(first),
+  });
 }

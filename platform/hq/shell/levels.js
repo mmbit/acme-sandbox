@@ -4,7 +4,7 @@
 // and the done threads it has opened.
 
 import { sfx } from './audio.js';
-import { dropKey } from './drop.js';
+import { dropKey, pinKey } from './drop.js'; // (pinKey)
 import { inEtaOrder } from './threads.js';
 
 const SWIPE = 70; // how far a sideways drag on a level goes before the next one beside it comes in (CSS px)
@@ -83,14 +83,15 @@ export async function leave(grid, motion) {
     });
 }
 // The level's keys come in: down, those in view drop in one after another from above the head and land with a clack,
-// as the home page's keys do; up, they settle from a little bigger; beside, from the side of the swipe. Where the board
-// is, in the head, comes the way it went.
+// as the home page's keys do (or are pinned on, in a look whose --pj-arrival is pin), and a thread's task rows, which
+// aren't tiles, fade in with their tree's lines; up, they settle from a little bigger; beside, from the side of the
+// swipe. Where the board is, in the head, comes the way it went.
 export function moveIn(el, motion) {
   if (!motion || still()) return;
   const board = el.querySelector('.pj-board').getBoundingClientRect(),
-    keys = [...el.querySelectorAll('.pj-level :is(.pj-tile, .pj-task), .pj-level > .pj-none')].filter(
-      k => k.getBoundingClientRect().top < board.bottom,
-    ),
+    inView = k => k.getBoundingClientRect().top < board.bottom,
+    keys = [...el.querySelectorAll('.pj-level .pj-tile, .pj-level:not(.pj-tasks) > .pj-none')].filter(inView),
+    rows = [...el.querySelectorAll('.pj-tasks > li')].filter(inView),
     told = [...el.querySelectorAll('.pj-head > :not(.pj-key, .pj-slot)')];
   const side = motion === 'up' || motion === 'from-left' ? -1 : 1;
   for (const k of told)
@@ -105,28 +106,68 @@ export function moveIn(el, motion) {
         fill: 'backwards',
       },
     );
-  if (motion === 'down')
+  if (motion === 'down') {
+    comeIn(rows, { opacity: 0 }, { duration: 260, stagger: 30, easing: 'ease-out' });
+    const arrive = getComputedStyle(el).getPropertyValue('--pj-arrival').trim() === 'pin' ? pinKey : dropKey;
     return keys.forEach((k, i) =>
-      dropKey(k, {
+      arrive(k, {
         height: k.getBoundingClientRect().bottom - board.top + 24,
         delay: 40 + Math.min(i, 12) * 55,
         tilt: (Math.random() - 0.5) * 8,
         land: hit => i < 8 && sfx.clack(hit ? 0.3 : 0.8, (i * 5) % 12),
       }),
     );
+  }
   const from =
     motion === 'up'
       ? { opacity: 0, transform: 'scale(1.04)' }
       : { opacity: 0, transform: `translateX(${side * 50}px)` };
-  keys.forEach((k, i) =>
+  comeIn([...keys, ...rows], from, { duration: 300, stagger: 18, easing: 'cubic-bezier(.2, .9, .3, 1.12)' });
+}
+// Elements in from a frame of their own, one after another
+const comeIn = (els, from, { duration, stagger, easing }) =>
+  els.forEach((k, i) =>
     k.animate([from, { opacity: 1, transform: 'none' }], {
-      duration: 300,
-      delay: Math.min(i, 12) * 18,
-      easing: 'cubic-bezier(.2, .9, .3, 1.12)',
+      duration,
+      delay: Math.min(i, 12) * stagger,
+      easing,
       fill: 'backwards',
     }),
   );
+// Whether work holds the place view names (its thread, project or business): a done thread not loaded yet, say, doesn't.
+export function holds(view, work) {
+  const at = level(view, work).at;
+  return view.thread ? at === 'thread' : view.project ? at === 'project' : view.business ? at === 'business' : true;
 }
+// The element in focus under el, found again after a paint by what it does: one of the keys `names` marks by its value,
+// a thread's time or a job's steps
+export function focusOf(el, names) {
+  const focused = el.contains(document.activeElement) ? document.activeElement : null;
+  const name = focused && names.find(n => focused.hasAttribute(n));
+  const selector = name
+    ? `[${name}="${CSS.escape(focused.getAttribute(name))}"]`
+    : focused?.matches('.pj-eta > summary')
+      ? `.pj-eta[data-eta="${CSS.escape(focused.parentElement.dataset.eta)}"] > summary`
+      : focused?.matches('.pj-steps > summary')
+        ? '.pj-steps > summary'
+        : null;
+  return selector && { selector, index: [...el.querySelectorAll(selector)].indexOf(focused) };
+}
+// Once the keys coming in under el (moveIn), and any other motion there that ends, are over, or SETTLE_MS on: a repaint
+// waits for it rather than cutting them short. SETTLE_MS caps the wait so a stuck or very long animation never holds
+// fresh data back. moveIn's slowest entrance, the last key dropped onto a tablet's view, ends within it (about 1.8 s);
+// on a much taller screen, or with an entrance made longer, the repaint redraws what's still moving at rest
+const SETTLE_MS = 2000;
+export const settled = el =>
+  Promise.race([
+    Promise.all(
+      el
+        .getAnimations({ subtree: true })
+        .filter(a => a.effect?.getTiming().iterations !== Infinity)
+        .map(a => a.finished.catch(() => {})),
+    ),
+    new Promise(done => setTimeout(done, SETTLE_MS)),
+  ]);
 // A big card (the view's frame, an open job) flies out of from, the element it opened from or that one's place (a
 // DOMRect), and back into it, as Wire's big key does; without one it rises into its place and sinks away. Resolves
 // once it's there.

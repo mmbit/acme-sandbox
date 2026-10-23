@@ -28,15 +28,6 @@ care.jobs.push({
   status: 'running',
   ready: 0,
 });
-// a task the naming model couldn't name: why, in its title's place
-care.jobs.push({
-  ...care.jobs[0],
-  id: 32,
-  agent: 'penny',
-  title: null,
-  naming: { title: "the naming model didn't answer" },
-  status: 'queued',
-});
 // a task whose title names another job: that job's number a link
 care.jobs.push({
   ...care.jobs[0],
@@ -287,7 +278,11 @@ for (const look of RENDERERS)
       [true, false],
       `${at}: the shop's domain and the banner's review wait for the board`,
     );
-    assert.deepEqual(await texts(page, '[data-group] > .pj-tile-body > b'), ['Recurring', 'Outside projects'], at);
+    assert.deepEqual(
+      await texts(page, '[data-group] > .pj-tile-body > b'),
+      ['Recurring', 'Outside projects', 'Meetings'],
+      at,
+    );
     assert.equal(await page.$('[data-group] .pj-next'), null, `${at}: what our works are, never what's up next`);
     assert.equal(await title(), 'Projects', `${at}: home is the view's top`);
     assert.ok(!(await page.$('#projects :is(.pj-head [data-up], .pj-dot)')), `${at}: no way up from the top`);
@@ -321,10 +316,10 @@ for (const look of RENDERERS)
       0,
       `${at}: every face is a portrait`,
     );
-    // an owner at work shows once, the others at work beside them
+    // an owner at work shows once, the others at work beside them, each at work marked so
     assert.deepEqual(
       await page.$$eval('[data-project]', ts => ts.map(t => [...t.querySelectorAll('.pj-face')].map(f => f.title))),
-      [['Kit', 'Rook'], ['Moss']],
+      [['Kit', 'Rook, at work'], ['Moss, at work']],
       `${at}: an owner at work once`,
     );
     assert.equal(await page.$$eval('[data-project] .pj-owner .pj-crown', c => c.length), 2, `${at}: owners crowned`);
@@ -442,7 +437,19 @@ for (const look of RENDERERS)
     );
     const cards = await texts(page, '.pj-level .pj-task');
     assert.match(cards[0], /^Which domain for the sticker shop\? ?On your desk phone · For Kit: Pick a domain/, at);
-    assert.match(cards[1], /^Which printer for the price tags\? ?Not on your desk phone yet/, at);
+    // (a card not on the desk phone yet under the task whose work it waits for, saying so; the tasks in time order.
+    const later = cards.findIndex(c => /^Which printer for the price tags\?/.test(c));
+    assert.match(
+      cards[later],
+      /^Which printer for the price tags\? ?Not on your desk phone yet · Once SH-PHOTOS is live · For Penny: /,
+      at,
+    );
+    assert.ok(later > cards.findIndex(c => /^Product photos/.test(c)), `${at}: under the work it waits for (${cards})`);
+    assert.ok(
+      cards.some(c => /^Product photos.*Vera · .{0,10}SH-DOMAIN ·/.test(c)) &&
+        (await page.$$('.pj-level .pj-wait svg[data-icon=hourglass]')).length > 0,
+      `${at}: a task after another names its code, behind an hourglass (${cards})`,
+    );
     assert.deepEqual(
       await page.$$eval('.pj-level .pj-board-task', b =>
         b.map(e => [!!e.querySelector(':scope > button.cover'), e.classList.contains('lit')]),
@@ -453,7 +460,7 @@ for (const look of RENDERERS)
       ],
       `${at}: the card on the desk phone lit and a key, the held one neither`,
     );
-    assert.match(cards[2], /^Landing page for the sticker shop ?Kit · Done, in review ?SH-LANDING$/, at);
+    assert.match(cards[1], /^Landing page for the sticker shop ?Kit · Done, in review ?SH-LANDING$/, at);
     assert.ok(
       cards.some(t =>
         /^Shipping costs per country.* ?Penny · starts \w{3} \d\d:\d\d · done \w{3} \d\d:\d\d ?1½ h ?SH-SHIPPING$/.test(
@@ -683,6 +690,13 @@ for (const look of RENDERERS)
     // picked while another thread's move was still leaving (that move is over); one that loads after the board has
     // moved on opens nothing
     await tap(page, '[data-done=completed]');
+    // (one closed with no jobs in it says so, never "0 of 0".)
+    await page.waitForSelector('[data-thread="news/old-card"]');
+    assert.deepEqual(
+      await texts(page, `${box('[data-thread="news/old-card"]')} .pj-state`),
+      ['Closed with no jobs'],
+      at,
+    );
     await page.route('**/mock/threads.json', r => r.fulfill({ status: 503, body: '' }));
     await page.evaluate(() => {
       document.querySelector('[data-done=ongoing]').click();
@@ -723,7 +737,7 @@ for (const look of RENDERERS)
     await tap(page, '[data-done=completed]');
     assert.deepEqual(
       await texts(page, `${box('[data-thread]')} b`),
-      ['The first issue', 'The proofs'],
+      ["Old card: the newsletter's sign-up line", 'The first issue', 'The proofs'],
       `${at}: the completed threads, in place of the ongoing`,
     );
     assert.deepEqual(await page.$$eval('.pj-head [data-done]', k => k.map(e => e.ariaPressed)), ['false', 'true'], at);
@@ -759,7 +773,7 @@ for (const look of RENDERERS)
     await level('The newsletter');
     assert.deepEqual(
       await texts(page, `${box('[data-thread]')} b`),
-      ['The first issue', 'The proofs'],
+      ["Old card: the newsletter's sign-up line", 'The first issue', 'The proofs'],
       `${at}: back keeps the completed threads shown`,
     );
     await tap(page, '[data-done=ongoing]');
@@ -880,6 +894,27 @@ for (const look of RENDERERS)
     await page.keyboard.press('Escape');
     await page.waitForSelector('[data-business]');
 
+    // the meetings: a tile each, with everyone at it and its topic as the board reads it, the ended ones on a tap;
+    // a meeting opens its first seat
+    await tap(page, '[data-group=meetings]');
+    await level('Meetings');
+    assert.deepEqual(await texts(page, '.pj-level .pj-tile b'), ['How the line-art kit fits together'], at);
+    assert.equal((await page.$$('.pj-level .pj-tile .pj-face')).length, 3, `${at}: everyone at it`);
+    assert.match((await texts(page, '.pj-level .pj-tile .pj-state'))[0], /^Starts /, at);
+    await tap(page, '.pj-head [data-done]');
+    await page.waitForFunction(() => document.querySelectorAll('.pj-level .pj-tile').length === 2);
+    assert.deepEqual(
+      await texts(page, '.pj-level .pj-tile .pj-state'),
+      [(await texts(page, '.pj-level .pj-tile .pj-state'))[0], 'Ended'],
+      at,
+    );
+    await tap(page, '.pj-level [data-job="81"]');
+    await page.waitForSelector('.pj-card');
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.pj-card'));
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('[data-business]');
+
     // an agent's words stay text
     await tap(page, '[data-business=office]');
     await page.waitForSelector('[data-project=office]');
@@ -897,10 +932,6 @@ for (const look of RENDERERS)
       (await page.$eval('.pj-level', e => e.textContent.includes('<img src=x'))) &&
         !(await page.$('.pj-level img[src=x]')),
       `${at}: markup in a title is text`,
-    );
-    assert.ok(
-      (await texts(page, '.pj-level .pj-task b i')).includes("Couldn’t be named: the naming model didn't answer"),
-      `${at}: a name that couldn't be made says why, never the agent's words`,
     );
     // a job number in a task's title links to that job, beside the row's tap target, and a tap on it opens that job
     assert.deepEqual(

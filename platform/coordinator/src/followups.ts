@@ -24,7 +24,7 @@ export async function collect(pr: number, merged: boolean) {
   if (!left.length) return;
   const project = projectOf(branch);
   const proposals = await import('./proposals.ts');
-  const agent = panel.consolidator(pr);
+  const agent = panel.attribution(pr);
   for (const [to, list] of [
     [project, left.filter(f => !f.cross_project)],
     [null, left.filter(f => f.cross_project)],
@@ -94,7 +94,7 @@ export async function upstream(ruling: { id: number; pr: number }, line: string)
   inOneStep(() => {
     const title = `Before review: what went wrong on PR #${ruling.pr}`;
     const brief = upstreamBrief([...said, line]);
-    const agent = panel.consolidator(ruling.pr);
+    const { agent } = db.prepare('select agent from jobs where id = ?').get(ruling.id) as { agent: string };
     const id = proposals.bundle({ agent, title, brief, project: projectOf(branch) }, open?.proposal);
     db.prepare('insert into review_upstream (ruling, pr, line, proposal) values (?, ?, ?, ?)').run(
       ruling.id,

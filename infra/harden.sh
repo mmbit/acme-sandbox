@@ -33,6 +33,8 @@ install_if_changed() {
 }
 install_if_changed "$here/block-metadata.sh" /usr/local/sbin/$SERVER_NAME-block-metadata 0755
 install_if_changed "$here/docker-metadata.conf" /etc/systemd/system/docker.service.d/$SERVER_NAME-metadata.conf 0644
+# The worker's parent keeps swap off before its first process starts, across container and host restarts.
+install_if_changed "$here/worker.slice" /etc/systemd/system/$SERVER_NAME-worker.slice 0644
 # The nightly off-site backup (infra/backup.py): encrypted here with age to the board's public key, then to R2.
 install_if_changed "$here/backup.service" /etc/systemd/system/$SERVER_NAME-backup.service 0644
 install_if_changed "$here/backup.timer" /etc/systemd/system/$SERVER_NAME-backup.timer 0644

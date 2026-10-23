@@ -1,8 +1,10 @@
 # Review configuration in org.yaml
 
 The company supplies general review candidates in `roles.reviewers` and eligible consolidators in
-`roles.consolidator` (one ID or a preference list). The first non-author consolidator triages each round.
-The default is the company's CEO. An author is never eligible to review or rule, including on a retry.
+`roles.consolidator` (one ID or a preference list). The first eligible consolidator triages each round.
+The default is the company's CEO. Co-authors may review and rule on work they wrote together. A sole author is
+excluded from panel and consolidator candidates, including the CEO and on retries. If the listed consolidators
+are ineligible, general reviewers are considered next, then other Claude or Codex staff.
 
 The triage reads the diff, thread goal, engine availability and open blocking findings. Its recorded JSON chooses
 readers, assigned files, domain labels and reasons, plus the eligible consolidator for the ruling. No path globs,

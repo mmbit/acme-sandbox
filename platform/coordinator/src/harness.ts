@@ -25,6 +25,8 @@ export const WORKER_TOKEN = 'worker-secret',
 const HQ = new URL('../../worker/bin/hq', import.meta.url).pathname;
 
 type Reply = { status: number; body: any };
+// an event of HQ's feed (stream: history, a replayed row; statuses, who's at work now.)
+type Fed = { type: string; agent: string; text: string; history?: boolean; statuses?: Record<string, unknown> };
 export type Running = { id: number; token: string; seat: string; agent: string; [k: string]: any };
 
 // env: settings the code reads as it loads (on top of the test company's). before(repo): changes to the test company's
@@ -243,8 +245,9 @@ export async function harness(
   // A persisted review transferred to another owner.
   const transferPr = (pr: number, author: string) =>
     db.prepare('update prs set author = ? where number = ?').run(author, pr);
-  // HQ's feed as a page opens it (/api/events): its latest 50 events, oldest first.
-  const feed = async () => {
+  // HQ's feed as a page opens it (/api/events): its latest 50 events, oldest first, then who's at work now (stream; feed:
+  // the events alone.)
+  const stream = async () => {
     const stop = new AbortController(),
       res = await fetch(base + '/api/events', { headers: { cookie: boardCookie }, signal: stop.signal });
     const reader = res.body!.getReader(),
@@ -260,8 +263,9 @@ export async function harness(
     return all
       .split('\n\n')
       .filter(l => l.startsWith('data: '))
-      .map(l => JSON.parse(l.slice(6))) as { type: string; agent: string; text: string }[];
+      .map(l => JSON.parse(l.slice(6))) as Fed[];
   };
+  const feed = async () => (await stream()).filter(e => e.type !== 'statuses');
 
   return {
     repo,
@@ -292,6 +296,7 @@ export async function harness(
     stuckReview,
     transferPr,
     feed,
+    stream,
     dueThread,
     mergedPr,
     ended,

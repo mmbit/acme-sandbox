@@ -110,7 +110,7 @@ const server = createServer((req, res) => {
     }
     if (u === '/api/agent/note-fixed') {
       const f = JSON.parse(b); res.statusCode = f.id === 6 ? 409 : 200;
-      return res.end(JSON.stringify(f.id === 6 ? { error: "note #6 isn't one this job looks at" } : { id: f.id, job: f.by ?? 68 }));
+      return res.end(JSON.stringify(f.id === 6 ? { error: "note #6 isn't one hq notes lists for you" } : { id: f.id, job: f.by ?? 68 }));
     }
     if (u.startsWith('/api/agent/reviewers')) return res.end(JSON.stringify({ total: 101, from: Number(new URL(u, 'http://x').searchParams.get('from')),
       lines: ['- Noor (noor@example.org): sent 3 notes in all', '- job #61 had 3 notes'] }));
@@ -642,12 +642,12 @@ test('hq reviewers pages through a share\'s people and jobs; anything else is re
   assert.equal(seen.length, before);
 });
 
-test('hq note <id> fixed marks an early look\'s note, by this job or another\'s; anything else is refused before HQ', async () => {
+test('hq note <id> fixed marks a note hq notes lists, by this job or another\'s; anything else is refused before HQ', async () => {
   assert.match(await hq('note', '5', 'fixed', 'Pay stayed disabled: fixed'), /Note #5 is marked fixed by job #68/);
   assert.deepEqual([last().url, last().body], ['/api/agent/note-fixed', { id: 5, how: 'Pay stayed disabled: fixed' }]);
   assert.match(await hq('note', '5', 'fixed', 'job:71', 'Fixed in the shop'), /by job #71/);
   assert.deepEqual(last().body, { id: 5, how: 'Fixed in the shop', by: 71 });
-  await assert.rejects(hq('note', '6', 'fixed', 'x'), /isn't one this job looks at/);
+  await assert.rejects(hq('note', '6', 'fixed', 'x'), /isn't one hq notes lists for you/);
   const before = seen.length;
   for (const args of [['5', 'fixed'], ['5', 'done', 'x'], ['5', 'fixed', 'job:7'], ['5', 'fixed', 'a', 'b']]) await assert.rejects(hq('note', ...args), /usage: hq note/);
   assert.equal(seen.length, before);

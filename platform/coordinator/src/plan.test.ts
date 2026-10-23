@@ -462,10 +462,10 @@ test('a project done leaves the lists once nothing is left in it, and stays amon
     false,
   );
   const done = board.completed.find((p: { id: string }) => p.id === 'privacy');
-  // (its name the board's, still being made: plainnames.test.ts.)
+  // (its name the board's, the agent's words until it's made: plainnames.test.ts.)
   assert.deepEqual(
     [done.name, done.naming, done.threads.map((t: any) => [t.id, t.jobs, t.done])],
-    [null, { name: null }, [[site, 1, 1]]],
+    ['Our details off the listings', undefined, [[site, 1, 1]]],
   );
   assert.ok(done.done, 'with when');
   assert.equal(

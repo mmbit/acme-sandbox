@@ -21,6 +21,7 @@ import { companyOnce, scrubOnStart, optimize } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
+import * as blocks from './blocks.ts';
 import * as seats from './seats.ts';
 import { stallSweep } from './stalls.ts';
 import * as summary from './summary.ts';
@@ -469,6 +470,8 @@ const worker: Record<string, (b: any) => unknown> = {
   'POST /api/worker/main-merged': b => review.mainMerged(b),
   // the worker's room and each job's share of it, every minute (room.ts)
   'POST /api/worker/room': b => room.reportRoom(b ?? {}),
+  // a run the worker blocked for its job's share, and the words its output gets (blocks.ts).
+  'POST /api/worker/blocked': b => blocks.blocked(b ?? {}),
   // the sizer's model, run by the worker on a Claude seat: the next job to size, and its answer (sizer.ts)
   'POST /api/worker/sizes/claim': () => sizer.claim() ?? {},
   'POST /api/worker/sizes/answer': b => sizer.answer(b ?? {}),
@@ -706,7 +709,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // since its last reading (tellTokens)
     const n = (v: unknown, type: string) => b.type === type && Number.isInteger(v) && (v as number) >= 0 && (v as number) < 10_000_000 ? v as number : undefined;
     if (b.type === 'lines') {
-      publish({ type: 'lines', agent, add: n(b.add, 'lines') ?? 0, del: n(b.del, 'lines') ?? 0 });
+      publish({ type: 'lines', agent, job: me.id, add: n(b.add, 'lines') ?? 0, del: n(b.del, 'lines') ?? 0 }); // (job)
       return { ok: true };
     }
     if (b.type === 'tokens') {
@@ -718,7 +721,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     }
     // board: a job holding a customer's details, the step itself, for the board's own HQ session alone (events.ts)
     const line = b.type === 'log' ? kept(me, b, str(b.text), str(b.board)) : { text: str(b.text), board: undefined, customers: jobs.holdsCustomerData(me.id) };
-    publish({ type: b.type, agent, to: str(b.to), text: line.text, state: str(b.state), board: line.board }, 'agent');
+    // (since: the agent's own status counts from its job's start, a team member's from its words.)
+    const since = b.type === 'status' && agent === me.agent && !me.call ? jobs.startedOf(me.id) : undefined;
+    publish({ type: b.type, agent, job: me.id, to: str(b.to), text: line.text, state: str(b.state), since, board: line.board }, 'agent'); // (job)
     return { ok: true, customers: line.customers };
   },
   // An agent's job is plain work (reviews and merges are the coordinator's own); the answer is its id, which anyone can check.
@@ -1101,10 +1106,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq reviewers <share> [--from <n>]: who was on a share, and the jobs its notes went to (feedback.ts reviewersOf).
   'GET /api/agent/reviewers': (b, me) => feedback.reviewersOf(Number(b.share), me.agent, Number(b.from) || 1),
   'GET /api/agent/notes': (b, me) => feedback.sentTo(me.agent, b.slug ? String(b.slug) : undefined, b.before ? Number(b.before) : undefined),
-  // hq note <id> fixed [job:<n>] "...": an early look at outside notes marks one it fixed (feedback.ts markFixed): only
-  // that look's job.
+  // hq note <id> fixed [job:<n>] "...": a job marks a note hq notes lists for its agent fixed (feedback.ts markFixed).
   'POST /api/agent/note-fixed': (b, me) => {
-    if (!me.id) return new Refused(403, 'only the job looking at the note marks it fixed');
+    if (!me.id) return new Refused(403, 'only a job marks a note fixed');
     const r = feedback.markFixed(Number(b.id), b.how, b.by == null ? null : Number(b.by), { id: me.id, agent: me.agent });
     return typeof r === 'string' ? new Refused(409, r) : r;
   },

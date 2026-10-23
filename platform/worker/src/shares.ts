@@ -3,17 +3,22 @@
 // The container's cgroup is read-only inside it, so a job can't have one of its own. Its share is kept here instead.
 // Everything a job runs uses its slot's uid (slots.ts): its CLI, commands, background processes and its push's checks.
 // A uid's processes in /proc are therefore the job's, counted together.
-// - Memory: a job past mostMb in all loses its biggest process (never its CLI), and so does the job holding the most
-//   past shareMb while the worker is starved (no slot could start long enough, and work is waiting). One process per
-//   look, so it goes on only while it's still past.
+// A job past its share has its heavy run blocked: the command its CLI started that holds the most of what it's past, with
+// everything under it (runsOf), never the CLI. The worker tells the job's agent in that command's own output where to run
+// it instead (worker.ts blockRun, the coordinator's blocks.ts). One run per look, so it goes on only while it's still past.
+// - Memory: a job past mostMb in all, and the job holding the most past shareMb while the worker is starved (no slot
+//   could start long enough, and work is waiting).
+// - Processes: a job with more than `processes` of them.
 // - CPU: a job's processes using more than half the cores get nice 10, and their sessions' groups too (the kernel shares
 //   the CPU between sessions first: sched_autogroup), so the others' come first. Renicing another uid's process takes
 //   CAP_SYS_NICE, which the container hasn't got, so it runs as the slot's uid: lowering one's own priority needs nothing.
-//   A group asked for stays pending, busy or not, until it's at nice 10 or gone.
-import { execFile } from 'node:child_process';
+//   A group asked for stays pending, busy or not, until it's at nice 10 or gone. A job past the cores for long (`hot`,
+//   the worker's count) has its busiest run blocked.
+import { execFile, spawn } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import type { Ids } from './slots.ts';
-import { CLI_PROGRAMS, procStat, processesOfUids, type ProcStat } from './detached.ts';
+import { CLI_PROGRAMS, WRAPPERS, procStat, processesOfUids, type ProcStat } from './detached.ts';
+import { redact } from './safety.ts';
 
 // memoryMb: its proportional share of mapped memory (PSS), or resident memory (RSS) when PSS cannot be read.
 // memoryMeasure identifies which measure was available. RSS counts shared memory in full.
@@ -26,6 +31,7 @@ export type ProcessSnapshot = ProcStat & {
   memoryMeasure: MemoryMeasure;
   rssMb?: number;
   group?: Autogroup;
+  cores?: number; // (the cores it used since the look before, in a job's use: tally)
 };
 // writable: its slot may change the group through this process (a nondumpable process's /proc files are root's)
 type Autogroup = { id: string; nice: number; writable: boolean };
@@ -115,9 +121,11 @@ export function tally(now: ProcessSnapshot[], before: ProcessSnapshot[], ms: num
     const u = uses.get(p.uid) ?? { uid: p.uid, memoryMb: 0, cores: 0, processes: [] };
     u.memoryMb += p.memoryMb;
     // A newly observed job may be adopted with hours of CPU time. Its first snapshot is the baseline.
-    if (sampledUids.has(p.uid))
-      u.cores += (p.ticks - (had.get(`${p.pid}:${p.start}`) ?? 0)) / CPU_TICKS_PER_SECOND / (ms / 1000);
-    u.processes.push(p);
+    const cores = sampledUids.has(p.uid)
+      ? (p.ticks - (had.get(`${p.pid}:${p.start}`) ?? 0)) / CPU_TICKS_PER_SECOND / (ms / 1000)
+      : 0;
+    u.cores += cores;
+    u.processes.push({ ...p, cores });
     uses.set(p.uid, u);
   }
   return uses;
@@ -140,10 +148,49 @@ export function cliProcesses(processes: ProcessSnapshot[], launch: { pid: number
   return own;
 }
 
-// Select the process to stop, the processes to slow down, and one writable process per session group to slow down.
+// What a run is blocked for: its job's memory (MB), its number of processes, or its cores kept up past the share.
+export type Measure = 'memory' | 'processes' | 'cores';
+// A run to block: its job (uid), what the job is past (its use and its share, in the measure's unit), and the run: its
+// first process (root, the command the CLI started) and every process under it.
+export type Block = {
+  uid: number;
+  measure: Measure;
+  used: number;
+  share: number;
+  root: ProcessSnapshot;
+  run: ProcessSnapshot[];
+};
+
+// A job's runs, each by its first process: a command its CLI started (its parent is the CLI's, or none of the job's
+// processes: a push's checks, run after the CLI has ended, or one left behind) with every process under it, the first
+// one first. The CLI's own processes are in none.
+export function runsOf(processes: ProcessSnapshot[], cli: Set<number>) {
+  const byPid = new Map(processes.map(p => [p.pid, p]));
+  const rootOf = (p: ProcessSnapshot) => {
+    const seen = new Set([p.pid]);
+    let root = p;
+    for (let up = byPid.get(root.ppid); up && !cli.has(up.pid) && !seen.has(up.pid); up = byPid.get(up.ppid)) {
+      seen.add(up.pid);
+      root = up;
+    }
+    return root;
+  };
+  const runs = new Map<ProcessSnapshot, ProcessSnapshot[]>();
+  for (const p of processes) {
+    if (cli.has(p.pid)) continue;
+    const root = rootOf(p);
+    if (!runs.has(root)) runs.set(root, [root]);
+    if (p !== root) runs.get(root)!.push(p);
+  }
+  return runs;
+}
+
+// Select the run to block, the processes to slow down, and one writable process per session group to slow down.
 // Busy jobs' groups stay pending until they reach nice 10 or disappear, even after the job stops being busy.
 // Each job's use counts its push checks too. cli contains process ids that are never stopped or slowed.
 // starved means work has waited for memory past the worker's grace period. Its own session group is left alone.
+// hot: the jobs (uids) whose processes have used more than `cores` for long. Memory comes first, then processes, then
+// cores: the run blocked is the one holding the most of it.
 export function overShare(
   uses: Map<number, JobUse>,
   cli: Set<number>,
@@ -151,18 +198,38 @@ export function overShare(
     mostMb: number;
     shareMb: number;
     cores: number;
+    processes: number;
     starved: boolean;
+    hot?: Set<number>;
     workerSessionId: number;
   },
   pending = new Set<string>(),
 ) {
   const jobs = [...uses.values()];
   const others = (u: JobUse) => u.processes.filter(p => !cli.has(p.pid));
-  const biggest = (u: JobUse) => others(u).sort((a, b) => b.memoryMb - a.memoryMb)[0];
+  const blockOf = (u: JobUse, measure: Measure, used: number, share: number, weigh: (p: ProcessSnapshot) => number) => {
+    const weight = (run: ProcessSnapshot[]) => run.reduce((sum, p) => sum + weigh(p), 0);
+    const [root, run] = [...runsOf(u.processes, cli)].sort((a, b) => weight(b[1]) - weight(a[1]))[0];
+    return { uid: u.uid, measure, used, share, root, run };
+  };
   const heaviestPast = (memoryMb: number) =>
-    jobs.filter(u => u.memoryMb > memoryMb && biggest(u)).sort((a, b) => b.memoryMb - a.memoryMb)[0];
-  const over = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb) : undefined);
-  const stop = over && { uid: over.uid, memoryMb: over.memoryMb, process: biggest(over)! };
+    jobs.filter(u => u.memoryMb > memoryMb && others(u).length).sort((a, b) => b.memoryMb - a.memoryMb)[0];
+  const memory = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb) : undefined);
+  const crowded = jobs.find(u => others(u).length > limits.processes);
+  const hot = jobs.find(u => limits.hot?.has(u.uid) && others(u).length);
+  const block: Block | undefined = memory
+    ? blockOf(
+        memory,
+        'memory',
+        memory.memoryMb,
+        memory.memoryMb > limits.mostMb ? limits.mostMb : limits.shareMb,
+        p => p.memoryMb,
+      )
+    : crowded
+      ? blockOf(crowded, 'processes', others(crowded).length, limits.processes, () => 1)
+      : hot
+        ? blockOf(hot, 'cores', hot.cores, limits.cores, p => p.cores ?? 0)
+        : undefined;
   const busy = jobs.filter(u => u.cores > limits.cores).flatMap(others);
   const slow = busy.filter(p => p.nice < 10);
   const wanted = new Set([...pending, ...busy.flatMap(p => (p.group ? [p.group.id] : []))]);
@@ -172,7 +239,7 @@ export function overShare(
   // (through a process of the group its slot may write for: a nondumpable one's is root's. A group none of whose
   // processes it may write for now stays pending, for a look when one may.)
   const groups = [...new Map(members.filter(p => p.group!.writable).map(p => [p.group!.id, p])).values()];
-  return { stop, slow, groups, pending: new Set(members.map(p => p.group!.id)) };
+  return { block, slow, groups, pending: new Set(members.map(p => p.group!.id)) };
 }
 
 // Lowers the priority of what overShare picked, as each process's slot. The kernel takes one group's change in 100 ms
@@ -197,3 +264,62 @@ let groupChangedAt = 0;
 // (a process gone meanwhile is skipped, and a group refused is picked again: neither needs an answer)
 const runAsSlot = (ids: Required<Ids>, cmd: string, args: string[]) =>
   new Promise<void>(resolve => execFile(cmd, args, { ...ids, env: PLAIN_ENV, timeout: 10_000 }, () => resolve()));
+
+// A blocked run's processes, each still the one looked at, sent the signal: SIGSTOP freezes it (it neither grows nor
+// starts anything), SIGKILL ends it
+export function signal(run: ProcessSnapshot[], name: NodeJS.Signals) {
+  for (const p of run)
+    try {
+      if (procStat(p.pid)?.start === p.start) process.kill(p.pid, name);
+    } catch {
+      /* ended meanwhile */
+    }
+}
+
+// A blocked run: frozen while HQ is asked for its words (ask: the coordinator's blocks.ts), told them in its own output,
+// then ended. An ask that fails still ends the run, never leaving it frozen, and goes on to the caller: the run hears
+// no words but HQ's.
+export async function stopRun(
+  run: ProcessSnapshot[],
+  ids: Required<Ids>,
+  root: { pid: number },
+  ask: () => Promise<{ text: string }>,
+) {
+  signal(run, 'SIGSTOP');
+  try {
+    await tellRun(ids, root, (await ask()).text);
+  } finally {
+    signal(run, 'SIGKILL');
+  }
+}
+
+// The command the agent ran, as the words about its block name it: the run's first program that isn't a shell (a tool's
+// bash -c around it says nothing), its arguments redacted (a command line can hold a token) and cut short.
+export function commandOf(run: ProcessSnapshot[]) {
+  const named = run.find(p => !WRAPPERS.has(p.comm)) ?? run[0];
+  try {
+    const args = readFileSync(`/proc/${named.pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ');
+    return redact(args).slice(0, COMMAND_SHOWN) || named.comm;
+  } catch {
+    return named.comm;
+  }
+}
+const COMMAND_SHOWN = 300;
+
+// The words about a block go where the agent reads its command's end: the run's first process's stderr (what its tool
+// returns), opened as the job's own user and appended to (root opening another's descriptor could write where the job may
+// not). A run whose stderr isn't there to open (closed, a socket) loses them; HQ's log keeps them.
+export function tellRun(ids: Required<Ids>, root: { pid: number }, words: string) {
+  return new Promise<void>(resolve => {
+    const c = spawn('sh', ['-c', 'cat >> "/proc/$1/fd/2"', 'sh', String(root.pid)], {
+      ...ids,
+      env: PLAIN_ENV,
+      stdio: ['pipe', 'ignore', 'ignore'],
+      timeout: 5_000,
+    });
+    c.on('error', () => resolve());
+    c.on('close', () => resolve());
+    c.stdin.on('error', () => {});
+    c.stdin.end(`\n${words}\n`);
+  });
+}

@@ -76,3 +76,6 @@ body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, 
 .pj-face { border-radius: 50%; box-shadow: 0 0 0 1px #80eaff, 0 0 8px rgba(110, 225, 255, .5); background-color: rgba(6, 26, 36, .9); filter: saturate(.7) brightness(1.1); }
 #projects .pj-key[aria-pressed=true] { background: rgba(128, 234, 255, .15); color: #bff4ff; }
 .pj-cover img { filter: saturate(.8) brightness(.95) hue-rotate(-10deg); }
+/* (on a lit tile the board's mark is an amber ring with its sign in the amber's light: the shell's swap of the two
+   colours puts the see-through amber on the sign, which vanishes.) */
+.pj-tile.lit .pj-tile-top .pj-mark.you { background: transparent; color: var(--pj-on-you); box-shadow: inset 0 0 0 1px var(--pj-you-lip), 0 0 10px rgba(255, 190, 92, .35); }

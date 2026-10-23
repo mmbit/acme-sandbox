@@ -3,11 +3,12 @@
 // short or not, since when, each job's share (memory and cores, all its processes counted), and the claims its free slots
 // would make if memory allowed. Short for STARVED_MS while those claims would start work is starvation:
 // the projects view, `hq jobs` and the CEO's summary (summary.ts) say so while it lasts, and HQ's feed once per spell.
-// The CEO decides whether the board needs to know.
+// The CEO decides whether the board needs to know. A spell the worker's shares can't end goes outside HQ (jam.ts).
 import { db, remember, setting } from './db.ts';
 import { publish } from './events.ts';
 import { readyOn, findAgent, type ReadySeat } from './jobs.ts';
 import { ceo } from './company.ts';
+import * as jam from './jam.ts';
 
 export const STARVED_MS = 5 * 60_000;
 const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
@@ -79,6 +80,7 @@ export function reportRoom(
   };
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
+  jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);
   return { waiting };
 }
 

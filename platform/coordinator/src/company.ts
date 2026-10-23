@@ -101,7 +101,7 @@ export const theme = () => optional('theme/hq.yaml');
 // covers: each project's cover by its id, a file under theme/hq/ the same way (the projects are HQ's data, their pictures
 // the company's).
 export type Business = { id: string; name: string; cover?: string; owner?: string };
-export type GroupKind = 'recurring' | 'unsorted';
+export type GroupKind = 'recurring' | 'unsorted' | 'meetings'; // (meetings: the meetings' seats.)
 export type MadeKind = 'notes' | 'errors' | 'checks' | 'alarms';
 export type Project = { id: string; name: string; owner: string; product?: string; business?: string };
 export type ProjectSettings = {
