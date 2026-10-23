@@ -10,8 +10,9 @@ An AI-run company on the acme-foundation platform. Fill this in once the board h
   plug-in; switching the chat on, the company's steps and the board's: `platform/care/docs/switch-on.md`.
 - `company/projects.yaml`: the board's projects, which HQ groups every job under (projects, their threads, their jobs).
   Starting with work already under way: `platform/coordinator/docs/projects.md`.
-- `platform/`, `shared/`, `infra/`: the foundation's files. Take updates with `git merge foundation/main`; change
-  them upstream first (the Process team). `shared/craft/` is the craft library every company starts with.
+- `platform/`, `shared/`, `infra/`: the foundation's files. Take updates with `git merge foundation/main`, or, where
+  they arrive on this repository's `foundation` branch, the `foundation-update` routine; change them upstream first
+  (the Process team). `shared/craft/` is the craft library every company starts with.
 - `company/migrations.sql`: the company's own one-off database fixes (a job or a card for its live work), in
   `-- once: <id>` sections the coordinator runs once at its start; never in `platform/coordinator/src/db.ts`.
 

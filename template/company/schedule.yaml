@@ -17,6 +17,15 @@
   code: ROUND
   routine: morning-round
 
+# The foundation's updates, when its maintainers push them to this repository's `foundation` branch (a run with
+# nothing new ends at once).
+- id: foundation-update
+  agent: ceo
+  at: "every 6h"
+  title: Foundation update
+  code: UPDATE
+  routine: foundation-update
+
 # Suggested, for once the company has code: the onboarding offers them (playbooks/intake.md), and the founding job
 # takes the ones the board wants out of the comments, each with the agent who runs it.
 # - id: weekly-code-quality

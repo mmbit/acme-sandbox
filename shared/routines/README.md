@@ -14,3 +14,4 @@ only one company's goes in its entry's `prompt`.
 | `support-articles.md` | Every night, support articles for what's new (products, features, offers, policies) in the knowledge base the customer helper answers from <!-- --> |
 | `foundation-sweep.md` | A weekly sweep of the foundation for the foundation keeper: company-specific code and one-of-each assumptions, a note and jobs for the fixes <!-- --> |
 | `show.md` | An episode of one of the company's On Air shows (`company/shows.yaml`): written, translated and spoken |
+| `foundation-update.md` | Takes the foundation's updates from the repository's `foundation` branch, for a company that receives them there: merged, gates run, through review |
