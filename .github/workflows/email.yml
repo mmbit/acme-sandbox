@@ -1,0 +1,77 @@
+name: Email
+# The company inbox, read-only (board-approved 2026-09-27): Email Routing on the domain sends every address to
+# the company's own hq-mail-<server name> Worker (infra/mail/worker.js), which posts it to HQ. A fresh token is made on
+# every run: the Worker gets it as a secret, the repo only its sha256 (infra/mail/token.sha256), which the coordinator
+# checks. Its name is the company's: companies on one Cloudflare account must never share a Worker (2026-10-02: the
+# second company's run took over the first one's, and its mail went to the other HQ).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [infra/mail/worker.js, infra/host, .github/workflows/email.yml]
+permissions:
+  contents: write
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -eo pipefail
+          SERVER_NAME=$(sed -n 's/^SERVER_NAME=\([a-z0-9][a-z0-9-]*\)$/\1/p' company/infra.env | tail -1)
+          [ -n "$SERVER_NAME" ] || { echo "::error::company/infra.env has no plain SERVER_NAME"; exit 1; }
+          host=$(cat infra/host); worker="hq-mail-$SERVER_NAME"
+          # The domains HQ takes mail at: brand.yaml's mail.domain and mail.also. Only
+          # these, as HQ keeps the board's own addresses (mail.boardOnly) from agents at these alone
+          zones=$(yq -o=json company/brand.yaml | jq -r '
+            def normalizeMailDomain:
+              # Match JavaScript String.trim() in company.ts. Run by jq: yq on the runner has no def.
+              "[\u0009-\u000d\u0020\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]" as $trimCharacter |
+              if type == "string" then gsub("^" + $trimCharacter + "+|" + $trimCharacter + "+$"; "") | ascii_downcase else "" end;
+            .mail as $mailSettings |
+            ($mailSettings.domain | normalizeMailDomain) as $publicMailDomain |
+            if ($publicMailDomain | test("^[a-z0-9-]+(\\.[a-z0-9-]+)+$")) then
+              [$publicMailDomain] + (if ($mailSettings.also | type) == "array" then $mailSettings.also else [] end) |
+              map(normalizeMailDomain) | .[] | select(test("^[a-z0-9-]+(\\.[a-z0-9-]+)+$"))
+            else error("mail.domain must be valid before enabling Email Routing") end
+          ' | awk '!seen[$0]++')
+          cf() { curl -sS -X "$1" "https://api.cloudflare.com/client/v4$2" -H "Authorization: Bearer $CF_TOKEN" -H "Content-Type: application/json" ${3:+-d "$3"}; }
+          ok() { jq -e '.success' >/dev/null || { echo "::error::$1"; exit 1; }; }
+          # the Worker's store for mail HQ can't take yet (HELD), made once
+          kv=$(cf GET "/accounts/$ACCOUNT/storage/kv/namespaces?per_page=100")
+          echo "$kv" | jq -e '.success' >/dev/null || { echo "::error::Cloudflare refused the Worker's store: $(echo "$kv" | jq -c '.errors') (the API token needs Workers KV Storage: Edit)"; exit 1; }
+          held=$(echo "$kv" | jq -r --arg t "$worker-held" '.result[] | select(.title == $t) | .id')
+          [ -n "$held" ] || held=$(cf POST "/accounts/$ACCOUNT/storage/kv/namespaces" "$(jq -nc --arg t "$worker-held" '{title:$t}')" | jq -r '.result.id // empty')
+          [ -n "$held" ] || { echo "::error::Couldn't find or make the Worker's store $worker-held"; exit 1; }
+          # the Worker, with HQ's address (infra/host) as its HQ_ORIGIN
+          curl -sS -X PUT "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT/workers/scripts/$worker" -H "Authorization: Bearer $CF_TOKEN" \
+            -F "metadata=$(jq -nc --arg o "https://$host" --arg h "$held" '{main_module:"worker.js",compatibility_date:"2026-09-01",bindings:[{type:"plain_text",name:"HQ_ORIGIN",text:$o},{type:"kv_namespace",name:"HELD",namespace_id:$h}]}');type=application/json" \
+            -F 'worker.js=@infra/mail/worker.js;type=application/javascript+module' | tee /tmp/w.json | ok "Worker upload failed: $(cat /tmp/w.json)"
+          token=$(openssl rand -hex 32)
+          cf PUT "/accounts/$ACCOUNT/workers/scripts/$worker/secrets" "$(jq -n --arg t "$token" '{name:"MAIL_TOKEN",text:$t,type:"secret_text"}')" | ok "Setting the Worker secret failed"
+          # On each domain: Email Routing on, with its MX and SPF records, and everything sent to the Worker. A domain
+          # Cloudflare refuses fails the run at the end, once the rest is done, naming its answer.
+          reached=""; refused=""
+          for zone_name in $zones; do
+            zone=$(cf GET "/zones?name=$zone_name" | jq -r '.result[0].id // empty')
+            [ -n "$zone" ] || { refused="$refused $zone_name (no such zone on this Cloudflare account);"; continue; }
+            dns=$(cf POST "/zones/$zone/email/routing/dns" '{}'); echo "$zone_name: $(echo "$dns" | jq -c '{success, errors}' 2>/dev/null || echo "$dns")"
+            routing=$(cf GET "/zones/$zone/email/routing" | jq -c '{enabled: .result.enabled, status: .result.status}' 2>/dev/null || echo '{}'); echo "$zone_name: $routing"
+            rule=$(cf PUT "/zones/$zone/email/routing/rules/catch_all" "$(jq -nc --arg w "$worker" '{name:"All mail to HQ",enabled:true,matchers:[{type:"all"}],actions:[{type:"worker",value:[$w]}]}')")
+            if ! echo "$rule" | jq -e '.success' >/dev/null 2>&1; then refused="$refused $zone_name (catch-all rule: $(echo "$rule" | jq -c '.errors' 2>/dev/null || echo "$rule"));"
+            elif ! echo "$routing" | jq -e '.enabled == true and .status == "ready"' >/dev/null; then
+              refused="$refused $zone_name (Email Routing isn't ready: $routing; Cloudflare said: $(echo "$dns" | jq -c '.errors' 2>/dev/null || echo "$dns"));"
+            else reached="$reached $zone_name"; fi
+          done
+          # the token's fingerprint, for the coordinator
+          printf %s "$token" | sha256sum | cut -d' ' -f1 > infra/mail/token.sha256
+          git config user.name "$SERVER_NAME-bot"; git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add infra/mail/token.sha256; git commit -qm "Email: rotate the inbox Worker's token"
+          for try in 1 2 3 4 5; do git pull -q --rebase && git push -q && break; [ $try = 5 ] && exit 1; sleep 3; done   # a busy main
+          for zone_name in $reached; do echo "### Mail to any address @$zone_name now reaches HQ" >> "$GITHUB_STEP_SUMMARY"; done
+          # last, as mail flows without it: held mail is handed to HQ again every five minutes
+          r=$(cf PUT "/accounts/$ACCOUNT/workers/scripts/$worker/schedules" '[{"cron":"*/5 * * * *"}]' | jq -c .); echo "$r" | ok "Setting the Worker's schedule failed: $r"
+          [ -z "$refused" ] || { echo "::error::No mail reaches HQ at:$refused"; exit 1; }

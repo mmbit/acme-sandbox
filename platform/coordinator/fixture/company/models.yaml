@@ -1,0 +1,3 @@
+claude: { model: claude-opus-5-5, effort: high }
+codex: { model: null, effort: high }
+calls: { model: claude-opus-5-5, effort: low }

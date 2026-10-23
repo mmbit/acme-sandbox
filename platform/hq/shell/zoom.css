@@ -1,0 +1,53 @@
+/* A picture full size over everything (zoom.js): on black, never tinted, in every look. */
+dialog.zoom {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100dvh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  background: #000;
+  touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: grab;
+}
+dialog.zoom:active {
+  cursor: grabbing;
+}
+dialog.zoom::backdrop {
+  background: #000;
+}
+dialog.zoom img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  max-width: none;
+  transform-origin: 0 0;
+  -webkit-user-drag: none;
+}
+.zoom-close {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(12px, env(safe-area-inset-right));
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid rgb(255 255 255 / 45%);
+  border-radius: 50%;
+  background: rgb(0 0 0 / 55%);
+  color: #fff;
+  font:
+    20px/1 system-ui,
+    sans-serif;
+  cursor: pointer;
+}
+.zoom-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}

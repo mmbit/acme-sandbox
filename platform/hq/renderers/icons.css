@@ -1,0 +1,48 @@
+/* The HUD for a look that isn't pixel art (holo, wire): eased motion, its icons' sizes (each look draws its own icons:
+   shell/icons.js), and the count badge's number as text. A look's skin.css imports it. */
+body {
+  --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --icons: geometricPrecision;
+}
+.count svg {
+  display: none;
+}
+.count::after {
+  content: attr(data-n);
+  font: 700 14px/1 var(--font);
+}
+/* the home screen's counts round like the HUD's (style.css squares them for a pixel screen)
+ */
+.crt .apps .count {
+  border-radius: 13px;
+}
+#status i {
+  border-radius: 50%;
+}
+.tools svg.icon,
+#zfit svg.icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+}
+.call-agent svg.icon {
+  width: 18px;
+  height: 18px;
+}
+.apps svg.icon {
+  width: 30px;
+  height: 30px;
+  filter: none;
+}
+/* the projects view's own: its back key and the desk phone on a card's row */
+#projects .pj-back-key svg.icon {
+  width: 20px;
+  height: 20px;
+}
+#projects .pj-phone {
+  display: grid;
+}
+#projects .pj-phone svg.icon {
+  width: 24px;
+  height: 24px;
+}

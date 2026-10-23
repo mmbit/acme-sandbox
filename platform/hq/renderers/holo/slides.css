@@ -1,0 +1,75 @@
+/* A deck (shared/deck) as the holo deck shows it: HQ hands this to a deck that says hello in its viewer (desk.js
+   fromViewer), laid over deck.css, so only what differs. Dark glass on a faint grid, thin cyan lines, the one button lit
+   solid cyan, smooth icons for the pixel ones; the chapters' colours stay on their charts and dots. (No web fonts: the
+   deck's CSP loads nothing, so its lettering is the system's sans, spaced in capitals where HQ's is.) */
+:root {
+  --ink: #dcf8ff; --cream: #021016; --paper: rgba(6, 26, 36, .78); --muted: #8cc0cf; --line: rgba(110, 225, 255, .16);
+  --cy: #80eaff; --cy-hi: #effcff; --edge: rgba(110, 225, 255, .5); --glass: rgba(6, 26, 36, .72); --dark: #021016;
+  --glow: 0 0 .8rem rgba(110, 225, 255, .45);
+  --shadow: 0 0 .8rem rgba(90, 220, 255, .2), inset 0 0 .8rem rgba(90, 220, 255, .06);
+  --mono: var(--sans);
+}
+html { background: var(--dark); }
+body { background: radial-gradient(90vmax 60vmax at 50% 115%, rgba(40, 170, 210, .2), transparent 70%),
+  radial-gradient(80vmax 50vmax at 85% -15%, rgba(90, 220, 255, .12), transparent 65%),
+  linear-gradient(var(--line) 1px, transparent 1px) 0 0 / 3.2rem 3.2rem, linear-gradient(90deg, var(--line) 1px, transparent 1px) 0 0 / 3.2rem 3.2rem, var(--dark);
+  font-weight: 500; }
+svg { shape-rendering: geometricPrecision; }
+
+/* text: headings glow, labels are spaced capitals */
+h1, h2 { font-weight: 700; letter-spacing: -.01em; text-shadow: 0 0 1.4rem rgba(110, 225, 255, .45); }
+.kicker { background: rgba(110, 225, 255, .1); color: var(--cy); border: 1px solid var(--edge); box-shadow: var(--glow); font-weight: 600; letter-spacing: .18em; }
+.points li::before { width: .55rem; height: .55rem; top: .48em; background: var(--accent); border: 0; border-radius: 50%; box-shadow: 0 0 .5rem var(--accent); }
+
+/* glass: cards, captions, pictures, the brand, the controls */
+.card, figure.photo .shell, figcaption, .brand, .tools button, #nav button, .play, #menu > ol, #zoom .close {
+  background: var(--glass); color: var(--ink); border: 1px solid var(--edge); box-shadow: var(--shadow); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+.brand svg { border-radius: .2rem; box-shadow: 0 0 0 1px var(--edge); }
+.card .label::before { border: 0; border-radius: 50%; box-shadow: 0 0 .4rem var(--accent); }
+.card .big { color: var(--cy-hi); text-shadow: 0 0 1rem rgba(110, 225, 255, .5); }
+figcaption { color: var(--cy); font-weight: 600; letter-spacing: .14em; }
+figure.phone .shell { background: #000; border: 1px solid var(--edge); box-shadow: 0 0 1.4rem rgba(90, 220, 255, .3); }
+.zoom { background: rgba(2, 16, 22, .7); border: 1px solid var(--edge); }
+.zoom::after { content: ''; position: absolute; inset: 0; background: var(--cy); -webkit-mask: var(--i-zoom) center / 60% no-repeat; mask: var(--i-zoom) center / 60% no-repeat; }
+.sound { background: var(--cy); color: var(--dark); border: 1px solid var(--cy); box-shadow: var(--glow); }
+.play { color: var(--cy); border-radius: 50%; }
+
+/* the one thing to tap, lit */
+.btn { background: var(--cy); color: var(--dark); border: 1px solid var(--cy); box-shadow: 0 0 1.2rem rgba(110, 225, 255, .5); font-weight: 700; }
+.btn:active, .tools button:active, #nav button:active { transform: scale(.96); box-shadow: 0 0 .4rem rgba(110, 225, 255, .4); }
+.tools button[aria-pressed=false] { background: var(--glass); color: var(--muted); }
+.tools button[aria-pressed=true] { color: var(--cy); }
+
+/* charts: the data keeps its colours, drawn in light */
+.stack { background: rgba(2, 16, 22, .8); border: 1px solid var(--edge); box-shadow: var(--shadow); }
+.stack i.hi, .legend li.hi { outline: 1px solid var(--cy-hi); outline-offset: -1px; filter: brightness(1.15); }
+.legend li { border-bottom: 1px solid var(--line); }
+.legend li::before { border: 0; border-radius: 50%; box-shadow: 0 0 .4rem var(--c); }
+.legend li.key { background: var(--glass); border: 1px solid var(--edge); }
+.bar .fill { border: 1px solid rgba(220, 248, 255, .45); box-shadow: 0 0 .9rem color-mix(in srgb, var(--c, var(--cy)) 55%, transparent); }
+.bar .tag { background: none; color: var(--cy); border: 1px solid var(--edge); }
+
+/* progress, hint, the slide list, the enlarged picture */
+#progress button { background: rgba(110, 225, 255, .08); border: 1px solid var(--edge); }
+#progress button i { background: var(--cy); box-shadow: 0 0 .5rem var(--cy); }
+#menu { background: rgba(1, 10, 15, .7); }
+#menu > ol { background: rgba(5, 20, 28, .96); }
+#menu h3::before { border: 0; border-radius: 50%; box-shadow: 0 0 .4rem var(--c, var(--cy)); }
+#menu button { background: rgba(110, 225, 255, .05); border: 1px solid var(--line); }
+#menu button.here { background: rgba(110, 225, 255, .2); border-color: var(--cy); color: var(--cy-hi); box-shadow: var(--glow); }
+#zoom { background: rgba(1, 10, 15, .94); }
+
+/* smooth icons for the deck's pixel ones (masks in the text colour) */
+.tools svg, #nav svg, #zoom .close svg { display: none; }
+.tools button::before, #nav button:not(#count)::before, #zoom .close::before { content: ''; width: 18px; height: 18px; background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat; mask: var(--icon) center / contain no-repeat; }
+:root {
+  --i-zoom: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M14 4h6v6M20 4l-6.5 6.5M10 20H4v-6M4 20l6.5-6.5'/></svg>");
+}
+#snd { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 9.5h3.5L11 5.5v13l-4.5-4H3z'/><path d='M15 9a4 4 0 0 1 0 6M18 6a8 8 0 0 1 0 12' fill='none'/></svg>"); }
+#snd[aria-pressed=false] { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M3 9.5h3.5L11 5.5v13l-4.5-4H3z'/><path d='m15.5 9.5 5 5m0-5-5 5' fill='none'/></svg>"); }
+#fs { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><path d='M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5'/></svg>"); }
+#chap { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round'><path d='M4 6h16M4 12h16M4 18h16'/></svg>"); }
+#prev { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M15 4.5 7.5 12l7.5 7.5'/></svg>"); }
+#next { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'><path d='M9 4.5 16.5 12 9 19.5'/></svg>"); }
+#zoom .close { --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round'><path d='m5.5 5.5 13 13m0-13-13 13'/></svg>"); }

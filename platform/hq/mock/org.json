@@ -1,0 +1,340 @@
+{
+  "company": {
+    "legal": "Legal name",
+    "brand": "New Company",
+    "ceo": "juno",
+    "timeZone": "UTC"
+  },
+  "board": {
+    "room": {
+      "kind": "boardroom",
+      "size": "m"
+    },
+    "members": [
+      {
+        "id": "board",
+        "name": "The Board",
+        "human": true
+      }
+    ]
+  },
+  "commons": [
+    {
+      "id": "lobby",
+      "room": {
+        "kind": "lobby",
+        "size": "m"
+      },
+      "features": [
+        "gazette-newsstand",
+        "reception"
+      ]
+    },
+    {
+      "id": "library",
+      "room": {
+        "kind": "library",
+        "size": "m"
+      },
+      "features": [
+        "knowledge-search"
+      ]
+    },
+    {
+      "id": "meeting",
+      "name": "Meeting Room",
+      "room": {
+        "kind": "meeting",
+        "size": "m"
+      }
+    }
+  ],
+  "departments": [
+    {
+      "id": "executive",
+      "name": "Executive",
+      "charter": "departments/executive.md",
+      "room": {
+        "kind": "office",
+        "size": "s"
+      },
+      "agents": [
+        {
+          "id": "juno",
+          "name": "Juno",
+          "role": "CEO",
+          "engine": "claude",
+          "look": "calm, round glasses, oversized mug",
+          "status": {
+            "state": "working",
+            "task": "Writing the weekly plan"
+          }
+        }
+      ]
+    },
+    {
+      "id": "studio",
+      "name": "Studio",
+      "charter": "departments/studio.md",
+      "room": {
+        "kind": "lab",
+        "size": "l"
+      },
+      "agents": [
+        {
+          "id": "wren",
+          "name": "Wren",
+          "role": "Head of Studio",
+          "engine": "claude",
+          "look": "paint-stained apron, pencil behind ear",
+          "status": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "creative",
+      "name": "Creative",
+      "charter": "departments/creative.md",
+      "room": {
+        "kind": "studio",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "moss",
+          "name": "Moss",
+          "role": "Creative Director",
+          "engine": "claude",
+          "look": "headphones, beanie, synth on desk",
+          "status": {
+            "state": "working",
+            "task": "Sketching a banner for the building post"
+          }
+        },
+        {
+          "id": "pinhole",
+          "name": "Pinhole",
+          "role": "Photo studio",
+          "engine": "claude",
+          "look": "a boxy little camera on a strap round the neck, red darkroom apron, a strip of negatives tucked behind one ear",
+          "status": {
+            "state": "working",
+            "task": "Studio: 2 photos to develop"
+          }
+        }
+      ]
+    },
+    {
+      "id": "growth",
+      "name": "Growth",
+      "charter": "departments/growth.md",
+      "room": {
+        "kind": "office",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "kit",
+          "name": "Kit",
+          "role": "Head of Growth",
+          "engine": "claude",
+          "look": "sneakers, wall of sticky-note charts",
+          "status": {
+            "state": "idle"
+          }
+        }
+      ]
+    },
+    {
+      "id": "care",
+      "name": "Customer Care",
+      "charter": "departments/care.md",
+      "room": {
+        "kind": "mailroom",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "poppy",
+          "name": "Poppy",
+          "role": "Customer Care",
+          "engine": "api",
+          "look": "headset, flower pin, tea",
+          "status": {
+            "state": "working",
+            "task": "Answering the support inbox"
+          }
+        }
+      ]
+    },
+    {
+      "id": "operations",
+      "name": "Operations",
+      "charter": "departments/operations.md",
+      "room": {
+        "kind": "dock",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "dex",
+          "name": "Dex",
+          "role": "Head of Operations",
+          "engine": "claude",
+          "look": "hi-vis vest, clipboard, parcel stack",
+          "status": {
+            "state": "waiting",
+            "task": "Queued for a seat: parcel label run"
+          }
+        }
+      ]
+    },
+    {
+      "id": "finance",
+      "name": "Finance",
+      "charter": "departments/finance.md",
+      "room": {
+        "kind": "vault",
+        "size": "s"
+      },
+      "agents": [
+        {
+          "id": "penny",
+          "name": "Penny",
+          "role": "Head of Finance",
+          "engine": "claude",
+          "look": "green visor, abacus, tidy desk",
+          "status": {
+            "state": "working",
+            "task": "Reconciling the September ledger"
+          }
+        }
+      ]
+    },
+    {
+      "id": "compliance",
+      "name": "Compliance",
+      "charter": "departments/compliance.md",
+      "room": {
+        "kind": "archive",
+        "size": "s"
+      },
+      "agents": [
+        {
+          "id": "vera",
+          "name": "Vera",
+          "role": "Head of Compliance",
+          "engine": "claude",
+          "look": "stacks of binders, reading lamp",
+          "status": {
+            "state": "sleeping",
+            "task": "Usage limit reached, back at 04:00"
+          }
+        }
+      ]
+    },
+    {
+      "id": "security",
+      "name": "Security",
+      "charter": "departments/security.md",
+      "room": {
+        "kind": "review",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "sable",
+          "name": "Sable",
+          "role": "Head of Security",
+          "engine": "claude",
+          "look": "hoodie, magnifying glass",
+          "status": {
+            "state": "working",
+            "task": "Auditing coordinator dependencies"
+          }
+        },
+        {
+          "id": "quill",
+          "name": "Quill",
+          "role": "Meta-reviewer",
+          "engine": "claude",
+          "look": "quill pen, judge's gavel",
+          "status": {
+            "state": "idle"
+          }
+        },
+        {
+          "id": "rook",
+          "name": "Rook",
+          "role": "Reviewer",
+          "engine": "claude",
+          "look": "chess-piece pin, stern eyebrows",
+          "status": {
+            "state": "working",
+            "task": "Reviewing PR #12: job queue"
+          }
+        },
+        {
+          "id": "tally",
+          "name": "Tally",
+          "role": "Reviewer",
+          "engine": "claude",
+          "look": "tally-mark notebook, ponytail",
+          "status": {
+            "state": "waiting",
+            "task": "Queued for a seat: review of PR #12"
+          }
+        },
+        {
+          "id": "nib",
+          "name": "Nib",
+          "role": "Reviewer",
+          "engine": "codex",
+          "look": "fountain-pen tip hat, tiny spectacles",
+          "status": {
+            "state": "working",
+            "task": "Reviewing PR #12: job queue"
+          }
+        },
+        {
+          "id": "flint",
+          "name": "Flint",
+          "role": "Reviewer",
+          "engine": "codex",
+          "look": "spark goggles, rolled sleeves",
+          "status": {
+            "state": "sleeping",
+            "task": "Codex limit reached, back at 06:00"
+          }
+        }
+      ]
+    },
+    {
+      "id": "platform",
+      "name": "Platform",
+      "charter": "departments/platform.md",
+      "room": {
+        "kind": "server",
+        "size": "m"
+      },
+      "agents": [
+        {
+          "id": "bolt",
+          "name": "Bolt",
+          "role": "Head of Platform",
+          "engine": "claude",
+          "look": "toolbelt, cable spaghetti",
+          "status": {
+            "state": "working",
+            "task": "Assembling desks (the job queue)"
+          }
+        }
+      ]
+    }
+  ],
+  "alumni": [],
+  "shows": [{ "id": "digest", "name": "The Morning Digest", "hosts": ["juno"] }],
+  "studio": { "keeper": "pinhole", "waiting": 3, "developing": 1, "editing": 1 }
+}

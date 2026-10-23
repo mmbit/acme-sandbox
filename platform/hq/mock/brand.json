@@ -1,0 +1,45 @@
+{
+  "brand": {
+    "name": "New Company",
+    "names": {
+      "hq": "HQ",
+      "os": "Desktop",
+      "newsletter": "the newsletter",
+      "newsletterShort": "News",
+      "library": "the library",
+      "libraryShort": "Library",
+      "phone": "desk phone",
+      "phoneShort": "Phone",
+      "intercom": "intercom",
+      "computer": "computer"
+    },
+    "colours": {
+      "ink": "#1f2328",
+      "cream": "#f6f4ef",
+      "paper": "#ffffff",
+      "muted": "#6e7781",
+      "red": "#cf222e",
+      "gold": "#d4a72c",
+      "blue": "#0969da",
+      "green": "#1a7f37",
+      "purple": "#8250df",
+      "orange": "#bc4c00"
+    },
+    "mascots": [],
+    "app": {
+      "title": "New Company HQ",
+      "description": "The New Company office, live: see what every agent is up to.",
+      "themeColour": "#1f2328"
+    },
+    "mail": {
+      "domain": "example.com",
+      "boardOnly": ["board", "claude-1"],
+      "groups": ["board", "documents", "hello"]
+    }
+  },
+  "theme": {
+    "renderer": "brownstone"
+  },
+  "care": true,
+  "studio": true
+}

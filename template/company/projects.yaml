@@ -1,0 +1,25 @@
+# The board's projects view's frame, and where HQ puts the jobs it makes itself (platform/coordinator/docs/projects.md).
+# The projects themselves are HQ's data: the CEO makes one and names its owner (hq project new, hq project owner), and
+# each owner draws its plan (hq plan: threads with a "done when" line, their tasks in order).
+#
+# The office: running the company, the CEO's own project, which HQ makes as it first reads this file (an entry under
+# projects: is lifted into HQ's projects once). Its owner is org.yaml's company.ceo: a CEO that takes a name of its own
+# changes it here too, or, once HQ has read this file, with hq project owner.
+# code: the prefix of its tasks' codes (OF-ROUND), as hq project new --code gives one.
+projects:
+  - { id: office, name: Office, owner: ceo, code: OF }
+
+# groups.unsorted.code: the prefix of the codes of work in no project (FD-SORT).
+groups:
+  unsorted: { code: FD }
+
+# made: the project HQ puts each job it makes from the same template in, each a one-task thread there, by the app it's
+# about. checks: the CEO's hourly follow-through check and the Process role's repair when it breaks, due by the end of
+# their hour; alarms: the CEO's job about a platform alarm (the disk, the backup, an app down), due as soon as it can
+# when it's urgent; notes: the board's notes on HQ. All the office's, running the company. A live app's repairs go to
+# the project its product.yaml names (`project:`). A kind or app with no entry goes to no project, for the CEO to sort,
+# but for the checks and an urgent alarm, which carry a window and need their project.
+made:
+  checks: { hq: office }
+  alarms: { hq: office }
+  notes: { hq: office }

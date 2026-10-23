@@ -1,0 +1,162 @@
+Licentieovereenkomst voor de Acme-foundation
+
+Alleen deze Nederlandse tekst is bindend. Een vertaling of samenvatting dient
+alleen ter informatie.
+
+
+1. Partijen
+
+Licentiegever:  Knop Works, ingeschreven bij de Kamer van Koophandel onder
+                nummer 74293257, Box G1319, Segment 3, 6921 RC Duiven
+Licentienemer:  Stephan de Vries
+
+Alleen de hier genoemde Licentienemer krijgt rechten onder deze
+overeenkomst.
+
+
+2. Begrippen
+
+In deze overeenkomst betekent:
+
+a. "Software": alle bestanden die Licentiegever onder de naam
+   Acme-foundation aan Licentienemer beschikbaar stelt, waaronder broncode,
+   scripts, configuratie, sjablonen, prompts en documentatie, en de updates
+   die Licentiegever later beschikbaar stelt. Onderdelen van derden vallen
+   er niet onder.
+b. "Onderdelen van derden": software en materiaal van anderen dan
+   Licentiegever die met de Software worden meegeleverd of door de Software
+   worden gebruikt, zoals de pakketten die in de pakketbestanden van de
+   Software staan vermeld.
+c. "Wijzigingen": wijzigingen van en toevoegingen aan de Software, gemaakt
+   door of voor Licentienemer, ook door AI-agents die Licentienemer inzet.
+d. "Eigen werk": producten, diensten, teksten, beelden en andere resultaten
+   die Licentienemer met behulp van de Software maakt en die zelf geen
+   (deel van de) Software of Wijzigingen bevatten.
+e. "Dienstverleners": derden die Licentienemer inschakelt om de Software te
+   hosten, op te slaan of uit te voeren, of om Licentienemer daarbij met
+   AI-modellen te ondersteunen (zoals aanbieders van servers, codeopslag en
+   AI-modellen), voor zover zij de Software alleen gebruiken om die dienst
+   aan Licentienemer te leveren en aan geheimhouding zijn gebonden, ook via
+   hun standaardvoorwaarden.
+f. "Schriftelijk": op papier of per e-mail.
+
+
+3. Licentie
+
+3.1 Licentiegever verleent Licentienemer een kosteloze, niet-exclusieve,
+    niet-overdraagbare licentie zonder recht op sublicentie om de Software
+    te installeren, uit te voeren, te kopiëren en te wijzigen, uitsluitend
+    om één eigen onderneming van Licentienemer te voeren.
+3.2 Die onderneming mag commercieel zijn: Licentienemer mag met de Software
+    Eigen werk maken, exploiteren en verkopen.
+3.3 Het is Licentienemer niet toegestaan om, zonder voorafgaande
+    Schriftelijke toestemming van Licentiegever:
+    a. de Software of Wijzigingen, geheel of gedeeltelijk, te verkopen, te
+       verhuren, te publiceren, weg te geven of op een andere manier aan
+       derden te verstrekken;
+    b. de Software als product of dienst aan derden aan te bieden, ook niet
+       als online dienst of als basis voor de onderneming van een ander;
+    c. sublicenties te verlenen of deze overeenkomst over te dragen;
+    d. vermeldingen van auteursrecht en licenties te verwijderen of te
+       wijzigen.
+3.4 Rechten die niet uitdrukkelijk zijn verleend, blijven bij
+    Licentiegever.
+
+
+4. Geheimhouding
+
+4.1 Licentienemer houdt de Software geheim en neemt redelijke maatregelen
+    om ongeoorloofde toegang te voorkomen.
+4.2 Licentienemer mag de Software alleen toegankelijk maken voor:
+    a. Dienstverleners, voor zover nodig voor hun dienst;
+    b. zijn eigen medewerkers en AI-agents, voor zover nodig voor de
+       onderneming uit artikel 3.1;
+    c. anderen, voor zover de wet of een rechterlijke uitspraak dat
+       verplicht; Licentienemer meldt dat dan vooraf aan Licentiegever,
+       als dat is toegestaan.
+4.3 Informatie die openbaar is geworden zonder dat Licentienemer deze
+    overeenkomst heeft geschonden, valt niet onder de geheimhouding.
+4.4 De geheimhouding blijft gelden na het einde van deze overeenkomst.
+
+
+5. Eigendom
+
+5.1 Alle intellectuele-eigendomsrechten op de Software blijven bij
+    Licentiegever.
+5.2 Rechten op Wijzigingen die Licentienemer maakt, komen toe aan
+    Licentienemer. Licentienemer mag Wijzigingen alleen gebruiken samen met
+    de Software en binnen deze licentie.
+5.3 Eigen werk is van Licentienemer.
+5.4 Licentienemer hoeft Wijzigingen niet aan Licentiegever te geven.
+    Licentiegever krijgt daar geen rechten op.
+
+
+6. Updates en ondersteuning
+
+Licentiegever is niet verplicht updates, onderhoud of ondersteuning te
+leveren. Updates die Licentiegever wel levert, vallen onder deze
+overeenkomst.
+
+
+7. Onderdelen van derden
+
+Onderdelen van derden vallen onder hun eigen licenties. Deze overeenkomst
+vervangt of beperkt die licenties niet. Licentienemer houdt zich aan die
+licenties.
+
+
+8. Garanties en aansprakelijkheid
+
+8.1 De Software wordt kosteloos en in de huidige staat ("as is")
+    geleverd, zonder garanties, voor zover de wet dat toestaat.
+8.2 Licentiegever is niet aansprakelijk voor schade die voortvloeit uit
+    het gebruik van de Software of het niet kunnen gebruiken ervan, behalve
+    voor zover die schade het gevolg is van opzet of bewuste roekeloosheid
+    van Licentiegever.
+8.3 Licentienemer is zelf verantwoordelijk voor zijn onderneming, de
+    beslissingen en handelingen van de AI-agents die hij met de Software
+    inzet, en de kosten van Dienstverleners.
+
+
+9. Duur en einde
+
+9.1 Deze overeenkomst geldt vanaf de aanvaarding voor onbepaalde tijd.
+9.2 Licentienemer kan de overeenkomst op elk moment beëindigen door het
+    gebruik van de Software te staken en zijn kopieën te verwijderen.
+9.3 Licentiegever kan de overeenkomst Schriftelijk beëindigen als
+    Licentienemer een verplichting uit deze overeenkomst niet nakomt en
+    dat niet binnen 14 dagen na een Schriftelijke aanmaning herstelt. Bij
+    schending van artikel 3.3 of 4 kan Licentiegever direct beëindigen,
+    zonder aanmaning.
+9.4 Na het einde staakt Licentienemer het gebruik van de Software en
+    verwijdert hij binnen 30 dagen alle kopieën van de Software en de
+    Wijzigingen. Eigen werk mag hij houden. De artikelen 4, 5, 8 en 10
+    blijven gelden.
+
+
+10. Overige bepalingen
+
+10.1 Licentiegever mag zijn rechten en verplichtingen uit deze
+     overeenkomst overdragen. Licentienemer mag dat alleen met voorafgaande
+     Schriftelijke toestemming van Licentiegever.
+10.2 Toestemming van Licentiegever geldt alleen als die Schriftelijk is
+     gegeven.
+10.3 Is een bepaling nietig of vernietigbaar, dan blijven de overige
+     bepalingen gelden. Partijen vervangen die bepaling dan door een
+     geldige die zoveel mogelijk dezelfde strekking heeft.
+10.4 Deze overeenkomst bevat alle afspraken tussen partijen over de
+     Software. Wijzigingen gelden alleen als beide partijen ze Schriftelijk
+     aanvaarden.
+10.5 Op deze overeenkomst is Nederlands recht van toepassing. Geschillen
+     worden voorgelegd aan de bevoegde rechter in het arrondissement waar
+     Licentiegever woont of is gevestigd, tenzij dwingend recht een andere
+     rechter aanwijst.
+10.6 Niets in deze overeenkomst beperkt rechten waarvan volgens het
+     toepasselijke recht niet bij overeenkomst mag worden afgeweken.
+
+
+11. Aanvaarding
+
+Licentienemer aanvaardt deze overeenkomst door de Software te installeren
+of te gebruiken. Gebruikt Licentienemer de Software niet onder deze
+voorwaarden, dan heeft hij geen recht om de Software te gebruiken.

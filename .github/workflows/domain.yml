@@ -1,0 +1,47 @@
+name: Domain
+# Checks a domain's price and availability, and registers it only when the board approved it
+# (the "register" run) and the price is at or below the approved cap.
+on:
+  workflow_dispatch:
+    inputs:
+      domain: { description: "Domain name", required: true }
+      register: { description: "Register it (board-approved)", type: boolean, default: false }
+      max_usd: { description: "Maximum first-year price in USD", default: "17" }
+jobs:
+  domain:
+    runs-on: ubuntu-latest
+    env:
+      CF: https://api.cloudflare.com/client/v4/accounts/${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      DOMAIN: ${{ inputs.domain }}
+      MAX_USD: ${{ inputs.max_usd }}
+    steps:
+      - name: Check
+        run: |
+          check=$(curl -sS -X POST "$CF/registrar/domain-check" -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" -d "$(jq -n --arg d "$DOMAIN" '{domains:[$d]}')")
+          echo "$check" | jq .
+          d=$(echo "$check" | jq '(.result.domains // .result // [])[0] // {}')
+          echo "registrable=$(echo "$d" | jq -r '.registrable')" >> "$GITHUB_ENV"
+          echo "price=$(echo "$d" | jq -r '.pricing.registration_cost // empty')" >> "$GITHUB_ENV"
+          echo "### $DOMAIN: registrable $(echo "$d" | jq -r '.registrable'), $(echo "$d" | jq -r '"\(.pricing.registration_cost) \(.pricing.currency) first year, \(.pricing.renewal_cost) renewal"')" >> "$GITHUB_STEP_SUMMARY"
+      - name: Register
+        if: inputs.register
+        run: |
+          [ "$registrable" = "true" ] || { echo "::error::$DOMAIN is not registrable"; exit 1; }
+          awk -v p="$price" -v m="$MAX_USD" 'BEGIN { exit !(p != "" && p + 0 <= m + 0) }' ||
+            { echo "::error::Price $price is above the approved cap of $MAX_USD USD"; exit 1; }
+          resp=$(curl -sS -X POST "$CF/registrar/registrations" -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" -d "$(jq -n --arg d "$DOMAIN" '{domain_name:$d, auto_renew:true}')")
+          echo "$resp" | jq .
+          [ "$(echo "$resp" | jq -r .success)" = "true" ] ||
+            { echo "::error::Registration refused: $(echo "$resp" | jq -r '.errors[0].message')"; exit 1; }
+          for i in $(seq 1 30); do
+            status=$(curl -sS "$CF/registrar/registrations/$DOMAIN/registration-status" -H "Authorization: Bearer $TOKEN")
+            state=$(echo "$status" | jq -r '.result.state // empty')
+            echo "state: $state"
+            case "$state" in succeeded) break;; failed|action_required|blocked) echo "$status" | jq .; exit 1;; esac
+            sleep 10
+          done
+          [ "$state" = "succeeded" ] || { echo "::error::Registration still '$state' after 5 minutes"; exit 1; }
+          echo "### Registered $DOMAIN" >> "$GITHUB_STEP_SUMMARY"

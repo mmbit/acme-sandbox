@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>Example Shop (local harness)</title>
+<!-- The local harness's stand-in for an app: a plain look, invented content. The
+     two lines an app adds for the care service are the script tag at the end and data-care on its Help links (a
+     company's plug-in may call the attribute otherwise: plugin.js names.opener; its demo/shop.html takes this one's place). -->
+<style>
+:root { --paper: #eef1f5; --card: #ffffff; --ink: #1f2430; --muted: #596273; --accent: #2f5c9e;
+  --sans: system-ui, -apple-system, 'Segoe UI', 'Liberation Sans', sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; display: flex; flex-direction: column; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+.harness { margin: 0; padding: 6px 12px; background: var(--ink); color: #dde3ec; font-size: 12px; text-align: center; }
+header { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid rgba(20, 30, 50, .1); }
+.brand { font: 700 22px/1 var(--sans); letter-spacing: -.01em; }
+nav { margin-left: auto; display: flex; gap: 18px; font-size: 14px; }
+nav a, footer a { color: var(--ink); }
+main { flex: 1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 36px; align-items: center; max-width: 920px; width: 100%; margin: 0 auto; padding: 32px 24px; }
+figure { margin: 0; justify-self: center; width: min(100%, 300px); }
+figure img { display: block; width: 100%; height: auto; }
+form { display: grid; gap: 10px; max-width: 360px; }
+.kick { margin: 0; font: 600 11px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+h1 { margin: 0 0 4px; font: 700 34px/1.1 var(--sans); }
+label { display: grid; gap: 3px; font-size: 12.5px; color: var(--muted); }
+input { border: 1.5px solid rgba(20, 30, 50, .18); border-radius: 10px; padding: 9px 11px; background: var(--card); color: var(--ink); font: inherit; font-size: 15px; width: 100%; }
+.cta { margin-top: 6px; min-height: 50px; border: 0; border-radius: 12px; background: var(--ink); color: #fff; font: 600 16px var(--sans); cursor: pointer; }
+.note { margin: 0; font-size: 12.5px; color: var(--muted); text-align: center; }
+footer { padding: 14px 20px 20px; font-size: 13px; color: var(--muted); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; border-top: 1px solid rgba(20, 30, 50, .08); }
+footer a[data-care] { font-weight: 600; }
+footer span { margin-left: auto; }
+@media (max-width: 699px) { main { grid-template-columns: 1fr; gap: 24px; padding: 20px; } figure { width: min(70%, 240px); } nav a:not([data-care]) { display: none; } }
+</style>
+</head>
+<body>
+<p class="harness">Local harness: an invented shop and invented orders. The chat below is the real care service.</p>
+<header>
+  <span class="brand">Example Shop</span>
+  <nav><a href="#make">Make a mug</a><a href="/help" data-care>Help</a></nav>
+</header>
+<main id="make">
+  <figure><img src="/img/mug.svg" alt="A blue mug with three white stripes" width="300" height="300"></figure>
+  <form onsubmit="return false">
+    <p class="kick">Mug · stoneware · 330 ml</p>
+    <h1>Your own mug</h1>
+    <label>Text on it<input value="Morning"></label>
+    <button class="cta" type="button">Order · $24.00</button>
+    <p class="note">One price, shipping included.</p>
+  </form>
+</main>
+<footer><a href="/help" data-care>Help</a> · <a href="#">Privacy</a> · <a href="#">Terms</a><span>Example Shop (harness copy)</span></footer>
+<script type="module" src="/__care/widget.js"></script>
+</body>
+</html>

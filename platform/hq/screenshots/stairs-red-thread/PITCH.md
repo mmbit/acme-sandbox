@@ -1,0 +1,3 @@
+# Red Thread
+
+One red spiral stair runs through the whole building, basement to penthouse, like a thread through beads. It makes one full turn per floor, so every flight starts and ends in the same spot and the helix never breaks. Each floor has a real well cut into the front of its slab: round at the back, open to the front edge like the rest of the dollhouse cut, with a low parapet and a brass cap round it. Since nothing sits in front of the stair, you see every tread, the whole climb and the arrival, with no dark holes and no slab edges swallowing the top. It sits well clear of the elevator, people walk round behind it, and after dark fairy lights run along the handrail. On the roof, a robin sits on the brass ball at the top.

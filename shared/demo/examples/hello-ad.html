@@ -1,0 +1,43 @@
+<!doctype html><meta charset="utf-8">
+<!-- Example ad scene for ad.mjs: the smallest complete one, and the reference for a sound-led ad. Every visible
+     action has its own sound from products/hello/demo/sound.mjs (a mix.mjs cue list over a quiet beat): the headline
+     words land on wood-block notes, the phone snaps in on "groove", the keys clack, the card stamps down, the tagline
+     is underlined in pencil on the "underline" cue, the wordmark locks in on "logo". Copy it, then make it yours.
+     node shared/demo/mix.mjs products/hello/demo/sound.mjs && node shared/demo/ad.mjs shared/demo/examples/hello-ad.html -->
+<script type="application/json" id="demo">{ "audio": "../../../products/hello/demo/sound.wav", "duration": 9.9, "out": "../../../products/hello/ads/hello-ad.mp4" }</script>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; overflow: hidden; background: #fdf6ec; color: #2b2230; font-family: 'Liberation Sans', sans-serif; }
+  .words { position: absolute; left: 90px; right: 90px; top: 560px; font: 700 150px/1.02 Charter, 'Bitstream Charter', Georgia, serif; letter-spacing: -0.02em; }
+  .words span { display: inline-block; margin-right: 0.22em; }
+  .phone { position: absolute; left: 50%; top: 250px; width: 600px; height: 1039px; margin-left: -300px; border-radius: 70px; padding: 18px; box-sizing: border-box;
+    background: #2b2230; box-shadow: 0 60px 120px #2b223055; }
+  .phone img { width: 100%; height: 100%; border-radius: 54px; display: block; object-fit: cover; }
+  .tag { position: absolute; left: 0; right: 0; top: 1420px; text-align: center; font: 700 64px/1.2 Charter, Georgia, serif; }
+  .tag em { font-style: normal; position: relative; } .tag svg { position: absolute; left: -6%; width: 112%; top: 88%; height: 34px; overflow: visible; }
+  .logo { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; background: #ff6b4a; color: #fdf6ec; }
+  .logo b { font: 700 220px/1 Charter, Georgia, serif; } .logo i { font: italic 400 56px/1.4 Charter, Georgia, serif; }
+</style>
+<div class="words" id="words"><span>A</span><span>card</span><span>made</span><span>just</span><span>for</span><span>them.</span></div>
+<div class="phone" id="phone"><img data-clip="../../../products/hello/ads/hello-phone.mp4" data-at="2"></div>
+<div class="tag" id="tag">Type a name. Watch it <em>land.<svg viewBox="0 0 200 20" preserveAspectRatio="none"><path id="line" d="M4 12 C 50 4, 120 18, 196 7" fill="none" stroke="#ff6b4a" stroke-width="7" stroke-linecap="round" pathLength="1" stroke-dasharray="1"/></svg></em></div>
+<div class="logo" id="logo"><div><b>Hello</b><br><i>printed for one</i></div></div>
+<script>
+  const words = [...document.querySelectorAll('.words span')];
+  const groove = demo.marker('groove') ?? 2, end = demo.marker('logo') ?? 8, under = demo.marker('underline') ?? 5.4;
+  window.frame = (t) => {
+    words.forEach((w, i) => { // one word per beat, then the headline clears for the phone
+      const k = demo.p(t, demo.beat(i * 0.5), demo.beat(i * 0.5) + 0.35, demo.ease.back);
+      w.style.opacity = Math.min(k, 1 - demo.p(t, groove - 0.25, groove));
+      w.style.transform = `translateY(${(1 - k) * 60}px) scale(${0.9 + 0.1 * k})`;
+    });
+    const up = demo.p(t, groove - 0.1, groove + 0.5, demo.ease.spring), pulse = 1 + 0.012 * Math.exp(-6 * (demo.beatAt(t) % 1));
+    phone.style.opacity = up > 0 ? 1 : 0;
+    phone.style.transform = `translateY(${(1 - up) * 1500}px) rotate(${(1 - up) * 8 - 1.5}deg) scale(${t > groove ? pulse : 1})`;
+    const tk = demo.p(t, under - 0.6, under - 0.1); // the tagline arrives, then the pencil underlines it with the scratch
+    tag.style.opacity = tk; tag.style.transform = `translateY(${(1 - tk) * 40}px)`;
+    line.style.strokeDashoffset = 1 - demo.p(t, under, under + 0.3, demo.ease.inOut);
+    const lk = demo.p(t, end - 0.15, end + 0.35, demo.ease.out);
+    logo.style.clipPath = `circle(${lk * 150}% at 50% 60%)`;
+    logo.firstElementChild.style.transform = `scale(${0.8 + 0.2 * demo.p(t, end, end + 0.6, demo.ease.back)})`;
+  };
+</script>

@@ -1,0 +1,185 @@
+[
+  {
+    "id": 96,
+    "created": "2026-09-27T21:10:00Z",
+    "agent": "dex",
+    "job": 295,
+    "kind": "action",
+    "topic": "test prints",
+    "title": "Pebblet's test posters arrived: five photos and five answers",
+    "body": "The two test posters are in. Hang Ava (the white daisies) with its rails on, in daylight. Keep people and anything personal out of the photos. Then answer below and add a photo to each field.",
+    "urgency": "today",
+    "seat": null,
+    "questions": [
+      {"title": "Rails: how much of the top does the rail cover?", "type": "number", "unit": "mm"},
+      {"title": "Edges: any white line or anything cut off?", "type": "yes-no"},
+      {"title": "Colours: anything clearly off from the phone?", "type": "yes-no"},
+      {"title": "Lettering: can you read the specimen number from arm's length?", "type": "yes-no"},
+      {"title": "Would you be happy to sell it at €39.95?", "type": "yes-no"}
+    ],
+    "photos": [
+      { "label": "Ava's top edge with a ruler", "optional": false, "saved": false },
+      { "label": "Both posters next to the phone", "optional": false, "saved": false },
+      { "label": "Bartholomeus's label", "optional": false, "saved": false },
+      { "label": "Bartholomeus's dark leaves", "optional": false, "saved": false },
+      { "label": "Anything that looks wrong", "optional": true, "saved": false }
+    ]
+  },
+  {
+    "id": 97,
+    "created": "2026-10-06T08:00:00Z",
+    "agent": "dex",
+    "job": null,
+    "kind": "action",
+    "topic": "invoices",
+    "title": "Last month's software invoices: two PDFs",
+    "body": "Two of our tools only show their invoices on their billing pages. Download September's from each and pick them below, as they are. They're filed as mail to invoices@, kept like any invoice.",
+    "urgency": "this week",
+    "seat": null,
+    "documents": [
+      { "label": "Design tool invoice", "optional": false, "to": "invoices@example.com", "saved": false, "name": null, "mail": null },
+      { "label": "Hosting invoice", "optional": false, "to": "invoices@example.com", "saved": false, "name": null, "mail": null }
+    ]
+  },
+  {
+    "id": 98,
+    "created": "2026-10-08T20:00:00Z",
+    "agent": "dex",
+    "job": null,
+    "kind": "action",
+    "topic": "concepts",
+    "title": "The prototypes zip",
+    "body": "Pick the zip with the prototypes and their trailers. Taking node_modules out first makes it smaller, but isn't needed: the server leaves those out as it unpacks.",
+    "urgency": "this week",
+    "seat": null,
+    "zips": [{ "label": "The prototypes (zip)", "optional": false, "state": null, "name": null, "size": null, "received": null, "imported": null, "error": null }]
+  },
+  {
+    "id": 91,
+    "created": "2026-09-27T09:10:00Z",
+    "agent": "juno",
+    "job": null,
+    "kind": "approval",
+    "topic": "shop",
+    "title": "Launch Hello Postcards",
+    "body": "The shop has run on test keys for a week: 40 test orders, no misprints. Recommendation: approve.",
+    "urgency": "today",
+    "seat": null,
+    "approves": "live:hello",
+    "grants": "Approving lets the product \"hello\" go public: real customers can see it and buy it."
+  },
+  {
+    "id": 90,
+    "created": "2026-09-27T01:30:00Z",
+    "agent": "wren",
+    "job": null,
+    "kind": "credential",
+    "topic": "print",
+    "title": "Print API test account: client ID and secret",
+    "body": "Sign up for a Print API test account at https://portal.printapi.nl/test/ with a @example.com address, then copy the client ID and secret here.",
+    "urgency": "today",
+    "seat": null,
+    "secrets": "PRINTAPI_TEST_CLIENT_ID,PRINTAPI_TEST_CLIENT_SECRET"
+  },
+  {
+    "id": 14,
+    "created": "2026-09-25T18:52:00Z",
+    "agent": "bolt",
+    "job": null,
+    "kind": "login",
+    "title": "Sign in the claude seat \"server-2\"",
+    "body": "A second Claude seat is ready on company-1 but needs you to sign in once.\n\nOpen https://claude.ai/oauth/authorize?device=QXJ4-7KPL on any device, sign in with the company account and approve.\nThen paste the code it shows you here, or answer \"done\".",
+    "urgency": "today",
+    "seat": "server-2"
+  },
+  {
+    "id": 13,
+    "created": "2026-09-25T16:05:00Z",
+    "agent": "kit",
+    "job": 41,
+    "kind": "approval",
+    "topic": "shop",
+    "title": "Approve the domain example.shop (\u20ac12 a year)",
+    "body": "For the first shop. Registration through Cloudflare, renews yearly. Recommendation: approve.",
+    "urgency": "this week",
+    "seat": null
+  },
+  {
+    "id": 12,
+    "created": "2026-09-25T14:20:00Z",
+    "agent": "penny",
+    "job": 57,
+    "kind": "guest",
+    "title": "For Robin: our move to your building",
+    "body": "",
+    "urgency": "now",
+    "seat": null,
+    "guest": { "request": 3, "name": "Robin", "address": "r••••@example.com", "needsEmail": false, "released": true, "revoked": false, "verified": "2026-09-25T15:02:00Z", "lang": "en",
+      "status": "open", "closed": null, "before": "1 November", "mail": true, "done": 2, "total": 4,
+      "people": [{ "name": "Robin", "address": "r••••@example.com", "released": true, "verified": "2026-09-25T15:02:00Z", "lang": "en", "withdrawn": false, "revoked": false, "share": "https://hq.example/guest/mock-robin" }], "items": [
+      { "n": 1, "section": "Documents", "kind": "document", "title": "The signed lease", "detail": null, "state": "done", "answer": null, "thread": [] },
+      { "n": 2, "section": "Questions", "kind": "question", "title": "Which unit goes on our invoices?", "detail": null, "state": "answered", "answer": "Unit 4B", "thread": [] },
+      { "n": 3, "section": "Questions", "kind": "question", "title": "Can post for us go to your front desk?", "detail": null, "state": null, "answer": null, "thread": [
+        { "who": "Robin", "guest": true, "text": "Parcels too, or only letters?", "ts": "2026-09-25T15:04:00Z" },
+        { "who": "Penny", "guest": false, "text": "Letters only. Parcels go to our printer.", "ts": "2026-09-25T15:30:00Z" } ] },
+      { "n": 4, "section": "Tasks", "kind": "task", "title": "Approve the address change in the register", "detail": "Only needed if you're the registered owner", "state": null, "answer": null, "thread": [] }
+    ] }
+  },
+  {
+    "id": 11,
+    "created": "2026-09-25T09:40:00Z",
+    "agent": "penny",
+    "job": 37,
+    "kind": "question",
+    "topic": "payments",
+    "title": "VAT: register for OSS now or at the first EU sale?",
+    "body": "Registering now costs nothing and saves a scramble later. Recommendation: register now. Reply with now or later.",
+    "urgency": "this week",
+    "seat": null
+  },
+  {
+    "id": 9,
+    "created": "2026-09-25T09:10:00Z",
+    "agent": "vera",
+    "job": 56,
+    "kind": "mail",
+    "topic": "print",
+    "title": "Our transfer impact assessment for your API",
+    "body": "Their data processing addendum asks for our assessment before 1 November. This is it, short.",
+    "urgency": "today",
+    "seat": null,
+    "mail": { "id": 1, "to": ["privacy@partner.example"], "cc": [], "from": "hello@example.com", "replyTo": "privacy@example.com",
+      "subject": "Our transfer impact assessment for your API",
+      "text": "Dear privacy team,\n\nAs your data processing addendum asks, here is our transfer impact assessment for the API we use.\n\nIn short: no customer's personal data goes into our prompts, and what we do send is covered by the standard contractual clauses.\n\nKind regards,",
+      "status": "open", "sent": null, "decided": null, "doubt": null, "signoff": "Ada\nTestco", "name": "Ada", "ready": true,
+      "_company": "",
+      "attachments": [{ "n": 0, "name": "data-flows.jpg", "type": "image/jpeg", "size": 48213, "src": "mock/care-photo.jpg" },
+        { "n": 1, "name": "transfer-assessment.pdf", "type": "application/pdf", "size": 91022, "src": "#" }] }
+    },
+  {
+    "id": 31,
+    "created": "2026-10-17T08:20:00Z",
+    "agent": "juno",
+    "kind": "call",
+    "topic": "calls",
+    "title": "Call Print API about our parcel",
+    "body": "Our test print's parcel has been in transit for six days. Juno asks where it is and whether they can send a new one. It may agree to a reprint at no cost to us. Anything that costs money comes back as an email for you to send.",
+    "urgency": "today",
+    "seat": null,
+    "call": { "id": 7, "kind": "phone", "who": "Print API", "about": "our parcel", "lang": "en", "at": null, "ending": "123", "digits": false,
+      "status": "open", "hours": "Mon–Fri 09:00–17:00", "timeZone": "Europe/Amsterdam", "name": "Juno" }
+  },
+  {
+    "id": 32,
+    "created": "2026-10-17T09:05:00Z",
+    "agent": "dex",
+    "kind": "call",
+    "topic": "calls",
+    "title": "Meet the framing workshop about frame samples",
+    "body": "They'd rather talk than email about oak frames. Dex asks which sizes they can make by November and what each costs. It agrees to nothing: prices come back as an email for you to send.",
+    "urgency": "whenever",
+    "seat": null,
+    "call": { "id": 8, "kind": "link", "who": "the framing workshop", "about": "the frame samples", "lang": "nl", "at": "2026-10-20T13:00:00Z", "ending": null, "digits": false,
+      "status": "open", "hours": "Mon–Fri 09:00–17:00", "timeZone": "Europe/Amsterdam", "name": "Dex" }
+  }
+]

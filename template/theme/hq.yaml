@@ -1,0 +1,28 @@
+# The company's HQ: the renderer that draws it, and that renderer's settings under its name. The board can switch
+# to any other renderer from Settings; this is the default. The renderers: brownstone (isometric pixel art), holo (a
+# hologram) and wire (Slate: keys on a board).
+# A new company starts with no style (no style: key yet), on wire in neutral colours; its onboarding writes the style, the
+# look and its accent (company/playbooks/intake.md).
+renderer: wire
+wire:
+  colourways:
+    - { id: day, name: Day, ground: '#eceef1', ink: '#1b1e24', muted: '#5a606b', panel: '#f8f9fb', accent: '#4f7cff', side: '#2f56c8', onAccent: '#ffffff' }
+    - { id: night, name: Night, ground: '#16181d', ink: '#e8eaee', muted: '#9aa0aa', panel: '#21242b', accent: '#4f7cff', side: '#2f4fb0', onAccent: '#ffffff' }
+# The company's own apps on the computer's home screen, each a kit's HQ app, kits/<name>/hq/app.js
+# (template/kits/README.md): each at the end of the group its app.group names (work, talk, business or team, with
+# Settings always last), in this order, and one that names none with the others like it, before the team's.
+# One naming any other group comes after the team's, before Settings.
+# company/brand.yaml's computer.apps sets another order (not its computer.appGroups, which orders Numbers' tiles).
+apps: []
+# The company's own stylesheets, laid over every look after HQ's and before the renderer's: a list of their URLs, each a
+# kit's file HQ serves, kits/<kit>/hq/<file>.css at /kits/<kit>/<file>.css (template/kits/README.md). A company can set
+# HQ's depth scale this way (--depth-tile, --depth-hover, --depth-button, --depth-pressed).
+# styles: [/kits/<kit>/<file>.css]
+# Wire in the company's own colours: its colourways, each { id, name, ground, ink, muted, panel, accent, side, onAccent }
+# in #hex (the grounds and letters, and the one thing lit at a time: its colour, the lip under it and the letters on
+# it), and its font from Google Fonts. Settings › Look offers each, and Auto: the first light one, or the first dark one
+# on a dark device. Left out: Wire's own Day and Night.
+# wire:
+#   font: { family: Bricolage Grotesque, href: 'https://fonts.googleapis.com/css2?family=...' }
+#   colourways:
+#     - { id: day, name: Day, ground: '#ece6da', ink: '#1d1b17', muted: '#5c554a', panel: '#f7f3ec', accent: '#d6ea3c', side: '#8f9f14', onAccent: '#1d1b17' }

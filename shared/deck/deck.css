@@ -1,0 +1,257 @@
+/* The deck: the house look (HQ's cream cards, ink outlines, hard shadows), tablet first, comfortable on a phone.
+   Everything is sized in rem; the root size follows the viewport. A slide that doesn't fit its stage scrolls inside it.
+   The page is two bands, the slides and #bar; the controls never cover a slide.
+   A slide runs to the top of the screen, with the safe area as its own padding, so nothing above it keeps a blank
+   strip or clips it as it scrolls; the deck's title is in #bar. */
+:root {
+  --ink: #1d1a2f; --cream: #fdf3e1; --paper: #fffaf0; --muted: #6b6580; --line: #d9ccb4;
+  --red: #e8505b; --gold: #ffd966; --blue: #5b8def; --green: #5cc26a; --purple: #9b72cf; --orange: #ff9b4a;
+  --accent: var(--gold);
+  --mono: ui-monospace, 'SF Mono', Menlo, 'Cascadia Mono', 'DejaVu Sans Mono', monospace;
+  --sans: system-ui, -apple-system, 'Segoe UI', Roboto, 'Liberation Sans', 'DejaVu Sans', sans-serif;
+  --shadow: .22rem .22rem 0 var(--ink);
+  --sat: env(safe-area-inset-top, 0px); --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px); --sar: env(safe-area-inset-right, 0px);
+  --side: 3.2rem;  /* the slide's side margin */
+  --head: 2.2rem;  /* the slide's top margin, below the safe area */
+  --tap: 44px;     /* the smallest control: Apple's minimum touch target */
+  font-size: clamp(11px, min(1.8vw, 2.55vh), 32px); /* up to a QHD monitor's 1440 px */
+}
+@media (orientation: portrait) { :root { font-size: clamp(11px, min(2.6vw, 1.75vh), 24px); } }
+/* in a frame (HQ's viewer, which keeps clear of the notch and home bar itself) the deck has no safe area of its own */
+:root.framed { --sat: 0px; --sab: 0px; --sal: 0px; --sar: 0px; }
+* { box-sizing: border-box; }
+html { height: 100%; background: var(--cream); }
+html, body { margin: 0; overflow: hidden; overscroll-behavior: none; }
+body { height: 100%; height: 100dvh; display: grid; grid-template-rows: minmax(0, 1fr) auto;
+  font: 1rem/1.35 var(--sans); color: var(--ink); -webkit-tap-highlight-color: transparent; -webkit-text-size-adjust: 100%;
+  background: radial-gradient(color-mix(in srgb, var(--line) 50%, transparent) .09rem, transparent .1rem) 0 0 / 1.6rem 1.6rem,
+    radial-gradient(120vmax 80vmax at 90% -20%, #fff 0, transparent 60%), var(--cream); }
+button, a.btn { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
+
+/* ---- the stage: everything above the controls, up to the top of the screen ---- */
+#deck { position: relative; overflow: hidden; touch-action: pan-y pinch-zoom; user-select: none; -webkit-user-select: none; }
+.slide { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; container: slide / size;
+  overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin;
+  padding: calc(var(--head) + var(--sat)) calc(var(--side) + var(--sar)) 1.4rem calc(var(--side) + var(--sal));
+  visibility: hidden; opacity: 0; transform: translateX(8%);
+  transition: transform .55s cubic-bezier(.2, 1.3, .35, 1), opacity .35s ease, visibility 0s .55s; }
+.slide.on { visibility: visible; opacity: 1; transform: none; transition: transform .55s cubic-bezier(.2, 1.3, .35, 1), opacity .35s ease; }
+.slide.past { transform: translateX(-8%); }
+.slide.drag { transition: none; }
+/* more below: the slide's foot fades out until it's scrolled to the end */
+.slide.below { -webkit-mask-image: linear-gradient(#000 calc(100% - 3rem), transparent); mask-image: linear-gradient(#000 calc(100% - 3rem), transparent); }
+@media (prefers-reduced-motion: reduce) { .slide, .slide.on { transition: opacity .2s; transform: none; } }
+
+/* ---- text ---- */
+.kicker { align-self: flex-start; justify-self: start; font: 700 .8rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase;
+  background: var(--accent); border: .12rem solid var(--ink); box-shadow: var(--shadow); padding: .4rem .6rem; margin: 0 0 1.1rem; border-radius: .2rem; }
+h1, h2 { font-family: var(--mono); font-weight: 800; letter-spacing: -.03em; margin: 0; text-wrap: balance; }
+h1 { font-size: 4.2rem; line-height: 1; }
+h2 { font-size: 2.7rem; line-height: 1.05; }
+.slide.split h2 { font-size: 2.4rem; }
+.sub { font-size: 1.35rem; color: var(--muted); margin: .9rem 0 0; max-width: 36em; text-wrap: balance; }
+.points { list-style: none; margin: 0; padding: 0; display: grid; gap: .8rem; }
+.points li { font-size: 1.3rem; line-height: 1.3; padding-left: 1.7rem; position: relative; text-wrap: pretty; max-width: 38em; } /* lines short enough to read on a wide screen */
+.points li::before { content: ''; position: absolute; left: 0; top: .42em; width: .8rem; height: .8rem; background: var(--accent); border: .12rem solid var(--ink); }
+.note { font: .8rem/1.35 var(--mono); color: var(--muted); margin: 1.1rem 0 0; }
+.more > :first-child { margin-top: 0; }
+
+/* ---- layout: the heading, the visual and the rest. Beside the visual in landscape, around it in portrait ---- */
+.body { flex: none; margin-block: auto; display: grid; column-gap: 2.4rem; row-gap: 1.5rem; align-items: center; }
+.head, .more { min-width: 0; display: flex; flex-direction: column; }
+.slide.split .body { min-height: 100cqh; grid-template-columns: minmax(0, 1.1fr) minmax(0, .9fr); align-content: center; row-gap: 0;
+  grid-template-areas: "head vis" "more vis"; grid-template-rows: auto auto; }
+.slide.split.wide .body { grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); }
+.slide.split .head { grid-area: head; align-self: end; }
+.slide.split .more { grid-area: more; align-self: start; padding-top: 1.5rem; }
+.vis { grid-area: vis; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 1.6rem; container-type: size; }
+.slide.split .vis { height: 100cqh; }
+@media (orientation: portrait) {
+  /* the heading, then the visual filling what's left of the screen (at least two thirds of it), then the rest below */
+  .slide.split .body, .slide.split.wide .body { grid-template-columns: minmax(0, 1fr); grid-template-areas: "head" "vis" "more";
+    grid-template-rows: auto minmax(68cqh, 1fr) auto; align-items: stretch; align-content: stretch; row-gap: 1.3rem; }
+  .slide.split .head, .slide.split .more { align-self: start; padding-top: 0; }
+  .slide.split .vis { height: auto; }
+  h1 { font-size: 3.4rem; }
+}
+/* a tablet held upright: the visual takes what the text leaves (at least two fifths), so the points stay on screen */
+@media (orientation: portrait) and (min-width: 600px) {
+  .slide.split .body, .slide.split.wide .body { grid-template-rows: auto minmax(40cqh, 1fr) auto; }
+  .cards:has(> .card:nth-child(4)) { grid-template-columns: repeat(2, minmax(0, 1fr)); } /* four cards, two by two */
+}
+
+/* hero (title) slides: the heading, the rest, the media in a row below */
+/* the media take what's left of the stage (at least 8rem: a short screen scrolls instead) */
+.slide.hero .body { min-height: 100cqh; grid-template-areas: "head" "more" "vis"; grid-template-rows: auto auto minmax(8rem, 1fr); row-gap: 0;
+  justify-items: start; align-content: center; }
+.slide.hero .more { padding-top: 1.5rem; }
+.slide.hero .vis { margin-top: 1.5rem; }
+.slide.hero h1 { font-size: 5rem; }
+.slide.hero .vis { height: 100%; max-height: 60cqh; justify-content: flex-start; flex-wrap: nowrap; gap: 1rem; justify-self: stretch; align-self: stretch; }
+.slide.hero .vis figure { height: auto; flex: none; max-width: 100%; }
+.slide.hero figure.phone .shell { height: min(100cqh, calc((100cqw - 4rem) / 5 * 16 / 9)); border-radius: .9rem; padding: .3rem; }
+.slide.hero figure.phone .shell > * { border-radius: .6rem; }
+.slide.full .body { grid-template-areas: "head" "more" "vis"; row-gap: 0; }
+.slide.full .more { padding-top: 1.5rem; }
+.slide.full .vis { height: 50cqh; margin-top: 1.5rem; }
+
+/* ---- media: the poster (or the image) gives the frame its size; a video lies over its poster once it plays ---- */
+figure { margin: 0; height: 100%; max-height: 100%; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; position: relative; cursor: zoom-in; }
+figure .shell { flex: 0 1 auto; min-height: 0; position: relative; }
+/* a phone's width comes from its height and 9:16, never from its picture: without the containment WebKit sized the
+   figure to the image's own width (552 px for a 540 px poster), and a title slide's row of phones ran off the screen */
+figure.phone .shell { height: min(calc(100cqh - 2.6rem), calc(100cqw * 16 / 9)); aspect-ratio: 9 / 16; contain: inline-size; background: var(--ink); border-radius: 1.6rem; padding: .45rem;
+  box-shadow: .35rem .35rem 0 color-mix(in srgb, var(--ink) 35%, transparent); }
+figure.phone .shell > img, figure.phone video { width: 100%; height: 100%; object-fit: cover; border-radius: 1.2rem; display: block; background: #000; }
+figure.photo { flex: 1 1 0; min-width: 0; }
+figure.photo .shell { max-width: 100%; border: .15rem solid var(--ink); box-shadow: var(--shadow); background: var(--paper); padding: .45rem; border-radius: .3rem; display: flex; }
+figure.photo .shell > img { max-width: 100%; max-height: calc(100cqh - 3.5rem); width: auto; height: auto; min-height: 0; object-fit: contain; display: block; }
+figure.video video { position: absolute; inset: .45rem; width: calc(100% - .9rem); height: calc(100% - .9rem); opacity: 0; transition: opacity .2s; }
+figure.photo.video video { object-fit: contain; background: var(--paper); }
+figure.video.live video { opacity: 1; }
+/* a corner mark: tap to see it large */
+.zoom { position: absolute; right: .9rem; top: .9rem; width: 1.7rem; height: 1.7rem; border-radius: .3rem; pointer-events: none; z-index: 2;
+  background: color-mix(in srgb, var(--paper) 85%, transparent) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M9 2h5v5h-2V5.4L9.7 7.7 8.3 6.3 10.6 4H9zM2 9h2v1.6l2.3-2.3 1.4 1.4L5.4 12H7v2H2z'/%3E%3C/svg%3E") center / 70% no-repeat;
+  border: .1rem solid var(--ink); }
+figure.phone .zoom { right: .8rem; top: .8rem; }
+/* two pictures (the app and the product): the product large, the phone in front of its corner */
+.vis.duo { position: relative; align-items: flex-start; justify-content: flex-end; }
+.vis.duo figure.photo { flex: 0 1 auto; height: auto; max-width: 82cqw; align-items: flex-end; }
+.vis.duo figure.phone { position: absolute; left: 0; bottom: 0; height: auto; z-index: 2; }
+.vis.duo figure.phone .shell { height: calc(72cqh - 2.6rem); }
+/* two pictures without a phone (now and proposed): side by side, one above the other on a screen held upright.
+ */
+.vis.pair figure.photo { height: 100%; }
+@media (orientation: portrait) {
+  .vis.pair { flex-direction: column; gap: 1rem; }
+  .vis.pair figure.photo { width: 100%; height: auto; }
+}
+figcaption { flex: none; font: 700 .72rem/1.2 var(--mono); text-transform: uppercase; letter-spacing: .08em; margin-top: .6rem;
+  background: var(--paper); border: .12rem solid var(--ink); padding: .25rem .5rem; border-radius: .2rem; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.sound { position: absolute; right: .9rem; bottom: .9rem; z-index: 3; border: .12rem solid var(--ink); background: var(--gold); box-shadow: var(--shadow);
+  border-radius: .3rem; padding: .35rem .6rem; min-height: 36px; font: 700 .8rem/1 var(--mono); display: none; }
+figure.muted .sound { display: block; }
+.play { position: absolute; inset: 0; margin: auto; width: 4rem; height: 4rem; min-width: var(--tap); min-height: var(--tap); border-radius: 50%; border: .15rem solid var(--ink); background: var(--paper);
+  box-shadow: var(--shadow); display: none; place-items: center; font-size: 1.5rem; z-index: 3; }
+figure.paused .play { display: grid; }
+
+/* ---- cards (customer / trend / gap, stat tiles) ---- */
+.cards { display: grid; grid-template-columns: repeat(var(--n, 3), minmax(0, 1fr)); gap: 1.3rem; margin-top: .3rem; }
+.card { background: var(--paper); border: .15rem solid var(--ink); box-shadow: var(--shadow); border-radius: .35rem; padding: 1.1rem 1.2rem 1.2rem; min-width: 0; }
+.card .label { font: 700 .72rem/1 var(--mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: .45rem; }
+.card .label::before { content: ''; width: .6rem; height: .6rem; background: var(--accent); border: .1rem solid var(--ink); }
+.card .big { font: 800 2.9rem/1 var(--mono); letter-spacing: -.04em; margin: .7rem 0 .1rem; font-variant-numeric: tabular-nums; }
+.card p { font-size: 1.25rem; line-height: 1.3; margin: .6rem 0 0; text-wrap: pretty; }
+.card .big + p { margin-top: .35rem; }
+.card small { display: block; font: .7rem/1.3 var(--mono); color: var(--muted); margin-top: .6rem; }
+@media (orientation: portrait) { .cards { grid-template-columns: 1fr; gap: .9rem; } .card .big { font-size: 2.2rem; } }
+
+/* ---- charts ---- */
+.chart { width: 100%; max-width: 40rem; align-self: center; }
+.stack { display: flex; gap: .15rem; height: 4.6rem; border: .15rem solid var(--ink); box-shadow: var(--shadow); background: var(--ink); padding: 0; border-radius: .3rem; overflow: hidden; }
+.stack i { display: block; height: 100%; background: var(--c); transition: filter .15s; cursor: pointer; }
+.stack i.hi, .legend li.hi { filter: brightness(1.08); outline: .15rem solid var(--ink); outline-offset: -.15rem; }
+.legend { list-style: none; padding: 0; margin: 1.1rem 0 0; display: grid; gap: .1rem; }
+.legend li { display: grid; grid-template-columns: 1rem 1fr auto; align-items: center; gap: .7rem; padding: .45rem .6rem; font-size: 1.2rem; border-bottom: .1rem dashed var(--line); cursor: pointer; }
+.legend li::before { content: ''; width: 1rem; height: 1rem; background: var(--c); border: .1rem solid var(--ink); }
+.legend b { font: 700 1.2rem/1 var(--mono); font-variant-numeric: tabular-nums; }
+.legend li.key { font-weight: 700; border: 0; background: var(--paper); border: .12rem solid var(--ink); border-radius: .25rem; margin-top: .4rem; font-size: 1.25rem; }
+.legend li.key b { font-size: 1.5rem; }
+.chart .total { display: flex; justify-content: space-between; font: 700 .8rem/1 var(--mono); text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin-bottom: .5rem; }
+.bars { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: .7rem .9rem; width: 100%; }
+.bar { display: contents; }
+.bar .name { font: 700 1.25rem/1.1 var(--mono); text-align: right; }
+.bar .name small { display: block; font: 400 .75rem/1.2 var(--sans); color: var(--muted); }
+.bar .track { display: flex; align-items: center; gap: .6rem; min-width: 0; }
+.bar .fill { height: 2.7rem; width: calc(var(--v) * (100% - 5.5rem)); background: var(--c, var(--blue)); border: .15rem solid var(--ink); border-radius: 0 .3rem .3rem 0; box-shadow: var(--shadow); flex: none;
+  transform-origin: left; }
+.slide.on .bar .fill { animation: grow .8s cubic-bezier(.2, 1.3, .35, 1) both; }
+.bar .val { font: 800 1.4rem/1 var(--mono); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bar .tag { display: inline-block; margin-top: .25rem; white-space: nowrap; font: 700 .7rem/1 var(--mono); text-transform: uppercase; background: var(--gold); border: .1rem solid var(--ink); padding: .2rem .35rem; border-radius: .2rem; }
+@keyframes grow { from { transform: scaleX(0); } }
+.vis .chart { cursor: default; }
+
+/* ---- buttons ---- */
+.btn { display: inline-flex; align-items: center; gap: .6rem; align-self: flex-start; margin-top: 1.8rem; text-decoration: none; color: var(--ink); min-height: var(--tap);
+  font: 800 1.35rem/1 var(--mono); background: var(--accent); border: .15rem solid var(--ink); box-shadow: var(--shadow); padding: 1rem 1.4rem; border-radius: .35rem; }
+.btn:active { transform: translate(.15rem, .15rem); box-shadow: .07rem .07rem 0 var(--ink); }
+.btn small { font: 400 .75rem/1 var(--mono); opacity: .7; }
+
+/* ---- the band below the slides: the deck's title (on a wide screen only: an upright tablet needs the room), progress
+   and the controls ---- */
+.brand { display: none; flex: 0 1 auto; max-width: 18rem; align-items: center; gap: .5rem; font: 700 .8rem/1 var(--mono); background: var(--paper); border: .12rem solid var(--ink); box-shadow: var(--shadow); padding: .35rem .6rem .35rem .35rem; border-radius: .25rem; min-width: 0; }
+@media (min-width: 1000px) and (min-height: 501px) { .brand { display: flex; } }
+.brand svg { width: 1.5rem; height: 1.5rem; flex: none; }
+.brand span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bar { position: relative; z-index: 5; display: flex; align-items: center; gap: .6rem 1rem; padding: .5rem calc(1rem + var(--sar)) calc(.8rem + var(--sab)) calc(1rem + var(--sal)); }
+.tools, #nav { display: flex; gap: .5rem; flex: none; }
+.tools button, #nav button { min-width: var(--tap); height: var(--tap); display: grid; place-items: center; padding: 0 .6rem;
+  background: var(--paper); border: .12rem solid var(--ink); box-shadow: var(--shadow); border-radius: .25rem; font: 700 .85rem/1 var(--mono); }
+.tools button:active, #nav button:active { transform: translate(.15rem, .15rem); box-shadow: .07rem .07rem 0 var(--ink); }
+.tools button[aria-pressed=false] { background: var(--cream); color: var(--muted); }
+.tools svg, #nav svg { width: 16px; height: 16px; }
+#count { font-variant-numeric: tabular-nums; min-width: 5.2em !important; }
+#progress { flex: 1 1 auto; min-width: 4rem; display: flex; align-items: center; gap: .2rem; height: 1.6rem; }
+#progress button { flex: var(--n) 1 0; height: .5rem; border: .1rem solid var(--ink); background: var(--paper); padding: 0; border-radius: .1rem; position: relative; }
+#progress button i { position: absolute; inset: 0; background: var(--ink); transform-origin: left; transform: scaleX(var(--f, 0)); transition: transform .4s; }
+#progress button::after { content: ''; position: absolute; inset: -.6rem 0; } /* a bigger tap target than the bar */
+#hint { display: none; flex: 1 1 auto; min-width: 0; font: .8rem/1.6rem var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#bar.hinting #hint { display: block; }
+#bar.hinting #progress { display: none; }
+
+/* the list of every slide, by chapter */
+#menu { position: fixed; inset: 0; z-index: 10; background: color-mix(in srgb, var(--ink) 55%, transparent); display: grid; place-items: center;
+  padding: calc(1rem + var(--sat)) calc(1rem + var(--sar)) calc(1rem + var(--sab)) calc(1rem + var(--sal)); }
+#menu[hidden] { display: none; }
+#menu > ol { list-style: none; margin: 0; padding: .6rem 1rem 1rem; background: var(--paper); border: .15rem solid var(--ink); box-shadow: .35rem .35rem 0 var(--ink); border-radius: .35rem;
+  width: min(34rem, 100%); max-height: 100%; overflow: auto; overscroll-behavior: contain; display: grid; gap: .2rem; }
+#menu h3 { display: flex; align-items: center; gap: .6rem; margin: .8rem 0 .3rem; font: 700 .8rem/1 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+#menu h3::before { content: ''; width: .8rem; height: .8rem; background: var(--c, var(--gold)); border: .1rem solid var(--ink); flex: none; }
+#menu ol ol { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+#menu button { width: 100%; min-height: var(--tap); text-align: left; display: flex; align-items: baseline; gap: .7rem; padding: .55rem .8rem; border: .12rem solid var(--ink); border-radius: .25rem; background: var(--cream); font: 1.05rem/1.25 var(--sans); }
+#menu button small { flex: none; min-width: 1.6em; font: 700 .8rem/1 var(--mono); color: var(--muted); }
+#menu button.here { background: var(--gold); font-weight: 700; }
+
+/* a picture or video as large as the screen allows: tap it, tap anywhere or Esc to close */
+#zoom { position: fixed; inset: 0; z-index: 12; background: color-mix(in srgb, var(--ink) 92%, transparent); display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  padding: calc(.8rem + var(--sat)) calc(.8rem + var(--sar)) calc(.8rem + var(--sab)) calc(.8rem + var(--sal)); touch-action: pinch-zoom; }
+#zoom[hidden] { display: none; }
+/* one track the size of the screen (less the padding), so a tall video or picture is held to it instead of
+   growing an auto track past the bottom of a phone on its side */
+#zoom .stage { min-width: 0; min-height: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; }
+#zoom img, #zoom video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; border-radius: .3rem; background: #000; }
+#zoom .close { position: absolute; z-index: 1; top: calc(.8rem + var(--sat)); right: calc(.8rem + var(--sar)); width: var(--tap); height: var(--tap); display: grid; place-items: center;
+  background: var(--paper); border: .12rem solid var(--ink); box-shadow: var(--shadow); border-radius: .25rem; }
+#zoom .close svg { width: 16px; height: 16px; }
+
+/* short landscape screens (a phone on its side): one slim band of controls, the brand left out, text beside the visual */
+@media (orientation: landscape) and (max-height: 500px) {
+  :root { font-size: clamp(12px, 1.6vw, 15px); --side: 1.6rem; --tap: 40px; --head: 1rem; }
+  #bar { padding-top: .3rem; padding-bottom: calc(.4rem + var(--sab)); }
+  .slide { padding-bottom: .8rem; }
+  .slide.split .body { column-gap: 1.6rem; }
+  .slide.split .more { padding-top: 1rem; }
+  .slide.hero h1 { font-size: 3.4rem; }
+  /* the title slide side by side too: under a tall heading, a picture would be a stamp */
+  .slide.hero .body { grid-template-areas: "head vis" "more vis"; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 1.6rem; }
+  .slide.hero .vis { height: 100cqh; max-height: none; margin-top: 0; flex-wrap: wrap; align-content: center; justify-content: center; }
+  .slide.hero figure.phone .shell { height: min(calc(50cqh - 1rem), calc((100cqw - 2rem) / 3 * 16 / 9)); }
+  .cards { gap: .8rem; }
+  .card p { font-size: 1.05rem; }
+  .kicker, .card .label, figcaption, .note, .card small, .bar .name small, .bar .tag, .chart .total, .btn small, .sound { font-size: max(.8rem, 12px); }
+}
+/* narrow portrait phones: the progress bar on a row of its own, the buttons under it; text no smaller than ~12px */
+@media (orientation: portrait) and (max-width: 500px) {
+  :root { font-size: clamp(12px, 3.6vw, 16px); --side: 1.1rem; --head: 1.1rem; }
+  #bar { flex-wrap: wrap; justify-content: space-between; row-gap: .3rem; padding-top: .2rem; }
+  #progress, #hint { order: -1; flex: 1 0 100%; }
+  h1, .slide.hero h1 { font-size: 2.5rem; } h2, .slide.split h2 { font-size: 1.95rem; }
+  .sub { font-size: 1.2rem; }
+  .points li { font-size: 1.15rem; }
+  .card p { font-size: 1.1rem; }
+  .kicker, .card .label, figcaption, .note, .card small, .bar .name small, .bar .tag, .chart .total, .btn small, .sound { font-size: max(.8rem, 12px); }
+  /* a title slide's row of phones: three to a row */
+  .slide.hero .vis { max-height: none; flex-wrap: wrap; justify-content: center; align-content: center; }
+  .slide.hero figure.phone .shell { height: min(calc(50cqh - 1rem), calc((100cqw - 2rem) / 3 * 16 / 9)); }
+}

@@ -1,0 +1,4 @@
+# What stays in this repo and out of the zip a newcomer unzips (infra/overseer/pack.py: git archive): the companies'
+# own lists and plans.
+COMING.md export-ignore
+PLAN.md export-ignore

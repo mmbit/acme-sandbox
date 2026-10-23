@@ -1,0 +1,239 @@
+<!doctype html><meta charset="utf-8">
+<!-- The default presentation deck for present.mjs. One page renders the whole timeline: window.frame(t).
+     Restyle per manifest ("css": "deck.css", "theme": {...}) or per section ("class", "style"). -->
+<style>
+  :root { --bg: #1b1520; --bg2: #2b2230; --ink: #fdf6ec; --muted: #cbbfc9; --accent: #ff6b4a; --accent2: #ffc36b;
+    --serif: Charter, 'Bitstream Charter', Georgia, serif; --sans: 'Liberation Sans', 'DejaVu Sans', system-ui, sans-serif; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--bg); color: var(--ink); font-family: var(--sans); }
+  body::before { content: ''; position: absolute; inset: 0; background:
+    radial-gradient(1200px 700px at var(--glow1, 12% 0%), color-mix(in srgb, var(--accent) 22%, transparent), transparent 70%),
+    radial-gradient(1000px 800px at var(--glow2, 100% 100%), color-mix(in srgb, var(--accent2) 14%, transparent), transparent 70%), var(--bg); }
+  /* the lights drift, so a slide held long still breathes */
+  section { position: absolute; inset: 0; display: block; padding: 120px 150px 190px; }
+  section:not(.on) { display: none !important; } /* type classes like .title set their own display */
+  .kicker { font: 700 26px/1 var(--sans); letter-spacing: .22em; text-transform: uppercase; color: var(--accent); margin: 0 0 28px; }
+  h1 { font: 700 150px/0.98 var(--serif); margin: 0; letter-spacing: -0.02em; }
+  h2 { font: 700 84px/1.02 var(--serif); margin: 0; letter-spacing: -0.01em; max-width: 1200px; }
+  .sub { font: 400 44px/1.3 var(--serif); color: var(--muted); margin-top: 36px; max-width: 1300px; font-style: italic; }
+  ul { list-style: none; padding: 0; margin: 56px 0 0; display: grid; gap: 30px; max-width: 1250px; }
+  li { font: 400 40px/1.3 var(--sans); padding-left: 56px; position: relative; }
+  li::before { content: ''; position: absolute; left: 0; top: 17px; width: 26px; height: 8px; border-radius: 4px; background: var(--accent); }
+  .title { display: grid; align-content: center; padding-top: 60px; }
+  .title h1 { font-size: 190px; }
+  .title .rule { width: 160px; height: 12px; border-radius: 6px; background: var(--accent); margin: 50px 0 0; }
+  .split { display: grid; grid-template-columns: 1fr auto; gap: 110px; align-items: center; height: 100%; }
+  .split h2 { font-size: 72px; } .split li { font-size: 34px; }
+  .phone { width: 452px; height: 782px; border-radius: 58px; background: #0c0a0d; padding: 14px; box-shadow: 0 40px 90px #0009, 0 0 0 2px #fff2 inset; }
+  .phone img { width: 424px; height: 754px; border-radius: 46px; display: block; object-fit: cover; object-position: top; }
+  .browser { width: 1180px; border-radius: 22px; overflow: hidden; background: #0c0a0d; box-shadow: 0 40px 90px #0009; }
+  .browser .bar { height: 42px; display: flex; gap: 11px; align-items: center; padding: 0 18px; background: #2a2430; }
+  .browser .bar i { width: 14px; height: 14px; border-radius: 50%; background: #fff3; }
+  .browser img { width: 1180px; height: 664px; display: block; }
+  .recording.wide .split { grid-template-columns: 1fr; gap: 40px; align-content: center; justify-items: center; } .recording.wide h2 { font-size: 56px; text-align: center; }
+  .shot { max-width: 1000px; max-height: 760px; border-radius: 26px; box-shadow: 0 40px 90px #0009; display: block; }
+  .card { background: color-mix(in srgb, var(--ink) 6%, transparent); border: 2px solid color-mix(in srgb, var(--ink) 14%, transparent); border-radius: 34px; padding: 34px 54px; min-width: 820px; }
+  .row { display: flex; justify-content: space-between; gap: 60px; padding: 22px 0; font: 400 38px/1.2 var(--sans); border-bottom: 2px solid color-mix(in srgb, var(--ink) 10%, transparent); }
+  .row:last-child { border: 0; font-weight: 700; color: var(--accent2); }
+  .row b { font: 700 44px/1.2 var(--serif); font-variant-numeric: tabular-nums; }
+  .ad { padding: 0; }
+  .ad .blur { position: absolute; inset: -80px; width: calc(100% + 160px); height: calc(100% + 160px); object-fit: cover; filter: blur(46px) brightness(.45) saturate(1.3); }
+  .ad .frame { position: absolute; left: 50%; top: 44px; height: 880px; aspect-ratio: 9/16; transform: translateX(-50%); border-radius: 30px; box-shadow: 0 40px 100px #000a, 0 0 0 2px #fff2; }
+  .ad .side { position: absolute; left: 110px; top: 50%; transform: translateY(-50%); width: 520px; }
+  .ad .side h2 { font-size: 76px; }
+  .ad .num { position: absolute; right: 120px; top: 50%; transform: translateY(-50%); font: 700 220px/1 var(--serif); color: #fff1; }
+  iframe { position: absolute; inset: 0; width: 1920px; height: 1080px; border: 0; }
+  .caption { position: absolute; left: 50%; bottom: 58px; transform: translateX(-50%); max-width: 1500px; width: max-content; text-align: center;
+    font: 500 38px/1.3 var(--sans); padding: 16px 34px; border-radius: 20px; background: #000a; color: #fff; z-index: 5; }
+  .caption:empty { display: none; }
+  .caption b { color: var(--accent2); margin-right: 8px; }
+  .progress { position: absolute; left: 0; bottom: 0; height: 8px; background: var(--accent); z-index: 6; }
+  .deck { position: absolute; left: 150px; top: 56px; font: 700 20px/1 var(--sans); letter-spacing: .2em; text-transform: uppercase; color: #fff6; z-index: 5; }
+  /* points that come on as they're said ("steps"): the newest bright, the ones before it stepped back
+ */
+  li.step::before { transform-origin: left; scale: var(--bar, 1) 1; }
+  /* the hosts: who speaks, as HQ draws them, from the waist up at the foot of the slide; the one speaking lit, their words in a
+     bubble on their side */
+  .host { position: absolute; z-index: 4; }
+  .host canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; image-rendering: pixelated;
+    filter: brightness(var(--lit, 1)) saturate(calc(0.6 + 0.4 * var(--lit, 1))); }
+  .host .glow { position: absolute; left: 50%; top: 40px; width: 520px; height: 580px; translate: -50% 0; border-radius: 50%;
+    background: radial-gradient(closest-side, color-mix(in srgb, var(--accent2) 30%, transparent), transparent); }
+  /* the bubble between the two groups of hosts, never over a face: --cap-l and --cap-r, their inner edges
+ */
+  .caption.left, .caption.right { transform: none; max-width: calc(1920px - var(--cap-l, 262px) - var(--cap-r, 262px)); text-align: left; }
+  .caption.left { left: var(--cap-l, 262px); } .caption.right { left: auto; right: var(--cap-r, 262px); }
+  .caption.left::before, .caption.right::before { content: ''; position: absolute; top: 50%; translate: 0 -50%; border: 12px solid transparent; }
+  .caption.left::before { right: 100%; border-right: 24px solid #000a; border-left: 0; }
+  .caption.right::before { left: 100%; border-left: 24px solid #000a; border-right: 0; }
+  .deck.live::before { content: ''; display: inline-block; width: 14px; height: 14px; margin: 0 16px 2px 0; border-radius: 50%; vertical-align: middle;
+    background: var(--accent); box-shadow: 0 0 calc(4px + var(--level, 0) * 22px) var(--accent); opacity: calc(.45 + var(--level, 0) * .55); }
+</style>
+<div class="deck" id="deck"></div>
+<div class="caption" id="cap"></div>
+<div class="progress" id="bar"></div>
+<script>
+  const D = demo.data, esc = (s) => String(s ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+  const head = (s) => `${s.kicker ? `<p class="kicker" data-in>${esc(s.kicker)}</p>` : ''}${s.title ? `<h2 data-in>${esc(s.title)}</h2>` : ''}`;
+  // a point with a time in the section's `steps` comes on then, not with its slide
+  const points = (s) => (s.points?.length ? `<ul>${s.points.map((p, i) => (s.steps?.[i] !== undefined ? `<li class="step">${esc(p)}</li>` : `<li data-in>${esc(p)}</li>`)).join('')}</ul>` : '');
+  const views = {
+    ad: (s) => `<img class="blur" data-src="${s.src}"><img class="frame" data-src="${s.src}">
+      <div class="side">${s.kicker ? `<p class="kicker" data-in>${esc(s.kicker)}</p>` : ''}<h2 data-in>${esc(s.title)}</h2>${s.sub ? `<p class="sub" data-in>${esc(s.sub)}</p>` : ''}</div>
+      <div class="num">${esc(s.num ?? '')}</div>`,
+    title: (s) => `${s.kicker ? `<p class="kicker" data-in>${esc(s.kicker)}</p>` : ''}<h1 data-in>${esc(s.title)}</h1>
+      ${s.sub ? `<p class="sub" data-in>${esc(s.sub)}</p>` : ''}<div class="rule" data-in></div>`,
+    text: (s) => `${head(s)}${s.sub ? `<p class="sub" data-in>${esc(s.sub)}</p>` : ''}${points(s)}`,
+    recording: (s) => s.wide
+      ? `<div class="split"><div>${head(s)}</div><div class="browser" data-in><div class="bar"><i></i><i></i><i></i></div><img data-src="${s.src}"></div></div>`
+      : `<div class="split"><div>${head(s)}${points(s)}</div><div class="phone" data-in><img data-src="${s.src}"></div></div>`,
+    image: (s) => `<div class="split"><div>${head(s)}${points(s)}</div><img class="shot kb" data-in src="${s.image}"></div>`,
+    table: (s) => `<div class="split"><div>${head(s)}${s.sub ? `<p class="sub" data-in>${esc(s.sub)}</p>` : ''}</div>
+      <div class="card" data-in>${s.table.map(([k, v]) => `<div class="row"><span>${esc(k)}</span><b>${esc(v)}</b></div>`).join('')}</div></div>`,
+    // an html section's `steps` reach its page in its address, #steps=1.2,3.4
+    html: (s) => `<iframe src="${s.html}${s.steps ? `#steps=${s.steps.join(',')}` : ''}"></iframe>`,
+  };
+  for (const css of [D.css ?? []].flat()) document.head.insertAdjacentHTML('beforeend', `<link rel="stylesheet" href="${css}">`);
+  if (D.theme) document.documentElement.style.cssText += Object.entries(D.theme).map(([k, v]) => `--${k}:${v}`).join(';');
+  deck.textContent = D.title ?? '';
+
+  // The hosts (`hosts`: [{ id, name, look, sprite }]): each as HQ draws them (platform/hq's brownstone sprites, seeded by
+  // id, dressed by `look`), in whole pixels from the waist up at the foot of the slide, the first half on the left facing in, the rest on
+  // the right. Whoever's caption is on is lit, their mouth moving with the sound (`levels`, a digit 0-9 a frame); the
+  // others dimmed, listening. They come on at the start, hop as they come in on a turn, point as a slide or a point comes
+  // on, and blink. Everything is a function of the frame's time.
+  const HOST = { S: 16, EDGE: 28, APART: 11 * 16 }; // pixel size, gap to the frame's edge, from one host to the next
+  const hosts = (() => {
+    const list = D.hosts ?? [];
+    if (!list.length) return { ready: null, side: () => null, frame: () => {} };
+    const { all, pointing } = hostsCast(list);
+    let draw;
+    const ready = hostsDrawn(all).then((drawn) => (draw = drawn));
+    return {
+      ready,
+      side: (who) => { const h = all.find((a) => a.name === who); return h ? (h.onLeft ? 'left' : 'right') : null; },
+      frame(t) {
+        const level = D.levels ? Number(D.levels[Math.floor(t * demo.fps + 1e-6)] ?? 0) : (Math.floor(t * 8) % 2) * 6;
+        const light = all.map((h) => Math.max(0, ...h.said.map((c) => hostLit(c, t))));
+        const anyone = Math.max(...light);
+        deck.style.setProperty('--level', anyone > 0.5 ? level / 9 : 0);
+        all.forEach((h, i) => hostFrame(h, i, t, { draw, level, on: light[i], anyone, pointing }));
+      },
+    };
+  })();
+  // Each host with where they stand and when they speak, and the moments one points: a slide or a point coming on, said
+  // by whoever speaks next
+  function hostsCast(list) {
+    const hash = (x) => [...String(x)].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619) >>> 0, 2166136261);
+    const left = Math.ceil(list.length / 2);
+    const all = list.map((h, i) => {
+      const onLeft = i < left, k = onLeft ? i : list.length - 1 - i;
+      const said = (D.captions ?? []).filter((c) => c.who === h.name);
+      // a turn: a caption after a second of this host's silence
+      const turns = said.filter((c, j) => !j || c.start - said[j - 1].end > 1).map((c) => c.start);
+      return { ...h, onLeft, k, said, turns, phase: (hash(h.id) % 1000) / 1000, every: 3.2 + (hash(h.id) % 17) / 10 };
+    });
+    const cues = D.sections.flatMap((s, i) => [...(i ? [s.start] : []), ...(s.steps ?? []).map((x) => s.start + x)]);
+    const pointing = cues.map((at) => ({ at, who: D.captions?.find((c) => c.end > at && c.start < at + 1.5)?.who }));
+    return { all, pointing };
+  }
+  // How lit a host is by one of their captions at t: up just before it, down half a second after
+  function hostLit(c, t) {
+    return Math.min(demo.p(t, c.start - 0.15, c.start), 1 - demo.p(t, c.end, c.end + 0.5));
+  }
+  // The hosts on the page as HQ draws them, and how to draw one: (host, sprite frame, mouth open 0-2)
+  async function hostsDrawn(all) {
+    const { makeLook, spriteFrame, CW, CH, FOOT } = await import('/platform/hq/renderers/brownstone/sprites.js');
+    const { mix } = await import('/platform/hq/util.js');
+    const { S } = HOST;
+    for (const h of all) {
+      h.look = makeLook(h);
+      h.w = CW * S;
+      h.el = Object.assign(document.createElement('div'), { className: 'host', innerHTML: '<div class="glow"></div><canvas></canvas>' });
+      // the frame's foot cuts them at the waist (the legs are the five rows above the feet)
+      Object.assign(h.el.style, { width: `${CW * S}px`, height: `${CH * S}px`, top: `${1080 - (FOOT - 5) * S}px` });
+      h.canvas = h.el.querySelector('canvas');
+      Object.assign(h.canvas, { width: CW, height: CH });
+      if (!h.onLeft) h.canvas.style.scale = '-1 1';
+      h.g = h.canvas.getContext('2d');
+      h.mouth = [mix(h.look.skin, '#1d1a2f', 0.7), mix(h.look.skin, '#e8505b', 0.5)];
+      document.body.append(h.el);
+    }
+    deck.classList.add('live');
+    // the bubble starts past the innermost host on its side, its tail clear of them
+    const inner = (n) => `${n ? HOST.EDGE + (n - 1) * HOST.APART + CW * S + 34 : 150}px`;
+    const left = all.filter((h) => h.onLeft).length;
+    cap.style.setProperty('--cap-l', inner(left));
+    cap.style.setProperty('--cap-r', inner(all.length - left));
+    return (h, frame, open) => {
+      h.g.clearRect(0, 0, CW, CH);
+      h.g.drawImage(spriteFrame(h.id, h.look, frame, true, true), 0, 0);
+      // the mouth, under the nose (sprite row 13), open as wide as the sound is loud
+      if (open > 0) { h.g.fillStyle = h.mouth[0]; h.g.fillRect(7, 13, 2, 1); }
+      if (open > 1) { h.g.fillStyle = h.mouth[1]; h.g.fillRect(7, 14, 2, 1); }
+    };
+  }
+  // One host at t: their pose, mouth, rise, hop and light
+  function hostFrame(h, i, t, { draw, level, on, anyone, pointing }) {
+    const { S, EDGE, APART } = HOST;
+    const talking = h.said.some((c) => t >= c.start && t < c.end);
+    const hop = h.turns.some((at) => t >= at && t < at + 0.2);
+    const points = pointing.some((p) => p.who === h.name && t >= p.at && t < p.at + 1.4);
+    const blink = (t / h.every + h.phase) % 1 < 0.12 / h.every;
+    draw(h, points ? 'water' : blink ? 'blink' : 'stand', talking ? (level >= 6 ? 2 : level >= 3 ? 1 : 0) : 0);
+    // coming up from below the frame at the start, one after the other, in whole pixels
+    const rise = (1 - demo.p(t, 0.15 * i, 0.15 * i + 0.7, demo.ease.back)) * 16;
+    h.el.style.left = `${h.onLeft ? EDGE + h.k * APART : 1920 - EDGE - h.k * APART - h.w}px`;
+    h.canvas.style.translate = `0 ${Math.round(rise - (hop ? 1 : 0)) * S}px`;
+    // the one speaking lit; the others dimmed while someone speaks
+    const bright = 1 - 0.45 * Math.max(0, anyone - on);
+    h.canvas.style.setProperty('--lit', bright); // a deck's css can dim them its own way
+    h.el.querySelector('.glow').style.opacity = on;
+  }
+  const secs = D.sections.map((s) => {
+    const el = document.createElement('section');
+    el.className = `${s.type} ${s.wide ? 'wide' : ''} ${s.class ?? ''}`;
+    if (s.style) el.style.cssText += s.style;
+    el.innerHTML = views[s.type](s);
+    document.body.append(el);
+    return { ...s, el, ins: [...el.querySelectorAll('[data-in]')], stepped: [...el.querySelectorAll('li.step')], clips: [...el.querySelectorAll('img[data-src]')], frame: el.querySelector('iframe') };
+  });
+  // `script`: the manifest's own module, imported once the slides are on the page, to draw on them
+  window.ready = Promise.all([...secs.filter((s) => s.frame).map((s) => new Promise((r) => (s.frame.onload = r))), hosts.ready,
+    D.script && import(D.script)]);
+
+  const FADE = 0.45;
+  window.frame = async (t) => {
+    const s = secs.find((x) => t >= x.start && t < x.start + x.dur) ?? secs.at(-1);
+    const lt = t - s.start;
+    document.body.style.setProperty('--glow1', `${12 + 7 * Math.sin(t / 9)}% ${4 * Math.cos(t / 7)}%`);
+    document.body.style.setProperty('--glow2', `${96 + 5 * Math.sin(t / 11 + 2)}% ${96 + 6 * Math.cos(t / 13)}%`);
+    const now = s.stepped.findLastIndex((el, i) => lt >= s.steps[i]);
+    s.stepped.forEach((el, i) => {
+      const k = demo.p(lt, s.steps[i], s.steps[i] + 0.5);
+      el.style.opacity = k * (i === now ? 1 : 0.5);
+      el.style.translate = `${(1 - k) * -40}px 0`;
+      el.style.setProperty('--bar', demo.p(lt, s.steps[i] + 0.1, s.steps[i] + 0.6, demo.ease.back));
+    });
+    for (const x of secs) x.el.classList.toggle('on', x === s);
+    s.el.style.opacity = Math.min(1, lt / FADE, (s.dur - lt) / FADE);
+    s.ins.forEach((el, i) => {
+      const k = demo.p(lt, 0.1 + i * 0.13, 0.8 + i * 0.13);
+      el.style.opacity = k;
+      el.style.translate = `0 ${(1 - k) * 34}px`;
+    });
+    s.el.querySelectorAll('.kb').forEach((el) => (el.style.scale = 1 + 0.035 * (lt / s.dur)));
+    await Promise.all(s.clips.map((img) => demo.clip(img, img.dataset.src, Math.max(0, lt - (s.lead ?? 0)))));
+    if (s.frame) await s.frame.contentWindow.demo?.seek(lt);
+    // timed captions over the whole film: when two overlap (a reaction over the last word), the later one
+    const said = D.captions?.findLast((c) => t >= c.start && t < c.end);
+    cap.innerHTML = said ? `${said.who ? `<b>${esc(said.who)}</b> ` : ''}${esc(said.text)}` : esc(s.caption);
+    const side = said && hosts.side(said.who);
+    cap.classList.toggle('left', side === 'left');
+    cap.classList.toggle('right', side === 'right');
+    hosts.frame(t);
+    cap.style.opacity = said ? 1 : Math.min(1, lt / 0.3, (s.dur - lt) / 0.3);
+    deck.style.opacity = s.type === 'ad' || s.type === 'html' ? 0 : 1;
+    bar.style.width = `${(t / demo.duration) * 100}%`;
+  };
+</script>

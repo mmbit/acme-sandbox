@@ -1,0 +1,47 @@
+<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Foley kit: soundboard</title>
+<!-- The foley.js soundboard: every sound, with its parameters, played exactly as an app plays it.
+     Open it through the kit's server (it serves the repo), e.g.
+     node -e "import('./shared/demo/core.mjs').then(async m => console.log((await m.serve()).origin + '/shared/demo/examples/foley.html'))"
+     Checked in Chromium by shared/demo/foley-check.mjs. -->
+<style>
+  :root { --bg: #f6f1e7; --ink: #2a2522; --muted: #7d7267; --card: #fffdf8; --accent: #e0643a; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 12px; padding: 18px 20px 6px; }
+  h1 { font: 700 22px Georgia, serif; margin: 0; flex: 1; }
+  p.hint { margin: 0 20px 12px; color: var(--muted); }
+  #mute { font-size: 20px; width: 44px; height: 44px; border-radius: 50%; border: 2px solid var(--ink); background: var(--card); cursor: pointer; }
+  #mute[aria-pressed="false"] { opacity: 0.55; }
+  .ctl { display: flex; flex-wrap: wrap; gap: 14px; padding: 0 20px 14px; color: var(--muted); font-size: 13px; }
+  .ctl label { display: flex; align-items: center; gap: 6px; }
+  main { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; padding: 0 20px 28px; }
+  button.s { text-align: left; padding: 12px; border-radius: 14px; border: 1.5px solid #2a252222; background: var(--card); cursor: pointer; font: inherit; color: inherit; transition: transform .08s; }
+  button.s:active { transform: scale(.97); }
+  button.s b { display: block; font-size: 16px; } button.s small { color: var(--muted); display: block; font-size: 12px; margin-top: 3px; }
+  button.s.on { border-color: var(--accent); box-shadow: 0 0 0 3px #e0643a33; }
+</style>
+<header><h1>Foley kit</h1><button id="mute" type="button" aria-label="Sound"></button></header>
+<p class="hint">Tap a sound. Every tap is a little different, as it is in the apps. The sliders apply to all.</p>
+<div class="ctl">
+  <label>size <input id="size" type="range" min="0.5" max="2" step="0.05" value="1"></label>
+  <label>pitch <input id="pitch" type="range" min="-12" max="12" step="1" value="0"></label>
+  <label>bright <input id="bright" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+  <label>room <input id="room" type="range" min="0" max="1" step="0.05" value="0.2"></label>
+</div>
+<main id="grid"></main>
+<script type="module">
+  import { foley, SOUNDS } from '../foley.js';
+  const sfx = window.sfx = foley({ key: 'foley:soundboard' });
+  sfx.bind(document.getElementById('mute'));
+  const grid = document.getElementById('grid'), val = id => +document.getElementById(id).value;
+  for (const [name, def] of Object.entries(SOUNDS)) {
+    const b = document.createElement('button'); b.className = 's'; b.type = 'button'; b.dataset.sound = name;
+    b.innerHTML = `<b>${name}</b><small>${def.about}</small>`;
+    b.onclick = () => {
+      const lead = sfx.play(name, { size: val('size'), pitch: val('pitch'), bright: val('bright'), room: val('room') });
+      b.classList.add('on'); setTimeout(() => b.classList.remove('on'), 1000 * (lead ?? 0) + 150); // lights up on the hit
+      window.lastPlay = lead;
+    };
+    grid.append(b);
+  }
+</script>

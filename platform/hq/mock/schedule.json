@@ -1,0 +1,62 @@
+[
+  {
+    "id": "morning-round",
+    "agent": "juno",
+    "title": "Morning round",
+    "when": "daily 07:45",
+    "downtime": false,
+    "last": "2026-09-25",
+    "next": "tomorrow 07:45",
+    "soon": 2905
+  },
+  {
+    "id": "board-report",
+    "agent": "juno",
+    "title": "Weekly board report",
+    "when": "Mondays 07:30",
+    "downtime": false,
+    "last": "2026-09-22",
+    "next": "Monday 07:30",
+    "soon": 4770
+  },
+  {
+    "id": "hardening",
+    "agent": "sable",
+    "title": "Weekly hardening scan",
+    "when": "Fridays 03:00",
+    "downtime": true,
+    "last": "2026-09-25",
+    "next": "Fri 2 Oct 03:00",
+    "soon": 10260
+  },
+  {
+    "id": "inbox",
+    "agent": "dex",
+    "title": "Support inbox round",
+    "when": "every 4 hours",
+    "downtime": false,
+    "last": "2026-09-25 16h",
+    "next": "today 20:00",
+    "soon": 1200
+  },
+  {
+    "id": "show-digest",
+    "agent": "juno",
+    "title": "On Air: The Morning Digest",
+    "when": "daily 06:45",
+    "downtime": false,
+    "last": "2026-09-25",
+    "next": "tomorrow 06:45",
+    "soon": 2845
+  },
+  {
+    "id": "show-friday",
+    "agent": "juno",
+    "title": "On Air: Friday at the Studio",
+    "when": "Fridays 15:45",
+    "downtime": false,
+    "last": "2026-09-19",
+    "next": "Friday 15:45",
+    "soon": 7065
+  }
+]

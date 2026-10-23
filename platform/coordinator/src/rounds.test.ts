@@ -1,0 +1,140 @@
+// node --test src/rounds.test.ts
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { play } from './eta.ts';
+import type { QueuedJob, Snapshot } from './eta.ts';
+
+const work = (id: number, fields: Partial<QueuedJob> = {}): QueuedJob => ({
+  id,
+  agent: 'author',
+  title: 'A change',
+  kind: 'work',
+  origin: 'work',
+  status: 'queued',
+  engine: 'claude',
+  for_seat: null,
+  downtime: 0,
+  created: 0,
+  finished: null,
+  notBefore: 0,
+  seat: null,
+  pr: null,
+  board: 0,
+  spentMs: 0,
+  after: 'released',
+  waitsFor: [],
+  cards: [],
+  wakes: [],
+  due: 3600000,
+  review: null,
+  reasons: [],
+  ...fields,
+});
+const snapshot = (jobs: QueuedJob[]): Snapshot => ({
+  now: 0,
+  planner: 3,
+  jobs,
+  seats: ['claude', 'codex'].map(engine => ({
+    id: engine,
+    engine,
+    state: 'ready',
+    until: null,
+    fiveHour: 0,
+    fiveHourResets: null,
+    week: 0,
+    weekResets: null, // (no pace)
+    stop: 0.95,
+  })),
+  rates: {},
+  slots: { claude: 1, codex: 1 },
+  deployLagMs: 0,
+});
+
+test('existing review runs count once and remaining fixes and rulings use their measured times', () => {
+  const owner = work(1, {
+    board: 1,
+    reviewPlan: {
+      panel: 'one',
+      count: 2,
+      terminal: '2:ruling',
+      stages: [
+        {
+          key: '1:review',
+          job: 2,
+          kind: 'review',
+          agent: 'reader',
+          engine: 'claude',
+          usualMs: 10,
+          slowMs: 20,
+          after: [],
+        },
+        { key: '1:fix', kind: 'work', agent: 'owner', engine: 'codex', usualMs: 30, slowMs: 40, after: ['1:review'] },
+        {
+          key: '2:ruling',
+          kind: 'consolidate',
+          agent: 'ruler',
+          engine: 'claude',
+          usualMs: 50,
+          slowMs: 60,
+          after: ['1:fix'],
+        },
+      ],
+    },
+  });
+  const input = snapshot([owner, work(2, { kind: 'review' }), work(3, { after: 1 })]);
+  const sizes = new Map([
+    [1, { agent_ms: 100 }],
+    [2, { agent_ms: 15 }],
+    [3, { agent_ms: 1 }],
+  ]);
+  const slow = play(input, sizes, { pace: 'slow' });
+  assert.equal(slow.get(1)!.done, 100);
+  assert.equal(slow.get(1)!.merged, 215);
+  assert.equal(slow.get(3)!.start, 215);
+  assert.equal(play(input, sizes).get(1)!.merged, 195);
+  sizes.set(1, { agent_ms: 100 });
+  assert.equal(play(input, sizes, { pace: 'slow' }).get(1)!.merged, 215);
+});
+
+test('existing fixes keep task precedence while later work waits for its own forecast review', () => {
+  const fix = work(1, { origin: 'fix' });
+  const continuation = work(2, {
+    follows: fix.id,
+    reviewPlan: {
+      panel: 'check',
+      count: 1,
+      terminal: 'ruling',
+      stages: [
+        {
+          key: 'fix',
+          job: fix.id,
+          kind: 'work',
+          agent: fix.agent,
+          engine: fix.engine,
+          usualMs: 10,
+          slowMs: 10,
+          after: [],
+        },
+        {
+          key: 'ruling',
+          kind: 'consolidate',
+          agent: 'ruler',
+          engine: 'codex',
+          usualMs: 30,
+          slowMs: 30,
+          after: ['fix'],
+        },
+      ],
+    },
+  });
+  const input = snapshot([fix, continuation]);
+  const sizes = new Map([
+    [fix.id, { agent_ms: 10 }],
+    [continuation.id, { agent_ms: 100 }],
+  ]);
+  const seen = play(input, sizes);
+  assert.equal(seen.get(fix.id)!.start, 0);
+  assert.equal(seen.get(continuation.id)!.start, 10);
+  assert.equal(seen.get(continuation.id)!.done, 110);
+  assert.equal(seen.get(continuation.id)!.merged, 140);
+});

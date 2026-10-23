@@ -1,0 +1,12 @@
+# The nightly off-site backup (infra/backup.py), installed by harden.sh. Root: it reads the Docker volumes.
+[Unit]
+Description=Nightly off-site backup to R2, encrypted to the board's key
+After=docker.service
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 /opt/@SERVER_NAME@/infra/backup.py run
+UMask=0077
+PrivateTmp=yes
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=2h

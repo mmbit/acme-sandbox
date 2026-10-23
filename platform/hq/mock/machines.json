@@ -1,0 +1,634 @@
+[
+  {
+    "id": 1,
+    "name": "The rig",
+    "state": "running",
+    "speed": 4416,
+    "cpus": 24,
+    "memoryGb": 40,
+    "gpu": "NVIDIA GeForce RTX 4090",
+    "gpuCount": 1,
+    "body": null,
+    "glow": null,
+    "kinds": ["simulation", "render"],
+    "paused": false,
+    "added": "2026-09-02T10:00:00.000Z",
+    "seen": "2026-10-17T08:04:50.000Z",
+    "run": {
+      "kind": "simulation",
+      "job": 61,
+      "job_code": "EN-SEEDS",
+      "agent": "wren",
+      "title": "Venture sizing: 400 seeds",
+      "since": "2026-10-17T07:35:00.000Z",
+      "cores": 24
+    },
+    "live": {
+      "cpu": 64,
+      "mem": 52,
+      "gpu": 16,
+      "history": [
+        {
+          "at": "2026-10-17T08:00:00.000Z",
+          "cpu": 70,
+          "mem": 48,
+          "gpu": 10
+        },
+        {
+          "at": "2026-10-17T08:00:10.000Z",
+          "cpu": 78,
+          "mem": 49,
+          "gpu": 13
+        },
+        {
+          "at": "2026-10-17T08:00:20.000Z",
+          "cpu": 85,
+          "mem": 50,
+          "gpu": 15
+        },
+        {
+          "at": "2026-10-17T08:00:30.000Z",
+          "cpu": 91,
+          "mem": 51,
+          "gpu": 16
+        },
+        {
+          "at": "2026-10-17T08:00:40.000Z",
+          "cpu": 94,
+          "mem": 52,
+          "gpu": 15
+        },
+        {
+          "at": "2026-10-17T08:00:50.000Z",
+          "cpu": 95,
+          "mem": 48,
+          "gpu": 14
+        },
+        {
+          "at": "2026-10-17T08:01:00.000Z",
+          "cpu": 93,
+          "mem": 49,
+          "gpu": 11
+        },
+        {
+          "at": "2026-10-17T08:01:10.000Z",
+          "cpu": 88,
+          "mem": 50,
+          "gpu": 8
+        },
+        {
+          "at": "2026-10-17T08:01:20.000Z",
+          "cpu": 81,
+          "mem": 51,
+          "gpu": 5
+        },
+        {
+          "at": "2026-10-17T08:01:30.000Z",
+          "cpu": 74,
+          "mem": 52,
+          "gpu": 4
+        },
+        {
+          "at": "2026-10-17T08:01:40.000Z",
+          "cpu": 65,
+          "mem": 48,
+          "gpu": 4
+        },
+        {
+          "at": "2026-10-17T08:01:50.000Z",
+          "cpu": 57,
+          "mem": 49,
+          "gpu": 6
+        },
+        {
+          "at": "2026-10-17T08:02:00.000Z",
+          "cpu": 51,
+          "mem": 50,
+          "gpu": 8
+        },
+        {
+          "at": "2026-10-17T08:02:10.000Z",
+          "cpu": 47,
+          "mem": 51,
+          "gpu": 11
+        },
+        {
+          "at": "2026-10-17T08:02:20.000Z",
+          "cpu": 45,
+          "mem": 52,
+          "gpu": 14
+        },
+        {
+          "at": "2026-10-17T08:02:30.000Z",
+          "cpu": 46,
+          "mem": 48,
+          "gpu": 16
+        },
+        {
+          "at": "2026-10-17T08:02:40.000Z",
+          "cpu": 50,
+          "mem": 49,
+          "gpu": 16
+        },
+        {
+          "at": "2026-10-17T08:02:50.000Z",
+          "cpu": 56,
+          "mem": 50,
+          "gpu": 15
+        },
+        {
+          "at": "2026-10-17T08:03:00.000Z",
+          "cpu": 63,
+          "mem": 51,
+          "gpu": 12
+        },
+        {
+          "at": "2026-10-17T08:03:10.000Z",
+          "cpu": 71,
+          "mem": 52,
+          "gpu": 10
+        },
+        {
+          "at": "2026-10-17T08:03:20.000Z",
+          "cpu": 79,
+          "mem": 48,
+          "gpu": 7
+        },
+        {
+          "at": "2026-10-17T08:03:30.000Z",
+          "cpu": 86,
+          "mem": 49,
+          "gpu": 5
+        },
+        {
+          "at": "2026-10-17T08:03:40.000Z",
+          "cpu": 92,
+          "mem": 50,
+          "gpu": 4
+        },
+        {
+          "at": "2026-10-17T08:03:50.000Z",
+          "cpu": 95,
+          "mem": 51,
+          "gpu": 5
+        },
+        {
+          "at": "2026-10-17T08:04:00.000Z",
+          "cpu": 95,
+          "mem": 52,
+          "gpu": 7
+        },
+        {
+          "at": "2026-10-17T08:04:10.000Z",
+          "cpu": 92,
+          "mem": 48,
+          "gpu": 10
+        },
+        {
+          "at": "2026-10-17T08:04:20.000Z",
+          "cpu": 87,
+          "mem": 49,
+          "gpu": 13
+        },
+        {
+          "at": "2026-10-17T08:04:30.000Z",
+          "cpu": 80,
+          "mem": 50,
+          "gpu": 15
+        },
+        {
+          "at": "2026-10-17T08:04:40.000Z",
+          "cpu": 72,
+          "mem": 51,
+          "gpu": 16
+        },
+        {
+          "at": "2026-10-17T08:04:50.000Z",
+          "cpu": 64,
+          "mem": 52,
+          "gpu": 16
+        }
+      ],
+      "lines": [
+        "seed 301: sizing ran 903 variants, best margin 0.872",
+        "seed 302: sizing ran 906 variants, best margin 0.875",
+        "seed 303: sizing ran 909 variants, best margin 0.877",
+        "seed 304: sizing ran 912 variants, best margin 0.88",
+        "seed 305: sizing ran 915 variants, best margin 0.882",
+        "seed 306: sizing ran 918 variants, best margin 0.885",
+        "seed 307: sizing ran 921 variants, best margin 0.887",
+        "seed 308: sizing ran 924 variants, best margin 0.89",
+        "seed 309: sizing ran 927 variants, best margin 0.892",
+        "seed 310: sizing ran 930 variants, best margin 0.895",
+        "seed 311: sizing ran 933 variants, best margin 0.897",
+        "seed 312: sizing ran 936 variants, best margin 0.9",
+        "seed 313: sizing ran 939 variants, best margin 0.902",
+        "seed 314: sizing ran 942 variants, best margin 0.905",
+        "seed 315: sizing ran 945 variants, best margin 0.907",
+        "seed 316: sizing ran 948 variants, best margin 0.91",
+        "seed 317: sizing ran 951 variants, best margin 0.912",
+        "seed 318: sizing ran 954 variants, best margin 0.915",
+        "seed 319: sizing ran 957 variants, best margin 0.917",
+        "seed 320: sizing ran 960 variants, best margin 0.92",
+        "seed 321: sizing ran 963 variants, best margin 0.922",
+        "seed 322: sizing ran 966 variants, best margin 0.925",
+        "seed 323: sizing ran 969 variants, best margin 0.927",
+        "seed 324: sizing ran 972 variants, best margin 0.93",
+        "seed 325: sizing ran 975 variants, best margin 0.932",
+        "seed 326: sizing ran 978 variants, best margin 0.935",
+        "seed 327: sizing ran 981 variants, best margin 0.938",
+        "seed 328: sizing ran 984 variants, best margin 0.94",
+        "seed 329: sizing ran 987 variants, best margin 0.943",
+        "seed 330: sizing ran 990 variants, best margin 0.945",
+        "seed 331: sizing ran 993 variants, best margin 0.948",
+        "seed 332: sizing ran 996 variants, best margin 0.95",
+        "seed 333: sizing ran 999 variants, best margin 0.953",
+        "seed 334: sizing ran 1002 variants, best margin 0.955",
+        "seed 335: sizing ran 1005 variants, best margin 0.958",
+        "seed 336: sizing ran 1008 variants, best margin 0.96",
+        "seed 337: sizing ran 1011 variants, best margin 0.963",
+        "seed 338: sizing ran 1014 variants, best margin 0.965",
+        "seed 339: sizing ran 1017 variants, best margin 0.968",
+        "<b>not markup</b> & a line that stays text"
+      ]
+    }
+  },
+  {
+    "id": 2,
+    "name": "The study’s laptop",
+    "state": "taking",
+    "speed": 512,
+    "cpus": 4,
+    "memoryGb": 8,
+    "gpu": null,
+    "gpuCount": 0,
+    "body": null,
+    "glow": null,
+    "kinds": ["simulation"],
+    "paused": false,
+    "added": "2026-10-10T18:00:00.000Z",
+    "seen": "2026-10-17T08:04:55.000Z",
+    "live": {
+      "cpu": 6,
+      "mem": 31,
+      "history": [
+        {
+          "at": "2026-10-17T08:00:00.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:00:10.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:00:20.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:00:30.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:00:40.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:00:50.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:00.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:10.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:20.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:30.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:40.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:01:50.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:00.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:10.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:20.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:30.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:40.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:02:50.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:00.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:10.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:20.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:30.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:40.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:03:50.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:00.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:10.000Z",
+          "cpu": 5,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:20.000Z",
+          "cpu": 6,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:30.000Z",
+          "cpu": 7,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:40.000Z",
+          "cpu": 4,
+          "mem": 31
+        },
+        {
+          "at": "2026-10-17T08:04:50.000Z",
+          "cpu": 5,
+          "mem": 31
+        }
+      ],
+      "lines": []
+    }
+  },
+  {
+    "id": 3,
+    "name": "Old tower",
+    "state": "away",
+    "speed": 896,
+    "cpus": 8,
+    "memoryGb": 16,
+    "gpu": null,
+    "gpuCount": 0,
+    "body": null,
+    "glow": null,
+    "kinds": [],
+    "paused": false,
+    "added": "2026-10-12T09:00:00.000Z",
+    "seen": "2026-10-15T22:10:00.000Z"
+  },
+  {
+    "id": 4,
+    "name": "Spare mini PC",
+    "state": "paused",
+    "speed": 640,
+    "cpus": 4,
+    "memoryGb": 16,
+    "gpu": null,
+    "gpuCount": 0,
+    "body": null,
+    "glow": null,
+    "kinds": ["simulation"],
+    "paused": true,
+    "added": "2026-10-14T09:00:00.000Z",
+    "seen": "2026-10-17T08:04:40.000Z"
+  },
+  {
+    "id": "server",
+    "name": "This server",
+    "state": "taking",
+    "speed": 528,
+    "cpus": 4,
+    "memoryGb": 3,
+    "gpu": null,
+    "gpuCount": 0,
+    "body": null,
+    "glow": null,
+    "kinds": ["simulation"],
+    "paused": false,
+    "added": null,
+    "seen": "2026-10-17T08:04:58.000Z",
+    "live": {
+      "cpu": 22,
+      "mem": 63,
+      "history": [
+        {
+          "at": "2026-10-17T08:00:00.000Z",
+          "cpu": 20,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:00:10.000Z",
+          "cpu": 21,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:00:20.000Z",
+          "cpu": 22,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:00:30.000Z",
+          "cpu": 23,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:00:40.000Z",
+          "cpu": 24,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:00:50.000Z",
+          "cpu": 25,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:00.000Z",
+          "cpu": 20,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:10.000Z",
+          "cpu": 21,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:20.000Z",
+          "cpu": 22,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:30.000Z",
+          "cpu": 23,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:40.000Z",
+          "cpu": 24,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:01:50.000Z",
+          "cpu": 25,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:00.000Z",
+          "cpu": 20,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:10.000Z",
+          "cpu": 21,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:20.000Z",
+          "cpu": 22,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:30.000Z",
+          "cpu": 23,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:40.000Z",
+          "cpu": 24,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:02:50.000Z",
+          "cpu": 25,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:00.000Z",
+          "cpu": 20,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:10.000Z",
+          "cpu": 21,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:20.000Z",
+          "cpu": 22,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:30.000Z",
+          "cpu": 23,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:40.000Z",
+          "cpu": 24,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:03:50.000Z",
+          "cpu": 25,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:00.000Z",
+          "cpu": 20,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:10.000Z",
+          "cpu": 21,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:20.000Z",
+          "cpu": 22,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:30.000Z",
+          "cpu": 23,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:40.000Z",
+          "cpu": 24,
+          "mem": 63
+        },
+        {
+          "at": "2026-10-17T08:04:50.000Z",
+          "cpu": 25,
+          "mem": 63
+        }
+      ],
+      "lines": []
+    }
+  }
+]

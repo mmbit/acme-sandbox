@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Care's ImageMagick policy (photos.ts): a claim photo is decoded here and nowhere else. Everything is refused but
+     JPEG in and JPEG out; no delegates (Ghostscript, curl…), no indirect reads (@file). This policy is the guard: Alpine's
+     core imagemagick package still carries some 90 coders (MSL, MVG, TXT, URL, HTML, PS…). The resources bound one decode: a bomb fails here, never in the service. -->
+<!DOCTYPE policymap [
+<!ELEMENT policymap (policy)*>
+<!ATTLIST policymap xmlns CDATA #FIXED "">
+<!ELEMENT policy EMPTY>
+<!ATTLIST policy xmlns CDATA #FIXED "" domain NMTOKEN #REQUIRED name NMTOKEN #IMPLIED pattern CDATA #IMPLIED rights NMTOKEN #IMPLIED stealth NMTOKEN #IMPLIED value CDATA #IMPLIED>
+]>
+<policymap>
+  <policy domain="resource" name="memory" value="160MiB"/>
+  <policy domain="resource" name="map" value="0"/>
+  <policy domain="resource" name="disk" value="0"/>
+  <policy domain="resource" name="area" value="40MP"/>
+  <policy domain="resource" name="width" value="16KP"/>
+  <policy domain="resource" name="height" value="16KP"/>
+  <policy domain="resource" name="time" value="20"/>
+  <policy domain="resource" name="thread" value="1"/>
+  <!-- The memory resource above bounds ImageMagick's own pixels, not libjpeg's: a
+       progressive JPEG's whole-image coefficient buffers are libjpeg's (40 MP 4:4:4 is 240 MB, CMYK 320 MB, from a 0.5 MB
+       file). ImageMagick passes this to libjpeg as its limit, so such a file fails here; a 40 MP 4:2:0 one still fits. -->
+  <policy domain="system" name="max-memory-request" value="128MiB"/>
+  <policy domain="delegate" rights="none" pattern="*"/>
+  <policy domain="filter" rights="none" pattern="*"/>
+  <policy domain="path" rights="none" pattern="@*"/>
+  <policy domain="coder" rights="none" pattern="*"/>
+  <policy domain="coder" rights="read|write" pattern="{JPEG,JPG,JPE}"/>
+</policymap>

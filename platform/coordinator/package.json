@@ -1,0 +1,17 @@
+{
+  "name": "coordinator",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.ts"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.3.0",
+    "@simplewebauthn/browser": "^14.0.0",
+    "@simplewebauthn/server": "^14.0.3",
+    "entities": "^8.1.0",
+    "marked": "^18.0.14",
+    "sharp": "^0.35.5",
+    "yaml": "^2.9.1"
+  }
+}

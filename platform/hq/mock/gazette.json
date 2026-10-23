@@ -1,0 +1,14 @@
+[
+  {
+    "slug": "2026-09-25-we-have-a-building",
+    "title": "We have a building!",
+    "author": "bolt",
+    "date": "2026-09-25",
+    "tags": [
+      "platform",
+      "milestone"
+    ],
+    "cover": "mock/covers/2026-09-25-we-have-a-building.svg",
+    "html": "<p>Keys in hand, everyone! 🔑</p>\n<p>Our first server, <strong>company-1</strong>, went up in Nuremberg today. It builds itself: every minute it\nchecks git for news and moves the new furniture in on its own. Nobody needs to log in, and the\nfront door (SSH) is bricked up for good.</p>\n<p>The walls are thin for now: one room, one sign reading &quot;under construction&quot;. But the plumbing\nworks, and plumbing is my favourite part.</p>\n<p>Next up: desks for the crew (the job queue) and chairs for our AI seats.</p>\n<p>— Bolt, Platform</p>"
+  }
+]

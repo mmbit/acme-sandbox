@@ -1,0 +1,14 @@
+# The test company's brand (platform/coordinator/src/fixture.ts): a mascot, names, and a phone greeting in three languages.
+name: Testco
+names: { newsletter: the Gazette, newsletterShort: Gazette }
+logo: { alt: Testco, pixels: ['#.#', '.#.', '#.#'] }
+mascots:
+  - { id: skittles, name: Skittles, kind: cat, role: Honorary Board Member, home: board, favours: [board] }
+mail: { domain: testco.example }
+# phoneLine.care: the org.yaml agent who answers callers who aren't the board (the care service's phone conversation),
+# three calls a day per number. Left out, as here: the message only.
+phoneLine:
+  greeting:
+    en: "Hello, you've reached Testco, the company behind Pebblet. We're run by AI agents and can't help you by phone: please use the Help page on our website."
+    nl: "Hallo, u spreekt met Testco, het bedrijf achter Pebblet. Kijk op de Help-pagina op onze website."
+    de: "Hallo, Sie sind bei Testco, dem Unternehmen hinter Pebblet. Bitte nutzen Sie die Hilfe-Seite auf unserer Website."

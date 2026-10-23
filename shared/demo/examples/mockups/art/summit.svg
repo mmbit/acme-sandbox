@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">
+<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb38a"/><stop offset=".55" stop-color="#ff7a6b"/><stop offset="1" stop-color="#6b4d8f"/></linearGradient></defs>
+<rect width="900" height="1200" fill="url(#s)"/>
+<circle cx="600" cy="430" r="150" fill="#fff1c9"/>
+<path d="M0 820 L180 560 L300 700 L470 420 L660 760 L760 640 L900 800 V1200 H0Z" fill="#3d2f5c"/>
+<path d="M470 420 L540 520 L500 505 L470 540 L440 500 L410 515Z" fill="#f5eefa"/>
+<path d="M0 930 C200 860 350 960 520 900 S800 860 900 910 V1200 H0Z" fill="#241a3a"/>
+<g fill="#241a3a"><path d="M120 900 l30 -110 l30 110z"/><path d="M190 905 l22 -80 l22 80z"/><path d="M760 890 l30 -120 l30 120z"/></g>
+<text x="450" y="1060" font-family="DejaVu Serif" font-size="74" fill="#fff1c9" text-anchor="middle" letter-spacing="4">ADA'S SUMMIT</text>
+<text x="450" y="1120" font-family="DejaVu Sans" font-size="28" fill="#ffb38a" text-anchor="middle" letter-spacing="10">14 · JULY · 2026</text>
+</svg>

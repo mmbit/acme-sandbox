@@ -1,0 +1,21 @@
+<!doctype html>
+<meta charset="utf-8">
+<canvas id="c" width="128" height="72" style="image-rendering: pixelated; width: 768px"></canvas>
+<script type="module">
+  import * as kit from './kit.js';
+  // ?src=<repo path of a cover.js> — its default export draws the cover: draw(g, kit)
+  const src = new URLSearchParams(location.search).get('src');
+  const org = await (await fetch('/company/org.yaml')).text();
+  // One agent per line of org.yaml: id, name, look and sprite (the pixel avatar spelled out), all that makeLook reads.
+  const sprite = line => Object.fromEntries([...(line.match(/\bsprite: \{([^}]*)\}/)?.[1] ?? '').matchAll(/(\w+): "?([^",]*)"?/g)].map(([, k, v]) => [k, v.trim()]));
+  kit.setPeople(Object.fromEntries([...org.matchAll(/\{ id: ([\w-]+), name: ([^,]+),[^}]*?look: "([^"]*)".*/g)].map(([line, id, name, look]) => [id, { id, name, look, sprite: sprite(line) }])));
+  // The company's brand (brand.yaml, served by render.mjs): its logo for kit.wordmark.
+  kit.setBrand(await (await fetch('/brand.json')).json());
+  // A sheet bigger than one cover (reference.js) says its size; it draws each panel at cover size
+  const { default: draw, size } = await import('/' + src);
+  const c = document.getElementById('c');
+  if (size) [c.width, c.height, c.style.width] = [size[0], size[1], `${size[0] * 3}px`];
+  const g = c.getContext('2d');
+  draw(g, kit);
+  window.done = document.getElementById('c').toDataURL('image/png');
+</script>

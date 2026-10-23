@@ -1,0 +1,17 @@
+# The Overseer's way in when HQ is down (infra/shell.py), installed by harden.sh. Root: it reads Docker's logs and
+# restarts services. It listens on Docker's bridge only (Caddy's /__shell), and takes only GitHub's tokens for this
+# repo's overseer workflow on main.
+[Unit]
+Description=The Overseer's fixed actions (status, logs, restart, deploy) for GitHub's overseer workflow
+After=docker.service
+Requires=docker.service
+[Service]
+EnvironmentFile=/etc/@SERVER_NAME@/env
+Environment=SERVER_NAME=@SERVER_NAME@ SHELL_CWD=/opt/@SERVER_NAME@ SHELL_AUDIENCE=overseer-shell SHELL_BIND=172.17.0.1:8722
+ExecStart=/usr/bin/python3 /opt/@SERVER_NAME@/infra/shell.py serve
+Restart=always
+RestartSec=5
+UMask=0077
+PrivateTmp=yes
+[Install]
+WantedBy=multi-user.target

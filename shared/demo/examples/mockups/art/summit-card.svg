@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1050" height="1480" viewBox="0 0 1050 1480">
+<!-- Card-ratio (1:1.41, A6 folded card) version of summit.svg, for the card example. Original art; "Ada" is a made-up name. -->
+<defs><linearGradient id="s" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffb38a"/><stop offset=".5" stop-color="#ff7a6b"/><stop offset="1" stop-color="#6b4d8f"/></linearGradient></defs>
+<rect width="1050" height="1480" fill="url(#s)"/>
+<circle cx="690" cy="470" r="165" fill="#fff1c9"/>
+<g fill="#fff1c9" opacity=".7"><circle cx="170" cy="190" r="4"/><circle cx="330" cy="120" r="3"/><circle cx="880" cy="170" r="3.5"/><circle cx="250" cy="330" r="2.5"/></g>
+<path d="M0 900 L200 610 L340 770 L540 450 L770 830 L890 700 L1050 880 V1480 H0Z" fill="#3d2f5c"/>
+<path d="M540 450 L620 565 L575 548 L540 588 L505 543 L470 560Z" fill="#f5eefa"/>
+<path d="M0 1030 C230 950 410 1060 610 995 S930 950 1050 1005 V1480 H0Z" fill="#241a3a"/>
+<g fill="#241a3a"><path d="M130 1000 l34 -125 l34 125z"/><path d="M210 1005 l25 -90 l25 90z"/><path d="M880 990 l34 -135 l34 135z"/></g>
+<text x="525" y="1225" font-family="DejaVu Serif" font-size="84" fill="#fff1c9" text-anchor="middle" letter-spacing="4">ADA'S SUMMIT</text>
+<text x="525" y="1300" font-family="DejaVu Sans" font-size="32" fill="#ffb38a" text-anchor="middle" letter-spacing="10">14 · JULY · 2026</text>
+</svg>

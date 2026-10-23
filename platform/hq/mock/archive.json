@@ -1,0 +1,89 @@
+[
+  {
+    "id": 30,
+    "created": "2026-10-02T08:00:00Z",
+    "answered": "2026-10-02T08:30:00Z",
+    "agent": "dex",
+    "kind": "call",
+    "status": "answered",
+    "title": "Meet the paper mill about the sample box",
+    "body": "They'd rather talk than email about the sample box. Dex asks when it ships. It agrees to nothing.",
+    "answer": "Call approved. It opens for one call, until 3 October 08:30. The link to send them: `https://hq.example/join/mock-30`",
+    "call": { "id": 6, "kind": "link", "who": "the paper mill", "about": "the sample box", "lang": "en", "at": null, "ending": null, "digits": false,
+      "status": "approved", "hours": "Mon–Fri 09:00–17:00", "timeZone": "Europe/Amsterdam", "name": "Dex" }
+  },
+  {
+    "id": 48,
+    "created": "2026-10-01T06:19:51Z",
+    "answered": "2026-10-01T19:02:00Z",
+    "agent": "kit",
+    "kind": "decision",
+    "status": "answered",
+    "title": "A support chat for the shops: the pitch and two choices",
+    "body": "An update to #42, after our call on it. The deck shows the chat answering in a shop, and when it hands over to us.\nhttps://cycles.preview.example.com/example-pitch/presentation/\n\nChoose:\n- Build it (recommended): in the first shop, then the others\n- Not now: keep email only\n\n---\nThe mockups and recordings are in the deck.",
+    "answer": "Build it\n\nStart with the first shop."
+  },
+  {
+    "id": 43,
+    "created": "2026-09-29T07:43:54Z",
+    "answered": "2026-09-30T10:00:00Z",
+    "agent": "bolt",
+    "kind": "credential",
+    "status": "answered",
+    "title": "Off-site backups: bucket, token and your key",
+    "body": "Off-site backups need three things from you. Paste each into its field below: they go straight to the server's key store, and no agent ever sees them.\n\n1. The bucket's name\n2. Its access token\n3. Your backup key",
+    "answer": "Saved on the server: BACKUP_BUCKET, BACKUP_TOKEN, BACKUP_KEY. Jobs get the test keys as environment variables (without _TEST_)."
+  },
+  {
+    "id": 41,
+    "created": "2026-09-29T03:33:03Z",
+    "answered": "2026-09-29T08:10:00Z",
+    "agent": "moss",
+    "kind": "decision",
+    "status": "answered",
+    "title": "The logo, round 2: A or D",
+    "body": "Two looks left. The film shows both on a shop page.\nThe film: products/_cycles/example-logo/logo-film.mp4\nBoth logos side by side: products/_cycles/example-logo/side-by-side.png\n\nOptions: A | D",
+    "answer": "D"
+  },
+  {
+    "id": 42,
+    "created": "2026-09-29T07:25:09Z",
+    "answered": null,
+    "agent": "kit",
+    "kind": "decision",
+    "status": "done",
+    "title": "A support chat for the shops: the first pitch",
+    "body": "The first pitch. https://cycles.preview.example.com/example-pitch/presentation/",
+    "answer": null
+  },
+  {
+    "id": 27,
+    "created": "2026-09-27T23:57:22Z",
+    "answered": "2026-09-28T07:00:00Z",
+    "agent": "dex",
+    "kind": "action",
+    "status": "answered",
+    "title": "The test print arrived. How does it look?",
+    "body": "The test poster arrived. Add a photo of it and a few words.",
+    "answer": "The colours match the phone.\n\nPhotos: 1 of 1 saved.",
+    "photos": [
+      {
+        "label": "The poster",
+        "optional": false,
+        "saved": true
+      }
+    ]
+  },
+  {
+    "id": 15,
+    "created": "2026-09-27T01:10:05Z",
+    "answered": "2026-09-27T02:00:00Z",
+    "agent": "dex",
+    "kind": "credential",
+    "status": "answered",
+    "title": "An example service: client ID and secret",
+    "body": "Paste the client ID and the secret from the test account's settings page.",
+    "answer": null,
+    "answer_hidden": "key"
+  }
+]

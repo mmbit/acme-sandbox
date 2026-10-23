@@ -1,0 +1,674 @@
+// node --test src/threadorder.test.ts   (throwaway DATA_DIR and the test company): threads in order while the company
+// plans by threads: a task after the one before it is done, a thread's first task after the threads it needs merge, the
+// thread's branch, its one pull request opened by every push, the next task held while a fix of it is open, the profile
+// split's pull request, the refusals, a merged thread closed, switching off and its drain, and the meetings' plan changes
+// (threadorder.ts, threadends.ts), and work past a thread's release out of its pull request.
+import { test, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
+import { writeFileSync } from 'node:fs';
+import { harness, until, type Running } from './harness.ts';
+
+const FILE = `projects:
+  - { id: game, name: The game, owner: wren }
+  - { id: shop, name: The shop, owner: moss }
+`;
+const h = await harness('threadorder', {
+  serve: true,
+  before: repo => writeFileSync(`${repo}/company/projects.yaml`, `${FILE}planning: threads\n`),
+});
+const { db } = h;
+const projects = await import('./projects.ts');
+const plan = await import('./plan.ts');
+const threadends = await import('./threadends.ts');
+const backlog = await import('./backlog.ts');
+const predictions = await import('./predictions.ts');
+const meetings = await import('./meetings.ts');
+const wakes = await import('./wakes.ts');
+const forecast = await import('./forecast.ts');
+const proposals = await import('./proposals.ts');
+// projects.yaml's switch, as HQ takes it in (threadends.ts watch, every minute)
+const planning = (on: boolean) => {
+  writeFileSync(`${h.repo}/company/projects.yaml`, `${FILE}${on ? 'planning: threads\n' : ''}`);
+  threadends.watch();
+};
+
+beforeEach(async () => {
+  planning(true);
+  h.cancelQueued();
+  db.exec(`delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes; delete from prs;
+    delete from waits; delete from wakes; delete from meetings; delete from meeting_seats; delete from meeting_asks;
+    delete from review_fix_tasks; delete from review_inbox; delete from proposals`);
+});
+
+const thread = (slug: string, project = 'game') => {
+  const t = projects.createThread({ project, name: `Thread ${slug}`, goal: 'It works', slug });
+  assert.equal(typeof t, 'object', typeof t === 'string' ? t : '');
+  return `${project}/${slug}`;
+};
+// a task on an engine of its own (reviews run on claude), so one claim picks among them all
+const task = (thread: string, agent = 'bolt') =>
+  h.jobs.createJob({ agent, title: `${agent}'s step`, prompt: 'Do it.', thread, engine: 'tasks', queuedBy: 'wren' }).id;
+const claim = () => h.claim('tasks');
+const sha = (c: string) => c.repeat(40);
+// A push of only the author's own records, which the review merges unreviewed through GitHub (review.ts mergeOffice)
+const records = (run: Running, pr: number, c: string) =>
+  h.finish(run, { pr, branch: run.branch ?? `job/${run.id}`, files: [`company/people/${run.agent}.md`], sha: sha(c) });
+const merged = (pr: number) => until(() => h.github.pr(pr).merged, `PR #${pr} merged`);
+const waitsOf = (id: number) => (h.job(id).waits as { id: number }[]).map(w => w.id);
+
+for (const operation of ['add', 'move']) {
+  test(`a wait ${operation} closing a loop through a deployment wake is refused atomically`, async () => {
+    const waiting = task(thread('waiting')),
+      deploying = task(thread('deploying')),
+      other = task(thread('other'));
+    wakes.hold(deploying, [{ kind: 'deployed', arg: String(waiting) }]);
+    const owner = await h.start({ agent: 'wren' });
+    if (operation === 'move') {
+      const added = await h.agent('waits', owner.token, { id: waiting, to: other });
+      assert.equal(added.status, 200, JSON.stringify(added.body));
+    }
+    const before = waitsOf(waiting);
+    const changes = db.prepare('select count(*) n from plan_changes').get();
+    const refused = await h.agent('waits', owner.token, {
+      id: waiting,
+      to: deploying,
+      ...(operation === 'move' ? { from: other } : {}),
+    });
+    assert.equal(refused.status, 409, JSON.stringify(refused.body));
+    assert.match(refused.body.error, /cycle/);
+    assert.ok(refused.body.error.includes(`#${waiting}`));
+    assert.ok(refused.body.error.includes(`#${deploying}`));
+    assert.deepEqual(waitsOf(waiting), before);
+    assert.deepEqual(db.prepare('select count(*) n from plan_changes').get(), changes);
+    const allowed = await h.agent('waits', owner.token, { id: waiting, to: other });
+    assert.equal(allowed.status, 200, JSON.stringify(allowed.body));
+    assert.deepEqual(waitsOf(waiting), [other]);
+  });
+}
+
+test('moving a task with a retained self-wait into another thread does not create a self-wait', async () => {
+  const source = thread('source'),
+    destination = thread('destination');
+  const moved = task(source);
+  h.jobs.holdForMerge(moved, moved, 'wren');
+  const owner = await h.start({ agent: 'wren' });
+  const accepted = await h.agent('jobs/move', owner.token, { id: moved, thread: destination });
+  assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+  assert.equal(h.job(moved).thread, destination);
+  assert.deepEqual(waitsOf(moved), [moved]);
+});
+
+test('a need closing a loop through a review endpoint is refused atomically at the plan API', async () => {
+  const build = thread('build'),
+    records = thread('records');
+  const work = task(build);
+  const author = h.ended({ agent: 'bolt', thread: records });
+  h.storedPr(9701, author, 'open', ['knowledge/notes/example.md'], { since: author, sha: sha('c') });
+  const fix = h.queue({ agent: 'bolt', branch: `job/${author}`, pr: 9701, stage: 'fix' });
+  wakes.hold(fix, [{ kind: 'deployed', arg: String(work) }]);
+  const owner = await h.start({ agent: 'wren' });
+  const before = db.prepare('select count(*) n from plan_changes').get();
+  const refused = await h.agent('plan/need', owner.token, { thread: build, needs: records });
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /cycle/);
+  assert.ok(refused.body.error.includes(build));
+  assert.ok(refused.body.error.includes(records));
+  assert.deepEqual(projects.needsOf(build), []);
+  assert.deepEqual(db.prepare('select count(*) n from plan_changes').get(), before);
+});
+
+test('an old need closing a review endpoint loop cannot fail claims, job listings or either forecast', async () => {
+  const build = thread('build'),
+    records = thread('records');
+  assert.deepEqual(plan.need(build, records, 'wren'), { ok: true });
+  const work = task(build);
+  const author = h.ended({ agent: 'bolt', thread: records });
+  h.storedPr(9702, author, 'open', ['knowledge/notes/example.md'], { since: author, sha: sha('c') });
+  const fix = h.queue({ agent: 'bolt', branch: `job/${author}`, pr: 9702, stage: 'fix' });
+  wakes.hold(fix, [{ kind: 'deployed', arg: String(work) }]);
+  const independent = task(thread('independent'));
+  assert.equal((await claim())?.id, independent);
+  assert.equal((await h.board('/api/jobs')).status, 200);
+  const seen = predictions.played(Date.now());
+  for (const pace of ['usual', 'slow'] as const) {
+    assert.equal(seen[pace].get(work)!.start, null);
+    assert.match(JSON.stringify(seen[pace].get(work)!.waits), /cycle/);
+  }
+});
+
+test('a task replacing a bare thread is refused when its deploy wait closes the thread need', async () => {
+  const build = thread('build'),
+    bare = thread('bare');
+  assert.deepEqual(plan.need(build, bare, 'wren'), { ok: true });
+  const work = task(build);
+  const owner = await h.start({ agent: 'wren' });
+  const before = db.prepare('select count(*) n from jobs').get();
+  const changes = db.prepare('select count(*) n from plan_changes').get();
+  const refused = await h.agent('job', owner.token, {
+    agent: 'bolt',
+    title: 'Make the records',
+    prompt: 'Make them.',
+    thread: bare,
+    when: [`deployed:${work}`],
+  });
+  assert.equal(refused.status, 409, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /cycle/);
+  assert.ok(refused.body.error.includes(bare));
+  assert.ok(refused.body.error.includes(build));
+  assert.deepEqual(db.prepare('select count(*) n from jobs').get(), before);
+  assert.deepEqual(db.prepare('select count(*) n from plan_changes').get(), changes);
+  assert.ok(predictions.prepared().snapshot.jobs.some(job => job.placeholder && job.thread === bare));
+});
+
+test('moving a task cannot close a loop through an empty thread and a deploy wait', async () => {
+  const build = thread('build'),
+    bare = thread('bare'),
+    loose = thread('loose');
+  assert.deepEqual(plan.need(build, bare, 'wren'), { ok: true });
+  const work = task(build),
+    moved = task(loose);
+  wakes.hold(moved, [{ kind: 'deployed', arg: String(work) }]);
+  const owner = await h.start({ agent: 'wren' });
+  const refused = await h.agent('jobs/move', owner.token, { id: moved, thread: bare });
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /cycle/);
+  assert.ok(refused.body.error.includes(build));
+  assert.ok(refused.body.error.includes(bare));
+  assert.equal(h.job(moved).thread, loose);
+});
+
+test('the October 21 move of a deployment waiter before its review fix is refused', async () => {
+  const bubbles = thread('bubbles'),
+    watching = thread('watching');
+  const author = h.ended({ agent: 'bolt', thread: bubbles });
+  const waiter = task(watching);
+  wakes.hold(waiter, [{ kind: 'deployed', arg: String(author) }]);
+  const branch = `job/${author}`,
+    pr = 9703;
+  h.storedPr(pr, author, 'open', ['game.ts'], { round: 1 });
+  proposals.deliverFindings({
+    pr,
+    branch,
+    round: 1,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Repair the bubbles',
+    findings: [{ id: 12, domain: 'engine', files: ['game.ts'], issue: 'The bubble cannot finish' }],
+  });
+  const owner = await h.start({ agent: 'wren' });
+  const fixed = await h.agent('job', owner.token, {
+    agent: 'bolt',
+    title: 'Repair the bubbles',
+    prompt: 'Repair them.',
+    thread: bubbles,
+    findings: '12',
+  });
+  assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
+  const refused = await h.agent('jobs/move', owner.token, { id: waiter, thread: bubbles });
+  assert.equal(refused.status, 400, JSON.stringify(refused.body));
+  assert.match(refused.body.error, /cycle/);
+  assert.ok(refused.body.error.includes(`#${waiter}`));
+  assert.ok(refused.body.error.includes(`#${fixed.body.id}`));
+  assert.equal(h.job(waiter).thread, watching);
+
+  planning(false);
+  assert.equal((await h.agent('jobs/move', owner.token, { id: waiter, thread: bubbles })).status, 200);
+  planning(true);
+  const unrelated = thread('independent'),
+    destination = thread('destination'),
+    needed = thread('needed');
+  const queued = await h.agent('job', owner.token, {
+    agent: 'bolt',
+    title: 'Independent work',
+    prompt: 'Do it.',
+    thread: unrelated,
+  });
+  assert.equal(queued.status, 200, JSON.stringify(queued.body));
+  const independent = queued.body.id;
+  const other = task(unrelated);
+  const need = await h.agent('plan/need', owner.token, { thread: unrelated, needs: needed });
+  assert.equal(need.status, 200, JSON.stringify(need.body));
+  assert.deepEqual(projects.needsOf(unrelated), [needed]);
+  const retainedNeed = await h.agent('plan/need', owner.token, { thread: bubbles, needs: needed });
+  assert.equal(retainedNeed.status, 200, JSON.stringify(retainedNeed.body));
+  assert.deepEqual(projects.needsOf(bubbles), [needed]);
+  const order = await h.agent('plan/move', owner.token, { id: other, place: 1 });
+  assert.equal(order.status, 200, JSON.stringify(order.body));
+  assert.deepEqual(order.body.order, [other, independent]);
+  const moved = await h.agent('jobs/move', owner.token, { id: independent, thread: destination });
+  assert.equal(moved.status, 200, JSON.stringify(moved.body));
+  assert.equal(h.job(independent).thread, destination);
+  const relocated = await h.agent('threads/move', owner.token, { id: destination, project: 'shop' });
+  assert.equal(relocated.status, 200, JSON.stringify(relocated.body));
+  assert.equal(h.job(independent).thread, 'shop/destination');
+  assert.equal(h.job(independent).ready, 1);
+  const claimable = task(thread('claimable'));
+  assert.equal((await claim())?.id, claimable);
+  assert.equal((await h.board('/api/jobs')).status, 200);
+  const seen = predictions.played();
+  for (const pace of ['usual', 'slow'] as const) {
+    assert.equal(seen[pace].get(waiter)!.start, null);
+    assert.equal(seen[pace].get(author)!.merged, null);
+    assert.match(JSON.stringify(seen[pace].get(fixed.body.id)!.waits), /cycle/);
+  }
+  const build = thread('second-build'),
+    records = thread('second-records');
+  assert.deepEqual(plan.need(build, records, 'wren'), { ok: true });
+  const work = task(build);
+  const secondAuthor = h.ended({ agent: 'bolt', thread: records });
+  h.storedPr(9704, secondAuthor, 'open', ['knowledge/notes/example.md'], { since: secondAuthor, sha: sha('d') });
+  const secondFix = h.queue({ agent: 'bolt', branch: `job/${secondAuthor}`, pr: 9704, stage: 'fix' });
+  wakes.hold(secondFix, [{ kind: 'deployed', arg: String(work) }]);
+
+  const repaired = await h.agent('plan/move', owner.token, { id: waiter, place: 2 });
+  assert.equal(repaired.status, 200, JSON.stringify(repaired.body));
+  const reversed = await h.agent('plan/move', owner.token, { id: waiter, place: 1 });
+  assert.equal(reversed.status, 400, JSON.stringify(reversed.body));
+  assert.match(reversed.body.error, /cycle/);
+  const after = predictions.played().usual.get(fixed.body.id)!;
+  assert.doesNotMatch(JSON.stringify(after.waits), /cycle/);
+  const retained = predictions.played().usual.get(work)!;
+  assert.equal(retained.start, null);
+  assert.match(JSON.stringify(retained.waits), /cycle/);
+});
+
+test("a thread's tasks run one at a time on the first task's branch, and each one's push opens its pull request", async () => {
+  const t = thread('levels');
+  const [one, two, three] = [task(t), task(t, 'moss'), task(t)];
+  const first = await claim();
+  assert.equal(first?.id, one);
+  assert.deepEqual((first as any).inThread, {
+    ...{ id: t, name: 'Thread levels', goal: 'It works', place: 1, of: 3 },
+    before: null,
+  });
+  assert.equal(await claim(), null, 'the next task waits for the one before it');
+  assert.deepEqual(h.job(two).wakes, [`after #${one} in its thread`]);
+  assert.equal(h.job(two).ready, 0);
+  const opening = (await h.worker('thread-push', { job: one })).body;
+  assert.equal(opening.opens, true, 'finished work opens the pull request, whatever is left in the thread');
+  assert.equal(opening.pull.title, 'Thread levels', "titled with the thread's name");
+
+  assert.equal(
+    (await h.finish(first!, { branch: `job/${one}`, sha: sha('a'), gates: { passed: true, report: '' } })).status,
+    200,
+  );
+  assert.equal(h.job(one).status, 'done');
+  const second = await claim();
+  assert.equal(second?.id, two, 'done is enough: the thread merges once, at its end');
+  assert.equal(second!.branch, `job/${one}`, 'a later task runs on the branch the first pushed');
+  assert.deepEqual((second as any).inThread.before, { id: one, agent: 'bolt', title: "bolt's step" });
+  await h.finish(second!, { branch: `job/${one}`, sha: sha('b') });
+  const third = await claim();
+  assert.equal(third?.id, three);
+  assert.equal(third!.branch, `job/${one}`);
+  const pushed = (await h.worker('thread-push', { job: three })).body;
+  assert.equal(pushed.opens, true, 'the last task too: its push is the next round');
+  assert.match(
+    pushed.pull.body,
+    new RegExp(`done when: It works\n\nIts tasks:\n- #${one}, bolt: bolt's step\n- #${two}, moss`),
+  );
+});
+
+test('switched off, the same tasks run as today: side by side, each its own pull request', async () => {
+  planning(false);
+  const t = thread('loose');
+  const [one, two] = [task(t), task(t)];
+  const first = await claim();
+  assert.equal(first?.id, one);
+  assert.equal((await claim())?.id, two);
+  assert.deepEqual((await h.worker('thread-push', { job: one })).body, { opens: true });
+  assert.equal(first!.inThread, undefined);
+});
+
+test("a thread's first task waits for the threads it needs to merge; their merge closes them", async () => {
+  const engine = thread('engine'),
+    art = thread('art');
+  assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+  const built = task(engine),
+    drawn = task(art, 'moss');
+  const running = await claim();
+  assert.equal(running?.id, built);
+  assert.equal(await claim(), null);
+  assert.deepEqual(h.job(drawn).wakes, [`until ${engine} merges`]);
+  await records(running!, 9201, 'c');
+  await merged(9201);
+  assert.equal(projects.findThread(engine)!.status, 'done', 'its work merged, the thread is done');
+  assert.equal((await claim())?.id, drawn);
+});
+
+test('a thread whose work needed no change has no branch, and its owner closes it', async () => {
+  const t = thread('check');
+  task(t);
+  const running = await claim();
+  assert.equal(running!.thread, t);
+  await h.finish(running!, { status: 'done', result: 'Checked: nothing to change.' });
+  const wren = await h.start({ agent: 'wren' });
+  const done = await h.hq(wren, 'plan', 'done', t);
+  assert.equal(done.code, 0, done.out);
+  assert.equal(projects.findThread(t)!.status, 'done');
+});
+
+test('the play plays the order: a task after the one before it, a need after its merge, a placeholder for a bare thread', () => {
+  const engine = thread('engine'),
+    art = thread('art'),
+    sound = thread('sound');
+  assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+  assert.deepEqual(plan.need(sound, art, 'wren'), { ok: true });
+  const [built, polished] = [task(engine), task(engine)];
+  const queue = backlog.orderingSnapshot(Date.now());
+  const row = (id: number) => queue.jobs.find(j => j.id === id)!;
+  assert.equal(row(polished).follows, built);
+  assert.equal(row(built).opensReview, true, "each task's push is a round of the thread's pull request");
+  assert.equal(row(polished).opensReview, true);
+  const sounded = task(sound, 'moss');
+  const stalled = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === sounded)!;
+  assert.match(
+    stalled.reasons.map(r => ('why' in r ? r.why : '')).join(),
+    /needs game\/art, which has no work to merge/,
+  );
+  const { snapshot } = predictions.prepared(Date.now(), [], ['usual']);
+  const stand = snapshot.jobs.find(j => j.placeholder && j.thread === art)!;
+  assert.ok(stand, 'the bare thread plays as a placeholder');
+  assert.deepEqual(stand.needs, [polished], 'which waits for the thread it needs');
+  assert.deepEqual(snapshot.jobs.find(j => j.id === sounded)!.needs, [stand.id]);
+});
+
+// The play runs every minute and after each change, so a bare thread's size is worked out once for the hour, as a spot
+// size is, not read off every done job at every play.
+test("a bare thread's placeholder keeps its size for the hour, then sizes on the done work since", () => {
+  const now = Date.now(),
+    HOUR = 3_600_000;
+  const done = (hours: number) => {
+    for (let i = 0; i < 3; i++)
+      h.pastJob({
+        agent: 'wren',
+        title: 'Thread drawn-sizes: It works',
+        run: { started: now - hours * HOUR, ended: now },
+      });
+  };
+  predictions.keepSpotSizes();
+  done(1);
+  const bare = thread('drawn-sizes');
+  const size = (at: number) => {
+    const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
+    return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === bare)!.id)!.agent_ms;
+  };
+  const sized = () => predictions.predict({ title: 'Thread drawn-sizes: It works', origin: 'work', agent: 'wren' });
+  const first = size(now);
+  assert.equal(first, sized().size.agent_ms);
+  done(3);
+  const since = sized().size.agent_ms;
+  assert.ok(since > first, `${since} after ${first}: the longer work moves its size`);
+  assert.equal(size(now + 60_000), first, 'kept for the hour');
+  assert.equal(size(now + HOUR + 60_000), since, 'then sized on the done work since');
+});
+
+test('hq projects and hq thread read a bare thread without a made-up job number', async () => {
+  const bare = thread('bare');
+  forecast.refresh(Date.now());
+  const lead = await h.start({ agent: 'juno' });
+  const listed = await h.hq(lead, 'projects');
+  assert.equal(listed.code, 0, listed.out);
+  assert.ok(listed.out.includes(bare));
+  assert.doesNotMatch(listed.out, /#-\d+/);
+  const one = await h.hq(lead, 'thread', bare);
+  assert.equal(one.code, 0, one.out);
+  assert.ok(one.out.includes(bare));
+  assert.doesNotMatch(one.out, /#-\d+/);
+});
+
+test("the next task waits while a fix of the thread's pull request is open, and its profile lines merge as records", async () => {
+  const t = thread('fix');
+  const [one, two] = [task(t), task(t)];
+  const profile = { pr: 9301, branch: `profile/${one}`, sha: sha('d'), files: ['company/people/bolt.md'] };
+  const run = await claim();
+  await h.finish(run!, { pr: 9302, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('e'), profile });
+  await merged(9301);
+  const fix = h.queue({ agent: 'bolt', branch: `job/${one}`, pr: 9302, stage: 'fix' });
+  assert.equal(await claim(), null, 'two sessions never push to one branch');
+  assert.deepEqual(h.job(two).wakes, [`until #${fix} on its thread's pull request ends`]);
+  db.prepare("update jobs set status = 'done' where id = ?").run(fix);
+  assert.equal((await claim())?.id, two, 'the fix pushed: the next task goes on from it');
+});
+
+test('a failed task releases later tasks while its pull request is open, but keeps the thread unfinished', async () => {
+  const t = thread('open');
+  const one = task(t);
+  await h.finish((await claim())!, { pr: 9601, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('4') });
+  const [two, three] = [task(t), task(t)];
+  const run = await claim();
+  assert.equal(run?.id, two);
+  await h.finish(run!, { status: 'failed', branch: `job/${one}`, result: 'the push failed' });
+  assert.equal(h.job(two).status, 'failed');
+  assert.deepEqual(h.job(three).wakes, []);
+  const next = await claim();
+  assert.equal(next?.id, three, 'the next task runs');
+  await h.finish(next!, { branch: `job/${one}`, sha: sha('5') });
+  h.mergedPr(9601);
+  threadends.merged(9601);
+  assert.equal(projects.findThread(t)!.status, 'open', 'the merge does not complete the failed task');
+  const four = task(t);
+  assert.deepEqual(h.job(four).wakes, [`task #${two} before it failed`]);
+  assert.equal(await claim(), null, 'without an open pull request the failed task holds later work');
+});
+
+test("a first push whose pull request GitHub refused fails, and its branch stays the thread's", async () => {
+  const t = thread('refused');
+  const [one, two] = [task(t), task(t)];
+  const refused = 'its work is pushed to job/1, but GitHub refused its pull request: HTTP 403: secondary rate limit';
+  await h.finish((await claim())!, { status: 'failed', branch: `job/${one}`, sha: sha('6'), result: refused });
+  assert.equal(h.job(one).status, 'failed');
+  assert.equal(projects.findThread(t)!.branch, `job/${one}`, 'the pushed work is the branch later tasks run on');
+  assert.equal(projects.findThread(t)!.status, 'open');
+  assert.deepEqual(h.job(two).wakes, [`task #${one} before it failed`]);
+});
+
+test("only the project's owner or the CEO adds a task to a thread, and no --after crosses threads", async () => {
+  const t = thread('owned'),
+    other = thread('other');
+  const elsewhere = task(other);
+  const bolt = await h.start({ agent: 'bolt', thread: t });
+  const refused = await h.agent('job', bolt.token, { agent: 'bolt', title: 'More', prompt: 'x' });
+  assert.equal(refused.status, 409);
+  assert.match(refused.body.error, /propose it to wren with hq propose --project game/);
+  const wren = await h.start({ agent: 'wren' });
+  const more = { agent: 'bolt', title: 'More', prompt: 'x', thread: t };
+  assert.equal((await h.agent('job', wren.token, more)).status, 200, "the owner's");
+  const across = await h.agent('job', wren.token, { ...more, title: 'After', after: elsewhere });
+  assert.equal(across.status, 409);
+  assert.match(across.body.error, /hq plan need game\/owned game\/other/);
+  planning(false);
+  assert.equal((await h.agent('job', bolt.token, { agent: 'bolt', title: 'More', prompt: 'x' })).status, 200);
+});
+
+test("a job waiting for its own thread's work deployed gets a thread of its own, so the thread's pull request opens", async () => {
+  const t = thread('seller');
+  const wren = await h.start({ agent: 'wren', thread: t, engine: 'tasks' });
+  const proof = { agent: 'bolt', title: 'Prove it live', prompt: 'x', when: [`deployed:${wren.id}`] };
+  const queued = await h.agent('job', wren.token, proof);
+  assert.equal(queued.status, 200);
+  assert.equal(queued.body.followOn, t);
+  assert.equal(queued.body.thread, `game/job-${queued.body.id}`, "HQ's one-task thread in the same project");
+  assert.equal(h.job(queued.body.id).thread, `game/job-${queued.body.id}`);
+  assert.equal((await h.worker('thread-push', { job: wren.id })).body.opens, true, 'nothing after it in its thread');
+  const next = await h.agent('job', wren.token, { agent: 'bolt', title: 'Then this', prompt: 'x' });
+  assert.equal(next.body.thread, t, 'work that can go in its pull request stays');
+  assert.equal(next.body.followOn, undefined);
+
+  assert.equal((await h.agent('window', wren.token, { thread: t, deadline: '6h', aim: '5h' })).status, 200);
+  const original = projects.findThread(t)!;
+  const ctx = await h.voice('call-context?agent=juno&request=0');
+  assert.equal(ctx.status, 200);
+  const deadline = new Date(Date.now() + 2 * 3_600_000).toISOString().slice(0, 19) + 'Z';
+  const promise = await h.agent('item', ctx.body.token, {
+    kind: 'promise',
+    owner: 'bolt',
+    what: 'Prove it live',
+    deadline,
+  });
+  assert.equal(promise.status, 200);
+  const handed = await h.agent('job', ctx.body.token, { ...proof, thread: t, item: promise.body.id });
+  assert.equal(handed.status, 200);
+  assert.equal(handed.body.followOn, t);
+  assert.equal(handed.body.deadline, new Date(deadline).toISOString());
+  const destination = projects.findThread(handed.body.thread)!;
+  assert.deepEqual(
+    [destination.deadline, destination.aim, destination.deadline_by],
+    [Date.parse(deadline), Date.parse(deadline), 'juno'],
+  );
+  const source = projects.findThread(t)!;
+  assert.deepEqual(
+    [source.deadline, source.aim, source.deadline_by],
+    [original.deadline, original.aim, original.deadline_by],
+    'the follow-on item leaves the source thread window intact',
+  );
+});
+
+test("finished work's pull request waits for no later task: one that waits for a seat, or fails, strands nothing", async () => {
+  const t = thread('carry');
+  const [work, standDown] = [task(t), task(t, 'moss')];
+  const run = await claim();
+  assert.equal(run?.id, work);
+  assert.equal((await h.worker('thread-push', { job: work })).body.opens, true, 'a later task still to run');
+  await h.finish(run!, { pr: 9701, branch: `job/${work}`, files: ['platform/x.ts'], sha: sha('7') });
+  const pr = () => db.prepare('select status from prs where number = 9701').get() as { status: string };
+  assert.equal(pr().status, 'open', 'in review at once');
+  const later = await claim();
+  assert.equal(later?.id, standDown);
+  await h.finish(later!, { status: 'failed', branch: `job/${work}`, result: 'it failed' });
+  assert.equal(pr().status, 'open', 'still in review');
+  assert.equal(wakes.deployed(String(work)), null, 'the finished work waits only for its merge');
+});
+
+test("switching off opens each idle thread branch's pull request, and its queued tasks wait for it", async () => {
+  const t = thread('revert');
+  const [one, two] = [task(t), task(t)];
+  const running = await claim();
+  await h.finish(running!, { branch: `job/${one}`, sha: sha('f') });
+  planning(false);
+  const [opener] = waitsOf(two);
+  assert.ok(opener && opener !== one, 'the queued task waits for a job that opens the pull request');
+  assert.deepEqual(
+    { agent: h.job(opener).agent, branch: h.job(opener).branch, thread: h.job(opener).thread },
+    { agent: 'bolt', branch: `job/${one}`, thread: t },
+  );
+  threadends.watch();
+  assert.deepEqual(waitsOf(two), [opener], 'once');
+  assert.equal(await claim(), null, 'nothing else of the thread runs');
+  assert.equal((await h.claim(h.job(opener).engine))?.id, opener, 'the opener runs');
+});
+
+test('switching off drains a thread first: its running task ends and opens the pull request, before anything after it starts', async () => {
+  const t = thread('drain');
+  const [one, two] = [task(t), task(t)];
+  const running = await claim();
+  assert.equal(running?.id, one);
+  planning(false);
+  assert.equal(await claim(), null, 'the order still holds while the thread drains');
+  assert.equal((await h.worker('thread-push', { job: one })).body.opens, true, 'its push opens the pull request');
+  await h.finish(running!, { pr: 9401, branch: `job/${one}`, files: ['platform/x.ts'], sha: sha('1') });
+  assert.equal(await claim(), null, "the next task waits for the thread's pull request");
+  assert.deepEqual(h.job(two).wakes, ["until its thread's pull request opens (planning switching off)"]);
+  threadends.watch();
+  assert.deepEqual(waitsOf(two), [one], 'then for its merge');
+  assert.equal(await claim(), null);
+});
+
+test('switched on again before the opener pushes, the opener still opens the pull request, and the next task runs after its merge', async () => {
+  const t = thread('back');
+  const [one, two] = [task(t), task(t)];
+  await h.finish((await claim())!, { branch: `job/${one}`, sha: sha('2') });
+  planning(false);
+  const [opener] = waitsOf(two);
+  planning(true);
+  const run = await h.claim(h.job(opener).engine);
+  assert.equal(run?.id, opener);
+  assert.equal((await h.worker('thread-push', { job: opener })).body.opens, true, 'what waits for it needs its merge');
+  assert.equal(backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === two)?.follows, opener);
+  await records(run!, 9501, '3');
+  await merged(9501);
+  assert.equal((await claim())?.id, two, 'the next task runs once it merged');
+});
+
+test("a profile pull request's fix that leaves nothing for main closes it", async () => {
+  const t = thread('withdrawn');
+  const one = task(t);
+  const profile = { pr: 9601, branch: `profile/${one}`, sha: sha('4'), files: ['company/people/bolt.md'] };
+  h.github.pr(9601).added = '- ghp_abcdefghijklmnopqrstuvwxyz';
+  await h.finish((await claim())!, { branch: `job/${one}`, sha: sha('5'), profile });
+  await until(() => h.jobs.listJobs().some((j: any) => j.pr === 9601 && j.status === 'queued'), 'the key sent back');
+  const fix = (h.jobs.listJobs() as any[]).find(j => j.pr === 9601 && j.status === 'queued');
+  assert.equal(fix.branch, `profile/${one}`);
+  const run = await h.claim(fix.engine);
+  assert.equal(run?.id, fix.id);
+  await h.finish(run!, { status: 'done', branch: `profile/${one}`, withdrawn: true });
+  await until(() => h.github.pr(9601).state === 'closed', 'PR #9601 closed');
+  assert.equal(h.github.pr(9601).merged, false);
+});
+
+test('a plan change made in a meeting is its, and the live meeting lists the projects it changed', async () => {
+  await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', until: 0 });
+  const wren = await h.start({ agent: 'wren', title: 'The levels' });
+  const asked = await h.agent('meetings/ask', wren.token, { topic: 'Needs', with: ['bolt'] });
+  assert.equal(asked.status, 200, JSON.stringify(asked.body));
+  const juno = await h.start({ agent: 'juno', title: 'The follow-through check' });
+  const set = await h.agent('meetings/set', juno.token, { asks: [asked.body.id], topic: 'Needs' });
+  assert.equal(set.status, 200, JSON.stringify(set.body));
+  for (const j of [wren, juno]) await h.finish(j);
+  const asksJob = (await h.claim('claude'))!;
+  assert.equal(asksJob.title, meetings.ASKS_TITLE);
+  await h.finish(asksJob);
+  const seats: Running[] = [];
+  for (const slot of ['claude#1', 'claude#2', 'claude#3', 'claude#1', 'claude#2']) {
+    // (three seats: the CEO's chairs it)
+    const r = await h.worker('claim', { seat: 'claude-1', engine: 'claude', slot });
+    if (r.body?.kind === 'meeting') seats.push({ ...r.body, seat: 'claude-1' });
+  }
+  const seat = seats.find(s => s.agent === 'wren')!;
+  assert.ok(seat, "wren's seat runs");
+  assert.equal((await h.hq(seat, 'plan', 'thread', 'game', 'Boss', 'You beat the boss')).code, 0);
+  const live = (await h.board('/api/meetings')).body.live.find((m: any) => m.id === set.body.meeting);
+  assert.deepEqual(
+    live.projects.map((p: any) => [p.id, p.name, typeof p.changed]),
+    [['game', 'The game', 'string']],
+  );
+});
+
+test('a wait drawn before thread planning holds both tasks when it conflicts with their order, and the plan still plays', async () => {
+  const t = thread('loop');
+  const [one, two] = [task(t), task(t)];
+  planning(false);
+  assert.deepEqual(h.jobs.addWait(one, two, 'wren'), { ok: true });
+  planning(true);
+  assert.equal(await claim(), null);
+  const second = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === two)!;
+  assert.equal(second.follows, undefined);
+  assert.match(JSON.stringify(second.reasons), new RegExp(`it and #${one} wait for each other`));
+  assert.ok(predictions.played(Date.now(), [], ['usual']).usual.has(one), 'no loop for the planner to throw on');
+});
+
+test('a task waiting for a later time holds no ready task behind it, nor its pull request, and follows it once its time comes', async () => {
+  const t = thread('timed');
+  const [timed, ready] = [task(t), task(t, 'moss')];
+  wakes.hold(timed, [{ kind: 'at', arg: String(Date.now() + 24 * 3600_000) }]);
+  const running = await claim();
+  assert.equal(running?.id, ready, 'the ready task starts now, not at the time');
+  assert.deepEqual((running as any).inThread, {
+    ...{ id: t, name: 'Thread timed', goal: 'It works', place: 1, of: 2 },
+    before: null,
+  });
+  const queue = backlog.orderingSnapshot(Date.now());
+  assert.equal(queue.jobs.find(j => j.id === timed)!.follows, ready, 'the play starts the timed task after it');
+  assert.equal(queue.jobs.find(j => j.id === ready)!.opensReview, true, 'the play reviews the ready work at once');
+  wakes.check(Date.now() + 25 * 3600_000);
+  assert.equal(await claim(), null, 'its time come, it still waits for the task that passed it');
+  assert.ok(h.job(timed).wakes.includes(`after #${ready} in its thread`));
+  const pushed = (await h.worker('thread-push', { job: ready })).body;
+  assert.equal(pushed.opens, true, 'the timed task still to run, the ready one opens the pull request');
+  await h.finish(running!, { pr: 9801, branch: `job/${ready}`, files: ['platform/x.ts'], sha: sha('e') });
+  const next = await claim();
+  assert.equal(next?.id, timed);
+  assert.equal(next!.branch, `job/${ready}`, 'it runs on the branch the ready task pushed');
+  assert.deepEqual((next as any).inThread.before, { id: ready, agent: 'moss', title: "moss's step" });
+  assert.equal((await h.worker('thread-push', { job: timed })).body.opens, true, 'its push is the next round');
+});

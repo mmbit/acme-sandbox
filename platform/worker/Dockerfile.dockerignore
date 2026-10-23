@@ -1,0 +1,14 @@
+# The worker's image (platform/worker/Dockerfile) is built from the repo's root: this file is BuildKit's ignore for that
+# Dockerfile alone (the root .dockerignore stays the coordinator's). It takes the supervisor and the package files the
+# gates' tools install from (shared/gates); the worker's own code is staged by infra/sync.sh, not built in (supervise.py).
+*
+!platform/worker/supervise.py
+!package.json
+!package-lock.json
+!platform/coordinator/package.json
+!platform/coordinator/package-lock.json
+**/node_modules
+
+# Worker runtime dependencies.
+!platform/worker/package.json
+!platform/worker/package-lock.json

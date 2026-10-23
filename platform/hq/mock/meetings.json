@@ -1,0 +1,36 @@
+{
+  "live": [
+    {
+      "id": 3,
+      "topic": "The spring update: what ships first",
+      "at": "2026-10-19T13:00:00Z",
+      "started": "2026-10-19T13:02:00Z",
+      "limit": 30,
+      "seats": ["juno", "wren", "kit", "moss", "penny"],
+      "projects": [
+        { "id": "game", "name": "Game", "changed": "2026-10-19T13:10:00Z" },
+        { "id": "site", "name": "Site", "changed": "2026-10-19T13:12:00Z" }
+      ],
+      "said": [
+        {
+          "id": 41,
+          "at": "2026-10-19T13:14:00Z",
+          "agent": "wren",
+          "text": "Wren, step 2: agree on **game-m2** (mine, held). The sound pass (#412, #415) moves to Kit's `audio/score` thread; the trailer cut waits on it.",
+          "bubbles": ["I agree, the next game update is mine", "The sound work moves over to Kit"]
+        },
+        {
+          "id": 42,
+          "at": "2026-10-19T13:15:00Z",
+          "agent": "kit",
+          "text": "Kit: taking `audio/score` from Wren. It needs the theme picked first (card #88), so I'll start it `--after request:88`; until then the stems stay on the old mix.",
+          "bubbles": ["Happy to take the sound work, Wren", "I'll start once you've picked the theme"]
+        }
+      ]
+    }
+  ],
+  "planned": [
+    { "id": 4, "topic": "Weekly strategy review", "at": "2026-10-19T15:00:00Z", "seats": ["juno", "penny"] },
+    { "id": 5, "topic": "Care's inbox", "at": "2026-10-20T08:30:00Z", "seats": ["poppy", "dex", "juno"] }
+  ]
+}

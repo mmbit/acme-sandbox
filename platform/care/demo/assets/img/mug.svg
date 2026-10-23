@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 300"><!-- the harness's invented product: a plain mug -->
+<rect width="300" height="300" rx="24" fill="#e8edf3"/>
+<ellipse cx="150" cy="246" rx="86" ry="12" fill="#c9d2dd"/>
+<path d="M214 118h14c22 0 34 14 34 34s-12 34-34 34h-16" fill="none" stroke="#2f5c9e" stroke-width="16"/>
+<path d="M78 92h144v118c0 22-18 38-40 38h-64c-22 0-40-16-40-38z" fill="#2f5c9e"/>
+<ellipse cx="150" cy="92" rx="72" ry="12" fill="#244a82"/>
+<path d="M100 132h100M100 156h100M100 180h100" stroke="#f6f7f9" stroke-width="8" stroke-linecap="round" opacity=".85"/>
+</svg>

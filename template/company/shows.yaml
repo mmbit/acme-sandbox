@@ -1,0 +1,14 @@
+# The company's On Air shows (shared/onair/README.md): short spoken episodes about its work, in the crew's desk phone
+# voices, in HQ's On Air and as podcast feeds. Each is a recurring job for its producer (shared/routines/show.md), with
+# Run now in HQ. None until the company starts one, for example:
+#
+# - id: digest
+#   name: The Morning Digest
+#   code: DIGEST          # (the word of its runs' task code.)
+#   at: '06:45'
+#   hosts: [ceo]
+#   minutes: 2
+#   languages: [en]
+#   audience: board
+#   about: Two minutes on what got done yesterday and what needs the board today.
+[]

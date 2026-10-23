@@ -1,0 +1,16 @@
+[
+  { "slug": "front", "name": "Front Door", "about": "Our front page and shop, where every visitor arrives.",
+    "status": "live", "waiting": false, "owner": "kit", "platform": false, "front": true, "preview": "https://front.preview.example.com",
+    "public": ["https://www.example.com"], "numbers": true },
+  { "slug": "pebble-pals", "name": "Pebble Pals", "about": "A family of painted pebbles drawn from your children's names, posted in a tin. Every pebble is different.",
+    "status": "live", "waiting": false, "owner": "wren", "platform": false, "front": false, "preview": "https://pebble-pals.preview.example.com",
+    "public": ["https://pebble-pals.example.com", "https://pebblepals.example"], "numbers": true },
+  { "slug": "paper-moon", "name": "Paper Moon", "about": "Tonight's moon over your town, printed on the night you choose.",
+    "status": "test", "waiting": false, "owner": "moss", "platform": false, "front": false, "preview": "https://paper-moon.preview.example.com", "public": [], "numbers": false },
+  { "slug": "lanternfold", "name": "Lanternfold", "about": "A folding paper lantern with your street's skyline cut into it.",
+    "status": "preview", "waiting": false, "owner": "kit", "platform": false, "front": false, "preview": "https://lanternfold.preview.example.com", "public": [], "numbers": true },
+  { "slug": "tiny-atlas", "name": "Tiny Atlas", "about": "Your own island, generated from your names, charted with your memories, printed as a pocket atlas.",
+    "status": "preview", "waiting": true, "owner": "wren", "platform": false, "front": false, "preview": "https://tiny-atlas.preview.example.com", "public": [], "numbers": true },
+  { "slug": "hello", "name": "Hello (platform test)", "about": "The platform's own test app, to try review mode, the kits and a deploy on. Never a product of its own.",
+    "status": "preview", "waiting": false, "owner": "bolt", "platform": true, "front": false, "preview": "https://hello.preview.example.com", "public": [], "numbers": false }
+]

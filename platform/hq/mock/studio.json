@@ -1,0 +1,204 @@
+{
+  "key": true,
+  "keeper": "pinhole",
+  "products": [
+    { "id": "mug", "name": "Story mug" },
+    { "id": "plush", "name": "Sprout plush" },
+    { "id": "tote", "name": "Wave tote" }
+  ],
+  "month": { "edits": 14, "usd": 0.55 },
+  "photos": [
+    {
+      "id": 14,
+      "product": "mug",
+      "status": "waiting",
+      "created": "2026-10-18T13:40:00.000Z",
+      "edited": "2026-10-18T13:41:10.000Z",
+      "edit": 21,
+      "tries": 1,
+      "decided": null,
+      "request": {
+        "id": 31,
+        "pages": ["https://shop.example/story-mug"],
+        "where": null,
+        "show": "The mug from the side with the sun, on a breakfast table"
+      },
+      "checks": ["The sun on the print is whole", "The handle points right", "No second mug in the shot"],
+      "mockPicture": "mug"
+    },
+    {
+      "id": 13,
+      "product": "plush",
+      "status": "waiting",
+      "created": "2026-10-18T13:38:00.000Z",
+      "edited": "2026-10-18T13:39:30.000Z",
+      "edit": 20,
+      "tries": 1,
+      "decided": null,
+      "request": {
+        "id": 30,
+        "pages": [],
+        "where": "every gift guide page",
+        "show": "The plush sitting up, held in two hands"
+      },
+      "checks": ["The face matches the drawing", "The hands look real"],
+      "mockPicture": "plush"
+    },
+    {
+      "id": 12,
+      "product": "tote",
+      "status": "waiting",
+      "created": "2026-10-18T13:35:00.000Z",
+      "edited": "2026-10-18T13:37:00.000Z",
+      "edit": 19,
+      "tries": 2,
+      "decided": null,
+      "request": {
+        "id": 29,
+        "pages": ["https://shop.example/wave-tote", "https://shop.example/gifts/a-new-home"],
+        "where": null,
+        "show": "The tote over a shoulder, the whole print in view"
+      },
+      "checks": ["Both handles in the picture", "The wave isn’t creased"],
+      "mockPicture": "tote"
+    },
+    {
+      "id": 11,
+      "product": "mug",
+      "status": "waiting",
+      "created": "2026-10-18T13:30:00.000Z",
+      "edited": "2026-10-18T13:31:00.000Z",
+      "edit": 18,
+      "tries": 1,
+      "decided": null,
+      "request": {
+        "id": 28,
+        "pages": ["https://shop.example/story-mug/gallery"],
+        "where": null,
+        "show": "A close-up of the printed story"
+      },
+      "checks": ["The words are sharp enough to read"],
+      "mockPicture": "mug"
+    },
+    {
+      "id": 10,
+      "product": "plush",
+      "status": "editing",
+      "created": "2026-10-18T13:44:00.000Z",
+      "edited": null,
+      "edit": null,
+      "tries": 0,
+      "decided": null,
+      "request": {
+        "id": 33,
+        "pages": ["https://shop.example/sprout-plush"],
+        "where": null,
+        "show": "The plush on a bed, in morning light"
+      },
+      "checks": [],
+      "mockPicture": "plush"
+    },
+    {
+      "id": 9,
+      "product": "tote",
+      "status": "new",
+      "created": "2026-10-18T13:45:00.000Z",
+      "edited": null,
+      "edit": null,
+      "tries": 0,
+      "decided": null,
+      "request": {
+        "id": 34,
+        "pages": [],
+        "where": "the shop’s front page and its newsletter",
+        "show": "The tote on a market stall"
+      },
+      "checks": [],
+      "mockPicture": "tote"
+    },
+    {
+      "id": 8,
+      "product": "mug",
+      "status": "edited",
+      "created": "2026-10-18T13:20:00.000Z",
+      "edited": "2026-10-18T13:46:00.000Z",
+      "edit": 17,
+      "tries": 1,
+      "decided": null,
+      "request": {
+        "id": 32,
+        "pages": ["https://shop.example/gifts/for-a-teacher"],
+        "where": null,
+        "show": "The mug on a desk with a stack of books"
+      },
+      "checks": [],
+      "mockPicture": "mug"
+    },
+    {
+      "id": 7,
+      "product": "plush",
+      "status": "approved",
+      "created": "2026-10-17T09:00:00.000Z",
+      "edited": "2026-10-17T09:02:00.000Z",
+      "edit": 12,
+      "tries": 1,
+      "decided": { "decision": "approved", "by": "board", "at": "2026-10-17T10:15:00.000Z" },
+      "places": ["https://shop.example/sprout-plush"],
+      "request": {
+        "id": 22,
+        "pages": ["https://shop.example/sprout-plush"],
+        "where": null,
+        "show": "The plush alone on white"
+      },
+      "checks": ["The green is the plush’s own"],
+      "mockPicture": "plush"
+    },
+    {
+      "id": 6,
+      "product": "tote",
+      "status": "approved",
+      "created": "2026-10-16T15:00:00.000Z",
+      "edited": "2026-10-16T15:03:00.000Z",
+      "edit": 10,
+      "tries": 1,
+      "decided": { "decision": "approved", "by": "board", "at": "2026-10-16T16:00:00.000Z" },
+      "places": ["https://shop.example/wave-tote", "https://shop.example/gifts/a-new-home"],
+      "request": {
+        "id": 21,
+        "pages": ["https://shop.example/wave-tote", "https://shop.example/gifts/a-new-home"],
+        "where": null,
+        "show": "The tote flat, from above"
+      },
+      "checks": ["The whole print shows", "No creases"],
+      "mockPicture": "tote"
+    },
+    {
+      "id": 5,
+      "product": "mug",
+      "status": "approved",
+      "created": "2026-10-15T11:00:00.000Z",
+      "edited": "2026-10-15T11:01:00.000Z",
+      "edit": 8,
+      "tries": 1,
+      "decided": { "decision": "approved", "by": "board", "at": "2026-10-15T12:30:00.000Z" },
+      "places": [],
+      "request": { "id": 20, "pages": [], "where": "the shop’s ads", "show": "The mug alone on white" },
+      "checks": ["The print is straight"],
+      "mockPicture": "mug"
+    },
+    {
+      "id": 3,
+      "product": "keyring",
+      "status": "approved",
+      "created": "2026-10-12T10:00:00.000Z",
+      "edited": "2026-10-12T10:02:00.000Z",
+      "edit": 4,
+      "tries": 1,
+      "decided": { "decision": "approved", "by": "board", "at": "2026-10-12T11:00:00.000Z" },
+      "places": [],
+      "request": null,
+      "checks": [],
+      "mockPicture": "plush"
+    }
+  ]
+}

@@ -1,0 +1,45 @@
+# The coordinator's image is the one built from the repo's root (infra/compose.yaml): it takes only what its Dockerfile
+# copies, the platform's code and the company's own parts
+*
+!platform/coordinator/package.json
+!platform/coordinator/package-lock.json
+!platform/coordinator/src
+# the desk phone's card reader, which the coordinator runs too, and the fence rules it shares with the phone's text
+!platform/hq/shell/card.js
+!platform/hq/shell/cardcheck.js
+!platform/hq/shell/prose.js
+# and what a card shows beside its words
+!platform/hq/shell/media.js
+# the questions' engine, which the guest checklists and the desk phone's cards share
+!platform/hq/shell/questions.js
+# HQ's sign letters, which a company's print pages draw with
+!platform/hq/renderers/brownstone/iso.js
+!platform/hq/util.js
+# the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
+!shared/html/escape.ts
+# the route tables' engine (platform/coordinator/src/runs.ts).
+!shared/routes/routes.ts
+# the platform's formats, which a company's kits may import
+!shared/format/format.js
+# the rule for what a commit's lines changed count, which HQ's daily lines read (platform/coordinator/src/commitlines.ts)
+!platform/worker/src/countedlines.ts
+# the order numbers' check digit, which payments.ts gives and a company's kits check (shared/ordernumber)
+!shared/ordernumber/ordernumber.js
+# the holidays' one table, which a company's kits read (kits/holidays: the order emails' sign-off)
+!shared/holidays/holidays.js
+# a picture's size and the AI-edit mark, which the photo studio reads and writes (platform/coordinator/src/studio.ts).
+!shared/pictures/size.ts
+!shared/provenance/provenance.ts
+# the plan levels' text, which hq's help and the coordinator's refusals and planning prompt share (names.ts, proposals.ts).
+!platform/worker/hq/levels.ts
+# what holds work in words, which hq's estimates and the CEO's summary share (threats.ts).
+!platform/worker/hq/waits.ts
+# a seat's week as pacing reads it, which HQ's play of the queue paces seats by as the worker does (playseats.ts).
+!platform/worker/src/pace.ts
+# the rude-word check, which the jobs' short codes skip words by (platform/coordinator/src/jobcodes.ts).
+!shared/wordcheck/wordcheck.js
+# the rule that places the board's sorted projects, which the projects view's dev mode shares (projectorder.ts).
+!platform/hq/shell/order.js
+!kits
+**/node_modules
+**/*.test.ts

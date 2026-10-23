@@ -1,0 +1,373 @@
+{
+  "days": [
+    {
+      "day": "2026-09-27",
+      "lines": null,
+      "tests": null,
+      "prs": 24,
+      "jobs": 40,
+      "tokens": null
+    },
+    {
+      "day": "2026-09-28",
+      "lines": null,
+      "tests": null,
+      "prs": 18,
+      "jobs": 53,
+      "tokens": null
+    },
+    {
+      "day": "2026-09-29",
+      "lines": null,
+      "tests": null,
+      "prs": 19,
+      "jobs": 44,
+      "tokens": null
+    },
+    {
+      "day": "2026-09-30",
+      "lines": null,
+      "tests": null,
+      "prs": 21,
+      "jobs": 50,
+      "tokens": null
+    },
+    {
+      "day": "2026-10-01",
+      "lines": null,
+      "tests": null,
+      "prs": 27,
+      "jobs": 56,
+      "tokens": null
+    },
+    {
+      "day": "2026-10-02",
+      "lines": null,
+      "tests": null,
+      "prs": 31,
+      "jobs": 56,
+      "tokens": 511000
+    },
+    {
+      "day": "2026-10-03",
+      "lines": 7336,
+      "tests": 11414,
+      "prs": 25,
+      "jobs": 71,
+      "tokens": 334000
+    },
+    {
+      "day": "2026-10-04",
+      "lines": 7738,
+      "tests": 14260,
+      "prs": 30,
+      "jobs": 62,
+      "tokens": 584000
+    },
+    {
+      "day": "2026-10-05",
+      "lines": 9228,
+      "tests": 12017,
+      "prs": 25,
+      "jobs": 60,
+      "tokens": 846000
+    },
+    {
+      "day": "2026-10-06",
+      "lines": 9946,
+      "tests": 14350,
+      "prs": 28,
+      "jobs": 71,
+      "tokens": 229000
+    },
+    {
+      "day": "2026-10-07",
+      "lines": 9480,
+      "tests": 14132,
+      "prs": 34,
+      "jobs": 76,
+      "tokens": 254000
+    },
+    {
+      "day": "2026-10-08",
+      "lines": 9075,
+      "tests": 15999,
+      "prs": 32,
+      "jobs": 83,
+      "tokens": 728000
+    },
+    {
+      "day": "2026-10-09",
+      "lines": 10953,
+      "tests": 14959,
+      "prs": 38,
+      "jobs": 66,
+      "tokens": 276000
+    },
+    {
+      "day": "2026-10-10",
+      "lines": 4210,
+      "tests": 6930,
+      "prs": 14,
+      "jobs": 33,
+      "tokens": 554000
+    }
+  ],
+  "agents": {
+    "juno": {
+      "jobs": 3,
+      "days": [
+        0,
+        1,
+        1,
+        0,
+        1,
+        0,
+        0
+      ],
+      "prs": 2,
+      "last": {
+        "title": "Morning round (2026-09-25)",
+        "finished": "2026-09-25T08:05:00Z"
+      }
+    },
+    "wren": {
+      "jobs": 1,
+      "days": [
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "prs": 5,
+      "last": {
+        "title": "Gift wrap at checkout",
+        "finished": "2026-09-25T17:45:00Z"
+      }
+    },
+    "moss": {
+      "jobs": 6,
+      "days": [
+        2,
+        0,
+        0,
+        3,
+        1,
+        0,
+        0
+      ],
+      "prs": 3,
+      "last": {
+        "title": "Banner for the building post",
+        "finished": "2026-09-25T10:02:00Z"
+      }
+    },
+    "kit": {
+      "jobs": 2,
+      "days": [
+        0,
+        2,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "prs": 0,
+      "last": {
+        "title": "Landing page for the sticker shop",
+        "finished": "2026-09-25T10:40:00Z"
+      }
+    },
+    "poppy": {
+      "jobs": 1,
+      "days": [
+        0,
+        0,
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "prs": 0,
+      "last": {
+        "title": "Tidy the order page copy",
+        "finished": "2026-10-01T10:20:00Z"
+      }
+    },
+    "dex": {
+      "jobs": 6,
+      "days": [
+        0,
+        1,
+        1,
+        0,
+        2,
+        1,
+        1
+      ],
+      "prs": 4,
+      "last": {
+        "title": "Check the Print API invoices",
+        "finished": "2026-10-02T11:20:00Z"
+      }
+    },
+    "penny": {
+      "jobs": 14,
+      "days": [
+        1,
+        3,
+        2,
+        2,
+        3,
+        2,
+        1
+      ],
+      "prs": 2,
+      "last": {
+        "title": "Draw the autumn shelf banner",
+        "finished": "2026-10-03T12:20:00Z"
+      }
+    },
+    "vera": {
+      "jobs": 12,
+      "days": [
+        2,
+        0,
+        4,
+        2,
+        1,
+        3,
+        0
+      ],
+      "prs": 6,
+      "last": {
+        "title": "Answer three care chats",
+        "finished": "2026-10-04T13:20:00Z"
+      }
+    },
+    "sable": {
+      "jobs": 0,
+      "days": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "prs": 1,
+      "last": {
+        "title": "Weekly security audit",
+        "finished": "2026-10-05T14:20:00Z"
+      }
+    },
+    "quill": {
+      "jobs": 8,
+      "days": [
+        0,
+        1,
+        1,
+        2,
+        1,
+        1,
+        2
+      ],
+      "prs": 4,
+      "last": {
+        "title": "Landing page for the sticker shop",
+        "finished": "2026-09-25T11:20:00Z"
+      }
+    },
+    "rook": {
+      "jobs": 5,
+      "days": [
+        1,
+        1,
+        0,
+        1,
+        0,
+        2,
+        0
+      ],
+      "prs": 2,
+      "last": {
+        "title": "Review PR #412",
+        "finished": "2026-10-06T15:20:00Z"
+      }
+    },
+    "tally": {
+      "jobs": 12,
+      "days": [
+        0,
+        0,
+        1,
+        2,
+        4,
+        3,
+        2
+      ],
+      "prs": 1,
+      "last": {
+        "title": "Landing page for the sticker shop",
+        "finished": "2026-09-25T09:30:00Z"
+      }
+    },
+    "nib": {
+      "jobs": 13,
+      "days": [
+        3,
+        2,
+        1,
+        2,
+        1,
+        3,
+        1
+      ],
+      "prs": 0,
+      "last": {
+        "title": "Plan the next venture cycle",
+        "finished": "2026-10-07T16:20:00Z"
+      }
+    },
+    "flint": {
+      "jobs": 4,
+      "days": [
+        0,
+        1,
+        1,
+        1,
+        0,
+        1,
+        0
+      ],
+      "prs": 1,
+      "last": {
+        "title": "Fix the slow photo upload",
+        "finished": "2026-10-08T17:20:00Z"
+      }
+    },
+    "bolt": {
+      "jobs": 14,
+      "days": [
+        0,
+        3,
+        1,
+        3,
+        1,
+        2,
+        4
+      ],
+      "prs": 0,
+      "last": {
+        "title": "Write the Gazette post",
+        "finished": "2026-10-09T18:20:00Z"
+      }
+    }
+  }
+}

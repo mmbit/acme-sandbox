@@ -1,0 +1,4 @@
+# Many branches add to these at the same place (the newest entry on top, a log line in a profile). Union keeps both
+# sides' lines, so merging main isn't a conflict every time.
+company/DECISIONS.md merge=union
+company/people/*.md merge=union

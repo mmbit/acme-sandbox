@@ -1,0 +1,19 @@
+name: Server
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [infra/provision.sh, infra/cloud-init.yaml, .github/workflows/server.yml]
+permissions:
+  contents: read
+jobs:
+  provision:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: infra/provision.sh
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+          SERVER_GITHUB_TOKEN: ${{ secrets.SERVER_GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}

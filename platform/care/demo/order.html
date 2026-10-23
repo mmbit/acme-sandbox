@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
+<title>Your order · Example Shop (local harness)</title>
+<!-- The harness's broken page, for the bug report: opened as /order?order=…&t=…#t=…, it shows the order,
+     holds a form with values in it, makes a request that fails (with a query) and throws an error naming an email and a
+     card number. None of that may reach the bundle as text. Everything here is invented (no real customer's data).
+     (a company's plug-in may bring its own, demo/order.html, with the same parts) -->
+<script type="module" src="/__care/telemetry.js"></script>
+<style>
+:root { --paper: #eef1f5; --paper2: #f6f7f9; --card: #ffffff; --ink: #1f2430; --muted: #596273; --accent: #2f5c9e;
+  --sans: system-ui, -apple-system, 'Segoe UI', 'Liberation Sans', sans-serif; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100dvh; background: var(--paper); color: var(--ink); font: 15px/1.5 var(--sans); }
+.harness { margin: 0; padding: 6px 12px; background: var(--ink); color: #dde3ec; font-size: 12px; text-align: center; }
+header { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 1px solid rgba(20, 30, 50, .1); }
+.brand { font: 700 22px/1 var(--sans); }
+nav { margin-left: auto; font-size: 14px; } nav a { color: var(--ink); }
+main { max-width: 880px; margin: 0 auto; padding: 24px; display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; }
+h1 { grid-column: 1 / -1; margin: 0; font: 700 32px/1.1 var(--sans); }
+.kick { margin: 0 0 4px; font: 600 11px var(--sans); letter-spacing: .14em; text-transform: uppercase; color: var(--accent); }
+figure { margin: 0; }
+figure img { display: block; width: 100%; height: auto; }
+.card { background: var(--card); border-radius: 16px; padding: 18px 20px; box-shadow: 0 1px 3px rgba(20, 30, 50, .12); }
+dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0 0 14px; font-size: 14px; } dt { color: var(--muted); } dd { margin: 0; }
+.pill { display: inline-block; padding: 1px 10px; border-radius: 99px; background: #fbeccb; color: #6e4600; font-size: 12.5px; font-weight: 600; }
+form { display: grid; gap: 10px; border-top: 1px solid rgba(20, 30, 50, .1); padding-top: 14px; }
+label { display: grid; gap: 3px; font-size: 12.5px; color: var(--muted); }
+input, textarea { border: 1.5px solid rgba(20, 30, 50, .18); border-radius: 10px; padding: 9px 11px; background: var(--paper2); color: var(--ink); font: inherit; font-size: 15px; width: 100%; }
+button.save { min-height: 46px; border: 0; border-radius: 12px; background: var(--ink); color: #fff; font: 600 15px var(--sans); }
+.err { margin: 0; padding: 10px 12px; border-radius: 10px; background: #f8dcd6; color: #8a2f1e; font-size: 13.5px; }
+.partner { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
+.partner img { width: 44px; height: 44px; border-radius: 8px; }
+#marks { vertical-align: middle; margin-left: 8px; } #marks .gone { display: none; } /* check 9: what an app hides in a drawing stays out */
+@media (max-width: 699px) { main { grid-template-columns: 1fr; padding: 18px; gap: 18px; } figure { width: 52%; justify-self: center; } h1 { font-size: 28px; } }
+</style>
+</head>
+<body>
+<p class="harness">Local harness: an invented order page that breaks on purpose. The chat below is the real care service.</p>
+<header>
+  <span class="brand">Example Shop</span>
+  <nav><a href="/help" data-care>Help</a></nav>
+</header>
+<main>
+  <h1>Your order<svg id="marks" viewBox="0 0 72 24" width="72" height="24" aria-hidden="true"><rect width="72" height="24" rx="4" fill="#e9f0e6"/><rect x="4" y="4" width="16" height="16" fill="#f0f" data-no-snapshot/><rect class="gone" x="28" y="4" width="16" height="16" fill="#f0f"/><rect x="52" y="4" width="16" height="16" fill="#0a0"/></svg></h1>
+  <figure><img src="/img/mug.svg" alt="The striped mug" width="300" height="300"></figure>
+  <div class="card">
+    <p class="kick">Order <span id="ref"></span></p>
+    <dl><dt>Mug</dt><dd>The striped mug · stoneware · 330 ml</dd><dt>Status</dt><dd><span class="pill">Shipped</span></dd><dt>Carrier</dt><dd>UPS</dd></dl>
+    <form onsubmit="return false">
+      <label>New delivery address<input id="street" value="12 Juniper Lane, Springfield"></label>
+      <label>A note for the courier<textarea rows="2">Ring twice, the bell is quiet-ish</textarea></label>
+      <p class="err">Something went wrong saving your address.</p>
+      <button class="save" type="button">Save the address</button>
+    </form>
+    <p class="partner"><img src="{{OTHER}}/img/mug.svg" alt="" width="44" height="44">An image from another origin: a plain box in the picture.</p>
+  </div>
+</main>
+<script type="module">
+  // the bug, on purpose: the order from the query on the page, a request that fails, an error with personal data in it, and
+  // a careless step logged with the street in it (track() keeps only its shared keys, so the street is dropped)
+  import { track } from '/__care/telemetry.js';
+  const q = new URLSearchParams(location.search);
+  track('address_save_failed', { step: 'address', ok: false, street: document.getElementById('street').value });
+  document.getElementById('ref').textContent = q.get('order') ?? '';
+  fetch(`/api/orders/${encodeURIComponent(q.get('order') ?? '')}?t=${encodeURIComponent(q.get('t') ?? '')}`).catch(() => {});
+  setTimeout(() => { throw new Error('Address update failed for {{EMAIL}}, card 4242 4242 4242 4242'); }, 50);
+</script>
+<script type="module" src="/__care/widget.js"></script>
+</body>
+</html>

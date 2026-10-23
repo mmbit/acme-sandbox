@@ -1,0 +1,725 @@
+/* The join link's page (joinpage.ts puts the brand's colours and fonts in front of this). */
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+}
+body {
+  margin: 0;
+  min-height: 100dvh;
+  background:
+    radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--glow) 22%, var(--bg)) 0, var(--bg) 60%) fixed,
+    var(--bg);
+  color: var(--ink);
+  font: 1rem/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+a {
+  color: var(--link);
+}
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  max-width: 1180px;
+  margin: auto;
+  padding: 16px 24px 8px;
+}
+.logo {
+  height: 30px;
+  width: auto;
+}
+.logo.pixelated {
+  image-rendering: pixelated;
+}
+.live {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 5px 12px;
+  border-radius: 99px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.live i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e8505b;
+  animation: beat 1.6s ease-in-out infinite;
+}
+main {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(300px, 1fr);
+  gap: 24px;
+  align-items: start;
+  max-width: 1180px;
+  margin: auto;
+  padding: 8px 24px 128px;
+}
+
+/* ---- the agent's tile */
+.stage {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.agent {
+  position: relative;
+  margin: 0;
+  aspect-ratio: 5/4;
+  border-radius: 28px;
+  overflow: hidden;
+  isolation: isolate;
+  background:
+    radial-gradient(circle, color-mix(in srgb, var(--ink) 9%, transparent) 1.3px, transparent 1.8px) 0 0/22px 22px,
+    var(--card);
+  box-shadow: var(--shadow);
+}
+.agent::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(
+    circle at 50% 40%,
+    color-mix(in srgb, var(--glow) 70%, var(--card)) 0,
+    color-mix(in srgb, var(--glow) 26%, var(--card)) 34%,
+    color-mix(in srgb, var(--card) 70%, transparent) 62%,
+    transparent 80%
+  );
+  transform: scale(calc(1 + var(--level, 0) * 0.1));
+  will-change: transform;
+}
+.agent::after {
+  content: '';
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  bottom: -6%;
+  height: 18%;
+  z-index: -1;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  filter: blur(10px);
+}
+.drawing {
+  position: absolute;
+  inset: 5% 6% 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+.drawing svg {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  overflow: visible;
+}
+.drawing [data-part] {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+.drawing [data-part='figure'],
+.drawing [data-part='body'] {
+  transform-origin: 50% 100%;
+}
+.drawing [data-part='head'] {
+  transform-origin: 50% 85%;
+}
+.drawing [data-part='mouth-open'] {
+  transform-origin: 50% 0;
+  transform: scale(1, 0);
+}
+.drawing [data-part='steam'] path {
+  opacity: 0;
+  animation: steam 3.6s ease-out infinite;
+}
+.drawing [data-part='steam'] path:nth-child(2) {
+  animation-delay: -1.2s;
+}
+.drawing [data-part='steam'] path:nth-child(3) {
+  animation-delay: -2.4s;
+}
+@keyframes steam {
+  0% {
+    opacity: 0;
+    transform: translateY(10px) scale(0.9, 0.7);
+  }
+  35% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-22px) scale(1.1, 1.15);
+  }
+}
+.plate {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: calc(100% - 28px);
+  padding: 7px 14px 7px 11px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--ink) 86%, transparent);
+  color: var(--bg);
+  font-weight: 700;
+  font-size: 0.95rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  backdrop-filter: blur(6px);
+}
+.plate .dot {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--glow);
+  box-shadow: 0 0 0 0 var(--glow);
+  transition: background 0.3s;
+}
+.agent[data-state='speaking'] .plate .dot {
+  animation: ping 1.2s ease-out infinite;
+}
+.agent[data-state='thinking'] .plate .dot {
+  background: #9b72cf;
+}
+.agent[data-state='listening'] .plate .dot {
+  background: #5cc26a;
+}
+.thought {
+  position: absolute;
+  left: 63%;
+  top: 9%;
+  display: flex;
+  gap: 6px;
+  padding: 10px 13px;
+  border-radius: 22px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  opacity: 0;
+  transform: translateY(8px) scale(0.6);
+  transform-origin: 0 100%;
+  transition:
+    opacity 0.25s,
+    transform 0.35s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+.thought::before,
+.thought::after {
+  content: '';
+  position: absolute;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: var(--shadow);
+}
+.thought::before {
+  width: 12px;
+  height: 12px;
+  left: -4px;
+  bottom: -8px;
+}
+.thought::after {
+  width: 6px;
+  height: 6px;
+  left: -12px;
+  bottom: -15px;
+}
+.thought i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: think 1.1s ease-in-out infinite;
+}
+.thought i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.thought i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+.agent[data-state='thinking'] .thought {
+  opacity: 1;
+  transform: none;
+}
+@keyframes think {
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-5px);
+    opacity: 1;
+  }
+}
+@keyframes ping {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--glow) 80%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 9px transparent;
+  }
+}
+@keyframes beat {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* what the agent says: a speech bubble under the tile, word by word */
+.captions {
+  position: relative;
+  margin: 0;
+  min-height: 3.2em;
+  padding: 12px 18px;
+  border-radius: 20px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  font-size: 1.08rem;
+  line-height: 1.45;
+  transition: opacity 0.4s;
+}
+.captions::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 16px;
+  height: 16px;
+  margin-left: -8px;
+  background: var(--card);
+  transform: rotate(45deg);
+  border-radius: 3px 0 0 0;
+}
+.captions:empty {
+  opacity: 0;
+}
+.captions.stale {
+  opacity: 0.55;
+}
+.captions span {
+  opacity: 0;
+  animation: word 0.28s ease-out forwards;
+}
+.captions q {
+  quotes: none;
+}
+.captions q::before,
+.captions q::after {
+  content: none;
+}
+.captions .before {
+  display: block;
+  color: var(--muted);
+  font-size: 0.9em;
+  margin-bottom: 4px;
+}
+.captions .before span {
+  opacity: 1;
+  animation: none;
+}
+.captions.notice {
+  background: var(--warn);
+  font-weight: 600;
+}
+@keyframes word {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: none;
+  }
+}
+body.lobby .captions {
+  display: none;
+}
+
+/* ---- the side: before joining, the people in the call, and how it ended */
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.card {
+  background: var(--card);
+  border-radius: 22px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+  animation: rise 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.15) both;
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+}
+h1 {
+  font-size: 1.5rem;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+  margin: 0 0 12px;
+}
+h2 {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+.notice {
+  margin: 0 0 18px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--glow) 24%, var(--card));
+  line-height: 1.45;
+}
+.badge {
+  display: inline-block;
+  padding: 1px 8px;
+  margin-right: 2px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--bg);
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  vertical-align: 1px;
+}
+label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+input {
+  width: 100%;
+  font: inherit;
+  font-size: 1.1rem;
+  color: var(--ink);
+  background: var(--bg);
+  border: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 11px 14px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+input:focus {
+  outline: 0;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 15%, transparent);
+}
+.hint,
+.small {
+  color: var(--muted);
+  font-size: 0.88rem;
+  margin: 6px 2px 0;
+}
+.small {
+  margin-top: 14px;
+}
+.error {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-radius: 12px;
+  background: var(--warn);
+  font-weight: 600;
+}
+button {
+  font: inherit;
+  font-weight: 700;
+  border: 0;
+  cursor: pointer;
+  color: var(--on);
+  background: var(--accent);
+  border-radius: var(--btn-r);
+  transition:
+    transform 0.15s cubic-bezier(0.3, 1.6, 0.5, 1),
+    filter 0.15s,
+    background 0.2s;
+}
+button:hover {
+  filter: brightness(1.1);
+}
+button:active {
+  transform: scale(0.96);
+}
+button:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  outline-offset: 3px;
+}
+button:disabled {
+  cursor: progress;
+  filter: saturate(0.6) opacity(0.75);
+}
+.join,
+.rejoin {
+  display: block;
+  width: 100%;
+  min-height: 52px;
+  margin-top: 18px;
+  font-size: 1.08rem;
+}
+.over .said {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+.waiting {
+  margin: 12px 2px 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.people {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.people li {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 16px;
+  animation: rise 0.4s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+}
+.people li.gone {
+  animation: leave 0.35s ease-in forwards;
+}
+@keyframes leave {
+  to {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+.avatar {
+  flex: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  background: var(--who);
+  color: #fff;
+  font-weight: 700;
+  font-size: 1.05rem;
+  box-shadow:
+    0 0 0 3px var(--card),
+    0 0 0 3px var(--who);
+  transition: box-shadow 0.15s;
+}
+.people li.talking .avatar {
+  box-shadow:
+    0 0 0 3px var(--card),
+    0 0 0 calc(6px + var(--level, 0) * 4px) var(--who);
+}
+.people li.talking .avatar::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 3px solid var(--who);
+  animation: halo 1.2s ease-out infinite;
+}
+@keyframes halo {
+  to {
+    inset: -14px;
+    opacity: 0;
+  }
+}
+.people b {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.people .who {
+  min-width: 0;
+  flex: 1;
+}
+.people small {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+.people .muted-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* ---- the call's buttons */
+.controls {
+  position: fixed;
+  left: 50%;
+  bottom: max(18px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  display: flex;
+  gap: 12px;
+  padding: 10px;
+  border-radius: 99px;
+  background: var(--card);
+  box-shadow: var(--shadow);
+  animation: rise 0.4s 0.1s cubic-bezier(0.2, 0.9, 0.3, 1.3) both;
+  z-index: 5;
+}
+.controls button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 0 20px;
+  border-radius: 99px;
+}
+.controls svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.mute {
+  background: var(--soft);
+  color: var(--ink);
+}
+.mute .off {
+  display: none;
+}
+.mute[aria-pressed='true'] {
+  background: var(--ink);
+  color: var(--bg);
+}
+.mute[aria-pressed='true'] .off {
+  display: inline;
+}
+.leave {
+  background: #d9434f;
+  color: #fff;
+}
+.leave svg {
+  fill: currentColor;
+  stroke: none;
+}
+.reconnecting {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 8px 16px;
+  border-radius: 99px;
+  background: var(--ink);
+  color: var(--bg);
+  font-weight: 700;
+  z-index: 6;
+  animation: rise 0.3s both;
+}
+
+/* ---- a phone */
+@media (max-width: 859px) {
+  .top {
+    padding: 12px 16px 4px;
+  }
+  .logo {
+    height: 24px;
+  }
+  main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    padding: 4px 14px 112px;
+  }
+  .agent {
+    aspect-ratio: auto;
+    height: min(52dvh, 108vw);
+  }
+  body.lobby .agent {
+    height: min(38dvh, 84vw);
+  }
+  .card {
+    padding: 18px;
+    border-radius: 20px;
+  }
+  .plate {
+    left: 10px;
+    bottom: 10px;
+    padding: 5px 11px 5px 9px;
+    font-size: 0.82rem;
+  }
+  h1 {
+    font-size: 1.3rem;
+  }
+  .captions {
+    font-size: 1rem;
+    min-height: 2.9em;
+  }
+  .room .people {
+    grid-auto-flow: column;
+    grid-auto-columns: minmax(78px, 1fr);
+    overflow-x: auto;
+    gap: 4px;
+  }
+  .room .people li {
+    flex-direction: column;
+    gap: 6px;
+    padding: 6px 2px;
+    text-align: center;
+  }
+  .room .people .who {
+    width: 100%;
+  }
+  .room .people li {
+    position: relative;
+  }
+  .room .people .muted-mark {
+    position: absolute;
+    top: 4px;
+    left: calc(50% + 14px);
+    background: var(--card);
+    border-radius: 50%;
+  }
+  .controls {
+    width: calc(100% - 28px);
+    justify-content: center;
+  }
+  .controls button {
+    flex: 1;
+    justify-content: center;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+  .captions span {
+    opacity: 1;
+  }
+}

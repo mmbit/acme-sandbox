@@ -1,0 +1,42 @@
+<!doctype html><meta charset="utf-8">
+<!-- The foley kit's audition reel: every sound in audition.mjs with its name and the exact call that makes it.
+     node shared/demo/mix.mjs shared/demo/examples/audition.mjs && node shared/demo/ad.mjs shared/demo/examples/audition.html -->
+<script type="application/json" id="demo">{ "audio": "audition.wav", "out": "audition.mp4" }</script>
+<style>
+  html, body { margin: 0; width: 1080px; height: 1920px; overflow: hidden; background: #f4eee3; color: #2a2522; font-family: 'Liberation Sans', sans-serif; }
+  .title { position: absolute; left: 90px; right: 90px; top: 330px; font: 700 96px/1.02 Charter, 'Bitstream Charter', Georgia, serif; letter-spacing: -0.02em; }
+  .title i { display: block; font: italic 400 44px/1.4 Charter, Georgia, serif; color: #8a7d70; margin-top: 18px; letter-spacing: 0; }
+  .ring { position: absolute; left: 540px; top: 1010px; width: 0; height: 0; }
+  .ring b { position: absolute; left: -150px; top: -150px; width: 300px; height: 300px; border-radius: 50%; border: 10px solid #e0643a; box-sizing: border-box; }
+  .ring s { position: absolute; left: -46px; top: -46px; width: 92px; height: 92px; border-radius: 50%; background: #2a2522; }
+  .name { position: absolute; left: 60px; right: 60px; top: 1300px; text-align: center; font: 700 92px/1.05 Charter, Georgia, serif; }
+  .code { position: absolute; left: 60px; right: 60px; top: 1440px; text-align: center; font: 34px/1.4 'DejaVu Sans Mono', 'Liberation Mono', monospace; color: #8a7d70; }
+  .count { position: absolute; left: 0; right: 0; top: 1640px; text-align: center; font: 600 28px/1 system-ui, sans-serif; letter-spacing: .2em; color: #b3a697; }
+</style>
+<div class="title" id="title">Satisfying sounds, made in code.<i>The foley kit: every sound here is synthesised, nothing recorded.</i></div>
+<div class="ring" id="ring"><b></b><s></s></div>
+<div class="name" id="name"></div>
+<div class="code" id="code"></div>
+<div class="count" id="count"></div>
+<script>
+  // The cue list itself (the same module mix.mjs rendered), so every caption shows the real call and params.
+  window.ready = import('./audition.mjs').then(({ default: spec }) => {
+    const cues = demo.cues.map((c, i) => ({ ...c, spec: spec.cues[i] }));
+    const call = ({ t, sound, name, ...p }) => `sfx.play('${sound}'${Object.keys(p).length ? `, { ${Object.entries(p).map(([k, v]) => `${k}: ${JSON.stringify(v).replace(/"/g, "'")}`).join(', ')} }` : ''})`;
+    const $ = (id) => document.getElementById(id), [title, ring, name, code, count] = ['title', 'ring', 'name', 'code', 'count'].map($), [circle, dot] = ring.children;
+    window.frame = (t) => {
+      const i = cues.findLastIndex((c) => t >= c.start - 0.15), c = cues[i];
+      const intro = 1 - demo.p(t, 0.45, 0.8);
+      title.style.opacity = intro; title.style.transform = `translateY(${(1 - intro) * -40}px)`;
+      if (!c) { name.textContent = code.textContent = count.textContent = ''; ring.style.opacity = 0; return; }
+      const next = cues[i + 1]?.start ?? demo.duration, k = demo.p(t, c.start - 0.15, c.start + 0.1), out = demo.p(t, next - 0.3, next - 0.15);
+      name.textContent = c.spec.name; code.textContent = call(c.spec); count.textContent = `${String(i + 1).padStart(2, '0')} / ${cues.length}`;
+      for (const el of [name, code]) { el.style.opacity = k * (1 - out); el.style.transform = `translateY(${(1 - k) * 30}px)`; }
+      // on the hit: the dot jolts and a ring flies out from it
+      const since = t - c.t, h = since >= 0 ? Math.exp(-since * 7) : 0, r = since >= 0 ? demo.p(t, c.t, c.t + 0.6) : 0;
+      ring.style.opacity = Math.max(0.15, k * (1 - out));
+      dot.style.transform = `scale(${1 + 0.45 * h})`;
+      circle.style.transform = `scale(${0.3 + 1.2 * r})`; circle.style.opacity = since >= 0 ? 1 - r : 0;
+    };
+  });
+</script>

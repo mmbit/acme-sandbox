@@ -1,0 +1,115 @@
+# The test company's org chart (platform/coordinator/src/fixture.ts): the coordinator's tests run against it, never a
+# real company's files. Same shape as template/company/org.yaml; more people, so there's someone for every route.
+
+company:
+  legal: Testco B.V.
+  brand: Testco
+  ceo: juno
+  timeZone: Europe/Amsterdam
+
+board:
+  room: { kind: boardroom, size: m }
+  members:
+    - id: board
+      name: The Board
+      human: true
+
+commons:
+  - { id: lobby, room: { kind: lobby, size: m }, features: [gazette-newsstand, reception] }
+  - { id: library, room: { kind: library, size: m }, features: [knowledge-search] }
+
+departments:
+  - id: executive
+    name: Executive
+    charter: departments/executive.md
+    room: { kind: office, size: s }
+    agents:
+      - { id: juno, name: Juno, role: CEO, pronouns: they/them, engine: claude, look: "round glasses", voice: alba }
+
+  - id: studio
+    name: Studio
+    charter: departments/studio.md
+    room: { kind: lab, size: l }
+    agents:
+      - { id: wren, name: Wren, role: Head of Studio, engine: claude, look: "paint-stained apron", voice: jane }
+
+  - id: creative
+    name: Creative
+    charter: departments/creative.md
+    room: { kind: studio, size: m }
+    agents:
+      - { id: moss, name: Moss, role: Creative Director, engine: claude, look: "headphones", voice: paul }
+
+  - id: growth
+    name: Growth
+    charter: departments/growth.md
+    room: { kind: office, size: m }
+    agents:
+      - { id: kit, name: Kit, role: Head of Growth, engine: claude, look: "sneakers" }
+
+  # (no customer_data any more: a customer's details are kept where they come in, not by department)
+  - id: care
+    name: Customer Care
+    charter: departments/care.md
+    room: { kind: mailroom, size: m }
+    agents:
+      - { id: poppy, name: Poppy, role: Customer Care, engine: api, look: "headset" }
+
+  - id: operations
+    name: Operations
+    charter: departments/operations.md
+    room: { kind: dock, size: m }
+    agents:
+      - { id: dex, name: Dex, role: Head of Operations, engine: claude, look: "hi-vis vest" }
+
+  - id: finance
+    name: Finance
+    charter: departments/finance.md
+    room: { kind: vault, size: s }
+    agents:
+      - { id: penny, name: Penny, role: Head of Finance, engine: claude, look: "green visor" }
+
+  - id: compliance
+    name: Compliance
+    charter: departments/compliance.md
+    room: { kind: archive, size: s }
+    agents:
+      - { id: vera, name: Vera, role: Head of Compliance, engine: claude, look: "binders", voice: eve }
+
+  - id: security
+    name: Security
+    charter: departments/security.md
+    room: { kind: review, size: m }
+    agents:
+      - { id: sable, name: Sable, role: Head of Security, engine: claude, look: "hoodie" }
+      - { id: quill, name: Quill, role: Meta-reviewer, engine: claude, model: claude-sonnet-5-5, look: "quill pen" }
+      - { id: rook, name: Rook, role: Reviewer, engine: claude, model: claude-sonnet-5-5, look: "chess-piece pin" }
+      - { id: tally, name: Tally, role: Reviewer, engine: claude, model: claude-sonnet-5-5, look: "tally-mark notebook" }
+      - { id: nib, name: Nib, role: Reviewer, engine: codex, look: "fountain-pen tip hat" }
+      - { id: flint, name: Flint, role: Reviewer, engine: codex, look: "spark goggles" }
+
+  - id: platform
+    name: Platform
+    charter: departments/platform.md
+    room: { kind: server, size: m }
+    agents:
+      - { id: bolt, name: Bolt, role: Head of Platform, engine: claude, look: "toolbelt", voice: michael }
+      - { id: lark, name: Lark, role: Platform Engineer, engine: claude, look: "feather in the hair" }
+      - { id: chime, name: Chime, role: Platform Engineer, engine: claude, look: "tiny keytar" }
+      - { id: pylon, name: Pylon, role: Platform Engineer, engine: claude, look: "coiled phone cord scarf" }
+
+roles:
+  reviewers: [rook, tally, nib, flint]
+  consolidator: quill
+  process: bolt
+  inbox: dex
+  # who reads through HQ by their work
+  businessMail: [penny, dex]
+  customerData: [penny, vera]
+  orders: [penny]
+  finance: penny   # money swings on the live apps (money.ts)
+
+alumni:
+  - { id: rivet, name: Rivet, role: Platform engineer, engine: claude, look: "rivet gun" }
+  - { id: gauge, name: Gauge, role: Platform engineer, engine: claude, look: "pressure-gauge badge" }
+  - { id: vervain, name: Vervain, role: Platform engineer, engine: claude, look: "satchel of sealed envelopes" }

@@ -1,0 +1,5 @@
+^company/people/[a-z0-9-]+\.md$
+^company/people/archive/[a-z0-9-]+\.md$
+^company/DECISIONS\.md$
+^company/briefs/([a-z0-9][a-z0-9.-]*/)*[a-z0-9][a-z0-9.-]*\.md$
+^knowledge/notes/([a-z0-9][a-z0-9.-]*/)*([a-z0-9][a-z0-9.-]*|README)\.md$

@@ -1,0 +1,36 @@
+/* board.css: the soundboard's look: big tiles that press down softly, two columns on a phone. The page sets the colours. */
+
+/* Neutral defaults: :where() keeps them weaker than any page's own :root, whatever the order of the style sheets */
+:where(:root) {
+  --card: #ffffff; --ink: #222222; --muted: #6b6b6b; --line: #2222222a; --accent: #4a6fa5; --shade: #2222220f;
+  --name-font: system-ui, sans-serif;
+}
+.soundboard, .soundboard *, #mute { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+#mute { flex: none; min-width: 96px; height: 44px; padding: 0 16px; border-radius: 22px; border: 1.5px solid var(--ink); background: var(--card);
+  color: var(--ink); font: 600 14px system-ui, sans-serif; cursor: pointer; }
+#mute[aria-pressed="false"] { border-color: var(--line); color: var(--muted); }
+
+.soundboard .tunings { display: grid; grid-template-columns: repeat(var(--tunings), 1fr); gap: 6px; margin: 18px 0 6px; padding: 5px; border-radius: 16px; background: var(--shade); }
+.soundboard .tunings button { min-height: 52px; border: 0; border-radius: 12px; background: transparent; color: var(--ink); font: 600 15px/1.15 system-ui, sans-serif; cursor: pointer; }
+.soundboard .tunings button small { display: block; font-weight: 400; font-size: 12px; color: var(--muted); margin-top: 2px; }
+.soundboard .tunings button[aria-pressed="true"] { background: var(--card); box-shadow: 0 2px 0 var(--line); }
+
+.soundboard h2 { margin: 22px 2px 8px; font: 600 13px system-ui, sans-serif; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.soundboard .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+@media (min-width: 640px) { .soundboard .grid { grid-template-columns: repeat(var(--cols, 3), 1fr); } } /* rows that fill: 3 for six, 4 for four */
+
+.soundboard .tile { position: relative; display: flex; flex-direction: column; justify-content: flex-start; min-height: 96px; padding: 14px 14px 12px; text-align: left;
+  border-radius: 18px; border: 1.5px solid var(--line); background: var(--card); color: inherit; font: inherit; cursor: pointer; box-shadow: 0 4px 0 var(--line);
+  transition: transform .09s ease-out, box-shadow .09s ease-out; }
+.soundboard .tile:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--line); }
+.soundboard .tile b { display: block; font: 700 19px/1.15 var(--name-font); }
+.soundboard .tile span { display: block; margin-top: 4px; font-size: 13px; line-height: 1.3; color: var(--muted); }
+.soundboard .tile i { position: absolute; right: 14px; top: 16px; width: 12px; height: 12px; border-radius: 50%; background: var(--line); }
+.soundboard .tile.hit i { background: var(--accent); animation: squash .32s ease-out; }
+.soundboard .tile.hit { animation: give .26s ease-out; }
+.soundboard .tile.wide { grid-column: 1 / -1; min-height: 84px; }
+.soundboard .tile[aria-pressed="true"] { border-color: var(--accent); }
+.soundboard .tile[aria-pressed="true"] i { background: var(--accent); }
+@keyframes squash { 0% { transform: scale(1.7, .6); } 45% { transform: scale(.85, 1.2); } 100% { transform: scale(1); } }
+@keyframes give { 0% { transform: translateY(3px) scale(.985, .97); } 100% { transform: none; } }

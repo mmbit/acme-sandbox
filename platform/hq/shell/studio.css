@@ -1,0 +1,439 @@
+/* HQ-OS › Photos (studio.js): the photo studio on the computer's screen. Colours come from the look's own variables
+   (style.css, a renderer's skin.css), but for the pictures, which are never tinted, and the darkroom's red safelight. */
+
+/* the computer is wider and taller while Photos is open (as for Care: the screen takes the device's height less its
+   header and frame, 96px) */
+.device.computer.sd-wide {
+  width: min(780px, 100%);
+}
+.sd-wide .crt .screen {
+  height: min(calc(var(--tool-h, 100dvh) - 96px), 1000px);
+  overscroll-behavior: contain;
+}
+
+.sd {
+  --sd-red: #ff4b3e;
+  /* its questions and notices, and its errors: a dark screen's gold and orange, or the look's own (Wire's skin.css) */
+  --sd-gold: var(--sd-notice, #ffd966);
+  --sd-warn: var(--sd-alert, #ff9b4a);
+  --sd-line: color-mix(in srgb, var(--scr) 35%, transparent);
+  /* the tray under a photo: a dark screen's darker still, or the look's own */
+  --sd-tray: var(--sd-photo-tray, color-mix(in srgb, var(--scr) 9%, rgb(0 0 0 / 50%)));
+  container-type: inline-size;
+  font-size: 15px;
+  line-height: 1.38;
+  overflow-wrap: anywhere;
+}
+.sd p {
+  margin: 0 0 8px;
+}
+.sd button {
+  font: inherit;
+  text-shadow: inherit;
+  cursor: pointer;
+}
+.sd button[disabled] {
+  opacity: 0.5;
+  cursor: default;
+}
+.sd svg.px {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  fill: currentColor;
+  shape-rendering: var(--icons, crispEdges);
+}
+.sd img {
+  text-shadow: none;
+}
+.sd-sub,
+.sd-state,
+.sd-for,
+.sd-hint {
+  color: var(--scr-dim);
+  font-size: 13px;
+}
+.sd-what b {
+  font-weight: 400;
+  color: var(--scr-hi);
+}
+.sd-what {
+  margin-bottom: 4px !important;
+}
+.sd-msg {
+  color: var(--sd-gold);
+  margin: 6px 0 0 !important;
+}
+.sd-signal {
+  color: var(--sd-warn);
+  font-size: 12px;
+}
+.sd-signal[hidden] {
+  display: none;
+}
+.sd-key {
+  padding: 8px 12px;
+  border: 1px dashed var(--sd-gold);
+  border-radius: var(--r);
+  color: var(--sd-gold);
+}
+.sd-foot {
+  margin: 20px 0 0 !important;
+  padding-top: 10px;
+  border-top: 1px dashed var(--sd-line);
+  color: var(--scr-dim);
+  font-size: 12px;
+  letter-spacing: 0.5px;
+}
+
+/* the darkroom's safelight: on while a photo develops */
+.sd-light {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  margin: 0 7px 1px 2px;
+  border-radius: 50%;
+  vertical-align: middle;
+  background: var(--sd-red);
+  box-shadow:
+    0 0 6px var(--sd-red),
+    0 0 14px color-mix(in srgb, var(--sd-red) 60%, transparent);
+  animation: sd-glow 2.6s ease-in-out infinite;
+}
+@keyframes sd-glow {
+  50% {
+    opacity: 0.55;
+    box-shadow: 0 0 3px var(--sd-red);
+  }
+}
+
+/* the tabs' sections */
+.sd-sec {
+  margin-top: 18px;
+}
+.sd-sec[hidden] {
+  display: none;
+}
+
+/* plain buttons on the screen: outlined; the one a row is for: lit */
+.sd-acts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.sd-acts button,
+.sd-retry button,
+.sd-flip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 6px 14px;
+  font-size: 15px;
+  background: none;
+  color: var(--scr);
+  border: 1px solid currentColor;
+  border-radius: var(--r-sm);
+  box-sizing: border-box;
+}
+.sd .cta {
+  background: var(--scr);
+  color: var(--scr-ink);
+  border-color: var(--scr);
+  text-shadow: none;
+  box-shadow: 0 0 12px color-mix(in srgb, var(--scr) 45%, transparent);
+}
+.sd-acts button:active {
+  transform: translateY(1px);
+}
+
+.sd-retry {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--sd-gold);
+  border-radius: var(--r);
+}
+.sd-retry label {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--sd-gold);
+  font-size: 14px;
+}
+/* a note's field and its button, the button at the foot of a field that grows */
+.sd-field {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px;
+}
+.sd-field textarea {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.sd input,
+.sd textarea,
+.sd select {
+  min-height: 44px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--ink);
+  background: var(--paper);
+  border: 1px solid var(--scr);
+  border-radius: var(--r-sm);
+  box-shadow: none;
+  text-shadow: none;
+}
+/* a note's field: as tall as its text (util.js grow), up to a few lines on a phone, then it scrolls
+ */
+.sd textarea {
+  display: block;
+  max-height: 40dvh;
+  line-height: 1.38;
+  resize: none;
+  overflow-y: auto;
+}
+
+/* ---- the Queue: a photo in the darkroom, a small print and its words */
+.sd-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.sd-rows:empty {
+  display: none;
+}
+.sd-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 8px 10px;
+  border: 1px dashed var(--sd-line);
+  border-radius: var(--r);
+}
+.sd-thumb {
+  all: unset;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--r-sm);
+  background: var(--sd-tray);
+}
+.sd-thumb img {
+  max-width: 58px;
+  max-height: 58px;
+  border: 2px solid #f4f1ea;
+  background: #f4f1ea;
+}
+.sd-about {
+  display: block;
+  min-width: 0;
+}
+/* ---- History: small prints with their product, and the search above them */
+.sd-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: 8px;
+}
+.sd-tile {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  justify-items: center;
+  gap: 4px;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  padding: 6px 6px 4px;
+  border-radius: var(--r-sm);
+  background: var(--sd-tray);
+  cursor: pointer;
+}
+.sd-tile img {
+  align-self: center;
+  max-width: 100%;
+  max-height: 100%;
+  min-height: 0;
+  box-sizing: border-box;
+  border: 2px solid #f4f1ea;
+  background: #f4f1ea;
+  object-fit: contain;
+}
+.sd-tile span {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--scr-soft);
+}
+.sd-tile:focus-visible,
+.sd-tile:hover {
+  outline: 1px solid var(--scr);
+}
+/* ---- one photo, big: the original and the edit in the same spot, a tap flips between them */
+.sd-big[hidden],
+.sd-sec [hidden] {
+  display: none;
+}
+.sd-bar-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.sd-flip {
+  display: inline-flex;
+}
+.sd-flip button {
+  min-width: 0;
+  padding: 6px 12px;
+  border-radius: 0;
+}
+.sd-flip button:first-child {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+.sd-flip button:last-child {
+  margin-left: -1px;
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+.sd-flip [aria-checked='true'] {
+  background: var(--scr);
+  color: var(--scr-ink);
+  text-shadow: none;
+}
+.sd-view {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  /* (one cell the view's own size, so a tall picture's max-height holds) */
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  place-items: center;
+  width: 100%;
+  /* the screen's height less the 344px of what's around the picture, and 196px for a photo's brief and a line
+ */
+  height: min(calc(var(--tool-h, 100dvh) - 540px), 656px);
+  min-height: 240px;
+  padding: 10px;
+  margin-bottom: 6px;
+  border-radius: var(--r);
+  background: var(--sd-tray);
+  /* (a tap shows it full size) */
+  cursor: zoom-in;
+}
+.sd-view img {
+  grid-area: 1 / 1;
+  max-width: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  border: 4px solid #f4f1ea;
+  background: #f4f1ea;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 60%);
+  transition: opacity 0.18s;
+}
+.sd-view[data-on='original'] [data-img='edited'],
+.sd-view[data-on='edited'] [data-img='original'] {
+  opacity: 0;
+}
+.sd-view:focus-visible {
+  outline: 2px solid var(--scr);
+}
+.sd-big .sd-acts {
+  margin-top: 6px;
+}
+.sd-count {
+  color: var(--scr-soft);
+  font-size: 14px;
+}
+.sd-comment {
+  display: block;
+  margin: 10px 0 6px;
+  color: var(--scr-cap);
+  font-size: 13px;
+}
+.sd-retry .sd-comment {
+  margin-top: 0;
+  color: var(--sd-gold);
+}
+/* Approvals: Accept and Reject side by side, the same size */
+.sd-decide {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+/* Approvals: the page it goes on, what it should show and what to check, each after its label, and the comment
+ */
+.sd-brief {
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--scr-soft);
+}
+.sd-brief p {
+  margin: 0 0 2px;
+}
+.sd-brief span {
+  color: var(--scr-dim);
+}
+.sd-brief ul {
+  margin: 0;
+  padding-left: 1.2em;
+}
+.sd .sd-comment-field {
+  width: 100%;
+  margin-top: 8px;
+}
+.sd-places {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+.sd-brief a,
+.sd-places a {
+  color: var(--scr-hi);
+}
+
+/* ---- the tabs (style.css .jb-tabs, as Jobs'), and a tab with nothing in it */
+.sd-tabs {
+  margin-bottom: 4px;
+}
+.sd-empty {
+  margin: 28px 0 !important;
+  text-align: center;
+  color: var(--scr-dim);
+}
+.sd-search {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+}
+.sd-search input {
+  width: 100%;
+}
+
+/* the board's note in the toast that says it went back: its first lines */
+.toast .sd-said {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-light {
+    animation: none;
+  }
+  .sd-view img {
+    transition: none;
+  }
+}

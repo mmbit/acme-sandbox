@@ -1,0 +1,7 @@
+# The test company's projects: the CEO's office, home of the jobs HQ makes with a window (made.ts), as a new company's
+# (template/company/projects.yaml). A test that writes its own file names its own.
+projects:
+  - { id: office, name: The office, owner: juno }
+made:
+  checks: { hq: office }
+  alarms: { hq: office }

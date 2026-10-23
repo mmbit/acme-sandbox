@@ -1,0 +1,42 @@
+# Recurring work: each entry has a project in HQ, and the coordinator opens a thread in it when the entry is due.
+# project: the routine's project id, which defaults to the entry's id. Entries that take turns at one task share it.
+# at: "HH:MM" (every day), "Mon HH:MM" (weekly) or "every 4h", in org.yaml's company.timeZone.
+# downtime: true for maintenance: it runs only on spare capacity and pauses when other work needs the room.
+# week: "k of n" runs an entry one week in n. model, effort: optional, only lighter than the agent's own.
+# routine: a recurring job every company runs, from shared/routines/ (its README lists them); prompt then holds only
+# the company's own additions, which come after the routine's text.
+# code: the word in its runs' task code (ROUND: the routine's project has no prefix), one word in capitals of up to 8
+# letters, each entry its own, and no queued task's. Every run of an entry carries the code; without one, each run's
+# agent names its own. An entry with `with:` (other agents: a meeting instead of one job) needs one.
+# Every entry spends AI capacity: the CEO reviews the list weekly. Every company starts with the morning round.
+
+- id: morning-round
+  agent: ceo
+  at: "07:45"
+  title: Morning round
+  code: ROUND
+  routine: morning-round
+
+# Suggested, for once the company has code: the onboarding offers them (playbooks/intake.md), and the founding job
+# takes the ones the board wants out of the comments, each with the agent who runs it.
+# - id: weekly-code-quality
+#   agent: <the code quality lead>
+#   at: "Mon 10:00"
+#   title: Weekly code quality check
+#   code: QUALITY
+#   routine: code-quality
+# - id: weekly-refactoring
+#   agent: <the code quality lead>
+#   at: "Sat 06:00"
+#   title: Weekly refactoring pass
+#   code: REFACTOR
+#   downtime: true
+#   routine: refactoring
+#   prompt: |
+#     This week's area: what landed since the last pass first, then the area of our code that most needs it.
+# - id: nightly-tests
+#   agent: <the code quality lead>
+#   at: "04:00"
+#   title: Nightly test run on main
+#   code: TESTS
+#   routine: tests

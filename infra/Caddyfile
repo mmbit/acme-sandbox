@@ -1,0 +1,83 @@
+# A deploy restarts containers (infra/sync.sh). Every way to one holds the request while it's away and tries it again
+# every quarter second, for up to 30 s, so a restart shows as a short wait, not a 502: one that couldn't connect is
+# tried again whatever its method, one cut off mid-answer only if it's a GET.
+(upstream) {
+	lb_try_duration 30s
+	lb_try_interval 250ms
+}
+# ...and one that still can't be served gets a calm page that tries again by itself (a page load), or a short line
+# (anything else), with 503 and Retry-After, never a bare 502. Every site imports it (and infra/products.py's).
+(back_soon) {
+	handle_errors 502 503 504 {
+		header Retry-After 5
+		header Cache-Control no-store
+		@back_soon_page method GET HEAD
+		handle @back_soon_page {
+			root * /repo/infra
+			rewrite * /back-soon.html
+			file_server {
+				status 503
+			}
+		}
+		respond "Back in a moment: please try again in a few seconds." 503
+	}
+}
+
+# Our own visits, which a product's counts skip (shared/metrics counts(), on X-Own-Device): a device HQ marked as the
+# board's when it signed in (the coordinator's auth.ts, on every host of the zone), and the server itself (a job's check,
+# HQ's watch), whose requests reach Caddy from Docker's private networks: a visitor's come from the internet. Every
+# product site imports it (infra/products.py), and own_device is 1 for these and unset for everyone else.
+(own_device) {
+	@own_device_cookie header_regexp Cookie (?:^|;\s*)hq-own-device=1(?:;|$)
+	vars @own_device_cookie own_device 1
+	@own_device_server remote_ip private_ranges
+	vars @own_device_server own_device 1
+}
+
+{$PUBLIC_HOST} {
+	encode gzip
+	import back_soon
+	# X-Care-App is Caddy's own word on a product host (infra/products.py): no client's copy goes anywhere
+	request_header -X-Care-App
+	# The worker's, agents' and voice line's APIs are for coordinator:8080 inside Docker, never the public host (L2).
+	# Caddy runs one handle block per request and tries those with a named matcher before any with a path or none, so
+	# this one wins whatever blocks are added (infra/test_caddy.sh). Mail, Twilio, payments and the rest go through.
+	# Only the /api/voice/ prefix: the bare /api/voice is HQ's own dictation for the board (the coordinator's speech to text).
+	@internal path /api/worker /api/worker/* /api/agent /api/agent/* /api/voice/*
+	handle @internal {
+		respond 404
+	}
+	# live calls: HQ's call screen (behind the board's login) and the phone line (Twilio, with a one-time ticket)
+	handle /voice/ws {
+		forward_auth coordinator:8080 {
+			uri /api/me
+			import upstream
+		}
+		reverse_proxy voice:8080 {
+			import upstream
+		}
+	}
+	handle /voice/twilio {
+		reverse_proxy voice:8080 {
+			import upstream
+		}
+	}
+	# a join link's room (the join page, /join/<token>): public, the voice line checks the link's token itself
+	handle /voice/join {
+		reverse_proxy voice:8080 {
+			import upstream
+		}
+	}
+	# the Overseer's fixed actions on the host (infra/shell.py), which take only GitHub's tokens for the overseer workflow
+	handle /__shell {
+		reverse_proxy host.docker.internal:8722
+	}
+	handle {
+		reverse_proxy coordinator:8080 {
+			import upstream
+		}
+	}
+}
+
+# Product sites, generated from products/*/product.yaml by infra/products.py.
+import /etc/caddy/generated/*.caddy

@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#1d1a2f">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="HQ">
+  <meta name="description" content="The Company office building, live: see what every agent is up to.">
+  <title>Company HQ</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="icon" href="favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="shell/main.js"></script>
+</head>
+<body>
+  <canvas id="world" role="img" aria-label="Pixel-art view of the HQ building. The computer's People tab lists everyone in text."></canvas>
+
+  <header id="hud">
+    <div class="brand"><img src="wordmark.svg" alt="Company" width="160" height="30"><span><b>HQ</b><small id="clock"></small></span><span id="dev" hidden title="Using mock data: the coordinator API is not reachable">DEV</span></div>
+    <!-- Icons drawn by the look's style (shell/icons.js). -->
+    <nav class="tools">
+      <!-- a plain href, so a middle-click opens a new HQ with the phone open -->
+      <a id="btn-desk" href="/?open=phone" title="Desk phone: requests waiting for you" class="desk board-tool"><svg class="icon i-phone" data-icon="phone" aria-hidden="true"></svg><span class="lbl">Phone</span><b id="desk-count" class="count" hidden>0</b></a>
+      <button id="btn-news" class="board-tool" title="The newsletter"><svg class="icon i-news" data-icon="news" aria-hidden="true"></svg><span class="sr">News</span><b id="news-count" class="count" hidden>0</b></button>
+      <!-- the intercom's count: the CEO's replies not seen yet -->
+      <button id="btn-intercom" class="board-tool" title="Intercom: a directive for the CEO"><svg class="icon i-intercom" data-icon="intercom" aria-hidden="true"></svg><span class="sr">Intercom</span><b id="intercom-count" class="count" hidden>0</b></button>
+      <!-- the computer's count: review notes waiting -->
+      <button id="btn-computer" class="board-tool" title="Computer: AI seats and jobs"><svg class="icon i-computer" data-icon="computer" aria-hidden="true"></svg><span class="sr">Computer</span><b id="computer-count" class="count" hidden>0</b></button>
+      <!-- HQ's search, where there's no / key to press (finder.js). -->
+      <button id="btn-find" class="board-tool" title="Go to anything (/)"><svg class="icon i-find" data-icon="find" aria-hidden="true"></svg><span class="sr">Go to anything</span></button>
+      <button id="btn-walls" aria-pressed="false" title="Outside walls"><svg class="icon i-walls" data-icon="walls" aria-hidden="true"></svg><span class="sr">Outside walls</span></button>
+      <button id="btn-sound" aria-pressed="false" title="Sound"><svg class="icon i-sound-off" data-icon="sound-off" aria-hidden="true"></svg><svg class="icon i-sound-on" data-icon="sound-on" aria-hidden="true"></svg><span class="sr">Sound</span></button>
+      <button id="btn-music" aria-pressed="false" title="Music"><svg class="icon i-music" data-icon="music" aria-hidden="true"></svg><span class="sr">Music</span></button>
+      <button id="btn-tour" aria-pressed="false" title="Showcase tour"><svg class="icon i-tour" data-icon="tour" aria-hidden="true"></svg><span class="sr">Tour</span></button>
+    </nav>
+  </header>
+
+  <div id="status" aria-live="polite"></div>
+  <div id="zoom"><button id="zin" aria-label="Zoom in">+</button><button id="zfit" aria-label="Show whole building"><svg class="icon i-zoom-fit" data-icon="zoom-fit" aria-hidden="true"></svg></button><button id="zout" aria-label="Zoom out">−</button></div>
+  <div id="hint">Drag to explore · pinch to zoom · tap anyone</div>
+  <div id="toasts" aria-live="polite"></div>
+  <div id="card" aria-live="polite"></div>
+  <div id="bubbles" aria-hidden="true"></div>
+  <div id="namecard" hidden></div>
+
+
+  <section id="projects" hidden aria-label="Projects"></section>
+  <aside id="panel" hidden aria-live="polite">
+    <button id="panel-close" aria-label="Close">×</button>
+    <div id="panel-body"></div>
+  </aside>
+  <div id="tool" hidden></div>
+  <div id="viewer" hidden></div>
+  <div id="loading">Assembling the building…</div>
+</body>
+</html>

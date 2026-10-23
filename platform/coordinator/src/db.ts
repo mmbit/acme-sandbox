@@ -1,0 +1,596 @@
+// Coordinator storage, schema and migrations.
+import { DatabaseSync } from 'node:sqlite';
+import { readFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { DATA_DIR, REPO_DIR } from './config.ts';
+import { redact, keysStamp, REDACT_RULES } from './secrets.ts';
+
+// ---- the connection and its helpers
+
+// Other processes open this file too (infra/report.sh, the backup's copy, reset.py), and a write that finds it locked
+// waits a moment instead of failing at once ("database is locked" cut a hand-off to the panel between its round and its
+// reviews). Short: the wait blocks the whole server.
+export const db = new DatabaseSync(`${DATA_DIR}/hq.db`, { timeout: 1500 });
+// Deleted rows (swept mail, an erased care case, a scrubbed key) are overwritten, not left readable in the
+// file's free pages. That needs the rollback journal SQLite starts with: a write-ahead log (journal_mode = wal) keeps the
+// old pages in hq.db-wal, after a checkpoint too.
+db.exec('pragma secure_delete = on');
+// Writes that belong together, all or none, and one disk sync for them all: outside a transaction the journal syncs on
+// every write, and the server waits for each. One inside another is a savepoint of it, so
+// it nests where a plain begin can't. A trial (keep: false) rolls back after reading its answer too.
+// What a step does outside the database (afterStep: the events it publishes) waits for the outermost step to be kept,
+// and is dropped with a step rolled back.
+const afterSteps: (() => void)[][] = [];
+export function inOneStep<T>(run: () => T, { keep = true } = {}): T {
+  db.exec('savepoint step');
+  afterSteps.push([]);
+  try {
+    const done = run();
+    const after = afterSteps.pop()!;
+    db.exec(keep ? 'release step' : 'rollback to step; release step');
+    if (keep && afterSteps.length) afterSteps.at(-1)!.push(...after);
+    else if (keep) for (const then of after) then();
+    return done;
+  } catch (err) {
+    afterSteps.pop();
+    db.exec('rollback to step; release step');
+    throw err;
+  }
+}
+// A lookup made many times a second, prepared once and kept: the queue's play (backlog.ts) looks up each open job's
+// waits, cards and wakes on every play, and compiling such a statement takes longer than running it. Only for
+// get and all: a statement under iterate() is still being read when the next call would reset it.
+const kept = new Map<string, ReturnType<typeof db.prepare>>();
+export function prepared(sql: string) {
+  let statement = kept.get(sql);
+  if (!statement) kept.set(sql, (statement = db.prepare(sql)));
+  return statement;
+}
+// Something outside the database: now, or once the step it's in is kept.
+export const afterStep = (then: () => void) => (afterSteps.length ? afterSteps.at(-1)!.push(then) : then());
+// A job (`job`, its row's alias) that can still merge: open work, or done with its latest pull request still in review.
+// Shared by wait and pause validation and their cycle check.
+export function mergePending(job: string) {
+  return `(${job}.status in ('queued', 'running', 'blocked') or ${job}.status = 'done' and
+    (select status from prs where branch = coalesce(${job}.branch, 'job/' || ${job}.id)
+      order by number desc limit 1) in ('open', 'stuck', 'board'))`;
+}
+// A key's value never stays in the free text an agent can read (secrets.ts redact()): a module that keeps such text names
+// its columns once its table exists, and every insert and update of them is redacted as it's written. The triggers are
+// this connection's own (temp), so the file holds none: report.sh, the backup's copy or an older coordinator open it
+// without redact(). scrub(): the same over what's already written, when a key is saved.
+db.function('redact', { varargs: false }, (t: unknown) => redact(t) as string | null);
+const guarded: [string, string][] = [];
+export function redacted(table: string, ...cols: string[]) {
+  for (const col of cols) {
+    guarded.push([table, col]);
+    for (const on of ['insert', `update of ${col}`]) db.exec(`create temp trigger if not exists redact_${table}_${col}_${on.split(' ')[0]}
+      after ${on} on main.${table} when new.${col} is not redact(new.${col})
+      begin update ${table} set ${col} = redact(new.${col}) where rowid = new.rowid; end`);
+  }
+}
+// scrub() remembers the keys, rules and columns it ran for, and a start runs it only when those changed (a key put in by
+// hand, a new column, a deploy that changed redact()): every write since went through the triggers. That holds only while
+// this coordinator is hq.db's one writer (report.sh, the backup and the payments shelf only read; reset.py writes only at
+// a reset): a new writer runs scrub() after its writes. Each pass reads every row, seconds on a server's database with its
+// keys, while HQ waits for the start.
+export function scrub() {
+  const keysAndColumns = scrubbedFor();
+  for (const [t, c] of guarded) db.exec(`update ${t} set ${c} = redact(${c}) where ${c} is not redact(${c})`);
+  remember('scrubbed', keysAndColumns);
+}
+export function scrubOnStart() {
+  if (setting('scrubbed') !== scrubbedFor()) scrub();
+}
+// The query planner's statistics, so it picks the narrow index for a query (a job's pull request, not its state, which
+// every done job shares): once every module's tables exist, then hourly, as SQLite advises a long-running process. Each
+// run reads again only the tables that changed much since the last.
+export const optimize = () => db.exec('pragma optimize=0x10002');
+// a hash, so the settings table holds no key's size (secrets.ts keeps keys out of the database)
+const scrubbedFor = (rules = REDACT_RULES) =>
+  createHash('sha256').update(JSON.stringify([[...guarded].sort(), rules, keysStamp()])).digest('hex');
+// A database made by this start: a new company's first (no tables at all), or the one a fresh start leaves, which holds
+// only the board's sign-ins (infra/reset.py KEPT_TABLES, and settings). Neither has run a one-off fix yet. One from before
+// the migrations table has others (events, jobs, mail), so its one-off fixes run.
+const KEPT_BY_A_FRESH_START = ['credentials', 'sessions', 'enrollments', 'push_subscriptions', 'settings'];
+const born = (db.prepare("select name from sqlite_master where type = 'table' and name not like 'sqlite_%'").all() as { name: string }[])
+  .every(t => KEPT_BY_A_FRESH_START.includes(t.name));
+// ---- schema
+
+// Every create statement includes all of the table's columns. Add a new column to its create statement and add an
+// `alter table ... add column` in a once() below for databases that already have the table.
+//
+// The board's sign-ins: credentials (its passkeys), sessions, enrollments (a sign-up link, used once), and its devices'
+// push subscriptions. events: the feed HQ shows.
+//
+// jobs: one agent's run of work.
+// - stage (review.ts Stage): a review-loop job's role, apart from its title.
+// - step: the review loop's step beside the work's own title.
+// - token: the running job's agent token (sha256 only).
+// - room_for: the ready work it last paused to make room for (jobs.ts makesRoom), which gets that room first.
+// - writes: the files a ruling may touch itself (JSON, review.ts touch-ups).
+// - stopping, suspending: who stopped it (hq stop) or paused it with its thread (suspendReview) and why, until it ends.
+// - queued_by: the agent who queued it (null: the coordinator's own).
+// - customers: it was handed a customer's own details (charter rule 7), never spread.
+// - downtime: maintenance on spare capacity only.
+// - cut: what a stop of the worker's container cut in its last run, for the next run's prompt.
+// - model, effort: a scheduled entry's own (schedule.ts).
+// - held_by: the seat whose usage limit holds it (only whether it's set matters).
+// - about_keys: its chat session heard a call about a card for keys (chat.ts).
+// - instead_of: the job it replaces (a review's retry, a takeover of failed work), whose call item and failure go with it.
+// - told: the board's word from a call (message items' ids, JSON) a review, ruling or fix took (review.ts withTold).
+// - cli: the CLI it must run on (none: any seat of its engine).
+// - is_check: QA, audits and compliance reads (hq job --check, since check is reserved in SQL).
+// - seq: its place among its thread's tasks (null: its id's).
+// - code: its task's name for the board and calls, its project's prefix and a word (HQ-COVERS), shared by the task's
+//   steps (jobcodes.ts).
+// - landing: a run that ended well but whose push or pull request the worker couldn't make (JSON: its pull request's
+//   body and its report, jobs.ts finish): its next run only lands it.
+//
+// seats: each seat as the worker last reported it.
+// - util, week: windows used (0 to 1), with each reset time in resets and week_resets (ms).
+// - pace: 1 while its week runs ahead of its pace (only the board's word and work due before its reset can start).
+// - credits: 1 while it runs on credits past its limits (playseats.ts).
+//
+// requests: the cards on the desk phone.
+// - secrets: the keys a credential card asks for (a password field each).
+// - approves: what approving grants (approvals.ts: live:<slug> or site:<slug>).
+// - pr: the pull request a "needs your call" card decides.
+// - photos, documents, zips, questions: what it asks for beside its answer box (each JSON).
+//   Their readers are photos.ts, documents.ts, zips.ts and hq/shell/questions.js.
+// - address: its four keys are one delivery address (secrets.ts addressKeys).
+// - customers: a tool wrote it about one customer.
+// - answered: when it left the desk phone.
+// - changed: when its open text last changed (shown as new again).
+// - closing: HQ's line on a card whose matter ended by itself (endRequest).
+// - hidden_until: kept off the desk phone until then (later.ts), still open.
+//
+// prs: each pull request the review loop runs (review.ts).
+// - since: the last job id before its current round started (only later runs are that round's).
+// - review_since: the last job id before the board sent it back. Rulings before it belong to the previous review.
+// - panel: the current round's panel (toPanel: full, held, light, deck, two, one).
+// - review_class: the risk class used to measure review rounds, retained when a later panel is partial.
+// - fixes_from: the commit a round reviews the author's fixes from (null: a full review).
+//
+// calls: a call with the board (call.ts), with a row from its start (status live).
+// - processed_at: a follow-up ended done with the items recorded after its transcript came in (lines_at).
+// - reply: what the board reads after the call, set by its follow-up (hq reply, ledger.ts reply).
+//
+// chat: the intercom (chat.ts).
+// - shown: the line shown for a call (the CEO hears the whole transcript, text).
+// - about_customer, about_keys: the line came from a job that holds a customer's details or heard a call about keys.
+//   Only the board and the CEO's session see it.
+// A database from before these columns moved into their tables' creates (a company that last ran the platform before
+// 23 October) gets them first, where the table is there already, before anything below indexes or reads them. A new
+// database has no such tables yet: the creates give them their columns.
+const FOLDED: Record<string, string[]> = {
+  calls: ['reply text'],
+  findings: ['cross_project integer not null default 0'],
+  jobs: [
+    'peak_mb integer',
+    'room_for integer',
+    'seq real',
+    'step text',
+    'code text',
+    'engine_only text',
+    'judges text',
+  ],
+  memory_docs: ['stamp text'],
+  messages: ['held integer'],
+  pay_lines: [
+    'held text',
+    'held_why text',
+    'held_words text',
+    'held_revision text',
+    'held_seen text',
+    'held_answer text',
+    'held_answered text',
+    'held_taken text',
+  ],
+  proposals: ['project text', 'heard_by integer', 'heard_at text'],
+  prs: ['review_since integer not null default 0', 'review_class text', 'merge_refused text'],
+  seats: ['credits integer'],
+  sizer_tries: ['answered integer not null default 0'],
+  test_results: ['began text'],
+  threads: ['aim integer', 'branch text'],
+};
+for (const [table, columns] of Object.entries(FOLDED)) {
+  const has = new Set((db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).map(c => c.name));
+  if (has.size)
+    for (const column of columns)
+      if (!has.has(column.split(' ')[0])) db.exec(`alter table ${table} add column ${column}`);
+}
+db.exec(`
+  create table if not exists credentials (id text primary key, public_key blob not null, counter integer not null,
+    transports text, created text not null);
+  create table if not exists sessions (token text primary key, expires integer not null);
+  create table if not exists enrollments (hash text primary key, used text not null);
+  create table if not exists events (id integer primary key, ts text not null, type text not null, agent text,
+    "to" text, text text, state text);
+  create table if not exists jobs (id integer primary key, created text not null, agent text not null,
+    title text not null, prompt text not null, engine text not null,
+    status text not null default 'queued', seat text, branch text, session text, attempts integer not null default 0,
+    not_before integer not null default 0, heartbeat integer, request integer, note text, result text,
+    kind text not null default 'work', pr integer, round integer, output text, after integer, finished text, token text,
+    sha text, peak_mb integer, room_for integer, writes text, stopping text, queued_by text,
+    customers integer not null default 0, for_seat text, downtime integer not null default 0, cut text, model text,
+    effort text, stage text, started text, held_by text, call integer, item integer, answers integer,
+    about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
+    is_check integer not null default 0, seq real, suspending text, step text,
+    code text, landing text, engine_only text, judges text);
+  create table if not exists seats (id text primary key, engine text not null, state text not null,
+    until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
+    credits integer, cli text);
+  create table if not exists requests (id integer primary key, created text not null, agent text, job integer,
+    kind text not null, title text not null, body text not null, urgency text not null default 'today',
+    status text not null default 'open', answer text, seat text, secrets text, approves text, pr integer, photos text,
+    documents text, zips text, address integer, questions text, customers integer not null default 0, answered text,
+    changed text, topic text, heard_by integer, closing text, hidden_until text);
+  create table if not exists prs (number integer primary key, branch text not null, author text not null,
+    round integer not null default 0, status text not null default 'open', verdict text, sha text,
+    since integer not null default 0, review_since integer not null default 0,
+    files text not null default '[]', added integer, removed integer, links text not null default '[]', why text,
+    panel text, review_class text, gate_fails integer not null default 0, fixes_from text, checks_note text not null default '',
+    tests_incomplete integer not null default 0, merged_at text, merge_refused text);
+  create table if not exists schedule_runs (id text not null, slot text not null, job integer, kind text,
+    routine text, primary key (id, slot));
+  create table if not exists settings (key text primary key, value text not null);
+  create table if not exists push_subscriptions (endpoint text primary key, p256dh text not null, auth text not null,
+    device text, created text not null);
+  create table if not exists calls (id integer primary key, ts text not null, agent text not null, request integer,
+    lines text not null, job integer, status text not null default 'ended', processed_at text,
+    attempts integer not null default 0, lines_at text, resumes text, reply text);
+  create table if not exists chat (id integer primary key, ts text not null, who text not null, text text not null,
+    sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
+    about_keys integer not null default 0);
+`);
+
+// A value a module keeps between runs (the settings table), and remember(key, null) forgets it.
+export const setting = (key: string) => (db.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined)?.value;
+export const remember = (key: string, value: string | null) => value === null ? db.prepare('delete from settings where key = ?').run(key)
+  : db.prepare('insert into settings (key, value) values (?, ?) on conflict(key) do update set value = excluded.value').run(key, value);
+
+// The lookups without which each would read the whole jobs table, its outputs too: a pull request's jobs (review.ts,
+// windows.ts), a branch's (ledger.ts, the status report), the done jobs' measured memory by agent and kind (room.ts),
+// the jobs by state (every claim and HQ's lists), by an agent call's token, and a branch's pull requests. And the feed's
+// old lines, which payments.ts's sweep looks for every two minutes.
+db.exec(`create index if not exists jobs_pr on jobs (pr) where pr is not null;
+  create index if not exists jobs_branch on jobs (branch) where branch is not null;
+  create index if not exists jobs_work_branch on jobs (coalesce(branch, 'job/' || id)) where kind = 'work';
+  create index if not exists jobs_peak on jobs (agent, kind, id) where peak_mb is not null and status = 'done';
+  create index if not exists jobs_status on jobs (status, finished);
+  create index if not exists jobs_token on jobs (token) where token is not null;
+  create index if not exists prs_branch on prs (branch);
+  create index if not exists events_ts on events (ts)`);
+// Covers the jobs columns read by reviewtime.ts and reviewplan.ts, so they skip wide job rows and their briefs.
+// Those queries name this index with `indexed by`. Any jobs columns they add belong here too.
+db.exec('create index if not exists jobs_run_sizes on jobs (id, status, kind, stage, engine, round)');
+// Thread task reads exclude PR jobs before fetching their rows.
+db.exec(`create index if not exists jobs_tasks on jobs (thread, coalesce(seq, id), id)
+  where kind = 'work' and pr is null and status != 'cancelled'`);
+// Wire's work tallies (work.ts) without a row read: each agent's jobs done by day and last finished work job, and the
+// merges by day.
+db.exec(`create index if not exists jobs_done_by on jobs (finished, agent) where status = 'done';
+  create index if not exists jobs_last_work on jobs (agent, finished, title) where status = 'done' and kind = 'work';
+  create index if not exists prs_merged on prs (merged_at, author) where merged_at is not null`);
+// The CEO's summary (summary.ts, threats.ts, finished.ts) counts and picks jobs by when they came in and ended without a
+// row read: status, kind and finished sit after the brief and output. Those queries name it with `indexed by`.
+db.exec('create index if not exists jobs_counts on jobs (created, kind, status, finished)');
+// And the jobs carrying the board's call items (agreements.ts), each one's kind, status and branch: by id, and by item.
+db.exec(`create index if not exists jobs_state on jobs (id, kind, status, branch);
+  create index if not exists jobs_carried on jobs (item, kind) where item is not null`);
+
+// The board's saved addresses' labels (addresses.ts; each address itself is in the key store).
+db.exec('create table if not exists addresses (id integer primary key autoincrement, label text not null, created text not null)');
+redacted('prs', 'checks_note');
+// pushes: the files each of a pull request's pushed commits changes against main (review.ts), and the lines it adds or
+// alters per file (findings.ts ChangedLines, JSON; null for a touch-up commit, whose lines shift the later ones).
+db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, primary key (pr, sha))');
+// What a pull request's pushes still owe before a review: work only one engine does that a run on another changed, to
+// restore from \`since\` and redo (engineonly.ts), and changed files people see whose previews no push recorded yet
+// (visual.ts).
+db.exec('create table if not exists engine_redo (pr integer primary key, files text not null, since text)');
+db.exec('create table if not exists previews_owed (pr integer primary key, files text not null)');
+// The review findings that reached an author (a ruling's "changes"), with what became of each as the next ruling judged
+// it, and the pre-existing ones the consolidator confirmed (findings.ts). `by`: the reviewers who reported it, with
+// their engines (JSON).
+db.exec(`create table if not exists findings (id integer primary key, created text not null, pr integer not null, round integer not null,
+  ruling integer not null, kind text not null, file text, line integer, issue text not null, by text not null, outcome text, right text, cross_project integer not null default 0)`);
+db.exec('create index if not exists findings_pr on findings (pr)');
+// The review follow-up bundle (a proposal) each finding went into (followups.ts).
+db.exec('create table if not exists review_followups (finding integer primary key, proposal integer not null)');
+// Accepted rulings retain their blocking IDs independently of later finding outcomes.
+db.exec('create table if not exists finding_rulings (ruling integer primary key, blocking text not null)');
+// The reviewer runs whose reports a ruling was given.
+db.exec('create table if not exists ruling_reports (ruling integer not null, report integer not null, primary key (ruling, report))');
+// The accepted rulings whose nonblocking findings went to the project's follow-ups, not the author (findings.ts record),
+// and what each ruling from the upstream round on said went wrong before review, in its owner's proposal (followups.ts
+// upstream).
+db.exec('create table if not exists followup_rulings (ruling integer primary key)');
+db.exec(`create table if not exists review_upstream (ruling integer primary key, pr integer not null, line text not null,
+  proposal integer not null)`);
+// The consolidations asked, when they were made, to say what went wrong before review (review.ts roundJob).
+db.exec('create table if not exists upstream_owed (job integer primary key)');
+redacted('findings', 'file', 'issue');
+// The worker's merge of main into a pull request's reviewed commit, which GitHub merges in its place (review.ts mergeMain).
+db.exec('create table if not exists main_merges (pr integer not null, sha text not null, head text not null, primary key (pr, sha))');
+// The consolidator's touch-ups (review.ts): the files a ruling may change itself (jobs.writes) and what the worker did
+// with them. `head` is the touch-up commit on the reviewed `base`, or null with why it was `refused`. `kept`: its author
+// checked it and changed nothing, so it merges in place of the ruled commit.
+db.exec(`create table if not exists touchups (job integer primary key, pr integer not null, round integer not null, base text not null,
+  head text, files text not null default '[]', refused text, kept integer not null default 0)`);
+// More jobs a queued job waits for, besides its own `after` (jobs.ts READY): each
+// must end done with its pull request merged. Written by a company's one-offs (company/migrations.sql); hq has no flag.
+db.exec('create table if not exists waits (job integer not null, on_job integer not null, primary key (job, on_job))');
+// The cards a queued job waits for (hq job --after request:<id>, hq waits <job> add request:<id>). Each card holds the
+// job until the card leaves the desk phone. The card's answer goes into the job's prompt (jobs.ts tellWaiting).
+db.exec('create table if not exists request_waits (job integer not null, request integer not null, primary key (job, request))');
+// The events a queued job waits for (hq job --when, wakes.ts): the next deploys, a deploy that recreated a container, a
+// job's or pull request's work deployed, or a time. `since`: when it was queued (ms), what deploys are counted from;
+// `met`: what happened, once it has. The deploys are the server's own records (infra/deploys.py), one row per file.
+db.exec(`create table if not exists wakes (job integer not null, kind text not null, arg text not null, since integer not null,
+  met text, primary key (job, kind, arg))`);
+db.exec(`create table if not exists deploys (file text primary key, sha text not null, fetched text not null, finished text not null,
+  ok integer not null, recreated text not null default '[]', reloaded text not null default '[]', services text not null default '[]')`);
+db.exec('create index if not exists deploys_finished on deploys (finished)');
+// The Codex seat each share went to (a job, or a normal review round's Codex review its seat was out for), so the next
+// goes to the seat with fewer (jobs.ts codexShare).
+db.exec('create table if not exists codex_shares (id integer primary key, seat text not null, at integer not null, job integer)');
+// The work an open card waits for, kept off the desk phone until it's merged and deployed (later.ts holdsFor): a
+// deployed: wake's arg, '<job>' or 'pr:<n>' (wakes.ts)
+db.exec('create table if not exists request_holds (request integer not null, work text not null, primary key (request, work))');
+
+// A live call's agent token (call.ts): only its sha256, the agent it speaks as, until when, and its call. listed: the
+// open items the call's briefing numbered (call.ts context(), JSON ids), the only earlier items its replace may change
+// (server.ts), with a restart adding the rebuilt briefing's. queued: the jobs the call queued, the only ones its agent may add
+// to while it goes on (call.ts addToJob).
+db.exec(`create table if not exists call_tokens (hash text primary key, agent text not null, expires integer not null,
+  listed text not null default '[]', queued text not null default '[]', call integer)`);
+// The call ledger (ledger.ts): what each call asked for, decided or explained, and what was promised on it, one item
+// each. `what` is the one plain line the board sees; `quote` (the words on the call, verbatim) and `lines` (the
+// transcript range) stay with the agents. An item is open until its job ends done, or it's linked to a request or a ref
+// (a decision entry, a note, a commit), or dropped with a `why` the board reads. `replaces`: the earlier item a
+// correction replaced (status 'replaced', with the why). by: the job that recorded it (null: the call's own token, or
+// the board: board, it added the item after the call in HQ-OS → Calls). acted_at: when the call's follow-up last
+// recorded, handed out, linked, dropped or acknowledged it (processed_at needs one since lines_at: ledger.ts recorded()).
+// due: the time the board was given for it (ms), which the thread of the job that carries it, or is linked to it, takes
+// as its window (ledger.ts link, server.ts hq job).
+db.exec(`create table if not exists call_items (id integer primary key, call integer not null, kind text not null, owner text not null,
+  what text not null, quote text not null, lines text, status text not null default 'open', job integer, request integer, ref text,
+  why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer)`);
+redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending', 'landing');
+redacted('requests', 'title', 'body', 'answer', 'topic', 'questions');
+redacted('calls', 'lines', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref'); redacted('events', 'text');
+// untold: a running job owed the message that its item (call_items.id) was dropped or replaced, until it's sent (ledger.ts
+// tell(): a live call's correction has nobody to send it; a refused send is tried again).
+db.exec('create table if not exists untold (job integer not null, item integer not null, primary key (job, item))');
+// reply_asks: a call's work follow-up briefed before replies were set (hq reply), owed the ask for one until its next run
+// reads it (ledger.ts askReplies).
+db.exec('create table if not exists reply_asks (job integer primary key)');
+// The CEO's hourly follow-through checks (followthrough.ts), one per hour slot: the job, and the verdict it recorded
+// with its one line.
+db.exec(`create table if not exists followthrough_checks (slot text primary key, job integer not null, created text not null,
+  verdict text, said text, at text)`);
+redacted('followthrough_checks', 'said');
+// The board's sent notes the CEO routes (routing.ts), one row a note: the routing check that holds it, what it's about
+// (slug, its owner and where, and whether it comes back as a product's return, owed.ts), its brief text, and once
+// routed the job it went to and how. Here rather than in that module: claim() reads it to let a routing check start
+// first (jobs.ts BOARD_CALL).
+db.exec(`create table if not exists note_routes (note integer primary key, job integer not null, slug text not null,
+  owner text not null, name text not null, place text not null, returns integer not null, text text not null, created text not null,
+  routed text, to_job integer, how text);
+  create index if not exists note_routes_job on note_routes (job)`);
+redacted('note_routes', 'text');
+// The jobs carrying a call item and their replacements, which the follow-through check reads every minute
+// (agreements.ts), and a thread's jobs: without these each read every job.
+db.exec(`create index if not exists jobs_item on jobs (item) where item is not null;
+  create table if not exists job_replacements (job integer not null, replaces integer not null, primary key (job, replaces));
+  create index if not exists job_replacements_prior on job_replacements (replaces, job);
+  create view if not exists job_replacement_links as select id job, instead_of replaces from jobs where instead_of is not null
+    union all select job, replaces from job_replacements;
+  create index if not exists jobs_instead_of on jobs (instead_of) where instead_of is not null;
+  create index if not exists jobs_thread_state on jobs (thread, status, finished, branch) where thread is not null;
+  drop index if exists jobs_thread`);
+// (a thread's jobs with their state, end and branch: the projects view, tallies.ts, reads them without a row's prompt and
+// output.)
+// A branch's work, by its title (reviewrows.ts fixesOf): those queries name it with `indexed by`.
+db.exec(`create index if not exists jobs_work_titles on jobs (coalesce(branch, 'job/' || id), id)
+  where kind in ('work', 'chat') and stage is null`);
+// The open tasks, each with its thread and branch: a redraw's holds (redraws.ts holds) read them by `indexed by`, never
+// a row's prompt and output (each a walk through its overflow pages on a cold file).
+db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
+  where kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')`);
+// Token use per job run, for Finance's seat economics (usage.ts): numbers and model names only. `totals` is the engine's
+// running total for the session at that point, so the next run of the job can be stored as what it added.
+db.exec(`create table if not exists usage (id integer primary key, job integer not null, ts text not null, engine text not null,
+  seat text, session text, models text not null, input integer not null, cache_write integer not null, cache_read integer not null,
+  output integer not null, cost real, totals text not null)`);
+// usage.ts and the status report's cost per job look usage up by job. The index keeps those reads short, so a report reader
+// doesn't block HQ's writes past its 1.5 s lock wait
+db.exec('create index if not exists usage_job on usage (job)');
+// The seats' spend in a window (headroom.ts), a seat's and an engine's, read several times a play of the queue: each its
+// window's rows, not the whole table.
+db.exec(`create index if not exists usage_seat on usage (seat, ts) where seat is not null;
+  create index if not exists usage_engine on usage (engine, ts)`);
+// The board's seats (seats.ts), kept here and changed in HQ's Settings › Seats: the worker runs jobs on these, each served by a
+// provider (the platform's, the company's company/providers.yaml, or one the board added: seat_providers, with the CLI it
+// speaks to beside its engine's, none: that engine's own). A removed seat keeps its row until the worker has removed it.
+// stop: its stop level in percent of its windows (null: the worker's default). seat_actions: each change the board made,
+// until the worker says how it went.
+db.exec(`create table if not exists seat_list (id text primary key, provider text not null, paused integer not null default 0,
+    removing integer not null default 0, added text not null, stop integer);
+  create table if not exists seat_providers (id text primary key, name text not null, engine text not null, url text not null,
+    model text not null, added text not null, cli text);
+  create table if not exists seat_actions (id integer primary key, seat text, engine text, what text not null,
+    status text not null default 'waiting', words text, at integer not null, done integer)`);
+// A project's threads (projects.ts), here rather than in that module: claim() reads their window.
+// id: "<project>/<slug>", the name jobs.thread holds. by: the job that started it. done: when it was closed. deadline and
+// aim: the thread's window (windows.ts), the time the board was given for its work and the earlier time it's aimed at
+// (aim <= deadline, both ms), with who gave the board the time (deadline_by). branch: the thread's branch, once its first
+// task starts.
+db.exec(`create table if not exists threads (id text primary key, project text not null, name text not null, owner text not null,
+  goal text not null, status text not null default 'open', created text not null, by integer, done text, deadline integer,
+  deadline_by text, aim integer, branch text)`);
+// A company's plans (plan.ts), here rather than in that module: company.ts reads the projects, and the claim will read
+// the needs and the order. projects: each a line of work with one owner, in the order made (by: the agent who made it,
+// or projects.yaml for one lifted from its old `projects:` list). done: when hq project done closed it. thread_needs: a
+// thread starts once every thread it needs is done and merged. plan_changes: every change to a plan, who made it and the
+// meeting it came from. code: the prefix of its tasks' codes (jobcodes.ts),
+// two or three capitals, unique.
+db.exec(`create table if not exists projects (id text primary key, name text not null, owner text not null, business text,
+    product text, status text not null default 'open', created text not null, by text not null, done text, code text);
+  create table if not exists thread_needs (thread text not null, needs text not null, primary key (thread, needs));
+  create table if not exists plan_changes (id integer primary key, at text not null, project text not null, thread text,
+    what text not null, by text not null, meeting integer)`);
+redacted('plan_changes', 'what');
+// A change to a plan, as it's made (plan.ts, and jobs.ts for each task added to a thread).
+// The meeting it came from: the live one its agent sits in, unless given.
+export function planChange(c: { project: string; thread?: string | null; what: string; by: string; meeting?: number | null }) {
+  const meeting = c.meeting !== undefined ? c.meeting : sittingIn(c.by);
+  db.prepare('insert into plan_changes (at, project, thread, what, by, meeting) values (?, ?, ?, ?, ?, ?)')
+    .run(new Date().toISOString(), c.project, c.thread ?? null, c.what, c.by, meeting);
+  if (meeting !== null) takeBack(meeting, c.by); // (the chair's, who never hands in, too)
+}
+// A meeting's inputs changed (a plan change made in it, a hand-in taken back or sent back, an ask joined): its tally goes,
+// and the agent's hand-in, if it had one, comes back to it, to hear the meeting again from where it handed in.
+export function takeBack(meeting: number, agent: string) {
+  db.prepare('update meeting_seats set handed = null, read = coalesce(handed_read, read) where meeting = ? and agent = ? and handed is not null').run(meeting, agent);
+  db.prepare('update meetings set tally = null where id = ?').run(meeting);
+}
+// The meeting an agent sits in now, if any: the hook for plan changes made in a meeting (plan_changes.meeting)
+export function sittingIn(agent: string) {
+  const row = db
+    .prepare(
+      `select s.meeting from meeting_seats s join meetings m on m.id = s.meeting join jobs j on j.id = s.job
+    where s.agent = ? and m.status = 'live' and j.status = 'running'`, // (a seat marked done is still in it.)
+    )
+    .get(agent) as { meeting: number } | undefined;
+  return row?.meeting ?? null;
+}
+
+// The plan changes made in a meeting, each with its owner (the agent who made it).
+export const meetingChanges = (meeting: number) =>
+  db.prepare('select at, project, thread, what, by from plan_changes where meeting = ? order by id').all(meeting) as
+    { at: string; project: string; thread: string | null; what: string; by: string }[];
+// The projects whose plans a meeting changed, each with its latest change in it (GET /api/meetings: the meeting room's tags),
+// read here beside the changes themselves
+export function meetingProjects(meeting: number) {
+  return db
+    .prepare(
+      `select c.project id, coalesce(p.name, c.project) name, max(c.at) changed from plan_changes c
+      left join projects p on p.id = c.project where c.meeting = ? group by c.project order by changed`,
+    )
+    .all(meeting) as { id: string; name: string; changed: string }[];
+}
+
+// A paused project or thread (pauses.ts): thread null pauses the whole project. item: the board's call item it carries
+// out (hq item link <item> pause:<id>). decision: the board's decision it waits for (decisions.ts). resumed: when it
+// ended, by its CEO or owner (resumed_by) or, null, by its pause_until jobs all being done and merged. Here rather than
+// in that module: claim() reads them.
+db.exec(`create table if not exists pauses (id integer primary key, project text not null, thread text, why text not null,
+    by text not null, at text not null, item integer, resumed text, resumed_by text, decision integer);
+  create table if not exists pause_until (pause integer not null, job integer not null, primary key (pause, job))`);
+redacted('pauses', 'why');
+// A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
+// it once there is one; answered, when the board answered that card; released, when the board let what it holds go in
+// HQ instead.
+db.exec(`create table if not exists decisions (id integer primary key, name text not null, by text not null, at text not null,
+  request integer, answered text, released text)`);
+redacted('decisions', 'name');
+// The board's pick of an agent's model on its page in HQ (models.ts): its main model and its one fallback, each a
+// model id from the company's list, null for none.
+db.exec('create table if not exists agent_models (agent text primary key, main text, fallback text, at text not null)');
+// Each push's tests as the worker ran them, by the git trees of the code they tested and of its base (testresults.ts):
+// the job whose push it was, whether they passed (null: claimed, running), the report, when, and the current
+// claimant's first claim time (began, kept when the same job claims again: at minus began is its wall time).
+db.exec(`create table if not exists test_results (tree text not null, base text not null, job integer not null,
+  passed integer, report text not null default '', at text not null, began text, primary key (tree, base))`);
+redacted('test_results', 'report');
+// Base comparisons are kept independently of the push that needed them.
+db.exec(`create table if not exists base_test_results (base text not null, test text not null, job integer not null,
+  failed integer, primary key (base, test))`);
+db.exec('create table if not exists migrations (id text primary key)');
+// All or nothing: a fix that throws halfway isn't recorded as done, and runs again at the next start. A one-off fix is
+// for the work already in the database of the company that wrote it: a database made by this start, with no work in it
+// yet, has nothing to fix, so the fix is recorded as done without running, and never brings another company's jobs or
+// requests along. (The columns and tables above aren't one-off: every database gets them.)
+const fresh = () => born && !db.prepare('select 1 from jobs union all select 1 from requests union all select 1 from calls union all select 1 from chat limit 1').get();
+// The foundation's own one-offs are removed from the code once every company's database has run them (their ids stay recorded).
+export function once(id: string, sql: string | (() => void)) {
+  db.exec('begin');
+  try {
+    if (db.prepare('insert or ignore into migrations (id) values (?)').run(id).changes && !fresh()) typeof sql === 'string' ? db.exec(sql) : sql();
+    db.exec('commit');
+  } catch (err) { db.exec('rollback'); throw err; }
+}
+// The names of a table's columns, for a once() that adds one an older database lacks.
+export const columnsOf = (table: string) =>
+  (db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).map(c => c.name);
+once('review-round-state', () => {
+  const columns = columnsOf('prs');
+  for (const name of columns) {
+    if (name === 'merge_rounds' || name === 'final_rounds') db.exec(`alter table prs drop column ${name}`);
+  }
+  if (!columns.includes('merge_refused')) db.exec('alter table prs add column merge_refused text');
+});
+once('review-forecast-class', () => {
+  const columns = db.prepare('pragma table_info(prs)').all() as { name: string }[];
+  if (!columns.some(column => column.name === 'review_class')) db.exec('alter table prs add column review_class text');
+  db.exec("update prs set review_class = case panel when 'fix' then 'full' else panel end");
+});
+
+once('historical-review-sizes', () => {
+  for (const [table, columns] of [
+    ['predictions', ['review_ms', 'slow_review_ms']],
+    ['prediction_log', ['review_ms']],
+  ] as const) {
+    const kept = columnsOf(table);
+    for (const column of columns) if (kept.includes(column)) db.exec(`alter table ${table} drop column ${column}`);
+  }
+});
+
+// A company's own one-offs (work for its live company: a job for its CEO, a card for its board) go in its
+// company/migrations.sql, not here, so they never come upstream and a foundation update never meets them in this file.
+// Each starts at a `-- once: <id>` line and runs as once() does. The server runs them at its start (companyOnce), when
+// every module's tables are there, and every minute after, so one that lands on main takes effect within a minute.
+export function companyOnce(file = `${REPO_DIR}/company/migrations.sql`) {
+  let text: string;
+  try { text = readFileSync(file, 'utf8'); } catch { return; /* none: a company with no one-offs of its own */ }
+  for (const part of text.split(/^-- once: /m).slice(1)) {
+    const [id, ...sql] = part.split('\n');
+    once(id.trim(), sql.join('\n'));
+  }
+}
+
+// ---- columns added since their table was made
+// Each only where its table is older: a database from before the migrations table makes its tables at this start, with
+// every column.
+const lacks = (table: string, column: string) =>
+  !(db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).some(c => c.name === column);
+once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table jobs add column code text'));
+once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
+once('2026-10-22-findings-routing', () => lacks('findings', 'cross_project') && db.exec('alter table findings add column cross_project integer not null default 0'));
+once('2026-10-22-prs-review-since', () => lacks('prs', 'review_since') && db.exec('alter table prs add column review_since integer not null default 0'));
+// engine_only: the rule of work only one engine does (engineonly.ts) that keeps its job there; judges: the files a review
+// judges.
+once('2026-10-21-jobs-engine-only', () => {
+  if (lacks('jobs', 'engine_only')) db.exec('alter table jobs add column engine_only text');
+  if (lacks('jobs', 'judges')) db.exec('alter table jobs add column judges text');
+});
+// A task's steps share its code (jobcodes.ts), and projects have their prefix.
+once('2026-10-21-task-codes', () => {
+  db.exec('drop index if exists jobs_code');
+  if (lacks('projects', 'code')) db.exec('alter table projects add column code text');
+});
+db.exec(`create index if not exists jobs_by_code on jobs (code);
+  create unique index if not exists projects_code on projects (code)`);
+// A call followed up before replies were set kept its notes as its work follow-up's last message: that becomes its reply.
+// A work follow-up still open was briefed that way: it's owed the ask for hq reply (reply_asks), which ledger.ts
+// askReplies() puts where its next run reads it (finished() needs the reply).
+once('2026-10-21-calls-reply', () => {
+  if (lacks('calls', 'reply')) db.exec('alter table calls add column reply text');
+  db.exec(`update calls set reply = (select nullif(trim(j.result), '') from jobs j where j.id = calls.job and j.kind = 'work' and j.status = 'done')
+    where processed_at is not null and reply is null`);
+  db.exec(`insert or ignore into reply_asks (job) select id from jobs where kind = 'work' and status in ('queued', 'running', 'blocked')
+    and id in (select job from calls where status = 'ended' and processed_at is null)`);
+});

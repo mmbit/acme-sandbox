@@ -1,0 +1,16 @@
+{
+  "about": "Example for present.mjs: the Hello test product as a four-slide presentation. Figures are placeholders, not a pitch.",
+  "title": "Demo kit example",
+  "audio": "../../../products/hello/demo/bed.wav",
+  "theme": { "accent": "#ff6b4a", "accent2": "#ffc36b" },
+  "sections": [
+    { "type": "title", "kicker": "Platform test product", "title": "Hello", "sub": "Type a name, get a card made just for them.", "dur": 4, "caption": "One page renders the whole deck; each section fades in on its own." },
+    { "type": "recording", "src": "../../../products/hello/ads/hello-phone.mp4", "kicker": "The signature moment", "title": "Your name, on the card, instantly",
+      "points": ["Real app, scripted with record.mjs", "Fixed clock: identical every run"], "lead": 0.8, "caption": "A real screen recording of the Hello app (demo data)." },
+    { "type": "image", "image": "../../../products/hello/demo/mockup-card.jpg", "kicker": "The printed product", "title": "A folded A6 card", "points": ["Mockup drawn in code by mockup.mjs"], "dur": 4.5,
+      "caption": "Mockup, not a photo: nothing has been printed yet." },
+    { "type": "table", "kicker": "Unit economics", "title": "Placeholder figures", "sub": "Example layout only.", "dur": 4.5,
+      "table": [["Price", "€ 6.95"], ["Print + shipping", "€ 3.10"], ["Payment fees", "€ 0.45"], ["Margin", "€ 3.40"]], "caption": "Tables read from [label, value] pairs; the last row is the total." },
+    { "type": "text", "kicker": "Next", "title": "Make it yours", "points": ["Bring your own look (css, theme)", "Bring your own music (synth.mjs)"], "dur": 3.5 }
+  ]
+}

@@ -1,0 +1,4 @@
+#!/bin/bash
+# hq, the agents' line to the company: the TypeScript in ../hq (main.ts), which Node runs as it is.
+set -euo pipefail
+exec node "$(dirname "${BASH_SOURCE[0]}")/../hq/main.ts" "$@"

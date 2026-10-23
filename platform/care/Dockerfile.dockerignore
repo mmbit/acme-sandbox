@@ -1,0 +1,29 @@
+# The support chat's image (platform/care/Dockerfile) is built from the repo's root: this file is BuildKit's ignore for
+# that Dockerfile alone (the root .dockerignore stays the coordinator's). It takes only what the Dockerfile copies, the
+# engine and the company's plug-in, without their tests, demo or eval
+*
+!platform/care/package.json
+!platform/care/src
+!platform/care/public
+!platform/care/magick
+!shared/pictures/size.ts
+!shared/net/net.ts
+!shared/routes/routes.ts
+!shared/format/format.js
+!shared/holidays/holidays.js
+!shared/ordernumber/ordernumber.js
+!kits
+!products/care/care.ts
+!products/care/package.json
+!products/care/src
+!products/care/public
+!products/care/kb
+# each app's own words
+!products/care/apps
+**/node_modules
+**/*.test.ts
+**/*.test.js
+**/*.test.mjs
+platform/care/demo
+products/care/demo
+products/care/eval

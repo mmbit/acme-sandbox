@@ -1,0 +1,37 @@
+name: DNS
+# Points hq.<domain> (infra/host) and the product wildcards (*.<domain>, *.preview.<domain>) at the server.
+# Idempotent; runs when infra/host or this workflow changes. (Wildcards approved by the board, 2026-09-26.)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [infra/host, .github/workflows/dns.yml]
+jobs:
+  dns:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}
+        run: |
+          SERVER=$(sed -n 's/^SERVER=\([a-z0-9][a-z0-9-]*\)$/\1/p' company/infra.env | tail -1)
+          [ -n "$SERVER" ] || { echo "::error::company/infra.env has no plain SERVER"; exit 1; }
+          host=$(cat infra/host)
+          zone_name=${host#*.}
+          cf() { curl -sS -X "$1" "https://api.cloudflare.com/client/v4$2" -H "Authorization: Bearer $CF_TOKEN" \
+            -H "Content-Type: application/json" ${3:+-d "$3"}; }
+          ip=$(curl -sf -H "Authorization: Bearer $HCLOUD_TOKEN" "https://api.hetzner.cloud/v1/servers?name=$SERVER" \
+            | jq -r '.servers[0].public_net.ipv4.ip // empty')
+          [ -n "$ip" ] || { echo "::error::No server $SERVER on Hetzner yet: run the Server workflow first"; exit 1; }
+          zone=$(cf GET "/zones?name=$zone_name" | jq -r '.result[0].id // empty')
+          [ -n "$zone" ] || { echo "::error::No Cloudflare zone for $zone_name"; exit 1; }
+          # Not proxied: the server's own Caddy handles HTTPS.
+          for name in "$host" "*.$zone_name" "*.preview.$zone_name"; do
+            record=$(jq -n --arg n "$name" --arg ip "$ip" '{type:"A",name:$n,content:$ip,ttl:300,proxied:false}')
+            id=$(cf GET "/zones/$zone/dns_records?type=A&name=$(jq -rn --arg n "$name" '$n|@uri')" | jq -r '.result[0].id // empty')
+            if [ -n "$id" ]; then resp=$(cf PUT "/zones/$zone/dns_records/$id" "$record"); else resp=$(cf POST "/zones/$zone/dns_records" "$record"); fi
+            echo "$resp" | jq '{success, errors, name: .result.name, content: .result.content}'
+            [ "$(echo "$resp" | jq -r .success)" = "true" ]
+          done
+          echo "### $host, *.$zone_name, *.preview.$zone_name → $ip" >> "$GITHUB_STEP_SUMMARY"

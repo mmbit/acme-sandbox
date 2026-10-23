@@ -1,0 +1,12 @@
+{
+  "pacing": { "on": true, "action": null },
+  "providers": [
+    { "id": "anthropic", "name": "Anthropic: Claude subscription", "engine": "claude", "cli": "claude", "sign_in": "login", "from": "platform" },
+    { "id": "anthropic-key", "name": "Anthropic: API key, pay per use", "engine": "claude", "cli": "claude", "sign_in": "key", "from": "platform", "metered": true },
+    { "id": "openai", "name": "OpenAI: ChatGPT subscription", "engine": "codex", "cli": "codex", "sign_in": "login", "from": "platform" },
+    { "id": "openai-key", "name": "OpenAI: API key, pay per use", "engine": "codex", "cli": "codex", "sign_in": "key", "from": "platform", "metered": true },
+    { "id": "mistral", "name": "Mistral: Le Chat subscription", "engine": "codex", "cli": "vibe", "sign_in": "key", "model": "mistral-medium-3.5", "from": "platform" },
+    { "id": "google", "name": "Google: AI subscription", "engine": "codex", "cli": "agy", "sign_in": "login", "model": "gemini-4-argon", "from": "platform" },
+    { "id": "eu-host", "name": "EU model host", "engine": "codex", "cli": "claude", "sign_in": "key", "url": "https://api.eu-host.example/v1", "model": "open-coder-large", "from": "board" }
+  ]
+}

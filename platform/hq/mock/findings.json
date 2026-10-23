@@ -1,0 +1,11 @@
+{
+  "41": [
+    { "issue": "The price on the landing page leaves out the shipping cost.", "blocking": true, "fate": "open" },
+    { "issue": "The hero picture loads at full size on a phone.", "blocking": false, "fate": "follow-up" },
+    { "issue": "A heading reads in title case, as #43’s did.", "blocking": false, "fate": "dropped" }
+  ],
+  "46": [
+    { "issue": "The price on the landing page leaves out the shipping cost.", "blocking": true, "fate": "open" },
+    { "issue": "The hero picture loads at full size on a phone.", "blocking": false, "fate": "follow-up" }
+  ]
+}

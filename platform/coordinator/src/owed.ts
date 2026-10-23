@@ -1,0 +1,386 @@
+// What a product owes the board after its feedback: one owner, one job at a time, until it's back on the desk phone.
+// The board's feedback on a product comes in pieces, in any order: review notes sent from HQ (feedback.ts), and its
+// answers on cards tagged with the product (hq ask --product/--back). Each piece opens the product's owed return, or
+// joins it:
+//   - The owner is the product's (product.yaml `owner`, or a cycle folder's maker:
+//     else the CEO; a new owner takes the return over once no job of the old one is on it). Every piece goes to the job
+//     that holds the return: added to its prompt while it hasn't started, or to a job queued after it while it runs.
+//     So no two jobs work on one product's feedback side by side, each thinking the other brings it back.
+//   - It closes when a card filed with --back <slug> reaches the desk phone (a new presentation, or why not), or with
+//     `hq owed close <slug> "why"` when the board's words ask for nothing back. Not while a job that hasn't run holds a
+//     piece the card can't have covered.
+//   - A job that ends with the return still open (a fix that needs its pull request merged first, or one that just
+//     stopped) gets a follow-up for the owner, queued after it, so it starts once the fix is on main. sweep() checks
+//     every minute, whatever ended the job; after FOLLOW_UPS of those it stays open for whoever reads the status
+//     (hq owed, STATUS.md).
+import { existsSync, readFileSync, statSync } from 'node:fs';   // (statSync)
+import { execFileSync } from 'node:child_process';
+import { parse } from 'yaml';
+import { db, redacted } from './db.ts';   // (redacted)
+import { REPO_DIR } from './config.ts';
+import { publish } from './events.ts';
+import * as jobs from './jobs.ts';
+import { ceo, infra } from './company.ts';   // (infra)
+import { codeOf } from './jobcodes.ts';
+
+const SLUG = /^[a-z0-9][a-z0-9-]{0,40}$/;
+const FOLLOW_UPS = 2;   // follow-ups sweep() queues for one return before it waits for the status report
+const LIVE = "status in ('queued', 'running', 'blocked')";
+// owed: job is the job that holds it now; follow_ups how many sweep() queued; stalled when it gave up queuing them;
+//   card the request that brought it back; outcome how it closed, in a line.
+// owed_pieces: kind is notes (review notes sent from HQ) or answer (the board's answer on a card).
+// owed_jobs: the jobs this module made, whose whole prompt is their return's brief.
+// owed_told: what a running asker reads with the answer (hq wait) about whose job brings each product back.
+db.exec(`create table if not exists owed (id integer primary key, slug text not null, agent text not null, opened text not null,
+  job integer, follow_ups integer not null default 0, stalled text, closed text, card integer, outcome text);
+  create table if not exists owed_pieces (id integer primary key, owed integer not null, at text not null, kind text not null,
+    request integer, notes text, job integer, text text not null);
+  create table if not exists owed_jobs (job integer primary key, owed integer not null);
+  create table if not exists owed_told (request integer primary key, text text not null);
+  create table if not exists request_products (request integer not null, slug text not null, back integer not null default 0,
+    primary key (request, slug))`);
+// outcome holds the closer's own words, which every agent reads (hq owed) and the status report shows.
+redacted('owed', 'outcome');
+
+type Owed = { id: number; slug: string; agent: string; opened: string; job: number | null; follow_ups: number;
+  stalled: string | null };
+type Piece = { kind: 'notes' | 'answer'; request?: number; notes?: number[]; text: string };
+
+// ---------------------------------------------------------------- products
+// The venture cycles' pages (products/_cycles, at cycles.preview.<zone>: decks, brand directions, sketched sites) take the
+// board's feedback like a product, under their host's label (infra/products.py reserves it, so no product has it). No
+// product.yaml: each folder in it is one of its own, `cycles/<folder>`, its maker's (maker()); the pages outside any
+// folder (`cycles`) and a folder none of our agents made are the CEO's, who hands them on.
+export const CYCLES = 'cycles';
+const CYCLE = /^cycles\/([a-z0-9][a-z0-9-]{0,60})$/;
+export const folder = (slug: string) => slug === CYCLES ? 'products/_cycles'
+  : CYCLE.test(slug) ? `products/_cycles/${slug.slice(CYCLES.length + 1)}` : `products/${slug}`;
+export const isProduct = (slug: unknown) => typeof slug === 'string' && (CYCLE.test(slug) ? isDir(`${REPO_DIR}/${folder(slug)}`)
+  : SLUG.test(slug) && existsSync(slug === CYCLES ? `${REPO_DIR}/products/_cycles` : `${REPO_DIR}/products/${slug}/product.yaml`));
+// A product's slug or a cycle folder's key, whether or not it's there now.
+export const isKey = (slug: unknown) => typeof slug === 'string' && (SLUG.test(slug) || CYCLE.test(slug));
+const isDir = (path: string) => { try { return statSync(path).isDirectory(); } catch { return false; } };
+// What a note on one of slug's pages is about: the product, or the cycle folder the page is in (`/<folder>/...`).
+export function about(slug: string, page: string) {
+  if (slug !== CYCLES) return slug;
+  const key = `${CYCLES}/${page.split(/[/?#]/)[1] ?? ''}`;
+  return isProduct(key) ? key : CYCLES;
+}
+export function ownerOf(slug: string) {
+  const cycle = CYCLE.exec(slug)?.[1];
+  if (cycle) return { agent: maker(cycle) ?? ceo(), name: cycle };
+  let meta: any = {};
+  try { meta = parse(readFileSync(`${REPO_DIR}/products/${slug}/product.yaml`, 'utf8')) ?? {}; } catch { /* no yaml: the CEO's */ }
+  const agent = typeof meta.owner === 'string' && jobs.findAgent(meta.owner) ? meta.owner : ceo();
+  return { agent, name: typeof meta.name === 'string' ? meta.name : slug === CYCLES ? 'Venture cycle pages' : slug };
+}
+// Who made a cycle folder: the author of the first commit that added a file to it, among our agents on a desk (the worker
+// commits a job's work as <agent>@<AGENT_EMAIL_DOMAIN>, and agents commit their own under the same name). A folder's first
+// commit never changes, so git is read once for it; a folder without a maker yet (none of its authors is on a desk, or
+// git can't be read) is asked again after MAKER_AGAIN.
+const makers = new Map<string, { agent: string | null; at: number }>(), MAKER_AGAIN = 10 * 60e3;
+function maker(name: string) {
+  const onDesk = (id: string | null) => !!id && !!jobs.findAgent(id) && !jobs.findAgent(id)!.temp;
+  const known = makers.get(name);
+  if (known && (known.agent || Date.now() - known.at < MAKER_AGAIN)) return onDesk(known.agent) ? known.agent : null;
+  const domain = `@${String(infra().AGENT_EMAIL_DOMAIN ?? '').toLowerCase()}`;
+  let agent: string | null = null;
+  try {
+    // safe.directory: the checkout is root's on the server, mounted read-only (as committed.ts reads it)
+    const authors = execFileSync('git', ['-c', `safe.directory=${REPO_DIR}`, '--literal-pathspecs', '-C', REPO_DIR, 'log',
+      '--reverse', '--diff-filter=A', '--format=%ae', 'HEAD', '--', `products/_cycles/${name}`],
+      { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16 << 20 });
+    agent = authors.split('\n').map(email => email.trim().toLowerCase()).filter(email => domain.length > 1 && email.endsWith(domain))
+      .map(email => email.slice(0, -domain.length)).find(onDesk) ?? null;
+  } catch (err) { console.error(`Could not read who made products/_cycles/${name}:`, (err as Error).message); }
+  makers.set(name, { agent, at: Date.now() });
+  return agent;
+}
+// A card's --product / --back slugs: real products (or the cycles' pages), at most 12; null if any isn't.
+export function slugs(value: unknown) {
+  if (value === undefined || value === null) return [];
+  const list = Array.isArray(value) ? [...new Set(value)] : null;
+  return list && list.length <= 12 && list.every(isProduct) ? list as string[] : null;
+}
+
+// ---------------------------------------------------------------- the desk phone
+// createRequest: the card is about these products (its answer is feedback on them), and brings back these.
+export function tag(request: number, about: string[], back: string[], job?: number) {
+  const insert = db.prepare('insert or ignore into request_products (request, slug, back) values (?, ?, ?)');
+  for (const slug of new Set([...about, ...back])) insert.run(request, slug, back.includes(slug) ? 1 : 0);
+  for (const slug of back) presented(slug, request, job);
+}
+export const productsOf = (request: number) => db.prepare('select slug, back from request_products where request = ? order by slug')
+  .all(request) as { slug: string; back: number }[];
+
+// answerRequest: the board answered a tagged card. Each product's owner hears it through its return. The asker still
+// hears its own card (hear: tell()), told which job has which product. Where the job that hears the card is the
+// product owner's and can hold the return (holds), that job holds it, and is told how it ends: one job, not two.
+// heir: a job queued after the card that hears it for an asker that has ended (jobs.ts tellWaiting). hear gets the
+// lines for the job that hears the card, and the lines on which job brings each product back, for every other job
+// waiting for it. Returns what hear returned.
+export function answered(req: { id: number; agent: string | null; job: number | null; title: string }, answer: string,
+  heir: number | undefined, hear: (extra: string, others: string) => number | undefined) {
+  const tagged = productsOf(req.id).map(product => ({ ...product, ...ownerOf(product.slug), held: holderOf(product.slug) }));
+  if (!tagged.length) return hear('', '');
+  const piece = (product: { name: string }): Piece => ({ kind: 'answer', request: req.id,
+    text: `The board answered card #${req.id} ("${req.title}"), which is about ${product.name}, on its desk phone: ${answer}` });
+  // tell() gives the answer to the asking job while it runs or waits on this card.
+  // Otherwise the waiting job hears it, or tell() makes a new job for the asker.
+  // An intercom chat holds no product return. A work job brings the product back, and the chat hears which job.
+  const asker = req.job ? db.prepare('select kind, status, request from jobs where id = ?').get(req.job) as
+    { kind: string; status: string; request: number | null } | undefined : undefined;
+  const hearing = asker?.kind === 'work' && (asker.status === 'running' || (asker.status === 'blocked' && asker.request === req.id));
+  const hearer = hearing ? req.job : heir ?? null;
+  const hearerAgent = !hearing && heir ? agentOf(heir) : req.agent;
+  const kept = asker?.kind === 'chat' ? []
+    : tagged.filter(product => (product.held?.agent ?? product.agent) === hearerAgent && holds(product.slug, hearer));
+  const carriedBy = (product: { name: string }, carrier: { agent: string; job: number }) =>
+    `${product.name}: ${jobs.findAgent(carrier.agent)?.name ?? carrier.agent} (job #${carrier.job})`;
+  const routed = tagged.filter(product => !kept.includes(product)).map(product => carriedBy(product, feedback(product.slug, piece(product))));
+  const yours = kept.map(product => `\n\nYou own bringing ${product.name} (${folder(product.slug)}) back to the board after `
+    + `this answer. HQ keeps that open, as owed to the board, until you do.\n${duty(product.slug, product.name)}`).join('');
+  // (no other job waits for the card when the hearer is still to be made)
+  const keptBy = hearer && hearerAgent ? kept.map(product => carriedBy(product, { agent: hearerAgent, job: hearer })) : [];
+  const extra = goneTo(routed) + yours;
+  const heard = hear(extra, goneTo([...routed, ...keptBy]));
+  // a running asker reads the answer itself (hq wait), and tell() leaves it at that: the answer it reads carries this
+  if (extra && asker?.status === 'running' && heard === req.job)
+    db.prepare('insert or replace into owed_told (request, text) values (?, ?)').run(req.id, extra);
+  for (const product of kept) feedback(product.slug, piece(product), heard);
+  return heard;
+}
+// The line on which job brings each product back (carriers: "<product>: <agent> (job #<n>)"), for a job that doesn't.
+function goneTo(carriers: string[]) {
+  if (!carriers.length) return '';
+  const one = carriers.length === 1;
+  return `\n\nThe answer on ${one ? 'this product' : 'these products'} also went to the job that brings ${one ? 'it' : 'each'} `
+    + `back to the board: ${carriers.join(', ')}. Leave bringing ${one ? 'it' : 'them'} back to that job.`;
+}
+// requestAnswer (hq wait): what the asker reads after the board's answer.
+export const told = (request: number) => (db.prepare('select text from owed_told where request = ?').get(request) as
+  { text: string } | undefined)?.text ?? '';
+
+// ---------------------------------------------------------------- feedback joins the return
+// A piece of the board's feedback on slug: to the job that holds the product's return. heardBy: a job of the owner's
+// that hears it already (the asker's: parked on the card, running, or just queued to hear it, its prompt told how the
+// return ends): it carries the piece and holds the return if it can (holds). Returns the job that carries the piece,
+// and whose it is.
+export function feedback(slug: string, piece: Piece, heardBy?: number) {
+  const owing = open(slug) ?? start(slug);
+  const owner = ownerOf(slug).agent;
+  if (owing.agent !== owner && !(owing.job && isLive(owing.job))) {   // a new owner, and nobody of the old one's on it
+    db.prepare('update owed set agent = ? where id = ?').run(owner, owing.id);
+    owing.agent = owner;
+  }
+  let job: number;
+  if (heardBy && holds(slug, heardBy) && isLive(heardBy) && agentOf(heardBy) === owing.agent) job = heardBy;
+  else if (owing.job && waiting(owing.job)) job = owing.job;
+  else {
+    job = jobs.createJob({ agent: owing.agent, title: 'Board feedback', prompt: '', after: previous(slug, owing) }).id;
+    db.prepare('insert into owed_jobs (job, owed) values (?, ?)').run(job, owing.id);
+  }
+  // new words from the board: the follow-ups count again
+  db.prepare('update owed set job = ?, follow_ups = 0, stalled = null where id = ?').run(job, owing.id);
+  owing.job = job;
+  const notes = piece.notes ? JSON.stringify(piece.notes) : null;
+  db.prepare('insert into owed_pieces (owed, at, kind, request, notes, job, text) values (?, ?, ?, ?, ?, ?, ?)')
+    .run(owing.id, new Date().toISOString(), piece.kind, piece.request ?? null, notes, job, piece.text);
+  const name = ownerOf(slug).name;
+  if (waiting(job) && ours(job)) brief(owing, job);
+  // a job that hears the card and hasn't started takes later pieces at the end of what tell() wrote (a running or
+  // parked one has the answer in its session already)
+  else if (waiting(job) && job !== heardBy) db.prepare(`update jobs set prompt = prompt || ? where id = ?
+    and status = 'queued' and session is null`).run(`\n\nMore feedback on ${name}, which you also bring back:\n\n${piece.text}`, job);
+  const what = piece.kind === 'notes' ? 'review notes' : `card #${piece.request}`;
+  publish({ type: 'log', agent: owing.agent, text: `Board feedback on ${slug} (${what}) is with job #${job}` });
+  return { job, agent: agentOf(job) ?? owing.agent };
+}
+
+const open = (slug: string) => db.prepare('select * from owed where slug = ? and closed is null order by id desc limit 1')
+  .get(slug) as Owed | undefined;
+function start(slug: string) {
+  const { lastInsertRowid } = db.prepare('insert into owed (slug, agent, opened) values (?, ?, ?)')
+    .run(slug, ownerOf(slug).agent, new Date().toISOString());
+  return db.prepare('select * from owed where id = ?').get(Number(lastInsertRowid)) as Owed;
+}
+// The live job that holds slug's open return, and whose it is.
+function holderOf(slug: string) {
+  const owing = open(slug);
+  return owing?.job && isLive(owing.job) ? { job: owing.job, agent: owing.agent } : undefined;
+}
+// Whether job (a job that hears a card, or the new one tell() will make: null) can hold slug's return itself: no other
+// job has had a piece of it, and none it would have to wait for is still on it. Else it would start beside that job,
+// or before its fix merged, its prompt without the earlier words.
+function holds(slug: string, job: number | null) {
+  const owing = open(slug);
+  const elsewhere = owing && db.prepare('select 1 from owed_pieces where owed = ? and job is not ?').get(owing.id, job);
+  const before = previous(slug, owing);
+  return !elsewhere && (!before || before === job);
+}
+// The job a new holder of slug's return queues after: the one that holds it now, or the last return's while it's still
+// on it (feedback right after its --back card).
+function previous(slug: string, owing?: Owed) {
+  if (owing?.job) return owing.job;
+  const last = db.prepare('select job from owed where slug = ? and closed is not null and job is not null order by id desc limit 1')
+    .get(slug) as { job: number } | undefined;
+  return last && isLive(last.job) ? last.job : undefined;
+}
+const isLive = (job: number) => !!db.prepare(`select 1 from jobs where id = ? and kind = 'work' and ${LIVE}`).get(job);
+// queued and never started: its prompt can still take more (a started session has read it already)
+const waiting = (job: number) => !!db.prepare(`select 1 from jobs where id = ? and kind = 'work' and status = 'queued'
+  and session is null`).get(job);
+const ours = (job: number) => !!db.prepare('select 1 from owed_jobs where job = ?').get(job);
+const agentOf = (job: number) => (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string } | undefined)?.agent;
+
+// The prompt of a job this module made (rebuilt whenever a piece joins it, until it starts): every piece of the return
+// in full, its own first, since a job before it may never have run or read its prompt, and the one way it ends.
+function brief(owing: Owed, job: number) {
+  const { name } = ownerOf(owing.slug);
+  const pieces = db.prepare('select * from owed_pieces where owed = ? order by id').all(owing.id) as any[];
+  const mine = pieces.filter(piece => piece.job === job), before = pieces.filter(piece => piece.job !== job);
+  const earlierJobs = [...new Set(before.map(piece => piece.job as number))];
+  const earlier = earlierJobs.map(earlierJob => {
+    const row = db.prepare('select status, result from jobs where id = ?').get(earlierJob) as
+      { status: string; result: string | null } | undefined;
+    const words = before.filter(piece => piece.job === earlierJob).map(piece => piece.text).join('\n\n');
+    // a report holding a customer's own details stays with its job (jobs.ts holdsCustomerData)
+    return `### Job #${earlierJob} (${row?.status ?? 'gone'}) had this${jobs.holdsCustomerData(earlierJob) ? '' : opening(row?.result)}\n\n${words}`;
+  });
+  const cards = db.prepare(`select id from requests r join request_products t on t.request = r.id
+    where t.slug = ? and t.back = 1 and r.created >= ? order by r.id`).all(owing.slug, owing.opened) as { id: number }[];
+  const counts = mine.map(piece => piece.kind === 'notes' ? noteCount(JSON.parse(piece.notes).length)
+    : `card #${piece.request}'s answer`);
+  const heading = before.length || !mine.length ? `${name} back to the board` : `Board feedback on ${name}`;
+  const title = `${heading}${counts.length ? `: ${counts.join(', ')}` : ''}`.slice(0, 140);
+  const parts = [`You own bringing ${name} (${folder(owing.slug)}) back to the board after its feedback. HQ keeps that open, \
+as owed to the board, until you do.`,
+    ...mine.map(piece => piece.text),
+    earlier.length ? `## Feedback on ${name} that jobs before this one had\n\nWork from what's on main and in their reports \
+(\`hq history '#<job>'\`): they may have fixed some of it already, or never run.\n\n${earlier.join('\n\n')}` : '',
+    cards.length ? `Cards that brought it back since this feedback began: ${cards.map(card => `#${card.id}`).join(', ')}. If they \
+already cover all of it, close it (below).` : '',
+    `## How this ends\n\n${duty(owing.slug, name)}`,
+    pieces.some(piece => piece.kind === 'answer') ? jobs.AUDIENCE : ''];
+  db.prepare("update jobs set title = ?, prompt = ? where id = ? and status = 'queued' and session is null")
+    .run(title, parts.filter(Boolean).join('\n\n'), job);
+}
+const noteCount = (count: number) => `${count} review note${count === 1 ? '' : 's'}`;
+function opening(result: string | null | undefined) {
+  if (!result) return '';
+  const start = result.replace(/\s+/g, ' ').slice(0, 300).trim();
+  return ` (its report opens: "${start}${result.length > 300 ? '…' : ''}")`;
+}
+// How a return ends, for whoever holds it. The card recommends nothing, and leads with pictures.
+const duty = (slug: string, name: string) => `${name} back on the board's desk phone. One card for it (hq ask or hq request, with \
+\`--back ${slug}\`): it leads with a picture of each change as it was and as it is now, with its preview link (the card's \
+"Before and after:" list). HQ gives it the board's two answers, Good now, or notes on the preview in review mode (they come \
+back as feedback of their own), so it has no choices or recommendation of yours. What changed for each point, in words, \
+folds under More. A point you won't act on goes on that card, with why.
+- A fix that needs a pull request: shoot each change before you make it (the board's own note's screenshot will do) and once \
+it's built, at a phone's width, into products/_cycles/; push it and end your job. HQ then queues your job to bring it back \
+after it merges, so the card shows what's on the preview.
+- Nothing to fix, or it's merged already: send the card now.
+- The board's words ask for nothing back (it approved, launched or dropped it): \`hq owed close ${slug} "why"\` instead.
+More feedback on ${name} that arrives meanwhile joins this job if it hasn't started, or the next one, never a parallel job.`;
+
+// ---------------------------------------------------------------- closing
+// A card filed with --back slug. Closes the return unless a job that holds a piece is still to run, or one that holds
+// the return now is still on it (the card came from someone else's job, before its fix).
+function presented(slug: string, request: number, job?: number) {
+  const owing = open(slug);
+  if (!owing) return;
+  const busy = holders(owing).filter(holder => holder !== job && isLive(holder));
+  if (busy.length) return publish({ type: 'log', agent: owing.agent,
+    text: `Card #${request} brings ${slug} back, but its return stays open: job #${busy[0]} still holds feedback on it` });
+  db.prepare('update owed set closed = ?, card = ?, outcome = ? where id = ?')
+    .run(new Date().toISOString(), request, `brought back on card #${request}`, owing.id);
+  publish({ type: 'log', agent: owing.agent, text: `${slug} is back on the board's desk phone (card #${request})` });
+}
+function holders(owing: Owed) {
+  const pieces = db.prepare('select job from owed_pieces where owed = ?').all(owing.id) as { job: number }[];
+  const pieceJobs = pieces.map(piece => piece.job);
+  return [...new Set([owing.job, ...pieceJobs])].filter((job): job is number => !!job);
+}
+
+// hq close on a --back card before the board answered it: it brought nothing back, so the return it closed opens again
+// (unless the product owes a newer one already). A card the board talked through on a call stays brought back: the call's
+// follow-up carries the board's words on.
+export function withdrawn(request: number) {
+  const call = db.prepare("select id, job from calls where request = ? and status = 'ended' and job is not null order by id desc limit 1")
+    .get(request) as { id: number; job: number } | undefined;
+  for (const owing of db.prepare('select * from owed where card = ?').all(request) as Owed[]) {
+    if (open(owing.slug)) continue;
+    if (call) {
+      publish({ type: 'log', agent: owing.agent, text: `Card #${request} left the desk phone after call #${call.id} about it: `
+        + `${owing.slug} stays brought back, and the call's follow-up (job #${call.job}) has the board's words` });
+      continue;
+    }
+    db.prepare('update owed set closed = null, card = null, outcome = null where id = ?').run(owing.id);
+    publish({ type: 'log', agent: owing.agent,
+      text: `Card #${request} was taken off the desk phone: ${owing.slug} owes the board its return again` });
+  }
+}
+
+const WHY_MAX = 300;
+
+// hq owed close <slug> "why": the board's words ask for nothing back. Its owner or the CEO, from a job that holds the
+// return or once no job of it is still on it. A refusal is [status, why].
+export function close(slug: string, agent: string, job: number, why: string) {
+  // (a dropped product's folder may be gone already; isKey)
+  const owing = isKey(slug) ? open(slug) : undefined;
+  if (!owing) return [404, `${slug} owes the board nothing`] as const;
+  const owners = [owing.agent, isProduct(slug) ? ownerOf(slug).agent : owing.agent, ceo()];
+  if (!owners.includes(agent)) return [403, `${slug}'s return is ${owing.agent}'s (or the CEO's) to close`] as const;
+  why = why.replace(/\s+/g, ' ').trim();
+  if (!why || why.length > WHY_MAX)
+    return [400, `say why nothing goes back to the board, in one line of up to ${WHY_MAX} characters: the board reads it`] as const;
+  const busy = holders(owing).filter(holder => holder !== job && isLive(holder));
+  if (busy.length) return [409, `job #${busy[0]} still holds feedback on ${slug}: it closes it, or brings it back`] as const;
+  db.prepare('update owed set closed = ?, outcome = ? where id = ?')
+    .run(new Date().toISOString(), `closed by ${agent}: ${why}`, owing.id);
+  publish({ type: 'log', agent, text: `${slug} owes the board nothing more: ${why}` });
+  return { ok: true };
+}
+
+// ---------------------------------------------------------------- the check
+// Every minute (server.ts): an open return whose job has ended gets a follow-up for its owner, queued after that job
+// (so it waits for the job's pull request), up to FOLLOW_UPS; past that it's logged once, and the status report (hq owed, STATUS.md) shows it.
+export function sweep() {
+  for (const owing of db.prepare('select * from owed where closed is null').all() as Owed[]) {
+    if (owing.job && isLive(owing.job)) continue;
+    if (owing.follow_ups >= FOLLOW_UPS) {
+      if (!owing.stalled) {
+        db.prepare('update owed set stalled = ? where id = ?').run(new Date().toISOString(), owing.id);
+        publish({ type: 'log', agent: owing.agent,
+          text: `${owing.slug} still owes the board its return after ${FOLLOW_UPS} follow-ups (last job #${owing.job}): `
+            + 'nobody is on it' });
+      }
+      continue;
+    }
+    if (isProduct(owing.slug) && ownerOf(owing.slug).agent !== owing.agent) {   // a new owner takes it over
+      owing.agent = ownerOf(owing.slug).agent;
+      db.prepare('update owed set agent = ? where id = ?').run(owing.agent, owing.id);
+    }
+    const job = jobs.createJob({ agent: owing.agent, title: 'Back to the board', prompt: '',
+      // (the task it brings back carries its code: jobcodes.ts.)
+      after: owing.job ?? undefined, code: codeOf(owing.job ?? null) ?? undefined }).id;
+    db.prepare('update owed set job = ?, follow_ups = follow_ups + 1 where id = ?').run(job, owing.id);
+    db.prepare('insert into owed_jobs (job, owed) values (?, ?)').run(job, owing.id);
+    brief({ ...owing, job }, job);
+    const after = owing.job ? ` after job #${owing.job}` : '';
+    publish({ type: 'log', agent: owing.agent,
+      text: `${owing.slug} still owes the board its return: job #${job} brings it back${after}` });
+  }
+}
+
+// ---------------------------------------------------------------- reading
+// hq owed and the status report: what's open, and what closed in the last day.
+export function list() {
+  const rows = db.prepare(`select o.*, j.status job_status, (select count(*) from owed_pieces where owed = o.id) pieces from owed o
+    left join jobs j on j.id = o.job where o.closed is null or o.closed > ? order by o.closed is not null, o.opened`)
+    .all(new Date(Date.now() - 864e5).toISOString()) as any[];
+  // (new feedback may have queued a job since it stalled)
+  const stalled = (row: any) => ['queued', 'running', 'blocked'].includes(row.job_status) ? null : row.stalled;
+  return rows.map(row => ({ ...row, name: ownerOf(row.slug).name, stalled: stalled(row) }));
+}

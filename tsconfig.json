@@ -1,0 +1,14 @@
+// The type check the gates run (CODE_STYLE.md): Node 24 strips types without checking them.
+{
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "types": ["node"],
+    "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
+    "allowJs": true,
+    "noEmit": true,
+    "skipLibCheck": true
+  }
+}

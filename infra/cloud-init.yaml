@@ -1,0 +1,50 @@
+#cloud-config
+# First boot of the company's server. Filled in by provision.sh.
+# After this, the server updates itself from git (infra/sync.sh, every minute).
+# user_data is readable at 169.254.169.254, so it holds no token: only a one-time bootstrap key. provision.sh
+# delivers the GitHub token, sealed with that key, to a one-shot listener on port 80 (infra/github_token.py).
+package_update: true
+packages: [git, docker.io, docker-compose-v2, jq]
+write_files:   # written before the packages install, so Docker's first start already blocks the metadata service
+  - path: /etc/${SERVER_NAME}/env
+    permissions: "0600"
+    content: |
+      REPO=${REPO}
+      BRANCH=${BRANCH}
+  - path: /etc/${SERVER_NAME}/bootstrap-key
+    permissions: "0600"
+    content: ${BOOT_KEY}
+  - path: /usr/local/lib/${SERVER_NAME}/github_token.py
+    encoding: b64
+    content: ${GITHUB_TOKEN_PY_B64}
+  - path: /usr/local/sbin/${SERVER_NAME}-block-metadata
+    permissions: "0755"
+    encoding: b64
+    content: ${BLOCK_METADATA_B64}
+  - path: /etc/systemd/system/docker.service.d/${SERVER_NAME}-metadata.conf
+    encoding: b64
+    content: ${DOCKER_METADATA_B64}
+  - path: /etc/systemd/system/${SERVER_NAME}-sync.service
+    content: |
+      [Unit]
+      Description=Pull the company from git and deploy
+      [Service]
+      Type=oneshot
+      ExecStart=/opt/${SERVER_NAME}/infra/sync.sh
+  - path: /etc/systemd/system/${SERVER_NAME}-sync.timer
+    content: |
+      [Unit]
+      Description=Run ${SERVER_NAME}-sync every minute
+      [Timer]
+      OnBootSec=30s
+      OnUnitActiveSec=60s
+      [Install]
+      WantedBy=timers.target
+runcmd:
+  - SERVER_ENV=/etc/${SERVER_NAME}/env python3 /usr/local/lib/${SERVER_NAME}/github_token.py serve 80 /etc/${SERVER_NAME}/bootstrap-key
+  # The token is read from the env file at call time (a credential helper), never stored in .git/config.
+  - |
+    . /etc/${SERVER_NAME}/env && git -c "credential.helper=!f() { echo username=x-access-token; sed -n 's/^GITHUB_TOKEN=/password=/p' /etc/${SERVER_NAME}/env; }; f" \
+      clone --branch "$BRANCH" "https://github.com/$REPO.git" /opt/${SERVER_NAME}
+  - systemctl daemon-reload
+  - systemctl enable --now docker ${SERVER_NAME}-sync.timer

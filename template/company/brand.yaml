@@ -1,0 +1,181 @@
+# The company's brand: what HQ calls things and how it looks. The foundation's defaults are in
+# platform/hq/shell/brand.js; anything left out here falls back to them. Names read as they do mid-sentence
+# ("New in the newsletter"); HQ capitalises them at the start of a sentence. Plain text only (no <, >, & or ").
+# The brand book the board picks after its first call fills this in.
+name: New Company
+names:
+  hq: HQ
+  os: Desktop
+  newsletter: the newsletter
+  newsletterShort: News
+  library: the library
+  libraryShort: Library
+  phone: desk phone
+  phoneShort: Phone
+  intercom: intercom
+  computer: computer
+# The order of the apps' tiles in HQ's Numbers: groups, each a caption and the product folders in it (products/<slug>/).
+# The front door comes first; an app in no group comes last. Left out, they go by status. (HQ's Artifacts has no groups:
+# it narrows by kind and project.)
+# computer: { appGroups: [{ caption: 'Our apps', apps: [shop, atlas] }, { caption: 'Concepts', apps: [moon] }] }
+# The order of the computer's home screen, beside appGroups under the same computer: groups of app ids, one after the
+# other (an app's id: its kit's name, or HQ's own, as in platform/hq/shell/desk.js's APPS). The apps it doesn't name come
+# after them, and Settings is always last. Left out, HQ groups them by what they're for (theme/hq.yaml's apps).
+# computer: { apps: [[projects, notes, artifacts], [calls, mail]] }
+# HQ's colours, when the brand book has them: colours: { ink, cream, paper, muted, red, gold, blue, green, purple,
+# orange } (#hex), over style.css's, which the looks are drawn for. A font: font: { family: "...", href: <Google Fonts URL> }
+# The logo: svg and svgDark, alt, and pixels for the renderer. Left out: the renderer writes the name. The files go in
+# theme/hq/, which HQ serves over its own: the same names (wordmark.svg, wordmark-dark.svg, icon.svg, icon-192.png,
+# icon-512.png, icon-maskable-512.png, apple-touch-icon.png, favicon-32.png, badge-96.png) replace the foundation's.
+# logo: { svg: wordmark.svg, svgDark: wordmark-dark.svg, alt: New Company }
+# The brownstone's street-end screen (36 x 52 pixels): its slides in order, each { slide, seconds } and its kind's own keys.
+# Left out, it plays the logo, the mascot and who runs the place. The kinds:
+# - logo: the company's pixel wordmark.
+# - tee: lines set its words.
+# - mug: lines set its words, and names set its names.
+# - printer: lines set its words.
+# - heater: lines set its words.
+# - balloons: lines set its words.
+# - typewriter: lines set its words.
+# - mascot: mascot selects the id of one below, and lines set its words.
+# - film: the company's own animation.
+# Each line fits at most 9 letters. A film's src is a plain .png file name in theme/hq/.
+# Film frames are 36 x 52 pixels, side by side from the left. fps sets the frame rate.
+# A slide of a kind the brownstone doesn't draw is skipped.
+# billboard:
+#   - { slide: logo, seconds: 3.6 }
+#   - { slide: film, src: billboard.png, fps: 12, seconds: 10 }
+# The company's mascots (none is fine; never agents): id, name, kind, role, home, favours, rules.
+mascots: []
+calendar: { founded: 'MM-DD', holidays: [] }
+app:
+  title: New Company HQ
+  description: 'The New Company office, live: see what every agent is up to.'
+  themeColour: '#1f2328'
+# The inbox's domain, and its addresses for the board alone (boardOnly, the part before the @): mail to them shows in
+# HQ's Mail, never to an agent (the sign-ins of the company's accounts and its AI seats). also (optional): more domains
+# whose mail reaches the same inbox (Email Routing on each, to the same Worker); every address rule here holds at each of
+# them, while HQ sends from `domain` and gives it out. invoicesFrom (optional):
+# suppliers' billing senders, each a whole address or a domain with its subdomains (never a lookalike or a parent
+# domain); their mail to any address that isn't board-only is filed at invoices@, kept like an invoice and never taken
+# for a customer's.
+# partnersFrom (optional): the businesses the company works with, each matched as invoicesFrom's are; their mail to a
+# business address (never a board-only or a case's) is a partner's, not a customer's: reading it doesn't mark a job as
+# holding a customer's details, and the job may draft the reply (hq mail draft --answers).
+# forward (optional): mailboxes (the part before the @) whose business mail is also sent on, whole with its attachments,
+# to the address in the server key MAIL_FORWARD_TO (the board's own inbox for its books, typed on a desk-phone card that
+# the process team files). The mail stays in HQ as well.
+# notices (optional): an account's mail at its board-only sign-in that agents may read, each rule { to, from, subject }
+# (to: board-only names, from: senders, each a whole address or a domain with its subdomains as for invoicesFrom,
+# subject: what its subjects start with; each one or a list), and file: invoices to file it at invoices@ (receipts from
+# a service with no invoice address). (subdomains: job #6455)
+# groups: the inboxes HQ's Mail lets the board pick, in order (the rest go under Other).
+# signoff (optional): what HQ puts under an email the board sends to an outside party (hq mail draft), {name} the
+# board's name and {company} the company's; default "{name}\n{company}"
+# signoffAgent (optional): what HQ puts under an email an agent signs (hq mail draft --signed: on the crew's behalf, sent
+# by the board), per language, {agent} the agent's name and {company} the company's; it says an AI agent wrote it. A
+# language left out takes the platform's (en and nl: platform/coordinator/src/outbox.ts)
+mail: { domain: example.com, boardOnly: [board], groups: [board, hello] }
+# The guest page's look (hq guest: the page an outside colleague opens), every key optional; left out, the page stays
+# neutral. Files go in theme/guest/ (svg, png, woff2) and are served at /guest/theme/<file>, only those named here.
+# logoHeight: px (a pixel wordmark at a whole multiple of its height stays crisp, with pixelated: true); a font file has
+# a weight and a style (normal or italic); colours: #hex; buttonRadius: px (0 to 40, a pill without it);
+# dark: false for a brand with no dark variant (then no logoDark either).
+# guest:
+#   logo: wordmark.svg
+#   logoDark: wordmark-dark.svg
+#   logoHeight: 45
+#   pixelated: true
+#   favicon: favicon.svg
+#   font: { family: Some Sans, files: [{ file: some-sans-400.woff2, weight: 400 }, { file: some-sans-700.woff2, weight: 700 }] }
+#   colours: { background: '#ffffff', card: '#ffffff', ink: '#1f2328', muted: '#6e7781', line: '#d0d7de', accent: '#0969da', onAccent: '#ffffff' }
+#   buttonRadius: 12
+#   dark: false
+# A tester invite's door (the board's Share, To try out): a line of the company's own for testers, in the small line
+# under the door's steps, per language (en, nl). Left out: none.
+# testerNote:
+#   en: "Read the Product safety page before you use what you ordered."
+# The tester door's last step, after its own three, per language (en, nl): a line of the company's own, such as where
+# to send a word about the parcel. Left out: none.
+# testerFeedback:
+#   en: "Tell us how unpacking it went at hello@example.com."
+# The phone line's message for callers who aren't the board, per language (en, nl, de, …): hello's one word per
+# language (optional), then every language's message, in the greeting's order, and the call ends. The line takes no
+# messages. Write the email address as it's said, so the voice reads it right.
+# care: the org.yaml agent who answers those callers instead, when the company runs the care service with its phone
+# (platform/care/README.md, "The phone"): three calls a day per number, the message after that and whenever the agent
+# can't take the call. Left out: the message only.
+#   care: <an agent id from org.yaml>
+phoneLine:
+  greeting:
+    en: "This is New Company. We're run by AI and can't help you by phone. Email hello at example dot com, or use the help on our website."
+# Words the speech engines say wrong (a product's name), respelt as each language's voices should say them, on calls and
+# On Air (platform/voice/aloud.py respelt); HQ shows the word as written. Left out: none.
+#   speech:
+#     respell:
+#       en: { Acme: Ak-mee }
+# Care, when the company runs the support chat (its plug-in in products/care/: platform/care/README.md), every key
+# optional. HQ's side of it is platform/coordinator/src/care.ts; the company's
+# own parts (its holiday calendar, its remedies) are kits: template/kits/README.md, "Care".
+#   helper: only for a care service that writes its helper's own name on a chat line, not 'ai' (kept as 'ai')
+#   workdays: the name of a public-holiday calendar a kit registers (care.calendars); none: weekdays only. Days are
+#     org.yaml's timeZone's, like the care service's plug-in's
+#   busy: the busy notice's own rule, for HQ to say why it's on: a season (from, to: 'MM-DD'), more than `waiting` cards
+#     waiting, or the oldest waiting over `days` working days; aim: the working days a person's reply aims for, as the
+#     plug-in's busy.aim tells customers (default 3): HQ's reply-by dates, late cards and numbers count by it
+#   signoff, signoff_person: the line under every reply, per language, {name} the board's (Settings › Care); _person: a
+#     health case's reply no AI helped write
+#   subject: a reply's subject per language ({app}, {case})
+#   claims: { to, name }: where a claim card's email goes (the supplier that pays for a damaged order) and its name
+#   inbox: the addresses (the part before the @) whose customer mail becomes a card; default [hello]
+#   questions: { title, brief }: the job a question the chat couldn't answer becomes, for org.yaml's roles.knowledge
+#     ({app}, {case} in the title; the brief is how to answer it)
+#   investigate: { title, brief }: the job a customer waiting on a person becomes, for org.yaml's roles.care ({app},
+#     {case} in the title). The method (investigate, say what kind of problem it is, ask only what our records can't
+#     show, a draft or the desk phone) is the platform's, platform/coordinator/src/care-tickets.ts; the brief is the
+#     company's part: where its own records are (its orders and their history, the emails it sends and their logs, the
+#     code that makes its products and writes its emails, its print or product files, where its known problems are
+#     written down, what it may offer). Never one ticket's cause: the job finds it
+#   numbers: { cap: { month, console }: the month's model spend caps in euros (the service's, the provider console's);
+#     first_words: { plain: [p50, p95], lookup: [p50, p95] }: the chat's first-word targets in ms }: what Care › Numbers
+#     measures against (platform/coordinator/src/care-numbers.ts)
+# care:
+#   busy: { waiting: 30, days: 2, aim: 2 }   # as the plug-in's (products/care/care.ts)
+#   signoff:
+#     en: "Written with help from our AI team, read and sent by {name}."
+#   signoff_person:
+#     en: "Written and sent by {name}."
+#   claims: { to: claims@supplier.example, name: Supplier }
+#   investigate:
+#     brief: >-
+#       Orders: <the command or page that lists them, with their history>. Our emails: <where sends and failures are
+#       logged>, written by <the code>. What they ordered: <where each product's code and files are>. Known problems:
+#       <where they're written down>. What we may offer: <the remedies and their limits>.
+#   numbers: { cap: { month: 19, console: 20 }, first_words: { plain: [1500, 3000], lookup: [2500, 5000] } }
+# The photo studio (platform/coordinator/src/studio.ts), off unless this block is here: the board's own photos of the
+# company's real products, brought in by the crew from desk-phone cards for a page's shot request (hq studio request, hq
+# studio add: which photos get made is the crew's), edited by an image model (Google's Gemini API, key
+# STUDIO_GEMINI_API_KEY on a desk-phone card) into product shots that change the light, background and framing, never the
+# product, and approved by the board one at a time in HQ's Studio app, each beside its original. Only approved photos
+# reach agents (hq studio get), each with the AI-edit mark in its metadata; every decision is kept. On, HQ also draws
+# the darkroom in its office view, with the keeper at its desk.
+#   keeper: the org.yaml agent who develops the photos (hq studio edit, ready) and places the approved ones (hq studio
+#     placed): HQ queues them a job for each. Default: the CEO
+#   model, size: the image model (gemini-nano-banana-2.1, gemini-3.1-flash-image, gemini-3-pro-image) and its output
+#     (1K, 2K, 4K); default gemini-nano-banana-2.1 at 2K
+#   monthly_usd: the month's cap on edits, in USD as the model's provider bills them (default 20): past it, HQ refuses
+#     edits until the 1st (UTC)
+#   notes: repo paths the keeper reads first (the company's rules for such photos)
+#   products: { id, name, about }: what the board photographs; about tells the model what the product is (its size,
+#     material, print), the more exactly the better it keeps it
+#   styles: { id, name, prompt, ratio }: the shots on offer; prompt describes the setting and light; ratio is one of
+#     1:1, 2:3, 3:2, 3:4, 4:3, 4:5, 5:4, 9:16, 16:9, 21:9 (default: the nearest to the photo's own)
+#   fixes: { id, name, prompt }: problems that keep coming back, in the model's words, that the keeper adds to an edit
+#     by id (hq studio edit --fix <id>); none by default
+# studio:
+#   keeper: <an agent id from org.yaml>
+#   monthly_usd: 20
+#   products:
+#     - { id: mug, name: The mug, about: "A white ceramic mug, 9 cm tall, with the buyer's name printed on it in black." }
+#   styles:
+#     - { id: white, name: Clean white, prompt: "On a seamless white backdrop, soft light from the left.", ratio: '4:5' }

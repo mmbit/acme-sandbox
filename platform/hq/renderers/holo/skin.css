@@ -1,0 +1,78 @@
+/* The holo deck's UI: a dark, translucent cyan HUD of thin glowing lines, lettered in Rajdhani like the deck's labels. */
+@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
+@import url('../icons.css');
+@import url('../controls.css');
+#panel-close { top: 10px; right: 10px; width: 38px; height: 38px; font-size: 24px; border-radius: var(--r); }
+.cards > .card { box-shadow: var(--shadow); } /* (a post stays glass, with no deep lip) */
+/* on body, under the brand's :root: the look's surfaces, lines and lettering (the brand's accents stay its own) */
+body {
+  --font: 'Rajdhani', 'DejaVu Sans', 'Segoe UI', sans-serif;
+  --ink: #dcf8ff; --cream: rgba(16, 48, 62, .6); --paper: rgba(5, 20, 28, .84); --muted: #8cc0cf;
+  --line: rgba(110, 225, 255, .5); --bw: 1px; --bw-lg: 1px; --r-sm: 2px; --r: 3px; --r-lg: 4px; --r-xl: 6px;
+  --shadow-press: 0 0 4px rgba(90, 220, 255, .3); --shadow-sm: 0 0 8px rgba(90, 220, 255, .2);
+  --shadow: 0 0 12px rgba(90, 220, 255, .22), inset 0 0 12px rgba(90, 220, 255, .08);
+  --shadow-lg: 0 0 32px rgba(90, 220, 255, .22), inset 0 0 28px rgba(90, 220, 255, .07); --shadow-xl: var(--shadow-lg); --press: scale(.96);
+  /* (glass has no lip: the depth scale, style.css --depth-*, reads as a tile giving a little under a pointer and more pressed.
+    ) */
+  --hover-tile: scale(.985); --press-tile: var(--press); --shadow-hover: var(--shadow);
+  --on-accent: #03131a; --deep: #021016; --on-deep: #dcf8ff;
+  --sand: rgba(110, 225, 255, .1); --rule: rgba(110, 225, 255, .16); --inset: inset 0 0 6px rgba(90, 220, 255, .12);
+  --tint-gold: color-mix(in srgb, var(--gold) 15%, transparent); --tint-green: color-mix(in srgb, var(--green) 18%, transparent); --tint-red: color-mix(in srgb, var(--red) 18%, transparent);
+  --scr: #80eaff; --scr-hi: #effcff; --scr-cap: #bff4ff; --scr-soft: #a4dcea; --scr-dim: #5fa3b8; --scr-ink: #021016; --scr-frame: transparent;
+  --scr-bg: rgba(2, 12, 18, .7) repeating-linear-gradient(0deg, rgba(110, 225, 255, .05) 0 1px, transparent 1px 3px); --scr-glow: 0 0 6px rgba(128, 234, 255, .45);
+  font-weight: 500;
+}
+.brand, .tools button, .tools a.desk, #zoom button, #status span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
+.brand, .tools button, .tools a.desk, #zoom button, #status span, .toast { background: rgba(6, 26, 36, .62); }
+#tool { background: rgba(0, 8, 12, .6); }
+#panel h2, .device header b, #card b, .brand b, .masthead h2, #panel h3, .gz-tabs button { text-transform: uppercase; letter-spacing: .08em; }
+#panel h2, .device header b, #card b, .brand b, .masthead h2 { text-shadow: 0 0 10px rgba(110, 225, 255, .55); font-weight: 700; }
+/* the board's devices: dark glass, opaque enough that a speech bubble behind never reads through (the desk phone's was
+   tinted the brownstone's red, which looked like an alarm) */
+.device.phone, .device.intercom, .device.computer { background: rgba(5, 22, 30, .95); color: var(--ink); }
+/* the intercom's keys glow, with no lip */
+.intercom header { --key-reach: 0px; --key-end: 10px; }
+.computer header, .computer header b span { color: var(--ink); }
+.crt { border: 1px solid var(--line); }
+.bubble::after { background: var(--line); }
+.back, .tag, .req .body a, .req .steps a, .req .rec a, .req .doc-link, .post .html a, .intercom summary { color: color-mix(in srgb, var(--blue) 50%, #9ff0ff); }
+.brand img { content: var(--logo-dark); } /* the brand's logo for dark grounds (main.js brandApp) */
+#card { background: rgba(5, 20, 28, .75); }
+/* the shared controls (controls.css) in the deck's cyan */
+body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, .14); --cy-glow: 0 0 12px rgba(110, 225, 255, .45);
+  --glass: rgba(6, 26, 36, .62); --alarm: #ff6b7a; --alarm-ink: #ffd6db; --alarm-fill: rgba(255, 107, 122, .16);
+  --cy-on: rgba(110, 225, 255, .24); --cy-on-inset: inset 0 0 12px rgba(110, 225, 255, .25); --cy-tint: rgba(110, 225, 255, .18); --cy-pale: #bff4ff;
+  --cy-soft: rgba(110, 225, 255, .35); --cy-mark: rgba(110, 225, 255, .3); --field: rgba(2, 12, 18, .6); --hint-bg: rgba(4, 18, 26, .72);
+  --sticky-bg: rgba(10, 48, 62, .8); --card-bg: rgba(5, 20, 28, .84); --their-bg: rgba(16, 48, 62, .75); --meter-off: rgba(110, 225, 255, .12);
+  --meter-glow: 0 0 4px rgba(110, 225, 255, .6); --copy-bg: rgba(110, 225, 255, .08);
+  --tick-lit: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2380eaff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='m4.5 12.5 5 5 10-11'/></svg>"); }
+#namecard b { text-transform: uppercase; letter-spacing: .06em; text-shadow: 0 0 10px rgba(110, 225, 255, .55); }
+.intercom .call .state { text-transform: uppercase; letter-spacing: .08em; text-shadow: 0 0 10px rgba(110, 225, 255, .55); }
+#viewer { background: #021016; }
+
+/* The projects view (shell/projects.js): lit glass with corner marks over the radar table, letters spaced like the
+   deck's labels, amber for the board's, a scan-in as a level opens. */
+#projects { --press: scale(.97); --press-tile: scale(.97); --pj-tile: rgba(5, 22, 30, .82); --pj-lift: var(--shadow); --pj-lift-sm: var(--shadow-sm); --pj-lift-big: var(--shadow-lg);
+  --pj-lift-tile: var(--shadow-sm); --pj-lift-hover: var(--shadow-sm);
+  --pj-you: rgba(255, 190, 92, .18); --pj-on-you: #ffd99a; --pj-you-lip: rgba(255, 190, 92, .8); --pj-live: #80eaff;
+  --pj-ground: rgba(10, 40, 52, .55); --pj-veil: rgba(0, 8, 12, .55); }
+#projects :is(.pj-tile, .pj-key, .pj-row) { -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); border-color: rgba(128, 234, 255, .35); }
+.pj-tile b, .pj-where h1, .pj-card h2 { text-transform: uppercase; letter-spacing: .08em; text-shadow: 0 0 10px rgba(110, 225, 255, .55); font-weight: 700; }
+.pj-tile b { font-size: 16px; } .pj-where h1 { font-size: 24px; }
+/* (the view and an open job: dark glass over the dimmed deck, the head's strip solid for the list scrolling under it.
+  ) */
+#projects { --pj-surface: rgba(4, 18, 26, .86); --pj-head: #041119; --pj-card: rgba(5, 22, 30, .95); }
+:is(.pj-modal, .pj-card) { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+:is(.pj-business, [data-project])::before { content: none; }
+#projects .pj-tile {
+  background-image: linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff),
+    linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff);
+  background-size: 14px 2px, 2px 14px, 14px 2px, 2px 14px, 14px 2px, 2px 14px, 14px 2px, 2px 14px;
+  background-position: 0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%; background-repeat: no-repeat; }
+#projects :is(.pj-tile, .pj-key).lit, #projects .pj-key.on { border-color: var(--pj-you-lip); box-shadow: 0 0 22px rgba(255, 190, 92, .25), inset 0 0 18px rgba(255, 190, 92, .08); color: #ffe7c2; }
+/* (the pulse's bars glow and ease.) */
+.pj-live { box-shadow: 0 0 8px #80eaff; animation-timing-function: ease-in-out; }
+.pj-face { border-radius: 50%; box-shadow: 0 0 0 1px #80eaff, 0 0 8px rgba(110, 225, 255, .5); background-color: rgba(6, 26, 36, .9); filter: saturate(.7) brightness(1.1); }
+#projects .pj-key[aria-pressed=true] { background: rgba(128, 234, 255, .15); color: #bff4ff; }
+.pj-cover img { filter: saturate(.8) brightness(.95) hue-rotate(-10deg); }

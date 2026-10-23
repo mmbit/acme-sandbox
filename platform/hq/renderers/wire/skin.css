@@ -1,0 +1,1767 @@
+/* Wire's UI: the company's colourway (scene.js appear: --k-ground, ink, muted, panel, and its accent, side and on-accent for
+   the one thing lit at a time) and its font, big and bold. Everything is a solid key with a lip under it, as on the
+   company's site: no outlines, no shadows that blur, no frosted glass. The keys are scene.js's; the shell's HUD,
+   devices, panels and buttons wear the same (the shell's --key-* settings, style.css). */
+@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap');
+@import url('../icons.css');
+@import url('../controls.css');
+
+/* on body, under the brand's :root: the look's surfaces, lines and lettering (Day's until scene.js sets the colourway) */
+body {
+  --k-ground: #ece6da;
+  --k-ink: #1d1b17;
+  --k-muted: #5c554a;
+  --k-panel: #f7f3ec;
+  --k-accent: #d6ea3c;
+  --k-side: #8f9f14;
+  --k-on-accent: #1d1b17;
+  --font: var(--k-font, 'Bricolage Grotesque'), system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --display: var(--font);
+  --bg: var(--k-ground);
+  --card: var(--k-panel);
+  --card-edge: transparent;
+  --cream: var(--k-panel);
+  --paper: var(--k-ground);
+  --ink: var(--k-ink);
+  --muted: var(--k-muted);
+  --line: color-mix(in srgb, var(--k-ink) 16%, transparent);
+  --rule: color-mix(in srgb, var(--k-ink) 10%, transparent);
+  --sand: color-mix(in srgb, var(--k-ink) 7%, transparent);
+  --lip: color-mix(in srgb, var(--k-ink) 20%, var(--k-panel)); /* a panel's lip, as the site's crew keys */
+  --lip-deep: color-mix(in srgb, var(--k-ink) 45%, var(--k-panel)); /* (the big key's: its side against the board) */
+  --bw: 1.5px;
+  --bw-lg: 1.5px;
+  --r-sm: 10px;
+  --r: 14px;
+  --r-lg: 18px;
+  --r-xl: 26px;
+  /* The depth scale (style.css --depth-*), straight down: how far a button and a tile go down pressed, and
+     a tile under a pointer. */
+  --press: translateY(calc(var(--depth-button) - var(--depth-pressed)));
+  --hover-tile: translateY(calc(var(--depth-tile) - var(--depth-hover)));
+  --press-tile: translateY(calc(var(--depth-tile) - var(--depth-pressed)));
+  --shadow-press: 0 var(--depth-pressed) 0 var(--lip);
+  --shadow-hover: 0 var(--depth-hover) 0 var(--lip);
+  --shadow-sm: none;
+  --shadow: none;
+  --shadow-lg: 0 24px 60px color-mix(in srgb, var(--k-ink) 22%, transparent);
+  --shadow-xl: var(--shadow-lg);
+  --inset: none;
+  --bar: var(--k-ink);
+  --on-accent: var(--k-on-accent);
+  --gold: var(--k-accent);
+  --deep: var(--k-ink);
+  --on-deep: var(--k-ground);
+  --tint-gold: color-mix(in srgb, var(--k-accent) 30%, var(--k-panel));
+  --tint-green: color-mix(in srgb, #1f8a5b 14%, var(--k-panel));
+  --tint-red: color-mix(in srgb, #d6335a 14%, var(--k-panel));
+  --ok: #1f8a5b;
+  --no: #c2410c;
+  /* HQ-OS's screen: the colourway's words on its panel */
+  --scr: var(--k-ink);
+  --scr-hi: var(--k-ink);
+  --scr-cap: var(--k-muted);
+  --scr-soft: var(--k-muted);
+  --scr-dim: var(--k-muted);
+  --scr-ink: var(--k-ground);
+  --scr-frame: transparent;
+  --scr-bg: transparent;
+  --scr-glow: none;
+  /* the photo studio's questions and notices in the colourway's ink, its errors in its --no a little towards the ink, to
+     read on the screen's panel (studio.css), and the tray under a photo a tint of the ink, so it shows on a dark panel
+     as on a light one. */
+  --sd-notice: var(--scr-hi);
+  --sd-alert: color-mix(in srgb, var(--no) 75%, var(--scr-hi));
+  --sd-photo-tray: color-mix(in srgb, var(--scr) 10%, transparent);
+  /* the shared controls */
+  --cy: var(--k-ink);
+  --cy-hi: var(--k-ink);
+  --cy-pale: var(--k-muted);
+  --cy-fill: var(--sand);
+  --cy-on: color-mix(in srgb, var(--k-ink) 12%, transparent);
+  --cy-on-inset: none;
+  --cy-tint: var(--sand);
+  --cy-soft: var(--line);
+  --cy-mark: color-mix(in srgb, var(--k-accent) 45%, transparent);
+  --cy-glow: none;
+  --field: var(--k-panel);
+  --tick-lit: var(--k-tick); /* (scene.js, in the accent's words' colour: a ticked box is lit in the accent) */
+  --hint-bg: var(--k-panel);
+  --sticky-bg: var(--k-accent);
+  --card-bg: var(--k-panel);
+  --their-bg: var(--k-panel);
+  --copy-bg: var(--sand);
+  --meter-off: var(--sand);
+  --meter-glow: none;
+  --alarm: #d6335a;
+  --alarm-ink: #8f1736;
+  --alarm-fill: color-mix(in srgb, #d6335a 12%, var(--k-panel));
+  /* every button a key: the panel's colour with its lip, pressed down on a tap; lit in the accent's colours (style.css) */
+  --key-bg: var(--k-panel);
+  /* (and on a panel, a face in a little of the ink, so it stands apart from the panel too) */
+  --key-panel-bg: color-mix(in srgb, var(--k-ink) 10%, var(--k-panel));
+  --key-ink: var(--k-ink);
+  --key-edge: transparent;
+  --key-lip: 0 var(--depth-button) 0 var(--lip);
+  --key-down: var(--press);
+  --key-down-lip: var(--shadow-press);
+  --key-on-bg: var(--k-accent);
+  --key-on-ink: var(--k-on-accent);
+  --key-on-lip: 0 var(--depth-button) 0 var(--k-side);
+  /* (a key that's on, picked or held: down on its lip, so it reads as pressed) */
+  --key-on-down-lip: 0 var(--depth-pressed) 0 var(--k-side);
+  /* a tile: the lip of a key that opens something, the deepest */
+  --tile-lip: 0 var(--depth-tile) 0 var(--lip);
+  --key-r: 999px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  font-variation-settings: 'opsz' 14;
+}
+body.wire-dark {
+  --key-bg: color-mix(in srgb, var(--k-ink) 10%, var(--k-panel));
+  --lip-deep: color-mix(in srgb, var(--k-ink) 28%, var(--k-panel));
+  --alarm: #ff7a93;
+  --alarm-ink: #ffd3dc;
+  --ok: #6fdba4;
+  --no: #ff9a6b;
+  color-scheme: dark;
+}
+body.wire-dark .brand img {
+  content: var(--logo-dark); /* the brand's logo for dark grounds (main.js brandApp) */
+}
+/* a logo with an accent part, inline in the colourway in use (scene.js logo). */
+.brand svg.logo {
+  height: 30px;
+  width: auto;
+  flex: none;
+  overflow: visible; /* (its p touches the edge: rounded down to whole pixels it would lose a sliver) */
+}
+.logo-accent {
+  /* Its 90px press (scene.js recolour) is 11.25 times a tile's, so it goes in 11.25 times a tile's hover. */
+  --accent-hover: calc((var(--depth-tile) - var(--depth-hover)) * 11.25);
+  fill: var(--k-accent);
+  transition: transform 0.1s ease-out;
+}
+.brand.over-accent .logo-accent {
+  transform: translateY(var(--accent-hover));
+}
+.logo-side {
+  fill: var(--k-side);
+}
+.logo-ink {
+  fill: var(--k-ink);
+}
+@media (max-width: 700px) {
+  .brand svg.logo {
+    height: 15px;
+  }
+}
+
+/* ---- the shell in the same keys: the HUD, the board's devices, the panels and cards */
+.brand,
+.tools button,
+.tools a.desk,
+#status span,
+.toast {
+  background: var(--k-panel);
+  border-color: transparent;
+  box-shadow: var(--key-lip);
+}
+.tools button,
+.tools a.desk {
+  border: 0;
+  border-radius: 999px;
+}
+.tools button[aria-pressed='true'],
+.toast.sticky {
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+  border-color: transparent;
+  box-shadow: var(--key-on-lip);
+}
+.tools button:active,
+.tools a.desk:active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+/* (a HUD key that's on stays down on its lip) */
+.tools button[aria-pressed='true'],
+.tools button[aria-pressed='true']:active {
+  transform: var(--press);
+  box-shadow: var(--key-on-down-lip);
+}
+.brand b,
+#panel h2,
+.device header b,
+#card b,
+#namecard b,
+.toast b {
+  font-family: var(--display);
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variation-settings: 'opsz' 28;
+}
+#loading {
+  background: var(--bg);
+  color: var(--muted);
+}
+#dev {
+  background: var(--sand);
+  color: var(--k-ink);
+  border: 0;
+}
+.device.phone,
+.device.intercom,
+.device.computer {
+  background: var(--k-ground);
+  color: var(--ink);
+}
+.device,
+#panel {
+  border-color: transparent;
+  box-shadow: var(--tile-lip), var(--shadow-lg);
+}
+/* the person panel over the page: the colourway's panel, apart from the ground behind it */
+#panel {
+  background: var(--k-panel);
+}
+.device header,
+.computer header b span {
+  color: var(--ink);
+}
+.app-line {
+  color: var(--k-on-accent);
+}
+.crt .apps button {
+  border: 0;
+  background: var(--k-panel);
+  box-shadow: var(--key-lip);
+}
+/* a ticked box lit like a picked key, its tick in the accent's words' colour */
+:is(.req .steps .tick, .notes li.pending) input:checked {
+  background-color: var(--key-on-bg);
+  border-color: var(--k-side);
+}
+.back,
+.tag,
+.req .body a,
+.req .steps a,
+.req .rec a,
+.req .doc-link,
+.post .html a,
+.intercom summary {
+  color: var(--k-ink);
+  text-decoration-color: var(--k-side);
+}
+body.touring #card {
+  display: none; /* (a tour stop's caption only says what its key does) */
+}
+#card {
+  background: var(--card-bg);
+}
+#tool {
+  background: color-mix(in srgb, var(--k-ink) 25%, transparent);
+}
+#panel-close {
+  top: 10px;
+  right: 10px;
+  width: 38px;
+  height: 38px;
+  font-size: 24px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--key-bg);
+  color: var(--k-ink);
+  box-shadow: var(--key-lip);
+}
+#panel-close:active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+/* a preview's bar: the colourway's ink, with its words and Share in the ground's colour */
+#viewer .bar {
+  background: var(--k-ink);
+  color: var(--k-ground);
+}
+#viewer .bar :is(.glyph, .where, .share) {
+  color: var(--k-ground);
+}
+/* the preview bar's pin and send: ground and panel against its ink */
+#viewer .bar .pin,
+#viewer .bar button.send {
+  border: 0;
+  background: var(--k-ground);
+  color: var(--k-ink);
+  box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--k-ink) 25%, var(--k-ground));
+}
+#viewer .bar button.send {
+  background: var(--k-panel);
+}
+#viewer .bar .send i {
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+}
+/* HQ-OS's screen: flat, with no glow or inset, so its words and keys align with the title on every screen size
+   */
+.crt {
+  border: 0;
+  margin: 0;
+  padding: 0;
+}
+.crt .screen {
+  border-radius: 0;
+  box-shadow: none;
+  padding: 12px 14px;
+}
+/* The intercom's talk has no surrounding frame. */
+.device.intercom > .screen {
+  border: 0;
+  background: none;
+  padding: 0 4px 4px;
+}
+/* its keys' lip straight down, and the box under them its talk, 4 px in */
+.intercom header {
+  --key-reach: var(--depth-button);
+  --key-end: 14px;
+}
+/* its Larger at the weight of Wire's close × */
+.intercom header .grow svg.icon > g {
+  stroke-width: 3;
+}
+/* the HUD on a phone: one row. Sound, music and the tour fold behind More (scene.js hud); the walls aren't Wire's */
+#btn-walls,
+#btn-more {
+  display: none;
+}
+@media (max-width: 600px) {
+  #btn-more {
+    display: grid;
+    order: 3;
+  }
+  #hud .brand {
+    flex-shrink: 0; /* (its words stay on it: the keys wrap first) */
+  }
+  .tools {
+    max-width: none;
+    gap: 5px;
+  }
+  .tools :is(#btn-sound, #btn-music, #btn-tour) {
+    order: 5; /* (open, on a row of their own under the rest) */
+  }
+  /* HQ's search key: the row has room for five keys, so it goes first in the drawer. */
+  .tools #btn-find {
+    order: 5;
+  }
+  .tools:not(.more-open) #btn-find {
+    display: none;
+  }
+  .tools.more-open::before {
+    content: '';
+    flex-basis: 100%;
+    order: 4;
+  }
+  .tools:not(.more-open) :is(#btn-sound, #btn-music, #btn-tour) {
+    display: none;
+  }
+  .tools .lbl {
+    display: none;
+  }
+  .tools button,
+  .tools a.desk {
+    min-width: 38px;
+    height: 38px;
+    padding: 0 7px;
+  }
+  #status {
+    left: 50%;
+    top: calc(var(--app-h, 100dvh) - max(8px, var(--sab) - 16px)); /* (low, beside the home bar) */
+    transform: translate(-50%, -100%);
+    max-width: calc(100vw - 24px);
+    flex-wrap: nowrap;
+    gap: 5px;
+  }
+  #status span {
+    padding: 2px 8px;
+    font-size: 12.5px;
+    white-space: nowrap;
+  }
+}
+/* HQ-OS's lists (Jobs, Mail, People, Seats and the rest): no prompt, each heading a label, each title bold over its
+   line in the muted ink, its state a pill (one waiting on the board in the accent) */
+.crt .prompt {
+  display: none;
+}
+.crt .cap {
+  margin: 18px 0 6px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--k-muted);
+}
+.rows {
+  gap: 0;
+}
+.rows > li {
+  gap: 4px 10px;
+  padding: 12px 0;
+  border-bottom: 1.5px solid var(--line);
+}
+.rows > li > b,
+.rows > li > button > b,
+.rows > li > details > summary > b {
+  font-size: 16px;
+  line-height: 1.25;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--k-ink);
+}
+.rows :is(.dim, .eng, small) {
+  font-size: 13px;
+  line-height: 1.35;
+  color: var(--k-muted);
+}
+.rows .st {
+  align-self: start;
+  padding: 3px 9px 4px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 650;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--k-ink);
+  background: color-mix(in srgb, var(--k-ink) 7%, transparent);
+}
+.rows .st::before {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--st, var(--k-muted));
+}
+.rows :is(.st-running, .st-working, .st-ready, .st-done) {
+  --st: #2f9e55;
+}
+.rows :is(.st-queued, .st-sleeping) {
+  --st: #5b7bd5;
+}
+.rows :is(.st-busy, .st-waiting) {
+  --st: #d49a12;
+}
+.rows .st-failed {
+  --st: #d93a3a;
+}
+/* a seat's states in HQ-OS › Seats */
+.rows :is(.st-paced, .st-new) {
+  --st: #d49a12;
+}
+.rows .st-draining {
+  --st: #5b7bd5;
+}
+.rows .st-closed {
+  --st: #d93a3a;
+}
+.rows :is(.st-blocked, .st-login) {
+  --st: currentColor;
+  color: var(--k-on-accent);
+  background: var(--k-accent);
+  box-shadow: 0 2px 0 var(--k-side);
+}
+/* an engine's mark (shell/engine.js), in the engine's own colour; Codex and a key in the ink */
+.mark {
+  width: 18px;
+  height: 18px;
+  color: var(--engine-colour, inherit);
+}
+.mark-claude {
+  --engine-colour: #d97757;
+}
+.mark-codex,
+.mark-api {
+  --engine-colour: var(--k-ink);
+}
+.mark-vibe {
+  --engine-colour: #c8641c;
+}
+.mark-agy {
+  --engine-colour: #3f6fd1;
+}
+.crt .mark {
+  filter: none;
+}
+.crt :is(.rows li > button, .rows li > details > summary, .notes.share > details > summary):is(:hover, :focus-visible) {
+  background: color-mix(in srgb, var(--k-ink) 6%, transparent);
+  outline: 0;
+}
+/* the apps' tiles: keys with the app's picture or letter in the colourway's ink, no screen's glow or scanlines */
+.applist .pic {
+  border: 0;
+  border-radius: var(--r-lg);
+  background: var(--k-panel);
+  box-shadow: var(--key-lip);
+}
+.applist .pic::after {
+  display: none;
+}
+.applist .pic i {
+  color: var(--k-ink);
+}
+.applist .pic .glyph {
+  color: var(--k-ink);
+}
+.applist .st-test {
+  color: color-mix(in srgb, #d49a12 60%, var(--k-ink));
+}
+/* the pictures are inked dark, so on a dark ground they're turned light */
+body.wire-dark .applist .pic img[data-ink] {
+  filter: invert(1);
+}
+/* Share's box over a preview: a panel with its lip */
+#viewer .sharebox {
+  border: 0;
+  border-radius: var(--r-xl);
+  box-shadow:
+    0 var(--depth-tile) 0 var(--lip-deep),
+    var(--shadow-lg);
+}
+/* (the board says what to do, and a big key has its own close button) */
+#hint,
+#zoom {
+  display: none;
+}
+/* the page takes its own taps and scrolls itself (scene.js touch): the canvas under it is only for the frame */
+#world {
+  pointer-events: none;
+}
+/* the colourway picker's swatches (Settings › Look): its ground on its accent */
+.look-settings .swatch {
+  display: inline-block;
+  width: 16px;
+  height: 12px;
+  margin-right: 8px;
+  vertical-align: -1px;
+  border-radius: 50%;
+  background: var(--t);
+  box-shadow:
+    0 3px 0 var(--s),
+    0 0 0 1px color-mix(in srgb, currentColor 25%, transparent);
+}
+
+/* ---- the board: frames of square keys (--t a side, scene.js fit), scrolling under the HUD's band and the status line */
+.wire {
+  position: fixed;
+  inset: 0;
+  --pad: max(14px, var(--sal));
+  --g: 10px; /* between keys, and a frame's padding (scene.js GAP) */
+}
+.wire .board {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  padding: var(--top, 64px) max(14px, var(--sar)) var(--bottom, 60px) var(--pad);
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), var(--t));
+  grid-auto-rows: var(--t);
+  gap: 18px var(--g); /* (room for the lips) */
+  align-content: start;
+}
+.wire::before,
+.wire::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+.wire::before {
+  top: 0;
+  height: var(--top, 64px);
+  background: linear-gradient(var(--bg) calc(100% - 18px), transparent);
+}
+.wire::after {
+  bottom: 0;
+  height: var(--bottom, 60px);
+  background: linear-gradient(transparent, var(--bg) 18px);
+}
+/* a key's place: the company's two wide */
+.wire .slot {
+  position: relative;
+  min-width: 0;
+  display: grid;
+}
+.wire .slot.wide {
+  grid-column: span 2;
+}
+
+/* ---- the rig: the company's lent machine, beside the mascots, keyed like an agent: a tower for a face, its ring
+   turning and a light for each of its run's cores, its use as bars at rest (scene.js machine). The colours the board
+   gives it: its lights' as --hue, its case's as --rig-body, with --rig-ink to read on it (scene.js dress). ---- */
+.wire .key.machine {
+  --hue: #8b5cf6;
+}
+.wire .machine .face {
+  background: var(--rig-body, color-mix(in srgb, var(--hue) 35%, var(--k-panel)));
+}
+.wire .machine .face .tower {
+  inset: 18%;
+  width: 64%;
+  height: 64%;
+  opacity: 1;
+  animation: none;
+  fill: none;
+  stroke: var(--rig-ink, var(--ink));
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.wire .machine .tower.size-3 {
+  inset: 14%;
+  width: 72%;
+  height: 72%;
+  stroke-width: 1.5;
+}
+.wire .machine .tower :is(.card, .strip) {
+  stroke: var(--hue);
+  stroke-width: 2;
+}
+.wire .machine .tower .strip {
+  stroke-width: 1;
+}
+.wire .machine:not(.working) .tower .card {
+  opacity: 0.55; /* (the cards light up while it computes) */
+}
+.wire .machine .fan {
+  stroke: var(--hue);
+  stroke-dasharray: 3.5 2;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.wire .machine.working .fan {
+  animation: wire-spin 1.2s linear infinite;
+}
+.wire .machine .id b {
+  white-space: normal; /* (a machine's name runs longer than an agent's) */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.wire .machine.offline {
+  opacity: 0.6;
+}
+.wire .cores {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+.wire .cores i {
+  width: 7px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--hue);
+}
+.wire .cores i.off {
+  background: color-mix(in srgb, var(--hue) 22%, transparent);
+}
+
+/* ---- a key ---- */
+.wire .key {
+  position: relative;
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  padding: 12px 13px;
+  border-radius: 24px;
+  background: var(--k-panel);
+  --key-side: var(--lip);
+  box-shadow: 0 var(--depth-tile) 0 var(--key-side);
+  overflow: hidden;
+  color: var(--ink);
+  font-family: var(--font);
+  cursor: pointer;
+}
+/* A tile goes down on its lip when pressed (scene.js press), and partly when a message lands or a pointer hovers. */
+.wire .key.down {
+  box-shadow: 0 var(--depth-pressed) 0 var(--key-side);
+}
+.wire .key.nudged {
+  box-shadow: 0 var(--depth-hover) 0 var(--key-side);
+}
+@media (hover: hover) {
+  .wire .key:not(.big, .down, .nudged):hover {
+    translate: 0 calc(var(--depth-tile) - var(--depth-hover));
+    box-shadow: 0 var(--depth-hover) 0 var(--key-side);
+  }
+}
+.wire .key {
+  transition:
+    box-shadow 0.12s,
+    translate 0.12s ease-out,
+    opacity 0.3s,
+    scale 0.3s;
+}
+.wire .key.away {
+  opacity: 0;
+  scale: 0.9; /* (it's out, big: shared/tactile/fly.js flies it from here.) */
+}
+.wire .key.lit {
+  outline: 3px solid var(--k-ink);
+  outline-offset: 3px;
+}
+.wire .id {
+  display: grid;
+  min-width: 0;
+}
+.wire .id b {
+  font-size: 16px;
+  line-height: 1.15;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  font-variation-settings: 'opsz' 28;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wire .id small {
+  font-size: 12px;
+  line-height: 1.25;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wire .aside {
+  color: var(--muted);
+  font-weight: 450;
+}
+.wire .head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.wire .avatar {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: none;
+}
+.wire .face {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--hue) 35%, var(--k-panel));
+}
+.wire .face .me {
+  position: absolute;
+  left: 50%;
+  top: -13px; /* (the frame's headroom above the hair: head and shoulders fill the circle) */
+  width: 42px;
+  height: 84px;
+  transform: translateX(-50%);
+  image-rendering: pixelated;
+}
+.wire .asleep .face .me {
+  opacity: 0.5;
+}
+/* at work, a ring turns round the face, in their own colour, and how long they've been at it is up in the corner */
+.wire .avatar svg {
+  position: absolute;
+  inset: -7px;
+  width: calc(100% + 14px);
+  height: calc(100% + 14px);
+  opacity: 0;
+}
+.wire .avatar circle {
+  fill: none;
+  stroke: var(--hue);
+  stroke-width: 5;
+  stroke-linecap: round;
+  stroke-dasharray: 100 120;
+}
+/* an accent badge: the time on a key at work, and a post's tags (its glyphs centred on the digits' height) */
+.wire .clock,
+#panel .tag {
+  padding: 2px 6px 1px;
+  border-radius: 999px;
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+  box-shadow: 0 2px 0 var(--k-side);
+  font-size: 11.5px;
+  font-weight: 750;
+  line-height: 1.2;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.wire .clock {
+  position: absolute;
+  top: 15px;
+  right: 13px;
+}
+.wire .clock:empty {
+  display: none;
+}
+.wire .key:has(.clock:not(:empty)) .id b {
+  padding-right: 36px; /* (the name stops short of it; the role runs on under it) */
+}
+/* The newsletter's posts: big keys, as the board's (.wire .key), the cover inset on the face.
+   The newsletter and the library are white keys on the ground, as the projects view's.
+ */
+#panel:has(> #panel-body > .masthead) {
+  --key-panel-bg: #fff;
+  background: var(--k-ground);
+}
+body.wire-dark #panel:has(> #panel-body > .masthead) {
+  --key-panel-bg: var(--k-panel);
+}
+#panel .cards {
+  gap: 18px;
+  padding-bottom: var(--depth-tile); /* (the last one's lip) */
+}
+#panel .cards > .card {
+  --key-lip: var(--tile-lip);
+  --key-down: var(--press-tile);
+  padding: 10px;
+  border-radius: 24px;
+  background: var(--key-bg);
+}
+#panel .cards > .card img {
+  border-radius: 16px;
+}
+#panel .cards .ct {
+  gap: 3px;
+  padding: 10px 4px 2px;
+}
+#panel .tag {
+  display: inline-block;
+  margin: 4px 1px 0 0;
+}
+/* (the role a pixel clear of the badge's lip) */
+.wire .head .id small {
+  position: relative;
+  top: 1px;
+}
+.wire .working .avatar svg {
+  opacity: 1;
+  animation: wire-spin 6s linear infinite;
+}
+@keyframes wire-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* an emote: its glyph in ink on a disc of its own colour (--emote, scene.js draw), so it reads on every colourway
+   */
+.wire .emote {
+  position: absolute;
+  right: -9px;
+  top: -9px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--emote);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--emote) 60%, #000);
+  color: #1d1b17;
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1;
+}
+.wire .doing {
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.22;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  font-variation-settings: 'opsz' 20;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.wire .key:not(.working) .doing {
+  font-weight: 500;
+  color: var(--muted);
+  -webkit-line-clamp: 2;
+}
+.wire .key:not(.working) .doing b {
+  color: var(--ink);
+}
+.wire .foot {
+  position: absolute;
+  left: 13px;
+  right: 13px;
+  bottom: 11px;
+  display: grid;
+  gap: 4px;
+}
+.wire .foot svg,
+.wire .pace svg {
+  width: 100%;
+  height: 20px;
+  display: block;
+}
+.wire small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.wire small b {
+  color: var(--ink);
+  font-weight: 750;
+}
+.wire .foot small,
+.wire .pace small {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.wire .since {
+  margin-left: auto;
+}
+.wire .big.company rect {
+  transform-box: fill-box;
+  transform-origin: 50% 100%; /* (they grow back up when Today is pressed) */
+}
+/* the bars: ink, faint; the last one (now, today) in the accent on its side */
+.wire rect {
+  fill: var(--bar);
+  opacity: 0.2;
+}
+.wire rect.now {
+  fill: var(--k-accent);
+  opacity: 1;
+}
+.wire rect.none {
+  opacity: 0.12;
+}
+.wire .big rect:hover {
+  opacity: 0.75;
+}
+.wire .working rect {
+  opacity: 0.38;
+}
+
+/* ---- the company's day: two keys wide, in the accent's own colours, the one bold key on the board ---- */
+.wire .company {
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+  --key-side: var(--k-side);
+  --muted: color-mix(in srgb, var(--k-on-accent) 70%, var(--k-accent));
+  --bar: var(--k-on-accent);
+  padding: 14px 16px;
+}
+.wire .company .id b {
+  font-size: 20px;
+}
+.wire .key.company:not(.big) .stat b {
+  font-size: 19px;
+}
+.wire .key.company:not(.big) .stat svg {
+  height: 14px;
+}
+.wire .company .stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+.wire .stat {
+  display: grid;
+  grid-template-columns: 5.2ch 1fr;
+  align-items: end;
+  column-gap: 6px;
+}
+.wire .stat b {
+  font-size: 21px;
+  line-height: 1;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+}
+.wire .stat small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wire .stat svg {
+  grid-row: 1;
+  grid-column: 2;
+  width: 100%;
+  height: 16px;
+}
+.wire .company rect {
+  opacity: 0.3;
+}
+.wire .company rect.now {
+  fill: var(--k-on-accent);
+  stroke: none;
+  opacity: 1;
+}
+
+/* ---- a mascot's key: the creature on a little stage ---- */
+.wire .mascot {
+  align-content: space-between;
+}
+.wire .stage {
+  position: relative;
+  height: 64px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.wire .stage canvas {
+  width: 56px;
+  height: 48px;
+  image-rendering: pixelated;
+}
+.wire .heart {
+  position: absolute;
+  top: 46%;
+  width: 14px;
+  height: 13px;
+  margin-left: -7px;
+  pointer-events: none;
+  opacity: 0;
+  animation: wire-heart 1.5s ease-out forwards;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='2.5 3.5 19 17.5'%3E%3Cpath fill='%23ff5b7f' d='M12 20.5S3 15 3 8.8A4.8 4.8 0 0 1 12 6.4a4.8 4.8 0 0 1 9 2.4C21 15 12 20.5 12 20.5z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+@keyframes wire-heart {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-90px) scale(1.15);
+  }
+}
+
+/* ---- a message's slip, flying from key to key (scene.js message) ---- */
+.wire .flights {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
+  overflow: hidden;
+}
+.wire .slip {
+  position: absolute;
+  left: 0;
+  top: 0;
+  max-width: 220px;
+  padding: 7px 12px 8px;
+  border-radius: 16px 16px 16px 4px;
+  background: var(--k-ink);
+  color: var(--k-ground);
+  box-shadow: 0 4px 0 color-mix(in srgb, var(--k-ink) 55%, var(--k-ground));
+  font: 600 13px/1.25 var(--font);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0;
+}
+
+/* ---- a message landed on its key: from whom, and all its words, over the key's own for a while (scene.js shows) */
+.wire .said {
+  position: absolute;
+  inset: 56px 0 0; /* (from under the head: whose key it is stays in sight) */
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 13px 12px;
+  border-radius: 14px 14px 0 0;
+  border-end-start-radius: inherit;
+  border-end-end-radius: inherit;
+  background: var(--k-ink);
+  color: var(--k-ground);
+  animation: wire-said 0.35s cubic-bezier(0.3, 1.4, 0.5, 1);
+  transition: opacity 0.3s;
+}
+.wire .said.gone {
+  opacity: 0;
+}
+.wire .said small {
+  color: color-mix(in srgb, var(--k-ground) 70%, var(--k-ink));
+}
+.wire .said b {
+  color: var(--k-ground);
+}
+.wire .said p {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.25;
+  font-weight: 600;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+@keyframes wire-said {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+/* ---- the big key: out over the dimmed board, its two faces turning in 3D; a swipe carries it (scene.js touch) ---- */
+.wire .solo {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  padding: var(--top, 64px) max(14px, var(--sar)) var(--bottom, 16px) var(--pad);
+  touch-action: none;
+  background: transparent;
+  grid-template-columns: minmax(0, 520px);
+  justify-content: center;
+  transition: background 0.25s;
+}
+.wire.alone .solo {
+  background: color-mix(in srgb, var(--k-ground) 82%, transparent);
+  animation: wire-dim 0.3s;
+}
+@keyframes wire-dim {
+  from {
+    background: transparent;
+  }
+}
+.wire .solo[hidden] {
+  display: none;
+}
+/* its sides (shell/sides.js) in the big key's cell, round its middle, so they stay as a swipe carries it. */
+.wire .solo > * {
+  grid-area: 1 / 1;
+}
+.wire .solo > .sides {
+  justify-self: stretch;
+  position: relative;
+  height: 0;
+  --side-w: min(44px, max(var(--pad), (100vw - 520px) / 2)); /* (the gutter beside it, up to a tap's width) */
+  --side-ink: var(--k-ink);
+  animation: wire-dim-in 0.3s;
+}
+@keyframes wire-dim-in {
+  from {
+    opacity: 0;
+  }
+}
+.wire .big {
+  width: 100%;
+  justify-self: center;
+  padding: 0;
+  border-radius: 34px;
+  cursor: default;
+  overflow: visible;
+  background: none;
+  box-shadow: none;
+  transition: transform 0.25s;
+}
+.wire .big.company,
+.wire .big.mascot,
+.wire .big.machine {
+  padding: 24px 26px;
+  background: var(--k-panel);
+  box-shadow:
+    0 var(--depth-tile) 0 var(--lip-deep),
+    var(--shadow-lg);
+}
+.wire .big.company {
+  min-height: 0;
+  background: var(--k-accent);
+  box-shadow:
+    0 var(--depth-tile) 0 var(--k-side),
+    var(--shadow-lg);
+}
+/* an agent's: square where the screen's tall enough, its log taking the room (the rig's as wide) */
+.wire .big:is(.agent, .machine) {
+  width: min(100%, calc(100dvh - var(--top, 64px) - var(--bottom, 16px) - 24px));
+}
+.wire .big.machine {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  aspect-ratio: 1; /* (at least, like an agent's; its use at the foot.) */
+}
+.wire .big.machine .usage {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+}
+.wire .big.machine .usage .graph {
+  flex: 1 0 56px; /* (the graph takes the room a resting machine leaves) */
+}
+.wire .big .whose {
+  margin: 0;
+  font-size: 16px;
+  color: var(--muted);
+}
+.wire .big.machine .foot {
+  position: static;
+  margin-top: 12px;
+  gap: 8px;
+}
+.wire .big .cores {
+  gap: 5px;
+}
+.wire .big .cores i {
+  width: 16px;
+  height: 40px;
+  border-radius: 4px;
+}
+/* its use (CPU, memory, GPU) as lines, and its run's last lines of output, when the machine reports them */
+.wire .usage {
+  display: grid;
+  gap: 6px;
+}
+.wire .usage .graph {
+  position: relative;
+  height: 56px;
+  border-radius: 12px;
+  background: var(--sand);
+}
+/* (in the graph's own pixels, clear of its edges. The rounding sits on the box around it, since Safari clips an svg's
+   drawing to its own rounded corners.) */
+.wire .usage svg {
+  position: absolute;
+  inset: 8px;
+  width: calc(100% - 16px);
+  height: calc(100% - 16px);
+  overflow: visible;
+}
+.wire .usage line {
+  stroke: var(--use);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+}
+.wire .usage circle {
+  fill: var(--use);
+}
+.wire .usage .cpu {
+  --use: var(--hue);
+}
+/* (solid, so the segments' round ends don't darken where they meet) */
+.wire .usage .memory {
+  --use: color-mix(in srgb, var(--ink) 55%, var(--k-panel));
+}
+.wire .usage .gpu {
+  --use: #d49a12;
+}
+.wire .usage small {
+  display: flex;
+  gap: 14px;
+}
+.wire .usage small span::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  margin-right: 5px;
+  border-radius: 50%;
+  background: var(--use);
+}
+.wire .tail {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 14px;
+  background: var(--sand);
+  list-style: none;
+  font:
+    12px/1.4 ui-monospace,
+    Menlo,
+    Consolas,
+    monospace;
+  color: var(--muted);
+}
+.wire .tail li {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wire .tail li:last-child {
+  color: var(--ink);
+}
+.wire .big :is(.foot, .usage, .tail):empty {
+  display: none;
+}
+.wire .faces {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  aspect-ratio: 1; /* (at least: both faces as tall as the taller) */
+  min-width: 0; /* (never wider for being taller) */
+}
+/* (one face shown at a time, the other keeping its room: scene.js turn) */
+.wire .flipped .front,
+.wire .big:not(.flipped) .back {
+  visibility: hidden;
+}
+.wire .front,
+.wire .back {
+  grid-area: 1 / 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  --face-x: 26px; /* (its side and bottom padding, the turn mark's inset too) */
+  --face-b: 22px;
+  padding: 24px var(--face-x) var(--face-b);
+  border-radius: 34px;
+  background: var(--k-panel);
+  box-shadow:
+    0 var(--depth-tile) 0 var(--lip-deep),
+    var(--shadow-lg);
+  cursor: pointer;
+  position: relative; /* (for its turn mark) */
+}
+/* a face that turns over says so, quietly, in its bottom corner, set in by the face's padding, at the icon set's line
+   weight (scene.js key). */
+.wire .big .turns {
+  position: absolute;
+  right: var(--face-x);
+  bottom: var(--face-b);
+  display: grid;
+  color: var(--k-muted);
+  pointer-events: none;
+}
+.wire .big .turns svg {
+  width: 20px;
+  height: 20px;
+}
+/* (each face's last line stops short of it) */
+.wire .big :is(.pace small, .who) {
+  padding-right: 30px;
+}
+/* (and an empty pace keeps its row, so an idle front's log stops above it) */
+.wire .big .pace:empty {
+  display: block;
+  height: 20px;
+}
+.wire .big .head {
+  gap: 14px;
+  padding-right: 52px; /* (the close button's) */
+}
+.wire .big .avatar {
+  width: 60px;
+  height: 60px;
+  cursor: pointer;
+}
+.wire .big .face .me {
+  top: -20px;
+  width: 66px;
+  height: 132px;
+}
+
+.wire .big .id b {
+  font-size: 28px;
+}
+.wire .big .id small {
+  font-size: 14px;
+}
+.wire .state {
+  align-self: flex-start;
+  margin-bottom: -4px;
+  padding: 4px 11px 5px;
+  border-radius: 999px;
+  border: 1.5px solid var(--line);
+  box-shadow: 0 2px 0 var(--line);
+  font-size: 13px;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.wire .working .state {
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+  border-color: transparent;
+  box-shadow: 0 2px 0 var(--k-side);
+}
+.wire .state i {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  vertical-align: 1px;
+  animation: wire-blink 1.2s ease-in-out infinite;
+}
+.wire .big .doing {
+  margin: 0;
+  font-size: 23px;
+  line-height: 1.18;
+  font-weight: 700;
+  -webkit-line-clamp: 3;
+  color: var(--ink);
+}
+.wire .log {
+  flex: 1 0 196px;
+  height: 0;
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 18px;
+  background: var(--sand);
+  list-style: none;
+  font-size: 13.5px;
+  line-height: 1.3;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+}
+.wire .log li {
+  display: flex;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+.wire .log li:last-child {
+  color: var(--ink);
+  font-weight: 600;
+  animation: wire-step 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.wire .log span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wire .log li:last-child span {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wire .log li.open span {
+  display: block;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.wire .log time {
+  flex: none;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+@keyframes wire-blink {
+  50% {
+    opacity: 0.35;
+  }
+}
+@keyframes wire-step {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+.wire .pace {
+  display: grid;
+  gap: 6px;
+}
+.wire .pace:empty {
+  display: none;
+}
+.wire .big .pace svg {
+  height: 44px;
+}
+.wire .big small {
+  font-size: 13px;
+}
+.wire .lbl {
+  display: block;
+  white-space: nowrap;
+  margin-bottom: 3px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: var(--muted);
+}
+.wire .last p,
+.wire .next p {
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.25;
+  font-weight: 650;
+}
+.wire .week {
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+}
+.wire .week svg {
+  width: 100%;
+  height: 44px;
+}
+.wire .week p,
+.wire .who {
+  margin: 0;
+  font-size: 14px;
+  color: var(--muted);
+}
+.wire .who {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wire .who .mark {
+  width: 16px;
+  height: 16px;
+  vertical-align: -3px;
+}
+.wire .week b {
+  color: var(--ink);
+}
+.wire .close {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 1;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--key-panel-bg); /* (a key on the big key's face) */
+  color: var(--k-ink);
+  box-shadow: var(--key-lip);
+  cursor: pointer;
+}
+.wire .close:active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+.wire .close svg {
+  width: 20px;
+  height: 20px;
+}
+/* the big company key: the day's five numbers, each with its 14 days under it, then the company now and the week's
+   most busy (it scrolls when it's taller than the screen) */
+.wire .big.company {
+  max-height: calc(100dvh - var(--top, 64px) - var(--bottom, 60px) - 16px);
+  overflow-y: auto;
+  touch-action: pan-y;
+}
+.wire .big.company .stats {
+  gap: 18px 26px;
+  margin-top: 18px;
+}
+.wire .big.company .id b {
+  font-size: 30px;
+}
+.wire .big .stat {
+  grid-template-columns: 1fr;
+  row-gap: 4px;
+}
+.wire .big .stat b {
+  font-size: 30px;
+}
+.wire .big .stat small {
+  grid-row: 2;
+}
+.wire .big .stat svg {
+  grid-row: 3;
+  grid-column: 1;
+  height: 40px;
+}
+.wire .big.company .span {
+  grid-column: 1 / -1;
+  margin: -6px 0 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.wire .big.company :is(.now, .board-list) {
+  grid-column: span 1;
+  padding-top: 12px;
+  border-top: 1.5px solid color-mix(in srgb, var(--k-on-accent) 25%, transparent);
+}
+.wire .big.company .now {
+  grid-column: 1 / -1;
+}
+.wire .big.company :is(.now, .board-list) p {
+  margin: 2px 0 0;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 15px;
+}
+.wire .big.company .now p {
+  display: block;
+}
+.wire .big .stage {
+  height: 200px;
+}
+.wire .big .stage canvas {
+  width: 112px;
+  height: 96px;
+}
+/* a phone: the keys a little smaller inside (scene.js fit sizes them), the big key's words too */
+@media (max-width: 600px) {
+  .wire {
+    --pad: max(12px, var(--sal));
+  }
+  .wire .board {
+    padding-right: max(12px, var(--sar));
+  }
+  .wire .key {
+    border-radius: 22px;
+  }
+  .wire .front,
+  .wire .back {
+    --face-x: 20px;
+    --face-b: 18px;
+    padding: 20px var(--face-x) var(--face-b);
+  }
+  .wire .big .id b {
+    font-size: 23px;
+  }
+  .wire .big .doing {
+    font-size: 19px;
+  }
+  .wire .big .avatar {
+    width: 52px;
+    height: 52px;
+  }
+  .wire .big .face .me {
+    top: -18px;
+    width: 57px;
+    height: 114px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .wire .avatar svg,
+  .wire .state i,
+  .wire .log li:last-child {
+    animation: none;
+  }
+}
+
+/* The projects view (shell/projects.js): white keys on the ground like the agents view's tiles (on a dark colourway,
+   its panel), solid with a lip that goes down when pressed and no outline (the view's --bw is 0, Wire's own 1.5px
+   stays everywhere else), and the accent only on what waits for the board.
+ */
+#projects {
+  --bw: 0px;
+  --bw-lg: 0px;
+  --pj-tile: #fff;
+  --pj-lift: var(--tile-lip);
+  --pj-lift-sm: var(--key-lip);
+  --pj-lift-tile: var(--tile-lip);
+  --pj-lift-hover: var(--shadow-hover);
+  --pj-press: var(--shadow-press);
+  --pj-lift-big: 0 12px 0 var(--lip-deep), var(--shadow-lg);
+  --pj-you: var(--k-accent);
+  --pj-on-you: var(--k-on-accent);
+  --pj-you-lip: var(--k-side);
+  --pj-live: var(--k-ink);
+  --pj-ground: color-mix(in srgb, var(--k-ink) 7%, var(--k-ground));
+  --pj-pill: 999px;
+  --pj-round: 24px;
+  /* (the view out big over the dimmed home page, as the big key is: its panel, its deep lip.) */
+  --pj-veil: color-mix(in srgb, var(--k-ground) 82%, transparent);
+  --pj-surface: var(--k-panel);
+  --pj-frame-r: 34px;
+  --pj-frame-lift: 0 var(--depth-tile) 0 var(--lip-deep), var(--shadow-lg);
+  font-weight: 500;
+}
+/* (on a dark colourway the keys a shade off the panel they lie on, as the big key's own keys are) */
+body.wire-dark #projects {
+  --pj-tile: var(--key-panel-bg);
+}
+#projects .pj-key:is(.lit, .on) {
+  box-shadow: var(--key-on-lip);
+}
+#projects .pj-tile.lit {
+  box-shadow: 0 var(--depth-tile) 0 var(--k-side);
+}
+@media (hover: hover) {
+  #projects .pj-tile.lit:not(.pj-lifted, :active):hover {
+    box-shadow: 0 var(--depth-hover) 0 var(--k-side);
+  }
+}
+#projects :is(.pj-tile, .pj-key).lit:active,
+#projects .pj-key.on:active {
+  box-shadow: var(--key-on-down-lip);
+}
+#projects .pj-key[aria-pressed='true'] {
+  background: var(--pj-ground);
+}
+#projects .pj-business {
+  border-radius: 28px;
+}
+/* (a level's head: the big key's lettering, its keys a shade off the panel like the big key's close.) */
+.pj-tile b,
+.pj-where h1,
+.pj-card h2 {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+.pj-where h1 {
+  font-size: 30px;
+}
+#projects :is(.pj-head, .pj-card-keys) .pj-key:not(.on, [aria-pressed='true']) {
+  background: var(--key-panel-bg);
+}
+:is(.pj-business, [data-project])::before {
+  content: none;
+}
+/* (a cover's fallback initial in the muted ink, opaque, so it keeps 3:1 against the cover like big type must.
+  ) */
+.pj-cover > .pj-initial {
+  opacity: 1;
+}
+.pj-face {
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--pj-tile);
+  background-color: var(--sand);
+}
+.pj-tile.lit .pj-tile-top .pj-face {
+  box-shadow: 0 0 0 2px var(--k-accent);
+}
+/* (the pulse's bars rounded and eased.) */
+.pj-live {
+  border-radius: 2px;
+  animation-timing-function: ease-in-out;
+}
+#projects :is(.pj-tile, .pj-key, .pj-row).pj-flat {
+  border: 1.5px dashed color-mix(in srgb, var(--k-ink) 25%, transparent);
+}
+/* (a task's row: planned and after other work hollow in a clear outline, a step's branch and a row's mark in the
+   colourway's ink.) */
+#projects .pj-task:is(.planned, .after),
+.pj-step::before {
+  border-color: color-mix(in srgb, var(--k-ink) 28%, transparent);
+}
+.pj-row-mark {
+  box-shadow: 0 0 0 2px var(--pj-ground);
+}
+.pj-size-bar {
+  border-radius: 3px;
+}
+/* (an agent's big key out over the view: the board behind it steps away and the key comes over the view, on its own
+   dimmed ground.) */
+body.projects .wire:has(> .solo:not([hidden])) {
+  z-index: 6;
+}
+body.projects .wire:has(> .solo:not([hidden])) > :not(.solo) {
+  visibility: hidden;
+}
+@media (max-width: 700px) {
+  .pj-where h1 {
+    font-size: 24px;
+  }
+}

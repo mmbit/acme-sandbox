@@ -1,0 +1,40 @@
+# The Overseer's way in when HQ is down (infra/shell.py): one of the server's fixed actions, proved by GitHub's own OIDC
+# token for this workflow on main, which the server checks. The output is this run's log.
+name: Overseer
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: status, logs, restart or deploy
+        type: choice
+        options: [status, logs, restart, deploy]
+      service:
+        description: the compose service (logs, restart)
+        default: coordinator
+      lines:
+        description: how many lines of its log
+        default: '300'
+permissions:
+  contents: read
+  id-token: write
+concurrency: overseer
+jobs:
+  act:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          sparse-checkout: infra/host
+          sparse-checkout-cone-mode: false
+      - name: ${{ inputs.action }} ${{ inputs.service }}
+        env:
+          ACTION: ${{ inputs.action }}
+          SERVICE: ${{ inputs.service }}
+          LINES: ${{ inputs.lines }}
+        run: |
+          token=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=overseer-shell" | jq -r .value)
+          body=$(jq -n --arg a "$ACTION" --arg s "$SERVICE" --argjson l "$LINES" '{action: $a, service: $s, lines: $l}')
+          curl -sS --fail-with-body --max-time 660 -H "Authorization: Bearer $token" -H 'content-type: application/json' \
+            -d "$body" "https://$(cat infra/host)/__shell"

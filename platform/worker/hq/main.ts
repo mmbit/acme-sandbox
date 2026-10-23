@@ -1,0 +1,144 @@
+// hq: the agents' line to the company. One function per command, with its help beside it, dispatched by name here; a
+// company's own commands come from its kits (kits.ts). bin/hq, the worker image's /usr/local/bin/hq, runs this.
+import { ApiError, speakAs } from './api.ts';
+import * as cards from './cards.ts';
+import { care } from './care.ts';
+import { estimate } from './estimate.ts';
+import * as feedback from './feedback.ts';
+import { followthrough, summary } from './followthrough.ts';
+import { guest } from './guests.ts';
+import * as jobs from './jobs.ts';
+import * as kits from './kits.ts';
+import * as ledger from './ledger.ts';
+import { mail } from './mail.ts';
+import { meeting } from './meetings.ts';
+import * as memory from './memory.ts';
+import * as messages from './messages.ts';
+import { numbers, spend } from './numbers.ts';
+import { orders } from './orders.ts';
+import { overseer } from './overseer.ts';
+import { owed } from './owed.ts';
+import { StopError, print, stop } from './output.ts';
+import { phone } from './phone.ts';
+import { plan } from './plan.ts';
+import { picture } from './pictures.ts';
+import { preview } from './preview.ts';
+import * as proposals from './proposals.ts';
+import { decision } from './pauses.ts';
+import * as projects from './projects.ts';
+import { report } from './report.ts';
+import * as runs from './runs.ts';
+import { tooling } from './tooling.ts';
+import { when } from './when.ts';
+import { studio } from './studio.ts';
+import { seatWarning } from './seatwarning.ts';
+
+// run: what it ends hq with (a command it runs for the agent: that command's exit code), or nothing for 0.
+type Command = { help: string; run: (args: string[]) => Promise<void | number> };
+
+// In the order of the help
+const COMMANDS: Record<string, Command> = {
+  status: messages.status,
+  say: messages.say,
+  sent: messages.sent,
+  job: jobs.job,
+  code: jobs.code,
+  propose: proposals.propose,
+  inbox: proposals.inbox,
+  meeting,
+  cancel: jobs.cancel,
+  stop: jobs.stopJob,
+  waits: jobs.waits,
+  review: jobs.review,
+  window: jobs.window,
+  when,
+  plan,
+  thread: projects.thread,
+  project: projects.project,
+  decision,
+  followthrough,
+  summary,
+  projects: projects.projectLines,
+  items: ledger.items,
+  item: ledger.item,
+  reply: ledger.reply,
+  ask: cards.ask,
+  owed,
+  photos: cards.photos,
+  picture,
+  studio,
+  'seat-warning': seatWarning,
+  wait: cards.wait,
+  topic: cards.topic,
+  close: cards.close,
+  requests: cards.requests,
+  jobs: jobs.jobs,
+  extend: jobs.extend,
+  rewrite: cards.rewrite,
+  request: cards.request,
+  mail,
+  guest,
+  phone,
+  note: feedback.note,
+  notes: feedback.notes,
+  reviewers: feedback.reviewers,
+  pin: feedback.pin,
+  route: feedback.route,
+  preview,
+  run: runs.run,
+  tooling,
+  orders,
+  care,
+  numbers,
+  spend,
+  search: memory.search,
+  history: memory.history,
+  call: memory.call,
+  intercom: memory.intercom,
+  report,
+  estimate,
+  overseer,
+};
+
+const HELP_HEAD =
+  "The agents' line to the company. Team members (sub-agents) add --as <their id> to speak as themselves.";
+const HELP_FOOT = 'kind: decision | approval | credential | action | notice; urgency: now | today | whenever';
+
+try {
+  process.exitCode = await run(process.argv.slice(2));
+} catch (error) {
+  process.exitCode = exitFor(error);
+}
+
+async function run(args: string[]) {
+  if (args[0] === '--as') {
+    if (args.length < 2) stop('usage: hq --as <team member id> <command> ...');
+    speakAs(args[1]);
+    args = args.slice(2);
+  }
+  const [name = '', ...rest] = args;
+  if (Object.hasOwn(COMMANDS, name)) {
+    return (await COMMANDS[name].run(rest)) ?? 0;
+  }
+  const own = kits.findKitCommand(name);
+  if (own) return kits.runKitCommand(own, args);
+  printHelp();
+  return 1;
+}
+
+// The platform's commands, then the company's
+function printHelp() {
+  const platform = Object.values(COMMANDS).flatMap(command => command.help.replace(/^\n/, '').split('\n'));
+  print(`# ${HELP_HEAD}`, ...platform.map(line => `#${line}`), `# ${HELP_FOOT}`, ...kits.kitHelp());
+}
+
+// A stop says why on stderr (when it has words). A call that failed without an answer exits silently with its code.
+function exitFor(error: unknown) {
+  if (error instanceof StopError) {
+    if (error.message) process.stderr.write(`${error.message}\n`);
+    return error.exitCode;
+  }
+  if (error instanceof ApiError) return error.exitCode;
+  console.error(error);
+  return 1;
+}

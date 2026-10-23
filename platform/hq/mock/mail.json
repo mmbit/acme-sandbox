@@ -1,0 +1,7 @@
+[{ "id": 8, "received": "2026-06-05T16:40:00Z", "sender": "bounces+40981237+a1b2-dashboard=example.com@em8613.stripe.com", "recipient": "dashboard@example.com", "subject": "Your Stripe receipt", "length": 900, "board": 0 },
+ { "id": 7, "received": "2026-06-05T11:02:00Z", "sender": "7c9e6679-7425-40de-944b-e07fc1f90ae7@bounce.stripe.com", "recipient": "stripe@example.com", "subject": "Payout on its way", "length": 700, "board": 0 },
+ { "id": 6, "received": "2026-06-04T18:12:00Z", "sender": "no-reply@anthropic.com", "recipient": "claude-1@example.com", "subject": "Your sign-in link", "length": 300, "board": 1 },
+ { "id": 5, "received": "2026-06-04T10:05:00Z", "sender": "contracts@printer.example", "recipient": "documents@example.com", "subject": "Signed agreement", "length": 1200, "board": 0 },
+ { "id": 4, "received": "2026-06-03T09:50:00Z", "sender": "accountant@example.net", "recipient": "board@example.com", "subject": "Quarterly VAT return", "length": 800, "board": 1 },
+ { "id": 2, "received": "2026-09-27T08:12:00Z", "sender": "noreply@printapi.nl", "recipient": "hello@example.com", "subject": "Welkom bij Print API", "length": 420, "board": 0 },
+ { "id": 1, "received": "2026-09-27T07:55:00Z", "sender": "board@example.test", "recipient": "hello@example.com", "subject": "Test: does the inbox work?", "length": 60, "board": 0 }]

@@ -1,0 +1,64 @@
+{
+ "11": { "to": "anna@example.com",
+   "words": "The kite came this morning and the sail is torn right through the name. The party is on Saturday. Can a new one get here before then? I'd rather hear it from a person.",
+   "facts": { "order": "PW-4K2M", "product": "Kite, \"Mila\" print", "shipped": "2026-09-25 by post", "photos": 4, "what the chat did": ["checked it's their order (a code from their inbox)", "started a new one: waiting for your tap"] },
+   "lines": [
+     { "id": 1, "at": "2026-09-28T09:05:00Z", "who": "customer", "text": "Hi, my kite arrived torn." },
+     { "id": 2, "at": "2026-09-28T09:06:00Z", "who": "ai", "text": "I'm sorry! I can start a new one right now: it takes a few photos." },
+     { "id": 3, "at": "2026-09-28T09:12:00Z", "who": "customer", "text": "I'd rather hear it from a person." },
+     { "id": 4, "at": "2026-10-01T18:40:00Z", "who": "email", "text": "Any news? The party is getting close.", "mail": 1, "from": "anna@example.com", "matches": true }
+   ],
+   "signoff": "Written with help from our AI team, read and sent by [your name]" },
+ "12": { "to": "someone@example.com",
+   "words": "<img src=x onerror=alert(1)> Kan het ook naar mijn zus in België? Het is een cadeau.\nAlvast bedankt!",
+   "facts": { "order": "PW-7H1C", "note <img src=x onerror=alert(1)>": "<img src=x onerror=alert(1)>", "address": { "country": "BE", "city": "Example" } },
+   "lines": [
+     { "id": 5, "at": "2026-09-30T14:38:00Z", "who": "customer", "text": "<img src=x onerror=alert(1)> Can it go to my sister?" },
+     { "id": 6, "at": "2026-09-30T14:40:00Z", "who": "email", "text": "Also: can the card say 'from both of us'?", "mail": 2, "from": "other@example.com", "matches": false },
+     { "id": 7, "at": "2026-09-30T15:00:00Z", "who": "note", "text": "Asked by the team: does Pinwheel ship to Belgium?" }
+   ],
+   "signoff": "Geschreven met hulp van ons AI-team, gelezen en verstuurd door [your name]" },
+ "13": { "to": "jonas@example.de",
+   "words": "Die Laterne ist mit verbeultem Rahmen angekommen. Was kann ich tun?",
+   "facts": { "order": "LT-5D8E", "shipped": "2026-09-24" },
+   "lines": [ { "id": 8, "at": "2026-10-01T08:05:00Z", "who": "customer", "text": "Die Laterne ist mit verbeultem Rahmen angekommen." },
+              { "id": 9, "at": "2026-10-02T07:30:00Z", "who": "board", "text": "Hallo Jonas, das tut uns leid. Wir schicken Ihnen gern eine neue Laterne." } ],
+   "signoff": "Geschrieben mit Hilfe unseres KI-Teams, gelesen und gesendet von [your name]" },
+ "14": { "to": "lee@example.com", "words": "Can I put a real tea light in it, or only the LED one?", "facts": { "order": "LT-2K4M" }, "lines": [], "signoff": "Written with help from our AI team, read and sent by [your name]" },
+ "15": { "to": null,
+   "words": "",
+   "facts": { "person_case": "H-1003" }, "personCard": 13,
+   "lines": [],
+   "signoff": "Written with help from our AI team, read and sent by [your name]",
+   "bundle": { "at": "2026-10-02T06:49:00Z", "page": { "path": "/order/pay", "w": 375, "h": 667 }, "picture": true,
+     "events": [
+       { "at": 0, "kind": "view", "text": "/order/pay" },
+       { "at": 4210, "kind": "track", "text": "pay pressed" },
+       { "at": 4260, "kind": "request", "text": "POST /api/pay 500" },
+       { "at": 4300, "kind": "error", "text": "<img src=x onerror=alert(1)>" },
+       { "at": 9800, "kind": "rejection", "text": "TypeError: undefined is not an object (evaluating 'session.id')" }
+     ] } },
+ "16": { "to": "jonas@example.de", "words": "",
+   "facts": { "order": "LT-7Q2W", "case": "damaged", "remedy": "reprint", "who_pays": "printco", "deadline": { "safe": "2026-10-08", "likely": "2026-10-13", "passed": "no" },
+     "report": { "arrived_on": "2026-09-29", "defect": "dented_frame" }, "photos": ["box", "label"] },
+   "lines": [], "photos": [{ "name": "LT-7Q2W-1-box.jpg", "bytes": 412330, "sent": null }, { "name": "LT-7Q2W-2-label.jpg", "bytes": 298114, "sent": null }], "photosDue": [],
+   "signoff": "Written with help from our AI team, read and sent by [your name]." },
+ "17": { "to": "eva@example.nl", "words": "Kan ik de naam nog veranderen? Er staat Mila, het moet Milla zijn.",
+   "facts": { "order": "PW-9X1T", "status": "printing" },
+   "lines": [
+     { "id": 30, "at": "2026-10-02T09:05:00Z", "who": "customer", "text": "Kan ik de naam nog veranderen?" },
+     { "id": 31, "at": "2026-10-02T09:05:10Z", "who": "ai", "text": "Je bestelling wordt al gedrukt. Zal ik je met iemand van ons team in contact brengen?" }
+   ],
+   "signoff": "Geschreven met hulp van ons AI-team, gelezen en verstuurd door [your name]." },
+ "21": {"to": "sam.k@example.com", "words": "Hi! Do you do gift wrapping? <img src=x onerror=alert(1)> My nephew's birthday is on the 14th and I'd love it to arrive wrapped.", "facts": {"subject": "Gift wrapping? <img src=x onerror=alert(1)>"}, "lines": [{"id": 90, "at": "2026-10-02T07:15:00Z", "who": "email", "text": "Hi! Do you do gift wrapping? <img src=x onerror=alert(1)> My nephew's birthday is on the 14th and I'd love it to arrive wrapped.", "mail": 7, "from": "sam.k@example.com", "matches": true}], "signoff": "Written with help from our AI team, read and sent by [your name]."},
+ "22": { "to": "lena@example.com", "words": "Could the poster show her real birth date? She came early and spent her first weeks in the NICU.",
+   "facts": { "order": "BD-8H3K", "product": "Birth poster, \"Noor\"" },
+   "lines": [
+     { "id": 40, "at": "2026-10-02T10:15:00Z", "who": "customer", "text": "Can I still change the date on my poster?" },
+     { "id": 41, "at": "2026-10-02T10:15:05Z", "who": "ai", "text": "I can help with that. Which date should it show?" },
+     { "id": 42, "at": "2026-10-02T10:20:00Z", "who": "customer", "text": "Could the poster show her real birth date? She came early and spent her first weeks in the NICU.", "health": true }
+   ],
+   "signoff": "Written and sent by [your name]." },
+ "23": {"to": "lieke@example.nl", "words": "Hallo, ons zoontje lag twee weken op de NICU. Kan de geboorteposter van bestelling PW-8K3D zijn echte geboortedatum krijgen? Groetjes, Lieke", "facts": {"subject": "Geboorteposter"}, "lines": [{"id": 90, "at": "2026-10-02T10:40:00Z", "who": "email", "text": "Hallo, ons zoontje lag twee weken op de NICU. Kan de geboorteposter van bestelling PW-8K3D zijn echte geboortedatum krijgen? Groetjes, Lieke", "mail": 9, "from": "lieke@example.nl", "matches": true}, {"id": 91, "at": "2026-10-02T10:40:01Z", "who": "note", "text": "It may mention a health detail, so no AI read it: there’s no draft and no translation. Write the reply yourself."}], "signoff": "Geschreven en verstuurd door [your name]."},
+ "24": {"to": null, "words": "The phone line takes a moment to answer. <img src=x onerror=alert(1)>", "facts": {}, "lines": [], "signoff": "Geschreven en verstuurd door [your name]."}
+}

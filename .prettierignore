@@ -1,0 +1,12 @@
+# Not held to the gates (CODE_STYLE.md): throwaway work, the knowledge base, and generated or vendored files.
+# ESLint reads this list too (eslint.config.js).
+products/_cycles/
+products/*/demo/
+products/*/ads/
+products/*/research/
+knowledge/
+company/
+**/lettering-*.js
+**/*.min.js
+# a template a build step fills in, not code until then (name.template.js)
+**/*.template.*

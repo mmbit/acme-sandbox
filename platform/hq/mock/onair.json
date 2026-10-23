@@ -1,0 +1,86 @@
+[
+  {
+    "id": "digest",
+    "name": "The Morning Digest",
+    "about": "Two minutes on what got done yesterday and what needs you today.",
+    "hosts": [
+      "juno"
+    ],
+    "audience": "colleagues",
+    "minutes": 2,
+    "run": "show-digest",
+    "feeds": [
+      {
+        "lang": "en",
+        "language": "English",
+        "url": "https://hq.example/onair/digest.en.xml?key=mock",
+        "video": "https://hq.example/onair/digest.en.video.xml?key=mock"
+      },
+      {
+        "lang": "nl",
+        "language": "Nederlands",
+        "url": "https://hq.example/onair/digest.nl.xml?key=mock"
+      }
+    ],
+    "episodes": [
+      {
+        "id": "2026-09-25",
+        "date": "2026-09-25",
+        "langs": {
+          "en": {
+            "title": "Thursday: the shop opens its doors",
+            "summary": "The shop went live, and the first three orders came in before lunch.",
+            "audio": "phone/chime.mp3",
+            "bytes": 12000,
+            "video": "phone/chime.mp3",
+            "videoBytes": 12000
+          },
+          "nl": {
+            "title": "Donderdag: de winkel gaat open",
+            "summary": "De winkel ging live, en de eerste drie bestellingen kwamen voor de lunch binnen.",
+            "audio": "phone/chime.mp3",
+            "bytes": 12000
+          }
+        }
+      },
+      {
+        "id": "2026-09-24",
+        "date": "2026-09-24",
+        "langs": {
+          "en": {
+            "title": "Wednesday: a softer sound",
+            "summary": "The tick on the phone line is back, quieter.",
+            "audio": "phone/chime.mp3",
+            "bytes": 12000
+          },
+          "nl": {
+            "title": "Woensdag: een zachter geluid",
+            "summary": "Het tikje op de telefoonlijn is terug, zachter.",
+            "audio": "phone/chime.mp3",
+            "bytes": 12000
+          }
+        }
+      }
+    ]
+  },
+  {
+    "id": "friday",
+    "name": "Friday at the Studio",
+    "about": "The week's stories with the crew who made them.",
+    "hosts": [
+      "juno",
+      "wren"
+    ],
+    "audience": "board",
+    "minutes": 20,
+    "run": "show-friday",
+    "feeds": [
+      {
+        "lang": "en",
+        "language": "English",
+        "url": "https://hq.example/onair/friday.en.xml?key=mock"
+      }
+    ],
+    "episodes": []
+  }
+]

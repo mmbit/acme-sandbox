@@ -1,0 +1,87 @@
+# The org chart. Source of truth for who exists and where they sit.
+# HQ draws the building from this file: each department is a room, each agent a character.
+# The CEO may edit it within AUTHORITY.md; changes are logged in DECISIONS.md.
+#
+# Fields
+#   room.kind   look of the room in HQ (office, boardroom, lab, studio, mailroom, dock, vault, archive, server,
+#               review, lobby, library)
+#   room.size   s | m | l
+#   agents[].engine  claude | codex | api
+#   agents[].role    the plain title, nothing in parentheses ("Code Quality Lead")
+#   agents[].focus   optional; what the title doesn't say ("structure, refactoring, tests"), shown quieter
+#                    beside it in HQ and with it in the agent's prompts; history (a job number) goes in the profile
+#   agents[].look    free-text hint for the sprite artist
+#   agents[].sprite  optional; the pixel avatar spelled out: { style: short|bob|spiky|bun|long|curly|pony,
+#                    hair, skin, shirt, pants, shoes: "#rrggbb" }; board members take one too
+#   agents[].model, agents[].effort   optional; override company/models.yaml for this agent
+#   agents[].voice   optional; their English voice on calls (a Pocket TTS voice: alba, jane, paul, michael, eve, …)
+#
+# Names are unique and never reused. Each agent has a profile in people/<id>.md (see people/README.md).
+# No departments beyond the CEO's until the board's onboarding: then the CEO staffs up.
+
+company:
+  legal: Legal name   # the company's legal entity
+  brand: New Company   # its brand name (brand.yaml has the rest)
+  ceo: ceo             # the CEO's agent id: whom the board's intercom talks to
+  timeZone: Europe/Amsterdam   # the company's clock (an IANA name): the schedule's times, briefs and alerts
+
+board:
+  room: { kind: boardroom, size: m }
+  members:
+    - id: board
+      name: The Board
+      human: true
+
+# Shared rooms that belong to no department.
+commons:
+  - { id: lobby, room: { kind: lobby, size: m }, features: [gazette-newsstand, reception] }
+  - { id: library, room: { kind: library, size: m }, features: [knowledge-search] }
+
+departments:
+  - id: executive
+    name: Executive
+    charter: departments/executive.md
+    room: { kind: office, size: s }
+    agents:
+      # Give the CEO a name of its own (id: the name in lowercase) and change company.ceo and the office's owner
+      # (projects.yaml) to match.
+      - { id: ceo, name: CEO, role: CEO, engine: claude, look: "to be decided by the CEO", voice: alba }
+
+# Who does the work the coordinator hands out itself (agent ids). A role left out is the CEO's.
+#   reviewers     the review panel: a change gets one Claude and one Codex reviewer (taking turns), a security-critical
+#                 one all of them. None: the consolidator reviews every change alone.
+#   consolidator  rules on each review round (merge, changes, close), and reads documentation-only changes alone
+#   process       builds fixes to how the company works (calls, hand-offs, HQ, the coordinator); hears what goes wrong
+#                 with it (a missed backup) and the coordinator's own log lines are theirs
+#   inbox         mail arrives in their name
+#   knowledge     keeps the support chat's knowledge, when the company runs it: a question the chat couldn't answer
+#                 becomes a job for them (brand.yaml's care.questions)
+#   care          investigates a customer waiting on a person (the chat's email to a person, an email to the inbox)
+#                 before anyone writes back: each becomes a job for them, the platform's method with the company's part
+#                 (brand.yaml's care.investigate). Left out: the board gets the card with the care service's draft alone
+#   finance       hears of money swings on the live apps: sales falling after steady ones, orders bringing in less,
+#                 refunds or unpaid orders jumping, ad spend up with sales flat (HQ's watch). A top-level `watch:` may
+#                 tune its thresholds by name (infra/products.md, "HQ's watch").
+roles:
+  reviewers: []
+  consolidator: ceo
+  process: ceo
+  inbox: ceo
+
+
+# The run helper (platform/helper/README.md, hq run): a machine that lends its cores to long headless runs, whichever
+# machine runs the helper with its key. Left out, runs go to this server's own helper with these defaults: helper (its
+# name where agents read it), cpus, memoryGb and diskGb (the run's container), maxMinutes (a run's limit) and
+# takeMinutes (how long a run waits for the lent machine before this server takes it).
+# runs: { helper: the helper, cpus: 4, memoryGb: 8, diskGb: 16, maxMinutes: 240, takeMinutes: 3 }
+
+# HQ's hourly follow-through check (platform/coordinator/src/followthrough.ts), which the CEO runs while the board's
+# agreements stand or the CEO's summary has something in it. prompt: the company's own words for it, after the check's
+# own text, as a schedule routine's additions are: what the check is for to this board, how far it goes, when to ask
+# the board. Left out, the check runs on its own text.
+# followThrough:
+#   prompt: |
+#     The company's own words for the hourly check.
+
+# Agents who finished their work. Names stay taken.
+alumni: []

@@ -1,0 +1,2449 @@
+{
+ "apps": [
+  {
+   "slug": "lanternfold",
+   "name": "Lanternfold",
+   "live": false,
+   "preview": true,
+   "status": "preview"
+  },
+  {
+   "slug": "pebble-pals",
+   "name": "Pebble Pals",
+   "live": true,
+   "preview": true,
+   "status": "live"
+  }
+ ],
+ "detail": {
+  "pebble-pals:live": {
+   "slug": "pebble-pals",
+   "app": "pebble-pals",
+   "name": "Pebble Pals",
+   "mode": "live",
+   "days": 28,
+   "from": "2026-09-03",
+   "to": "2026-09-30",
+   "today": "2026-10-01",
+   "updated": "2026-10-01T09:40:00Z",
+   "totals": {
+    "conversations": 359,
+    "resolved": 126,
+    "resolvedHelped": 122,
+    "resolvedRemedy": 4,
+    "resolvedRate": 35.1,
+    "person": 31,
+    "personRate": 8.6,
+    "questions": 8,
+    "questionRate": 2.2,
+    "helped": {
+     "asked": 173,
+     "yes": 104,
+     "no": 69
+    },
+    "replies": {
+     "plain": 794,
+     "lookup": 209
+    },
+    "bands": {
+     "plain": [
+      547,
+      225,
+      22,
+      0
+     ],
+     "lookup": [
+      56,
+      100,
+      53,
+      0
+     ]
+    },
+    "outage": 45,
+    "cap": 0,
+    "calls": 1147,
+    "cost": 15.89,
+    "perConversation": 0.044,
+    "costP95": 0.12,
+    "days": 26
+   },
+   "daily": [
+    {
+     "day": "2026-09-03",
+     "partial": false,
+     "at": "2026-09-04T00:20:00Z",
+     "conversations": 12,
+     "resolved": 4,
+     "resolvedHelped": 4,
+     "resolvedRemedy": 0,
+     "resolvedRate": 33.3,
+     "person": 1,
+     "personRate": 8.3,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 6,
+      "yes": 3,
+      "no": 3
+     },
+     "replies": {
+      "plain": 24,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       17,
+       7,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 31,
+     "cost": 0.44,
+     "perConversation": 0.037,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-04",
+     "partial": false,
+     "at": "2026-09-05T00:20:00Z",
+     "conversations": 16,
+     "resolved": 5,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 0,
+     "resolvedRate": 31.2,
+     "person": 2,
+     "personRate": 12.5,
+     "questions": 1,
+     "questionRate": 6.2,
+     "helped": {
+      "asked": 8,
+      "yes": 5,
+      "no": 3
+     },
+     "replies": {
+      "plain": 36,
+      "lookup": 11
+     },
+     "bands": {
+      "plain": [
+       25,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 47,
+     "cost": 0.87,
+     "perConversation": 0.054,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-05",
+     "partial": false,
+     "at": "2026-09-06T00:20:00Z",
+     "conversations": 11,
+     "resolved": 3,
+     "resolvedHelped": 3,
+     "resolvedRemedy": 0,
+     "resolvedRate": 27.3,
+     "person": 1,
+     "personRate": 9.1,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 5,
+      "yes": 3,
+      "no": 2
+     },
+     "replies": {
+      "plain": 26,
+      "lookup": 5
+     },
+     "bands": {
+      "plain": [
+       18,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       2,
+       1,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 40,
+     "cost": 0.4,
+     "perConversation": 0.036,
+     "costP95": 0.09,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 5400
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-06",
+     "partial": false,
+     "at": "2026-09-07T00:20:00Z",
+     "conversations": 20,
+     "resolved": 7,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 1,
+     "resolvedRate": 35.0,
+     "person": 2,
+     "personRate": 10.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 10,
+      "yes": 6,
+      "no": 4
+     },
+     "replies": {
+      "plain": 44,
+      "lookup": 12
+     },
+     "bands": {
+      "plain": [
+       30,
+       13,
+       1,
+       0
+      ],
+      "lookup": [
+       3,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 64,
+     "cost": 0.9,
+     "perConversation": 0.045,
+     "costP95": 0.09,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-07",
+     "partial": false,
+     "at": "2026-09-08T00:20:00Z",
+     "conversations": 15,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 40.0,
+     "person": 2,
+     "personRate": 13.3,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 4,
+      "no": 3
+     },
+     "replies": {
+      "plain": 34,
+      "lookup": 9
+     },
+     "bands": {
+      "plain": [
+       23,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       3,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 3,
+     "cap": 0,
+     "calls": 48,
+     "cost": 0.73,
+     "perConversation": 0.049,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-08",
+     "none": true
+    },
+    {
+     "day": "2026-09-09",
+     "none": true
+    },
+    {
+     "day": "2026-09-10",
+     "partial": false,
+     "at": "2026-09-11T00:20:00Z",
+     "conversations": 17,
+     "resolved": 5,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 0,
+     "resolvedRate": 29.4,
+     "person": 1,
+     "personRate": 5.9,
+     "questions": 1,
+     "questionRate": 5.9,
+     "helped": {
+      "asked": 8,
+      "yes": 5,
+      "no": 3
+     },
+     "replies": {
+      "plain": 39,
+      "lookup": 11
+     },
+     "bands": {
+      "plain": [
+       27,
+       11,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 54,
+     "cost": 0.84,
+     "perConversation": 0.049,
+     "costP95": 0.12,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1300,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-11",
+     "partial": false,
+     "at": "2026-09-12T00:20:00Z",
+     "conversations": 11,
+     "resolved": 3,
+     "resolvedHelped": 3,
+     "resolvedRemedy": 0,
+     "resolvedRate": 27.3,
+     "person": 1,
+     "personRate": 9.1,
+     "questions": 1,
+     "questionRate": 9.1,
+     "helped": {
+      "asked": 5,
+      "yes": 3,
+      "no": 2
+     },
+     "replies": {
+      "plain": 25,
+      "lookup": 5
+     },
+     "bands": {
+      "plain": [
+       17,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       2,
+       1,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 32,
+     "cost": 0.48,
+     "perConversation": 0.044,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-12",
+     "partial": false,
+     "at": "2026-09-13T00:20:00Z",
+     "conversations": 14,
+     "resolved": 5,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 0,
+     "resolvedRate": 35.7,
+     "person": 1,
+     "personRate": 7.1,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 4,
+      "no": 3
+     },
+     "replies": {
+      "plain": 29,
+      "lookup": 8
+     },
+     "bands": {
+      "plain": [
+       20,
+       8,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 47,
+     "cost": 0.56,
+     "perConversation": 0.04,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-13",
+     "partial": false,
+     "at": "2026-09-14T00:20:00Z",
+     "conversations": 10,
+     "resolved": 4,
+     "resolvedHelped": 4,
+     "resolvedRemedy": 0,
+     "resolvedRate": 40.0,
+     "person": 1,
+     "personRate": 10.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 5,
+      "yes": 3,
+      "no": 2
+     },
+     "replies": {
+      "plain": 25,
+      "lookup": 5
+     },
+     "bands": {
+      "plain": [
+       17,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       2,
+       1,
+       0
+      ]
+     },
+     "outage": 3,
+     "cap": 0,
+     "calls": 37,
+     "cost": 0.53,
+     "perConversation": 0.053,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-14",
+     "partial": false,
+     "at": "2026-09-15T00:20:00Z",
+     "conversations": 17,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 35.3,
+     "person": 2,
+     "personRate": 11.8,
+     "questions": 1,
+     "questionRate": 5.9,
+     "helped": {
+      "asked": 8,
+      "yes": 5,
+      "no": 3
+     },
+     "replies": {
+      "plain": 34,
+      "lookup": 10
+     },
+     "bands": {
+      "plain": [
+       23,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       5,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 53,
+     "cost": 0.61,
+     "perConversation": 0.036,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-15",
+     "partial": false,
+     "at": "2026-09-16T00:20:00Z",
+     "conversations": 17,
+     "resolved": 5,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 0,
+     "resolvedRate": 29.4,
+     "person": 1,
+     "personRate": 5.9,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 8,
+      "yes": 4,
+      "no": 4
+     },
+     "replies": {
+      "plain": 34,
+      "lookup": 8
+     },
+     "bands": {
+      "plain": [
+       23,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 49,
+     "cost": 0.93,
+     "perConversation": 0.055,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-16",
+     "partial": false,
+     "at": "2026-09-17T00:20:00Z",
+     "conversations": 10,
+     "resolved": 4,
+     "resolvedHelped": 4,
+     "resolvedRemedy": 0,
+     "resolvedRate": 40.0,
+     "person": 1,
+     "personRate": 10.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 5,
+      "yes": 3,
+      "no": 2
+     },
+     "replies": {
+      "plain": 21,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       15,
+       6,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 30,
+     "cost": 0.49,
+     "perConversation": 0.049,
+     "costP95": 0.12,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1300,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 5400
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-17",
+     "partial": false,
+     "at": "2026-09-18T00:20:00Z",
+     "conversations": 12,
+     "resolved": 4,
+     "resolvedHelped": 4,
+     "resolvedRemedy": 0,
+     "resolvedRate": 33.3,
+     "person": 1,
+     "personRate": 8.3,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 6,
+      "yes": 4,
+      "no": 2
+     },
+     "replies": {
+      "plain": 25,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       17,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 35,
+     "cost": 0.62,
+     "perConversation": 0.052,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-18",
+     "partial": false,
+     "at": "2026-09-19T00:20:00Z",
+     "conversations": 15,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 40.0,
+     "person": 1,
+     "personRate": 6.7,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 4,
+      "no": 3
+     },
+     "replies": {
+      "plain": 34,
+      "lookup": 9
+     },
+     "bands": {
+      "plain": [
+       23,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       3,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 50,
+     "cost": 0.77,
+     "perConversation": 0.051,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1300,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-19",
+     "partial": false,
+     "at": "2026-09-20T00:20:00Z",
+     "conversations": 14,
+     "resolved": 6,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 1,
+     "resolvedRate": 42.9,
+     "person": 2,
+     "personRate": 14.3,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 5,
+      "no": 2
+     },
+     "replies": {
+      "plain": 33,
+      "lookup": 9
+     },
+     "bands": {
+      "plain": [
+       23,
+       9,
+       1,
+       0
+      ],
+      "lookup": [
+       3,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 52,
+     "cost": 0.51,
+     "perConversation": 0.036,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-20",
+     "partial": false,
+     "at": "2026-09-21T00:20:00Z",
+     "conversations": 16,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 37.5,
+     "person": 2,
+     "personRate": 12.5,
+     "questions": 1,
+     "questionRate": 6.2,
+     "helped": {
+      "asked": 8,
+      "yes": 5,
+      "no": 3
+     },
+     "replies": {
+      "plain": 35,
+      "lookup": 11
+     },
+     "bands": {
+      "plain": [
+       24,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 52,
+     "cost": 0.8,
+     "perConversation": 0.05,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-21",
+     "partial": false,
+     "at": "2026-09-22T00:20:00Z",
+     "conversations": 14,
+     "resolved": 6,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 1,
+     "resolvedRate": 42.9,
+     "person": 1,
+     "personRate": 7.1,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 4,
+      "no": 3
+     },
+     "replies": {
+      "plain": 32,
+      "lookup": 8
+     },
+     "bands": {
+      "plain": [
+       22,
+       9,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       4,
+       2,
+       0
+      ]
+     },
+     "outage": 12,
+     "cap": 0,
+     "calls": 40,
+     "cost": 0.49,
+     "perConversation": 0.035,
+     "costP95": 0.12,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-22",
+     "partial": false,
+     "at": "2026-09-23T00:20:00Z",
+     "conversations": 11,
+     "resolved": 3,
+     "resolvedHelped": 3,
+     "resolvedRemedy": 0,
+     "resolvedRate": 27.3,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 5,
+      "yes": 3,
+      "no": 2
+     },
+     "replies": {
+      "plain": 26,
+      "lookup": 6
+     },
+     "bands": {
+      "plain": [
+       18,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       1,
+       0
+      ]
+     },
+     "outage": 3,
+     "cap": 0,
+     "calls": 41,
+     "cost": 0.46,
+     "perConversation": 0.042,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-23",
+     "partial": false,
+     "at": "2026-09-24T00:20:00Z",
+     "conversations": 6,
+     "resolved": 2,
+     "resolvedHelped": 2,
+     "resolvedRemedy": 0,
+     "resolvedRate": 33.3,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 3,
+      "yes": 2,
+      "no": 1
+     },
+     "replies": {
+      "plain": 16,
+      "lookup": 3
+     },
+     "bands": {
+      "plain": [
+       12,
+       4,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 26,
+     "cost": 0.3,
+     "perConversation": 0.05,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-24",
+     "partial": false,
+     "at": "2026-09-25T00:20:00Z",
+     "conversations": 9,
+     "resolved": 3,
+     "resolvedHelped": 3,
+     "resolvedRemedy": 0,
+     "resolvedRate": 33.3,
+     "person": 1,
+     "personRate": 11.1,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 4,
+      "yes": 2,
+      "no": 2
+     },
+     "replies": {
+      "plain": 24,
+      "lookup": 4
+     },
+     "bands": {
+      "plain": [
+       17,
+       7,
+       0,
+       0
+      ],
+      "lookup": [
+       1,
+       2,
+       1,
+       0
+      ]
+     },
+     "outage": 12,
+     "cap": 0,
+     "calls": 36,
+     "cost": 0.33,
+     "perConversation": 0.037,
+     "costP95": 0.09,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-25",
+     "partial": false,
+     "at": "2026-09-26T00:20:00Z",
+     "conversations": 15,
+     "resolved": 6,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 1,
+     "resolvedRate": 40.0,
+     "person": 1,
+     "personRate": 6.7,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 7,
+      "yes": 5,
+      "no": 2
+     },
+     "replies": {
+      "plain": 32,
+      "lookup": 10
+     },
+     "bands": {
+      "plain": [
+       22,
+       9,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       5,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 50,
+     "cost": 0.68,
+     "perConversation": 0.045,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-26",
+     "partial": false,
+     "at": "2026-09-27T00:20:00Z",
+     "conversations": 13,
+     "resolved": 5,
+     "resolvedHelped": 5,
+     "resolvedRemedy": 0,
+     "resolvedRate": 38.5,
+     "person": 1,
+     "personRate": 7.7,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 6,
+      "yes": 4,
+      "no": 2
+     },
+     "replies": {
+      "plain": 26,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       18,
+       7,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 39,
+     "cost": 0.47,
+     "perConversation": 0.036,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 5400
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-27",
+     "partial": false,
+     "at": "2026-09-28T00:20:00Z",
+     "conversations": 13,
+     "resolved": 4,
+     "resolvedHelped": 4,
+     "resolvedRemedy": 0,
+     "resolvedRate": 30.8,
+     "person": 1,
+     "personRate": 7.7,
+     "questions": 1,
+     "questionRate": 7.7,
+     "helped": {
+      "asked": 6,
+      "yes": 4,
+      "no": 2
+     },
+     "replies": {
+      "plain": 27,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       18,
+       8,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 36,
+     "cost": 0.64,
+     "perConversation": 0.049,
+     "costP95": 0.12,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-28",
+     "partial": false,
+     "at": "2026-09-29T00:20:00Z",
+     "conversations": 16,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 37.5,
+     "person": 1,
+     "personRate": 6.2,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": 8,
+      "yes": 4,
+      "no": 4
+     },
+     "replies": {
+      "plain": 32,
+      "lookup": 11
+     },
+     "bands": {
+      "plain": [
+       22,
+       9,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 48,
+     "cost": 0.73,
+     "perConversation": 0.046,
+     "costP95": 0.09,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2600
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-29",
+     "partial": false,
+     "at": "2026-09-30T00:20:00Z",
+     "conversations": 20,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 30.0,
+     "person": 2,
+     "personRate": 10.0,
+     "questions": 1,
+     "questionRate": 5.0,
+     "helped": {
+      "asked": 10,
+      "yes": 6,
+      "no": 4
+     },
+     "replies": {
+      "plain": 46,
+      "lookup": 12
+     },
+     "bands": {
+      "plain": [
+       32,
+       13,
+       1,
+       0
+      ],
+      "lookup": [
+       3,
+       6,
+       3,
+       0
+      ]
+     },
+     "outage": 12,
+     "cap": 0,
+     "calls": 64,
+     "cost": 0.76,
+     "perConversation": 0.038,
+     "costP95": 0.12,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-30",
+     "partial": false,
+     "at": "2026-10-01T00:20:00Z",
+     "conversations": 15,
+     "resolved": 6,
+     "resolvedHelped": 6,
+     "resolvedRemedy": 0,
+     "resolvedRate": 40.0,
+     "person": 1,
+     "personRate": 6.7,
+     "questions": 1,
+     "questionRate": 6.7,
+     "helped": {
+      "asked": 7,
+      "yes": 4,
+      "no": 3
+     },
+     "replies": {
+      "plain": 35,
+      "lookup": 7
+     },
+     "bands": {
+      "plain": [
+       24,
+       10,
+       1,
+       0
+      ],
+      "lookup": [
+       2,
+       3,
+       2,
+       0
+      ]
+     },
+     "outage": 0,
+     "cap": 0,
+     "calls": 46,
+     "cost": 0.55,
+     "perConversation": 0.037,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    }
+   ],
+   "now": {
+    "day": "2026-10-01",
+    "partial": true,
+    "at": "2026-10-01T09:40:00Z",
+    "conversations": 2,
+    "resolved": 0,
+    "resolvedHelped": 0,
+    "resolvedRemedy": 0,
+    "resolvedRate": 0.0,
+    "person": 0,
+    "personRate": 0.0,
+    "questions": 0,
+    "questionRate": 0.0,
+    "helped": {
+     "asked": 1,
+     "yes": 0,
+     "no": 1
+    },
+    "replies": {
+     "plain": 5,
+     "lookup": 3
+    },
+    "bands": {
+     "plain": [
+      4,
+      1,
+      0,
+      0
+     ],
+     "lookup": [
+      2,
+      1,
+      0,
+      0
+     ]
+    },
+    "outage": 3,
+    "cap": 0,
+    "calls": 8,
+    "cost": 0.08,
+    "perConversation": 0.04,
+    "costP95": 0.12,
+    "days": 1,
+    "words": {
+     "plain": {
+      "p50": 1300,
+      "p95": 3200
+     },
+     "lookup": {
+      "p50": 2200,
+      "p95": 4700
+     }
+    },
+    "model": "claude-sonnet-5"
+   },
+   "targets": [
+    {
+     "kind": "plain",
+     "p": "p50",
+     "ms": 1500,
+     "met": true,
+     "replies": 794,
+     "daysMet": 18,
+     "days": 26
+    },
+    {
+     "kind": "plain",
+     "p": "p95",
+     "ms": 3000,
+     "met": true,
+     "replies": 794,
+     "daysMet": 20,
+     "days": 26
+    },
+    {
+     "kind": "lookup",
+     "p": "p50",
+     "ms": 2500,
+     "met": null,
+     "replies": 209,
+     "daysMet": 17,
+     "days": 26
+    },
+    {
+     "kind": "lookup",
+     "p": "p95",
+     "ms": 5000,
+     "met": true,
+     "replies": 209,
+     "daysMet": 23,
+     "days": 26
+    }
+   ],
+   "model": "claude-sonnet-5",
+   "reply": {
+    "arrived": 34,
+    "answered": 29,
+    "within": 26,
+    "late": 1,
+    "share": 86.7,
+    "median": 1,
+    "longest": 5,
+    "waiting": 3,
+    "closed": 2,
+    "oldest": {
+     "since": "2026-09-28T09:12:00Z",
+     "days": 3
+    },
+    "aim": 3
+   },
+   "busy": {
+    "switch": "auto",
+    "on": true,
+    "why": "one has waited over 2 working days",
+    "held": false
+   },
+   "questions": {
+    "open": 3,
+    "team": [
+     {
+      "job": 812,
+      "job_code": "CR-ANSWER",
+      "status": "running"
+     },
+     {
+      "job": 815,
+      "job_code": "CR-REFUND",
+      "status": "queued"
+     }
+    ],
+    "board": 1
+   },
+   "kb": {
+    "entries": 23,
+    "shared": 17,
+    "own": 6
+   },
+   "month": {
+    "month": "2026-10",
+    "eur": 0.5,
+    "app": 0.08,
+    "cap": 19,
+    "console": 20,
+    "hq": 0.42
+   }
+  },
+  "pebble-pals:preview": {
+   "slug": "pebble-pals",
+   "app": "pebble-pals@preview",
+   "name": "Pebble Pals",
+   "mode": "preview",
+   "days": 28,
+   "from": "2026-09-03",
+   "to": "2026-09-30",
+   "today": "2026-10-01",
+   "updated": "2026-10-01T00:20:00Z",
+   "totals": {
+    "conversations": 11,
+    "resolved": 1,
+    "resolvedHelped": 1,
+    "resolvedRemedy": 0,
+    "resolvedRate": 9.1,
+    "person": 0,
+    "personRate": 0.0,
+    "questions": 0,
+    "questionRate": 0.0,
+    "helped": {
+     "asked": null,
+     "yes": null,
+     "no": null
+    },
+    "replies": {
+     "plain": 32,
+     "lookup": 17
+    },
+    "bands": {
+     "plain": [
+      26,
+      6,
+      0,
+      0
+     ],
+     "lookup": [
+      9,
+      7,
+      1,
+      0
+     ]
+    },
+    "outage": null,
+    "cap": null,
+    "calls": 91,
+    "cost": 0.51,
+    "perConversation": 0.046,
+    "costP95": 0.11,
+    "days": 6
+   },
+   "daily": [
+    {
+     "day": "2026-09-03",
+     "none": true
+    },
+    {
+     "day": "2026-09-04",
+     "none": true
+    },
+    {
+     "day": "2026-09-05",
+     "none": true
+    },
+    {
+     "day": "2026-09-06",
+     "none": true
+    },
+    {
+     "day": "2026-09-07",
+     "none": true
+    },
+    {
+     "day": "2026-09-08",
+     "none": true
+    },
+    {
+     "day": "2026-09-09",
+     "none": true
+    },
+    {
+     "day": "2026-09-10",
+     "none": true
+    },
+    {
+     "day": "2026-09-11",
+     "none": true
+    },
+    {
+     "day": "2026-09-12",
+     "none": true
+    },
+    {
+     "day": "2026-09-13",
+     "none": true
+    },
+    {
+     "day": "2026-09-14",
+     "none": true
+    },
+    {
+     "day": "2026-09-15",
+     "none": true
+    },
+    {
+     "day": "2026-09-16",
+     "none": true
+    },
+    {
+     "day": "2026-09-17",
+     "none": true
+    },
+    {
+     "day": "2026-09-18",
+     "none": true
+    },
+    {
+     "day": "2026-09-19",
+     "none": true
+    },
+    {
+     "day": "2026-09-20",
+     "none": true
+    },
+    {
+     "day": "2026-09-21",
+     "none": true
+    },
+    {
+     "day": "2026-09-22",
+     "none": true
+    },
+    {
+     "day": "2026-09-23",
+     "partial": false,
+     "at": "2026-09-24T00:20:00Z",
+     "conversations": 1,
+     "resolved": 0,
+     "resolvedHelped": 0,
+     "resolvedRemedy": 0,
+     "resolvedRate": 0.0,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 3,
+      "lookup": 3
+     },
+     "bands": {
+      "plain": [
+       3,
+       0,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 16,
+     "cost": 0.05,
+     "perConversation": 0.05,
+     "costP95": 0.09,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-24",
+     "partial": false,
+     "at": "2026-09-25T00:20:00Z",
+     "conversations": 2,
+     "resolved": 0,
+     "resolvedHelped": 0,
+     "resolvedRemedy": 0,
+     "resolvedRate": 0.0,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 7,
+      "lookup": 4
+     },
+     "bands": {
+      "plain": [
+       5,
+       2,
+       0,
+       0
+      ],
+      "lookup": [
+       1,
+       2,
+       1,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 21,
+     "cost": 0.1,
+     "perConversation": 0.05,
+     "costP95": 0.11,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4300
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-25",
+     "none": true
+    },
+    {
+     "day": "2026-09-26",
+     "partial": false,
+     "at": "2026-09-27T00:20:00Z",
+     "conversations": 3,
+     "resolved": 1,
+     "resolvedHelped": 1,
+     "resolvedRemedy": 0,
+     "resolvedRate": 33.3,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 7,
+      "lookup": 2
+     },
+     "bands": {
+      "plain": [
+       5,
+       2,
+       0,
+       0
+      ],
+      "lookup": [
+       1,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 19,
+     "cost": 0.12,
+     "perConversation": 0.04,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2700,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-27",
+     "partial": false,
+     "at": "2026-09-28T00:20:00Z",
+     "conversations": 2,
+     "resolved": 0,
+     "resolvedHelped": 0,
+     "resolvedRemedy": 0,
+     "resolvedRate": 0.0,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 6,
+      "lookup": 3
+     },
+     "bands": {
+      "plain": [
+       5,
+       1,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 12,
+     "cost": 0.09,
+     "perConversation": 0.045,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1100,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-28",
+     "none": true
+    },
+    {
+     "day": "2026-09-29",
+     "partial": false,
+     "at": "2026-09-30T00:20:00Z",
+     "conversations": 0,
+     "resolved": 0,
+     "resolvedHelped": 0,
+     "resolvedRemedy": 0,
+     "resolvedRate": null,
+     "person": 0,
+     "personRate": null,
+     "questions": 0,
+     "questionRate": null,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 3,
+      "lookup": 3
+     },
+     "bands": {
+      "plain": [
+       3,
+       0,
+       0,
+       0
+      ],
+      "lookup": [
+       2,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 12,
+     "cost": 0.0,
+     "perConversation": null,
+     "costP95": 0.1,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1200,
+       "p95": 3200
+      },
+      "lookup": {
+       "p50": 2400,
+       "p95": 4700
+      }
+     },
+     "model": "claude-sonnet-5"
+    },
+    {
+     "day": "2026-09-30",
+     "partial": false,
+     "at": "2026-10-01T00:20:00Z",
+     "conversations": 3,
+     "resolved": 0,
+     "resolvedHelped": 0,
+     "resolvedRemedy": 0,
+     "resolvedRate": 0.0,
+     "person": 0,
+     "personRate": 0.0,
+     "questions": 0,
+     "questionRate": 0.0,
+     "helped": {
+      "asked": null,
+      "yes": null,
+      "no": null
+     },
+     "replies": {
+      "plain": 6,
+      "lookup": 2
+     },
+     "bands": {
+      "plain": [
+       5,
+       1,
+       0,
+       0
+      ],
+      "lookup": [
+       1,
+       1,
+       0,
+       0
+      ]
+     },
+     "outage": null,
+     "cap": null,
+     "calls": 11,
+     "cost": 0.15,
+     "perConversation": 0.05,
+     "costP95": 0.08,
+     "days": 1,
+     "words": {
+      "plain": {
+       "p50": 1600,
+       "p95": 2900
+      },
+      "lookup": {
+       "p50": 2200,
+       "p95": 5400
+      }
+     },
+     "model": "claude-sonnet-5"
+    }
+   ],
+   "now": null,
+   "targets": [
+    {
+     "kind": "plain",
+     "p": "p50",
+     "ms": 1500,
+     "met": true,
+     "replies": 32,
+     "daysMet": 4,
+     "days": 6
+    },
+    {
+     "kind": "plain",
+     "p": "p95",
+     "ms": 3000,
+     "met": true,
+     "replies": 32,
+     "daysMet": 4,
+     "days": 6
+    },
+    {
+     "kind": "lookup",
+     "p": "p50",
+     "ms": 2500,
+     "met": true,
+     "replies": 17,
+     "daysMet": 5,
+     "days": 6
+    },
+    {
+     "kind": "lookup",
+     "p": "p95",
+     "ms": 5000,
+     "met": true,
+     "replies": 17,
+     "daysMet": 5,
+     "days": 6
+    }
+   ],
+   "model": "claude-sonnet-5",
+   "reply": {
+    "arrived": 0,
+    "answered": 0,
+    "within": 0,
+    "late": 0,
+    "share": null,
+    "median": null,
+    "longest": null,
+    "waiting": 0,
+    "closed": 0,
+    "oldest": null,
+    "aim": 3
+   },
+   "busy": {
+    "switch": "auto",
+    "on": true,
+    "why": "one has waited over 2 working days",
+    "held": false
+   },
+   "questions": {
+    "open": 0,
+    "team": [],
+    "board": 0
+   },
+   "kb": {
+    "entries": 23,
+    "shared": 17,
+    "own": 6
+   },
+   "month": {
+    "month": "2026-10",
+    "eur": 0.5,
+    "app": null,
+    "cap": 19,
+    "console": 20,
+    "hq": 0.42
+   }
+  },
+  "lanternfold:preview": {
+   "slug": "lanternfold",
+   "app": "lanternfold@preview",
+   "name": "Lanternfold",
+   "mode": "preview",
+   "days": 28,
+   "from": "2026-09-03",
+   "to": "2026-09-30",
+   "today": "2026-10-01",
+   "updated": null,
+   "totals": {
+    "conversations": null,
+    "resolved": null,
+    "resolvedHelped": null,
+    "resolvedRemedy": null,
+    "resolvedRate": null,
+    "person": null,
+    "personRate": null,
+    "questions": null,
+    "questionRate": null,
+    "helped": {
+     "asked": null,
+     "yes": null,
+     "no": null
+    },
+    "replies": {
+     "plain": null,
+     "lookup": null
+    },
+    "bands": {
+     "plain": [
+      null,
+      null,
+      null,
+      null
+     ],
+     "lookup": [
+      null,
+      null,
+      null,
+      null
+     ]
+    },
+    "outage": null,
+    "cap": null,
+    "calls": null,
+    "cost": null,
+    "perConversation": null,
+    "costP95": null,
+    "days": 0
+   },
+   "daily": [
+    {
+     "day": "2026-09-03",
+     "none": true
+    },
+    {
+     "day": "2026-09-04",
+     "none": true
+    },
+    {
+     "day": "2026-09-05",
+     "none": true
+    },
+    {
+     "day": "2026-09-06",
+     "none": true
+    },
+    {
+     "day": "2026-09-07",
+     "none": true
+    },
+    {
+     "day": "2026-09-08",
+     "none": true
+    },
+    {
+     "day": "2026-09-09",
+     "none": true
+    },
+    {
+     "day": "2026-09-10",
+     "none": true
+    },
+    {
+     "day": "2026-09-11",
+     "none": true
+    },
+    {
+     "day": "2026-09-12",
+     "none": true
+    },
+    {
+     "day": "2026-09-13",
+     "none": true
+    },
+    {
+     "day": "2026-09-14",
+     "none": true
+    },
+    {
+     "day": "2026-09-15",
+     "none": true
+    },
+    {
+     "day": "2026-09-16",
+     "none": true
+    },
+    {
+     "day": "2026-09-17",
+     "none": true
+    },
+    {
+     "day": "2026-09-18",
+     "none": true
+    },
+    {
+     "day": "2026-09-19",
+     "none": true
+    },
+    {
+     "day": "2026-09-20",
+     "none": true
+    },
+    {
+     "day": "2026-09-21",
+     "none": true
+    },
+    {
+     "day": "2026-09-22",
+     "none": true
+    },
+    {
+     "day": "2026-09-23",
+     "none": true
+    },
+    {
+     "day": "2026-09-24",
+     "none": true
+    },
+    {
+     "day": "2026-09-25",
+     "none": true
+    },
+    {
+     "day": "2026-09-26",
+     "none": true
+    },
+    {
+     "day": "2026-09-27",
+     "none": true
+    },
+    {
+     "day": "2026-09-28",
+     "none": true
+    },
+    {
+     "day": "2026-09-29",
+     "none": true
+    },
+    {
+     "day": "2026-09-30",
+     "none": true
+    }
+   ],
+   "now": null,
+   "targets": [
+    {
+     "kind": "plain",
+     "p": "p50",
+     "ms": 1500,
+     "met": null,
+     "replies": 0,
+     "daysMet": 0,
+     "days": 0
+    },
+    {
+     "kind": "plain",
+     "p": "p95",
+     "ms": 3000,
+     "met": null,
+     "replies": 0,
+     "daysMet": 0,
+     "days": 0
+    },
+    {
+     "kind": "lookup",
+     "p": "p50",
+     "ms": 2500,
+     "met": null,
+     "replies": 0,
+     "daysMet": 0,
+     "days": 0
+    },
+    {
+     "kind": "lookup",
+     "p": "p95",
+     "ms": 5000,
+     "met": null,
+     "replies": 0,
+     "daysMet": 0,
+     "days": 0
+    }
+   ],
+   "model": null,
+   "reply": {
+    "arrived": 0,
+    "answered": 0,
+    "within": 0,
+    "late": 0,
+    "share": null,
+    "median": null,
+    "longest": null,
+    "waiting": 0,
+    "closed": 0,
+    "oldest": null,
+    "aim": 3
+   },
+   "busy": {
+    "switch": "auto",
+    "on": true,
+    "why": "one has waited over 2 working days",
+    "held": false
+   },
+   "questions": {
+    "open": 0,
+    "team": [],
+    "board": 0
+   },
+   "kb": {
+    "entries": 17,
+    "shared": 17,
+    "own": 0
+   },
+   "month": {
+    "month": "2026-10",
+    "eur": 0.08,
+    "app": null,
+    "cap": 19,
+    "console": 20,
+    "hq": null
+   }
+  }
+ }
+}

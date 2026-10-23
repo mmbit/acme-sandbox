@@ -1,0 +1,24 @@
+.data/
+node_modules
+infra/generated/
+.claude/worktrees/
+# Renders: video and audio aren't committed, their recipe and the .render.json beside them are (shared/demo/README.md,
+# Renders); the server puts them back. The platform's own small UI sounds (HQ's chime) are committed.
+*.mp4
+*.mov
+*.webm
+*.m4a
+*.wav
+*.mp3
+*.ogg
+!/platform/**/*.mp4
+!/platform/**/*.mov
+!/platform/**/*.webm
+!/platform/**/*.m4a
+!/platform/**/*.wav
+!/platform/**/*.mp3
+!/platform/**/*.ogg
+
+# demo kit: the audition's beat grid is rebuilt with its track by mix.mjs
+shared/demo/examples/audition.beats.json
+__pycache__/

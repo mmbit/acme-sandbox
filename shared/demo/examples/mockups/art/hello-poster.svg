@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1200" viewBox="0 0 900 1200">
+<rect width="900" height="1200" fill="#fdf6ec"/>
+<g fill="none" stroke="#2b2230" stroke-width="3" opacity=".08">
+<circle cx="450" cy="470" r="260"/><circle cx="450" cy="470" r="330"/><circle cx="450" cy="470" r="400"/></g>
+<circle cx="450" cy="470" r="200" fill="#ffd9a8"/>
+<defs><g id="hand">
+<rect x="-118" y="-150" width="46" height="170" rx="23" transform="rotate(-8 -95 20)"/>
+<rect x="-62" y="-205" width="48" height="225" rx="24"/>
+<rect x="-6" y="-215" width="48" height="235" rx="24"/>
+<rect x="50" y="-190" width="46" height="210" rx="23" transform="rotate(6 73 20)"/>
+<path d="M-120 -20 Q-125 110 -40 150 Q40 175 100 110 Q150 60 175 -10 Q190 -50 160 -60 Q130 -66 110 -20 L100 10 L100 -20 Z"/></g></defs>
+<g transform="translate(450 500) rotate(-14)">
+<use href="#hand" fill="#2b2230" stroke="#2b2230" stroke-width="14" stroke-linejoin="round"/>
+<use href="#hand" fill="#f4a47c"/>
+<g stroke="#2b2230" stroke-width="5" stroke-linecap="round" fill="none"><path d="M-72 -40 v28"/><path d="M-14 -40 v30"/><path d="M42 -40 v28"/><path d="M-75 60 q30 20 60 8"/></g>
+</g>
+<g fill="none" stroke="#e0664f" stroke-width="9" stroke-linecap="round">
+<path d="M690 300 q40 60 10 130"/><path d="M735 270 q60 90 15 190"/>
+<path d="M210 330 q-40 60 -10 130"/><path d="M165 300 q-60 90 -15 190"/></g>
+<text x="450" y="900" font-family="DejaVu Serif" font-size="150" font-weight="bold" fill="#2b2230" text-anchor="middle" letter-spacing="-3">hello!</text>
+<text x="450" y="975" font-family="DejaVu Sans" font-size="32" fill="#2b2230" text-anchor="middle">from the product platform</text>
+<line x1="330" y1="1040" x2="570" y2="1040" stroke="#e0664f" stroke-width="4" stroke-linecap="round"/>
+<text x="450" y="1105" font-family="DejaVu Sans" font-size="22" fill="#2b2230" opacity=".6" text-anchor="middle" letter-spacing="8">A DEMO KIT EXAMPLE</text>
+</svg>

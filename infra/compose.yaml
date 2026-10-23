@@ -1,0 +1,120 @@
+# Every container logs to the host journal, which deletes entries within 14 days (journald.conf, installed by harden.sh):
+# the shops' privacy pages give that number for the web server's logs (an IP address and browser on an error).
+x-logging: &logging { driver: journald }
+services:
+  caddy:
+    image: caddy:2-alpine
+    logging: *logging
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      PUBLIC_HOST: ${PUBLIC_HOST}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./generated:/etc/caddy/generated:ro
+      # The server's checkout, for the venture cycle presentations (products/_cycles, at cycles.preview.<zone>). The
+      # whole checkout, because its root is never deleted: git removes a folder whose last file goes (a clean slate
+      # empties products/), and a mount of that folder keeps showing the deleted one, empty, for good: every deck a
+      # 404 until Caddy is recreated.
+      - ..:/repo:ro
+      - caddy:/data
+    # Not on default, where the worker is: Caddy and the coordinator share the voice network only, so the address
+    # `caddy` resolves to in the coordinator is the one Caddy connects from, and only Caddy's X-Forwarded-For is believed.
+    networks: [voice]                   # plus one network per product (infra/generated/products.yaml)
+    extra_hosts: ["host.docker.internal:host-gateway"]   # the host's shell service (infra/shell.py), on Docker's bridge
+  coordinator:
+    build:
+      context: ..                       # the repo's root: the platform's code and the company's kits/
+      dockerfile: platform/coordinator/Dockerfile
+      args: { MEMORY_MODEL_TRY: "${MEMORY_MODEL_TRY:-}" }   # a new value fetches the search model again (sync.sh)
+    logging: *logging
+    restart: unless-stopped
+    # an init as PID 1 reaps what node can't: the helper processes Chromium leaves behind when it closes (kits/printapi/
+    # render.ts)
+    init: true
+    env_file: /etc/${SERVER_NAME}/env   # REPO, GITHUB_TOKEN: merging after a clean review (SERVER_NAME: company/infra.env)
+    environment:
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
+      PUBLIC_HOST: ${PUBLIC_HOST}
+      REPO_DIR: /repo
+      DATA_DIR: /data
+      WORKER_TOKEN: ${WORKER_TOKEN}
+      VOICE_TOKEN: ${VOICE_TOKEN}
+      RUNS_TOKEN: ${RUNS_TOKEN}         # this server's run helper's key
+      IMPORTS_DIR: /imports
+      RUN_DIR: /run/hq
+      IMPORTS_MAX_GB: ${IMPORTS_MAX_GB:-}            # a company's own in its company/infra.env
+      IMPORTS_MIN_FREE_GB: ${IMPORTS_MIN_FREE_GB:-}
+    volumes:
+      - ..:/repo:ro                     # the server's checkout
+      - hqdata:/data
+      # the zips the board uploads on the desk phone, unpacked (src/zips.ts): its own volume, so the worker can read it
+      # without the data volume
+      - imports:/imports
+      # RUN_DIR: the host's /run, in memory, so no volume, disk snapshot or backup holds it (sync.sh gives it the
+      # coordinator's user).
+      - /run/${SERVER_NAME}-hq:/run/hq
+    networks: [default, voice, runs]
+  stt:
+    build: ../platform/stt
+    logging: *logging
+    restart: unless-stopped
+    mem_limit: 1500m                    # speech-to-text for the intercom; internal only, no ports
+    # the clips being converted, in memory and swept (platform/stt/Dockerfile).
+    # 64 MB: a few of the largest (a 5 MB intercom clip, each with its 16 kHz copy)
+    tmpfs: ["/clips:size=64m,mode=1777"]
+  voice:
+    build: { context: ../platform, dockerfile: voice/Dockerfile }
+    logging: *logging
+    restart: unless-stopped
+    mem_limit: 5g                       # live calls with the team (Parakeet, Pocket TTS, Piper, the Claude CLI); a call
+                                        # peaks near 2.7 GB, and a cgroup at its limit stalls reclaiming the models: choppy audio
+    environment:
+      HQ_URL: http://coordinator:8080
+      VOICE_TOKEN: ${VOICE_TOKEN}       # its own, for /api/voice/* only: never the worker's
+      ORIGIN: https://${PUBLIC_HOST}
+    volumes:
+      - voiceseat:/seat:ro              # one Claude seat's token, put there by the worker's keeper (no /seats)
+      - ..:/repo:ro                     # the deployed company files, for looking things up during a call
+      - voice:/data                     # the calls' Claude sessions
+    # Not on default, where the worker is: a job could open ws://voice:8080 itself, without the board's session (which
+    # only Caddy checks), and speak as the board. Its own network has Caddy and the coordinator (and the internet).
+    # It is also the only way from Caddy to the coordinator (login challenges, platform/coordinator/src/auth.ts).
+    # The support chat's phone routes it reaches through Caddy, at caddy:8081 (infra/products.py).
+    networks: [voice]
+  worker:
+    build:
+      context: ..                       # the repo's root: the gates' pinned tools (platform/worker/Dockerfile.dockerignore)
+      dockerfile: platform/worker/Dockerfile
+    logging: *logging
+    restart: unless-stopped
+    stop_grace_period: 30s
+    # No setuid binary raises a job's slot user to more (su, mount): the worker switches users itself, as root, and jobs'
+    # git, npm and Chromium run without them
+    security_opt: [no-new-privileges:true]
+    mem_limit: 7168m                    # agent jobs: capped, no swap, so they can never starve HQ, calls or the products
+    memswap_limit: 7168m                # (16 GB: the rest holds a call's peak, speech-to-text, HQ and the products)
+    env_file: /etc/${SERVER_NAME}/env   # REPO, BRANCH, GITHUB_TOKEN
+    environment:
+      WORKER_TOKEN: ${WORKER_TOKEN}
+      HQ_URL: http://coordinator:8080
+      SEATS: ${SEATS:-claude-1:claude,codex-1:codex}   # the first list (company/infra.env): HQ's Seats keeps it after
+      SEAT_MOVES: ${SEAT_MOVES:-}       # renamed seats' logins, old:new (worker.ts moveSeats)
+      CODEX_SEAT_RUNS: ${CODEX_SEAT_RUNS:-2}   # Codex runs one seat carries at once (worker.ts SEAT_RUNS)
+    volumes:
+      - seats:/seats                    # seat logins and sessions (for resuming)
+      - work:/work                      # the repo mirror, and each job's clone and home
+      - voiceseat:/voice-seat           # the voice line's seat token (written by the keeper)
+      - imports:/imports:ro             # the board's unpacked zips, read in place
+networks:
+  voice: {}                             # not internal: the call's Claude needs the internet
+  # This server's run helpers, one per kind, are in generated/products.yaml (infra/run_helpers.py).
+  runs: { internal: true }              # the coordinator and this server's run helpers
+volumes:
+  seats:
+  voice:
+  voiceseat:
+  work:
+  caddy:
+  hqdata:
+  imports:

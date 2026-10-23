@@ -1,0 +1,433 @@
+/* HQ-OS › Care (care.js): the list and the cards on the computer's screen. Every colour comes from the look's own
+   variables (style.css, a renderer's skin.css); the draft reply is paper, so it reads as the email it becomes. */
+
+/* Pixelify Sans' 5, 2 and € read as S, Z and @ at these sizes: in a pixel look, digits, € and % come from Jersey 10
+   (care.js sets .cr-px when the look's font is Pixelify; the same fix as numbers.css) */
+@font-face { font-family: 'Care Digits'; font-display: swap; size-adjust: 118%; unicode-range: U+0030-0039, U+20AC, U+0025;
+  src: url(https://fonts.gstatic.com/s/jersey10/v4/GftH7vZKsggXMf9n_J5X-A.ttf) format('truetype'); }
+.cr-px :is(.cr, [data-app-settings=care]) { font-family: 'Care Digits', var(--font); font-variant-ligatures: none; }
+.cr-px :is(.cr, [data-app-settings=care]) :is(button, b, input, textarea, small) { font-family: inherit; }
+
+/* the computer is wider and taller while Care is open: a card is long */
+.device.computer.care-wide { width: min(780px, 100%); }
+/* the screen takes the height the device has (#tool's --tool-h, inside a phone's notch and home bar) less the device's
+   header and frame, 96px */
+.care-wide .crt .screen { height: min(calc(var(--tool-h, 100dvh) - 96px), 1000px); overscroll-behavior: contain; }
+
+.cr { --cr-warn: #ff9b4a; --cr-gold: #ffd966; --cr-line: color-mix(in srgb, var(--scr) 35%, transparent); font-size: 15px; line-height: 1.38; overflow-wrap: anywhere; }
+.cr p { margin: 0 0 8px; }
+.cr button { font: inherit; text-shadow: inherit; cursor: pointer; }
+.cr button[disabled] { opacity: .5; cursor: default; }
+.cr svg.px { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.cr .txt { white-space: pre-wrap; }
+.cr .sm, .cr-none { color: var(--scr-dim); font-size: 13px; }
+.cr-signal { color: var(--cr-warn); font-size: 12px; } .cr-signal[hidden] { display: none; }
+.cr-lede { color: var(--scr-soft); }
+.cr-msg { color: var(--cr-gold); margin: 6px 0 0 !important; }
+.cr h4 { margin: 0 0 6px; font-size: 13px; font-weight: 400; letter-spacing: 1px; text-transform: uppercase; color: var(--scr-cap); display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.cr h4 em { font-style: normal; text-transform: none; letter-spacing: 0; color: var(--scr-dim); }
+
+/* plain buttons on the screen: outlined; the one the screen is for: lit */
+.cr-two, .cr-acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.cr-two button, .cr-acts button, .cr-more button, .cr-older, .cr-name button, .cr-mail, .cr-asked button, .cr-sent button, .cr-find button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 6px 14px; font-size: 15px;
+  background: none; color: var(--scr); border: 1px solid currentColor; border-radius: var(--r-sm); }
+.cr .cta, .cr-acts .send { background: var(--scr); color: var(--scr-ink); border-color: var(--scr); text-shadow: none; box-shadow: 0 0 12px color-mix(in srgb, var(--scr) 45%, transparent); }
+.cr-two button:active, .cr-acts button:active { transform: translateY(1px); }
+
+/* ---------------------------------------------------------------- the list */
+.cr-sec { margin-top: 16px; }
+.cr-sec h3 { margin: 0 0 8px; padding-bottom: 3px; font-size: 13px; font-weight: 400; color: var(--scr-cap); text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid var(--cr-line); }
+.cr-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+/* a row: its kind's icon in a column of its own, then the words; its customer's quote two lines at most (the card has the
+   rest). Its hover is HQ-OS's one hover, a soft fill and an outline. A row is a box under its button, beside its job
+   links (prose.js covered): the reset keeps the box the button's frame, and the button out of the columns. */
+.cr-row { all: unset; position: relative; isolation: isolate; box-sizing: border-box; width: 100%; cursor: pointer; display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 12px; row-gap: 3px;
+  padding: 10px 12px; border: 1px solid var(--cr-line); border-radius: var(--r); background: color-mix(in srgb, var(--scr) 4%, transparent); }
+.cr-row > :not(.ic, .cover) { grid-column: 2; }
+.cr-row .ic { grid-row: 1 / span 4; padding-top: 3px; color: var(--scr); } .cr-row .ic svg.px { width: 20px; height: 20px; filter: drop-shadow(0 0 2px currentColor); }
+.cr-row:hover, .cr-row:focus-visible, .cr-row:has(> .cover:focus-visible) { background: color-mix(in srgb, var(--scr) 12%, transparent); outline: 1px solid var(--scr); }
+.cr-row .q { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.cr-row .t { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.cr-row .t b { font-weight: 400; font-size: 16px; color: var(--scr-hi); }
+.cr-row .q { color: var(--scr-cap); }
+.cr-row .m { color: var(--scr-dim); font-size: 13px; }
+.cr-row .r { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; margin-top: 3px; }
+.cr .cs { flex: none; color: var(--scr-dim); font-size: 13px; letter-spacing: .5px; white-space: nowrap; }
+.cr-list.soft .cr-row { border-style: dashed; border-color: var(--cr-line); background: none; }
+.cr-list.soft .cr-row .t b { font-size: 15px; color: var(--scr-soft); }
+.cr-due { font-size: 13px; color: var(--scr); white-space: nowrap; }
+.cr-due.late { color: var(--cr-warn); } .cr-due.late b { font-weight: 400; text-transform: uppercase; letter-spacing: 1px; }
+.cr-check, .cr-tag { display: inline-block; font-size: 12px; letter-spacing: .5px; padding: 1px 7px; border-radius: 2px; border: 1px solid currentColor; text-shadow: none; }
+.cr-check.ok { background: var(--scr); color: var(--scr-ink); border-color: var(--scr); }
+.cr-check.mid { color: var(--scr-soft); }
+.cr-check.no { color: var(--cr-warn); }
+.cr-tag { color: var(--scr-soft); } .cr-tag.new, .cr-tag.warn { color: var(--cr-gold); } .cr-tag.warn { color: var(--cr-warn); } .cr-tag.team { color: #9bb0ff; }
+.cr-foot { margin: 20px 0 0 !important; padding-top: 10px; border-top: 1px dashed var(--cr-line); color: var(--scr-dim); font-size: 12px; letter-spacing: .5px; }
+
+/* the busy notice */
+.cr-busy { margin: 12px 0 0; padding: 8px 0; border-top: 1px dashed var(--cr-line); border-bottom: 1px dashed var(--cr-line); }   /* (a quiet strip) */
+.cr-busy .hd { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.cr-busy .hd > b { font-weight: 400; font-size: 15px; color: var(--scr-cap); }
+.cr-busy .seg { display: inline-flex; border: 1px solid var(--scr); border-radius: var(--r-sm); overflow: hidden; }
+.cr-busy .seg button { min-height: 36px; min-width: 52px; padding: 0 12px; background: none; color: var(--scr); border: 0; border-left: 1px solid var(--scr); font-size: 15px; }
+.cr-busy .seg button:first-child { border-left: 0; }
+.cr-busy .seg [aria-checked=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
+.cr-busy .state { color: var(--scr-soft); font-size: 14px; margin: 0 !important; }
+.cr-busy .state i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; border-radius: 50%; border: 1px solid var(--scr-dim); vertical-align: 0; }
+.cr-busy.on .state i { background: var(--cr-gold); border-color: var(--cr-gold); box-shadow: 0 0 6px var(--cr-gold); }
+.cr-busy .state b { font-weight: 400; color: var(--scr-hi); }
+.cr-busy .held { color: var(--cr-gold); font-size: 14px; }
+.cr-busy .sm { margin: 0 !important; }
+
+/* remedies, money owed and held orders: each a box with its buttons right there */
+.cr-remedy, .cr-owed, .cr-held { margin: 0 0 10px; padding: 10px 12px; border: 1px solid var(--cr-gold); border-radius: var(--r); }
+.cr-remedy .t, .cr-owed .t, .cr-held .t { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; margin-bottom: 4px; }
+.cr-remedy .t b, .cr-owed .t b, .cr-held .t b { font-weight: 400; font-size: 16px; color: var(--scr-hi); }
+.cr-owed .t b { font-size: 20px; } .cr-owed .t > span, .cr-held .t > span { color: var(--scr-soft); }
+.cr-remedy .grant { color: var(--cr-gold); }
+.cr-owed .why, .cr-held .why { color: var(--scr-cap); }
+/* a held order: its printed words, which can be long */
+.cr-held .t b { font-size: 18px; overflow-wrap: anywhere; } .cr-held .t b.long { font-size: 15px; max-height: 40vh; overflow-y: auto; } .cr-held .grant { color: var(--cr-gold); }
+.cr-remedy details, .cr-more { margin: 0 0 8px; }
+.cr-remedy summary, .cr-more summary { cursor: pointer; color: var(--scr-soft); font-size: 14px; min-height: 32px; display: flex; align-items: center; }
+.cr-remedy details p { margin-top: 4px; color: var(--scr-cap); }
+
+/* Sent and Every remedy: folded, loaded when opened */
+.cr-fold { margin-top: 16px; border-top: 1px solid var(--cr-line); padding-top: 6px; }
+.cr-fold summary { cursor: pointer; list-style: none; display: grid; gap: 1px; padding: 6px 0; }
+.cr-fold summary::-webkit-details-marker { display: none; }
+.cr-fold summary b { font-weight: 400; font-size: 13px; letter-spacing: 1px; text-transform: uppercase; color: var(--scr-cap); }
+.cr-fold summary b::before { content: '▸ '; } .cr-fold[open] summary b::before { content: '▾ '; }
+.cr-fold summary span { color: var(--scr-dim); font-size: 13px; }
+.cr-older { display: flex; margin: 10px auto 0; }
+.cr-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cr-rows li { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 1px 8px; padding-bottom: 6px; border-bottom: 1px dashed color-mix(in srgb, var(--scr) 25%, transparent); }
+.cr-rows b { font-weight: 400; color: var(--scr-hi); } .cr-rows .dim, .cr-rows small { grid-column: 2; } .cr-rows .dim { color: var(--scr-dim); font-size: 13px; } .cr-rows small { color: var(--scr-soft); }
+.cr-rows .st { grid-row: span 4; align-self: start; font-size: 11px; text-transform: uppercase; padding: 1px 5px; border: 1px solid currentColor; border-radius: 2px; max-width: 96px; text-align: center; }
+.cr-rows .st-waiting { color: var(--cr-gold); } .cr-rows .st-granted { color: var(--scr); } .cr-rows .st-declined { color: var(--scr-dim); } .cr-rows .st-done { color: var(--scr-cap); }
+
+/* ---------------------------------------------------------------- a card */
+.cr-card { display: grid; gap: 14px; }
+.cr-card > * { min-width: 0; margin: 0; }
+.cr-h { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 4px 12px; padding-bottom: 8px; border-bottom: 1px dashed var(--cr-line); }
+.cr-h b { display: block; font-weight: 400; font-size: 20px; line-height: 1.15; color: var(--scr-hi); }
+.cr-h span { color: var(--scr-dim); font-size: 13px; }
+.cr-h .rt { display: grid; justify-items: end; gap: 2px; }
+.cr-banner { padding: 8px 12px; border-radius: var(--r); border: 1px solid var(--scr); }
+.cr-banner.warn { border-color: var(--cr-warn); color: var(--cr-warn); } .cr-banner.warn b { font-weight: 400; color: var(--scr-hi); }
+.cr-banner.new { border-color: var(--cr-gold); color: var(--cr-gold); }
+.cr-banner.team { border-color: #9bb0ff; color: #9bb0ff; }
+.cr-banner.done { color: var(--scr-cap); border-style: dashed; }
+.cr-banner .cr-two { margin-top: 8px; }
+.cr-words blockquote { margin: 0; padding: 8px 12px; border-left: 3px solid var(--scr); background: color-mix(in srgb, var(--scr) 7%, transparent); color: var(--scr-hi); font-size: 16px; }
+.cr-facts dl { margin: 0; display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 4px 14px; }
+.cr-facts dt { color: var(--scr-dim); font-size: 13px; padding-top: 2px; }
+.cr-facts dd { margin: 0; color: var(--scr-cap); }
+.cr-sum .txt { color: var(--scr-cap); }
+.cr-lines ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.cr-lines .ln { padding: 6px 10px; border-left: 2px solid var(--cr-line); }
+.cr-lines .ln.customer, .cr-lines .ln.email { border-left-color: var(--scr); }
+.cr-lines .ln.board { border-left-color: var(--cr-gold); }
+.cr-lines .meta { margin: 0 0 2px !important; font-size: 13px; color: var(--scr-dim); }
+.cr-lines .meta b { font-weight: 400; color: var(--scr-soft); }
+.cr-lines .meta .warn { color: var(--cr-warn); }
+.cr-lines .txt { margin: 0 !important; color: var(--scr-hi); }
+.cr-mail { min-height: 36px !important; margin-top: 6px; font-size: 14px !important; }
+.cr-bundle p { color: var(--scr-cap); }
+.cr-pic { margin: 0 0 12px; }
+.cr-pic img { display: block; max-width: 100%; max-height: 460px; height: auto; border: 1px solid var(--scr); border-radius: var(--r-sm); background: #000; }
+.cr-log { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; font-size: 13px; }
+.cr-log li { display: grid; grid-template-columns: 58px 76px minmax(0, 1fr); gap: 8px; padding: 2px 4px; border-radius: 2px; }
+.cr-log .at { color: var(--scr-dim); } .cr-log .k { color: var(--scr-soft); text-transform: uppercase; font-size: 11px; padding-top: 2px; }
+.cr-log .txt { color: var(--scr-hi); }
+.cr-log .k-error, .cr-log .k-rejection { background: color-mix(in srgb, var(--cr-warn) 14%, transparent); } .cr-log .k-error .k, .cr-log .k-rejection .k { color: var(--cr-warn); }
+@media (max-width: 480px) { .cr-log li { grid-template-columns: 52px minmax(0, 1fr); } .cr-log .txt { grid-column: 1 / -1; } }
+
+/* the draft: paper, edited in place, the sign-off under it as it will go */
+.cr-by { color: var(--scr-soft); font-size: 14px; }
+.cr-draft .paper { padding: 4px 4px 10px; background: var(--paper); color: var(--ink); border-radius: var(--r); text-shadow: none; box-shadow: 0 0 0 1px var(--scr); }
+.cr-draft textarea { display: block; width: 100%; box-sizing: border-box; min-height: 160px; resize: vertical; padding: 10px 12px; font: inherit; font-size: 16px; line-height: 1.45;
+  color: var(--ink); background: transparent; border: 0; border-radius: var(--r-sm); box-shadow: none; outline: none; }
+.cr-draft textarea:focus { background: color-mix(in srgb, var(--gold) 12%, transparent); }
+.cr-draft .paper > .txt { margin: 0; padding: 10px 12px; }
+.cr-draft .sign { margin: 0 12px !important; padding-top: 8px; border-top: 1px dashed color-mix(in srgb, var(--ink) 25%, transparent); color: var(--muted); font-size: 14px; }
+.cr-saved { margin: 4px 0 0 !important; color: var(--scr-dim); font-size: 13px; min-height: 1em; }
+.cr-asked { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; border: 1px dashed var(--cr-gold); border-radius: var(--r); color: var(--cr-gold); }
+.cr-asked span { flex: 1; min-width: 180px; } .cr-asked q { color: var(--scr-hi); }
+.cr-asked button { min-height: 36px; font-size: 14px; }
+.cr-ask, .cr-naming { padding: 10px 12px; border: 1px solid var(--cr-gold); border-radius: var(--r); }
+.cr-ask textarea, .cr-name input { width: 100%; box-sizing: border-box; margin: 0 0 8px; font: inherit; font-size: 16px; padding: 8px 10px;
+  color: var(--ink); background: var(--paper); border: 1px solid var(--scr); border-radius: var(--r-sm); box-shadow: none; text-shadow: none; }
+.cr-naming p b { font-weight: 400; color: var(--cr-gold); }
+.cr-name { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.cr-name input { flex: 1 1 180px; width: auto; margin: 0; min-height: 44px; }
+.cr-name button { background: var(--scr); color: var(--scr-ink); border-color: var(--scr); text-shadow: none; }
+/* the three buttons: in a row on a laptop or tablet; on a phone, Send gets the full width under the other two */
+.cr-acts { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1.6fr); }
+.cr-acts button { padding: 6px 10px; min-height: 48px; font-size: 16px; }
+.cr-acts [aria-pressed=true] { background: color-mix(in srgb, var(--scr) 18%, transparent); }
+.cr-acts.bug { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+@media (max-width: 560px) { .cr-acts:not(.bug) { grid-template-columns: 1fr 1fr; } .cr-acts .send { grid-column: 1 / -1; order: -1; } }
+.cr-sent { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 10px 12px; border: 1px solid var(--scr); border-radius: var(--r); background: color-mix(in srgb, var(--scr) 10%, transparent); }
+.cr-sent svg.px { width: 18px; height: 18px; }
+.cr-sent > span { flex: 1; min-width: 140px; } .cr-sent b { font-weight: 400; color: var(--scr-hi); font-size: 17px; }
+.cr-sent button { background: var(--cr-gold); color: var(--scr-ink); border-color: var(--cr-gold); text-shadow: none; }
+.cr-sent button i { font-style: normal; font-variant-numeric: tabular-nums; }
+.cr-more button { margin-top: 6px; color: var(--cr-warn); }
+/* deleting a case at the customer's request: the confirm step, its Delete lit in the warning colour (job #3539) */
+.cr-erase { margin-top: 8px; padding: 10px 12px; border: 1px solid var(--cr-warn); border-radius: var(--r); }
+.cr-erase p { margin: 0 0 4px; } .cr-erase b { font-weight: 400; color: var(--cr-warn); }
+.cr-erase .danger { background: var(--cr-warn); color: var(--scr-ink); border-color: var(--cr-warn); text-shadow: none; }
+.cr-erase [data-erase-cancel] { color: var(--scr); }
+/* a company's own buttons on the case: low and quiet, a dashed rule above; its hint under each, a tick once done
+ */
+.cr-actions { padding-top: 10px; border-top: 1px dashed var(--cr-line); }
+.cr-actions h4 { overflow-wrap: anywhere; }   /* the heading names the address */
+.cr-actions :is(.act, .done) + :is(.act, .done) { margin-top: 10px; }
+.cr-actions .act .sm { margin: 4px 0 0; }
+.cr-actions .done { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0; min-height: 32px; color: var(--scr-soft); }
+.cr-actions .done svg.px { color: var(--scr); }
+/* a bug's link to its person card; Find a case under the list */
+.cr-link { background: none; border: 0; padding: 0; min-height: 32px; color: var(--scr-hi); text-decoration: underline; text-underline-offset: 3px; font: inherit; text-align: left; cursor: pointer; }
+/* Find a case, in the bar at the top of the list beside Numbers */
+.cr-find { display: flex; align-items: center; gap: 8px; flex: 1 1 260px; min-width: 0; }
+.cr-find label { display: inline-flex; align-items: center; gap: 6px; color: var(--scr-soft); font-size: 14px; white-space: nowrap; }
+.cr-find button { min-height: 40px !important; padding: 4px 12px !important; }
+.cr-top > .cr-msg { flex: 1 1 100%; order: 3; }
+.cr-find input { flex: 1 1 90px; min-width: 0; max-width: 160px; min-height: 40px; box-sizing: border-box; padding: 8px 10px; font: inherit; font-size: 16px;
+  color: var(--ink); background: var(--paper); border: 1px solid var(--scr); border-radius: var(--r-sm); box-shadow: none; text-shadow: none; }
+
+/* Settings › Care */
+[data-app-settings=care] .cr-name { margin: 6px 0; }
+[data-app-settings=care] .dim { color: var(--scr-dim); font-size: 13px; } [data-app-settings=care] .dim b { font-weight: 400; color: #ffd966; }
+[data-app-settings=care] .msg { color: #ffd966; min-height: 1.2em; }
+
+/* drafts, redrafts, claims and photos */
+.cr-to { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 0 0 8px !important; }
+.cr-to span { color: var(--scr-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 1px; }
+.cr-to button { min-height: 40px; padding: 4px 14px; background: none; color: var(--scr); border: 1px solid var(--scr); border-radius: var(--r-sm); font-size: 15px; }
+.cr-to [aria-checked=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
+.cr-back { margin: 6px 0 0 !important; }
+.cr-without { margin: 8px 0 0 !important; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.cr-without button { min-height: 40px; padding: 4px 12px; background: none; color: var(--scr-soft); border: 1px dashed currentColor; border-radius: var(--r-sm); font-size: 14px; }
+.cr-back button { min-height: 36px; padding: 4px 12px; background: none; color: var(--scr-soft); border: 1px dashed currentColor; border-radius: var(--r-sm); font-size: 14px; }
+.cr-tr { margin-top: 8px; padding: 6px 12px; border: 1px dashed var(--cr-line); border-radius: var(--r); }
+.cr-tr summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; color: var(--scr-soft); font-size: 14px; }
+.cr-tr .txt { color: var(--scr-cap); }
+.cr-acts.one { grid-template-columns: minmax(0, 1fr); max-width: 220px; }
+.cr-acts.two { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
+@media (max-width: 560px) { .cr-acts.one { max-width: none; } }
+.cr-photos ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+.cr-photos li { display: grid; gap: 3px; min-width: 0; }
+.cr-photos li.big { grid-column: 1 / -1; }
+.cr-photos button { all: unset; cursor: zoom-in; display: block; border-radius: var(--r-sm); }
+.cr-photos li.big button { cursor: zoom-out; }
+.cr-photos button:focus-visible { outline: 2px solid var(--scr); outline-offset: 2px; }
+.cr-photos img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border: 1px solid var(--scr); border-radius: var(--r-sm); background: #000; }
+.cr-photos li.big img { aspect-ratio: auto; object-fit: contain; max-height: 70vh; }
+.cr-photos small { color: var(--scr-dim); font-size: 12px; overflow-wrap: anywhere; }
+.cr-sec.claims h3 { color: var(--cr-gold); }
+
+/* an email to the company: HQ's own card */
+.cr-lines .ln .cr-tr { margin: 6px 0 0; }
+/* Settings › Care: the senders kept in Mail */
+.cr-kept { list-style: none; margin: 6px 0; padding: 0; display: grid; gap: 6px; }
+.cr-kept li { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 10px; padding: 4px 0; border-bottom: 1px dashed color-mix(in srgb, var(--scr) 25%, transparent); }
+.cr-kept span { overflow-wrap: anywhere; min-width: 0; }
+.cr-kept button { min-height: 40px; padding: 4px 12px; font: inherit; background: none; color: var(--scr); border: 1px solid currentColor; border-radius: var(--r-sm); cursor: pointer; }
+.cr-acts .send[disabled] { background: none; color: var(--scr); box-shadow: none; border-style: dashed; opacity: .6; }
+
+/* ---------------------------------------------------------------- Care › Numbers */
+.cr-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; margin: 0 0 12px; }
+/* what waits, counted: a tile each, a tap goes to its section */
+.cr-glance { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 8px; }
+.cr-count { display: grid; justify-items: start; gap: 0; padding: 8px 10px; background: color-mix(in srgb, var(--scr) 6%, transparent); color: var(--scr);
+  border: 1px solid var(--cr-line); border-radius: var(--r-sm); text-align: start; }
+.cr-count b { font-weight: 400; font-size: 26px; line-height: 1.1; color: var(--scr-hi); }
+.cr-count span { font-size: 13px; color: var(--scr-soft); }
+.cr-count.late { border-color: var(--cr-warn); } .cr-count.late span { color: var(--cr-warn); }
+.cr .cr-count[disabled] { opacity: 1; } .cr-count[disabled] b { color: var(--scr-dim); }
+.cr-count:not([disabled]):is(:hover, :focus-visible) { background: color-mix(in srgb, var(--scr) 12%, transparent); outline: 1px solid var(--scr); }
+.cr-past { margin-top: 22px; }
+.cr-go { min-height: 40px; padding: 4px 14px; background: none; color: var(--scr); border: 1px solid currentColor; border-radius: var(--r-sm); font-size: 15px; white-space: nowrap; }
+.cr-go:hover, .cr-go:focus-visible { background: color-mix(in srgb, var(--scr) 14%, transparent); }
+.cn { --cn-b1: color-mix(in srgb, var(--scr) 62%, var(--scr-ink)); --cn-b2: color-mix(in srgb, var(--scr) 38%, var(--scr-ink)); --cn-b3: color-mix(in srgb, var(--scr) 22%, var(--scr-ink)); }
+.cn .cr-lede { font-size: 14px; }
+.cn-na { color: var(--scr-dim); font-size: 13px; font-style: normal; }
+.cn-switch { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 8px !important; }
+.cn-switch button { min-height: 40px; padding: 4px 14px; background: none; color: var(--scr); border: 1px solid var(--scr); border-radius: var(--r-sm); font-size: 15px; }
+.cn-switch [aria-checked=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
+.cn-switch { align-items: center; } .cn-switch > span { color: var(--scr-dim); font-size: 13px; text-transform: uppercase; letter-spacing: 1px; margin-right: 4px; }
+.cn-mode { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin: 0 0 8px !important; }
+.cn-seg { display: inline-flex; border: 1px solid var(--scr); border-radius: var(--r-sm); overflow: hidden; }
+.cn-seg button { min-height: 40px; min-width: 76px; padding: 0 12px; background: none; color: var(--scr); border: 0; border-left: 1px solid var(--scr); font-size: 15px; }
+.cn-seg button:first-child { border-left: 0; }
+.cn-seg [aria-checked=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
+.cn-banner { padding: 7px 12px; border: 1px dashed var(--cr-gold); border-radius: var(--r); color: var(--cr-gold); font-size: 14px; }
+
+/* a figure: its label, the number, a line under it */
+.cn-fig { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.cn-fig .l { color: var(--scr-cap); font-size: 13px; line-height: 1.25; }
+.cn-fig .v { font-weight: 400; font-size: 28px; line-height: 1.1; color: var(--scr-hi); }
+.cn-fig .s { color: var(--scr-soft); font-size: 13px; line-height: 1.3; }
+.cn-fig .s em { font-style: normal; color: var(--scr-hi); font-size: 15px; }
+.cn-fig .s small { display: block; color: var(--scr-dim); margin-top: 2px; }
+
+/* the headline: conversations, then the two that are always read together, in one box */
+.cn-head { display: grid; gap: 12px; margin: 10px 0 12px; }
+.cn-head .conv .v { font-size: 40px; }
+.cn-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; padding: 10px 12px; border: 1px solid var(--scr); border-radius: var(--r); background: color-mix(in srgb, var(--scr) 5%, transparent); }
+.cn-pair .cn-fig + .cn-fig { border-left: 1px dashed var(--cr-line); padding-left: 16px; }
+.cn-rule { grid-column: 1 / -1; margin: 0 !important; padding-top: 8px; border-top: 1px dashed var(--cr-line); color: var(--scr-soft); font-size: 13px; }
+@media (min-width: 640px) { .cn-head { grid-template-columns: minmax(150px, .7fr) minmax(0, 2fr); align-items: start; } }
+.cn-today { padding: 8px 12px; border: 1px dashed var(--cr-line); border-radius: var(--r); color: var(--scr-cap); font-size: 14px; }
+.cn-today b { font-weight: 400; color: var(--scr-hi); margin-right: 8px; }
+.cn-today.none { color: var(--scr-dim); }
+
+/* the smaller parts: two columns where there's room */
+.cn-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0 24px; }
+@media (min-width: 700px) { .cn-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.cn-grid > .cr-sec { min-width: 0; }
+.cn-aim { color: var(--scr-soft); font-size: 14px; }
+.cn-big { display: flex; align-items: baseline; gap: 10px; }
+.cn-big > b { flex: none; white-space: nowrap; font-weight: 400; font-size: 32px; line-height: 1; color: var(--scr-hi); }
+.cn-big span { color: var(--scr-cap); } .cn-big small { display: block; color: var(--scr-dim); font-size: 13px; }
+.cn-dl { margin: 0 0 8px; display: grid; grid-template-columns: fit-content(45%) minmax(0, 1fr); gap: 5px 12px; }
+.cn-dl dt { color: var(--scr-dim); font-size: 13px; padding-top: 2px; }
+.cn-dl dd { margin: 0; color: var(--scr-hi); }
+.cn-dl dd small { display: block; color: var(--scr-dim); font-size: 13px; }
+.cn-busy { margin-top: 8px; padding: 8px 12px; } .cn-busy .state { margin-bottom: 4px; }
+.cn-figs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px 14px; margin: 0 0 8px; }
+.cn-figs.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.cn-figs .v { font-size: 24px; }
+
+/* first words: a bar per kind, its bands as shares (one hue, faster brighter; a 2px gap between), the legend with the
+   shares under it, and each target */
+.cn-kinds { display: grid; gap: 14px; }
+@media (min-width: 700px) { .cn-kinds { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; } }
+.cn-kind { min-width: 0; }
+.cn-kind .hd { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 2px 10px; margin-bottom: 6px; }
+.cn-kind .hd b { font-weight: 400; color: var(--scr-hi); }
+.cn-kind .hd span { color: var(--scr-dim); font-size: 13px; }
+.cn-bar { display: flex; gap: 2px; height: 16px; }
+.cn-bar i { flex: 1 1 0; min-width: 3px; }
+.cn-bar i:first-child { border-radius: 4px 0 0 4px; } .cn-bar i:last-child { border-radius: 0 4px 4px 0; } .cn-bar i:only-child { border-radius: 4px; }
+:is(.cn-bar, .cn-legend) .b0 { background: var(--scr); } :is(.cn-bar, .cn-legend) .b1 { background: var(--cn-b1); }
+:is(.cn-bar, .cn-legend) .b2 { background: var(--cn-b2); } :is(.cn-bar, .cn-legend) .b3 { background: var(--cn-b3); }
+.cn-legend { list-style: none; margin: 6px 0 8px; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; color: var(--scr-soft); font-size: 13px; }
+.cn-legend li { white-space: nowrap; } .cn-legend b { font-weight: 400; color: var(--scr-hi); }
+.cn-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+.cn-goals { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: max-content max-content minmax(0, 1fr); align-items: baseline; gap: 4px 10px; }
+.cn-goals li { display: contents; }
+.cn-goals .g { color: var(--scr-cap); font-size: 14px; white-space: nowrap; }
+.cn-goals .m { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 0 6px; border: 1px solid currentColor; border-radius: 2px; white-space: nowrap; text-shadow: none; }
+.cn-goals .m svg.px { width: 11px; height: 11px; }
+.cn-goals .m.ok { background: var(--scr); color: var(--scr-ink); border-color: var(--scr); } .cn-goals .m.no { color: var(--cr-warn); } .cn-goals .m.mid { color: var(--scr-soft); border-style: dashed; }
+.cn-goals .m { justify-self: start; }
+@media (max-width: 420px) { .cn-goals { grid-template-columns: max-content minmax(0, 1fr); row-gap: 2px; } .cn-goals .sm { grid-column: 2; margin-bottom: 4px; } }
+
+/* cost: the month against the cap. The fill is every app's spend, this app's part brighter inside it; the track is a
+   fainter step of the same green; gold from 80% of the cap, orange past it */
+.cn-meter { margin: 4px 0 8px; }
+.cn-meter .hd { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 10px; margin-bottom: 6px !important; }
+.cn-meter .hd b { font-weight: 400; color: var(--scr-hi); } .cn-meter .hd span { color: var(--scr-cap); font-size: 14px; }
+.cn-meter .track { position: relative; height: 14px; border-radius: 4px; background: color-mix(in srgb, var(--scr) 16%, transparent); }
+.cn-meter .track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 4px; }
+.cn-meter :is(.track, .keys) .all { background: var(--cn-b2); } .cn-meter :is(.track, .keys) .app { background: var(--scr); }
+.cn-meter.near :is(.track, .keys) .all { background: color-mix(in srgb, var(--cr-gold) 55%, var(--scr-ink)); } .cn-meter.near :is(.track, .keys) .app { background: var(--cr-gold); }
+.cn-meter.over :is(.track, .keys) .all { background: color-mix(in srgb, var(--cr-warn) 55%, var(--scr-ink)); } .cn-meter.over :is(.track, .keys) .app { background: var(--cr-warn); }
+/* HQ's own email drafts, after the app's part: stripes in the app's colour over the rest (job #4184) */
+.cn-meter :is(.track, .keys) .hq { color: var(--scr); background: repeating-linear-gradient(-45deg, currentColor 0 2px, transparent 2px 5px); }
+.cn-meter .track .hq { border-radius: 0; } .cn-meter .keys i.hq { box-shadow: inset 0 0 0 1px currentColor; }
+.cn-meter.near :is(.track, .keys) .hq { color: var(--cr-gold); } .cn-meter.over :is(.track, .keys) .hq { color: var(--cr-warn); }
+.cn-meter .track .tick { position: absolute; top: -4px; bottom: -4px; width: 2px; margin-left: -1px; background: var(--scr-hi); }
+.cn-meter .keys { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 6px 0 4px !important; color: var(--scr-soft); font-size: 13px; }
+.cn-meter .keys i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+.cn-meter .keys i.tick { width: 2px; height: 12px; border-radius: 0; background: var(--scr-hi); }
+.cn-cost > .sm b { font-weight: 400; color: var(--scr-hi); }
+
+/* day by day: a table where there's room; on a phone each day is a small block of labelled figures */
+.cn-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; margin-top: 6px; }
+.cn-table th { overflow-wrap: normal; font-weight: 400; color: var(--scr-dim); text-align: right; vertical-align: bottom; padding: 4px 5px; line-height: 1.2; border-bottom: 1px solid var(--cr-line); hyphens: manual; }
+.cn-table td { color: var(--scr-hi); text-align: right; padding: 4px 5px; white-space: nowrap; border-bottom: 1px dashed color-mix(in srgb, var(--scr) 18%, transparent); }
+.cn-table :is(th, td):first-child { text-align: left; color: var(--scr-cap); }
+.cn-table tr.none td { color: var(--scr-dim); }
+@media (max-width: 700px) {
+  .cn-table thead { display: none; }
+  .cn-table, .cn-table tbody { display: block; }
+  .cn-table tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 2px 10px; padding: 6px 0; border-bottom: 1px dashed var(--cr-line); }
+  .cn-table td { display: flex; flex-direction: column; text-align: left; padding: 0; border: 0; }
+  .cn-table td:first-child { grid-column: 1 / -1; }
+  .cn-table td[data-l]::before { content: attr(data-l); white-space: normal; color: var(--scr-dim); font-size: 11px; line-height: 1.2; }
+  .cn-table tr.none { grid-template-columns: auto 1fr; } .cn-table tr.none td:first-child { grid-column: auto; }
+}
+@media (max-width: 560px) { .cn-figs .v { font-size: 21px; } .cn-head .conv .v { font-size: 34px; } .cn-fig .v { font-size: 24px; } .cn-pair { padding: 10px; gap: 10px 12px; } .cn-pair .cn-fig + .cn-fig { padding-left: 12px; } }
+
+/* a health case (job #3766): its tag, and the customer's message sent to a person from the health card */
+.cr-tag.health { color: var(--cr-gold); }
+.cr-lines .meta .health { color: var(--cr-gold); }
+
+/* ---------------------------------------------------------------- a look of keys (body.keys: Wire)
+   Care uses the look’s keys and panels. Its gold and orange words mix with the ink to stay readable on light backgrounds.
+   */
+body.keys .cr { --cr-warn: color-mix(in srgb, #e07020 70%, var(--scr)); --cr-gold: color-mix(in srgb, #c88a00 60%, var(--scr)); --cr-line: var(--line); }
+body.keys :is(.cr-two button, .cr-acts button, .cr-more button, .cr-older, .cr-name button, .cr-mail, .cr-asked button, .cr-sent button, .cr-find button, .cr-go,
+  .cr-to button, .cr-without button, .cr-back button, .cr-kept button, .cn-switch button) {
+  background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip); text-shadow: none; transition: transform .06s; }
+body.keys :is(.cr .cta, .cr-acts .send, .cr-name button, .cr-sent button, .cr-to [aria-checked=true], .cn-switch [aria-checked=true]) {
+  background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
+body.keys :is(.cr-two button, .cr-acts button, .cr-more button, .cr-older, .cr-name button, .cr-mail, .cr-asked button, .cr-sent button, .cr-find button, .cr-go,
+  .cr-to button, .cr-without button, .cr-back button, .cr-kept button, .cn-switch button):not(:disabled):active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
+body.keys .cr-go:is(:hover, :focus-visible) { background: var(--key-bg); }
+body.keys .cr-more button { color: var(--cr-warn); }
+body.keys .cr-acts .send[disabled] { background: var(--key-bg); color: var(--key-ink); box-shadow: var(--key-lip); border-style: solid; }
+/* what waits, counted: keys; a count with nothing in it flat */
+body.keys .cr-glance { gap: 10px; }
+body.keys .cr-count { border: 0; border-radius: var(--r); background: var(--key-bg); box-shadow: var(--key-lip); transition: transform .06s; }
+body.keys .cr-count b { font-weight: 650; }
+body.keys .cr-count:not([disabled]):is(:hover, :focus-visible) { background: var(--key-bg); outline: 0; }
+body.keys .cr-count:not([disabled]):focus-visible { outline: 2px solid var(--scr-hi); outline-offset: 2px; }
+body.keys .cr-count:not([disabled]):active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
+body.keys .cr-count[disabled] { background: color-mix(in srgb, var(--key-ink) 5%, transparent); box-shadow: none; }
+body.keys .cr-count.late { box-shadow: 0 3px 0 var(--cr-warn); }
+/* the Busy notice: a panel with its name, its Auto · On · Off keys (Stop at's, Settings › Seats) and what it does */
+body.keys .cr-busy { margin-top: 18px; padding: 12px 14px 14px; border: 0; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--key-lip); }
+body.keys .cr-busy .hd > b { font-size: 16px; font-weight: 650; color: var(--scr-hi); }
+body.keys .cr-busy .seg { gap: 6px; padding-bottom: 3px; border: 0; border-radius: 0; overflow: visible; }
+body.keys .cr-busy .seg button { min-width: 56px; }
+body.keys .cr-busy > .sm { margin: 0 0 6px !important; }
+body.keys .cr-busy .state i { border-color: var(--scr-dim); }
+body.keys .cr-busy.on .state i { box-shadow: none; }
+/* each section under its heading; its rows keys, the remedies, money owed and held orders panels marked in gold */
+body.keys .cr-sec { margin-top: 24px; }
+body.keys .cr-sec h3 { margin: 0 0 10px; padding: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; text-transform: none; color: var(--scr-hi); border: 0; }
+body.keys .cr-list { gap: 12px; }
+body.keys .cr-row { border: 0; border-radius: var(--r-lg); background: var(--card); box-shadow: var(--key-lip); transition: transform .06s; }
+body.keys .cr-row:is(:hover, :focus-visible) { background: var(--card); outline: 0; }
+body.keys .cr-row:focus-visible { outline: 2px solid var(--scr-hi); outline-offset: 2px; }
+body.keys .cr-row:active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
+body.keys .cr-row .ic svg.px { filter: none; }
+body.keys .cr-row .t b { font-weight: 650; }
+body.keys .cr-list.soft .cr-row { background: color-mix(in srgb, var(--key-ink) 5%, transparent); box-shadow: none; }
+body.keys :is(.cr-remedy, .cr-owed, .cr-held) { margin-bottom: 14px; padding: 12px 14px; border: 0; border-radius: var(--r-lg);
+  background: var(--card); box-shadow: inset 4px 0 0 var(--cr-gold), var(--key-lip); }
+body.keys :is(.cr-remedy, .cr-owed, .cr-held) .t b { font-weight: 650; }
+body.keys :is(.cr-check, .cr-tag) { padding: 2px 9px 3px; border: 0; border-radius: 999px; font-weight: 650; background: color-mix(in srgb, currentColor 12%, transparent); }
+body.keys .cr-check.ok { color: color-mix(in srgb, var(--ok) 75%, var(--scr)); }
+body.keys .cr-due.late b { font-weight: 650; }
+body.keys .cr-fold summary b { font-size: 15px; font-weight: 650; letter-spacing: 0; text-transform: none; color: var(--scr-hi); }
+/* the dashed rules, solid */
+body.keys :is(.cr-foot, .cr-actions) { border-top: 1.5px solid var(--line); }
+body.keys .cr-fold { border-top: 1.5px solid var(--line); }
+body.keys .cr-h { border-bottom: 1.5px solid var(--line); }
+body.keys .cr-rows li { border-bottom: 1.5px solid var(--line); }
+body.keys :is(.cr-tr, .cr-asked, .cn-banner, .cr-banner.done, .cn-today) { border-style: solid; }
+body.keys :is(.cr-draft .sign, .cn-rule) { border-top-style: solid; } body.keys .cn-pair .cn-fig + .cn-fig { border-left-style: solid; }
+body.keys :is(.cr-kept li, .cn-table td, .cn-table tr) { border-bottom-style: solid; }
+/* the draft: a sheet of the look's panel, the field it holds the paper itself (not a field's well) */
+body.keys .cr-draft .paper { background: var(--card); border-radius: var(--r-lg); box-shadow: var(--key-lip); }
+body.keys .cr-draft .paper textarea { background-color: transparent; box-shadow: none; }
+body.keys :is(.cr-owed, .cr-held) .why { padding: 0; border: 0; font-size: inherit; }   /* (not the generic dashed box of a .why on the screen) */
+/* a card's headings as the look's captions */
+body.keys .cr h4 { font-size: 12.5px; font-weight: 700; letter-spacing: 0.06em; color: var(--scr-cap); }

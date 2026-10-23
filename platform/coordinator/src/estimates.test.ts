@@ -1,0 +1,118 @@
+// node --test src/estimates.test.ts   (uses a throwaway DATA_DIR): hq estimate, past jobs' agent time and the seats'
+// headroom.
+import { mock, test } from 'node:test';
+import assert from 'node:assert/strict';
+import { harness } from './harness.ts';
+
+const HOUR = 3_600_000,
+  T0 = Math.floor(Date.now() / HOUR) * HOUR;
+
+const h = await harness('estimates');
+mock.timers.enable({ apis: ['Date'], now: T0 - 5 * HOUR });
+test.after(() => mock.timers.reset());
+
+const usage = (cost: number) => ({
+  models: { 'claude-opus-5-5': { input: 10, cacheWrite: 0, cacheRead: 100, output: 5, cost } },
+  cost,
+  resumed: false,
+});
+const later = (ms: number) => mock.timers.setTime(Date.now() + ms);
+const earlier = await h.start({ agent: 'kit', title: 'Earlier chart', engine: 'claude' }, { seat: 'claude-a' });
+later(5 * HOUR);
+await h.finish(earlier, { usage: usage(3) });
+
+// A done job: each run's minutes, with the gap before the next run (a wait for a seat).
+async function done(title: string, runs: [minutes: number, gap: number][], cost: number | null = 1) {
+  const id = h.queue({ agent: 'kit', title }),
+    engine = (h.db.prepare('select engine from jobs where id = ?').get(id) as { engine: string }).engine;
+  for (const [i, [minutes, gap]] of runs.entries()) {
+    const job = (await h.claim(engine, { seat: 'claude-a' }))!;
+    assert.equal(job.id, id);
+    later(minutes * 60_000);
+    const last = i === runs.length - 1;
+    await h.finish(job, {
+      status: last ? 'done' : 'interrupted',
+      usage: cost === null ? undefined : usage(cost / runs.length),
+      session: `s${id}-${i}`,
+    });
+    later(gap * 60_000);
+  }
+  return id;
+}
+// (a new reader each time: the clock moves hours on, so an earlier one's heartbeat is stale)
+const reader = () => h.start({ agent: 'bolt', title: 'Sizing' });
+const ask = async (query: string) => {
+  const r = await h.agent(`estimate?${query}`, (await reader()).token);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  return r.body;
+};
+
+test("a job's agent time is its runs, without the wait for a seat between them", async () => {
+  const id = await done('Seats in HQ: switch seats from the board', [
+    [30, 180],
+    [20, 0],
+  ]);
+  const found = await ask('q=seats%20board');
+  const job = found.jobs.find((j: any) => j.id === id);
+  assert.deepEqual([job.agent_minutes, job.wall_minutes, job.runs, job.rebuilt], [50, 230, 2, false]);
+});
+
+test("past jobs are matched by their title's words, by another job's title, and by the folder they changed", async () => {
+  const mug = await done('Mug print file at 300 dpi', [[40, 0]]);
+  const poster = await done('Poster print file with bleed', [[70, 0]]);
+  h.db
+    .prepare("insert into prs (number, branch, author, status, files) values (90, ?, 'kit', 'merged', ?)")
+    .run(`job/${poster}`, JSON.stringify(['products/poster/print.ts']));
+  assert.deepEqual((await ask('q=mug%20print')).jobs.map((j: any) => j.id).slice(0, 2), [mug, poster]);
+  const like = await ask(`q=${encodeURIComponent(`#${mug}`)}`);
+  assert.equal(like.job.id, mug);
+  assert.equal(like.jobs[0].id, poster);
+  assert.deepEqual(
+    (await ask('q=print&path=products/poster/')).jobs.map((j: any) => j.id),
+    [poster],
+  );
+});
+
+test("the seats' headroom: each week's share left and its reported reset", async () => {
+  await h.worker('seat', {
+    seat: 'claude-a',
+    engine: 'claude',
+    state: 'idle',
+    week: 0.4,
+    weekResets: Date.now() + 72 * HOUR,
+  });
+  const { seats, engines } = (await ask('q=nothing%20like%20it')).seats;
+  assert.equal(seats.find((s: any) => s.id === 'claude-a').week, 0.4);
+  const claude = engines.find((e: any) => e.engine === 'claude');
+  assert.deepEqual([claude.left_percent, claude.next_reset], [60, Date.now() + 72 * HOUR]);
+});
+
+test("a seat with no reading yet isn't counted as used up: what's left says how many seats it stands on", async () => {
+  await h.worker('seat', { seat: 'codex-a', engine: 'codex', state: 'idle' });
+  const { engines } = (await ask('q=nothing%20like%20it')).seats;
+  const codex = engines.find((e: any) => e.engine === 'codex');
+  assert.deepEqual([codex.left_percent, codex.measured_seats, codex.unmeasured_seats], [0, 0, 1]);
+  const { out } = await h.hq(await reader(), 'estimate');
+  assert.match(out, /codex: none of its 1 seat has a reading yet/);
+  assert.match(out, /claude: .*60% of one seat's week left on 1 seat with a reading/);
+});
+
+test('hq estimate prints the past jobs and the seats', async () => {
+  const { out, code } = await h.hq(await reader(), 'estimate', 'seats board');
+  assert.equal(code, 0, out);
+  assert.match(out, /50 min of agent time in 2 runs, 3 h 50 min from its first start to its end/);
+  assert.match(out, /claude-a \(claude, idle\): 40% of its week used/);
+});
+
+test('a done job with no usage reported has no spend, and is left out of the typical spend', async () => {
+  await done('Meter sweep one', [[20, 0]], 2);
+  await done('Meter sweep two', [[20, 0]], 4);
+  await done('Meter sweep three', [[20, 0]], 6);
+  const unmetered = await done('Meter sweep four', [[20, 0]], null);
+  const found = await ask('q=meter%20sweep');
+  assert.equal(found.jobs.find((j: any) => j.id === unmetered).spend, null);
+  // counted as 0 it would pull the median from 4 down to 2
+  assert.deepEqual([found.typical.spend, found.typical.unit], [4, '$']);
+  const { out } = await h.hq(await reader(), 'estimate', 'meter sweep');
+  assert.match(out, /seat spend not reported/);
+});

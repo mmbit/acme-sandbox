@@ -1,0 +1,9 @@
+# Nightly, before the 04:00 security-update reboot (harden.sh). Persistent: a night the server was off runs at boot.
+[Unit]
+Description=Run the off-site backup every night
+[Timer]
+OnCalendar=*-*-* 02:30:00 UTC
+RandomizedDelaySec=15m
+Persistent=true
+[Install]
+WantedBy=timers.target

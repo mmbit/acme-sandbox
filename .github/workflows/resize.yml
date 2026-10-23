@@ -1,0 +1,18 @@
+name: Resize server
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '17 3 * * *'   # a quiet hour: retries until the wanted type has capacity (then it's a no-op)
+  push:
+    branches: [main]
+    paths: [infra/server-type]
+permissions:
+  contents: read
+jobs:
+  resize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: infra/resize.sh
+        env:
+          HCLOUD_TOKEN: ${{ secrets.HCLOUD_TOKEN }}

@@ -1,0 +1,819 @@
+{
+ "days": 28,
+ "from": "2026-09-03",
+ "to": "2026-09-30",
+ "apps": [
+  {
+   "slug": "pebble-pals",
+   "name": "Pebble Pals",
+   "status": "live",
+   "mode": "live",
+   "hasFile": true,
+   "revenue": 8433.1,
+   "page": 12085,
+   "paid": 347,
+   "conversion": 0.0287,
+   "spark": [
+    12,
+    7,
+    12,
+    14,
+    7,
+    3,
+    2,
+    9,
+    18,
+    18,
+    13,
+    12,
+    15,
+    11,
+    11,
+    9,
+    13,
+    26,
+    9,
+    11,
+    10,
+    18,
+    21,
+    14,
+    14,
+    7,
+    16,
+    15
+   ],
+   "test": {
+    "id": "big-button",
+    "state": "not-called"
+   },
+   "updated": "2026-10-01T09:55:00Z"
+  },
+  {
+   "slug": "lanternfold",
+   "name": "Lanternfold",
+   "status": "preview",
+   "mode": "preview",
+   "hasFile": true,
+   "revenue": 480,
+   "page": 302,
+   "paid": 15,
+   "conversion": 0.0497,
+   "spark": [
+    0,
+    2,
+    0,
+    0,
+    1,
+    1,
+    0,
+    0,
+    1,
+    0,
+    2,
+    0,
+    0,
+    0,
+    1,
+    1,
+    0,
+    1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    1,
+    0,
+    1,
+    2
+   ],
+   "test": null,
+   "updated": "2026-10-01T09:55:00Z"
+  },
+  {
+   "slug": "tiny-atlas",
+   "name": "Tiny Atlas",
+   "status": "preview",
+   "mode": "preview",
+   "hasFile": true,
+   "revenue": 0,
+   "page": 0,
+   "paid": 0,
+   "conversion": null,
+   "spark": [
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
+   ],
+   "test": null,
+   "updated": null
+  }
+ ],
+ "baskets": {
+  "_company": "",
+  "paid": 324,
+  "several": 12,
+  "returning": 16,
+  "known": 324,
+  "days": [
+   {
+    "day": "2026-09-03",
+    "paid": 11,
+    "several": 2,
+    "returning": 0,
+    "known": 11
+   },
+   {
+    "day": "2026-09-04",
+    "paid": 6,
+    "several": 0,
+    "returning": 0,
+    "known": 6
+   },
+   {
+    "day": "2026-09-05",
+    "paid": 10,
+    "several": 0,
+    "returning": 0,
+    "known": 10
+   },
+   {
+    "day": "2026-09-06",
+    "paid": 13,
+    "several": 0,
+    "returning": 0,
+    "known": 13
+   },
+   {
+    "day": "2026-09-07",
+    "paid": 7,
+    "several": 0,
+    "returning": 0,
+    "known": 7
+   },
+   {
+    "day": "2026-09-08",
+    "paid": 3,
+    "several": 0,
+    "returning": 0,
+    "known": 3
+   },
+   {
+    "day": "2026-09-09",
+    "paid": 2,
+    "several": 0,
+    "returning": 0,
+    "known": 2
+   },
+   {
+    "day": "2026-09-10",
+    "paid": 7,
+    "several": 1,
+    "returning": 0,
+    "known": 7
+   },
+   {
+    "day": "2026-09-11",
+    "paid": 17,
+    "several": 2,
+    "returning": 2,
+    "known": 17
+   },
+   {
+    "day": "2026-09-12",
+    "paid": 17,
+    "several": 0,
+    "returning": 2,
+    "known": 17
+   },
+   {
+    "day": "2026-09-13",
+    "paid": 13,
+    "several": 0,
+    "returning": 0,
+    "known": 13
+   },
+   {
+    "day": "2026-09-14",
+    "paid": 11,
+    "several": 1,
+    "returning": 2,
+    "known": 11
+   },
+   {
+    "day": "2026-09-15",
+    "paid": 15,
+    "several": 1,
+    "returning": 1,
+    "known": 15
+   },
+   {
+    "day": "2026-09-16",
+    "paid": 11,
+    "several": 0,
+    "returning": 0,
+    "known": 11
+   },
+   {
+    "day": "2026-09-17",
+    "paid": 9,
+    "several": 2,
+    "returning": 1,
+    "known": 9
+   },
+   {
+    "day": "2026-09-18",
+    "paid": 9,
+    "several": 0,
+    "returning": 0,
+    "known": 9
+   },
+   {
+    "day": "2026-09-19",
+    "paid": 12,
+    "several": 0,
+    "returning": 2,
+    "known": 12
+   },
+   {
+    "day": "2026-09-20",
+    "paid": 24,
+    "several": 0,
+    "returning": 1,
+    "known": 24
+   },
+   {
+    "day": "2026-09-21",
+    "paid": 9,
+    "several": 0,
+    "returning": 0,
+    "known": 9
+   },
+   {
+    "day": "2026-09-22",
+    "paid": 11,
+    "several": 1,
+    "returning": 0,
+    "known": 11
+   },
+   {
+    "day": "2026-09-23",
+    "paid": 10,
+    "several": 0,
+    "returning": 0,
+    "known": 10
+   },
+   {
+    "day": "2026-09-24",
+    "paid": 17,
+    "several": 1,
+    "returning": 0,
+    "known": 17
+   },
+   {
+    "day": "2026-09-25",
+    "paid": 17,
+    "several": 0,
+    "returning": 1,
+    "known": 17
+   },
+   {
+    "day": "2026-09-26",
+    "paid": 14,
+    "several": 1,
+    "returning": 0,
+    "known": 14
+   },
+   {
+    "day": "2026-09-27",
+    "paid": 13,
+    "several": 0,
+    "returning": 1,
+    "known": 13
+   },
+   {
+    "day": "2026-09-28",
+    "paid": 7,
+    "several": 0,
+    "returning": 1,
+    "known": 7
+   },
+   {
+    "day": "2026-09-29",
+    "paid": 14,
+    "several": 0,
+    "returning": 2,
+    "known": 14
+   },
+   {
+    "day": "2026-09-30",
+    "paid": 15,
+    "several": 0,
+    "returning": 0,
+    "known": 15
+   }
+  ]
+ },
+ "dashboards": [
+  {
+   "id": "e-commerce",
+   "name": "E-commerce",
+   "about": "The live apps' revenue and orders, and the shop's baskets",
+   "icon": [
+    "...#..#...",
+    "..#....#..",
+    ".#......#.",
+    "##########",
+    "#.#.##.#.#",
+    ".#.#..#.#.",
+    ".#.#..#.#.",
+    ".########."
+   ],
+   "tile": "€8,433 · 324 baskets",
+   "figures": [
+    {
+     "label": "Revenue",
+     "value": 8433.1,
+     "unit": "EUR",
+     "sub": "from 1 live app"
+    },
+    {
+     "label": "Paid orders",
+     "value": 347,
+     "sub": "from the live apps"
+    },
+    {
+     "label": "Baskets paid",
+     "value": 324,
+     "sub": "in the shop"
+    },
+    {
+     "label": "With a second thing",
+     "value": 12,
+     "sub": "4% of baskets"
+    },
+    {
+     "label": "From a buyer who came back",
+     "value": 16,
+     "sub": "5% of 324 baskets with a known buyer"
+    }
+   ],
+   "daily": {
+    "title": "Per day",
+    "sub": "Live orders and baskets, Dutch days.",
+    "columns": [
+     {
+      "key": "orders",
+      "label": "Paid orders"
+     },
+     {
+      "key": "baskets",
+      "label": "Baskets paid"
+     },
+     {
+      "key": "several",
+      "label": "With a second thing"
+     },
+     {
+      "key": "returning",
+      "label": "From a buyer who came back"
+     }
+    ],
+    "rows": [
+     {
+      "day": "2026-09-03",
+      "orders": 12,
+      "baskets": 11,
+      "several": 2,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-04",
+      "orders": 7,
+      "baskets": 6,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-05",
+      "orders": 12,
+      "baskets": 10,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-06",
+      "orders": 14,
+      "baskets": 13,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-07",
+      "orders": 7,
+      "baskets": 7,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-08",
+      "orders": 3,
+      "baskets": 3,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-09",
+      "orders": 2,
+      "baskets": 2,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-10",
+      "orders": 9,
+      "baskets": 7,
+      "several": 1,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-11",
+      "orders": 18,
+      "baskets": 17,
+      "several": 2,
+      "returning": 2
+     },
+     {
+      "day": "2026-09-12",
+      "orders": 18,
+      "baskets": 17,
+      "several": 0,
+      "returning": 2
+     },
+     {
+      "day": "2026-09-13",
+      "orders": 13,
+      "baskets": 13,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-14",
+      "orders": 12,
+      "baskets": 11,
+      "several": 1,
+      "returning": 2
+     },
+     {
+      "day": "2026-09-15",
+      "orders": 15,
+      "baskets": 15,
+      "several": 1,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-16",
+      "orders": 11,
+      "baskets": 11,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-17",
+      "orders": 11,
+      "baskets": 9,
+      "several": 2,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-18",
+      "orders": 9,
+      "baskets": 9,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-19",
+      "orders": 13,
+      "baskets": 12,
+      "several": 0,
+      "returning": 2
+     },
+     {
+      "day": "2026-09-20",
+      "orders": 26,
+      "baskets": 24,
+      "several": 0,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-21",
+      "orders": 9,
+      "baskets": 9,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-22",
+      "orders": 11,
+      "baskets": 11,
+      "several": 1,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-23",
+      "orders": 10,
+      "baskets": 10,
+      "several": 0,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-24",
+      "orders": 18,
+      "baskets": 17,
+      "several": 1,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-25",
+      "orders": 21,
+      "baskets": 17,
+      "several": 0,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-26",
+      "orders": 14,
+      "baskets": 14,
+      "several": 1,
+      "returning": 0
+     },
+     {
+      "day": "2026-09-27",
+      "orders": 14,
+      "baskets": 13,
+      "several": 0,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-28",
+      "orders": 7,
+      "baskets": 7,
+      "several": 0,
+      "returning": 1
+     },
+     {
+      "day": "2026-09-29",
+      "orders": 16,
+      "baskets": 14,
+      "several": 0,
+      "returning": 2
+     },
+     {
+      "day": "2026-09-30",
+      "orders": 15,
+      "baskets": 15,
+      "several": 0,
+      "returning": 0
+     }
+    ]
+   },
+   "bars": [
+    {
+     "title": "Revenue by app",
+     "sub": "The live apps.",
+     "rows": [
+      {
+       "label": "Pebble Pals",
+       "value": 8433.1,
+       "unit": "EUR"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "postcard",
+   "name": "The postcard",
+   "about": "The postcard in every parcel, and the ones scanned back",
+   "icon": [
+    "########",
+    "#......#",
+    "#.##.#.#",
+    "#......#",
+    "#.####.#",
+    "#......#",
+    "########"
+   ],
+   "tile": "324 sent · 16 scanned",
+   "figures": [
+    {
+     "label": "Scanned per 100 postcards",
+     "value": 4.94,
+     "sub": "worth it from about 3"
+    },
+    {
+     "label": "Postcards sent",
+     "value": 324,
+     "sub": "live orders"
+    },
+    {
+     "label": "Scanned back",
+     "value": 16,
+     "sub": "live orders"
+    }
+   ],
+   "daily": {
+    "title": "Per day",
+    "sub": "Live orders.",
+    "columns": [
+     {
+      "key": "postcards",
+      "label": "Postcards sent"
+     },
+     {
+      "key": "scanned",
+      "label": "Scanned back"
+     }
+    ],
+    "rows": [
+     {
+      "day": "2026-09-03",
+      "postcards": 11,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-04",
+      "postcards": 6,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-05",
+      "postcards": 10,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-06",
+      "postcards": 13,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-07",
+      "postcards": 7,
+      "scanned": 2
+     },
+     {
+      "day": "2026-09-08",
+      "postcards": 3,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-09",
+      "postcards": 2,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-10",
+      "postcards": 7,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-11",
+      "postcards": 17,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-12",
+      "postcards": 17,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-13",
+      "postcards": 13,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-14",
+      "postcards": 11,
+      "scanned": 2
+     },
+     {
+      "day": "2026-09-15",
+      "postcards": 15,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-16",
+      "postcards": 11,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-17",
+      "postcards": 9,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-18",
+      "postcards": 9,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-19",
+      "postcards": 12,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-20",
+      "postcards": 24,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-21",
+      "postcards": 9,
+      "scanned": 2
+     },
+     {
+      "day": "2026-09-22",
+      "postcards": 11,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-23",
+      "postcards": 10,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-24",
+      "postcards": 17,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-25",
+      "postcards": 17,
+      "scanned": 1
+     },
+     {
+      "day": "2026-09-26",
+      "postcards": 14,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-27",
+      "postcards": 13,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-28",
+      "postcards": 7,
+      "scanned": 2
+     },
+     {
+      "day": "2026-09-29",
+      "postcards": 14,
+      "scanned": 0
+     },
+     {
+      "day": "2026-09-30",
+      "postcards": 15,
+      "scanned": 1
+     }
+    ]
+   },
+   "targets": [
+    {
+     "label": "Scanned per 100 postcards",
+     "goal": 3,
+     "value": 4.94,
+     "mark": "green"
+    }
+   ]
+  }
+ ]
+}

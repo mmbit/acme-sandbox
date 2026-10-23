@@ -1,0 +1,27 @@
+{
+ "kinds": [
+  {
+   "name": "simulation",
+   "about": "long simulation runs",
+   "commands": {
+    "start": "docker run -d --init --name run-helper-simulation --restart unless-stopped --user 0:0 --entrypoint node --cap-drop ALL --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges --read-only --tmpfs /tmp:size=64m,mode=755 --tmpfs /work:exec,mode=1777,size=16g --cpus 24 --memory 40g --pids-limit 4096 -v run-helper:/state -e HQ_URL=https://hq.example -e RUN_KIND=simulation node:24.22.1-slim -e \"fetch(process.env.HQ_URL+'/api/helper/code',{redirect:'error'}).then(r=>r.text()).then(t=>{if(require('crypto').createHash('sha256').update(t).digest('hex')!='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')throw Error('this is not the helper code the command trusts');const f=require('os').tmpdir()+'/helper.mjs';require('fs').writeFileSync(f,t);return import(f)})\"",
+    "stop": "docker stop run-helper-simulation",
+    "startAgain": "docker start run-helper-simulation",
+    "remove": "docker rm -f run-helper-simulation"
+   }
+  },
+  {
+   "name": "render",
+   "about": "films",
+   "commands": {
+    "start": "docker run -d --init --name run-helper-render --restart unless-stopped --user 0:0 --entrypoint node --cap-drop ALL --cap-add SETUID --cap-add SETGID --security-opt no-new-privileges --read-only --tmpfs /tmp:size=64m,mode=755 --tmpfs /work:exec,mode=1777,size=100g --cpus 32 --memory 64g --pids-limit 4096 --gpus all -v run-helper:/state -e HQ_URL=https://hq.example -e RUN_KIND=render registry.example/render@sha256:0a1b -e \"fetch(process.env.HQ_URL+'/api/helper/code',{redirect:'error'}).then(r=>r.text()).then(t=>{if(require('crypto').createHash('sha256').update(t).digest('hex')!='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef')throw Error('this is not the helper code the command trusts');const f=require('os').tmpdir()+'/helper.mjs';require('fs').writeFileSync(f,t);return import(f)})\"",
+    "stop": "docker stop run-helper-render",
+    "startAgain": "docker start run-helper-render",
+    "remove": "docker rm -f run-helper-render"
+   }
+  }
+ ],
+ "removeKey": "docker volume rm run-helper",
+ "install": "docker run --rm --user 0:0 --entrypoint node -v /var/run/docker.sock:/var/run/docker.sock -v hq-example:/state -e MANAGER=install -e HQ_URL=https://hq.example node:24.22.1-slim -e \"fetch(process.env.HQ_URL+'/api/helper/manager')\"",
+ "remove": "docker run --rm --user 0:0 --entrypoint node -v /var/run/docker.sock:/var/run/docker.sock -e MANAGER=remove -e HQ_URL=https://hq.example node:24.22.1-slim -e \"fetch(process.env.HQ_URL+'/api/helper/manager')\""
+}

@@ -1,0 +1,14 @@
+[
+  {
+    "id": 99,
+    "created": "2026-09-27T09:00:00Z",
+    "agent": "dex",
+    "kind": "action",
+    "topic": "accounts",
+    "title": "The partner's credits: look again once they're rolled out",
+    "body": "The credits section isn't there yet: the partner is still rolling it out. Look again from the day this card comes back. About 2 minutes.",
+    "urgency": "today",
+    "hidden_until": "2026-12-01T08:00:00Z",
+    "day": "2026-12-01"
+  }
+]

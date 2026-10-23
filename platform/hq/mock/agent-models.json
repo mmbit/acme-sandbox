@@ -1,0 +1,26 @@
+{
+  "choices": [
+    { "id": "claude-opus-5-5", "name": "Opus 5.5", "provider": "anthropic", "engine": "claude", "cli": "claude", "seated": true },
+    { "id": "claude-sonnet-5-5", "name": "Sonnet 5.5", "provider": "anthropic", "engine": "claude", "cli": "claude", "seated": true },
+    { "id": "gpt-6.1-sol", "name": "GPT-6.1 Sol", "provider": "openai", "engine": "codex", "cli": "codex", "seated": true },
+    { "id": "gpt-6-astra", "name": "GPT-6 Astra", "provider": "openai", "engine": "codex", "cli": "codex", "seated": true },
+    { "id": "mistral-medium-3.5", "name": "Mistral Medium 3.5", "provider": "mistral", "engine": "codex", "cli": "vibe", "seated": false },
+    { "id": "gemini-4-argon", "name": "Gemini 4 Argon", "provider": "google", "engine": "codex", "cli": "agy", "seated": false }
+  ],
+  "models": {
+    "juno": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "wren": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "moss": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "kit": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "dex": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "penny": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "vera": { "main": "claude-opus-5-5", "picked": false, "fallback": "gpt-6.1-sol", "engine": null },
+    "sable": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "quill": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null },
+    "rook": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": "claude" },
+    "tally": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": "claude" },
+    "nib": { "main": "gpt-6.1-sol", "picked": false, "fallback": null, "engine": "codex" },
+    "flint": { "main": "gpt-6.1-sol", "picked": false, "fallback": null, "engine": "codex" },
+    "bolt": { "main": "claude-opus-5-5", "picked": false, "fallback": null, "engine": null }
+  }
+}

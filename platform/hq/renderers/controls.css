@@ -1,0 +1,544 @@
+/* One language for every control on a smooth look (holo, wire), as HQ-OS speaks it: a thin line on glass, and the one
+   thing to tap lit solid in the look's accent. Nothing keeps the brownstone's gold, green or red fills, ink rings or hard
+   shadows. A look's skin.css imports it and sets its palette: --cy (the accent), --cy-hi, --cy-fill, --cy-glow, --cy-on,
+   --cy-on-inset, --cy-tint, --cy-pale, --cy-soft, --cy-mark, --glass, --field, --hint-bg, --sticky-bg, --card-bg,
+   --their-bg, --meter-off, --meter-glow, --copy-bg, --tick-lit, --alarm, --alarm-ink, --alarm-fill.
+   A new icon is drawn once per style (icons/<style>/<name>.svg, shell/icons.js), and new HQ work is checked in a smooth
+   look as well as the brownstone (screens-check.mjs wire). */
+/* lit: what a card or a screen is for (send, approve, call someone, sign in, make the key, pin a note) */
+.device .send,
+.req .btns button:is(.send:not(.later), .approve),
+.call-agent,
+.signin,
+.req .agekey .make,
+#viewer .bar .pin {
+  background: var(--cy);
+  color: var(--scr-ink);
+  border: 1px solid var(--cy);
+  box-shadow: var(--cy-glow);
+  text-shadow: none;
+}
+/* line: everything else you can tap (the viewer bar's glyphs and Share stay bare, in the bar's own colour) */
+.device .x,
+.computer .home,
+.req .btns button:is(.later, .talk, .mic),
+.device .mic,
+.intercom .call-btn,
+.pager button,
+.pic-keys button,
+.pic-head button,
+.req .opts button,
+.req .claude-task,
+.req .agekey .make.again,
+.req .agekey .secret .copy,
+.intercom .call .row button,
+#viewer .bar button:not(.pin, .glyph, .share),
+.req .photo .act,
+.gz-tabs button,
+#panel-close,
+.post .reads button {
+  background: var(--glass);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+  text-shadow: none;
+}
+.device .send[disabled],
+.device .mic[disabled] {
+  opacity: 0.45;
+  box-shadow: none;
+}
+:is(
+  .device .send,
+  .device .x,
+  .device .mic,
+  .computer .home,
+  .pager button,
+  .pic-keys button,
+  .pic-head button,
+  .req .opts button,
+  .req .claude-task,
+  .req .agekey .make,
+  .call-agent,
+  .gz-tabs button,
+  #panel-close
+):active {
+  transform: var(--press);
+}
+/* on: a pressed HUD button (sound, music, the tour, walls), a picked option or tab, a chosen card */
+.tools button[aria-pressed='true'],
+.pic-keys button[aria-pressed='true'],
+.req .opts button.on,
+.gz-tabs button[aria-selected='true'] {
+  background: var(--cy-on);
+  color: var(--cy-hi);
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow), var(--cy-on-inset);
+}
+.tools button:active,
+#zoom button:active {
+  box-shadow: var(--shadow-press);
+}
+.req .choice.on {
+  background: var(--cy-fill);
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow);
+}
+/* a field: the text it holds is light (a field doesn't inherit it), its focus a cyan line */
+.device textarea,
+.device input,
+.search input {
+  color: var(--ink);
+}
+:is(.device textarea, .device input, .search input)::placeholder {
+  color: var(--muted);
+  opacity: 1;
+}
+:is(.device textarea, .device input, .search input):focus {
+  outline: none;
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow), var(--inset);
+}
+.device :focus-visible:not(textarea, input),
+#panel :focus-visible:not(input) {
+  outline: 1px solid var(--cy);
+  outline-offset: 2px;
+}
+
+/* ---- the HUD and what floats over the deck */
+/* the count badge: a plain cyan dot, its number dark on it, no ring (style.css lifts it above the buttons beside it) */
+.count {
+  background: var(--cy);
+  color: var(--scr-ink);
+  box-shadow: none;
+}
+#dev {
+  background: none;
+  color: var(--cy);
+  border: 1px solid var(--line);
+}
+#hint {
+  background: var(--hint-bg);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+}
+#loading {
+  color: var(--cy);
+}
+.toast.sticky {
+  background: var(--sticky-bg);
+  color: var(--cy-hi);
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow);
+}
+#namecard {
+  background: var(--card-bg);
+  color: var(--ink);
+  border-color: var(--cy);
+  box-shadow: var(--shadow);
+}
+#namecard small {
+  color: var(--muted);
+}
+.bubble small {
+  color: var(--cy);
+}
+mark {
+  background: var(--cy-mark);
+  color: var(--cy-hi);
+}
+
+/* ---- the panels: chips in the line style, tinted by what they say; thin rules */
+.badge,
+.chip {
+  border: 1px solid color-mix(in srgb, var(--c, var(--cy)) 50%, transparent);
+}
+.chip {
+  background: color-mix(in srgb, var(--c, var(--cy)) 14%, transparent);
+  color: var(--c, var(--cy));
+}
+.st-working {
+  --c: var(--cy);
+}
+.st-waiting {
+  --c: var(--cy-pale);
+}
+.st-sleeping {
+  --c: #c3b4ff;
+}
+.st-idle {
+  --c: var(--muted);
+}
+.log li {
+  border-top: 1px solid var(--rule);
+}
+/* a portrait is a hologram in a dark glass frame (no brownstone disc behind it), drawn smooth and kept inside it */
+.pframe {
+  background:
+    radial-gradient(ellipse at 50% 100%, color-mix(in srgb, var(--c) 22%, transparent), transparent 70%), var(--cream);
+  overflow: hidden;
+}
+.portrait,
+.portrait.cat {
+  width: 48px;
+  height: 96px;
+  margin: 0;
+  image-rendering: auto;
+}
+.portrait:not(.cat) {
+  image-rendering: pixelated;
+} /* a person's hologram is their pixel avatar, shown 1:1 */
+.mini {
+  image-rendering: auto;
+}
+.masthead {
+  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 0 var(--rule);
+}
+.post .reads {
+  border-top: 1px solid var(--rule);
+}
+.gz-new,
+.gz-n {
+  background: var(--cy);
+  color: var(--scr-ink);
+}
+
+/* ---- the desk phone */
+.handset {
+  width: 30px;
+  height: 14px;
+  background: none;
+  border: 1px solid var(--cy);
+  border-radius: 7px 7px 3px 3px;
+  box-shadow:
+    var(--cy-glow),
+    inset 0 -3px 0 var(--cy-soft);
+}
+.req .rec {
+  background: var(--cy-fill);
+  border-left: 2px solid var(--cy);
+}
+.req em {
+  color: var(--alarm);
+}
+.req .choice .cl em {
+  background: none;
+  color: var(--cy);
+  border-color: var(--cy);
+}
+.req .choice input,
+.req .steps .tick input,
+.notes li.pending input {
+  -webkit-appearance: none;
+  appearance: none;
+  display: grid;
+  place-items: center;
+  background: var(--field);
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.req .choice input {
+  border-radius: 50%;
+}
+:is(.req .steps .tick, .notes li.pending) input {
+  border-radius: var(--r-sm);
+}
+.req .choice input:checked,
+.req .steps .tick input:checked,
+.notes li.pending input:checked {
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow);
+}
+/* the dot and the tick are background images: Safari and Firefox don't draw an ::after on a checkbox or a radio */
+.req .choice input:checked {
+  background: radial-gradient(circle, var(--cy) 0 4.5px, transparent 5.5px), var(--field);
+}
+:is(.req .steps .tick, .notes li.pending) input:checked {
+  background: center / 15px no-repeat var(--field) var(--tick-lit);
+}
+.req .copy {
+  background: var(--copy-bg);
+  border-color: var(--line);
+  color: var(--cy-hi);
+}
+.req .copy::after,
+.req .copy.copied::after {
+  color: var(--cy);
+}
+.req .saved {
+  background: none;
+  color: var(--cy);
+  border: 1px solid var(--line);
+}
+.req .agekey .secret {
+  background: var(--cy-fill);
+  border: 1px dashed var(--cy);
+}
+.req .agekey .ready {
+  background: var(--cy-fill);
+  border-left: 2px solid var(--cy);
+}
+.req .agekey .warn,
+.device .msg.err {
+  background: var(--alarm-fill);
+  border-left: 2px solid var(--alarm);
+}
+.device .msg.err {
+  color: var(--alarm-ink);
+}
+.device .msg.err > svg.icon {
+  color: var(--alarm);
+}
+.req .agekey [data-age-msg] {
+  color: var(--alarm);
+}
+.req label.photo.is-saved {
+  background: var(--cy-fill);
+  border-color: var(--cy);
+}
+.req .photo:not(.is-saved) .act {
+  color: var(--cy);
+  border-color: var(--cy);
+} /* (each photo's own button: lit in line, the card's Send is the one lit solid) */
+.req label.photo:focus-within {
+  outline: 1px solid var(--cy);
+  outline-offset: 2px;
+  box-shadow: var(--cy-glow);
+}
+.req label.photo.missing {
+  border: 1px solid var(--alarm);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--alarm) 60%, transparent);
+}
+.req .photo .thumb {
+  background: var(--field);
+}
+.req .photo.busy .thumb {
+  animation: look-busy 1.2s var(--ease) infinite alternate;
+}
+@keyframes look-busy {
+  to {
+    opacity: 0.4;
+  }
+}
+
+/* ---- the intercom */
+.grille {
+  width: 34px;
+  height: 22px;
+  background: radial-gradient(circle, var(--cy) 1px, transparent 1.6px) 0 0 / 5px 5px;
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-sm);
+}
+.intercom .chat {
+  background: var(--field);
+  border-color: var(--line);
+}
+.intercom .chat .ceo {
+  background: var(--their-bg);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+}
+.intercom .chat .me {
+  background: var(--cy-tint);
+  color: var(--cy-hi);
+  border: 1px solid color-mix(in srgb, var(--cy) 55%, transparent);
+}
+.intercom .chat :is(.call, .hint) {
+  color: var(--muted);
+  border-color: var(--rule);
+}
+.device .mic[disabled] {
+  border-style: dashed;
+  color: var(--muted);
+}
+.intercom .call-btn {
+  color: var(--cy);
+  border-color: var(--cy);
+} /* (a call: the line style, lit in its colour) */
+.onair {
+  background: none;
+  color: var(--muted);
+  border: 1px solid var(--rule);
+}
+.onair::before {
+  background: var(--muted);
+  border-radius: 50%;
+}
+.on-air .onair {
+  background: var(--alarm-fill);
+  color: var(--alarm-ink);
+  border-color: var(--alarm);
+  animation: look-onair 1.6s ease-in-out infinite;
+}
+.on-air .onair::before {
+  background: var(--alarm);
+  box-shadow: 0 0 6px var(--alarm);
+}
+@keyframes look-onair {
+  50% {
+    box-shadow: 0 0 14px 2px color-mix(in srgb, var(--alarm) 55%, transparent);
+  }
+}
+.on-air .mic,
+.req .row.on-air button.mic,
+.calls .missed .on-air .mic {
+  background: var(--alarm-fill);
+  color: var(--alarm-ink);
+  border: 1px solid var(--alarm);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--alarm) 50%, transparent);
+  transform: none;
+}
+.on-air #dir-title {
+  border-color: var(--alarm);
+  background: color-mix(in srgb, var(--alarm) 8%, var(--field));
+}
+.voicebar {
+  background: var(--field);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+}
+.voicebar b,
+.sending .voicebar b {
+  color: var(--cy);
+}
+#voice-hint {
+  color: var(--muted);
+}
+.meter i {
+  background: var(--meter-off);
+}
+.meter i.on,
+.sending .meter i.on {
+  background: var(--cy);
+  box-shadow: var(--meter-glow);
+}
+.meter i:nth-child(n + 8).on {
+  background: var(--cy-pale);
+}
+.meter i:nth-child(n + 11).on {
+  background: var(--cy-hi);
+}
+.intercom .call .row button.hangup {
+  background: var(--alarm-fill);
+  color: var(--alarm-ink);
+  border-color: var(--alarm);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--alarm) 40%, transparent);
+}
+
+/* ---- HQ-OS: its attention notes and busy states in its own bright line, not the brownstone's yellow */
+.st-busy,
+.st-running,
+.rows .st-waiting,
+.rows .st-board,
+.push-app .push-said,
+.oversight .msg,
+.notes .msg,
+.crt .why em,
+.calls .heard em,
+.calls .missed summary {
+  color: var(--scr-hi);
+}
+.calls .missed textarea {
+  background: var(--field);
+}
+.calls .missed .mic {
+  box-shadow: none;
+}
+.bell.ringing svg {
+  animation: look-ring 0.5s var(--ease) 3 alternate;
+}
+@keyframes look-ring {
+  from {
+    transform: rotate(-14deg);
+  }
+  to {
+    transform: rotate(14deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bell.ringing svg {
+    animation: none;
+  }
+}
+
+/* ---- the preview viewer's bar */
+#viewer .bar {
+  border-bottom: 1px solid var(--rule);
+}
+/* the slim bar: the address's ↗ cyan; Send N, next to the lit pin, a cyan line
+   on a cyan tint with its count lit */
+#viewer .bar .where i,
+#viewer .bar .where.flash {
+  color: var(--cy);
+}
+#viewer .bar button.send {
+  background: var(--cy-fill);
+  color: var(--cy-hi);
+  border-color: var(--cy);
+  box-shadow: var(--cy-glow);
+}
+#viewer .bar .send i {
+  background: var(--cy);
+  color: var(--scr-ink);
+}
+
+/* ---- the icons' sizes on the board's devices (each look draws its own icons: shell/icons.js). */
+:is(
+    .req .btns button,
+    .device .mic,
+    .req .agekey .make,
+    .intercom .chat .call,
+    .req .agekey .ready,
+    #viewer .bar .pin,
+    #viewer .bar .share,
+    .device header .past-btn,
+    .pager .to-list,
+    .pager .later-btn
+  )
+  > svg.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+/* the moon of cards put aside and an app's line's icon */
+:is(.later-link, .later-note, .app-line) > svg.icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+/* a card's file to download: an arrow into a tray */
+.req .files a > svg {
+  display: none;
+}
+.req .files a::before {
+  content: '';
+  width: 14px;
+  height: 14px;
+  flex: none;
+  background: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+  --icon: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><path d='M12 4v11M7 10.5l5 5 5-5M4.5 19.5h15'/></svg>");
+}
+:is(.care-line, .bell) > svg.icon {
+  width: 16px;
+  height: 16px;
+}
+.care-line > svg.icon {
+  color: var(--red);
+}
+.bell > svg.icon {
+  transform-origin: 50% 0;
+  filter: none;
+}
+.rows.mail svg.lock {
+  width: 10px;
+  height: 12px;
+  vertical-align: -1px;
+}
+.req .photo .thumb svg.icon {
+  width: 28px;
+  height: 28px;
+  color: var(--cy);
+}
