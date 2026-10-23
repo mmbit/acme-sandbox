@@ -46,6 +46,60 @@ test('the org’s read sets who is at work, unless the feed has told a newer sta
   assert.deepEqual(heard, [{ agent: 'wren', was: 'working' }, { agent: 'pip', was: 'idle' }]);
 });
 
+test('the org’s read moves one still at work onto the job the feed missed, its clock from that job’s start', () => {
+  world.setOrg(org(['studio', 'wren']));
+  world.apply({ type: 'status', agent: 'wren', state: 'working', text: 'Reviewing (round 4)', ts: '2026-10-22T13:00:00Z' });
+  const read = org(['studio', 'wren']), asked = Date.now() + 1;
+  read.departments[0].agents[0].status = { state: 'working', task: 'Reviewing (round 5)', since: '2026-10-22T13:27:00Z', jobs: [{ id: 5, task: 'Reviewing (round 5)' }] };
+  const heard = [], off = world.on('status', e => heard.push(e));
+  world.setStatuses(read, asked);
+  world.setStatuses(read, asked);   // (the same read again changes nothing)
+  off();
+  const wren = world.agents.get('wren');
+  assert.deepEqual([wren.task, wren.since, wren.jobs.map(j => j.id)], ['Reviewing (round 5)', Date.parse('2026-10-22T13:27:00Z'), [5]]);
+  assert.deepEqual(heard, [{ agent: 'wren', was: 'working' }]);
+  // its next run says when the job started, and the clock keeps it
+  world.apply({ type: 'status', agent: 'wren', state: 'sleeping', text: 'Paused' });
+  world.apply({ type: 'status', agent: 'wren', state: 'working', text: 'Reviewing (round 5)', since: '2026-10-22T13:27:00Z', ts: '2026-10-22T14:49:00Z' });
+  assert.equal(wren.since, Date.parse('2026-10-22T13:27:00Z'));
+});
+
+test('the feed’s replay is only history: who’s at work comes from the statuses after it, or from the org’s read', () => {
+  world.setOrg(org(['studio', 'fern', 'moss']));
+  const seats = { id: 41, task: 'Seats for ten', project: 'HQ’s looks', thread: 'Meeting room seating', since: '2026-10-22T12:00:00Z' };
+  world.apply({ type: 'status', agent: 'fern', state: 'working', text: seats.task, job: 41, jobs: [seats], since: seats.since });
+  const fern = world.agents.get('fern'), asked = Date.now();
+  // its job 41 ended and 43 started while the tablet slept; on reconnecting the replay brings the stored rows
+  world.apply({ type: 'status', agent: 'fern', state: 'working', text: 'The wall board', ts: '2026-10-22T13:00:00Z', history: true });
+  assert.deepEqual([fern.task, fern.jobs.map(j => j.id), fern.since], [seats.task, [41], Date.parse(seats.since)]);
+  assert.ok(!(fern.heard > asked), 'history confirms nothing');
+  assert.equal(fern.logs.at(-1).text, 'Working: The wall board');
+  // the org's read asked before it still counts
+  const read = org(['studio', 'fern', 'moss']),
+    wall = { id: 43, task: 'The wall board', project: 'Board lines', thread: 'The wall board', since: '2026-10-22T12:50:00Z', lines: { add: 2, del: 1 } };
+  read.departments[0].agents[0].status = { state: 'working', task: wall.task, since: wall.since, jobs: [wall], lines: wall.lines };
+  world.setStatuses(read, asked);
+  assert.deepEqual([fern.task, fern.jobs.map(j => j.id), fern.since, fern.lines], [wall.task, [43], Date.parse(wall.since), wall.lines]);
+  // the statuses after the replay: whole, and newer than a read asked before; one with none is idle
+  world.apply({ type: 'status', agent: 'moss', state: 'working', text: 'Pitching ducks' });
+  const before = Date.now() - 1;
+  world.apply({ type: 'statuses', statuses: { fern: { state: 'working', task: seats.task, since: seats.since, jobs: [seats] } } });
+  assert.deepEqual([fern.task, fern.jobs.map(j => j.id), fern.since, fern.lines], [seats.task, [41], Date.parse(seats.since), undefined]);
+  assert.ok(fern.heard > before);
+  assert.equal(world.agents.get('moss').state, 'idle');
+});
+
+test('a status of one of its running jobs takes that job’s lines', () => {
+  world.setOrg(org(['studio', 'tally']));
+  const seats = { id: 41, task: 'Fitting the tenth chair' }, board = { id: 42, task: 'The wall board' };
+  world.apply({ type: 'status', agent: 'tally', state: 'working', text: board.task, job: 42, jobs: [board, seats] });
+  world.apply({ type: 'lines', agent: 'tally', job: 42, add: 12, del: 3 });
+  const tally = world.agents.get('tally');
+  assert.deepEqual(tally.lines, { add: 12, del: 3 });
+  world.apply({ type: 'status', agent: 'tally', state: 'working', text: seats.task, job: 41, jobs: [seats] });
+  assert.deepEqual([tally.task, tally.lines], [seats.task, undefined]);
+});
+
 test('a room goes dark only when everyone in it sleeps, and the board’s never does', () => {
   world.setOrg(org(['studio', 'wren', 'pip']));
   const asleep = id => world.rooms.find(r => r.id === id).asleep;

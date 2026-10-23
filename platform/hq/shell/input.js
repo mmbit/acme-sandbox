@@ -53,7 +53,7 @@ export function bindInput() {
     if (e.target.closest('input, textarea')) return;
     seq = seq.concat(e.key).slice(-code.length);
     if (seq.join() === code.join()) { audio.unlock(); world.startParty(); }
-    if (PAN[e.key]) { scene.camera.nudge(...PAN[e.key]); dropCard(); }
+    if (PAN[e.key] && !e.defaultPrevented) { scene.camera.nudge(...PAN[e.key]); dropCard(); } // (an arrow the panel took steps its jobs.)
     if (e.key === '+' || e.key === '=') scene.camera.zoom(1);
     if (e.key === '-') scene.camera.zoom(-1);
   });

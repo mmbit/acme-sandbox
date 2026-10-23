@@ -230,6 +230,28 @@ test("a review and the board's call's follow-up are never paused, and memory sho
   for (const j of [review, lane, back, again]) await h.finish(j);
 });
 
+test("the CEO's follow-through check runs to its end once started: work due sooner pauses another run", async () => {
+  paused(null);
+  await seatReady('claude');
+  const other = await h.start({ agent: 'kit', engine: 'claude', title: 'Started first' });
+  // (the later of the two in the order, so the one a pause would stop: the 11:00 check of 23 October, paused a minute in)
+  const check = await h.start({ agent: 'juno', engine: 'claude', title: 'Follow-through check (11:00 UTC)' });
+  h.db
+    .prepare("insert into followthrough_checks (slot, job, created) values ('2026-10-23T11', ?, ?)")
+    .run(check.id, new Date().toISOString());
+  const tight = h.queue({
+    agent: 'moss',
+    engine: 'claude',
+    title: 'Slack used',
+    thread: h.dueThread({ deadline: Date.now() + 60_000 }),
+  });
+  assert.deepEqual([await yieldOf(other), await yieldOf(check)], ['waiting', undefined]);
+  h.db.prepare('delete from followthrough_checks').run();
+  assert.equal(await yieldOf(check), 'waiting', 'the same run as plain work would have been the one');
+  for (const j of [other, check]) await h.finish(j);
+  assert.ok(cancelJob(tight, 'Test finished'));
+});
+
 test('a seat at its run cap: with slots and memory to spare, a run on that seat makes room', async () => {
   paused(null);
   await seatReady('codex');

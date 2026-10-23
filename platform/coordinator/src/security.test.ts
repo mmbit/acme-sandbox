@@ -315,8 +315,8 @@ test('a card that brings work back leads with its pictures, on main or held unti
   assert.equal((await agent('request-rewrite', a.token, { id: shown.body.id, body: pair('main') + '\n\nSharper.' })).status, 200);
 });
 
-// A document a card names by its file opens in the board's Library (card #196 named a brief, which the Library doesn't
-// shelve): one no shelf shows is refused, with the shelves.
+// A document a card names by its file opens in the board's Library: one no shelf shows (a brief, here) is refused, with
+// the shelves.
 test("a card naming a document the Library doesn't show is refused by hq ask, hq request, its pre-check and hq rewrite", async () => {
   const a = await running('bolt');
   const brief = 'The licence to sign is in company/briefs/6728-foundation-licence.md.', shelved = 'How we decide: `CHARTER.md`, and company/DECISIONS.md.';

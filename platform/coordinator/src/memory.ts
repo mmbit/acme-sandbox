@@ -551,8 +551,9 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
   }
   const where = (k: 'job' | 'request' | 'call', col: string) => exact ? ` and ${col} = ${Number(exact)}` : ids ? ` and ${col} in (${ids[k].join(',') || 0})` : '';
   const order = <T extends { id: number }>(k: 'job' | 'request' | 'call', rows: T[]) => ids ? rows.sort((a, b) => ids![k].indexOf(a.id) - ids![k].indexOf(b.id)) : rows;
+  // db.ts jobs_agent_work: the query reads only the rows it shows.
   const done = db.prepare(`select j.id, j.code, j.created, j.title, j.step, j.round, j.status, ${PR} pr, j.result report, j.customers from jobs j
-    where j.agent = ? and j.kind = 'work'${where('job', 'j.id')} order by j.id desc limit ?`).all(agent, n) as any[];
+    indexed by jobs_agent_work where j.agent = ? and j.kind = 'work'${where('job', 'j.id')} order by j.id desc limit ?`).all(agent, n) as any[];
   // closing: HQ's line, apart from the board's answer.
   const requests = db.prepare(`select r.id, r.created, r.kind, r.title, r.status, r.body, r.answer, r.closing, r.customers from requests r
     left join jobs j on j.id = r.job where coalesce(j.agent, r.agent) = ? and r.kind != 'login'${where('request', 'r.id')} order by r.id desc limit ?`).all(agent, n) as any[];

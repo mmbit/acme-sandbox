@@ -53,6 +53,17 @@ export function runEnded(job: number, solo: boolean) {
   );
 }
 
+// HQ's own alarm (jam.ts), from no job (job 0): what HQ can't free itself goes to the Overseer at once, let out as it's
+// written, never behind a run or a queue.
+export function fromHq(text: string) {
+  const at = new Date().toISOString();
+  return Number(
+    db
+      .prepare('insert into overseer_notes (at, job, run, text, released, released_at) values (?, 0, null, ?, ?, ?)')
+      .run(at, text.trim().slice(0, MAX_NOTE_CHARACTERS), latest() + 1, at).lastInsertRowid,
+  );
+}
+
 // The newest notes for the CLI (held: waiting for their run's end).
 export function list() {
   const notes = db
@@ -105,11 +116,15 @@ function outbox(notes: Note[]) {
   const head = `# To the Overseer, from the CEO
 
 The CEO's retained notes, newest first. Only the CEO's own jobs can write here: HQ checks the sender and
-lets a note out when its run ends. Times are UTC. A note asks; the Overseer decides as it always does.
+lets a note out when its run ends. HQ's own alarms (from HQ, not a job) go out as they're written. Times are UTC.
+A note asks; the Overseer decides as it always does.
 `;
   return [
     head,
-    ...notes.map(n => `## #${n.id}, ${n.at.slice(0, 16).replace('T', ' ')} (job #${n.job})\n\n${n.text}\n`),
+    ...notes.map(
+      n =>
+        `## #${n.id}, ${n.at.slice(0, 16).replace('T', ' ')} (${n.job ? `job #${n.job}` : 'from HQ'})\n\n${n.text}\n`,
+    ),
   ].join('\n');
 }
 

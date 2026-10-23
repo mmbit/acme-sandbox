@@ -11,9 +11,10 @@ export const note = {
    hq note <id>                                      a review note the board sent you (review mode) in full; saves its screenshot to
                                                      $TMPDIR/review-note-<id>.XXXXXX.png|jpg so you can look at it, and
                                                      the pictures added to it as review-note-<id>-picture-<n>.XXXXXX.png|jpg
-   hq note <id> fixed [job:<n>] "..."                in an early look at outside notes: you fixed this one (what didn't
-                                                     work and what changed, in a line), by this job's pull request or
-                                                     job <n>'s; its reviewer is thanked once that's deployed`,
+   hq note <id> fixed [job:<n>] "..."                a note hq notes lists for you: you fixed it (what didn't work and
+                                                     what changed, in a line), by this job's pull request or job <n>'s
+                                                     (the job it went to, or one this job queued); once that's deployed
+                                                     HQ's Notes shows it fixed, and an outside reviewer is thanked`,
 
   async run([id, action, ...rest]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '')) stop(NOTE_USAGE);
@@ -132,7 +133,7 @@ function pinnedTo(n: ListedNote) {
 
 const NOTE_USAGE = 'usage: hq note <id> | hq note <id> fixed [job:<n>] "what didn\'t work and what changed"';
 
-// An early look's fix. A refusal (4xx) changed nothing (exit 1); anything else
+// A fix for a note hq notes lists. A refusal (4xx) changed nothing (exit 1); anything else
 // may have (exit 3).
 async function fixed(id: string, action: string, [first, second, ...more]: string[]) {
   const by = first?.match(/^job:([0-9]+)$/);
@@ -143,7 +144,7 @@ async function fixed(id: string, action: string, [first, second, ...more]: strin
   if (api.isSuccess(answer.status)) {
     const marked = api.parseOrNull(answer.body) ?? {};
     return print(
-      `Note #${id} is marked fixed by job #${text(marked.job)}: its reviewer is thanked on the preview once that's merged and deployed.`,
+      `Note #${id} is marked fixed by job #${text(marked.job)}: it shows as fixed once that's merged and deployed.`,
     );
   }
   if (api.isRefusal(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'refused')}`);

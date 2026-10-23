@@ -138,22 +138,22 @@ export function clock(ms: number, now: number) {
   return day === f.dayAt(now) ? time : `${f.weekday(day, 'en', { short: true })} ${time}`;
 }
 
+// (the job from db.ts jobs_state, not its row: the summary reads the end of every job of each done thread it looks at.
+const jobEnd = db.prepare('select id, status, branch from jobs indexed by jobs_state where id = ?');
+const branchPr = db.prepare('select number, status from prs where branch = ? order by number desc limit 1');
+const relandOf = db.prepare(
+  `select id from jobs where kind = 'work' and pr = ? and status != 'cancelled'
+    and coalesce(branch, 'job/' || id) != ? order by id desc limit 1`,
+);
 function endOf(id: number, depth = 0): WorkEnd | undefined {
-  const job = db.prepare('select id, status, branch from jobs where id = ?').get(id) as
-    { id: number; status: string; branch: string | null } | undefined;
+  const job = jobEnd.get(id) as { id: number; status: string; branch: string | null } | undefined;
   if (job?.status === 'failed' || job?.status === 'cancelled') return 'dropped';
   if (job?.status !== 'done') return undefined;
   const branch = job.branch ?? `job/${job.id}`;
-  const pr = db.prepare('select number, status from prs where branch = ? order by number desc limit 1').get(branch) as
-    { number: number; status: string } | undefined;
+  const pr = branchPr.get(branch) as { number: number; status: string } | undefined;
   if (!pr || pr.status === 'merged') return 'finished';
   if (pr.status !== 'closed' || depth >= DEPTH) return undefined;
-  const reland = db
-    .prepare(
-      `select id from jobs where kind = 'work' and pr = ? and status != 'cancelled'
-    and coalesce(branch, 'job/' || id) != ? order by id desc limit 1`,
-    )
-    .get(pr.number, branch) as { id: number } | undefined;
+  const reland = relandOf.get(pr.number, branch) as { id: number } | undefined;
   return reland ? endOf(reland.id, depth + 1) : 'dropped';
 }
 

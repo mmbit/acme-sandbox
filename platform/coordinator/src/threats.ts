@@ -11,7 +11,7 @@ import { getRoom, plannerCapacity } from './room.ts';
 import { ownerOf } from './projects.ts';
 import { findProject } from './projects.ts';
 import { clock } from './windows.ts';
-import { standing, type Forecast, type ThreadOutlook } from './forecast.ts';
+import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
 import { ORIGIN } from './matching.ts';
 import { duration, waitWords } from '../../worker/hq/waits.ts';
 
@@ -81,9 +81,11 @@ function missed(open: OpenThread[], now: number) {
     });
 }
 
-// What holds a thread first: the earliest cause along the chain that sets its finish, else a wait on another thread's
-// job, else nothing but its own work.
+// What holds a thread first: no task drawn, the earliest cause along the chain
+// that sets its finish, else a wait on another thread's job, else nothing but its own work.
 function causeOf(o: ThreadOutlook, now: number) {
+  const undrawn = undrawnWords(o);
+  if (undrawn) return undrawn;
   const link = [...o.chain].reverse().find(l => l.causes.length);
   if (link) return `${waitWords(link.causes[0], ms => clock(ms, now))} (at #${link.job})`;
   const other = o.waits.find(w => w.on === 'job');

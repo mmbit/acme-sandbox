@@ -1,0 +1,6 @@
+# The worker has no swap at any point in its container's lifetime. Compose supplies its finite RAM ceiling.
+[Unit]
+Description=Agent worker memory policy
+
+[Slice]
+MemorySwapMax=0

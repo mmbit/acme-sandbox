@@ -86,7 +86,7 @@ export function days(now = Date.now()) {
 }
 
 // Each agent's last 7 days: jobs done (and each day's, oldest first) and pull requests merged, and the last work job
-// they finished (Wire's cards), by its title as the board reads it, with its naming while it has none (boardnames.ts.)
+// they finished (Wire's cards), by its title as the board reads it (boardnames.ts)
 export function agents(now = Date.now()) {
   const dayOf = makeDayOf();
   const list = Array.from({ length: 7 }, (_, i) => dayOf(now - (6 - i) * 864e5)),
@@ -97,7 +97,7 @@ export function agents(now = Date.now()) {
         jobs: number;
         days: number[];
         prs: number;
-        last: { title: string | null; naming?: { title: string | null }; finished: string } | null;
+        last: { title: string | null; finished: string } | null;
       }
     > = {};
   const of = (agent: string) => (out[agent] ??= { jobs: 0, days: list.map(() => 0), prs: 0, last: null });
@@ -121,7 +121,6 @@ export function agents(now = Date.now()) {
       "select id, agent, title, max(finished) finished from jobs indexed by jobs_last_work where status = 'done' and kind = 'work' group by agent",
     )
     .all() as { id: number; agent: string; title: string; finished: string }[];
-  for (const { agent, title, naming, finished } of boardJobs(last))
-    of(agent).last = { title, ...(naming && { naming }), finished };
+  for (const { agent, title, finished } of boardJobs(last)) of(agent).last = { title, finished };
   return out;
 }

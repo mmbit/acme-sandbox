@@ -138,3 +138,43 @@ test('existing fixes keep task precedence while later work waits for its own for
   assert.equal(seen.get(continuation.id)!.done, 110);
   assert.equal(seen.get(continuation.id)!.merged, 140);
 });
+
+test('due work pauses a predicted follow-through fix while the check itself keeps its room', () => {
+  const minute = 60_000;
+  const check = work(1, {
+    origin: 'hq',
+    followThrough: true,
+    due: 4 * 60 * minute,
+    reviewPlan: {
+      panel: 'check',
+      count: 2,
+      terminal: '1:fix',
+      stages: [
+        {
+          key: '1:fix',
+          kind: 'work',
+          agent: 'author',
+          engine: 'claude',
+          usualMs: 60 * minute,
+          slowMs: 60 * minute,
+          after: [],
+        },
+      ],
+    },
+  });
+  const due = work(2, { notBefore: 3 * minute, due: 15 * minute });
+  const input = { ...snapshot([check, due]), room: 1 };
+  const sizes = new Map([
+    [check.id, { agent_ms: 2 * minute }],
+    [due.id, { agent_ms: minute }],
+  ]);
+  const forecast = play(input, sizes);
+  assert.equal(forecast.get(check.id)!.done, 2 * minute);
+  assert.equal(forecast.get(due.id)!.start, 9 * minute);
+  assert.ok(forecast.get(due.id)!.done! <= due.due!);
+
+  sizes.set(check.id, { agent_ms: 60 * minute });
+  const protectedCheck = play(input, sizes);
+  assert.equal(protectedCheck.get(check.id)!.done, 60 * minute);
+  assert.equal(protectedCheck.get(due.id)!.start, 60 * minute);
+});

@@ -54,6 +54,8 @@ export type QueuedJob = {
   pr: number | null;
   // The board's call follow-up or sent-note routing check (jobs.ts BOARD_CALL), which goes first.
   board: number;
+  // the CEO's hourly follow-through check (jobs.ts FOLLOW_THROUGH), which no pause stops (planner.ts pausable)
+  followThrough?: boolean;
   spentMs: number;
   after: number | 'released' | 'never';
   waitsFor: number[];

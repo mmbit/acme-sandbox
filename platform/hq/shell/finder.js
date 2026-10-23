@@ -113,7 +113,7 @@ async function fill(c) {
       .map(item => ({ ...item, category: c.id, old: isOld(item.at), ...folded(item) }));
     held.set(c.id, { at: Date.now(), items, missed: listed.filter(item => item.missed).map(item => item.missed) });
   } catch (e) {
-    console.warn(`[hq] search: ${c.id} didn't load`, e);
+    console.error(`[hq] search: ${c.id} didn't load`, e);
     held.set(c.id, { at: Date.now(), items: [], missed: [c.name], failed: true });
   }
   if (!$('#finder').hidden) paint();
@@ -184,7 +184,7 @@ function askMeaning() {
   if (q.length < 3 || ranked(q).length >= FEW) return;
   meaningTimer = setTimeout(async () => {
     const { hits, why = null } = await loadMeaning(world.dev, q).catch(e => {
-      console.warn("[hq] search: meaning didn't answer", e);
+      console.error("[hq] search: meaning didn't answer", e);
       return { hits: [], why: '' };
     });
     if ($('#finder').hidden || $('#finder input').value.trim() !== q) return;

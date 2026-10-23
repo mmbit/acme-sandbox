@@ -1,5 +1,5 @@
 // The slide-in panel: agents, rooms and the mascots (news.js opens the newsletter and the library in it).
-import { esc, titleCase, cap, canvas, mins, roleHtml } from '../util.js';
+import { esc, titleCase, cap, canvas, roleHtml } from '../util.js';
 import * as world from '../world/world.js';
 import { clockWhen, timeOf } from '../world/clock.js';
 import { sfx } from './audio.js';
@@ -10,6 +10,7 @@ import { names } from './brand.js';
 import { loadAgentModels, setAgentModel } from './data.js';
 import { prose } from './prose.js';
 import { icon } from './icons.js';
+import { rightNow, readFresh, wireSteps, initRightNow } from './rightnow.js';
 import { engineMark } from './engine.js';
 
 const $ = s => document.querySelector(s);
@@ -29,6 +30,7 @@ export function initPanel() {
   addEventListener('keydown', e => {
     if (e.key === 'Escape' && !panel.hidden) closePanel();
   });
+  initRightNow();
 }
 
 export function show(kind, html, ref, quiet) {
@@ -84,14 +86,10 @@ function portrait(target, name, cls = 'portrait') {
 }
 const STATE = { working: 'Working', waiting: 'Queuing for a seat', sleeping: 'Sleeping', idle: 'Idle' };
 const stateChip = s => `<span class="chip st-${esc(s)}">${esc(STATE[s] || s)}</span>`;
-// the job in hand as the Wire look's panes show it: how long it's been on, and the lines it has added and removed
-const onJob = A =>
-  A.state === 'working' && A.since
-    ? `<small class="on-job">${mins(A.since)} on it · +${A.lines?.add ?? 0} −${A.lines?.del ?? 0} lines</small>`
-    : '';
 
 export function openAgent(A, quiet = false) {
   if (!A) return;
+  if (!quiet && !A.data.board) readFresh(A.id);
   const d = A.data,
     room = world.rooms.find(r => r.id === A.roomId),
     dept = room.board ? 'Top floor' : room.name,
@@ -111,7 +109,6 @@ export function openAgent(A, quiet = false) {
     : '';
   const role = `${esc(d.role || '')}${d.pronouns ? ` · ${esc(d.pronouns)}` : ''} · ${esc(dept)}`,
     focus = d.focus ? `<p class="role role-focus">${esc(d.focus)}</p>` : '';
-  const task = A.task ? esc(A.task) : '<span class="muted">Nothing on the desk right now.</span>';
   const call =
     !d.board && !d.temp ? `<button class="call-agent" data-call>${icon('phone')}Call ${esc(d.name)}</button>` : '';
   // (the engine as its mark)
@@ -121,7 +118,7 @@ export function openAgent(A, quiet = false) {
     <header class="who"><div class="pframe" style="--c:${pic.accent}"></div>
       <div><h2>${esc(d.name)}</h2><p class="role">${role}</p>${focus}
       <p>${engineMark(d.engine, { titled: true })} ${stateChip(A.state)}</p></div></header>
-    <section class="task"><h3>Right now</h3><p>${task}</p>${onJob(A)}</section>
+    <section class="task">${rightNow(A)}</section>
     ${saidHtml(A.id)}
     ${d.look ? `<p class="look">“${esc(d.look)}”</p>` : ''}
     ${call}
@@ -133,6 +130,7 @@ export function openAgent(A, quiet = false) {
     quiet,
   );
   body.querySelector('.pframe').append(pic.img);
+  wireSteps();
   body.querySelector('[data-call]')?.addEventListener('click', () => callAgent(A.id, d.name));
   body
     .querySelectorAll('[data-tool]')

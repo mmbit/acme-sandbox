@@ -69,7 +69,8 @@ mkdirSync(SHOTS, { recursive: true });
 // - share: the outside reviewer's share it was made with.
 // - author, author_email: who wrote it there, as they signed in. The board's notes have neither.
 // - early: the job that looked at an outside note while its share was open (lookEarly).
-// - fixed, fixed_by: what that look fixed, in its words, and the job whose pull request carries the fix.
+// - fixed, fixed_by: what that look, or the job a note was sent to, fixed, in its words, and the job whose pull request
+//   carries the fix.
 // - thanked: when its reviewer was told it's fixed.
 // - pictures: the files of the pictures the reviewer added, a JSON list in their order.
 db.exec(`create table if not exists review_notes (id integer primary key, created text not null, slug text not null,
@@ -540,7 +541,8 @@ const row = (n: any) => {
 const LIST = `select * from (select * from review_notes where status = 'pending' and (?1 is null or coalesce(about, slug) = ?1)
   union all select * from (select * from review_notes where status not in ('pending', 'outside') and (?1 is null or coalesce(about, slug) = ?1)
   order by id desc limit 200)) order by status = 'pending' desc, id desc`;
-export const listNotes = (slug?: string) => db.prepare(LIST).all(slug ?? null).map(row);
+// fixed_live: its fix is merged and deployed, so HQ shows it fixed
+export const listNotes = (slug?: string) => db.prepare(LIST).all(slug ?? null).map((n: any) => ({ ...row(n), fixed_live: !!n.fixed && fixLive(n.fixed_by) }));
 // Products (and cycle folders) with notes, the ones waiting on the board first.
 export const products = () => (db.prepare(`select coalesce(about, slug) slug, sum(status = 'pending') pending, sum(status = 'sent') sent,
   sum(status = 'discarded') discarded, max(id) last from review_notes where status != 'outside' group by coalesce(about, slug)
@@ -1020,29 +1022,32 @@ const fixedLine = (n: any) => {
   return 'never' in done ? `\nAn early fix (job #${n.fixed_by}) never landed: ${done.never}` : `\nAlready fixed (job #${n.fixed_by}): ${visible(n.fixed)}`;
 };
 
-// hq note <id> fixed [job:<n>] "...": the early look marks a note of its own fixed, by its own pull request or another
-// job's. Its words are one line.
+// hq note <id> fixed [job:<n>] "...": an agent marks a note hq notes lists for it (sent to one of its jobs, or in an early
+// look of its) fixed, by this job's pull request, the one of the job it went to, or a job this one queued. Its words are
+// one line. (an agent's sent notes)
 export function markFixed(id: number, how: unknown, by: number | null, me: { id: number; agent: string }) {
-  const n = db.prepare('select * from review_notes where id = ? and early = ?').get(id, me.id) as any;
-  if (!n) return `note #${id} isn't one this job looks at`;
+  const n = db.prepare(`select n.*, j.id went from review_notes n join jobs j on j.id = case when n.status = 'sent' then n.job else n.early end
+    where n.id = ? and j.agent = ?`).get(id, me.agent) as any;
+  if (!n) return `note #${id} isn't one hq notes lists for you`;
   const fix = by ?? me.id;
   if (by != null && !db.prepare("select 1 from jobs where id = ? and kind = 'work'").get(by)) return `job #${by} isn't a job: give the number hq job answered with`;
-  // another job's fix is one this look queued, so it came after it: an older job's is long live and thanks no one
-  if (by != null && by < me.id) return `job #${by} came before this one: give the number hq job answered with in this job`;
+  // another job's fix is the note's own job's, or one this job queued, so it came after it: an older job's is long live
+  // and thanks no one
+  if (by != null && by < me.id && by !== n.went) return `job #${by} came before this one: give the number hq job answered with in this job, or job:${n.went}, the one the note went to`;
   const words = line(how, 300);
   if (!words) return 'say in a line what didn\'t work and what changed';
   db.prepare('update review_notes set fixed = ?, fixed_by = ? where id = ?').run(words, fix, id);
-  publish({ type: 'log', agent: me.agent, text: `Outside note #${id} on ${n.about ?? n.slug}: fixed with job #${fix}` });
+  publish({ type: 'log', agent: me.agent, text: `${n.share ? 'Outside note' : 'Review note'} #${id} on ${n.about ?? n.slug}: fixed with job #${fix}` });
   return { id, job: fix };
 }
 
+const fixLive = (fixedBy: number) => { const done = deployed(String(fixedBy)); return !!done && !('never' in done); };
 // The thank-you an outsider's next preview page shows (shared/review/thanks.js, after the tool or alone): their notes whose
 // fix is merged and deployed and that they haven't been thanked for, with a few words of each. Empty if none.
 async function thanksFor(share: shares.Session) {
-  const isLive = (fixedBy: number) => { const done = deployed(String(fixedBy)); return !!done && !('never' in done); };
   const gist = (note: string) => { const said = [...visible(note).replace(/\s+/g, ' ').trim()]; return said.length > 70 ? `${said.slice(0, 69).join('').trim()}…` : said.join(''); };
   const fixed = (db.prepare('select id, note, fixed_by from review_notes where share = ? and author = ? and fixed is not null and thanked is null order by id')
-    .all(share.id, share.guest) as { id: number; note: string; fixed_by: number }[]).filter(n => isLive(n.fixed_by));
+    .all(share.id, share.guest) as { id: number; note: string; fixed_by: number }[]).filter(n => fixLive(n.fixed_by));
   if (!fixed.length) return '';
   return `\n${(await readFile(`${REPO_DIR}/shared/review/thanks.js`, 'utf8')).replace('{{FIXED}}', () => inJsString(JSON.stringify({ ids: fixed.map(n => n.id), notes: fixed.slice(0, 3).map(n => gist(n.note)), crew: names().name })))}`;
 }

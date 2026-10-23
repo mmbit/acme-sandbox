@@ -307,7 +307,8 @@ function wireCap(box, s, redraw) {
     if (!s || !Number.isInteger(amount) || amount < 1 || amount > 500) { field.focus(); return; }
     const button = form.querySelector('button');
     button.disabled = true;
-    try { redraw(await setShareCap(world.dev, s.id, euros), `Each voucher now pays up to €${euros}.`); sfx.blip(); }
+    // (the amount, not the euros formatter)
+    try { redraw(await setShareCap(world.dev, s.id, amount), `Each voucher now pays up to ${euros(amount)}.`); sfx.blip(); }
     catch (err) { button.disabled = false; msg().textContent = refused(err); }
   });
 }
@@ -2849,8 +2850,8 @@ async function notes(el) {
       ${x.seen ? `<span class="dim seen">${esc(x.seen)}</span>` : ''}
       ${x.shot ? `<button class="shot" data-shot="${+x.id}" data-file="${esc(x.shotFile ?? '')}" aria-label="Show the screenshot bigger"><img src="${esc(reviewShot(world.dev, x.id, x.shotFile))}" alt="" loading="lazy"${shotFrame(x.element, x.viewport)}></button>` : ''}
       ${x.pictures?.length ? `<span class="pics">${x.pictures.map(file => pictureButton(x.id, file)).join('')}</span>` : ''}</li>`;   // (pictures)
-  // (a note marked sent on a call with no job: answered there.)
-  const state = x => x.status === 'sent' && !x.job && x.call ? 'answered' : x.status;
+  // (a note marked sent on a call with no job: answered there. One whose fix is live: fixed.)
+  const state = x => x.fixed_live ? 'fixed' : x.status === 'sent' && !x.job && x.call ? 'answered' : x.status;
   // (an outside reviewer's, once it went: who wrote it, as they signed in; and a general note says so)
   const by = x => {
     const line = [x.element?.kind === 'general' ? 'General note' : '', x.author ? `by ${esc(x.author)}${x.author_email ? ` (${esc(x.author_email)})` : ''}` : ''].filter(Boolean);

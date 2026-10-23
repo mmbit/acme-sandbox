@@ -37,11 +37,12 @@ export function createScene({ canvas: screen, world: w, brand: b, settings, shel
   Object.assign(walls, { on, shut: settings.intro || on, anim: null, freeze: null });
   Object.assign(cam, { t: null, vx: 0, vy: 0, held: false, pinching: false });
   const offs = listen();
+  document.body.classList.add('brownstone'); // (the shell's pixel touches for this look alone: style.css).
   if (w.dev) for (const m of w.mascots) if (!ART[m.kind]) console.warn(`[hq] the brownstone has no art for a ${m.kind}, so ${m.name} isn't in the building`);
   return {
     update: step, draw, hit, focus, resize, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,
-    // its signals stop, and its sky leaves the page's background
-    dispose() { for (const off of offs) off(); document.body.style.background = ''; },
+    // its signals stop, and its sky and its pixel touches leave the page
+    dispose() { for (const off of offs) off(); document.body.style.background = ''; document.body.classList.remove('brownstone'); },
     controls: [{ id: 'walls', title: 'Outside walls', pressed: () => walls.on, toggle: () => setWalls(!walls.on) }],
     dev: {
       R, cam, fx,

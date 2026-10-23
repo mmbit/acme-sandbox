@@ -14,6 +14,7 @@ import { jobSheet, followSteps } from './jobsheet.js';
 import * as levels from './levels.js';
 import { sortable, sorting, sortGesture } from './sorting.js';
 import { sides } from './sides.js';
+import { keepCovers } from './covers.js';
 
 const $ = s => document.querySelector(s);
 const REFRESH_MS = 20000;
@@ -61,7 +62,10 @@ let board = null,
   opening = null,
   // where the job opened last came from (its row's place), for its card to fly out of
   origin = null,
-  timer = null;
+  timer = null,
+  // the level's keys coming in (levels.moveIn) and the view flying out, which a refresh waits for rather than cutting
+  // them short.
+  arriving = Promise.resolve();
 export const projectsOpen = () => !$('#projects').hidden;
 const modal = () => $('#projects .pj-modal');
 // until the board first loads: three of the view’s keys pressed in turn.
@@ -117,8 +121,12 @@ export async function openProjects(at = {}) {
       thread: at.thread ?? null,
       showDone: !!at.done,
     };
-  if (!board) modal().innerHTML = LOADING;
-  await refresh(was ? '' : 'down');
+  // (the board's work read before, where it holds this place, shows at once, its keys dropping in, and the read brings
+  // it up to date in place: the keys never drop in twice.)
+  const ready = Boolean(board) && levels.holds(view, work());
+  if (ready) paint(was ? '' : 'down');
+  else if (!board || !was) modal().innerHTML = LOADING;
+  await refresh(ready || was ? '' : 'down');
   clearInterval(timer);
   timer = setInterval(refresh, REFRESH_MS);
 }
@@ -156,11 +164,13 @@ async function refresh(motion = '') {
         view.jobId = null;
       }
     }
+    await keepCovers(board);
   } catch {
     if (!board)
       modal().innerHTML = `<div class="pj-board"><p class="pj-notice" role="status">The projects didn’t load. Trying again…</p></div>${LOADING}`;
     return;
   }
+  await arriving;
   // (a key pressed to sort keeps its grid until the gesture ends)
   if (projectsOpen() && !sortGesture()) paint(motion);
 }
@@ -177,7 +187,7 @@ function jobsOnBoard() {
     [...p.threads, ...[...closed.values()].filter(t => t.project === p.id)].map(t => [p, t]),
   );
   const placed = threads.flatMap(([p, t]) => t.jobs.map(j => ({ ...j, project: p, projectThread: t })));
-  return [...placed, ...(board?.unsorted ?? []), ...(lookedUp ? [lookedUp] : [])];
+  return [...placed, ...(board?.unsorted ?? []), ...(board?.meetings ?? []), ...(lookedUp ? [lookedUp] : [])];
 }
 // ---------------------------------------------------------------- moving about
 // A move to a change of the view: the level's keys leave, and it commits unless a later move came meanwhile
@@ -350,7 +360,7 @@ function paint(motion = '') {
     board: el.querySelector('.pj-board')?.scrollTop ?? 0,
     job: el.querySelector('.pj-card-faces')?.scrollTop ?? 0,
     sums: [...el.querySelectorAll('.pj-eta[open]')].map(d => d.dataset.eta),
-    focus: focusOf(el),
+    focus: levels.focusOf(el, TAPPABLE),
   };
   const sameJob = el.querySelector('.pj-card')?.dataset.jobOpen === String(view.jobId ?? '');
   const job = view.jobId ? jobsOnBoard().find(x => x.id === view.jobId) : null;
@@ -375,17 +385,5 @@ function paint(motion = '') {
   if (sheet && view.steps) toggled({ target: sheet.querySelector('.pj-steps') ?? {} });
   if (kept.focus) el.querySelectorAll(kept.focus.selector)[kept.focus.index]?.focus({ preventScroll: true });
   levels.moveIn(el, motion);
-}
-// the element in focus, found again after a paint by what it does
-function focusOf(el) {
-  const focused = el.contains(document.activeElement) ? document.activeElement : null;
-  const name = focused && TAPPABLE.find(n => focused.hasAttribute(n));
-  const selector = name
-    ? `[${name}="${CSS.escape(focused.getAttribute(name))}"]`
-    : focused?.matches('.pj-eta > summary')
-      ? `.pj-eta[data-eta="${CSS.escape(focused.parentElement.dataset.eta)}"] > summary`
-      : focused?.matches('.pj-steps > summary')
-        ? '.pj-steps > summary'
-        : null;
-  return selector && { selector, index: [...el.querySelectorAll(selector)].indexOf(focused) };
+  arriving = levels.settled(el);
 }

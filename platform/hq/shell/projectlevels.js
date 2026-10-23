@@ -17,6 +17,11 @@ export function levelHtml(l, { view, board, opening }) {
     // (Recurring: the routines' projects, as any project's tiles.)
     if (view.group === 'recurring')
       return `${keys.head({ back: 'Projects', title: group.name })}<div class="pj-level pj-grid">${routinesOf(board).map(keys.projectTile).join('') || '<p class="pj-none">Nothing here right now.</p>'}</div>`;
+    // (Meetings: a tile each.)
+    if (view.group === 'meetings') {
+      const seats = board.meetings ?? [];
+      return `${keys.head({ back: 'Projects', title: group.name, keys: keys.doneKey(keys.endedMeetings(seats), view.showDone) })}<div class="pj-level pj-grid">${keys.meetingTiles(seats, view.showDone)}</div>`;
+    }
     const done = groupDone(view.group),
       rows = [...groupRows(view.group), ...(view.showDone ? done : [])];
     return `${keys.head({ back: 'Projects', title: group.name, keys: keys.doneKey(done.length, view.showDone) })}<div class="pj-level pj-grid">${keys.groupTiles(rows)}</div>`;

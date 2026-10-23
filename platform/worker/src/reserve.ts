@@ -1,7 +1,7 @@
 // Memory set aside for jobs still starting and slots holding a meeting seat.
 // Jobs started in the last minute reserve JOB_MB until they reach their full size. A meeting seat mostly waits on
 // hq meeting listen (~300 MB measured), so each hold reserves SEAT_MB. A free slot may claim while FREE_MB remains
-// after these reservations (worker.ts room).
+// after these reservations and the candidate's allowance (worker.ts room).
 export const FREE_MB = 1500,
   JOB_MB = 700,
   SEAT_MB = 400,
@@ -17,12 +17,15 @@ export function reservations<Seat>(now = Date.now) {
   const reservedMb = (n = starting()) => n * JOB_MB + holding.size * SEAT_MB;
   // What's free of the available MB, less the reservations when young (else the room as it stands)
   const freeMb = (availableMb: number, young = true) => availableMb - (young ? reservedMb() : 0);
+  const claimMb = (availableMb: number, young = true) => Math.max(0, Math.floor(freeMb(availableMb, young) - FREE_MB));
   return {
     holding,
     starting,
     reservedMb,
     freeMb,
-    room: (availableMb: number, young = true) => freeMb(availableMb, young) >= FREE_MB,
+    claimMb,
+    starts: (availableMb: number, young = true) => Math.floor(claimMb(availableMb, young) / JOB_MB),
+    room: (availableMb: number, young = true) => claimMb(availableMb, young) >= JOB_MB,
     // A claim takes its room before it's asked (its start, given back if it finds nothing), so idle slots can't all
     // start at once.
     take() {

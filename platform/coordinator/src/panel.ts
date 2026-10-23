@@ -1,6 +1,7 @@
-// Branch authors and the independent consolidator selected for a round.
+// Branch authors, review eligibility and the consolidator selected for a round.
 import { db, redacted } from './db.ts';
-import { ceo, roles } from './company.ts';
+import { org, roles } from './company.ts';
+import { findAgent } from './jobs.ts';
 
 db.exec(`create table if not exists review_triage (job integer primary key, pr integer not null,
   round integer not null, sha text, base text, selection text not null);
@@ -30,8 +31,13 @@ export function authorsOf(pr: number) {
   return authors(row.branch, row.author);
 }
 
+export function excludedAuthors(pr: number) {
+  const authors = authorsOf(pr);
+  return authors.size === 1 ? authors : new Set<string>();
+}
+
 export function consolidator(pr?: number) {
-  const excluded = pr === undefined ? new Set<string>() : authorsOf(pr);
+  const candidates = consolidators(pr);
   const selected =
     pr === undefined
       ? undefined
@@ -42,13 +48,46 @@ export function consolidator(pr?: number) {
           )
           .get(pr) as { selection: string } | undefined);
   const assigned = selected ? (JSON.parse(selected.selection).consolidator as string) : undefined;
-  if (assigned && !excluded.has(assigned)) return assigned;
-  return roles().consolidators.find(agent => !excluded.has(agent)) ?? ceo();
+  if (assigned && candidates.includes(assigned)) return assigned;
+  if (!candidates.length) throw new Error(`No eligible consolidator${pr === undefined ? '' : ` for PR #${pr}`}`);
+  return candidates[0];
+}
+
+export function consolidators(pr?: number): string[] {
+  const excluded = pr === undefined ? new Set<string>() : excludedAuthors(pr);
+  const staff = org().departments.flatMap((department: { agents?: { id: string }[] }) =>
+    (department.agents ?? []).map(agent => agent.id),
+  );
+  const eligible = new Set<string>(
+    staff.filter(
+      (agent: string) => !excluded.has(agent) && ['claude', 'codex'].includes(findAgent(agent)?.engine ?? ''),
+    ),
+  );
+  const configured = roles();
+  for (const candidates of [configured.consolidators, configured.reviewers, staff]) {
+    const available = [...new Set<string>(candidates)].filter(agent => eligible.has(agent));
+    if (available.length) return available;
+  }
+  return [];
+}
+
+// Logs and follow-ups credit the recorded round job, or the author before review starts.
+export function attribution(pr: number) {
+  const { agent } = db
+    .prepare(
+      `select coalesce((
+    select j.agent from jobs j where j.pr = p.number and j.round = p.round
+    and j.kind = 'consolidate' and j.id > p.review_since and j.voided is null
+    order by j.id desc limit 1
+  ), p.author) agent from prs p where p.number = ?`,
+    )
+    .get(pr) as { agent: string };
+  return agent;
 }
 
 export const reviewers = (pr: number) => {
-  const authors = authorsOf(pr);
-  return roles().reviewers.filter(agent => !authors.has(agent));
+  const excluded = excludedAuthors(pr);
+  return roles().reviewers.filter(agent => !excluded.has(agent));
 };
 
 export type Seat = { agent: string; files: string[]; domains: string[]; slice: boolean };

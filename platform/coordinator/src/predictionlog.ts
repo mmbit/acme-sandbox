@@ -15,7 +15,8 @@ db.exec(`create table if not exists prediction_log (id integer primary key, at i
   thread text, start integer, merged integer, held integer, agent_ms integer, sized_by text,
   version integer not null);
   create index if not exists prediction_log_job on prediction_log (job);
-  create index if not exists prediction_log_thread on prediction_log (thread)`);
+  drop index if exists prediction_log_thread;
+  create index if not exists prediction_log_thread_at on prediction_log (thread, at)`);
 
 export type LogRow = {
   at: number;
@@ -109,6 +110,7 @@ export const ofJobs = (jobs: number[]) =>
 
 // A thread's ETA as the log had it at `at`: its latest row by then (merged null: no merge in sight then), or undefined
 // when the log has nothing that old (deadlines.ts).
+// One seek on prediction_log_thread_at: hq when reads it per window and trial.
 export const threadAt = (thread: string, at: number) =>
   db
     .prepare('select merged from prediction_log where thread = ? and at <= ? order by at desc, id desc limit 1')

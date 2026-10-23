@@ -271,7 +271,7 @@ test("a card rings from work the pass gives a latest start (a due thread's, work
   );
 });
 
-test("a deadline orders the claim even once it's past; a done thread's orders nothing", async () => {
+test("a deadline orders the claim even once it's past, after the windows still open; a done thread's orders nothing", async () => {
   const engine = 'urgency',
     now = Date.now();
   const ahead = jobs.createJob({
@@ -292,7 +292,7 @@ test("a deadline orders the claim even once it's past; a done thread's orders no
   assert.deepEqual(plan.done(closed, 'juno'), { ok: true });
   const done = jobs.createJob({ agent: 'kit', title: 'Closed', prompt: 'x', thread: closed, engine }).id;
   const plain = jobs.createJob({ agent: 'kit', title: 'Plain', prompt: 'x', engine }).id;
-  assert.deepEqual(await claimed(engine, 4), [past, ahead, done, plain]);
+  assert.deepEqual(await claimed(engine, 4), [ahead, past, done, plain]);
 });
 
 test("the queue's play uses latest starts before unwindowed older work", () => {

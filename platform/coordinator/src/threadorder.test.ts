@@ -403,6 +403,58 @@ test("a bare thread's placeholder keeps its size for the hour, then sizes on the
   assert.equal(size(now + HOUR + 60_000), since, 'then sized on the done work since');
 });
 
+test('a thread drawn within the hour is sized on the done work read for the hour, not every done job read again', () => {
+  const HOUR = 3_600_000,
+    now = Date.now() + 5 * HOUR;
+  const done = (hours: number) => {
+    for (let i = 0; i < 3; i++)
+      h.pastJob({
+        agent: 'wren',
+        title: 'Thread pool-kept: It works',
+        run: { started: now - hours * HOUR, ended: now },
+      });
+  };
+  predictions.keepSpotSizes();
+  done(1);
+  const size = (slug: string, at: number) => {
+    const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
+    return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === slug)!.id)!.agent_ms;
+  };
+  const first = size(thread('pool-kept'), now);
+  done(3);
+  const again = thread('pool-kept-again');
+  assert.equal(size(again, now + 60_000), first, "on the hour's done work");
+  const since = predictions.predict({ title: 'Thread pool-kept-again: It works', origin: 'work', agent: 'wren' });
+  assert.ok(since.size.agent_ms > first);
+  assert.equal(size(again, now + HOUR + 60_000), since.size.agent_ms, 'the next hour on the done work since');
+});
+
+test("a bare thread is sized once for its name, kept through the plays after, and sized again when it's renamed", () => {
+  const HOUR = 3_600_000,
+    now = Date.now() + 8 * HOUR;
+  const done = (title: string, hours: number) => {
+    for (let i = 0; i < 8; i++)
+      h.pastJob({ agent: 'wren', title, run: { started: now - (i + hours) * HOUR, ended: now - i * HOUR } });
+  };
+  const sized = (title: string) => predictions.predict({ title, origin: 'work', agent: 'wren' }).size.agent_ms;
+  predictions.keepSpotSizes();
+  done('Thread harbour: It works', 4);
+  done('Thread quay: It works', 1);
+  const bare = thread('harbour');
+  const size = (at: number) => {
+    const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
+    return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === bare)!.id)!.agent_ms;
+  };
+  const [first, quay] = [sized('Thread harbour: It works'), sized('Thread quay: It works')];
+  assert.notEqual(first, quay, 'the two names size apart on this done work');
+  assert.equal(size(now), first);
+  done('Thread harbour: It works', 2);
+  assert.equal(size(now + 60_000), first, 'kept, though done work like it came in');
+  const renamed = plan.rename(bare, { name: 'Thread quay' }, 'wren');
+  assert.equal(typeof renamed, 'object', typeof renamed === 'string' ? renamed : '');
+  assert.equal(size(now + 120_000), quay, 'renamed, it is sized again for its new name');
+});
+
 test('hq projects and hq thread read a bare thread without a made-up job number', async () => {
   const bare = thread('bare');
   forecast.refresh(Date.now());

@@ -11,6 +11,7 @@ const h = await harness('panel', {
   },
 });
 const panel = await import('./panel.ts');
+const { org } = await import('./company.ts');
 const review = await import('./review.ts');
 const team = await import('./team.ts');
 const files = ['products/x/index.html'];
@@ -46,8 +47,8 @@ test('pushed consolidator edits and their registered members are authors through
   h.storedPr(72, author, 'open', files, { sha, round: 2 });
   for (const pr of [71, 72]) {
     assert.deepEqual(panel.authorsOf(pr), new Set(['bolt', 'quill', 'rook']));
-    assert.equal(panel.consolidator(pr), 'juno');
-    assert.ok(!panel.reviewers(pr).includes('rook'));
+    assert.equal(panel.consolidator(pr), 'quill');
+    assert.ok(panel.reviewers(pr).includes('rook'));
   }
   assert.deepEqual(panel.authors(branch), new Set(['bolt', 'quill', 'rook']));
   const touched = (await h.feed()).find(event => event.text?.includes('PR #71: Quill touched up'));
@@ -75,4 +76,43 @@ test('read-only and unpushed consolidations remain independent reviewers', async
   assert.equal(panel.consolidator(74), 'quill');
   assert.ok(panel.reviewers(74).includes('nib'));
   assert.deepEqual(panel.authorsOf(73), new Set(['bolt']), 'other branches do not supply authors');
+});
+
+test('a branch authored by every staff member still has a consolidator and reviewers', () => {
+  const author = h.ended({ agent: 'bolt' });
+  h.storedPr(75, author, 'open', files, { sha, round: 1 });
+  const { departments } = org();
+  for (const department of departments)
+    for (const agent of department.agents ?? []) h.ended({ agent: agent.id, branch: `job/${author}` });
+  assert.equal(panel.consolidator(75), 'quill');
+  assert.ok(panel.reviewers(75).includes('rook'));
+});
+
+test('a sole author cannot be its reviewer or consolidator', () => {
+  for (const [pr, agent] of [
+    [76, 'quill'],
+    [77, 'rook'],
+    [78, 'juno'],
+  ] as const) {
+    const author = h.ended({ agent });
+    h.storedPr(pr, author, 'open', files, { sha, round: 1 });
+    assert.ok(!panel.reviewers(pr).includes(agent));
+    assert.ok(!panel.consolidators(pr).includes(agent));
+    assert.notEqual(panel.consolidator(pr), agent);
+  }
+});
+
+test('the default CEO consolidator follows the same sole-author rule', () => {
+  const path = `${process.env.REPO_DIR}/company/org.yaml`,
+    before = readFileSync(path, 'utf8');
+  writeFileSync(path, before.replace('consolidator: [quill, rook]', 'consolidator:'));
+  try {
+    const author = h.ended({ agent: 'juno' });
+    h.storedPr(79, author, 'open', files, { sha, round: 1 });
+    assert.notEqual(panel.consolidator(79), 'juno');
+    h.ended({ agent: 'bolt', branch: `job/${author}` });
+    assert.equal(panel.consolidator(79), 'juno');
+  } finally {
+    writeFileSync(path, before);
+  }
 });

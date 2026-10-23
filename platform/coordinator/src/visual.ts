@@ -1,6 +1,7 @@
 // What people see, checked in pictures (org.yaml review.visual): a change to those paths is looked at in its previews, in
-// every state and setting they render, by its author before the push (a record of the run beside the change) and by every
-// reviewer and the ruling (each names the pictures it opened). A picture wrong in any of them is blocking, in every round.
+// every state and setting they render, by its author before the push (a record of the run beside the change) and by the
+// one reader the round's triage chose to look (who names the pictures it opened); the ruling weighs what that reader saw.
+// A picture wrong in any of them is blocking, in every round.
 import { matchesGlob } from 'node:path';
 import { db } from './db.ts';
 import { reviewSettings, type VisualCheck } from './reviewsettings.ts';
@@ -66,7 +67,7 @@ blocking in every round: what the board sees is what a customer meets. Add to yo
    "previews": [{"sheet": "<the path you opened>", "saw": "<one line: what it shows in the day and in the dark>"}]
 A report without the pictures you opened counts as a review that didn't run.`;
 
-// The ruling's step: open them too before a merge
+// The ruling's step when it reads alone as the one who looks: open them before a merge
 export const rulingStep = (checks: Applied[]) =>
   !checks.length
     ? ''
@@ -74,8 +75,17 @@ export const rulingStep = (checks: Applied[]) =>
 
 ## The previews
 ${checks.map(check => `- ${pictures(check)}`).join('\n')}
-Open them yourself before you rule, and weigh what each reviewer's "previews" says it saw: a picture wrong in any state
-or setting is blocking, whatever the round.`;
+Open them yourself before you rule: a picture wrong in any state or setting is blocking, whatever the round.`;
+
+// The ruling's step when a reviewer looked: weigh what they saw, without rendering the pictures again
+export const weighStep = (checks: Applied[], looker: string) =>
+  !checks.length
+    ? ''
+    : `
+
+## The previews
+${looker} was this round's one reader to look at ${checks.flatMap(check => check.files).join(', ')}: weigh what their
+"previews" says they saw, and don't render them again. A picture wrong in any state or setting is blocking, whatever the round.`;
 
 // Whether a reviewer's report names the pictures it opened
 export function sawPreviews(output: string | null) {

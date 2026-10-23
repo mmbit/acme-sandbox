@@ -157,11 +157,11 @@ test("each agent's week: jobs done, pull requests merged and the last work job f
   await done('A review', { kind: 'review', pr: 3 });
   merged(3, 'penny');
   const penny = (await work()).agents.penny;
-  // (the last by the board's name, still being made: plainnames.test.ts.)
+  // (the last by the board's name, the agent's own words until it's made: plainnames.test.ts.)
   const { finished } = h.db.prepare('select finished from jobs where id = ?').get(ledger) as { finished: string };
   assert.deepEqual(
     { jobs: penny.jobs, today: penny.days.at(-1), prs: penny.prs, last: penny.last },
-    { jobs: 2, today: 2, prs: 1, last: { title: null, naming: { title: null }, finished } },
+    { jobs: 2, today: 2, prs: 1, last: { title: 'The ledger', finished } },
   );
 });
 

@@ -39,6 +39,27 @@ test('ready reviews get one occupied Codex place while work keeps the other and 
   await h.finish(work);
 });
 
+test("a review waiting for its place pauses other work, never the CEO's follow-through check", async () => {
+  await h.capacity({ codex: 2 });
+  const a = await h.start({ agent: 'kit', engine: 'codex' }, { seat });
+  const check = await h.start({ agent: 'bolt', engine: 'codex' }, { seat });
+  h.db
+    .prepare("insert into followthrough_checks (slot, job, created) values ('2026-10-23T11', ?, ?)")
+    .run(check.id, new Date().toISOString());
+  const review = h.queue({ agent: 'quill', engine: 'codex', kind: 'review' });
+  const room = { capped: [seat] };
+  assert.deepEqual(
+    [(await h.heartbeat(a, room)).body.yield, (await h.heartbeat(check, room)).body.yield],
+    ['waiting', undefined],
+    'the check is the later in the order, and runs on',
+  );
+  h.db.prepare('delete from followthrough_checks').run();
+  for (const j of [a, check]) await h.finish(j);
+  const started = (await claim())!;
+  assert.equal(started.id, review);
+  await h.finish(started);
+});
+
 test('a free Codex seat starts a review before older work and then starts work beside it', async () => {
   const work = h.queue({ agent: 'kit', engine: 'codex' });
   const review = h.queue({ agent: 'quill', engine: 'codex', kind: 'consolidate' });

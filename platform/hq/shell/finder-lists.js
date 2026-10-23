@@ -75,6 +75,7 @@ async function work() {
       ...p.threads.flatMap(t => t.jobs.map(j => task(j, `${nameText(t, 'name')} · ${nameText(p, 'name')}`))),
     ]),
     ...(board.unsorted ?? []).map(j => task(j, 'Being placed')),
+    ...(board.meetings ?? []).map(j => task(j, 'Meetings')),
   ];
 }
 async function cards() {

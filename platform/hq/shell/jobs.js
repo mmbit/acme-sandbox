@@ -22,17 +22,13 @@ const NOISE = /\([^()]*\)|#\d+/g;
 export function titleHtml(j) {
   const quiet = html => `<span class="aside">${html}</span>`;
   const words = s => { let html = '', at = 0; for (const m of s.matchAll(NOISE)) { html += withJobLinks(s, at, m.index) + quiet(withJobLinks(s, m.index, m.index + m[0].length)); at = m.index + m[0].length; } return html + withJobLinks(s, at); };
-  return (j.step ? quiet(esc(`${j.step}:`)) + ' ' : '') + (unnamed(j) ? nameHtml(j) : words(String(j.title ?? '').trim()));
+  return (j.step ? quiet(esc(`${j.step}:`)) + ' ' : '') + words(String(j.title ?? '').trim());
 }
 // A name the board reads (the coordinator's boardnames.ts: a project's, a thread's or a task's, field of x): its plain
-// words, or while it has none (naming), that it's being named or why that failed, never the agent's words. The HTML
-// one sets that apart, and links the job numbers in a job's title (a project's and a thread's names have none: the
-// coordinator's plainnames.ts.).
-const unnamed = (x, field = 'title') => x[field] == null && field in (x.naming ?? {});
-export const nameText = (x, field = 'title') =>
-  !unnamed(x, field) ? x[field] : x.naming[field] ? `Couldn’t be named: ${x.naming[field]}` : 'Being named…';
-export const nameHtml = (x, field = 'title') =>
-  unnamed(x, field) ? `<i>${esc(nameText(x, field))}</i>` : field === 'title' ? withJobLinks(x[field]) : esc(x[field]);
+// words, or the agent's own until they come. The HTML one links the job numbers
+// in a job's title (a project's and a thread's names have none: the coordinator's plainnames.ts.).
+export const nameText = (x, field = 'title') => x[field];
+export const nameHtml = (x, field = 'title') => (field === 'title' ? withJobLinks(x[field]) : esc(x[field]));
 
 // The HUD's status line (hud.js): how many jobs are active, waiting and recurring
 export async function jobCounts(dev) {
@@ -59,6 +55,6 @@ export function whereNow(j, { who, ago }) {
 export function holdsOf(j) {
   const waits = j.waits ?? [], cards = (j.cards ?? []).map(c => ({ ...c, card: true })), wakes = (j.wakes ?? []).map(text => ({ wake: text }));
   if (!j.after_state) return [...waits, ...cards, ...wakes];
-  const after = { id: j.after, agent: j.after_agent, title: j.after_title, naming: j.after_naming, state: j.after_state };
+  const after = { id: j.after, agent: j.after_agent, title: j.after_title, state: j.after_state };
   return [after, ...waits.filter(w => w.id !== j.after), ...cards, ...wakes];
 }

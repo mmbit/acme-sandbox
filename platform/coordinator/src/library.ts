@@ -1,5 +1,4 @@
 // HQ's Library, the documents the board reads: their shelves, and a card naming a document none shows.
-// (moved here from company.ts, past its 400 lines)
 import { readdirSync, existsSync } from 'node:fs';
 import { REPO_DIR } from './config.ts';
 import { frontmatter, render, readOnce } from './company.ts';
@@ -9,13 +8,13 @@ import { docsIn, docOn } from '../../hq/shell/card.js';
 // the foundation's craft library (shared/craft) after them. The newsletter's posts are on the Library's shelves too
 // (HQ has them already).
 const HANDBOOK = ['CHARTER', 'AUTHORITY', 'DECISIONS', 'BUDGET', 'BACKLOG', 'NAMES'];
-// [folder, shelf, its order]: a folder's Markdown files but its README, and knowledge/notes a shelf per topic folder
-const SHELVES: [string, string, string[]?][] = [
-  ['company', 'Handbook', HANDBOOK],
-  ['company/playbooks', 'Playbooks'],
-  ['company/departments', 'Departments'],
-  ['knowledge/notes', 'Notes'],
-  ['shared/craft', 'Shared craft'],
+// Each shelf: a folder's Markdown files but its README, in its order, or with `topics` a shelf per folder in it
+const SHELVES: { dir: string; name: string; order?: string[]; topics?: true }[] = [
+  { dir: 'company', name: 'Handbook', order: HANDBOOK },
+  { dir: 'company/playbooks', name: 'Playbooks' },
+  { dir: 'company/departments', name: 'Departments' },
+  { dir: 'knowledge/notes', name: 'Notes', topics: true },
+  { dir: 'shared/craft', name: 'Shared craft' },
 ];
 export function library() {
   const docs: { path: string; shelf: string; title: string; author?: string; date?: string; html: string }[] = [];
@@ -54,8 +53,8 @@ export function library() {
         }),
       );
   };
-  for (const [dir, name, order] of SHELVES) {
-    if (dir !== 'knowledge/notes') shelf(dir, name, order);
+  for (const { dir, name, order, topics } of SHELVES) {
+    if (!topics) shelf(dir, name, order);
     else if (existsSync(`${REPO_DIR}/${dir}`))
       for (const topic of readdirSync(`${REPO_DIR}/${dir}`).sort()) shelf(`${dir}/${topic}`, `${name} · ${topic}`);
   }
@@ -70,9 +69,7 @@ export function unshelvedProblem(body: string) {
       const opens = docOn(docs, name)?.path;
       return !(opens === name || opens?.endsWith('/' + name));
     });
-  const where = SHELVES.map(([dir, name]) => `${dir}/${dir === 'knowledge/notes' ? '<topic>/' : ''} (${name})`).join(
-    ', ',
-  );
+  const where = SHELVES.map(({ dir, name, topics }) => `${dir}/${topics ? '<topic>/' : ''} (${name})`).join(', ');
   return off.length
     ? `the card names ${off.join(', ')}, which the board's Library doesn't show, so the desk phone's link would open a search ` +
         `that misses it. The board reads only the Library's shelves: ${where}. Put what the board must read on the card, or name a document there`

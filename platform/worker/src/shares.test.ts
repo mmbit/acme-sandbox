@@ -1,11 +1,22 @@
 // node --test src/shares.test.ts
-// Each job's share of the worker: its processes counted together, the biggest stopped past its share, never its CLI.
+// Each job's share of the worker: its processes counted together, its heavy run blocked past its share, never its CLI.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
-import { procStat } from './detached.ts';
-import { cliProcesses, processesFor, overShare, slowDown, tally, type ProcessSnapshot } from './shares.ts';
+import { closeSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { alive, procStat } from './detached.ts';
+import {
+  cliProcesses,
+  commandOf,
+  processesFor,
+  overShare,
+  runsOf,
+  slowDown,
+  stopRun,
+  tally,
+  type ProcessSnapshot,
+} from './shares.ts';
 
 const proc = (pid: number, uid: number, mb: number, ticks = 0, o: Partial<ProcessSnapshot> = {}): ProcessSnapshot => ({
   pid,
@@ -22,7 +33,7 @@ const proc = (pid: number, uid: number, mb: number, ticks = 0, o: Partial<Proces
   ...o,
 });
 const group = (id: string, nice = 0, writable = true) => ({ group: { id, nice, writable } });
-const opts = { mostMb: 2560, shareMb: 1536, cores: 4, starved: false, workerSessionId: 1 };
+const opts = { mostMb: 2560, shareMb: 1536, cores: 4, processes: 400, starved: false, workerSessionId: 1 };
 const launch = { pid: 10, start: '100' };
 
 test("a uid's processes count together: its memory now, and its cores since the last look", () => {
@@ -32,26 +43,125 @@ test("a uid's processes count together: its memory now, and its cores since the 
   assert.equal(uses.get(1501)!.memoryMb, 2060);
   // 100 + 2000 + 300 (new: all its time) ticks in 10 s, at 100 a second
   assert.equal(uses.get(1501)!.cores, 2.4);
+  assert.deepEqual(
+    uses.get(1501)!.processes.map(p => p.cores),
+    [0.1, 2, 0.3],
+    'each process its own',
+  );
   assert.equal(uses.get(1501)!.processes.length, 3);
   // a pid used again by a new process is a new process
   assert.equal(tally([proc(10, 1501, 1, 40, { start: '999' })], before, 1000).get(1501)!.cores, 0.4);
 });
 
-test('past its share a job loses its biggest process, never its CLI; starved, the biggest past the smaller share', () => {
+test('past its share a job has its heaviest run blocked, never its CLI; starved, the heaviest past the smaller share', () => {
   const uses = (a: ProcessSnapshot[]) => tally(a, a, 1000);
   const cli = new Set([10, 20]);
   const hog = uses([proc(10, 1501, 300), proc(11, 1501, 2400), proc(12, 1501, 100), proc(20, 1502, 1700)]);
-  assert.equal(overShare(hog, cli, opts).stop?.process.pid, 11);
-  assert.equal(overShare(uses([proc(10, 1501, 2700)]), cli, opts).stop, undefined, 'only its CLI: nothing to stop');
+  const block = overShare(hog, cli, opts).block!;
+  assert.deepEqual([block.root.pid, block.measure, block.used, block.share], [11, 'memory', 2800, 2560]);
+  assert.equal(overShare(uses([proc(10, 1501, 2700)]), cli, opts).block, undefined, 'only its CLI: nothing to block');
   const mid = uses([proc(10, 1501, 300), proc(11, 1501, 1400), proc(20, 1502, 200), proc(21, 1502, 1500)]);
-  assert.equal(overShare(mid, cli, opts).stop, undefined, 'under its share, and nobody waits');
-  assert.equal(overShare(mid, cli, { ...opts, starved: true }).stop?.process.pid, 11, 'the job holding the most');
+  assert.equal(overShare(mid, cli, opts).block, undefined, 'under its share, and nobody waits');
+  const starved = overShare(mid, cli, { ...opts, starved: true }).block!;
+  assert.deepEqual([starved.root.pid, starved.share], [11, 1536], 'the job holding the most');
+});
+
+// The incident of 23 October: browsers under a tool's shell, each renderer small. Stopping the biggest process left the
+// browser to open another page; the run is the shell's command, everything under it.
+test('a run is the command the CLI started, with everything under it: the browser goes with all its pages', () => {
+  const tree = [
+    proc(10, 1501, 300, 0, { comm: 'claude' }),
+    proc(30, 1501, 4, 0, { ppid: 10, comm: 'bash' }),
+    proc(31, 1501, 250, 0, { ppid: 30, comm: 'node' }),
+    proc(32, 1501, 400, 0, { ppid: 31, comm: 'chrome' }),
+    ...[33, 34, 35, 36, 37].map(pid => proc(pid, 1501, 380, 0, { ppid: 32, comm: 'chrome' })),
+    proc(40, 1501, 4, 0, { ppid: 10, comm: 'bash' }),
+    proc(41, 1501, 600, 0, { ppid: 40, comm: 'tsc' }), // (the biggest process, in a smaller run)
+    proc(50, 1501, 90, 0, { comm: 'node' }), // (left behind: its parent is none of the job's)
+  ];
+  const cli = cliProcesses(tree, launch);
+  const runs = runsOf(tree, cli);
+  assert.deepEqual(
+    [...runs].map(([root, run]) => [root.pid, run.map(p => p.pid)]),
+    [
+      [30, [30, 31, 32, 33, 34, 35, 36, 37]],
+      [40, [40, 41]],
+      [50, [50]],
+    ],
+  );
+  const block = overShare(tally(tree, tree, 1000), cli, opts).block!;
+  assert.equal(block.root.pid, 30, 'the run holding the most, not the biggest process');
+  assert.equal(block.run.length, 8);
+  assert.ok(!block.run.some(p => p.pid === 10), 'never the CLI');
+});
+
+test('a job running too many processes has the run with the most blocked; one past the cores for long, its busiest', () => {
+  const many = [
+    proc(30, 1501, 4),
+    ...Array.from({ length: 6 }, (_, i) => proc(31 + i, 1501, 10, 0, { ppid: 30 })),
+    proc(40, 1501, 5),
+  ];
+  const crowded = overShare(tally(many, many, 1000), new Set(), { ...opts, processes: 5 }).block!;
+  assert.deepEqual([crowded.root.pid, crowded.measure, crowded.used, crowded.share], [30, 'processes', 8, 5]);
+  const before = [proc(30, 1501, 50, 0), proc(31, 1501, 50, 0, { ppid: 30 }), proc(40, 1501, 50, 0)];
+  const now = [proc(30, 1501, 50, 10), proc(31, 1501, 50, 600, { ppid: 30 }), proc(40, 1501, 50, 100)];
+  const uses = tally(now, before, 1000);
+  assert.equal(overShare(uses, new Set(), opts).block, undefined, 'busy, not for long yet: slowed only');
+  const hot = overShare(uses, new Set(), { ...opts, hot: new Set([1501]) }).block!;
+  assert.deepEqual([hot.root.pid, hot.measure, hot.used, hot.share], [30, 'cores', 7.1, 4]);
+});
+
+test("a blocked run hears why in its own output, then ends: frozen first, its words before it's Killed", async () => {
+  // (as Claude Code runs a command: its output to a file the tool reads back)
+  const me = { uid: process.getuid!(), gid: process.getgid!() };
+  const out = `${mkdtempSync(`${tmpdir()}/blocked-`)}/output`;
+  writeFileSync(out, 'started\n');
+  const fd = openSync(out, 'a');
+  const run = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: ['ignore', fd, fd] });
+  closeSync(fd);
+  await new Promise(r => setTimeout(r, 300));
+  const own = (await processesFor([me])).filter(p => p.pid === run.pid || p.ppid === run.pid);
+  const root = own.find(p => p.pid === run.pid)!;
+  assert.equal(commandOf(own), 'sleep 30', 'the program, not the shell around it');
+  await stopRun(own, me, root, async () => ({ text: "HQ's worker stopped this command: offload it." }));
+  const killed = await new Promise(r => run.on('close', (_code, sig) => r(sig)));
+  assert.equal(killed, 'SIGKILL');
+  assert.equal(readFileSync(out, 'utf8'), "started\n\nHQ's worker stopped this command: offload it.\n");
+  assert.ok(
+    own.every(p => !alive(p.pid, p.start)),
+    'every process of it ended',
+  );
+});
+
+test("a blocked run HQ can't be asked about still ends, and hears no words but HQ's", async () => {
+  const me = { uid: process.getuid!(), gid: process.getgid!() };
+  const out = `${mkdtempSync(`${tmpdir()}/blocked-`)}/output`;
+  writeFileSync(out, 'started\n');
+  const fd = openSync(out, 'a');
+  const run = spawn('sh', ['-c', 'sleep 30 & wait'], { stdio: ['ignore', fd, fd] });
+  closeSync(fd);
+  await new Promise(r => setTimeout(r, 300));
+  const own = (await processesFor([me])).filter(p => p.pid === run.pid || p.ppid === run.pid);
+  const root = own.find(p => p.pid === run.pid)!;
+  const away = new TypeError('fetch failed');
+  await assert.rejects(
+    stopRun(own, me, root, () => Promise.reject(away)),
+    away,
+    'the failure goes on to the shares loop',
+  );
+  assert.equal(await new Promise(r => run.on('close', (_code, sig) => r(sig))), 'SIGKILL', 'never left frozen');
+  assert.equal(readFileSync(out, 'utf8'), 'started\n');
 });
 
 test("a job's push checks, run after its CLI has ended, are held to its share too", () => {
   const checks = [proc(30, 1503, 200, 0, { comm: 'nice' }), proc(31, 1503, 2900, 0, { ppid: 30 })];
   const uses = tally(checks, checks, 1000);
-  assert.equal(overShare(uses, cliProcesses(checks, { pid: 9, start: '100' }), opts).stop?.process.pid, 31);
+  const block = overShare(uses, cliProcesses(checks, { pid: 9, start: '100' }), opts).block!;
+  assert.deepEqual(
+    block.run.map(p => p.pid),
+    [30, 31],
+    'the checks, from their first process',
+  );
 });
 
 test("a Node launcher's native agent is the CLI too; the commands it runs are not", () => {
@@ -65,7 +175,10 @@ test("a Node launcher's native agent is the CLI too; the commands it runs are no
   ];
   const cli = cliProcesses(codex, launch);
   assert.deepEqual([...cli].sort(), [10, 11, 12]);
-  assert.equal(overShare(tally(codex, codex, 1000), cli, opts).stop?.process.pid, 14);
+  assert.deepEqual(
+    overShare(tally(codex, codex, 1000), cli, opts).block?.run.map(p => p.pid),
+    [13, 14, 15],
+  );
 });
 
 test("a job's CLI is the launch running now: a second launch is protected, a reused pid isn't", () => {
@@ -73,7 +186,7 @@ test("a job's CLI is the launch running now: a second launch is protected, a reu
   assert.deepEqual([...cliProcesses(asked, launch)], [], 'the first launch has ended');
   assert.deepEqual([...cliProcesses(asked, { pid: 40, start: '500' })], [40]);
   const reused = [proc(10, 1501, 2700, 0, { start: '900' })];
-  assert.equal(overShare(tally(reused, reused, 1000), cliProcesses(reused, launch), opts).stop?.process.pid, 10);
+  assert.equal(overShare(tally(reused, reused, 1000), cliProcesses(reused, launch), opts).block?.root.pid, 10);
 });
 
 test('an adopted job needs a CPU baseline before any of its processes are slowed', () => {

@@ -1259,3 +1259,29 @@ test("a lent machine's pull of a kind's private image signs in with HQ's registr
   assert.equal((await asServer('/api/helper/pull', { image: voice })).status, 403, 'never this server');
   assert.equal((await asKey('not-a-key', '/api/helper/pull', { image: voice })).status, 401);
 });
+
+test("a lent machine's runs fit its own memory cap together: a run of another kind waits while they'd pass it, and goes once one ends", async t => {
+  const file = `${h.repo}/company/org.yaml`;
+  const before = readFileSync(file, 'utf8');
+  writeFileSync(
+    file,
+    `${before}\nruns:\n  helper: the lent machine\n  machineMemoryGb: 12\n  kinds:\n` +
+      '    simulation:\n      memoryGb: 8\n    render:\n      memoryGb: 6\n      helpers: 2\n',
+  );
+  t.after(() => writeFileSync(file, before));
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const sim = await sendRun(job.token, { command: 'true', kind: 'simulation' });
+  const render = await sendRun(job.token, { command: 'true', kind: 'render' });
+  const simTake = (await asHelper('/api/helper/take', { kind: 'simulation' })).json.id;
+  assert.equal(simTake, takeOf(sim.json.id));
+  assert.equal(
+    (await asHelper('/api/helper/take', { kind: 'render', slot: 1 })).status,
+    204,
+    '8 GB held and 6 more would pass the 12 GB the machine gives its runs',
+  );
+  assert.equal(stateOf(render.json.id), 'waiting');
+  await asHelper(`/api/helper/runs/${simTake}/finish`, Buffer.alloc(0), { 'x-run-exit': '0' });
+  assert.equal((await asHelper('/api/helper/take', { kind: 'render', slot: 1 })).json.id, takeOf(render.json.id));
+  await h.finish(job);
+});

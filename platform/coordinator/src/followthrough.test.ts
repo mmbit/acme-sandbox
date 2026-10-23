@@ -292,6 +292,20 @@ test('an expired check queued by a limit or interruption releases the next hourl
   }
 });
 
+test("the hour's check starts before work whose window passed hours ago", async () => {
+  reset();
+  agreed();
+  const late = h.queue({
+    agent: 'bolt',
+    engine: 'claude',
+    title: 'Due at five',
+    thread: h.dueThread({ deadline: Date.now() - 3 * HOUR }),
+  });
+  followThroughSweep(Date.now());
+  assert.equal((await h.claim('claude'))?.id, checks()[0].job);
+  assert.equal((await h.claim('claude'))?.id, late);
+});
+
 test('below the room line a claim takes the work whose measured memory fits the room, whatever its kind', async () => {
   reset();
   agreed();

@@ -48,15 +48,15 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // Done work with its runs: agent time, start to finish (waits included), its seat spend (the API-equivalent price
 // where the engine reports one, tokens where it doesn't; none where no usage was reported) and its latest pull request.
 // (made at its first use: jobs.ts, whose workBranch it reads, imports the deadline clock that reads this)
-// The runs summed by job first, then each one's job by its id: `cross join` keeps that order. Stale statistics
-// (pragma optimize reads a table again only once it grew tenfold) otherwise let the planner scan every job row and sum
-// the runs again for each.
+// The runs summed by job first, then each one's job by its id in db.ts jobs_done_work, which `indexed by` names: stale
+// statistics (pragma optimize reads a table again only once it grew tenfold) otherwise let the planner read every done
+// job's row, brief and output included.
 const past =
   () => `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}
-  from jobs j
+  from jobs j indexed by jobs_done_work
   join (select job, count(*) runs, sum(ended_as = 'rebuilt' or seat is null) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms from runs group by job) r on r.job = j.id
   left join (select job, sum(cost) cost, sum(input + cache_write + cache_read + output) tokens from usage group by job) u
@@ -88,13 +88,12 @@ export function picksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis
   return runsLike(work, pool) ?? matched(work, pool);
 }
 function matched(work: Work, pool: PastJob[]) {
-  const sameOrigin = pool.filter(j => j.origin === work.origin);
-  const own = work.agent ? sameOrigin.filter(j => j.agent === work.agent) : sameOrigin;
+  const sameOrigin = groupOf(pool, work.origin);
+  const own = work.agent ? groupOf(pool, work.origin, work.agent) : sameOrigin;
   const among = own.length >= FEWEST ? own : sameOrigin.length >= FEWEST ? sameOrigin : pool;
   const basis = { kind: among === pool ? null : work.origin, agent: among === own ? (work.agent ?? null) : null };
   const terms = [...new Set(wordsFor(work))];
-  const found = ranked(among, terms);
-  const words = terms.filter(t => found.some(j => titleWords(j).some(w => alike(w, t))));
+  const { found, words } = rankedIn(among, terms);
   if (found.length >= FEWEST) return { picks: found.slice(0, PICKS), basis: { ...basis, words } };
   const latest = [...among].sort((a, b) => b.id - a.id).filter(j => !found.includes(j));
   return { picks: [...found, ...latest].slice(0, LATEST), basis: { ...basis, words } };
@@ -161,23 +160,58 @@ const rarity = (hits: number, n: number) => Math.log(1 + n / Math.max(hits, 1));
 // Each word list's score against the terms: the weights of the terms it has a word alike to, a rare term weighing more
 // than a common one. Each term is matched against the lists' words once, not against every list. (outlooks.ts
 // findOutlooks scores a call's words with it)
-export function scores(lists: string[][], terms: string[]) {
-  const vocabulary = [...new Set(lists.flat())];
-  const found = terms.map(t => {
-    const near = new Set(vocabulary.filter(w => alike(w, t)));
-    return lists.map(words => words.some(w => near.has(w)));
+export const scores = (lists: string[][], terms: string[]) => scored(indexed(lists), terms).sums;
+
+// The lists' words, each with the lists that have it: what scoring reads of the lists, whatever the terms.
+type Indexed = { lists: number; having: [string, number[]][] };
+function indexed(lists: string[][]): Indexed {
+  const having = new Map<string, number[]>();
+  lists.forEach((words, i) => {
+    for (const w of new Set(words)) {
+      const has = having.get(w);
+      if (has) has.push(i);
+      else having.set(w, [i]);
+    }
   });
-  const weight = found.map(hits => rarity(hits.filter(Boolean).length, lists.length));
-  return lists.map((_, i) => found.reduce((sum, hits, k) => sum + (hits[i] ? weight[k] : 0), 0));
+  return { lists: lists.length, having: [...having] };
+}
+// Each list's score, and how many lists have each term
+function scored({ lists, having }: Indexed, terms: string[]) {
+  const sums = Array.from({ length: lists }, () => 0);
+  const hits = terms.map(t => {
+    const near = new Set(having.flatMap(([w, has]) => (alike(w, t) ? has : [])));
+    const weight = rarity(near.size, lists);
+    for (const i of near) sums[i] += weight;
+    return near.size;
+  });
+  return { sums, hits };
 }
 
-// The pool's jobs that share a word with the terms, most alike first (then the newest)
-export function ranked(pool: PastJob[], terms: string[]) {
-  const titles = pool.map(j => titleWords(j));
-  const jobScores = scores(titles, terms);
-  return pool
-    .map((j, i) => ({ j, s: jobScores[i] }))
+// What matching reads of a pool, once for all the work matched against it (a play sizes every unsized job against the
+// same pastJobs()): its jobs of each origin, or origin and agent, and each such group's title words indexed. Kept by
+// the array, which a caller never changes once matched against (each makes a new one).
+const groups = new WeakMap<PastJob[], Map<string, PastJob[]>>();
+const titlesIndexed = new WeakMap<PastJob[], Indexed>();
+function groupOf(pool: PastJob[], origin: JobOrigin, agent?: string) {
+  const byKey = groups.get(pool) ?? groups.set(pool, new Map()).get(pool)!;
+  const key = agent === undefined ? origin : `${origin}\n${agent}`;
+  if (!byKey.has(key))
+    byKey.set(
+      key,
+      pool.filter(j => j.origin === origin && (agent === undefined || j.agent === agent)),
+    );
+  return byKey.get(key)!;
+}
+function rankedIn(pool: PastJob[], terms: string[]) {
+  const index = titlesIndexed.get(pool) ?? titlesIndexed.set(pool, indexed(pool.map(j => titleWords(j)))).get(pool)!;
+  const { sums, hits } = scored(index, terms);
+  const found = pool
+    .map((j, i) => ({ j, s: sums[i] }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s || b.j.id - a.j.id)
     .map(x => x.j);
+  return { found, words: terms.filter((_, k) => hits[k] > 0) };
 }
+
+// The pool's jobs that share a word with the terms, most alike first (then the newest)
+export const ranked = (pool: PastJob[], terms: string[]) => rankedIn(pool, terms).found;

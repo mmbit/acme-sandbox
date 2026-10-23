@@ -280,6 +280,17 @@ test("a follow-up's card about work it handed out (--when deployed:<job>) is hel
   assert.equal(asked.code, 0, asked.out);
   assert.match(asked.out, new RegExp(`until the work of #${wren.id} and #${restructure} is merged and deployed`));
   const plan = (db.prepare("select id from requests where title = 'The plan: go?'").get() as { id: number }).id;
+  // a job waiting on it reads the work it's held for, each by its job and code, for the board's projects view
+  const step = await h.hq(wren, 'job', '--after', `request:${plan}`, 'kit', 'Act on the plan', body('Act.'), '--new');
+  const acting = Number(/Queued job #(\d+)/.exec(step.out)?.[1]);
+  assert.ok(acting, step.out);
+  const { findJob } = await import('./jobs.ts');
+  const code = (id: number) =>
+    (db.prepare('select code from jobs where id = ?').get(id) as { code: string | null }).code;
+  assert.deepEqual(
+    findJob(acting)!.cards.map((c: { id: number; shown: boolean; holds: unknown }) => [c.id, c.shown, c.holds]),
+    [[plan, false, [wren.id, restructure].map(id => ({ id, code: code(id), agent: id === wren.id ? 'wren' : 'kit' }))]],
+  );
 
   await h.finish(wren);
   assert.deepEqual(later.sweep(), [], 'the follow-up ended without a pull request: the restructuring is still queued');
@@ -356,10 +367,25 @@ test("a job's cards, and the one it's blocked on, say whether they're on the des
     await after(wren, hidden, 'After later'),
     await after(wren, shown, 'After now'),
   ];
+  // (a held one with the work it waits for)
+  const code = (db.prepare('select code from jobs where id = ?').get(lark.id) as { code: string | null }).code;
   assert.deepEqual(await Promise.all(waiting.map(async id => (await listed(id)).cards)), [
-    [{ id: held, title: 'Shown: held?', shown: false }],
-    [{ id: hidden, title: 'Shown: later?', shown: false }],
-    [{ id: shown, title: 'Shown: now?', shown: true }],
+    [{ id: held, title: 'Shown: held?', shown: false, holds: [{ id: lark.id, code, agent: 'lark' }] }],
+    [{ id: hidden, title: 'Shown: later?', shown: false, holds: [] }],
+    [{ id: shown, title: 'Shown: now?', shown: true, holds: [] }],
+  ]);
+  // one held for a pull request waits on the task that opened it, which carries no jobs.pr
+  const opened = await running('kit');
+  h.storedPr(781, opened.id, 'open');
+  const forPr = await ask(wren, 'Shown: for the pull request?', '--when', 'deployed:pr:781');
+  const openedCode = (db.prepare('select code from jobs where id = ?').get(opened.id) as { code: string | null }).code;
+  assert.deepEqual((await listed(await after(wren, forPr, 'After the pull request'))).cards, [
+    {
+      id: forPr,
+      title: 'Shown: for the pull request?',
+      shown: false,
+      holds: [{ id: opened.id, code: openedCode, agent: 'kit' }],
+    },
   ]);
   // a job parked on a card for later is blocked on it, off the desk phone until its day
   const moss = await running('moss');

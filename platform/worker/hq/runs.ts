@@ -48,6 +48,7 @@ export type Machine = {
   lent: number;
   takeMinutes: number;
   maxMinutes: number;
+  machineMemoryGb?: number; // (0: no cap but each kind's)
   machines: {
     name: string;
     state: 'taking' | 'running' | 'away' | 'paused';
@@ -341,6 +342,9 @@ async function showHelper() {
     `The fastest free machine takes a run. A slower one takes it after ${machine.takeMinutes} min while a faster one is busy.`,
     `${SERVER} takes a run only when its kind allows it, after ${machine.takeMinutes} min or while no machine is asking for work.`,
     `A run takes ${machine.maxMinutes} min at most.`,
+    ...(machine.machineMemoryGb
+      ? [`A machine's runs hold ${machine.machineMemoryGb} GB at most together: one that would pass it waits.`]
+      : []),
   );
   for (const kind of machine.kinds)
     print('', `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''})`);

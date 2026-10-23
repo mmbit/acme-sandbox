@@ -113,13 +113,13 @@ function brandApp() {
 // (every minute, on return to the app, or when an event names someone we don't know) and the building
 // rebuilt if its shape changed, and who is at work taken from it (not in dev: its mock org runs no jobs). Requests, the
 // newsletter, seats and jobs refresh themselves elsewhere.
-let orgBusy = false, known = null; // known: the org as last read
-export async function refreshOrg() {
-  if (orgBusy) return;
-  orgBusy = true;
+// (one read at a time: a second call has the one under way, so an agent's panel waits for it; it tells whether the read
+// came in.)
+let orgRead = null, known = null; // known: the org as last read
+export const refreshOrg = () => (orgRead ??= readOrg().finally(() => (orgRead = null)));
+async function readOrg() {
   const asked = Date.now(), org = await fetchOrg(world.dev);
-  orgBusy = false;
-  if (!org) return;
+  if (!org) return false;
   world.setMachines(org.machines);
   world.setStudio(org.studio);
   if (orgKey(org) !== orgKey(known)) {
@@ -128,6 +128,7 @@ export async function refreshOrg() {
     const p = panelOpen(); if (p?.kind === 'agent') refreshAgent(p.ref);
   }
   if (!world.dev) world.setStatuses(org, asked);
+  return true;
 }
 // The meetings: who sits in the meeting room, what about, and what's next on its door. A failed read leaves them unread
 // (null) until a read succeeds, and the room and its panel say so

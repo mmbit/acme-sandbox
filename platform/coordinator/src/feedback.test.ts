@@ -278,6 +278,28 @@ test("hq notes: the notes hq note would give an agent, newest first, one line ea
   assert.deepEqual(feedback.sentTo('wren').map(n => n.note), ["wren's"]);
 });
 
+test("hq note <id> fixed: the job a board's note went to marks it, and HQ shows it fixed once that's live", async () => {
+  const post = async () => (await call('/__review/notes', { method: 'POST', body: note() })).json().id as number;
+  const [mine, waiting] = [await post(), await post()];
+  const { job, agent } = send({ slug: 'hello', ids: [mine] }) as any;
+  const { createJob } = await import('./jobs.ts');
+  // a later job of the same agent, as hq notes lists it there: with its own fix, or the pull request of the job it went to
+  const later = { id: createJob({ agent, title: 'later', prompt: 'x' }).id, agent };
+  assert.match(feedback.markFixed(waiting, 'x', null, later) as string, /isn't one hq notes lists for you/, 'not sent yet');
+  assert.match(feedback.markFixed(mine, 'x', null, { id: later.id, agent: 'wren' }) as string, /isn't one hq notes lists for you/, "another agent's");
+  assert.match(feedback.markFixed(mine, 'x', job - 1, later) as string, /came before this one/);
+  assert.deepEqual(feedback.markFixed(mine, 'Still pale', null, later), { id: mine, job: later.id });
+  assert.deepEqual(feedback.markFixed(mine, 'The button was pale: darker now', job, later), { id: mine, job });
+  const listed = () => feedback.listNotes('hello').find(x => x.id === mine)!;
+  assert.equal(listed().fixed_live, false, 'not merged yet');
+  const merged = new Date(Date.now() - 60_000).toISOString(), now = new Date().toISOString();
+  db.prepare("insert into prs (number, branch, author, status, merged_at) values (9481, ?, ?, 'merged', ?)").run(`job/${job}`, agent, merged);
+  db.prepare("insert into deploys (file, sha, fetched, finished, ok) values ('d-9481', 'abc', ?, ?, 1)").run(now, now);
+  assert.equal(listed().fixed_live, true);
+  assert.equal(listed().status, 'sent');
+  db.prepare('delete from review_notes where id in (?, ?)').run(mine, waiting);   // (they'd count in the page's hour of notes)
+});
+
 test('a screenshot is refused with why while the disk is low, and a note without one still goes in', async () => {
   storage.FLOOR.bytes = Number.MAX_SAFE_INTEGER;
   try {

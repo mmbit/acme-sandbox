@@ -110,6 +110,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - room_for: the ready work it last paused to make room for (jobs.ts makesRoom), which gets that room first.
 // - writes: the files a ruling may touch itself (JSON, review.ts touch-ups).
 // - stopping, suspending: who stopped it (hq stop) or paused it with its thread (suspendReview) and why, until it ends.
+// - off_worker: its suspending is HQ's, for the worker's room (offWorker), not a pause's.
 // - queued_by: the agent who queued it (null: the coordinator's own).
 // - customers: it was handed a customer's own details (charter rule 7), never spread.
 // - downtime: maintenance on spare capacity only.
@@ -174,6 +175,7 @@ const FOLDED: Record<string, string[]> = {
     'code text',
     'engine_only text',
     'judges text',
+    'off_worker integer not null default 0',
   ],
   memory_docs: ['stamp text'],
   messages: ['held integer'],
@@ -217,7 +219,7 @@ db.exec(`
     effort text, stage text, started text, held_by text, call integer, item integer, answers integer,
     about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
     is_check integer not null default 0, seq real, suspending text, step text,
-    code text, landing text, engine_only text, judges text);
+    code text, landing text, engine_only text, judges text, off_worker integer not null default 0);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -279,6 +281,14 @@ db.exec('create index if not exists jobs_counts on jobs (created, kind, status, 
 // And the jobs carrying the board's call items (agreements.ts), each one's kind, status and branch: by id, and by item.
 db.exec(`create index if not exists jobs_state on jobs (id, kind, status, branch);
   create index if not exists jobs_carried on jobs (item, kind) where item is not null`);
+// An agent's own work jobs, newest first (memory.ts history: hq history, a call's history tool), without reading other
+// agents' job rows. That query names it with `indexed by`.
+db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where kind = 'work'`);
+// Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
+// job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
+// names it with `indexed by`.
+db.exec(`create index if not exists jobs_done_work on jobs (id, agent, title, engine, created, finished, stage, round,
+  queued_by, pr, branch, thread) where kind = 'work' and status = 'done'`);
 
 // The board's saved addresses' labels (addresses.ts; each address itself is in the key store).
 db.exec('create table if not exists addresses (id integer primary key autoincrement, label text not null, created text not null)');
@@ -312,6 +322,11 @@ db.exec(`create table if not exists review_upstream (ruling integer primary key,
 // The consolidations asked, when they were made, to say what went wrong before review (review.ts roundJob).
 db.exec('create table if not exists upstream_owed (job integer primary key)');
 redacted('findings', 'file', 'issue');
+// A push that waits for its round's ruling while that round's panel is out (reviewpushes.ts): the latest per pull request.
+db.exec('create table if not exists review_waiting_pushes (pr integer primary key, push text not null, at text not null)');
+redacted('review_waiting_pushes', 'push');
+// A pass whose branch had moved on by its ruling, for that push (reviewpushes.ts leavePass)
+db.exec('create table if not exists review_left_passes (ruling integer primary key)');
 // The worker's merge of main into a pull request's reviewed commit, which GitHub merges in its place (review.ts mergeMain).
 db.exec('create table if not exists main_merges (pr integer not null, sha text not null, head text not null, primary key (pr, sha))');
 // The consolidator's touch-ups (review.ts): the files a ruling may change itself (jobs.writes) and what the worker did
@@ -372,6 +387,8 @@ db.exec('create table if not exists reply_asks (job integer primary key)');
 db.exec(`create table if not exists followthrough_checks (slot text primary key, job integer not null, created text not null,
   verdict text, said text, at text)`);
 redacted('followthrough_checks', 'said');
+// (by job: the queue's every read asks whether a job is one, jobs.ts FOLLOW_THROUGH)
+db.exec('create index if not exists followthrough_checks_job on followthrough_checks (job)');
 // The board's sent notes the CEO routes (routing.ts), one row a note: the routing check that holds it, what it's about
 // (slug, its owner and where, and whether it comes back as a product's return, owed.ts), its brief text, and once
 // routed the job it went to and how. Here rather than in that module: claim() reads it to let a routing check start

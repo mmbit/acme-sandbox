@@ -1,20 +1,27 @@
 // node --test src/reviewtriage.test.ts (uses a throwaway DATA_DIR and local GitHub fixture)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { harness, until } from './harness.ts';
-import { leftoverJobs } from './reviewfixture.ts';
+import { leftoverJobs, retryNow } from './reviewfixture.ts';
 
 const h = await harness('reviewtriage', {
   before: repo => {
     const file = `${repo}/company/org.yaml`;
     writeFileSync(file, readFileSync(file, 'utf8').replace('consolidator: quill', 'consolidator: [quill, tally, nib]'));
+    appendFileSync(
+      file,
+      '\nreview:\n  visual:\n' +
+        '    - { paths: ["platform/hq/renderers/**"], run: "node preview.mjs", look: "lit in the dark", record: "qa/previews" }\n' +
+        '\nengineOnly:\n  - { id: pixels, what: pixel work, engine: claude, model: claude-opus-5-5, paths: ["platform/hq/renderers/**"] }\n',
+    );
   },
 });
 await h.worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready' });
 const { db } = h;
 const review = await import('./review.ts');
+const panel = await import('./panel.ts');
 const files = ['platform/hq/room.js'];
 const sha = () => randomBytes(20).toString('hex');
 const pending = (pr: number) => h.jobs.listJobs().filter(job => job.pr === pr && job.status === 'queued');
@@ -38,8 +45,8 @@ const selection = (reviewers?: ReturnType<typeof reader>[]) => ({
 const cancelLeftovers = leftoverJobs(db);
 afterEach(cancelLeftovers);
 
-async function push(pr: number, next = sha(), more = {}) {
-  const author = await h.start({ agent: 'bolt', branch: `review/${pr}` });
+async function push(pr: number, next = sha(), more = {}, engine?: string) {
+  const author = await h.start({ agent: 'bolt', branch: `review/${pr}`, ...(engine && { engine }) });
   assert.equal((await h.finish(author, { pr, branch: `review/${pr}`, files, sha: next, ...more })).status, 200);
   await until(() => pending(pr).some(job => job.stage === 'triage'), 'round triage');
   return next;
@@ -103,7 +110,7 @@ test('triage rejects a panel that leaves part of its assigned diff unread', asyn
   assert.equal(h.github.pr(pr).merged, false);
   const retry = pending(pr).find(job => job.stage === 'triage');
   assert.ok(retry, 'incomplete coverage retries triage before dispatch');
-  db.prepare('update jobs set not_before = 0 where id = ?').run(retry.id);
+  retryNow(db, retry.id);
   await finish(
     pr,
     'triage',
@@ -115,6 +122,70 @@ test('triage rejects a panel that leaves part of its assigned diff unread', asyn
   assert.deepEqual(readers(pr).sort(), ['nib', 'rook']);
 });
 
+test('the looker follows visual files moved by engine constraints, and each reader keeps their lens', async () => {
+  const pr = 116,
+    room = 'platform/hq/renderers/brownstone/rooms.js',
+    readme = 'README.md',
+    record = `qa/previews/review-${pr}.md`;
+  const read = (agent: string, files: string[], domain = 'hq') => ({ ...reader(agent), files, domain });
+  await push(pr, sha(), { files: [room, readme, record] }, 'claude');
+  // Codex keeps the code read while the pixel rule hands the visual files and their look to tally.
+  await finish(pr, 'triage', {
+    ...selection([
+      { ...read('nib', [room, readme], 'readability'), reason: 'Read the names' },
+      read('tally', [record]),
+    ]),
+    looker: 'nib',
+  });
+  assert.deepEqual(readers(pr).sort(), ['nib', 'tally'], 'the triage dispatches without a retry');
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+  assert.equal(rows[0].triage.selection.looker, 'tally');
+  assert.deepEqual(rows[0].triage.selection.reviewers.find((read: any) => read.agent === 'nib').files, [readme]);
+  assert.deepEqual(rows[0].triage.selection.reviewers.find((read: any) => read.agent === 'tally').files, [
+    record,
+    room,
+  ]);
+  const brief = (agent: string) =>
+    (
+      db
+        .prepare("select prompt from jobs where pr = ? and kind = 'review' and agent = ? and status = 'queued'")
+        .get(pr, agent) as { prompt: string }
+    ).prompt;
+  assert.ok(brief('nib').includes('## Your lens: readability') && brief('nib').includes('Read the names'));
+  assert.ok(!brief('nib').includes('node preview.mjs'));
+  assert.ok(brief('tally').includes('node preview.mjs'));
+});
+
+test('triage keeps a valid looker or no looker and refuses a reader with no visual scope', async () => {
+  for (const [pr, looker] of [
+    [118, 'rook'],
+    [119, null],
+    [120, 'nib'],
+  ] as const) {
+    const room = 'platform/hq/renderers/brownstone/rooms.js',
+      readme = 'README.md',
+      record = `qa/previews/review-${pr}.md`;
+    await push(pr, sha(), { files: [room, readme, record] }, 'claude');
+    await finish(pr, 'triage', {
+      ...selection([
+        { ...reader('rook'), files: [room] },
+        { ...reader('nib'), files: [readme, record] },
+      ]),
+      looker,
+    });
+    if (looker === 'nib') {
+      assert.deepEqual(readers(pr), []);
+      assert.ok(pending(pr).some(job => job.stage === 'triage'));
+    } else {
+      assert.deepEqual(readers(pr).sort(), ['nib', 'rook']);
+      const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+      assert.equal(rows[0].triage.selection.looker, looker);
+    }
+    cancelLeftovers();
+  }
+});
+
 test('fix-round coverage uses the supplied fix scope instead of the whole pull request', async () => {
   const pr = 103,
     readme = 'README.md';
@@ -124,13 +195,14 @@ test('fix-round coverage uses the supplied fix scope instead of the whole pull r
   assert.deepEqual(readers(pr), [], 'the old blocker file does not cover the changed readme');
   const retry = pending(pr).find(job => job.stage === 'triage');
   assert.ok(retry);
-  db.prepare('update jobs set not_before = 0 where id = ?').run(retry.id);
+  retryNow(db, retry.id);
   await finish(pr, 'triage', selection([{ ...reader('rook'), files: [readme] }]));
   assert.deepEqual(readers(pr), ['rook'], 'the fix scope is sufficient without the old pull request files');
 });
 
-test('a visual HQ fix rechecks only its finder unless triage explicitly adds another reader', async () => {
+test('a visual HQ fix rechecks only its co-author finder unless triage explicitly adds another reader', async () => {
   const { head } = await blocked(93);
+  h.ended({ agent: 'rook', branch: 'review/93' });
   await push(93, sha(), { pushedSince: { sha: head, files } });
   await finish(93, 'triage', selection());
   await until(() => readers(93).length > 0, 'finder recheck');
@@ -151,7 +223,7 @@ test('a visual HQ fix rechecks only its finder unless triage explicitly adds ano
   assert.deepEqual(readers(93).sort(), ['nib', 'rook']);
 });
 
-test('triage cannot assign an author or silently omit a blocker finder, and retries decide nothing', async () => {
+test('triage cannot assign a sole author or silently omit a blocker finder, and retries decide nothing', async () => {
   await blocked(94);
   await push(94);
   const invalid = await finish(94, 'triage', selection([reader('bolt')]));
@@ -169,7 +241,7 @@ test('triage cannot assign an author or silently omit a blocker finder, and retr
   assert.deepEqual(readers(94), []);
   assert.equal(h.github.pr(94).merged, false);
   const retry = pending(94).find(job => job.stage === 'triage')!;
-  db.prepare('update jobs set not_before = 0 where id = ?').run(retry.id);
+  retryNow(db, retry.id);
   await finish(94, 'triage', selection([reader('tally')]));
   await until(
     () => (db.prepare('select status from prs where number = 94').get() as { status: string }).status === 'stuck',
@@ -236,7 +308,7 @@ test('a new fix-round blocker without a regression cause decides nothing and an 
   assert.equal(h.github.pr(97).merged, false);
   const retry = pending(97).find(job => job.stage === 'ruling')!;
   assert.ok(retry, 'the ruling retries, independently of triage');
-  db.prepare('update jobs set not_before = 0 where id = ?').run(retry.id);
+  retryNow(db, retry.id);
   await finish(97, 'ruling', {
     decision: 'merge',
     outcomes: [{ finding, outcome: 'fixed' }],
@@ -332,6 +404,57 @@ test('the triage chooses the eligible consolidator and its actual engine for the
     assert.deepEqual([ruling.agent, ruling.engine], [agent, engine]);
     cancelLeftovers();
   }
+});
+
+test('triage offers and accepts co-authors when all listed consolidators and the CEO wrote the branch', async () => {
+  const authors = ['quill', 'tally', 'nib', 'juno', 'rook'];
+  for (const [pr, consolidator, decision] of [
+    [105, 'quill', 'review'],
+    [106, 'nib', 'review'],
+    [107, 'tally', 'escalate'],
+  ] as const) {
+    for (const agent of authors) h.ended({ agent, branch: `review/${pr}` });
+    await push(pr);
+    const triage = pending(pr).find(job => job.stage === 'triage')!;
+    assert.equal(triage.agent, 'quill');
+    const run = await h.claim(triage.engine, { seat: triage.engine === 'codex' ? 'codex-1' : 'claude-1' });
+    assert.equal(run?.id, triage.id);
+    const offered = JSON.parse(run!.prompt.match(/Eligible consolidators: (\[[^\n]*\])/u)![1]) as string[];
+    assert.ok(offered.includes(consolidator));
+    assert.ok(offered.every(agent => panel.authorsOf(pr).has(agent)));
+    assert.ok(!offered.some(agent => ['poppy', 'rivet', 'unknown'].includes(agent)));
+    const output = JSON.stringify({ ...selection([reader('rook')]), decision, consolidator });
+    assert.equal((await h.finish(run!, { output })).status, 200);
+    await until(() => h.jobs.findJob(run!.id)?.status === 'done', 'co-authored triage completion');
+    assert.equal(panel.consolidator(pr), consolidator);
+    assert.equal(
+      pending(pr).some(job => job.stage === 'triage'),
+      false,
+    );
+    if (decision === 'review') {
+      assert.deepEqual(readers(pr), ['rook']);
+      await finish(pr, 'review', { findings: [] });
+      const ruling = pending(pr).find(job => job.stage === 'ruling')!;
+      assert.equal(ruling.agent, consolidator);
+    } else {
+      assert.equal(
+        (db.prepare('select status from prs where number = ?').get(pr) as { status: string }).status,
+        'stuck',
+      );
+      assert.equal(h.github.pr(pr).state, 'open');
+    }
+    cancelLeftovers();
+  }
+});
+
+test('triage rejects a sole author as its solo consolidator', async () => {
+  const pr = 108;
+  await push(pr);
+  await finish(pr, 'triage', { ...selection([]), consolidator: 'bolt' });
+  assert.deepEqual(readers(pr), []);
+  assert.ok(pending(pr).some(job => job.stage === 'triage'));
+  assert.ok(!pending(pr).some(job => job.stage === 'ruling'));
+  assert.equal(h.github.pr(pr).merged, false);
 });
 
 test('a newly triaged ruling cannot replace its panel with another triage read', async () => {

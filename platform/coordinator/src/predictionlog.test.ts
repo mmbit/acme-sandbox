@@ -45,7 +45,7 @@ function played(now: number, job: number, start: number, merged: number, version
     sizedBy: new Map([[job, 'tool']]),
     usual: new Map([[job, outlook(start, merged)]]),
     slow: new Map([[job, outlook(start, merged + HOUR)]]),
-    threads: new Map([['hq/estimates', { ...thread, waits: [], cards: [], chain: [], next: job }]]),
+    threads: new Map([['hq/estimates', { ...thread, waits: [], cards: [], chain: [], next: job, undrawn: [] }]]),
   };
 }
 const logged = (job: number) =>

@@ -8,7 +8,6 @@ import * as wakes from './wakes.ts';
 import * as agreements from './agreements.ts';
 import * as memory from './memory.ts';
 import { clock, dropped, finished } from './windows.ts';
-import { lineageTo } from './jobs.ts';
 import { lastCheck } from './threats.ts';
 import { ownerOf } from './projects.ts';
 
@@ -58,12 +57,12 @@ function threadsDone(since: number, now: number, moved: Set<number>) {
     project: string;
     done: string;
   }[];
+  // (a thread's jobs from its index, their kind and status from db.ts jobs_state: never their rows, cold behind their
+  // briefs.)
+  const ofThread = db.prepare(`select s.id, s.kind, s.status from jobs j indexed by jobs_thread_state
+    cross join jobs s indexed by jobs_state on s.id = j.id where j.thread = ?`);
   return done.flatMap(t => {
-    const jobs = db.prepare('select id, kind, status from jobs where thread = ?').all(t.id) as {
-      id: number;
-      kind: string;
-      status: string;
-    }[];
+    const jobs = ofThread.all(t.id) as { id: number; kind: string; status: string }[];
     const work = jobs.filter(j => j.kind === 'work' && j.status !== 'cancelled');
     const kept = jobs.filter(j => !dropped(j.id));
     const doneJobs = work.filter(j => j.status === 'done' && kept.includes(j)).map(j => j.id);
@@ -121,22 +120,25 @@ function movedSince(since: number) {
   return new Set([...ended.map(j => j.id), ...named.map(j => j.id), ...own]);
 }
 
-// The board's handled items and answered cards that work (its kept jobs' ids) carries, through each job's replacements
+// The board's handled items and answered cards that work (its kept jobs' ids) carries, through each job's replacements:
+// the jobs and every job they replaced read once (`line`), then each item and card against them, not against each job
 function carried(ids: number[]) {
   const json = JSON.stringify(ids);
+  const line = `with recursive line(id) as (select value from json_each($ids)
+    union select r.replaces from line join job_replacement_links r on r.job = line.id)`;
   const items = db
     .prepare(
-      `select id, call, kind, what from call_items i where status = 'handled' and exists (select 1 from jobs j
-      where j.id in (select value from json_each(?)) and (j.item = i.id or i.job in (${lineageTo('j.id')}))) order by id`,
+      `${line} select id, call, kind, what from call_items i where status = 'handled' and (i.job in (select id from line)
+      or i.id in (select item from jobs indexed by jobs_item where item is not null and id in (select value from json_each($ids))))
+      order by id`,
     )
-    .all(json) as { id: number; call: number; kind: string; what: string }[];
+    .all({ ids: json }) as { id: number; call: number; kind: string; what: string }[];
   const cards = db
     .prepare(
-      `select id, title from requests r where customers = 0 and exists (select 1 from jobs j
-      where j.id in (select value from json_each(?)) and r.id in
-      (select answers from jobs where id in (${lineageTo('j.id')}))) order by id`,
+      `${line} select id, title from requests where customers = 0 and id in (select answers from jobs
+      where id in (select id from line)) order by id`,
     )
-    .all(json) as { id: number; title: string }[];
+    .all({ ids: json }) as { id: number; title: string }[];
   return { items, cards };
 }
 

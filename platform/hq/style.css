@@ -18,6 +18,10 @@
   --press: translate(calc(var(--px-button) - var(--px-pressed)), calc(var(--px-button) - var(--px-pressed)));
   --hover-tile: translate(calc(var(--px-tile) - var(--px-hover)), calc(var(--px-tile) - var(--px-hover)));
   --press-tile: translate(calc(var(--px-tile) - var(--px-pressed)), calc(var(--px-tile) - var(--px-pressed)));
+  /* a button under a pointer, halfway down to pressed, as a tile goes in under one */
+  --px-button-hover: round(down, calc((var(--depth-button) + var(--depth-pressed)) / 4), 1px);
+  --hover-button: translate(calc(var(--px-button) - var(--px-button-hover)), calc(var(--px-button) - var(--px-button-hover)));
+  --shadow-hover-button: var(--px-button-hover) var(--px-button-hover) 0 var(--ink);
   /* (and --ease: the pixel art moves in steps, a skin may ease) */
   /* the space a key keeps from the box beside it, counted from its lip; the company may set it (theme/hq.yaml styles)
  */
@@ -70,6 +74,15 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 .tools { display: flex; gap: 8px; }
 .tools button, .tools a.desk, #zoom button { min-width: 44px; height: 44px; display: grid; place-items: center; padding: 0 10px; grid-auto-flow: column; gap: 6px; }
 .tools button:active, #zoom button:active { transform: var(--press); box-shadow: var(--shadow-press); }
+/* the brownstone's buttons (body.brownstone: its scene.js) go in a little under a pointer, as its tiles do: the HUD's,
+   the desk phone's and the projects view's, not the computer's screen's. */
+body.brownstone :is(.tools button, .tools a.desk, #zoom button, .req .btns button, .device .send, .device header :is(.past-btn, .x), #projects .pj-key) {
+  transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); }
+@media (hover: hover) {
+  body.brownstone :is(.tools button, .tools a.desk, #zoom button, .req .btns button:not(.on-air .mic), .device .send, #projects .pj-key:not(.on, [aria-pressed=true])):not(:active, :disabled):hover {
+    transform: var(--hover-button); box-shadow: var(--shadow-hover-button); }
+  /* (the devices' head keys stand on a thinner lip: down by as much, onto the pressed one) */
+  body.brownstone .device header :is(.past-btn, .x):not(:active):hover { transform: var(--hover-button); box-shadow: var(--shadow-press); } }
 .tools button[aria-pressed=true] { background: var(--gold); color: var(--on-accent); }
 svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 #btn-sound:not([aria-pressed=true]) .i-sound-on, #btn-sound[aria-pressed=true] .i-sound-off { display: none; }
@@ -125,6 +138,8 @@ svg.icon .accent { fill: var(--gold); }
 .tag { border: 0; padding: 0; color: var(--blue); }
 .task p { margin: 0; font-size: 18px; }
 .task .on-job { display: block; margin-top: 4px; color: var(--muted); }
+/* the project and thread a running job serves */
+.task .where { margin: 0 0 2px; font-size: 14px; color: var(--muted); }
 .look { font-style: italic; color: var(--muted); margin: 12px 0 0; }
 .log { list-style: none; padding: 0; margin: 0; }
 .log li { padding: 6px 0; border-top: 2px dotted var(--rule, #e3dccb); font-size: 15px; overflow-wrap: anywhere; }   /* (a path or a command never widens the panel) */
@@ -692,8 +707,9 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
    of its own, and a cover in its own colours. */
 .crt .artifacts .pills [aria-pressed=true] { color: var(--scr-hi); background: color-mix(in srgb, var(--scr) 20%, transparent); border-color: var(--scr); }
 .artifacts .heroes[hidden], .artifacts .none[hidden] { display: none; }
-/* one row to pick from, swiped sideways where it's wider than the screen. */
-.crt .artifacts .pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -4px; padding: 0 4px 4px; }
+/* one row to pick from, swiped sideways where it's wider than the screen, with room under it for a key's lip, or the
+   scroller cuts it off. */
+.crt .artifacts .pills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: -4px; padding: 0 4px 8px; margin-bottom: 6px; }
 .crt .artifacts .pills button { flex: none; white-space: nowrap; }
 .artifacts .applist { margin-top: 8px; }
 .artifacts .applist:not(.heroes) { grid-template-columns: repeat(auto-fill, minmax(min(96px, calc((100% - 20px) / 3)), 1fr)); }
@@ -943,7 +959,7 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 /* a job's number in any of HQ's words opens that job (prose.js jobLink): in the words' own colour, underlined */
 .job-link { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 /* a tap target whose words hold job links (prose.js covered): its button stretched over the box, each link above it
- */
+   */
 .covered { position: relative; isolation: isolate; }
 .covered > .cover { all: unset; position: absolute; inset: 0; z-index: 1; cursor: pointer; border-radius: inherit; -webkit-tap-highlight-color: transparent; }
 .covered .job-link { position: relative; z-index: 2; }
@@ -1175,7 +1191,14 @@ body.keys #viewer .sharebox .seg button[aria-pressed=true] { transform: var(--ke
 /* ---- the projects view (shell/projects.js), over the building: the board's four levels as keys, a level at a time, each
    under its head, in the brownstone's pixel look by default (inked paper keys with hard shadows over the town, a pixel
    pin on the businesses' and projects'). Wire's and the deck's touches are in their skins. */
-body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card, #btn-walls, #btn-tour) { display: none; }
+body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: none; }
+/* (as the view comes out, the HUD glides to the column's edges with it and the world's own tools fold away beside the
+   rest, so nothing jumps; on a phone, where the tools wrap, they simply go.) */
+#hud { transition: padding .42s cubic-bezier(.2, .9, .3, 1); }
+#hud .tools > :is(#btn-walls, #btn-tour) { max-width: 120px; transition: .42s cubic-bezier(.2, .9, .3, 1); transition-property: max-width, margin, padding, border-width, opacity, visibility; }
+body.projects #hud .tools > :is(#btn-walls, #btn-tour) { max-width: 0; min-width: 0; margin-left: -8px; padding-inline: 0; border-width: 0; overflow: hidden; opacity: 0; visibility: hidden; }
+@media (max-width: 700px) { body.projects #hud .tools > :is(#btn-walls, #btn-tour) { display: none; } }
+@media (prefers-reduced-motion: reduce) { #hud, #hud .tools > * { transition: none; } }
 #hud .brand small { white-space: nowrap; }
 /* (Pixelify draws "fi" and "fl" as one glyph that reads as an A: no ligatures) */
 #projects { position: fixed; inset: 0; z-index: 5; overflow: hidden; color: var(--ink); font-variant-ligatures: none;
@@ -1236,7 +1259,7 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 #projects .pj-key[aria-pressed=true] { transform: var(--press); box-shadow: var(--pj-press); background: var(--pj-ground); }
 #projects :is(.pj-back-key, .pj-close) { width: 44px; height: 44px; min-height: 0; padding: 0; flex: none; border-radius: 50%; }
 :is(.pj-back-key, .pj-close) svg { width: 20px; height: 20px; }
-@media (hover: hover) { #projects .pj-key:not(.on, [aria-pressed=true]):hover { background: color-mix(in srgb, var(--pj-tile) 88%, var(--pj-ink)); } }
+@media (hover: hover) { body:not(.brownstone) #projects .pj-key:not(.on, [aria-pressed=true]):hover { background: color-mix(in srgb, var(--pj-tile) 88%, var(--pj-ink)); } }
 
 /* a level's head, the same strip at every level: back up (at home the view's mark in its place), where the board is
    (the level above over its name), its marks, its keys and the view's close. */
@@ -1284,16 +1307,17 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-faces { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; padding-left: 4px; }
 .pj-who-line { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 14px; }
 .pj-size { margin-left: auto; padding-left: 6px; color: var(--muted); font-size: 13px; font-weight: 600; white-space: nowrap; }
-/* work under way: a voice of three bars for each job running, rising and falling together on the voice's beat, each
-   voice on its own (projectkeys.js pulse sets --at; its 1.2 s is BEAT_MS there). */
+/* work under way: a voice of three bars for each job running, each bar rising and falling on its own uneven run, as a
+   level meter's do, and each voice at its own point in the run (projectkeys.js pulse sets --at; its 2.4 s is BEAT_MS
+   there). */
 .pj-pulse { display: inline-flex; align-items: flex-end; gap: 5px; height: 14px; flex: none; }
 .pj-voice { display: flex; align-items: flex-end; gap: 2px; height: 100%; }
-.pj-live { width: 3px; height: 100%; flex: none; background: var(--pj-live); transform-origin: bottom; animation: pj-beat 1.2s var(--ease, steps(4)) var(--at, 0s) infinite; }
+.pj-live { width: 3px; height: 100%; flex: none; background: var(--pj-live); transform-origin: bottom; animation: pj-beat 2.4s var(--ease, steps(4)) var(--at, 0s) infinite; }
 .pj-live:nth-child(2) { animation-name: pj-beat-2; }
 .pj-live:nth-child(3) { animation-name: pj-beat-3; }
-@keyframes pj-beat { 0%, 100% { transform: scaleY(.3); } 30% { transform: scaleY(.8); } 62% { transform: scaleY(.45); } }
-@keyframes pj-beat-2 { 0%, 100% { transform: scaleY(.45); } 30% { transform: none; } 62% { transform: scaleY(.6); } }
-@keyframes pj-beat-3 { 0%, 100% { transform: scaleY(.25); } 30% { transform: scaleY(.65); } 62% { transform: scaleY(.35); } }
+@keyframes pj-beat { 0%, 100% { transform: scaleY(.35); } 7% { transform: scaleY(.8); } 15% { transform: scaleY(.45); } 22% { transform: scaleY(.6); } 33% { transform: scaleY(.25); } 41% { transform: scaleY(.9); } 52% { transform: scaleY(.5); } 60% { transform: scaleY(.7); } 71% { transform: scaleY(.3); } 80% { transform: scaleY(.65); } 90% { transform: scaleY(.4); } }
+@keyframes pj-beat-2 { 0%, 100% { transform: scaleY(.55); } 6% { transform: none; } 14% { transform: scaleY(.5); } 26% { transform: scaleY(.85); } 35% { transform: scaleY(.4); } 44% { transform: scaleY(.7); } 50% { transform: scaleY(.95); } 63% { transform: scaleY(.45); } 74% { transform: scaleY(.8); } 85% { transform: scaleY(.35); } 93% { transform: scaleY(.75); } }
+@keyframes pj-beat-3 { 0%, 100% { transform: scaleY(.25); } 10% { transform: scaleY(.55); } 18% { transform: scaleY(.3); } 29% { transform: scaleY(.7); } 38% { transform: scaleY(.45); } 47% { transform: scaleY(.2); } 56% { transform: scaleY(.6); } 68% { transform: scaleY(.85); } 77% { transform: scaleY(.4); } 88% { transform: scaleY(.6); } 95% { transform: scaleY(.3); } }
 .pj-icon { width: 34px; height: 34px; }
 .pj-phone svg { width: 22px; height: 22px; display: block; fill: currentColor; }
 
@@ -1359,8 +1383,16 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-log time { font-weight: 600; color: var(--ink); margin-right: 6px; }
 
 /* the brownstone's own: a pixel pin on the businesses' and projects' keys */
-:is(.pj-business, [data-project])::before { content: ''; position: absolute; z-index: 1; top: 6px; left: 50%; margin-left: -7px; width: 15px; height: 18px; image-rendering: pixelated;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 12' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M3 0h4v1h2v1h1v4H9v1H7v1H6v4H4V8H3V7H1V6H0V2h1V1h2z'/%3E%3Cpath fill='%235b8def' d='M3 1h4v1h2v4H7v1H3V6H1V2h2z'/%3E%3Cpath fill='%23fffaf0' d='M3 2h2v1H3z'/%3E%3C/svg%3E") center / 100% no-repeat; }
+:is(.pj-business, [data-project])::before { content: ''; position: absolute; z-index: 1; top: 6px; left: 50%; margin-left: -8px; width: 16px; height: 22px; image-rendering: pixelated;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 11' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M2 0h4v1h1v1h1v4H7v1H6v1H5v3H3V8H2V7H1V6H0V2h1V1h1z'/%3E%3Cpath fill='%235b8def' d='M2 1h4v1h1v4H6v1H2V6H1V2h1z'/%3E%3Cpath fill='%23fffaf0' d='M2 2h2v1H3v1H2z'/%3E%3C/svg%3E") center / 100% no-repeat; } /* (round, at 2 px a pixel.) */
+/* and its keys arrive as notes pinned to a board (levels.js moveIn), its view's icon in its head's ink, the one waiting
+   for the board ringed in ink like the HUD's counts, a face's frame square like the face, and For you a chip in the
+   tile's ink. */
+body.brownstone #projects { --pj-arrival: pin; }
+body.brownstone .pj-slot { color: inherit; }
+body.brownstone .pj-mark.you { box-shadow: 0 0 0 2px var(--line); }
+body.brownstone .pj-person { border-radius: var(--r); }
+body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: var(--r-sm); background: var(--pj-on-you); color: var(--pj-you); }
 @media (prefers-reduced-motion: reduce) { .pj-live { animation: none; } }
 /* Projects 3.0: a cover on each business and project, people in its corner, deliverables, tasks with their codes.
  */
@@ -1407,6 +1439,8 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; min-height: 22px; align-self: end; }
 .pj-foot .pj-when, .pj-foot .pj-size { margin-left: auto; padding: 0; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .pj-task-text small .pj-pulse { height: 12px; margin-right: 6px; vertical-align: -1px; }
+/* a wait: an hourglass in the line's own muted colour, then what it waits on */
+.pj-wait svg { width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; fill: currentColor; }
 .pj-lines { font-size: 13px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pj-tile.lit :is(.pj-lines, .pj-next small, .pj-was) { color: inherit; } /* (a deliverable's time and the one before) */
 .pj-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
@@ -1418,11 +1452,11 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-task-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
 .pj-task-side .pj-size { margin: 0; padding: 0; font-size: 14px; color: var(--pj-ink); }
 /* a task's row in its own state, each its own look (tasks.js): working a lifted key with its bars and its face at work,
-   the board's lit with its desk phone, planned hollow, after other work hollow and dashed with an hourglass, done (or
-   ended) quiet with a tick; a step under its task on a branch of its own. */
+   the board's lit with its desk phone, planned hollow, after other work hollow with an hourglass and its wait in its
+   words, done (or ended) quiet with a tick; a step under its task on a branch of its own that ends at the step's edge.
+  . */
 #projects .pj-task:is(.planned, .after, .done, .ended) { background: transparent; box-shadow: none; }
 #projects .pj-task:is(.planned, .after) { border: 2px solid var(--line); }
-#projects .pj-task.after { border-style: dashed; }
 #projects .pj-task:is(.done, .ended) { border-color: transparent; }
 #projects .pj-task:is(.done, .ended) .pj-task-text b { font-weight: 500; color: var(--muted); }
 .pj-task-who { position: relative; flex: none; display: grid; }
@@ -1438,8 +1472,8 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-task:is(.done, .ended) .pj-row-mark { color: var(--muted); }
 .pj-size-bar { display: inline-block; width: 34px; height: 6px; margin-right: 7px; vertical-align: 1px;
   background: linear-gradient(to right, currentColor calc(var(--share) * 100%), color-mix(in srgb, currentColor 20%, transparent) 0); }
-.pj-step { position: relative; margin-left: 34px; }
-.pj-step::before { content: ''; position: absolute; left: -2px; top: -10px; bottom: 50%; width: 12px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
+.pj-step { position: relative; margin-left: 46px; }
+.pj-step::before { content: ''; position: absolute; left: -14px; top: -10px; bottom: 50%; width: 14px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
 #projects .pj-step .pj-task { min-height: 52px; }
 #projects .pj-step .pj-face { width: 28px; height: 28px; }
 .pj-board-task.pj-flat .pj-phone { color: var(--muted); }
@@ -1448,7 +1482,7 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 @media (max-width: 700px) {
   #projects .pj-task { flex-wrap: wrap; row-gap: 6px; }
   .pj-task-side { flex-direction: row; align-items: center; gap: 10px; width: 100%; padding-left: 48px; }
-  .pj-step { margin-left: 22px; }
+  .pj-step { margin-left: 34px; }
 }
 .pj-code { padding: 3px 6px; font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; color: var(--pj-ink); background: var(--pj-ground);
   border-radius: 4px; flex: none; white-space: nowrap; } /* (whole beside a review's badge) */

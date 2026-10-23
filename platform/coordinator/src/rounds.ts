@@ -119,6 +119,7 @@ function synthetic(
     seat: null,
     for_seat: null,
     board: 0,
+    followThrough: false,
     after: 'released',
     follows: undefined,
     needs: undefined,

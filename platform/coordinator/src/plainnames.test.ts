@@ -54,6 +54,10 @@ async function nameAll() {
 const boardJob = async (id: number) => (await h.board(`/api/jobs/find?id=${id}`)).body.job;
 const titleOf = (id: number) =>
   (h.db.prepare('select title from jobs where id = ?').get(id) as { title: string }).title;
+// (why a task's latest naming failed: on its row, for the agents)
+const errorOf = (id: number) =>
+  (h.db.prepare("select error from board_names where kind = 'task' and id = ?").get(String(id)) as { error: string })
+    .error;
 
 test("a new task's board title comes from the model's route, its brief read, and the agent's words stay on it", async () => {
   await nameAll();
@@ -109,17 +113,17 @@ test("a new task's board title comes from the model's route, its brief read, and
   assert.equal(projects.findThread(thread.id)!.name, 'Claim-plan cost');
   assert.deepEqual(await claim(), {}, 'nothing more is due');
 
-  // A retitle is due again, and the board's view says it's being named until it is, never the agent's new words
+  // A retitle is due again, and the board reads the agent's new words until it's named
   assert.deepEqual(plan.title(job, 'Read the cohort again', 'wren'), { ok: true });
   const retitled = await boardJob(job);
-  assert.deepEqual([retitled.title, retitled.naming], [null, { title: null }]);
+  assert.deepEqual([retitled.title, retitled.naming], ['Read the cohort again', undefined]);
   const again = await claim();
   assert.deepEqual(refs(again), [`task:${job}`]);
   await answer(again, { [`task:${job}`]: 'Measure the wait for a free seat again' });
   assert.equal((await boardJob(job)).title, 'Measure the wait for a free seat again');
 });
 
-test("the model being down blocks nothing: the board's view says the name is being made, then why it failed, and it's asked until it's named", async () => {
+test("the model being down blocks nothing: the board reads the agent's words, why it failed stays on its row, and it's asked until it's named", async () => {
   await nameAll();
   const queued = await h.agent('job', (await h.start({ agent: 'wren', title: 'Plan', thread: 'game/claims' })).token, {
     agent: 'kit',
@@ -132,10 +136,15 @@ test("the model being down blocks nothing: the board's view says the name is bei
   const claimed = await claim();
   assert.ok(refs(claimed).includes(`task:${job}`));
   const asked = await boardJob(job);
-  assert.deepEqual([asked.title, asked.naming, asked.status], [null, { title: null }, 'queued'], 'queued, being named');
+  assert.deepEqual(
+    [asked.title, asked.naming, asked.status],
+    ['Profile the CPQ seat path', undefined, 'queued'],
+    'queued, in its words',
+  );
   await answer(claimed, null);
   const down = await boardJob(job);
-  assert.deepEqual([down.title, down.naming], [null, { title: "the naming model didn't answer" }], 'the error shows');
+  assert.deepEqual([down.title, down.naming], ['Profile the CPQ seat path', undefined], 'still its words');
+  assert.equal(errorOf(job), "the naming model didn't answer", 'the error stays on its row');
   assert.deepEqual(await claim(), {}, 'not asked again at once');
   // (an answer that names nothing, or too long a name, is an error too, and it's asked again however often it comes)
   for (let tries = 0; tries < 4; tries++) {
@@ -143,9 +152,11 @@ test("the model being down blocks nothing: the board's view says the name is bei
     const c = await claim();
     assert.ok(refs(c).includes(`task:${job}`), 'asked again later');
     await answer(c, { [`task:${job}`]: tries % 2 ? '' : 'x'.repeat(101) });
-    assert.deepEqual((await boardJob(job)).naming, {
-      title: tries % 2 ? 'the naming model gave no name for it' : "the naming model's name was over 100 characters",
-    });
+    assert.equal(
+      errorOf(job),
+      tries % 2 ? 'the naming model gave no name for it' : "the naming model's name was over 100 characters",
+    );
+    assert.equal((await boardJob(job)).title, 'Profile the CPQ seat path');
   }
   mock.timers.tick(10 * MIN);
   await answer(await claim(), { [`task:${job}`]: 'Time how a free seat gets its next task' });
@@ -170,7 +181,7 @@ test('work finished before it was named, done threads and done projects get plai
   // (a project renamed by the CEO, juno, and ended before its new name was put plainly)
   assert.equal((plan.renameProject('shop', 'Shop, the second', 'juno') as { name: string }).name, 'Shop, the second');
   assert.deepEqual(projectdone.projectDone('shop', 'wren'), { ok: true });
-  assert.equal((await boardJob(run.id)).title, null, 'done, being named');
+  assert.equal((await boardJob(run.id)).title, 'Cut the RC build', 'done, in its words until named');
   const named = await nameAll();
   for (const ref of [`task:${run.id}`, `thread:${ended.id}`, `goal:${ended.id}`, 'project:shop'])
     assert.ok(named.includes(ref), ref);
@@ -188,7 +199,7 @@ test("Wire's last-work line reads the finished task's plain title", async () => 
   await nameAll();
   await h.finish(await h.start({ agent: 'tess', title: 'Wire the CPQ cohort sweep', thread: 'game/claims' }));
   const before = (await h.board('/api/work')).body.agents.tess.last;
-  assert.deepEqual([before.title, before.naming], [null, { title: null }]);
+  assert.deepEqual([before.title, before.naming], ['Wire the CPQ cohort sweep', undefined]);
   await nameAll();
   assert.equal((await h.board('/api/work')).body.agents.tess.last.title, 'Wire the CPQ cohort sweep (plain)');
 });
@@ -223,13 +234,17 @@ test("a fix round's board title is written from its findings' text", async () =>
     title: 'Fix 614 and 615',
   }) as { job: number };
   assert.equal(typeof accepted.job, 'number', JSON.stringify(accepted));
-  // (its owner's own title for it, which what the round fixes then names: the board's version of it, none until made)
+  // (its owner's own title for it, which what the round fixes then names: the board's version of it, its words until made)
   assert.deepEqual(plan.title(accepted.job, 'Fix 614 and 615', 'wren'), { ok: true });
   const words = titleOf(accepted.job);
   const fixes = async () =>
     (await h.board('/api/projects/thread?id=game/orders')).body.jobs.find((j: { id: number }) => j.id === accepted.job)
       .fixes;
-  assert.deepEqual(await fixes(), { round: 1, findings: [] }, "never the agents' words");
+  assert.deepEqual(
+    await fixes(),
+    { round: 1, findings: [], title: 'Fix 614 and 615' },
+    "the agents' words until named",
+  );
   let claimed = await claim();
   while (claimed.names && !refs(claimed).includes(`task:${accepted.job}`)) {
     await answer(claimed, Object.fromEntries(claimed.names.map(n => [`${n.kind}:${n.id}`, n.words])));
@@ -242,4 +257,92 @@ test("a fix round's board title is written from its findings' text", async () =>
   assert.equal((await boardJob(accepted.job)).title, 'Fix a broken order path');
   assert.equal((await fixes()).title, 'Fix a broken order path');
   assert.equal(titleOf(accepted.job), words);
+});
+
+test("a meeting's topic gets a plain name, and its seats are the board's Meetings group, out of the unsorted work", async () => {
+  await nameAll();
+  const meetings = await import('./meetings.ts');
+  const topic = 'Kit seams, settled: read company/briefs/1-meeting.md first';
+  const set = meetings.create({
+    topic,
+    agents: ['ivy', 'wren'],
+    at: Date.now() + 60 * MIN,
+    calledBy: 'juno',
+    code: undefined,
+  });
+  assert.equal(typeof set, 'object', String(set));
+  const { id, seats } = set as { id: number; seats: { job: number }[] };
+  type Seat = { id: number; kind: string; meeting: { id: number; topic: string } };
+  const seatsOf = async () => {
+    const board = (await h.board('/api/projects')).body as { meetings: Seat[]; unsorted: Seat[] };
+    assert.ok(!board.unsorted.some(j => j.kind === 'meeting'), 'no seat in the unsorted work');
+    return board.meetings.sort((a, b) => a.id - b.id);
+  };
+  const before = await seatsOf();
+  assert.deepEqual(
+    before.map(j => j.id),
+    seats.map(s => s.job).sort((a, b) => a - b),
+  );
+  assert.ok(
+    before.every(j => j.meeting.id === id && j.meeting.topic === topic),
+    "the agents' words while it's named",
+  );
+  const c = await claim();
+  assert.deepEqual(refs(c), [`meeting:${id}`]);
+  assert.match(c.prompt ?? '', /What it is: a meeting's topic/);
+  await answer(c, { [`meeting:${id}`]: 'How the line-art kit fits together' });
+  assert.ok((await seatsOf()).every(j => j.meeting.topic === 'How the line-art kit fits together'));
+});
+
+test('a meeting topic with deeply nested delimiters can be claimed without escaping its prompt fences', async () => {
+  await nameAll();
+  const meetings = await import('./meetings.ts');
+  const topic = '<na'.repeat(12_000) + '<name>' + 'me>'.repeat(12_000);
+  const set = meetings.create({
+    topic,
+    agents: ['ivy', 'wren'],
+    at: Date.now() + 60 * MIN,
+    calledBy: 'juno',
+    code: undefined,
+  });
+  assert.equal(typeof set, 'object', String(set));
+  const { id } = set as { id: number };
+  const claimed = await h.worker('names/claim');
+  assert.equal(claimed.status, 200);
+  const c = claimed.body as Claimed;
+  assert.deepEqual(refs(c), [`meeting:${id}`]);
+  assert.equal(c.names[0].words, topic);
+  assert.match(c.prompt, /The agents' words: &lt;na&lt;na/);
+  assert.doesNotMatch(c.prompt, /<na<na/);
+  assert.match(c.prompt.slice(0, c.prompt.indexOf('\n<work>\n')), /"<" the agents wrote reads "&lt;": write it as "<"/);
+});
+
+test("a '<' in the agents' words reaches the model encoded, and the '<' in its answer is what the board reads", async () => {
+  await nameAll();
+  const thread = projects.createThread({
+    project: 'game',
+    name: 'Order checks',
+    goal: 'Orders add up',
+    slug: 'less-than',
+  }) as {
+    id: string;
+  };
+  await nameAll();
+  const words = 'Check total < limit before <work> closes';
+  const job = h.queue({
+    agent: 'kit',
+    title: words,
+    thread: thread.id,
+    prompt: 'Refuse an order when total < limit fails.',
+  });
+  const c = await claim();
+  assert.deepEqual(refs(c), [`task:${job}`]);
+  assert.match(c.prompt!, /The agents' words: Check total &lt; limit before &lt;work> closes/);
+  assert.match(c.prompt!, /Refuse an order when total &lt; limit fails/, 'its brief');
+  const plain = 'Refuse an order whose total < its limit fails';
+  await answer(c, { [`task:${job}`]: plain });
+  assert.equal((await boardJob(job)).title, plain, 'the board reads "<", not "&lt;"');
+  const shown = (await h.board(`/api/projects/thread?id=${thread.id}`)).body;
+  assert.equal(shown.jobs[0].title, plain);
+  assert.equal(titleOf(job), words, "the agents' words stay on the task");
 });
