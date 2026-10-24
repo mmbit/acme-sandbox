@@ -49,9 +49,11 @@ const COMPARISON_INPUT = 'base-comparison.json';
 const COMPARISON_OUTPUT = 'base-outcomes.json';
 // The tools the worker's image adds for the Python and shell suites (platform/worker/Dockerfile), which a helper's image
 // lacks and its proxy can't fetch: the worker's own copies go along in the bundle's tools/, first on PATH (lent.ts),
-// when a Python or shell suite runs (about 53 MB gzipped).
-const TOOLS = ['age', 'age-keygen', 'versitygw', 'caddy'];
+// when a Python or shell suite runs.
 const TOOLS_BIN = process.env.TESTS_TOOLS_BIN ?? '/usr/local/bin'; // where the image puts them (the tests' stand-ins elsewhere)
+// Compose is optional on machines without the worker image. Its policy tests report a skip when absent.
+const TOOLS = ['age', 'age-keygen', 'versitygw', 'caddy'];
+if (existsSync(join(TOOLS_BIN, 'docker-compose'))) TOOLS.push('docker-compose');
 
 type Failure = { key: string; file: string; text: string };
 type FailureTargets = Map<Run, { failures: Pick<Failure, 'key' | 'file'>[] }>;

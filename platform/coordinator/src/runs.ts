@@ -147,8 +147,18 @@ function runSettings() {
     if (why) leftOut.push({ name, why });
     else kinds.push(kindOf(name, entry as Record<string, unknown>));
   }
+  // the kind HQ's browser harnesses send their renders to (shared/browser/render.ts): one with git, sockets and the
+  // worker's Playwright, which a film's kind may lack. One that isn't a kind's name is left out, and the harnesses stay
+  // on the worker.
+  const browser = given.browser === undefined ? 'render' : typeof given.browser === 'string' ? given.browser : '';
+  if (!KIND_NAME.test(browser))
+    leftOut.push({
+      name: 'browser',
+      why: 'the name of one of runs.kinds: a to z, 0 to 9 and -, starting with a letter',
+    });
   return {
     helper: typeof given.helper === 'string' && given.helper ? given.helper : 'the helper',
+    browser: KIND_NAME.test(browser) ? browser : '',
     maxMinutes: whole(given.maxMinutes, 240),
     takeMinutes: whole(given.takeMinutes, 3),
     // the memory a lent machine's runs may hold in all, in GB (0: no cap but each kind's): the offload machine's own cap,
@@ -486,6 +496,7 @@ function helperState() {
       setup: setup.kinds[index].commands,
     })),
     leftOut: settings.leftOut,
+    browser: settings.browser,
     removeKey: setup.removeKey,
     install: setup.install,
     remove: setup.remove,

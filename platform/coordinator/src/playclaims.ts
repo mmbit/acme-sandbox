@@ -12,6 +12,7 @@ type Queue<T> = {
   next: number;
   groups: Map<string, Group<T>[]>;
   base: (a: QueuedJob, b: QueuedJob) => number;
+  orders: ReadonlyMap<number, Timing>;
 };
 
 export function queue<T extends Claim>(runs: T[], orders: ReadonlyMap<number, Timing>): Queue<T> {
@@ -20,7 +21,7 @@ export function queue<T extends Claim>(runs: T[], orders: ReadonlyMap<number, Ti
       y = orders.get(b.id)!;
     return Number(spareOnly(a, x)) - Number(spareOnly(b, y)) || compare(x, y);
   };
-  return { runs, pending: new Set(runs), next: 0, groups: new Map(), base };
+  return { runs, pending: new Set(runs), next: 0, groups: new Map(), base, orders };
 }
 
 export function take<T extends Claim>(
@@ -38,7 +39,12 @@ export function take<T extends Claim>(
       ? capacity.choose(picked.row, picked.order, seats, new Map(), limits, false)
       : available;
   if ('id' in seat && reviewroom.shared(limits[seat.engine] ?? Infinity)) {
-    const order = reviewroom.claimOrder(occupants(seat.id), limits[seat.engine], queue.base);
+    const order = reviewroom.claimOrder(
+      occupants(seat.id),
+      limits[seat.engine],
+      queue.base,
+      row => queue.orders.get(row.id)!.latestStart !== null,
+    );
     const spare = spareOnly(picked.row, picked.order);
     for (const group of groupsOn(queue, seat, seats.now, limits)) {
       if (group.spare && !spare) continue;

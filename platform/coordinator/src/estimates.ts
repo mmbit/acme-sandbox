@@ -1,11 +1,11 @@
-// hq estimate: a piece of work sized on done jobs like it (matching.ts), its agent time; a queued job's with its ETA
-// (eta.ts), review included. It says which jobs it compared against and on what, then the seats' headroom. With no
-// words, an agent's or a folder's latest done jobs. When new work could be done is hq when's (when.ts).
+// Scope evidence for caller estimates, saved task sizes, and timing-quality counts.
 import { db } from './db.ts';
 import { isOpenJob } from './jobs.ts';
 import {
   ORIGIN,
   pastJobs,
+  cleanPastJobs,
+  timingAudit,
   RUN_COLUMNS,
   RUN_JOIN,
   type JobOrigin,
@@ -25,22 +25,41 @@ export type Ask = {
   limit?: unknown;
 };
 
+export function audit(pool = pastJobs()) {
+  const measured = timingAudit(pool);
+  const missing = db
+    .prepare(
+      `select count(*) total,
+    sum(not exists(select 1 from runs r where r.job = j.id)) missing_runs,
+    sum(exists(select 1 from runs r where r.job = j.id and r.ended is null)) open_runs
+    from jobs j where j.kind = 'work' and j.status = 'done'`,
+    )
+    .get() as { total: number; missing_runs: number | null; open_runs: number | null };
+  return {
+    ...measured,
+    total: missing.total,
+    excluded: missing.total - measured.clean,
+    reasons: { ...measured.reasons, missing_runs: missing.missing_runs ?? 0, open_runs: missing.open_runs ?? 0 },
+  };
+}
+
 export function estimate(ask: Ask) {
   const asked = readAsk(ask);
   if (typeof asked === 'number') return asked;
   const { q, agent, path, limit } = asked;
   const inFolder = (j: PastJob) => !path || (JSON.parse(j.files) as string[]).some(f => f.startsWith(path));
   const past = pastJobs();
-  const pool = past.filter(inFolder);
+  const quality = audit(past);
+  const pool = cleanPastJobs(past).filter(inFolder);
   const like = q.match(/^#(\d+)$/)?.[1];
   if (!q) {
     const latest = pool.filter(j => !agent || j.agent === agent).sort((a, b) => b.id - a.id);
-    return { jobs: latest.slice(0, limit).map(j => shown(j, pool)), seats: seatHeadroom() };
+    return { jobs: latest.slice(0, limit).map(j => shown(j, pool)), quality, seats: seatHeadroom() };
   }
   const job = like ? jobOf(Number(like)) : undefined;
   if (like && !job) return 404;
   const work: Work = job ?? { title: q, origin: 'work', agent: agent || undefined };
-  const own = job && pool.find(j => j.id === job.id);
+  const own = job && past.find(j => j.id === job.id);
   // a queued job's own: the prediction stored as it was queued, which its outlook plays too
   const sized =
     (job?.open && predictions.stored(job.id, past)) ||
@@ -48,18 +67,25 @@ export function estimate(ask: Ask) {
       work,
       pool.filter(j => j !== own),
     );
+  const saved = job?.open ? predictions.sizeHistory(job.id)[0] : undefined;
+  const compared = saved ? past.filter(j => !j.customers && !j.about_keys && saved.refs.includes(j.id)) : sized.picks;
   return {
+    quality,
     ...(own ? { job: shown(own, pool) } : {}),
-    jobs: sized.picks.slice(0, limit).map(j => shown(j, pool)),
-    estimate: {
-      agent_minutes: minutes(sized.size.agent_ms),
-      compared: sized.picks.length,
-      basis: sized.basis,
-      guessed: sized.guessed,
-    },
+    jobs: compared.slice(0, limit).map(j => shown(j, pool)),
+    ...(job?.open
+      ? {
+          estimate: {
+            agent_minutes: minutes(saved?.agent_ms ?? sized.size.agent_ms),
+            compared: compared.length,
+            basis: sized.basis,
+            guessed: sized.guessed,
+          },
+        }
+      : {}),
     // a queued job's outlook, and its sizes, the one that counts first (predictions.ts sizeHistory)
     ...(job?.open ? { outlook: openOutlook(job.id), sizes: predictions.sizeHistory(job.id).map(shownSize) } : {}),
-    typical: typical(sized.picks),
+    typical: typical(compared),
     seats: seatHeadroom(),
   };
 }
@@ -113,6 +139,11 @@ const shownSize = (s: ReturnType<typeof predictions.sizeHistory>[number]) => ({
 // A job whose seat spend per agent hour is under a third of its engine's usual took its hours mostly waiting on tools
 // that use no tokens (renders, long test suites): its hours and its spend are judged apart.
 function shown(j: PastJob, pool: PastJob[]) {
+  const scope = db.prepare('select prompt, result, customers from jobs where id = ?').get(j.id) as {
+    prompt: string;
+    result: string | null;
+    customers: number;
+  };
   const usual = median(
     pool
       .filter(priced)
@@ -134,6 +165,13 @@ function shown(j: PastJob, pool: PastJob[]) {
     spend: j.spend === null ? null : Math.round(j.spend * 100) / 100,
     unit: j.unit,
     files,
+    // Customer details and credential-call scopes never become comparison material.
+    brief: scope.customers || j.about_keys ? null : scope.prompt,
+    report: scope.customers || j.about_keys ? null : scope.result,
+    changed_files: JSON.parse(j.files) as string[],
+    added: j.added,
+    removed: j.removed,
+    timing_quality: j.timing_flags ?? [],
     pr: j.pr === null ? null : { number: j.pr, status: j.pr_status, merged_at: j.merged_at },
     tool_bound: usual !== null && priced(j) && j.agent_ms >= 10 * 60_000 && rate(j) < usual / 3,
   };

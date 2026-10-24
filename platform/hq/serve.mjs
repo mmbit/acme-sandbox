@@ -17,8 +17,9 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     const asked = decodeURIComponent(new URL(req.url, 'http://x').pathname).slice(1), path = !asked || asked.endsWith('/') ? `${asked}index.html` : asked;
     // (and a company's own HQ apps at /kits/<name>/…, from kits/<name>/hq/)
     const kit = /^kits\/([a-z0-9][a-z0-9-]*)\/(.+)$/.exec(path);
-    // (and the keys' motion Slate shares, shared/tactile/.)
-    const sharedKit = /^shared\/tactile\/[a-z]+\.js$/.test(path);
+    // (and the keys' motion, the statistics and the signs Slate shares, shared/tactile/, shared/stats/ and shared/signs/
+    // with the contrast sums it imports.)
+    const sharedKit = /^shared\/(tactile|stats|signs|contrast)\/[a-z]+\.js$/.test(path);
     // (and review mode's framing rule, which HQ's note thumbnails import, the platform's sound kit, its button that asks
     // once more and its contrast sums, and the holidays' table and the shared formats the clock imports)
     const review = { '__review/frame.js': 'shared/review/frame.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',

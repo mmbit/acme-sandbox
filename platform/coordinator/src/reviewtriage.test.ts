@@ -5,6 +5,7 @@ import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { harness, until } from './harness.ts';
 import { leftoverJobs, retryNow } from './reviewfixture.ts';
+import * as reviewrefusals from './reviewrefusals.ts';
 
 const h = await harness('reviewtriage', {
   before: repo => {
@@ -19,6 +20,7 @@ const h = await harness('reviewtriage', {
   },
 });
 await h.worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready' });
+await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready' });
 const { db } = h;
 const review = await import('./review.ts');
 const panel = await import('./panel.ts');
@@ -45,8 +47,8 @@ const selection = (reviewers?: ReturnType<typeof reader>[]) => ({
 const cancelLeftovers = leftoverJobs(db);
 afterEach(cancelLeftovers);
 
-async function push(pr: number, next = sha(), more = {}, engine?: string) {
-  const author = await h.start({ agent: 'bolt', branch: `review/${pr}`, ...(engine && { engine }) });
+async function push(pr: number, next = sha(), more = {}, work: { engine?: string; thread?: string } = {}) {
+  const author = await h.start({ agent: 'bolt', branch: `review/${pr}`, ...work });
   assert.equal((await h.finish(author, { pr, branch: `review/${pr}`, files, sha: next, ...more })).status, 200);
   await until(() => pending(pr).some(job => job.stage === 'triage'), 'round triage');
   return next;
@@ -62,15 +64,15 @@ async function finish(pr: number, stage: string, output: object) {
   return run!;
 }
 
-async function blocked(pr: number, note = false) {
+async function blocked(pr: number, note = false, finder = 'rook') {
   const head = await push(pr);
-  await finish(pr, 'triage', selection([reader('rook')]));
+  await finish(pr, 'triage', selection([reader(finder)]));
   await until(() => readers(pr).length === 1, 'selected reviewer');
   await finish(pr, 'review', { findings: [{ file: files[0], line: 5, issue: 'The label is hidden' }] });
   await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
   const ruling = await finish(pr, 'ruling', {
     decision: 'changes',
-    blocking: [{ file: files[0], line: 5, issue: 'The label is hidden', by: ['rook'] }],
+    blocking: [{ file: files[0], line: 5, issue: 'The label is hidden', task: 'Show the label', by: [finder] }],
     nonblocking: note ? [{ file: files[0], line: 6, issue: 'A naming suggestion', by: ['rook'] }] : [],
   });
   await until(() => db.prepare('select 1 from findings where ruling = ?').get(ruling.id), 'recorded blocker');
@@ -78,6 +80,57 @@ async function blocked(pr: number, note = false) {
   const finding = db.prepare('select id from findings where ruling = ?').get(ruling.id) as { id: number };
   return { head, finding: finding.id };
 }
+
+test('a running triage corrects unreadable answers against the live roster before it finishes', async () => {
+  const pr = 155;
+  await push(pr);
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  assert.equal(run?.id, queued.id);
+  const check = (output: string) => h.agent('review-output', run!.token, { output });
+  assert.equal((await check('The panel should read this.')).body.error, 'not a JSON object');
+  assert.equal(
+    (await check(JSON.stringify({ ...selection([]), consolidator: 'bolt' }))).body.error,
+    'ineligible consolidator',
+  );
+  const output = JSON.stringify(selection([reader('rook')]));
+  assert.equal((await check(output)).body.error, null);
+  assert.equal(h.jobs.findJob(run!.id)?.status, 'running');
+  assert.equal(
+    (db.prepare('select output from jobs where id = ?').get(run!.id) as { output: string | null }).output,
+    null,
+  );
+  assert.deepEqual(readers(pr), []);
+  assert.equal((await h.finish(run!, { output })).status, 200);
+  await until(() => readers(pr).includes('rook'), 'the checked triage dispatches');
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+  const reviewer = await h.claim('claude', { seat: 'claude-1' });
+  assert.equal(reviewer?.agent, 'rook');
+  const readerCheck = (output: string) => h.agent('review-output', reviewer!.token, { output });
+  assert.ok((await readerCheck('No findings.')).body.error);
+  const report = JSON.stringify({ findings: [{ file: files[0], line: 1, issue: 'The control is hidden' }] });
+  assert.equal((await readerCheck(report)).body.error, null);
+  await h.finish(reviewer!, { output: report });
+  await until(() => pending(pr).some(job => job.stage === 'ruling'), 'the checked reviewer reports');
+  const ruling = pending(pr).find(job => job.stage === 'ruling')!;
+  const ruler = await h.claim(ruling.engine, { seat: `${ruling.engine}-1` });
+  assert.equal(ruler?.id, ruling.id);
+  const rulingCheck = (output: object) => h.agent('review-output', ruler!.token, { output: JSON.stringify(output) });
+  assert.ok((await rulingCheck({ decision: 'review' })).body.error);
+  assert.ok(
+    (
+      await rulingCheck({
+        decision: 'merge',
+        finding_sources: true,
+        blocking: [{ from: [{ by: 'outsider', finding: 0 }] }],
+      })
+    ).body.error,
+  );
+  const verdict = { decision: 'merge', finding_sources: true, blocking: [], nonblocking: [] };
+  assert.equal((await rulingCheck(verdict)).body.error, null);
+  assert.equal(h.jobs.findJob(ruler!.id)?.status, 'running');
+  await h.finish(ruler!, { output: JSON.stringify(verdict) });
+});
 
 test('the recorded triage decision chooses the readers, independent of paths or panel size', async () => {
   for (const [pr, agents] of [
@@ -105,13 +158,15 @@ test('triage rejects a panel that leaves part of its assigned diff unread', asyn
     checkout = 'kits/payments/checkout.ts',
     readme = 'README.md';
   await push(pr, sha(), { files: [checkout, readme] });
-  await finish(pr, 'triage', selection([{ ...reader('rook'), files: [readme] }]));
+  const first = await finish(pr, 'triage', selection([{ ...reader('rook'), files: [readme] }]));
   assert.deepEqual(readers(pr), []);
   assert.equal(h.github.pr(pr).merged, false);
   const retry = pending(pr).find(job => job.stage === 'triage');
   assert.ok(retry, 'incomplete coverage retries triage before dispatch');
+  const reason = "the review triage can't be read: reviewers must cover every assigned file";
+  assert.ok(reviewrefusals.report(db).includes(reason), 'the refusal is reported while its retry is pending');
   retryNow(db, retry.id);
-  await finish(
+  const second = await finish(
     pr,
     'triage',
     selection([
@@ -119,7 +174,13 @@ test('triage rejects a panel that leaves part of its assigned diff unread', asyn
       { ...reader('nib'), files: [checkout] },
     ]),
   );
+  assert.ok(second.prompt.includes(reason), 'the retry names the check that refused the first answer');
   assert.deepEqual(readers(pr).sort(), ['nib', 'rook']);
+  const report = reviewrefusals.report(db);
+  assert.ok(report.includes(reason), 'a recovered pull request still reports the refusal');
+  const entry = JSON.parse(report.split('\n').find(line => line.startsWith('{') && JSON.parse(line).pr === pr)!);
+  assert.deepEqual(entry, { job: first.id, pr, round: 1, stage: 'triage', reason });
+  assert.ok(!reviewrefusals.report(db, Date.now() + 86_400_001).includes(reason), 'only the last day is listed');
 });
 
 test('the looker follows visual files moved by engine constraints, and each reader keeps their lens', async () => {
@@ -128,7 +189,7 @@ test('the looker follows visual files moved by engine constraints, and each read
     readme = 'README.md',
     record = `qa/previews/review-${pr}.md`;
   const read = (agent: string, files: string[], domain = 'hq') => ({ ...reader(agent), files, domain });
-  await push(pr, sha(), { files: [room, readme, record] }, 'claude');
+  await push(pr, sha(), { files: [room, readme, record] }, { engine: 'claude' });
   // Codex keeps the code read while the pixel rule hands the visual files and their look to tally.
   await finish(pr, 'triage', {
     ...selection([
@@ -157,16 +218,16 @@ test('the looker follows visual files moved by engine constraints, and each read
   assert.ok(brief('tally').includes('node preview.mjs'));
 });
 
-test('triage keeps a valid looker or no looker and refuses a reader with no visual scope', async () => {
+test('triage keeps its chosen looker or no looker and refuses a looker outside the panel', async () => {
   for (const [pr, looker] of [
     [118, 'rook'],
     [119, null],
-    [120, 'nib'],
+    [120, 'flint'],
   ] as const) {
     const room = 'platform/hq/renderers/brownstone/rooms.js',
       readme = 'README.md',
       record = `qa/previews/review-${pr}.md`;
-    await push(pr, sha(), { files: [room, readme, record] }, 'claude');
+    await push(pr, sha(), { files: [room, readme, record] }, { engine: 'claude' });
     await finish(pr, 'triage', {
       ...selection([
         { ...reader('rook'), files: [room] },
@@ -174,7 +235,7 @@ test('triage keeps a valid looker or no looker and refuses a reader with no visu
       ]),
       looker,
     });
-    if (looker === 'nib') {
+    if (looker === 'flint') {
       assert.deepEqual(readers(pr), []);
       assert.ok(pending(pr).some(job => job.stage === 'triage'));
     } else {
@@ -184,6 +245,39 @@ test('triage keeps a valid looker or no looker and refuses a reader with no visu
     }
     cancelLeftovers();
   }
+});
+
+test('with no file under a preview check, triage chooses which reader looks, among its readers', async () => {
+  for (const [pr, looker] of [
+    [181, 'rook'],
+    [182, 'tally'],
+  ] as const) {
+    await push(pr, sha(), {}, { engine: 'claude' });
+    await finish(pr, 'triage', { ...selection([reader('rook'), reader('nib')]), looker });
+    if (looker === 'tally') {
+      assert.deepEqual(readers(pr), [], 'a looker outside the panel decides nothing');
+      assert.ok(pending(pr).some(job => job.stage === 'triage'));
+    } else {
+      assert.deepEqual(readers(pr).sort(), ['nib', 'rook']);
+      const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+      assert.equal(rows[0].triage.selection.looker, 'rook');
+    }
+    cancelLeftovers();
+  }
+});
+
+test("a re-review's brief names the finders it keeps unless excepted", async () => {
+  const pr = 183;
+  await blocked(pr);
+  await push(pr);
+  const triage = pending(pr).find(job => job.stage === 'triage')!;
+  const { prompt } = db.prepare('select prompt from jobs where id = ?').get(triage.id) as { prompt: string };
+  assert.ok(prompt.includes('the open blockers listed below (rook).'));
+  await finish(pr, 'triage', {
+    ...selection([reader('nib')]),
+    exceptions: [{ agent: 'rook', reason: 'nib covers the label' }],
+  });
+  assert.deepEqual(readers(pr), ['nib']);
 });
 
 test('fix-round coverage uses the supplied fix scope instead of the whole pull request', async () => {
@@ -348,7 +442,7 @@ test('a newly discovered secret blocks a fix round without a regression cause', 
   await finish(pr, 'ruling', {
     decision: 'changes',
     outcomes: [{ finding, outcome: 'fixed' }],
-    blocking: [secret],
+    blocking: [{ ...secret, task: 'Take the credential out' }],
   });
   assert.equal(
     (db.prepare('select outcome from findings where id = ?').get(finding) as { outcome: string }).outcome,
@@ -447,6 +541,46 @@ test('triage offers and accepts co-authors when all listed consolidators and the
   }
 });
 
+test('a triage briefed before a change to who may rule runs again briefed and run on who may rule now', async () => {
+  const file = `${h.repo}/company/org.yaml`,
+    before = readFileSync(file, 'utf8');
+  const prompt = (job: number) =>
+    (db.prepare('select prompt from jobs where id = ?').get(job) as { prompt: string }).prompt;
+  for (const [pr, legacy] of [
+    [184, false],
+    [185, true],
+  ] as const) {
+    await push(pr);
+    const first = pending(pr).find(job => job.stage === 'triage')!;
+    assert.equal(first.agent, 'quill');
+    // one queued before its brief was kept
+    if (legacy) db.prepare('delete from triage_briefs where job = ?').run(first.id);
+    // the change lands while it runs, so the consolidator its brief offered is refused
+    writeFileSync(file, before.replace('consolidator: [quill, tally, nib]', 'consolidator: [tally, nib]'));
+    try {
+      await finish(pr, 'triage', selection([reader('rook')]));
+      const retry = pending(pr).find(job => job.stage === 'triage')!;
+      assert.ok(retry, 'it runs again');
+      assert.equal(retry.agent, 'tally', 'on a runner chosen now');
+      const offered = JSON.parse(prompt(retry.id).match(/Eligible consolidators: (\[[^\n]*\])/u)![1]) as string[];
+      assert.deepEqual(offered, ['tally', 'nib'], 'offering only whom its read accepts');
+      assert.equal(prompt(retry.id).includes(prompt(first.id)), legacy, 'the old brief only as background');
+      const row = (job: number) =>
+        ({
+          ...db.prepare('select instead_of, queued_by, customers, round, sha, judges from jobs where id = ?').get(job),
+        }) as { instead_of: number | null };
+      assert.deepEqual(row(retry.id), { ...row(first.id), instead_of: first.id }, 'in place of the run it repeats');
+      retryNow(db, retry.id);
+      await finish(pr, 'triage', { ...selection([reader('rook')]), consolidator: 'tally' });
+      await until(() => readers(pr).length === 1, 'retried triage dispatch');
+      assert.equal(panel.consolidator(pr), 'tally');
+    } finally {
+      writeFileSync(file, before);
+      cancelLeftovers();
+    }
+  }
+});
+
 test('triage rejects a sole author as its solo consolidator', async () => {
   const pr = 108;
   await push(pr);
@@ -465,4 +599,278 @@ test('a newly triaged ruling cannot replace its panel with another triage read',
   assert.equal(pending(101).filter(job => job.stage === 'ruling').length, 1);
   assert.deepEqual(readers(101), []);
   assert.equal(h.github.pr(101).merged, false);
+});
+
+test('refused reviewer and ruling reads report their full reason and brief their replacements', async () => {
+  const pr = 117;
+  await push(pr);
+  await finish(pr, 'triage', selection([reader('rook')]));
+  const reviewer = await finish(pr, 'review', {});
+  const reviewReason = "rook's review ended without its report";
+  const reviewRetry = pending(pr).find(job => job.stage === 'review')!;
+  retryNow(db, reviewRetry.id);
+  const reviewed = await finish(pr, 'review', { findings: [] });
+  assert.ok(reviewed.prompt.includes(reviewReason));
+  const ruling = await finish(pr, 'ruling', {});
+  const rulingReason = `Quill's verdict (job #${ruling.id}) isn't the JSON file the review asks for`;
+  const rulingRetry = pending(pr).find(job => job.stage === 'ruling')!;
+  retryNow(db, rulingRetry.id);
+  const ruled = await finish(pr, 'ruling', {
+    decision: 'changes',
+    blocking: [{ file: files[0], line: 5, issue: 'The label is hidden', task: 'Show the label' }],
+  });
+  assert.ok(ruled.prompt.includes(rulingReason));
+  const refused = reviewrefusals
+    .report(db)
+    .split('\n')
+    .slice(1)
+    .map(line => JSON.parse(line))
+    .filter(read => read.pr === pr);
+  assert.deepEqual(refused, [
+    { job: reviewer.id, pr, round: 1, stage: 'review', reason: reviewReason },
+    { job: ruling.id, pr, round: 1, stage: 'ruling', reason: rulingReason },
+  ]);
+});
+
+test('a triage of hundreds of files scopes its readers by folder and glob, and is read', async () => {
+  const pr = 1865,
+    many = (folder: string, n: number, ext: string) => Array.from({ length: n }, (_, i) => `${folder}/${i}.${ext}`),
+    all = [
+      ...many('kits/brand/covers', 94, 'svg'),
+      ...many('kits/design/icons', 69, 'svg'),
+      ...many('theme/covers', 25, 'svg'),
+      ...many('platform/hq/shell', 18, 'js'),
+      ...many('platform/hq/sounds', 3, 'js'),
+      ...many('kits/brand', 40, 'js'),
+    ];
+  assert.equal(all.length, 249);
+  await push(pr, sha(), { files: all });
+  const triage = pending(pr).find(job => job.stage === 'triage')!,
+    { prompt: brief } = db.prepare('select prompt from jobs where id = ?').get(triage.id) as { prompt: string };
+  assert.match(brief, /folders ending in \/ or globs/);
+  assert.match(brief, /never with a command or script/);
+  await finish(
+    pr,
+    'triage',
+    selection([
+      { ...reader('rook'), files: ['kits/brand/covers/', 'kits/design/', 'theme/**/*.svg'], domain: 'drawing' },
+      {
+        ...reader('nib'),
+        files: ['platform/hq/shell/', 'platform/hq/sounds/@(0|1|2).js', 'kits/brand/*.js'],
+        domain: 'code',
+      },
+    ]),
+  );
+  await until(() => readers(pr).length === 2, 'triage dispatch');
+  const judged = pending(pr)
+    .filter(job => job.kind === 'review')
+    .flatMap(job =>
+      JSON.parse((db.prepare('select judges from jobs where id = ?').get(job.id) as { judges: string }).judges),
+    );
+  assert.deepEqual([...judged].sort(), [...all].sort(), 'each reported file is read once, by its path');
+});
+
+test('a reader whose folders match none of the files is refused', async () => {
+  const pr = 1866;
+  await push(pr);
+  await finish(pr, 'triage', selection([{ ...reader('rook'), files: ['kits/'] }]));
+  assert.deepEqual(readers(pr), []);
+  assert.ok(
+    pending(pr).some(job => job.stage === 'triage'),
+    'it runs again',
+  );
+});
+
+test('a UI reader can look without a configured preview command, beside other configured visual work too', async () => {
+  for (const configured of [false, true]) {
+    const pr = configured ? 124 : 121,
+      room = 'platform/hq/renderers/brownstone/rooms.js',
+      record = `qa/previews/review-${pr}.md`,
+      scope = configured ? [...files, room, record] : files;
+    await push(pr, sha(), { files: scope }, { engine: 'claude' });
+    await finish(pr, 'triage', {
+      ...selection([reader('rook'), ...(configured ? [{ ...reader('tally'), files: [room, record] }] : [])]),
+      looker: 'rook',
+    });
+    assert.deepEqual(readers(pr).sort(), configured ? ['rook', 'tally'] : ['rook']);
+    assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+    const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+    assert.equal(rows[0].triage.selection.looker, 'rook');
+    cancelLeftovers();
+  }
+});
+
+test('a retained finder can look on a later round without a configured preview command', async () => {
+  const pr = 122;
+  const { head } = await blocked(pr);
+  await push(pr, sha(), { pushedSince: { sha: head, files } });
+  await finish(pr, 'triage', { ...selection(), looker: 'rook' });
+  assert.deepEqual(readers(pr), ['rook']);
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+  assert.equal(rows.find((job: any) => job.status === 'queued').triage.selection.looker, 'rook');
+});
+
+test('a fix round passes the consolidator look to the reader holding the shown files, or keeps it alone', async () => {
+  for (const [pr, solo] of [
+    [1863, false],
+    [128, true],
+  ] as const) {
+    const room = 'platform/hq/renderers/brownstone/rooms.js',
+      record = `qa/previews/review-${pr}.md`,
+      scope = [...files, room, record];
+    const { head } = await blocked(pr, false, 'quill');
+    await push(pr, sha(), { files: scope, pushedSince: { sha: head, files: scope } }, { engine: 'claude' });
+    await finish(pr, 'triage', {
+      ...selection(solo ? [] : [{ ...reader('nib'), files: scope }]),
+      looker: 'quill',
+    });
+    assert.ok(!pending(pr).some(job => job.stage === 'triage'), 'the look must not refuse the triage');
+    assert.deepEqual(readers(pr).sort(), solo ? [] : ['nib', 'rook']);
+    const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.status === 'queued');
+    assert.equal(rows[0].round, 2);
+    const looker = solo ? 'quill' : 'rook';
+    assert.equal(rows[0].triage.selection.looker, looker);
+    const { prompt } = db
+      .prepare("select prompt from jobs where pr = ? and agent = ? and status = 'queued'")
+      .get(pr, looker) as { prompt: string };
+    assert.ok(prompt.includes('node preview.mjs'), 'the reader receives the required previews');
+    cancelLeftovers();
+  }
+});
+
+test('an unseated consolidator cannot pass an unconfigured look to a security reader ahead of the UI reader', async () => {
+  const pr = 127,
+    security = 'platform/coordinator/src/signin.ts',
+    scope = [security, ...files];
+  const { head } = await blocked(pr, false, 'quill');
+  await push(pr, sha(), { files: scope, pushedSince: { sha: head, files: scope } });
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  assert.equal(run?.id, queued.id);
+  const report = selection([
+    { ...reader('nib'), files: [security], domain: 'security', security: true },
+    reader('rook'),
+  ]);
+  const checked = await h.agent('review-output', run!.token, {
+    output: JSON.stringify({ ...report, looker: 'quill' }),
+  });
+  assert.equal(checked.body.error, 'the looker must be a reader of files that show');
+  assert.deepEqual(readers(pr), []);
+  assert.equal(h.jobs.findJob(run!.id)?.status, 'running');
+  const output = JSON.stringify({ ...report, looker: 'rook' });
+  assert.equal((await h.agent('review-output', run!.token, { output })).body.error, null);
+  await h.finish(run!, { output });
+  await until(() => readers(pr).length === 2, 'the corrected triage dispatches both readers');
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+  assert.equal(rows[0].triage.selection.looker, 'rook');
+});
+
+test('a fix round still refuses unknown and unselected lookers when the consolidator reads alone', async () => {
+  const pr = 129;
+  const { head } = await blocked(pr, false, 'quill');
+  await push(pr, sha(), { pushedSince: { sha: head, files } });
+  const queued = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(queued.engine, { seat: `${queued.engine}-1` });
+  assert.equal(run?.id, queued.id);
+  for (const looker of ['nobody', 'rook']) {
+    const checked = await h.agent('review-output', run!.token, {
+      output: JSON.stringify({ ...selection([]), looker }),
+    });
+    assert.equal(checked.body.error, 'the looker must be a reader of files that show');
+    assert.deepEqual(readers(pr), []);
+    assert.equal(h.jobs.findJob(run!.id)?.status, 'running');
+  }
+  await h.finish(run!, { output: JSON.stringify({ ...selection([]), looker: 'quill' }) });
+  await until(() => pending(pr).some(job => job.stage === 'ruling'), 'the consolidator takes the valid look');
+});
+
+test('a finder serving as consolidator needs no omission reason, with or without other reviewers', async () => {
+  for (const panel of [false, true]) {
+    const pr = panel ? 125 : 123;
+    const { head } = await blocked(pr, false, 'nib');
+    await push(pr, sha(), { pushedSince: { sha: head, files } });
+    await finish(pr, 'triage', {
+      ...selection(panel ? [reader('tally')] : []),
+      consolidator: 'nib',
+      looker: panel ? 'tally' : 'nib',
+    });
+    assert.deepEqual(readers(pr), panel ? ['tally'] : []);
+    assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+    if (panel) await finish(pr, 'review', { findings: [] });
+    assert.ok(pending(pr).some(job => job.stage === 'ruling' && job.agent === 'nib'));
+    cancelLeftovers();
+  }
+});
+
+test('an original finder retained by engine constraints needs no omission reason and can receive the look', async () => {
+  const pr = 126,
+    room = 'platform/hq/renderers/brownstone/rooms.js',
+    record = `qa/previews/review-${pr}.md`,
+    scope = [...files, room, record];
+  const { head } = await blocked(pr);
+  await push(pr, sha(), { files: scope, pushedSince: { sha: head, files: scope } }, { engine: 'claude' });
+  await finish(pr, 'triage', {
+    ...selection([{ ...reader('nib'), files: scope }]),
+    looker: 'nib',
+  });
+  assert.deepEqual(readers(pr).sort(), ['nib', 'rook']);
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.status === 'queued');
+  assert.equal(rows[0].triage.selection.looker, 'rook');
+});
+
+// The seats' state for one test: paused ones take nothing, a paced one only work whose latest start precedes its reset
+async function seatsFor(states: Record<string, 'ready' | 'paused' | 'paced'>, body: () => Promise<void>) {
+  const set = async (seat: string, state: 'ready' | 'paused' | 'paced') => {
+    await h.worker('seat', { seat, engine: seat.split('-')[0], state: state === 'paced' ? 'ready' : state });
+    db.prepare('update seats set pace = ?, week_resets = ? where id = ?').run(
+      ...(state === 'paced' ? [1, Date.now() + 24 * 3_600_000] : [null, null]),
+      seat,
+    );
+  };
+  try {
+    for (const [seat, state] of Object.entries(states)) await set(seat, state);
+    await body();
+  } finally {
+    for (const seat of Object.keys(states)) await set(seat, 'ready');
+  }
+}
+
+const triager = (pr: number) => pending(pr).find(job => job.stage === 'triage')!.agent;
+
+// A round on a thread due in `hours`
+async function pushDue(pr: number, hours: number) {
+  const thread = h.dueThread({ deadline: Date.now() + hours * 3_600_000 });
+  await push(pr, sha(), {}, { thread });
+}
+
+test('rounds open at once go to more than one consolidator while more than one seat has room', async () => {
+  for (const pr of [160, 161, 162, 163]) await push(pr);
+  assert.deepEqual([160, 161, 162, 163].map(triager), ['quill', 'nib', 'quill', 'nib']);
+  await seatsFor({ 'codex-1': 'paused' }, async () => {
+    await push(164);
+    assert.equal(triager(164), 'quill', 'only the Claude seat has room');
+  });
+});
+
+test('a round counts queued runs ahead in the shared plan, and a paced seat takes a round whose latest start precedes reset', async () => {
+  await seatsFor({ 'codex-1': 'paused' }, async () => {
+    for (const pr of [165, 166, 167]) await pushDue(pr, 1);
+  });
+  await seatsFor({ 'claude-1': 'paused' }, async () => {
+    for (const pr of [168, 169, 170]) await push(pr);
+  });
+  assert.deepEqual([165, 166, 167, 168, 169, 170].map(triager), ['quill', 'quill', 'quill', 'nib', 'nib', 'nib']);
+  await pushDue(171, 2);
+  assert.equal(triager(171), 'nib', "Codex's three queued rounds have no window, so they wait behind it");
+  await push(172);
+  assert.equal(triager(172), 'quill', 'a round without a window waits behind all of them');
+  cancelLeftovers();
+  await seatsFor({ 'claude-1': 'paced' }, async () => {
+    for (const pr of [173, 174]) await push(pr);
+    assert.deepEqual([173, 174].map(triager), ['nib', 'nib'], 'the paced seat takes no undated round');
+    await pushDue(175, 2);
+    assert.equal(triager(175), 'quill', 'a round due before the reset is one the paced seat takes');
+  });
 });

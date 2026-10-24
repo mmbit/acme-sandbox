@@ -21,6 +21,8 @@ const earlier = await h.start({ agent: 'kit', title: 'Earlier chart', engine: 'c
 later(5 * HOUR);
 await h.finish(earlier, { usage: usage(3) });
 
+let resumedJob: number;
+
 // A done job: each run's minutes, with the gap before the next run (a wait for a seat).
 async function done(title: string, runs: [minutes: number, gap: number][], cost: number | null = 1) {
   const id = h.queue({ agent: 'kit', title }),
@@ -52,8 +54,14 @@ test("a job's agent time is its runs, without the wait for a seat between them",
     [30, 180],
     [20, 0],
   ]);
-  const found = await ask('q=seats%20board');
-  const job = found.jobs.find((j: any) => j.id === id);
+  resumedJob = id;
+  const found = await ask(`q=%23${id}`);
+  const job = found.job;
+  assert.deepEqual(job.timing_quality, ['resumed', 'interrupted']);
+  assert.equal(
+    (await ask('q=seats%20board')).jobs.some((j: { id: number }) => j.id === id),
+    false,
+  );
   assert.deepEqual([job.agent_minutes, job.wall_minutes, job.runs, job.rebuilt], [50, 230, 2, false]);
 });
 
@@ -98,7 +106,7 @@ test("a seat with no reading yet isn't counted as used up: what's left says how 
 });
 
 test('hq estimate prints the past jobs and the seats', async () => {
-  const { out, code } = await h.hq(await reader(), 'estimate', 'seats board');
+  const { out, code } = await h.hq(await reader(), 'estimate', `#${resumedJob}`);
   assert.equal(code, 0, out);
   assert.match(out, /50 min of agent time in 2 runs, 3 h 50 min from its first start to its end/);
   assert.match(out, /claude-a \(claude, idle\): 40% of its week used/);
@@ -116,3 +124,103 @@ test('a done job with no usage reported has no spend, and is left out of the typ
   const { out } = await h.hq(await reader(), 'estimate', 'meter sweep');
   assert.match(out, /seat spend not reported/);
 });
+
+test('credential-call follow-ups and jobs holding keys never expose estimate scopes to jobs or calls', async () => {
+  const card = h.jobs.createRequest({
+    agent: 'kit',
+    kind: 'credential',
+    title: 'Credential comparison',
+    body: 'Enter the test key.',
+    secrets: 'STRIPE_TEST_ESTIMATE_KEY',
+  }) as { id: number };
+  const first = (await h.voice(`call-context?agent=kit&request=${card.id}`)).body;
+  const transcript = 'Board: the test key spoken aloud is otter space zebra.';
+  assert.equal(
+    (
+      await h.voice('call-end', {
+        agent: 'kit',
+        request: card.id,
+        token: first.token,
+        lines: [transcript],
+      })
+    ).status,
+    200,
+  );
+  const resumed = (await h.voice('call-context?agent=kit')).body;
+  assert.equal(
+    (
+      await h.voice('call-end', {
+        agent: 'kit',
+        token: resumed.token,
+        lines: [transcript],
+      })
+    ).status,
+    200,
+  );
+  const follows: number[] = [];
+  for (const call of [first.call, resumed.call]) {
+    const id = (await h.board('/api/calls')).body.find((c: any) => c.id === call).job;
+    const follow = await h.claimJob(id);
+    assert.ok(follow.prompt.includes(transcript));
+    assert.equal(
+      (
+        await h.agent('item', follow.token, {
+          call,
+          kind: 'decision',
+          owner: 'kit',
+          what: 'Record test credentials',
+          quote: transcript,
+        })
+      ).status,
+      200,
+    );
+    assert.equal((await h.agent('reply', follow.token, { text: 'Recorded the test credential.' })).status, 200);
+    later(20 * 60_000);
+    assert.equal((await h.finish(follow, { result: 'The test key is otter space zebra.' })).status, 200);
+    assert.equal(h.jobs.holdsKeys(id), false, 'the call classification must also cover unmarked follow-ups');
+    follows.push(id);
+  }
+  const run = { started: Date.now() - HOUR, ended: Date.now() - 60_000 };
+  const marked = h.pastJob({ agent: 'kit', title: 'Credential comparison', about_keys: 1, run });
+  const customer = h.pastJob({ agent: 'kit', title: 'Credential comparison', customers: 1, run });
+  const safe = h.pastJob({
+    agent: 'kit',
+    title: 'Credential comparison',
+    prompt: 'Public scope',
+    result: 'Public report',
+    run,
+  });
+  const privateJobs = [...follows, marked, customer];
+  const queued = h.queue({ agent: 'kit', title: 'Credential comparison' });
+  const sizes = await import('./sizes.ts');
+  sizes.recordQueued(queued, 'kit', 'Compare historical scopes', {
+    agent_ms: 60_000,
+    refs: [...privateJobs, safe],
+    why: 'Previously saved references',
+  });
+  const jobReader = await reader();
+  const callReader = (await h.voice('call-context?agent=bolt')).body;
+  for (const token of [jobReader.token, callReader.token]) {
+    await privateComparisons(token, privateJobs, safe, queued);
+  }
+  assert.equal(h.jobs.holdsKeys(jobReader.id), false);
+  assert.equal((await h.agent('estimate/audit', callReader.token)).status, 403);
+  assert.equal((await h.agent('sizes', callReader.token, {})).status, 403);
+});
+
+async function privateComparisons(token: string, privateJobs: number[], safe: number, queued: number) {
+  for (const id of privateJobs) {
+    const response = await h.agent(`estimate?q=%23${id}`, token);
+    assert.equal(response.status, 200);
+    assert.deepEqual([response.body.job.brief, response.body.job.report], [null, null]);
+    assert.deepEqual(response.body.job.timing_quality, []);
+  }
+  for (const query of ['agent=kit', 'q=Credential%20comparison', `q=%23${queued}`]) {
+    const response = await h.agent(`estimate?${query}`, token);
+    assert.equal(response.status, 200);
+    const publicJob = response.body.jobs.find((j: any) => j.id === safe);
+    assert.deepEqual([publicJob?.brief, publicJob?.report], ['Public scope', 'Public report']);
+    assert.ok(response.body.jobs.every((j: any) => !privateJobs.includes(j.id)));
+    assert.doesNotMatch(JSON.stringify(response.body), /otter space zebra/);
+  }
+}

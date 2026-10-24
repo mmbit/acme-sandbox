@@ -216,3 +216,44 @@ test('two weeks of finished jobs are counted in well under a second', async () =
   await work();
   assert.ok(performance.now() - start < 1000, `took ${Math.round(performance.now() - start)} ms`);
 });
+
+const piles = async () => (await h.board('/api/work/piles')).body;
+test("what's on the plate: waiting (queued or held for a card), at work and done in the last day, reviews apart, no chats", async () => {
+  const before = await piles();
+  const past = (status: string, kind = 'work', finished = Date.now()) =>
+    h.pastJob({ agent: 'plate', title: 'x', status, kind, finished });
+  past('queued');
+  past('queued', 'review');
+  past('blocked');
+  past('running', 'consolidate');
+  past('done', 'review');
+  past('done', 'work', Date.now() - 2 * 864e5); // (done before the last day)
+  past('cancelled');
+  past('running', 'chat');
+  const after = await piles(),
+    added = (k: 'waiting' | 'active' | 'done') => ({
+      work: after[k].work - before[k].work,
+      review: after[k].review - before[k].review,
+    });
+  assert.deepEqual(added('waiting'), { work: 2, review: 1 });
+  assert.deepEqual(added('active'), { work: 0, review: 1 });
+  assert.deepEqual(added('done'), { work: 0, review: 1 });
+});
+
+test('the last day done hour by hour, oldest first, each hour [work, reviews], summing to the day', async () => {
+  const before = (await piles()).done.hours as number[][];
+  h.pastJob({ agent: 'flow', title: 'x', status: 'done', finished: Date.now() - 60e3 });
+  h.pastJob({ agent: 'flow', title: 'x', status: 'done', kind: 'review', finished: Date.now() - 60e3 });
+  h.pastJob({ agent: 'flow', title: 'x', status: 'done', finished: Date.now() - 5.5 * 36e5 });
+  const { done } = await piles(),
+    added = (done.hours as number[][]).map(([w, r], i) => [w - before[i][0], r - before[i][1]]);
+  assert.equal(added.length, 24);
+  assert.deepEqual(added.at(-1), [1, 1]);
+  assert.deepEqual(added.at(-6), [1, 0]);
+  assert.equal(
+    added.flat().reduce((a, b) => a + b),
+    3,
+  );
+  const sum = (k: 0 | 1) => (done.hours as number[][]).reduce((n, x) => n + x[k], 0);
+  assert.deepEqual([sum(0), sum(1)], [done.work, done.review]);
+});

@@ -86,6 +86,27 @@ test('a prediction is logged when it moves five minutes or more, or the play cha
   );
 });
 
+test("after a restart a thread's last row is one seek on the log's index, never a sort of its rows", async () => {
+  const job = h.queue({ agent: 'kit', title: 'Log me after a restart', engine: 'claude' });
+  const merged = T0 + 5 * HOUR;
+  predictionlog.record(played(T0 + 10 * MIN, job, T0 + 20 * MIN, merged));
+  const before = threadRows().length;
+  // (the server started again: a module with no last rows read yet)
+  const restarted = await import(`./predictionlog.ts?restart=${job}`);
+  restarted.record(played(T0 + 11 * MIN, job, T0 + 20 * MIN, merged + 4 * MIN));
+  assert.equal(threadRows().length, before, 'four minutes from the logged ETA is no move');
+  for (const [by, sql] of Object.entries(predictionlog.LAST_ROW)) {
+    const plan = h.db.prepare(`explain query plan ${sql}`).all(by === 'job' ? job : 'hq/estimates') as {
+      detail: string;
+    }[];
+    assert.ok(
+      plan.some(p => p.detail.includes(`prediction_log_${by === 'job' ? 'job' : 'thread_at'}`)),
+      by,
+    );
+    assert.ok(!plan.some(p => p.detail.includes('TEMP B-TREE')), `${by}: ${JSON.stringify(plan)}`);
+  }
+});
+
 test("a logged size names who gave it: the sizer's, an agent's, or the estimate tool's", async () => {
   const job = h.queue({ agent: 'kit', title: 'Size me', engine: 'claude' });
   sizes.record({
@@ -121,7 +142,10 @@ function done(agent: string, minutes: number, size: number, merged: number, file
     sized: size * MIN,
   });
   if (by !== 'tool')
-    sizes.record({ job: id, by, agent_ms: size * MIN, low_ms: null, high_ms: null, refs: [], why: '', brief: 'b' });
+    sizes.record(
+      { job: id, by, agent_ms: size * MIN, low_ms: null, high_ms: null, refs: [], why: '', brief: 'b' },
+      started - HOUR,
+    );
   return id;
 }
 

@@ -17,7 +17,7 @@ import { library, unshelvedProblem } from './library.ts';
 import { TYPES } from './types.ts';
 import { attachment, findFile, inside } from './files.ts'; // (attachment)
 import { subscribe, publish, endAll } from './events.ts';
-import { companyOnce, scrubOnStart, optimize } from './db.ts';
+import { companyOnce, scrubOnStart, optimize, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as engineOnly from './engineonly.ts';
 import * as room from './room.ts';
@@ -58,6 +58,7 @@ import * as routing from './routing.ts';
 import * as overseer from './overseer.ts';
 import * as oversight from './oversight.ts';
 import * as windows from './windows.ts';
+import * as askwindow from './askwindow.ts';
 import * as wakes from './wakes.ts';
 import * as work from './work.ts';
 import * as commitLines from './commitlines.ts';
@@ -102,8 +103,6 @@ import './snapshots.ts';   // the play's input kept hourly, for the backtest
 import * as backtest from './backtest.ts';
 import * as calibration from './calibration.ts';
 import * as accuracy from './accuracy.ts';
-import * as predictions from './predictions.ts';
-import * as sizer from './sizer.ts';
 import * as meetinggist from './meetinggist.ts';
 import * as plainnames from './plainnames.ts';
 import { boardJob, boardJobs } from './boardnames.ts'; // (the jobs the board reads, by its names)
@@ -308,6 +307,7 @@ const api: Record<string, BoardRoute> = {
   'GET /api/oversight': () => oversight.forBoard(),
   'POST /api/oversight/renew': () => oversight.renew(),
   'GET /api/work': () => ({ days: work.days(), agents: work.agents() }),
+  'GET /api/work/piles': () => work.piles(), // (HQ's throughput, hud.js)
   'GET /api/jobs/find': q => ({ job: boardJob(jobs.findJob(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id')))) }),
   'GET /api/jobs/log': q => jobLog(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('id'))),
   'GET /api/chat': () => chat.history(),
@@ -472,9 +472,9 @@ const worker: Record<string, (b: any) => unknown> = {
   'POST /api/worker/room': b => room.reportRoom(b ?? {}),
   // a run the worker blocked for its job's share, and the words its output gets (blocks.ts).
   'POST /api/worker/blocked': b => blocks.blocked(b ?? {}),
-  // the sizer's model, run by the worker on a Claude seat: the next job to size, and its answer (sizer.ts)
-  'POST /api/worker/sizes/claim': () => sizer.claim() ?? {},
-  'POST /api/worker/sizes/answer': b => sizer.answer(b ?? {}),
+  // Retired workers cannot change a saved estimate.
+  'POST /api/worker/sizes/claim': () => ({}),
+  'POST /api/worker/sizes/answer': () => 410,
   // a live meeting's bubbles, by the same: the next lines to put in bubbles, and the model's answer (meetinggist.ts.)
   'POST /api/worker/gists/claim': () => meetinggist.claim() ?? {},
   'POST /api/worker/gists/answer': b => meetinggist.answer(b ?? {}),
@@ -585,29 +585,88 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
   const thread = threadFor(b, threadSource);
   if (thread instanceof Refused) return thread;
   // Its item's time, given on its call (by whoever was on the call), is the window of the job's thread: one named or
-  // started, else the one it inherits (createJob's from). Work in no open thread has nowhere to take it, so it's
-  // refused before anything is queued.
-  const at = b.item != null ? from?.due : undefined;
+  // started, else the one it inherits (createJob's from). So is --by's (askwindow.ts). Work in no open thread has
+  // nowhere to take it, so it's refused before anything is queued.
+  const by = askwindow.readBy(b.by);
+  if (by && by !== 'none' && 'refused' in by) return new Refused(400, by.refused);
+  const itemDue = b.item != null ? from?.due : undefined;
+  if (itemDue !== undefined && by !== undefined) return new Refused(409, `item #${b.item} has its time from the call: the job takes no --by`);
+  const window = itemDue !== undefined ? { deadline: itemDue, aim: itemDue } : by === 'none' ? undefined : by;
   const target = 'thread' in thread ? thread.thread : thread.from ? jobs.threadOf(thread.from) : null;
   // A running job adds no task to a thread that isn't its agent's to draw, nor waits across threads (threadorder.ts).
   const outOfOrder = me.call ? undefined : threadorder.jobRefusal(me.agent, target, Number(b.after) || undefined);
   if (outOfOrder) return new Refused(409, outOfOrder);
-  const timed = at === undefined ? undefined : target === null ? projects.untimedRefusal() : windows.threadOf({ thread: target });
+  const timed = window === undefined ? undefined : target === null ? projects.untimedRefusal() : windows.threadOf({ thread: target });
   if (typeof timed === 'string')
     return new Refused(409, target === null ? timed : `${timed}. Retry with --thread <project>/<slug> (hq thread list)`);
   // One handed out for an item carries the words on the call (ledger.handOut).
   // The answer says which threads it moves (moves.ts)
   const fix = threadorder.on() ? reviewinbox.fixFor(target, b.findings, me.agent) : undefined;
   if (typeof fix === 'string') return new Refused(400, fix);
+  // One thread, one pull request: work waiting for its thread's own work deployed can't be in it, so it gets a thread
+  // of its own in that project, after the release (threadrelease.ts): a fresh one, which nothing timed waits on.
+  const release = !!target && !fix && !landingSource && threadorder.on() && threadrelease.waitsForRelease(target, origin.when);
+  // The board's ask with no time, on the thread it ends up on, which nothing timed waits on: the CEO is asked for its
+  // time (askwindow.ts). A task of the board's notes (--notes) is its ask too.
+  const source = askwindow.sourceOf(me, b.item != null) ?? (b.notes != null ? 'notes' : null);
+  const untimed = source && !window && by !== 'none' && (release || !askwindow.servedWindow(target)) ? source : null;
+  if (untimed && me.agent === ceo() && !me.call) return new Refused(409, askwindow.untimedRefusal(untimed));
   const named = fix || landingSource ? undefined : jobcodes.claim(b.code, target);
   if (named && 'refused' in named) return new Refused(409, named.refused);
   // hq job --only: work only one engine does, by its rule's id (engineonly.ts).
   if (b.only != null && !engineOnly.byId(b.only))
     return new Refused(400, `--only names a rule of company/org.yaml engineOnly: ${engineOnly.rules().map(rule => rule.id).join(', ') || 'it has none'}`);
-  return { thread, at, target, timed, fix, named };
+  return { thread, window, byCall: itemDue !== undefined, target, timed, untimed, source, fix, named, release };
 }
 
+// hq job --notes: the CEO's routing makes the board's notes a task, they and how the product comes back at the end of
+// its brief (routing.ts forTask).
+function jobNotes(b: any, me: Me) {
+  if (b.notes == null) return undefined;
+  if (!Array.isArray(b.notes) || !b.notes.every(Number.isSafeInteger))
+    return new Refused(400, '--notes names the notes by their numbers (hq route lists them)');
+  const taken = routing.forTask(me, String(b.agent), [...new Set<number>(b.notes)]);
+  return typeof taken === 'string' ? new Refused(409, taken) : taken;
+}
 const shownThread = (job: number) => { const thread = jobs.threadOf(job); return thread ? { thread } : {}; };
+// The board's ask queued with no window (askwindow.ts): on a live call its agent asks the board, who's on the line; a
+// run's (a follow-up of another agent's call handing out its item) asks the CEO, unless the call is a customer's, whose
+// details stay with its agent. (The CEO's own run was refused: jobPlacement.)
+function askedForTime(me: Me, job: { id: number; agent: string; title: string }, source: askwindow.AskSource, from?: { call: number }) {
+  const inThread = !!jobs.threadOf(job.id), told = { untimed: askwindow.untimedLine(job.id, !!me.call, inThread) };
+  if (me.call || me.agent === ceo() || (from && memory.customerCall(from.call))) return told;
+  const sent = askwindow.askCeo({ agent: me.agent, job: me.id }, job, source, inThread);
+  return typeof sent === 'object' ? { askedCeo: ceo() } : told;
+}
+// The work a live call's promise names (hq item add --job), checked before anything is recorded: its owner's (a misheard
+// number names someone else's: call.ts reach), under way, and in an open thread, or put on the one the promise names
+// (--thread) if the call queued it in none (askwindow.ts untimedLine).
+function promisedWork(b: any, due: number | undefined, me: Me) {
+  const id = Number(b.job), onto = str(b.thread);
+  if (!me.call) return new Refused(400, '--job is for a live call: its follow-up links the item to the work (hq item link)');
+  if (due === undefined) return new Refused(400, '--job goes with --deadline: the time the work\'s thread takes');
+  const whose = Number.isSafeInteger(id) && id > 0 ? call.notTheirs(String(b.owner), id) : [404, `there's no job #${b.job}`] as const;
+  if (whose) return new Refused(whose[0], whose[1]);
+  if (windows.finished(id) || windows.dropped(id))
+    return new Refused(409, `job #${id} isn't work under way: note the promise without it, and the follow-up links it`);
+  const queuedHere = call.queuedHere(me.callId, id);
+  if (onto === undefined) {
+    const thread = windows.threadOf({ job: id });
+    if (typeof thread !== 'string') return { job: id };
+    return new Refused(409, queuedHere ? `${thread}: note the promise with the open thread it serves too (thread)`
+      : `${thread}: note the promise without it, and the follow-up puts the work on a thread`);
+  }
+  const had = jobs.threadOf(id);
+  if (had && projects.isOpen(had)) return new Refused(409, `job #${id} is on ${had} already: note the promise without the thread`);
+  if (!queuedHere) return new Refused(409, `job #${id} wasn't queued on this call: only one you queued goes on a thread now`);
+  if (!projects.isOpen(onto)) return new Refused(409, `${onto} isn't an open thread (eta lists them)`);
+  return { job: id, thread: onto };
+}
+// The window of the deliverable an ask's thread serves, when it's another thread's (the job's own shows as its thread's).
+function servesOther(job: number) {
+  const own = jobs.threadOf(job), served = askwindow.servedWindow(own);
+  return served && served.thread !== own ? { serves: { thread: served.thread, deadline: new Date(served.deadline).toISOString() } } : {};
+}
 // The thread hq window names (by id, job or PR: windows.ts), with who names it.
 function namedThread(b: any, me: Me) {
   const agent = speaker(b.as, me);
@@ -670,6 +729,7 @@ function kept(me: Me, b: any, text: string | undefined, board: string | undefine
 }
 const RENDER_SEND_MAX = 200 * 1024 * 1024;   // (GET /api/agent/render: a film is tens of MB)
 const agentApi: Record<string, (b: any, me: Me) => unknown> = {
+  'POST /api/agent/review-output': (b, me) => ({ error: review.outputProblem(me.id, b.output) ?? null }),
   // A worker-issued ticket restricts comparisons to a claimed push and its pinned base.
   'POST /api/agent/tests/base/claim': (b, me) => testresults.claimBaseTests(b, me.id),
   'POST /api/agent/tests/base/done': (b, me) => testresults.doneBaseTests(b, me.id),
@@ -731,24 +791,29 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // queued by a job that carries an item carries it too, so a correction reaches it. With --lands, the job instead
   // replaces a failed job and carries its call and item (takeover.ts landing). A job whose item was dropped or
   // replaced queues nothing more, not even another item on its call (unless it's a call's follow-up: that one's its work).
+  // --expedite: the CEO's structural HQ fix, first in line and merged on its checks (review.ts mergeExpedited).
   'POST /api/agent/job': (b, me) => writePlan(() => {
+    if (b.expedite === true && me.agent !== ceo()) return new Refused(403, 'only the CEO expedites a job');
+    const size = sizes.readQueuedSize(b);
+    if (typeof size === 'string') return new Refused(400, size);
     const origin = jobOrigin(b, me);
     if (origin instanceof Refused) return origin;
+    const notes = jobNotes(b, me);
+    if (notes instanceof Refused) return notes;
     const placement = jobPlacement(b, me, origin);
     if (placement instanceof Refused) return placement;
     const { title, brief, hire, from, failedJobId, landingSource, landingBrief, card, when } = origin;
-    const { thread, at, target, timed, fix, named } = placement;
+    const { thread, window, byCall, target, timed, untimed, source, fix, named, release } = placement;
     const earlier = moves.before();
     const job = jobs.createJob({ agent: String(b.agent), title, ...thread, check: b.check === true, only: b.only ?? undefined,
-      prompt: `${brief || title}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${from?.words ? `\n\n${from.words}` : ''}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,
-      after: Number(b.after) || undefined, queuedBy: me.agent, engine: hire ? hiring.HIRING : undefined,
-      downtime: b.downtime === true, call: from?.call, item: from?.item, insteadOf: failedJobId, code: named?.code,
+      prompt: `${brief || title}${notes ? `\n\n${notes.text}` : ''}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${from?.words ? `\n\n${from.words}` : ''}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,  // (notes)
+      after: Number(b.after) || undefined, queuedBy: me.agent, size, engine: hire ? hiring.HIRING : undefined,
+      downtime: b.downtime === true, call: from?.call, item: from?.item, insteadOf: failedJobId, code: named?.code, expedite: b.expedite === true,
       ...(fix && { branch: fix.branch, round: fix.round, stage: fix.stage, insteadOf: fix.replaces }) });
     if (fix) reviewinbox.recordTask(job.id, fix);
-    // One thread, one pull request: work waiting for its thread's own work deployed can't be in it, so it gets a thread
-    // of its own in that project, after the release (threadrelease.ts).
-    const ownThread = target && !fix && !landingSource && threadorder.on() && threadrelease.waitsForRelease(target, when)
-      ? oneTaskThread(projects.findThread(target)!.project, { id: job.id, title }) : null;
+    notes?.take(job.id);
+    // (a thread of its own after the release: jobPlacement)
+    const ownThread = release && b.expedite !== true ? oneTaskThread(projects.findThread(target!)!.project, { id: job.id, title }) : null;
     const followOn = ownThread ? { followOn: target } : {};
     if (card !== undefined) jobs.holdForCard(job.id, card);
     // Work queued on a call waits for the call's end, so what the board adds on it (add) goes into its brief and it
@@ -761,8 +826,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (landingSource?.customers) jobs.handedCustomerData(job.id);
     // (a correction handed out: the replaced item's running jobs hear it now, and the answer says which weren't told)
     // (a job on a paused thread is queued, and told it's held: pauses.ts)
-    const promised = timed && windows.set(ownThread ? projects.findThread(ownThread)! : timed, { deadline: at!, aim: at! }, ledger.callAgent(from!.call));
-    const due = { ...promised && { deadline: promised.deadline }, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier) };
+    // (--by never loosens the window its thread has: askwindow.ts narrowed)
+    const windowOn = timed && (ownThread ? projects.findThread(ownThread)! : timed);
+    const given = windowOn && (byCall ? window : askwindow.narrowed(windowOn.id, window!));
+    const promised = given && windows.set(windowOn, given, byCall ? ledger.callAgent(from!.call) : me.agent);
+    const kept = windowOn && !promised ? { deadline: new Date(windowOn.deadline!).toISOString() } : {};
+    const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, from) : source ? servesOther(job.id) : {};
+    const due = { ...promised && { deadline: promised.deadline }, ...kept, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier) };
     return b.item != null ? { ...job, ...due, ...ledger.handedOut(from!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
@@ -806,6 +876,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     return agent ? refusal(plan.setOwner(String(b.id ?? ''), String(b.owner ?? ''), { agent, job: me.id }, staff)) : 403;
   },
+  // hq project business: the CEO moves a project into a business, or out of any (plan.ts setBusiness).
+  'POST /api/agent/projects/business': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.setBusiness(String(b.id ?? ''), b.business, agent)) : 403; },
   // hq projects and hq thread <id>: every open thread's outlook, or one's with its jobs (outlooks.ts).
   'GET /api/agent/projects': () => outlooks.lines(forecast.current()),
   'GET /api/agent/thread': b => outlooks.detail(String(b.id ?? ''), forecast.current()) ?? 404,
@@ -853,7 +925,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   },
   'GET /api/agent/proposals': (b, me) => { const agent = speaker(b.as, me); return agent ? proposals.list(agent, b.all === '1') : 403; },
   'POST /api/agent/proposals/accept': (b, me) => { const agent = speaker(b.as, me); return agent
-    ? refusal(proposals.accept(reviewinbox.inboxId(b.id), agent, { thread: b.thread, newThread: b.newThread, for: b.for, findings: b.findings, code: b.code })) : 403; },
+    ? refusal(proposals.accept(reviewinbox.inboxId(b.id), agent, { thread: b.thread, newThread: b.newThread, for: b.for, findings: b.findings, code: b.code, title: b.title, size: b.size, refs: b.refs, why: b.why })) : 403; },  // (title)
   'POST /api/agent/proposals/drop': (b, me) => { const agent = speaker(b.as, me); return agent
     ? refusal(proposals.drop(reviewinbox.inboxId(b.id), { agent, job: me.id }, b.why)) : 403; },
   // hq meeting: an ask to the CEO, the CEO's open asks and the meetings set from them, and a seat's lines (meetings.ts).
@@ -894,6 +966,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return { ...made, tried, ...said };
   },
   // hq stop <job> "why": a running job of the caller's own, or any as the CEO, ends now (jobs.ts stopJob).
+  // hq expedite <job>: the CEO's. A queued or running job starts first and merges on its checks; one that has pushed,
+  // its pull request still in review, merges now if its last push passed them, and is reviewed after. Not a thread's
+  // task: it runs on the thread's branch with the others' work.
+  'POST /api/agent/expedite': async (b, me) => {
+    if (me.agent !== ceo()) return new Refused(403, 'only the CEO expedites a job');
+    const done = await review.expedite(Number(b.id));
+    return typeof done === 'string' ? new Refused(409, done) : { ok: true, ...done };
+  },
   'POST /api/agent/stop': (b, me) => {
     const why = String(b.why ?? '').trim().slice(0, 300);
     if (!why) return new Refused(400, 'say why: hq stop <job> "why"');
@@ -961,7 +1041,27 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // --deadline: the time the board was given for it, which its job takes
     const due = b.deadline == null ? undefined : windows.parse(String(b.deadline), Date.now(), true);
     if (typeof due === 'string') return new Refused(400, due);
-    return refusal(ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due }, me.call ? null : me.id));
+    // --job, on a live call: the work under way the promise is about. The item is linked to it as it's added (as hq item
+    // link job:<id>, --thread too), so its thread takes the time at once and it's handled when that work ends done: both
+    // or neither (askwindow.ts).
+    const work = b.job == null ? undefined : promisedWork(b, due, me);
+    if (work instanceof Refused) return work;
+    if (b.thread != null && !work) return new Refused(400, '--thread goes with --job: it puts that work on the thread');
+    const add = () => ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due }, me.call ? null : me.id);
+    if (!work) return refusal(add());
+    try {
+      return refusal(inOneStep(() => {
+        const added = add();
+        if (typeof added !== 'object') return added;
+        const link = ledger.link(added.id, work, me.agent, me.id);
+        if (typeof link === 'string') throw new Refused(409, link);   // (the item with it: inOneStep rolls it back)
+        linked(added.id, work.job, link);   // (a customer call's: it holds their details, as item-link marks it)
+        return { ...added, job: work.job, ...'deadline' in link && { deadline: link.deadline, thread: link.thread } };
+      }));
+    } catch (err) {
+      if (err instanceof Refused) return err;
+      throw err;
+    }
   },
   // hq item link <item> job:<id> | request:<id> | pause:<thread or project> | <ref>, and hq item drop <item> "why": the
   // call's follow-up, or (a link only) the job that carries the item or a job of roles.asks (keepsAsks). A job handed out
@@ -1028,15 +1128,15 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
       : refusal(followthrough.recordVerdict(me.id, b.verdict, String(b.said ?? ''))),
   'POST /api/agent/followthrough-requeue': (b, me) =>
     !Number.isInteger(b.job) ? 400 : refusal(takeover.requeue(me.id, b.job, String(b.said ?? ''))),
-  // hq route: the CEO reads the notes to route and the open work by thread, and routes them; hq route log --since: every
-  // note sent since then, with its times (routing.ts).
+  // hq route: the CEO reads the notes to route and the open work by thread, and routes them into a waiting job (a task of
+  // them: hq job --notes); hq route log --since: every note sent since then, with
+  // its times (routing.ts).
   'GET /api/agent/route': (b, me) => (me.agent === ceo() ? { text: routing.read(me) } : 403),
   'POST /api/agent/route': (b, me) => {
     if (me.agent !== ceo()) return 403;
     const notes = Array.isArray(b.notes) ? [...new Set<number>(b.notes.map(Number))] : [];
     if (typeof b.to !== 'string' || !notes.every(Number.isInteger)) return 400;
-    if (b.after !== undefined && !Number.isInteger(b.after)) return 400;
-    return refusal(routing.route(me, b.to, notes, { thread: typeof b.thread === 'string' ? b.thread : undefined, after: b.after }));
+    return refusal(routing.route(me, b.to, notes));
   },
   'GET /api/agent/route-log': b => (Number.isNaN(Date.parse(b.since)) ? 400 : routing.log(new Date(b.since).toISOString())),
   // hq owed: products that owe the board a return after its feedback; hq owed close <slug> "why" (owed.ts)
@@ -1136,7 +1236,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // On a call: the board's word to one job under way, by its number (call.ts reach).
   'POST /api/agent/message': (b, me) => { if (me.call) return refusal(call.reach(me, String(b.to ?? ''), Number(b.job), String(b.what ?? ''), String(b.text ?? '')));
     const agent = speaker(b.as, me), to = String(b.to ?? '');
-    const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''));
+    if (b.needsAnswer !== undefined && typeof b.needsAnswer !== 'boolean') return 400;
+    const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''), undefined, undefined, b.needsAnswer === true);
     return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : r; },
   'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...meetingseats.take(me.id)], // (a meeting seat's lines)
   // (and the meeting lines it printed, lines)
@@ -1157,11 +1258,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/intercom': async (b, me) => refusal(await memory.findIntercom(b.q, me, b.limit, b.day)),
   // hq estimate: work sized on done jobs like it (a queued job with its ETA), and the seats' headroom (estimates.ts)
   'GET /api/agent/estimate': b => estimates.estimate(b),
+  'GET /api/agent/estimate/audit': () => estimates.audit(),
   // hq when: when new work could be done without making any window miss, or whether by a time and what would make it
   // (when.ts).
   'GET /api/agent/when': (b, me) => refusal(when.when(b, me.agent)),
-  // hq estimate set #n <time> ["why"]: a queued or running job re-sized by the CEO, its queuer, its thread's owner or its own
-  // agent, and the threads that moved (sizes.ts setSize)
+  // An explicit CEO revision of a saved estimate, and the threads that moved (sizes.ts setSize)
   'POST /api/agent/sizes': (b, me) => {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
@@ -1251,7 +1352,7 @@ const PARTNER_ROUTES = new Set<string>();
 // (the when tool: the eta tool)
 const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET /api/agent/search', 'GET /api/agent/history', 'GET /api/agent/call', 'GET /api/agent/intercom',
   'GET /api/agent/seat-warnings', 'POST /api/agent/seat-warnings',
-  'GET /api/agent/numbers', 'POST /api/agent/pin', 'GET /api/agent/when', 'GET /api/agent/outlooks', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message']);   // (pin)
+  'GET /api/agent/numbers', 'POST /api/agent/pin', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message']);   // (pin)
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
 // The voice line (platform/voice), with its own token: a call's context (and its agent's call token), the transcript
@@ -1299,6 +1400,11 @@ async function answer(res: ServerResponse, routeReply: unknown) {
 // report (git.ts) and the text it masks (REDACT_MAX) to a million characters, which UTF-8 takes in at most 3 bytes each.
 // A request before any sign-in has shared/routes's JSON_MAX.
 const SIGNED_IN_MAX = 3_000_000;
+// Linux execve(2): argv + envp cannot exceed 3/4 of _STK_LIM (8 MiB), even with a larger stack.
+// https://man7.org/linux/man-pages/man2/execve.2.html
+// A command byte can need six JSON bytes. The remaining report fields keep the normal signed-in budget.
+const LINUX_COMMAND_MAX = 3 / 4 * 8 * 1024 ** 2;
+const BLOCKED_MAX = 6 * LINUX_COMMAND_MAX + SIGNED_IN_MAX;
 // A route's handler called with a POST's JSON body (refused when it isn't JSON within max) or a GET's query, and answered
 const answered = async (request: RouteRequest, handle: (body: any) => unknown, max = SIGNED_IN_MAX) => {
   const { req, url, res, jsonBody } = request;
@@ -1311,7 +1417,7 @@ const wrapped = <H>(table: Record<string, H>, wrap: Wrap<H>) => Object.fromEntri
 const forWorker: Wrap<(b: any) => unknown> = (key, handle) => request => {
   if (!workerAuthed(request.req.headers.authorization)) return send(request.res, 401, { error: 'worker token' });
   jobs.workerHeard();   // (the intercom says when it isn't: chat.ts paused)
-  return answered(request, handle);
+  return answered(request, handle, key === 'POST /api/worker/blocked' ? BLOCKED_MAX : undefined);
 };
 const forVoice: Wrap<(b: any) => unknown> = (key, handle) => request =>
   voiceAuthed(request.req.headers.authorization) ? answered(request, handle) : send(request.res, 401, { error: 'voice token' });
@@ -1438,6 +1544,11 @@ const board: RouteTable = {
   // and the keys' motion Slate shares with the brand guide
   'GET /shared/tactile/:file([a-z]+\\.js)': request =>
     hqFile(`${REPO_DIR}/shared/tactile`, `/${request.params.file}`)(request),
+  // and the statistics' drawing and motion Slate shares with it too
+  'GET /shared/stats/:file([a-z]+\\.js)': request => hqFile(`${REPO_DIR}/shared/stats`, `/${request.params.file}`)(request),
+  // and the signs (the ring's colour, by the contrast sums it imports by their path)
+  'GET /shared/signs/signs.js': hqFile(`${REPO_DIR}/shared/signs`, '/signs.js'),
+  'GET /shared/contrast/contrast.js': hqFile(`${REPO_DIR}/shared/contrast`, '/contrast.js'),
   // a company's own HQ apps (kits/<name>/hq/, at /kits/<name>/…, from the copy its routes run from)
   'GET /kits/:kit([a-z0-9][a-z0-9\\-]*)/*': request => {
     const { kit } = request.params;
@@ -1568,11 +1679,10 @@ const cardFilesSweep = () => { try { cardFiles.sweep(); } catch (err) { console.
 const owedSweep = () => { try { owed.sweep(); } catch (err) { console.error('Could not check what the board is owed:', err); } };
 const shareSweep = () => { try { feedback.gather(); } catch (err) { console.error('Could not end the shares due:', err); } };
 const laterSweep = () => { try { later.sweep(); } catch (err) { console.error('Could not look at the cards for later:', err); } };
-// New work's estimate, then the minute's forecast, on the deploys read in (its deploy lag).
+// New work's estimate and the minute's forecast in one play (forecast.ts sweep), on the deploys read in (its deploy lag).
 const forecastSweep = () => {
   try { wakes.readDeploys(); } catch (err) { console.error('Could not read the deploys:', err); }
-  try { predictions.sweep(); } catch (err) { console.error('Could not estimate new work:', err); }
-  try { forecast.refresh(); } catch (err) { console.error('Could not play the queue:', err); }
+  try { forecast.sweep(); } catch (err) { console.error('Could not play the queue:', err); }
 };
 const hireSweep = () => { try { hiring.sweep(); } catch (err) { console.error('Could not check the hires:', err); } };
 const stallCheck = () => { try { stallSweep(); } catch (err) { console.error('Could not check the engines for a stall:', err); } };

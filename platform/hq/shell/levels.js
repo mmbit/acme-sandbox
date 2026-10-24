@@ -5,7 +5,7 @@
 
 import { sfx } from './audio.js';
 import { dropKey, pinKey } from './drop.js'; // (pinKey)
-import { inEtaOrder } from './threads.js';
+import { inEtaOrder, finished } from './threads.js'; // (finished)
 
 const SWIPE = 70; // how far a sideways drag on a level goes before the next one beside it comes in (CSS px)
 
@@ -134,6 +134,13 @@ const comeIn = (els, from, { duration, stagger, easing }) =>
       fill: 'backwards',
     }),
   );
+// Where a job of the board's lives (j: one with its project and thread, as projects.js reads them): there, with the
+// finished tasks showing where it's one, a done thread's or finished itself; null for none.
+export function placeOf(j) {
+  if (!j?.projectThread) return null;
+  const done = !j.project.threads.includes(j.projectThread) || finished(j);
+  return { business: null, group: null, project: j.project.id, thread: j.projectThread.id, showDone: done };
+}
 // Whether work holds the place view names (its thread, project or business): a done thread not loaded yet, say, doesn't.
 export function holds(view, work) {
   const at = level(view, work).at;

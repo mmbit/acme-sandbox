@@ -14,6 +14,8 @@ const at = (ms: number) => new Date(ms).toISOString();
 mock.timers.enable({ apis: ['Date'], now: T0 });
 test.after(() => mock.timers.reset());
 
+const firstGuess = h.queue({ agent: 'kit', title: 'Paint the lighthouse', engine: 'claude', queuedBy: 'juno' });
+
 // A done job of kit's, queued by Juno, that ran `minutes` two days ago, its pull request merged `review` minutes after
 // its end (null: none opened).
 function past(title: string, minutes: number, review: number | null) {
@@ -44,7 +46,7 @@ const harbour = { q: 'paint the harbour map', agent: 'kit' };
 // New work played into the plan as if queued now (hq when): with no window, its start, merge and waits.
 const when = async (query: Record<string, string>) => {
   await reportCapacity();
-  const r = await h.agent(`when?${new URLSearchParams(query)}`, (await reader()).token);
+  const r = await h.agent(`when?${new URLSearchParams({ size: '40m', ...query })}`, (await reader()).token);
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const merged = r.body.free.finish === null ? null : r.body.free.finish - deployLag();
   return { ...r.body.free, merged };
@@ -63,12 +65,22 @@ test.before(async () => {
 const clear = () => h.db.exec("update jobs set status = 'cancelled' where status = 'queued'");
 test.afterEach(clear);
 
-test('work queued now uses the mean agent time and measured review runs', async () => {
+test('a first guess stays saved when comparable history arrives later', async () => {
+  await seat();
+  const found = await ask({ q: `#${firstGuess}` });
+  assert.deepEqual(
+    [found.estimate.agent_minutes, found.estimate.guessed, found.estimate.compared, found.outlook.merged],
+    [30, true, 0, T0 + 60 * MIN],
+  );
+});
+
+test('new work uses the caller estimate and measured review runs', async () => {
   await seat();
   const found = await ask(harbour);
+  assert.equal(found.estimate, undefined, 'the search supplies comparisons, not a chosen estimate');
   assert.deepEqual(
-    [found.estimate.agent_minutes, found.estimate.basis],
-    [40, { kind: 'work', agent: 'kit', words: ['paint', 'harbour', 'map'] }],
+    found.jobs.map((job: { agent_minutes: number }) => job.agent_minutes).sort((a: number, b: number) => a - b),
+    [30, 40, 50],
   );
   assert.equal(found.outlook, undefined);
   const planned = await when(harbour);
@@ -206,7 +218,7 @@ test("a time a promise holds to: the play once more at every size's slow pick, f
   assert.match(out, /is merged about .* \(by .* four times in five: the time a promise holds to\)/);
 });
 
-test("a queued job's own estimate is the one stored as it was queued, a first guess too", async () => {
+test("a queued job's own estimate is the one stored as it was queued", async () => {
   await seat();
   const id = queued('Paint the harbour map for the visitors');
   predictions.sweep();
@@ -220,16 +232,6 @@ test("a queued job's own estimate is the one stored as it was queued, a first gu
   h.db.prepare('delete from runs where job = ?').run(longer);
   h.db.prepare('delete from prs where branch = ?').run(`job/${longer}`);
   h.db.prepare('delete from jobs where id = ?').run(longer);
-  clear();
-  const guess = queued('Paint the lighthouse');
-  h.db
-    .prepare(`insert into predictions (job, made, agent_ms, picks, basis, guessed) values (?, ?, ?, '[]', ?, 1)`)
-    .run(guess, at(T0), 30 * MIN, JSON.stringify({ kind: null, agent: null, words: [] }));
-  const guessed = await ask({ q: `#${guess}` });
-  assert.deepEqual(
-    [guessed.estimate.agent_minutes, guessed.estimate.guessed, guessed.estimate.compared, guessed.outlook.merged],
-    [30, true, 0, T0 + 60 * MIN],
-  );
   clear();
 });
 

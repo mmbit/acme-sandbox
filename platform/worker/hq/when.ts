@@ -1,5 +1,6 @@
 // hq when: when new work could be done, played into the plan as it stands (the coordinator's when.ts): the earliest
 // without making any window miss, or with --by whether it makes that time, and only if not, what would.
+import * as seatreplay from './seatreplay.ts';
 import * as api from './api.ts';
 import { deadlineLines, type Deadline } from './deadlines.ts';
 import { at, comparedWords, duration, waitWords, type Basis, type Wait } from './estimate.ts';
@@ -36,13 +37,17 @@ type Answer = {
   played: { plays: number; ms: number };
 };
 
-const USAGE = 'usage: hq when "what the work is" [size] [--agent <id>] [--after <job>] [--by <time>]';
+const USAGE = 'usage: hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]';
 
 export const when = {
   help: `
-   hq when "what the work is" [size] [--agent <id>] [--after <job>] [--by <time>]
+   hq when --extra-seat 5x|20x                       replay the live plan with one hypothetical Claude Max seat, at
+                                                     any time: every project, thread and window before and after,
+                                                     measured capacity and confidence. Nothing changes.
+   hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]
                                                      when new work could be done (merged and deployed), played into the
-                                                     plan as it stands: sized like hq estimate, or by the size given
+                                                     plan as it stands: use hq estimate to compare clean past jobs, then
+                                                     give your own scope judgment as --size
                                                      (90m, 2h, 1h30m), as --agent's work (yours by default), after
                                                      --after's job. The earliest it can be done without making any
                                                      window miss, and the window to set for it (hq window). With --by
@@ -54,14 +59,21 @@ export const when = {
     const flags: Record<string, string> = {};
     const words: string[] = [];
     for (let i = 0; i < given.length; i++) {
-      const name = given[i].match(/^--(agent|after|by)$/)?.[1];
+      const name = given[i].match(/^--(agent|after|by|size|extra-seat)$/)?.[1];
       if (!name) words.push(given[i]);
       else if (!given[i + 1]) stop(`usage: --${name} needs a value`);
       else flags[name] = given[++i];
     }
-    if (!words.length || words.length > 2) stop(USAGE);
-    const [q, size] = words;
-    const query = new URLSearchParams({ q, ...(size ? { size } : {}), ...flags });
+    if (flags['extra-seat'] !== undefined) {
+      if (words.length || Object.keys(flags).length !== 1) stop('usage: hq when --extra-seat 5x|20x (the live plan)');
+      const query = new URLSearchParams({ extra_seat: flags['extra-seat'] });
+      const replay: seatreplay.Replay = JSON.parse(
+        await api.orStop(api.get(`when?${query}`), 'Could not replay the plan.'),
+      );
+      return seatreplay.show(replay);
+    }
+    if (words.length !== 1 || !flags.size) stop(USAGE);
+    const query = new URLSearchParams({ q: words[0], ...flags });
     const found: Answer = JSON.parse(
       await api.orStop(api.get(`when?${query}`), "Couldn't play the work into the plan."),
     );

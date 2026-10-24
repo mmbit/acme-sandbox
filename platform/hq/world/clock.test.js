@@ -47,6 +47,11 @@ test("HQ's times and days read the company's clock, wherever this device is", ()
     assert.equal(clock.dayTime(evening), 'Thu 31 Dec, 23:30');
     assert.equal(clock.clockWhen(Date.parse('2026-01-01T08:00:00Z')), 'Thu 09:00', 'another day: its weekday');
     assert.equal(clock.clockWhen(Date.now()), clock.timeOf(Date.now()), 'today: the time alone');
+    // the design system's words (shared/signs), on the company's clock
+    const past = Date.now() - 60_000;
+    assert.equal(clock.fromNow(past), clock.clockWhen(past), 'a time past: its clock time');
+    assert.equal(clock.fromNow(Date.now() + 25 * 60_000), '25 min', 'within the day: a glance');
+    assert.equal(clock.fromNow(Date.parse('2026-12-31T23:30:00Z')), 'Fri 1 Jan', 'far off: its date there, not UTC’s');
     assert.equal(clock.companyFormats('EUR').money(2695, 'en'), '€26.95');
   } finally {
     clock.setTimeZone('UTC');

@@ -20,6 +20,8 @@ export type ReviewPlan = {
   unresolved?: boolean;
   resolutionAt?: number;
   resolutionAfter?: number;
+  // why nothing resolves it until someone acts (reviewplan.ts)
+  waiting?: string;
 };
 
 export function expand<T extends OrderingSnapshot>(
@@ -93,10 +95,10 @@ function pendingResolution(owner: QueuedJob, id: number) {
   const pending = synthetic(owner, stage, id);
   pending.kind = 'resolution';
   pending.dependencies.push({ job: owner.id, until: 'done' });
-  const { resolutionAt, resolutionAfter } = owner.reviewPlan!;
+  const { resolutionAt, resolutionAfter, waiting } = owner.reviewPlan!;
   if (resolutionAfter !== undefined) pending.dependencies.push({ job: resolutionAfter, until: 'done' });
   else if (resolutionAt !== undefined) pending.notBefore = resolutionAt;
-  else pending.reasons.push({ on: 'stalled', why: 'Its pull request awaits resolution' });
+  else pending.reasons.push({ on: 'stalled', why: waiting ?? 'Its pull request awaits resolution' });
   return pending;
 }
 

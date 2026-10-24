@@ -1,25 +1,35 @@
 // Branch authors, review eligibility and the consolidator selected for a round.
 import { db, redacted } from './db.ts';
 import { org, roles } from './company.ts';
-import { findAgent } from './jobs.ts';
+import { findAgent, SEAT_READY } from './jobs.ts';
+import * as ordering from './ordering.ts';
+import * as planner from './planner.ts';
+import { withPicks } from './models.ts';
 
 db.exec(`create table if not exists review_triage (job integer primary key, pr integer not null,
   round integer not null, sha text, base text, selection text not null);
   create index if not exists review_triage_round on review_triage (pr, round, job)`);
 redacted('review_triage', 'selection');
 
+// The jobs that can be on the branch come by index first (its own, its thread's, the job it's named after, a touch-up's
+// pull request), then the rule decides: the rule alone read every job row, and a review's start asks 5 times (0.3 s).
 export function authors(branch: string, author?: string) {
   const rows = db
     .prepare(
-      `with author_jobs as (
-      select j.id, j.agent from jobs j left join threads t on t.id = j.thread
-      where (j.kind in ('work', 'chat') and coalesce(j.branch, t.branch, 'job/' || j.id) = ?)
+      `with maybe as (
+      select id from jobs where branch = ?1
+      union select j.id from threads t cross join jobs j on j.thread = t.id where t.branch = ?1 and j.branch is null
+      union select id from jobs where ?1 like 'job/%' and id = cast(substr(?1, 5) as integer)
+      union select u.job from prs p cross join touchups u on u.pr = p.number where p.branch = ?1
+    ), author_jobs as (
+      select j.id, j.agent from maybe cross join jobs j on j.id = maybe.id left join threads t on t.id = j.thread
+      where (j.kind in ('work', 'chat') and coalesce(j.branch, t.branch, 'job/' || j.id) = ?1)
       or (j.kind = 'consolidate' and exists (
         select 1 from touchups u join prs p on p.number = u.pr
-        where u.job = j.id and u.head is not null and p.branch = ?))
+        where u.job = j.id and u.head is not null and p.branch = ?1))
     ) select agent from author_jobs union select m.agent from job_members m join author_jobs j on j.id = m.job`,
     )
-    .all(branch, branch) as { agent: string }[];
+    .all(branch) as { agent: string }[];
   return new Set(rows.map(row => row.agent).concat(author ? [author] : []));
 }
 
@@ -36,7 +46,7 @@ export function excludedAuthors(pr: number) {
   return authors.size === 1 ? authors : new Set<string>();
 }
 
-export function consolidator(pr?: number) {
+export function consolidator(pr?: number, stage = 'triage') {
   const candidates = consolidators(pr);
   const selected =
     pr === undefined
@@ -50,18 +60,69 @@ export function consolidator(pr?: number) {
   const assigned = selected ? (JSON.parse(selected.selection).consolidator as string) : undefined;
   if (assigned && candidates.includes(assigned)) return assigned;
   if (!candidates.length) throw new Error(`No eligible consolidator${pr === undefined ? '' : ` for PR #${pr}`}`);
-  return candidates[0];
+  return pr === undefined ? candidates[0] : soonest(pr, candidates, stage);
 }
 
+// The candidate whose seats start the round's next run soonest: the fewest rounds' runs ahead of it per seat of the
+// candidate's engine that takes it now, the preference order breaking ties. Ahead are the runs running and the queued
+// ones the shared plan puts first (planner.ts compare). Seat eligibility uses that plan's key too (pacedTakes).
+function soonest(pr: number, candidates: string[], stage: string) {
+  const t = Date.now();
+  const { branch, round } = db.prepare('select branch, round from prs where number = ?').get(pr) as {
+    branch: string;
+    round: number;
+  };
+  const { id } = db.prepare('select coalesce(max(id), 0) + 1 id from jobs').get() as { id: number };
+  const timings = ordering.withRound(
+    {
+      id,
+      pr,
+      round,
+      branch,
+      thread: threadOfBranch(branch),
+      stage,
+      agent: candidates[0],
+      engine: findAgent(candidates[0])!.engine,
+      kind: 'consolidate',
+      status: 'queued',
+    },
+    t,
+  );
+  const order = timings.get(id)!;
+  const seats = db
+    .prepare(
+      `select engine, iif(pace is null or week_resets <= $now, null, week_resets) until from seats where ${SEAT_READY}`,
+    )
+    .all({ now: t }) as { engine: string; until: number | null }[];
+  const runs = db
+    .prepare(
+      `select id, engine, status from jobs indexed by jobs_status
+    where status in ('queued', 'running') and kind in ('review', 'consolidate')`,
+    )
+    .all() as { id: number; engine: string; status: string }[];
+  const goesFirst = (run: (typeof runs)[number]) =>
+    run.status === 'running' || planner.compare(timings.get(run.id)!, order) < 0;
+  const wait = (agent: string) => {
+    const engine = findAgent(agent)?.engine,
+      taking = seats.filter(seat => seat.engine === engine && planner.pacedTakes(order, seat.until ?? undefined));
+    const ahead = runs.filter(run => run.engine === engine && goesFirst(run)).length;
+    return taking.length ? ahead / taking.length : Infinity;
+  };
+  const waits = candidates.map(wait);
+  return candidates[waits.indexOf(Math.min(...waits))];
+}
+
+// Each agent on the engine it runs on, from one read of the chart (a findAgent per agent read it and the picks again).
 export function consolidators(pr?: number): string[] {
   const excluded = pr === undefined ? new Set<string>() : excludedAuthors(pr);
-  const staff = org().departments.flatMap((department: { agents?: { id: string }[] }) =>
-    (department.agents ?? []).map(agent => agent.id),
+  const agents: { id: string; engine: string }[] = withPicks(org()).departments.flatMap(
+    (department: { agents?: { id: string; engine: string }[] }) => department.agents ?? [],
   );
+  const staff = agents.map(agent => agent.id);
+  // (the first of an id, as findAgent finds it)
+  const engines = new Map(agents.map(agent => [agent.id, agent.engine] as const).reverse());
   const eligible = new Set<string>(
-    staff.filter(
-      (agent: string) => !excluded.has(agent) && ['claude', 'codex'].includes(findAgent(agent)?.engine ?? ''),
-    ),
+    staff.filter(agent => !excluded.has(agent) && ['claude', 'codex'].includes(engines.get(agent) ?? '')),
   );
   const configured = roles();
   for (const candidates of [configured.consolidators, configured.reviewers, staff]) {

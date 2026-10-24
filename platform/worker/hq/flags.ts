@@ -2,9 +2,17 @@
 import { stop } from './output.ts';
 import { companyLevels } from './files.ts';
 
-export type ItemFlags = { item?: string; replaces?: string; call?: string; deadline?: string; lands?: string };
+export type ItemFlags = {
+  item?: string;
+  replaces?: string;
+  call?: string;
+  deadline?: string;
+  lands?: string;
+  job?: string;
+};
 
 // --item, --replaces and --call <number> (hq items), --lands <job> (hq job: the failed job whose saved work it lands),
+// --job <job> (hq item add on a live call: the work under way a promise is about),
 // --deadline <when> (hq item add, replace: the item's time; hq job refuses it).
 export function takeItemFlags(given: string[], command: 'job' | 'item') {
   const flags: ItemFlags = {};
@@ -12,14 +20,15 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
   for (let i = 0; i < given.length; i++) {
     const flag = given[i];
     const value = given[i + 1];
-    if (flag === '--item' || flag === '--replaces' || flag === '--call' || (command === 'job' && flag === '--lands')) {
+    const numbered = ['--item', '--replaces', '--call'].includes(flag);
+    if (numbered || (command === 'job' && flag === '--lands') || (command === 'item' && flag === '--job')) {
       if (!/^[0-9]+$/.test(value ?? ''))
-        stop(`${flag} needs a number (${flag === '--lands' ? 'the failed job' : 'hq items'})`);
-      flags[flag.slice(2) as 'item' | 'replaces' | 'call' | 'lands'] = value;
+        stop(`${flag} needs a number (${numbered ? 'hq items' : flag === '--lands' ? 'the failed job' : 'the job'})`);
+      flags[flag.slice(2) as 'item' | 'replaces' | 'call' | 'lands' | 'job'] = value;
       i++;
     } else if (flag === '--deadline') {
       if (command === 'job')
-        stop("No job was queued: hq job takes no --deadline. A time is its thread's window: hq window <thread> <when>");
+        stop("No job was queued: hq job takes no --deadline. Its time is its thread's window: --by <when>");
       // (hq_tools.py reads "Nothing recorded" as a refusal)
       if (!value) stop('Nothing recorded: --deadline needs a time (2h, 90m, 14:30 UTC)');
       flags.deadline = value;

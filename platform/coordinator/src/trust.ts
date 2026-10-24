@@ -51,7 +51,10 @@ export const FINDING_NOTES = `   "from": where the case comes from: "outside" (o
 // The consolidator's lists: what it drops and why, and blocking findings that name the case first
 export const DISMISSED_FIELD = `, "dismissed": [{"file": "...", "line": 0, "rule": "trust" | "unshown", "why": "..."}]`;
 export const BLOCKING = `[{"file": "...", "line": 0, "case": "...", "issue": "...", "also": [{"file": "...", "line": 0}], "fix": "...",
-  "secret": true (only for a secret in code), "by": ["reviewer id"], "from": [{"by": "reviewer id", "finding": 0}], "earlier": 0 (only for a finding of the previous ruling's), "rule": "trust" (only for the trust rule)}]`;
+  "secret": true (only for a secret in code), "task": "...", "by": ["reviewer id"], "from": [{"by": "reviewer id", "finding": 0}], "earlier": 0 (only for a finding of the previous ruling's), "rule": "trust" (only for the trust rule)}]`;
+// The fix task each blocking finding goes in, named by the consolidator (reviewinbox.ts).
+export const TASK_NOTE = `"task": the title of the fix task the finding goes in: what the fix does, in a few plain words, never a finding's
+or pull request's number. Findings one fix answers share it; unrelated ones get one each.`;
 export const CONSOLIDATOR_TRUST = `
 Hold every finding to the trust rule below. Check its case against the code: a guard against a case from our own
 systems or one that can't happen, and any fix that falls back, you drop as "trust"; a finding you can't show concretely

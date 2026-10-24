@@ -28,6 +28,7 @@ import { db, redacted } from './db.ts';
 import { publish } from './events.ts';
 import { DATA_DIR, ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
 import { brand, ceo, companyFormats, names } from './company.ts';
+import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { createRequest, closeRequest, findAgent, holdsCustomerData } from './jobs.ts';
 import { clientOf } from './auth.ts';
 import { inside } from './files.ts';
@@ -115,7 +116,7 @@ const items = (id: number) => db.prepare('select * from guest_items where reques
 const thread = (id: number, n: number) => db.prepare('select id, who, person, text, ts, pictures from guest_messages where item = ? and point = ? order by id').all(id, n) as Message[];
 const agentName = (id: string) => String(findAgent(id)?.name ?? id);
 const documents = () => { const d = String(brand().mail?.domain ?? ''); return d ? `documents@${d}` : null; };
-const langOf = (g: Pick<Guest, 'lang'>): Lang => g.lang === 'nl' ? 'nl' : 'en';
+const langOf = (g: Pick<Guest, 'lang'>): Lang => g.lang && Object.hasOwn(COPY, g.lang) ? g.lang as Lang : 'en';
 const hourAgo = () => new Date(Date.now() - 3600e3).toISOString();
 const expired = (r: Request) => !!r.closed && Date.parse(r.closed) < Date.now() - KEEP_DAYS * 864e5;
 // a@example.nl → a••••@example.nl: the page says where the code goes without showing the address
@@ -461,12 +462,14 @@ export function card(c: any) {
   return { ...rest, guest: { ...cardGuest(r, lead, list), ...(legend.length ? { legend } : {}), ...(colleagues ? { colleagues } : {}),
     people: all.map(p => cardPerson(r, p, legend)), items: list.map(i => cardItem(r, i, langOf(lead), legend)) } };
 }
+// (the card's language pick: a page's languages by their own names)
+const pageLanguages = () => (Object.keys(COPY) as Lang[]).map(code => ({ code, own: LANGUAGES[code].own }));
 // Share releases the request (release()); the masked address tells this guest from another of the same name. What Send
 // link shares: the link alone, so a share sheet offers Copy link and an app like Teams takes it
 const shareOf = (r: Request, p: Person) => p.email && active(p) && r.status === 'open' ? linkOf(p) : null;
 const cardGuest = (r: Request, lead: Person, list: Item[]) => ({ request: r.id, name: lead.guest, address: lead.email && masked(lead.email),
   needsEmail: !lead.email && active(lead), released: !!lead.released, revoked: !!lead.revoked, verified: lead.verified, lang: langOf(lead), status: r.status,
-  closed: r.closed, before: r.before, mail: mailout.ready(MODE), ...progress(list) });
+  closed: r.closed, before: r.before, mail: mailout.ready(MODE), ...progress(list), languages: pageLanguages() });
 function cardPerson(r: Request, p: Person, legend: Legend) {
   const share = shareOf(r, p);
   return { name: p.guest, address: p.email && masked(p.email), released: !!p.released, verified: p.verified, lang: langOf(p), withdrawn: !!p.withdrawn,
@@ -660,8 +663,9 @@ export function revoke(id: number, what: unknown, person?: unknown) {
 }
 
 // ---------------------------------------------------------------- the guest's page: its words
-// Every word the page and the code email say, per language (the guest's: guests.lang). Plain, short and warm, with no
-// semicolons or dashes between clauses (the board's copy rules).
+// Every word the page and the code email say, per language (the guest's: guests.lang), one for each of the platform's
+// (language.ts). Plain, short and warm, with no semicolons or dashes between clauses (the board's copy rules).
+// (German)
 export const COPY = {
   nl: {
     locale: 'nl-NL', you: 'Jij',
@@ -687,9 +691,10 @@ export const COPY = {
     unavailable: 'Deze pagina kan nu niet open: aan onze kant moet eerst iets gerepareerd worden. Probeer het later nog eens.',
     copy: 'Kopieer', copied: 'Gekopieerd', number: 'Vul een getal in, zoals 3 of 3,5.',
     download: (name: string) => `${name} downloaden`,
+    gone: { title: 'Deze link opent niets', text: 'Misschien is hij verkeerd overgenomen, of werkt hij niet meer. Vraag wie hem stuurde om een nieuwe.' },
     // a colleague invited from the page (invite: the page's part, inviteEmail: what they get)
     invite: {
-      title: 'Een collega erbij halen', name: 'Naam', address: 'E-mailadres', button: 'Uitnodigen',
+      title: 'Een collega erbij halen', name: 'Naam', address: 'E-mailadres', button: 'Uitnodigen', mailbox: 'naam',
       text: (domain: string) => `Wil je dit samen met een collega doen, of aan iemand overdragen? Nodig iemand uit met een e-mailadres op @${domain}. Die krijgt een eigen link per e-mail.`,
       left: (n: number) => n === 1 ? 'Je kunt nog 1 persoon uitnodigen.' : `Je kunt nog ${n} mensen uitnodigen.`,
       none: 'Je hebt alle uitnodigingen voor deze pagina gebruikt. Moet er nog iemand bij? Vraag het aan wie je deze link stuurde.',
@@ -729,8 +734,9 @@ export const COPY = {
     unavailable: 'This page can’t open right now: something on our side needs fixing first. Please try again later.',
     copy: 'Copy', copied: 'Copied', number: 'Please enter a number, like 3 or 3.5.',
     download: (name: string) => `Download ${name}`,
+    gone: { title: 'This link doesn’t open anything', text: 'It may be mistyped, or it no longer works. Ask the person who sent it for a new one.' },
     invite: {
-      title: 'Bring in a colleague', name: 'Name', address: 'Email address', button: 'Invite',
+      title: 'Bring in a colleague', name: 'Name', address: 'Email address', button: 'Invite', mailbox: 'name',
       text: (domain: string) => `Want to do this with a colleague, or hand it on? Invite someone with an @${domain} address. They’ll get a link of their own by email.`,
       left: (n: number) => n === 1 ? 'You can invite 1 more person.' : `You can invite ${n} more people.`,
       none: 'You’ve used all the invites for this page. If someone else needs to join, please ask the person who sent you this link.',
@@ -746,7 +752,49 @@ export const COPY = {
       email: (who: string, co: string, title: string, link: string) => `${who} invited you to work on “${title}”, a page from ${co}.\n\nOpen it here: ${link}\n\nTo check it’s you, we’ll first send you a 6-digit code there. Not expecting this? You can ignore this email.`,
     },
   },
-};
+  de: {
+    locale: 'de-DE', you: 'Du',
+    sections: { document: 'Dokumente', question: 'Fragen', task: 'Aufgaben', info: 'Gut zu wissen' } as Record<Kind, string>,
+    from: (agent: string) => `Von ${agent}`, before: (d: string) => `Bitte bis ${d}`,
+    progress: (d: number, t: number) => `${d} von ${t} erledigt`, mailTo: 'Dokumente mailen an',
+    mailed: 'Gemailt', done: 'Erledigt', na: 'Trifft nicht zu', undo: 'Rückgängig', save: 'Speichern', answer: 'Deine Antwort',
+    ask: 'Eine Frage stellen', question: 'Deine Frage', send: 'Senden', talk: (n: number) => `Gespräch (${n})`,
+    closed: (d: string) => `Abgeschlossen am ${d}`, closedNote: 'Diese Anfrage ist abgeschlossen. Kommt noch etwas Neues, bekommst du einen neuen Link.',
+    footer: (co: string) => `Du schreibst mit den KI-Agents von ${co}, die das Unternehmen führen.`,
+    more: (co: string) => `Mehr von ${co} für dich`, people: 'Wer daran arbeitet', me: 'du',
+    verifyTitle: 'Kurz prüfen, ob du es bist', verify: (co: string) => `Diese Seite von ${co} ist für eine Person. Wir schicken einen 6-stelligen Code an`,
+    sendCode: 'Code schicken', codeTitle: 'Gib deinen Code ein', codeSent: 'Wir haben einen Code geschickt an', codeWorks: 'Er gilt 10 Minuten.',
+    code: 'Code', openPage: 'Seite öffnen', newCode: 'Neuen Code schicken', test: 'Testmodus: Es wurde keine E-Mail verschickt. Sie hätte gelautet:',
+    noMail: 'Wir können noch keine Codes per E-Mail schicken. Frag bitte die Person, die dir diesen Link geschickt hat.',
+    enough: 'Das sind genug Codes für jetzt. Versuch es in einer Stunde noch einmal.', mailFailed: 'Die E-Mail mit deinem Code ist nicht rausgegangen. Versuch es später noch einmal.',
+    badAddress: 'Die E-Mail mit deinem Code kann nicht raus: Diese E-Mail-Adresse funktioniert nicht. Bitte die Person, die dir diesen Link geschickt hat, sie zu prüfen.',
+    tooMany: 'Zu viele Versuche. Versuch es in einer Stunde noch einmal.', expired: 'Dieser Code ist abgelaufen oder aufgebraucht. Fordere einen neuen an.',
+    wrong: (n: number) => `Dieser Code stimmt nicht. Noch ${n} ${n === 1 ? 'Versuch' : 'Versuche'}.`, usedUp: 'Dieser Code stimmt nicht und ist jetzt aufgebraucht. Fordere einen neuen an.',
+    long: `Eine Nachricht hat 1 bis ${MAX_TEXT} Zeichen.`, busy: 'Das sind viele Nachrichten in einer Stunde. Warte kurz, bevor du mehr schickst.',
+    subject: (co: string) => `Dein Code für ${co}`,
+    email: (co: string, code: string) => `Dein Code, um deine Seite von ${co} zu öffnen: ${code}\n\nEr gilt 10 Minuten. Hast du ihn nicht angefordert? Dann kannst du diese E-Mail ignorieren.`,
+    unavailable: 'Diese Seite lässt sich gerade nicht öffnen: Bei uns muss erst etwas repariert werden. Versuch es später noch einmal.',
+    copy: 'Kopieren', copied: 'Kopiert', number: 'Gib eine Zahl ein, etwa 3 oder 3,5.',
+    download: (name: string) => `${name} herunterladen`,
+    gone: { title: 'Dieser Link öffnet nichts', text: 'Vielleicht wurde er falsch übernommen, oder er funktioniert nicht mehr. Bitte die Person, die ihn geschickt hat, um einen neuen.' },
+    invite: {
+      title: 'Jemanden aus deinem Team dazuholen', name: 'Name', address: 'E-Mail-Adresse', button: 'Einladen', mailbox: 'name',
+      text: (domain: string) => `Möchtest du das gemeinsam mit jemandem aus deinem Team machen oder es abgeben? Lade jemanden mit einer E-Mail-Adresse auf @${domain} ein. Diese Person bekommt per E-Mail einen eigenen Link.`,
+      left: (n: number) => n === 1 ? 'Du kannst noch 1 Person einladen.' : `Du kannst noch ${n} Personen einladen.`,
+      none: 'Du hast alle Einladungen für diese Seite verwendet. Soll noch jemand dazukommen? Frag die Person, die dir diesen Link geschickt hat.',
+      sent: (name: string) => `${name} hat eine Einladung bekommen.`,
+      badName: 'Gib einen Vornamen oder vollen Namen ein, mit einem Großbuchstaben am Anfang.',
+      domain: (domain: string) => `Du kannst nur jemanden mit einer E-Mail-Adresse auf @${domain} einladen.`,
+      already: (name: string) => `${name} arbeitet hier schon mit.`,
+      refused: 'Diese Person kannst du hier nicht einladen. Frag die Person, die dir diesen Link geschickt hat.',
+      bounced: 'Die Einladung kann nicht raus: Diese E-Mail-Adresse funktioniert nicht. Prüf sie bitte noch einmal.',
+      failed: 'Die Einladung ist nicht rausgegangen. Versuch es später noch einmal.',
+      unsure: (name: string) => `Wir wissen nicht sicher, ob die Einladung verschickt wurde. ${name} steht jetzt aber auf dieser Seite. Kommt nichts an? Bitte die Person, die dir diesen Link geschickt hat, ${name} den Link zu schicken.`,
+      subject: (who: string, title: string) => `${who} bittet dich um Hilfe: ${title}`,
+      email: (who: string, co: string, title: string, link: string) => `${who} hat dich eingeladen, an „${title}“ mitzuarbeiten, einer Seite von ${co}.\n\nHier öffnest du sie: ${link}\n\nDamit wir wissen, dass du es bist, schicken wir dir dort zuerst einen 6-stelligen Code. Hast du das nicht erwartet? Dann kannst du diese E-Mail ignorieren.`,
+    },
+  },
+} satisfies Record<BoardLanguage, unknown>;
 
 // ---------------------------------------------------------------- the guest's page: how it looks
 // GET /guest/<token>, and the page's forms: POST …/send (a code), …/verify, …/item (a tick or an answer), …/ask (a question
@@ -845,22 +893,27 @@ const day = (ts: string, lang: Lang) => {
 const when = (ts: string, lang: Lang) => pageFormats().moment(Date.parse(ts), lang, { short: true });
 export const SCRIPT = readFileSync(new URL('./guest.js', import.meta.url), 'utf8');
 
-function html(res: ServerResponse, status: number, lang: Lang | 'nl en', body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
+function html(res: ServerResponse, status: number, lang: Lang, body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
   const b = brand(), n = names().name, l = look(), css = style(l, pct, legend);
   const src = l.logo ? `/guest/theme/${l.logo}` : `/${esc(logo(b))}`, darkSrc = l.logo ? l.logoDark && `/guest/theme/${l.logoDark}` : l.dark && `/${esc(darkLogo(b))}`;
   // same-origin, not no-referrer: the link (its token) never goes to another site, and a browser still sends the page's
   // own Origin with its forms (no-referrer makes it "null", which server.ts refuses)
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
     'content-security-policy': `default-src 'none'; script-src 'self'; style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
-  res.end(`<!doctype html><html lang="${lang === 'nl en' ? 'nl' : lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  res.end(`<!doctype html><html lang="${lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script>
 <header><picture>${darkSrc ? `<source srcset="${darkSrc}" media="(prefers-color-scheme: dark)">` : ''}<img src="${src}" alt="${esc(b.logo?.alt ?? n)}"></picture></header>
 <main>${body}</main>`);
 }
-// (who the link is for isn't known here, so it says it in both languages)
-const gone = (res: ServerResponse) => html(res, 404, 'nl en', `<div class="card"><h1>Deze link opent niets</h1>
-<p>Misschien is hij verkeerd overgenomen, of werkt hij niet meer. Vraag wie hem stuurde om een nieuwe.</p>
-<h1 lang="en">This link doesn’t open anything</h1><p lang="en">It may be mistyped, or it no longer works. Ask the person who sent it for a new one.</p></div>`);
+// (who the link is for isn't known here, so it says it in every language, the first the page's)
+const gone = (res: ServerResponse) => {
+  const [first] = Object.keys(COPY) as Lang[];
+  const said = Object.entries(COPY).map(([lang, t]) => {
+    const at = lang === first ? '' : ` lang="${lang}"`;
+    return `<h1${at}>${esc(t.gone.title)}</h1><p${at}>${esc(t.gone.text)}</p>`;
+  });
+  html(res, 404, first, `<div class="card">${said.join('\n')}</div>`);
+};
 
 // Per client and hour: the few requests a person makes, never a guessing run.
 const hits = new Map<string, number[]>();
@@ -1011,7 +1064,7 @@ function inviteHtml(r: Request, g: Guest, url: string, lang: Lang, o: Invited = 
     : o.sent ? `<p class="sent" role="status">${esc(w.sent(o.sent))}</p>${o.test ? `<div class="alert"><b>${t.test}</b><pre>${esc(o.test.subject)}\n\n${esc(o.test.text)}</pre></div>` : ''}` : '';
   const kept = (v?: string) => v ? ` value="${esc(v)}"` : '';
   const form = left ? `<form method="post" action="${url}/invite#invite" class="inviting"><label class="sr" for="iname">${w.name}</label><input id="iname" name="name" placeholder="${w.name}" autocomplete="off" maxlength="60" required${kept(o.error && o.name)}>
-<label class="sr" for="imail">${w.address}</label><input id="imail" name="email" type="email" placeholder="${esc(`${lang === 'nl' ? 'naam' : 'name'}@${r.colleagues}`)}" autocomplete="off" spellcheck="false" required${kept(o.error && o.email)}><button>${w.button}</button></form>
+<label class="sr" for="imail">${w.address}</label><input id="imail" name="email" type="email" placeholder="${esc(`${w.mailbox}@${r.colleagues}`)}" autocomplete="off" spellcheck="false" required${kept(o.error && o.email)}><button>${w.button}</button></form>
 <p class="meta">${w.left(left)}</p>` : `<p class="meta">${w.none}</p>`;
   return `<h2>${w.title}</h2><div class="card" id="invite">${done}<p>${esc(w.text(r.colleagues!))}</p>${form}</div>`;
 }

@@ -1,7 +1,7 @@
 // node --test src/reviewinbox.test.ts   (uses a throwaway DATA_DIR)
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { harness } from './harness.ts';
 import { resetReviewInbox, historicalRedrawDatabase } from './reviewfixture.ts';
@@ -21,8 +21,15 @@ const order = await import('./threadorder.ts');
 const plan = await import('./plan.ts');
 const { remember } = await import('./db.ts');
 const findings = [
-  { id: 12, domain: 'engine', files: ['game.ts'], issue: 'The level cannot finish', fix: 'Advance its state' },
-  { id: 13, domain: 'art', files: ['world.svg', 'ship.svg'], issue: 'The ship is invisible' },
+  {
+    id: 12,
+    domain: 'engine',
+    files: ['game.ts'],
+    issue: 'The level cannot finish',
+    fix: 'Advance its state',
+    task: 'Let the level finish',
+  },
+  { id: 13, domain: 'art', files: ['world.svg', 'ship.svg'], issue: 'The ship is invisible', task: 'Show the ship' },
 ];
 beforeEach(() => {
   resetReviewInbox(db);
@@ -57,6 +64,24 @@ async function deliver(decision: 'changes' | 'close' = 'changes') {
     }),
   };
 }
+
+const heardBy = () =>
+  (db.prepare("select heard_by from proposals where title = 'Review changes on PR #71'").get() as { heard_by: number })
+    .heard_by;
+const proposalOf71 = () =>
+  (db.prepare("select id from proposals where title = 'Review changes on PR #71'").get() as { id: number }).id;
+const fixTasks = () =>
+  db
+    .prepare("select agent, status, thread, branch, round, title from jobs where stage = 'fix' order by id")
+    .all()
+    .map(j => ({ ...j })) as {
+    agent: string;
+    status: string;
+    thread: string;
+    branch: string;
+    round: number;
+    title: string;
+  }[];
 
 test('a thread stays open while any finished task still has a pull request in review', async () => {
   const closure = await import('./reviewclosure.ts');
@@ -107,6 +132,19 @@ test('one review inbox item reaches the project owner with domains and files, an
   assert.equal(read.code, 0, read.out);
   assert.match(read.out, /#12 \[engine\] game.ts/);
   assert.match(read.out, /#13 \[art\] world.svg, ship.svg/);
+  assert.match(read.out, /Task: Let the level finish[\s\S]*Task: Show the ship/);
+  // two unrelated findings are two tasks: drawn together, they need the owner's own title
+  const together = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13');
+  assert.equal(together.code, 1, together.out);
+  assert.match(together.out, /--title/);
+  // a --title that isn't a task's title is refused for that, not replaced
+  const overlong = await h.agent('proposals/accept', owner.token, {
+    id: 'findings:71',
+    for: 'kit',
+    findings: '12',
+    title: 'x'.repeat(141),
+  });
+  assert.deepEqual([overlong.status, overlong.body.error], [400, inbox.BAD_TITLE]);
   assert.equal((await h.hq(author, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12')).code, 1);
   assert.deepEqual(inbox.unassigned(71, 1), [12, 13]);
   const first = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12');
@@ -119,6 +157,11 @@ test('one review inbox item reaches the project owner with domains and files, an
   assert.deepEqual(
     tasks.map(t => t.findings),
     [[12], [13]],
+  );
+  // each named by the reviewer for what it fixes, no template left
+  assert.deepEqual(
+    tasks.map(t => h.job(t.id).title),
+    ['Let the level finish', 'Show the ship'],
   );
   assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'accepted');
 });
@@ -174,6 +217,7 @@ test('touch-ups without blockers reach the assigned worker with their full instr
     decision: 'changes',
     summary: 'Check the safe touch-ups',
     findings: [],
+    touchups: 'Keep the renamed level helpers',
     brief: 'Read the touched commit before accepting it.',
   });
   await h.finish(author);
@@ -185,6 +229,7 @@ test('touch-ups without blockers reach the assigned worker with their full instr
   const check = await h.claim('claude');
   assert.ok(check);
   assert.equal(check.agent, 'kit');
+  assert.equal(check.title, 'Keep the renamed level helpers', "the reviewer's title for its touch-ups");
   assert.match(check.prompt, /Read the touched commit before accepting it/);
 });
 
@@ -194,7 +239,7 @@ for (const [windowed, stops] of [
   [true, 'yields'],
   [true, 'parks'],
 ] as const)
-  test(`findings on a thread ${windowed ? `with a window wait in no queued planning job (the session ${stops})` : 'without a window go as before'}`, async () => {
+  test(`findings on a thread ${windowed ? `with a window wait in no queued planning job (the session ${stops})` : 'without a window go as before'}, without review.drawWindowedChanges`, async () => {
     const { orderingSnapshot } = await import('./backlog.ts');
     const windows = await import('./windows.ts');
     const deadline = Date.now() + 3_600_000;
@@ -204,12 +249,6 @@ for (const [windowed, stops] of [
     const session = await h.start({ agent: 'wren', title: 'Plan the shop', engine: 'claude' });
     const unhurried = h.queue({ agent: 'kit', title: 'Tidy the docs', engine: 'claude' });
     const { author, branch } = await deliver();
-    const heardBy = () =>
-      (
-        db.prepare("select heard_by from proposals where title = 'Review changes on PR #71'").get() as {
-          heard_by: number;
-        }
-      ).heard_by;
     const planning = heardBy();
     assert.equal(orderingSnapshot(Date.now()).jobs.find(job => job.id === planning)!.due, windowed ? deadline : null);
     // the next round's touch-ups: with a window, the owner's session hears them at once and holds them
@@ -245,8 +284,168 @@ for (const [windowed, stops] of [
           .map(m => ({ ...m })),
         [{ became: null, lapsed: 1 }],
       );
+    assert.equal(fixTasks().length, 0);
     assert.equal((await h.claim('claude'))?.id, windowed ? planning : unhurried);
   });
+
+test('an automatically drawn fix rejects missing task titles before accepting its ruling', async t => {
+  const org = `${h.repo}/company/org.yaml`,
+    before = readFileSync(org, 'utf8');
+  writeFileSync(org, before + '\nreview:\n  drawWindowedChanges: true\n');
+  t.after(() => writeFileSync(org, before));
+  const windows = await import('./windows.ts');
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
+  const author = await h.start({ agent: 'bolt', title: 'Build the world', thread: 'game/world' });
+  h.storedPr(71, author.id, 'open', ['game.ts'], { round: 1 });
+  const ruler = await h.start({ agent: 'quill', kind: 'consolidate', stage: 'ruling', pr: 71, round: 1 });
+  const check = (task?: string) =>
+    h.agent('review-output', ruler.token, {
+      output: JSON.stringify({
+        decision: 'changes',
+        blocking: [{ file: 'game.ts', line: 1, issue: 'The level cannot finish', task }],
+      }),
+    });
+  assert.match((await check()).body.error, /blocking finding 1's "task"/);
+  assert.match((await check('x'.repeat(141))).body.error, /blocking finding 1's "task"/);
+  assert.equal((await check('Let the level finish')).body.error, null);
+  assert.equal(inbox.get(71), undefined, 'no ruling or fix task was accepted');
+  assert.deepEqual(fixTasks(), []);
+});
+
+test('a transferred project sends the open findings to its new owner through the same inbox', async () => {
+  await deliver();
+  const ceo = await h.start({ agent: 'juno', title: 'Hand the project on' });
+  const changed = await h.agent('projects/owner', ceo.token, { id: 'game', owner: 'moss' });
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.equal(proposals.list('moss').find(p => p.id === 'findings:71')!.owner, 'moss');
+  assert.equal(
+    proposals.list('wren').find(p => p.id === 'findings:71'),
+    undefined,
+  );
+});
+
+// Lyra's findings:2064 on 23 Oct: a windowed thread's ruling sat 27 minutes in the inbox while her running sessions
+// worked on other things
+test('with review.drawWindowedChanges, a windowed thread\'s "changes" ruling gives its author a fix task at once, whatever the owner\'s session does', async t => {
+  const org = `${h.repo}/company/org.yaml`,
+    before = readFileSync(org, 'utf8');
+  writeFileSync(org, before + '\nreview:\n  drawWindowedChanges: true\n');
+  t.after(() => writeFileSync(org, before));
+  const windows = await import('./windows.ts');
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
+  const session = await h.start({ agent: 'wren', title: 'Plan the shop', engine: 'claude' });
+  const { author, branch } = await deliver();
+  const world = projects.findThread('game/world')!.id;
+  assert.deepEqual(fixTasks(), [
+    { agent: 'bolt', status: 'queued', thread: world, branch, round: 1, title: 'Let the level finish' },
+    { agent: 'bolt', status: 'queued', thread: world, branch, round: 1, title: 'Show the ship' },
+  ]);
+  assert.deepEqual(
+    inbox.tasks(71, 1).map(t => t.findings),
+    [[12], [13]],
+  );
+  assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'accepted');
+  // no planning job, and the busy session holds nothing
+  assert.deepEqual(
+    (h.jobs.listJobs() as { id: number; agent: string; status: string }[]).filter(
+      job => job.agent === 'wren' && job.status === 'queued',
+    ),
+    [],
+  );
+  // the next round's touch-ups: the author checks them, and the owner's session hears of the task
+  h.storedPr(71, author.id, 'open', ['game.ts'], { round: 2 });
+  proposals.deliverFindings(
+    {
+      pr: 71,
+      round: 2,
+      branch,
+      agent: 'bolt',
+      decision: 'changes',
+      summary: 'Check the touch-ups',
+      findings: [],
+      touchups: 'Check the review touch-ups',
+    },
+    { agent: 'bolt', job: author.id },
+  );
+  const check = fixTasks().find(t => t.round === 2);
+  assert.deepEqual(check && { agent: check.agent, thread: check.thread, title: check.title }, {
+    agent: 'bolt',
+    thread: world,
+    title: 'Check the review touch-ups',
+  });
+  const told = db.prepare("select job, held, text from messages where recipient = 'wren'").all() as {
+    job: number;
+    held: number | null;
+    text: string;
+  }[];
+  assert.deepEqual(
+    told.map(m => ({ job: m.job, held: m.held })),
+    [{ job: session.id, held: proposalOf71() }],
+  );
+  assert.match(told[0].text, /findings:71/);
+  // the session ends without reading it: the notice lapses, and no planning or message job follows
+  await h.finish(session, { status: 'done' });
+  proposals.sweep();
+  assert.deepEqual(
+    (h.jobs.listJobs() as { agent: string; status: string }[]).filter(j => j.agent === 'wren' && j.status === 'queued'),
+    [],
+  );
+  assert.deepEqual(
+    {
+      ...(db
+        .prepare("select became, lapsed is not null lapsed from messages where recipient = 'wren'")
+        .get() as object),
+    },
+    { became: null, lapsed: 1 },
+  );
+});
+
+// findings:2004 on 23 Oct: round 1's touch-ups still open after round 2 had started
+test('a "changes" item a later round has left closes by itself', async () => {
+  const { author } = await deliver();
+  proposals.sweep();
+  assert.equal(proposals.list('wren').find(p => p.id === 'findings:71')!.status, 'open');
+  h.storedPr(71, author.id, 'open', ['game.ts'], { round: 2 });
+  proposals.sweep();
+  const closed = proposals.list('bolt').find(p => p.id === 'findings:71')!;
+  assert.equal(closed.status, 'dropped');
+  assert.equal(closed.why, "Round 1's findings closed by themselves: round 2 has started");
+  assert.equal(
+    proposals.list('wren').find(p => p.id === 'findings:71' && p.status === 'open'),
+    undefined,
+  );
+});
+
+test('a round ruled "changes" with no fix task drawn has no merge in sight', async () => {
+  const { author } = await deliver();
+  await h.finish(author);
+  const owner = await h.start({ agent: 'wren', title: 'Read the plan' });
+  const read = await h.hq(owner, 'thread', 'game/world');
+  assert.equal(read.code, 0, read.out);
+  assert.match(read.out, /no fix task is drawn \(findings:71, wren's to decide\)/);
+  assert.doesNotMatch(read.out, /merged about/);
+  assert.equal(
+    (
+      await h.hq(
+        owner,
+        'inbox',
+        'accept',
+        'findings:71',
+        '--for',
+        'bolt',
+        '--findings',
+        '12,13',
+        '--title',
+        'Finish the level, show the ship',
+      )
+    ).code,
+    0,
+  );
+  const drawn = await h.hq(owner, 'thread', 'game/world');
+  assert.doesNotMatch(drawn.out, /no fix task is drawn/);
+});
 
 test('a transferred project sends the open findings to its new owner through the same inbox', async () => {
   await deliver();
@@ -263,7 +462,23 @@ test('a transferred project sends the open findings to its new owner through the
 test('ordinary tasks stay ordinary after all findings are assigned and during a touch-up-only review', async () => {
   const { author, branch } = await deliver();
   const owner = await h.start({ agent: 'wren', title: 'Draw tasks' });
-  assert.equal((await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13')).code, 0);
+  assert.equal(
+    (
+      await h.hq(
+        owner,
+        'inbox',
+        'accept',
+        'findings:71',
+        '--for',
+        'kit',
+        '--findings',
+        '12,13',
+        '--title',
+        'Finish the level and show the ship',
+      )
+    ).code,
+    0,
+  );
   const made = await h.agent('job', owner.token, {
     agent: 'moss',
     title: 'Improve the next move',
@@ -281,6 +496,7 @@ test('ordinary tasks stay ordinary after all findings are assigned and during a 
     decision: 'changes',
     summary: 'Check touch-ups',
     findings: [],
+    touchups: 'Keep the renamed level helpers',
   });
   const next = await h.agent('job', owner.token, {
     agent: 'moss',
@@ -342,6 +558,7 @@ test('threadless findings bind the reviewed work to a permitted canonical thread
     id: 'findings:72',
     for: 'kit',
     findings: '12,13',
+    title: 'Finish the level and show the ship',
     thread: 'game/world',
   });
   assert.equal(reply.status, 200, JSON.stringify(reply.body));
@@ -404,7 +621,12 @@ for (const entry of ['inbox', 'job'])
     await h.finish(author);
     const replacement =
       entry === 'inbox'
-        ? await h.agent('proposals/accept', owner.token, { id: 'findings:71', for: 'kit', findings: '12,13' })
+        ? await h.agent('proposals/accept', owner.token, {
+            id: 'findings:71',
+            for: 'kit',
+            findings: '12,13',
+            title: 'Finish the level and show the ship',
+          })
         : await h.agent('job', owner.token, {
             agent: 'kit',
             title: 'Repair both failed fixes',
@@ -731,7 +953,12 @@ for (const state of ['reviewing', 'unassigned', 'assigned', 'touchups']) {
     if (state !== 'reviewing') deliverReview();
     const fixed =
       state === 'assigned'
-        ? await h.agent('proposals/accept', owner.token, { id: 'findings:72', for: 'kit', findings: '12,13' })
+        ? await h.agent('proposals/accept', owner.token, {
+            id: 'findings:72',
+            for: 'kit',
+            findings: '12,13',
+            title: 'Finish the level and show the ship',
+          })
         : undefined;
     if (fixed) assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
     else if (state === 'unassigned') assert.deepEqual(inbox.unassigned(72, 1), [12, 13]);
@@ -758,6 +985,7 @@ for (const state of ['reviewing', 'unassigned', 'assigned', 'touchups']) {
         id: 'findings:72',
         for: 'kit',
         ...(state === 'touchups' ? {} : { findings: '12,13' }),
+        title: 'Finish the level and show the ship',
       }));
     assert.equal(fix.status, 200, JSON.stringify(fix.body));
     assert.equal(h.job(fix.body.job).thread, 'shop/safe');

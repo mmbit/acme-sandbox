@@ -25,6 +25,22 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
   # (imports: the board's unpacked zips)
   for v in hqdata imports voice seats; do d=$(docker volume inspect -f '{{.Mountpoint}}' "infra_$v" 2>/dev/null) && timeout 60 du -xsh "$d"; done
   timeout 60 du -xsh /var/lib/$SERVER_NAME /var/log 2>/dev/null
+  # what runs, for the CVE check (shared/routines/cve-watch.md).
+  echo; echo "== versions (the host, Docker, each running container's image, when it was built, its system and Node; security updates waiting, a reboot pending)"
+  (. /etc/os-release; echo "$PRETTY_NAME, kernel $(uname -r)")
+  echo "docker $(docker version -f '{{.Server.Version}}' 2>&1), compose $(docker compose version --short 2>&1)"
+  for c in $($compose ps -q); do
+    inside=$(timeout 10 docker exec "$c" sh -c '. /etc/os-release && echo "$PRETTY_NAME, $(if command -v node >/dev/null; then node --version; else echo "no node"; fi)"' 2>&1) ||
+      inside="system and node unread: ${inside:-timed out}"
+    built=$(docker image inspect -f '{{.Created}}' "$(docker inspect -f '{{.Image}}' "$c")" 2>&1) || built="unread: $built"
+    echo "$(docker inspect -f '{{.Name}} {{.Config.Image}}' "$c" | sed 's|^/||') (built $built): $inside"
+  done
+  $compose exec -T caddy caddy version 2>&1 | sed 's/^/caddy /'
+  # dist-upgrade: on Ubuntu a kernel update comes as a new package, which a plain upgrade holds back
+  updates=$(apt-get -s dist-upgrade 2>&1) \
+    && echo "security updates waiting: $(awk '/^Inst.*security/ { n++; s = s " " $2 } END { print n ? n ":" s : "none" }' <<< "$updates")" \
+    || echo "security updates: apt-get failed: $updates"
+  [ -f /var/run/reboot-required ] && echo "reboot pending for: $(tr '\n' ' ' < /var/run/reboot-required.pkgs 2>/dev/null)"
   # renders (infra/renders.py): how many are in the checkout, and the ones it couldn't find
   python3 -c "import json, sys; s = json.load(open(sys.argv[1])); print(f\"renders: {len(s['put'])} in place, {len(s['missing'])} missing\", *s['missing'][:10])" \
     "/var/lib/$SERVER_NAME/renders.json" 2>/dev/null
@@ -67,6 +83,8 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     } catch (err) { console.log('seats in HQ:', err.message); }
     console.table(db.prepare('select id, agent, kind, pr, round, after, status, attempts, substr(title,1,50) title, ' + said('result', 80) + ' result from jobs order by id desc limit 40').all());
     console.table(db.prepare('select number, author, round, status, substr(verdict,1,120) verdict from prs').all());
+    const reviewRefusals = await import('./src/reviewrefusals.ts');
+    console.log(reviewRefusals.report(db));
     // A pull request nobody is on: open or stuck, no job queued, running or waiting on it (a review, the consolidator's check, its
     // author's job on its branch), and the last one ended over an hour ago. HQ brings back a lost hand-off by itself
     // (review.ts reviveRounds); what's left here waits for a person: \`hq review <n>\` for a stuck one.
@@ -78,6 +96,14 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
       + \"then 'round ' || p.round || ' never reached the panel' else 'round ' || p.round || ': its runs ended with nothing acting on them' end), 1, 200) why from prs p \"
       + \"left join jobs j on j.pr = p.number or j.kind = 'work' and j.branch = p.branch where p.status in ('open', 'stuck') group by p.number \"
       + \"having coalesce(sum(j.status in ('queued', 'running', 'blocked')), 0) = 0 and coalesce(last_job, '') < strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 hour') order by p.number\").all());
+    // The blocking findings of each open or stuck pull request's last ruling for changes, whole: the tables cut a ruling
+    // short, and its fix task names them
+    console.log('== blocking findings of the last ruling for changes on each open or stuck pull request, whole');
+    for (const r of db.prepare(\"select p.number, j.id job, j.round, j.customers, json_extract(j.output, '\$.blocking') blocking from prs p \"
+      + \"join jobs j on j.id = (select max(c.id) from jobs c where c.pr = p.number and c.kind = 'consolidate' and c.status = 'done' \"
+      + \"and json_valid(c.output) and json_extract(c.output, '\$.decision') = 'changes' and json_array_length(c.output, '\$.blocking') > 0) \"
+      + \"where p.status in ('open', 'stuck') order by p.number\").all())
+      console.log(\`PR #\${r.number}, round \${r.round}, ruling #\${r.job}: \${r.customers ? \"(holds a customer's details)\" : r.blocking}\`);
     // What products owe the board after its feedback (owed.ts), for whoever reads the status.
     try {
       console.log('== owed to the board (products whose feedback the board waits to see back: open, and closed in the last day)');
@@ -343,11 +369,14 @@ PY
   # Every load of those pages by where it came from, a column per source seen: a person's by the kind of page that sent
   # them, or the crawler, fetcher or prefetch that made it, which the page loads above leave out (shared/metrics
   # loadSource and fetchedBy). Only HQ's counts, in its own checked words.
+  # (the company's clock, like the table above)
   echo; echo "== live products: every page load by where it came from, last 7 days (HQ's counts; prefetch and agent-<name> aren't in the page loads above)"
   timeout 40 $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
     import { DatabaseSync } from 'node:sqlite';
+    import { readFileSync } from 'node:fs';
     const db = new DatabaseSync('/data/hq.db', { timeout: 5000, readOnly: true });
-    const from = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Amsterdam' }).format(Date.now() - 6 * 864e5);
+    const timeZone = readFileSync('/data/time-zone', 'utf8');
+    const from = new Intl.DateTimeFormat('sv-SE', { timeZone }).format(Date.now() - 6 * 864e5);
     const rows = db.prepare(\`select product, day, campaign source, sum(n) n from metric_counts where mode = 'live' and step = 'load'
       and day >= ? group by product, day, campaign\`).all(from);
     // a person's sources first, then the prefetches, then the crawlers and fetchers; (not kept): a source HQ no longer keeps

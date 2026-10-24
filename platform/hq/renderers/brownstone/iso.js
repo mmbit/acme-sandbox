@@ -101,6 +101,11 @@ export function wallXCol(y1, X, zb, H, u) { const c = Math.round(16 * (X - y1)) 
 export const F = (g, x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
 // A sprite's shape in one flat colour
 export function silhouette(src, color) { const c = canvas(src.width, src.height), g = c.getContext('2d'); g.drawImage(src, 0, 0); g.globalCompositeOperation = 'source-in'; F(g, 0, 0, c.width, c.height, color); return c; }
+// a 1 px line from point a to point b ([x, y])
+export function line(g, [x1, y1], [x2, y2], c) {
+  const n = Math.max(1, Math.round(Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1))));
+  for (let k = 0; k <= n; k++) F(g, Math.round(x1 + (x2 - x1) * k / n), Math.round(y1 + (y2 - y1) * k / n), 1, 1, c);
+}
 export const disc = (g, cx, cy, rad, c) => { g.fillStyle = c; for (let y = -rad; y <= rad; y++) { const w = Math.round(Math.sqrt(rad * rad - y * y)); g.fillRect(cx - w, cy + y, w * 2, 1); } };
 // a small canvas holding one iso object, drawn in world coordinates: { img, x, y } (its world position)
 export function sprite(x0, y0, x1, y1, z0, z1, draw, pad = 3) {
@@ -152,4 +157,16 @@ export function text(g, s, x, y, c, k = 1) {
     for (let row = 0; row < 5; row++) for (let col = 0; col < 3; col++)
       if (+gl[row] & (4 >> col)) g.fillRect(x + (i * 4 + col) * k, y + row * k, k, k);
   });
+}
+// s in the pixel font at (x, y) of a drawing for a wall, each letter shifted against the wall's slant so it stands
+// upright once drawn onto it (rows: the screen row each column of the drawing lands on, from a frame's cols or from
+// wallYCol/wallXCol). The slant steps a pixel every second column, inside a letter as often as not: drawn flat, its
+// bars break, and P reads F and M reads H. A letter takes the rows y to y + 5.
+export function upright(g, s, x, y, c, rows) {
+  const flat = canvas(textW(s), 5);
+  text(flat.getContext('2d'), s, 0, 0, c);
+  for (let u = 0; u < flat.width; u++) {
+    const x0 = x + u - (u % 4), low = Math.max(rows[x0], rows[x0 + 1], rows[x0 + 2]);
+    g.drawImage(flat, u, 0, 1, 5, x + u, y + low - rows[x + u], 1, 5);
+  }
 }

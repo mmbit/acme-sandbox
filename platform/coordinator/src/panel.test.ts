@@ -14,6 +14,7 @@ const panel = await import('./panel.ts');
 const { org } = await import('./company.ts');
 const review = await import('./review.ts');
 const team = await import('./team.ts');
+const { db } = await import('./db.ts');
 const files = ['products/x/index.html'];
 const sha = 'a'.repeat(40);
 afterEach(() => h.cancelQueued());
@@ -53,6 +54,21 @@ test('pushed consolidator edits and their registered members are authors through
   assert.deepEqual(panel.authors(branch), new Set(['bolt', 'quill', 'rook']));
   const touched = (await h.feed()).find(event => event.text?.includes('PR #71: Quill touched up'));
   assert.equal(touched?.agent, 'quill', 'the recorded editor gets credit after panel eligibility changes');
+});
+
+test("a branch's authors: its own jobs, its thread's tasks and the job it's named after, no one else's", () => {
+  const thread = h.dueThread();
+  db.prepare('update threads set branch = ? where id = ?').run('thread/authors', thread);
+  const tasks = [h.ended({ agent: 'tally', thread }), h.ended({ agent: 'nib', thread })];
+  db.prepare(`update jobs set branch = null where id = ?`).run(tasks[1]);
+  h.ended({ agent: 'flint', branch: 'thread/authors' });
+  h.ended({ agent: 'rook', kind: 'review', branch: 'thread/authors' });
+  h.ended({ agent: 'plane', branch: 'job/elsewhere' });
+  assert.deepEqual(panel.authors('thread/authors', 'bolt'), new Set(['tally', 'nib', 'flint', 'bolt']));
+  const named = h.ended({ agent: 'gesso' });
+  db.prepare('update jobs set branch = null where id = ?').run(named);
+  assert.deepEqual(panel.authors(`job/${named}`), new Set(['gesso']));
+  assert.deepEqual(panel.authors(`job/0${named}`), new Set(), 'only the name the job goes by');
 });
 
 test('read-only and unpushed consolidations remain independent reviewers', async () => {

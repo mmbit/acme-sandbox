@@ -1,5 +1,4 @@
 /* The holo deck's UI: a dark, translucent cyan HUD of thin glowing lines, lettered in Rajdhani like the deck's labels. */
-@import url('https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap');
 @import url('../icons.css');
 @import url('../controls.css');
 #panel-close { top: 10px; right: 10px; width: 38px; height: 38px; font-size: 24px; border-radius: var(--r); }
@@ -22,9 +21,10 @@ body {
   --scr-bg: rgba(2, 12, 18, .7) repeating-linear-gradient(0deg, rgba(110, 225, 255, .05) 0 1px, transparent 1px 3px); --scr-glow: 0 0 6px rgba(128, 234, 255, .45);
   font-weight: 500;
 }
-.brand, .tools button, .tools a.desk, #zoom button, #status span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
+/* (#status > span: the throughput's chips, not the words in them) */
+.brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
-.brand, .tools button, .tools a.desk, #zoom button, #status span, .toast { background: rgba(6, 26, 36, .62); }
+.brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast { background: rgba(6, 26, 36, .62); }
 #tool { background: rgba(0, 8, 12, .6); }
 #panel h2, .device header b, #card b, .brand b, .masthead h2, #panel h3, .gz-tabs button { text-transform: uppercase; letter-spacing: .08em; }
 #panel h2, .device header b, #card b, .brand b, .masthead h2 { text-shadow: 0 0 10px rgba(110, 225, 255, .55); font-weight: 700; }

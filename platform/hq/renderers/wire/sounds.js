@@ -1,7 +1,7 @@
 // Wire's sounds: a crisp dry switch, like a key pressed (the platform's sound kit, /foley.js: the same click, a
 // bigger key the deeper), never a ding; the creatures' own calls; and its own music: a slow, warm loop under the sound of
 // work being done (see score).
-import { tone, noise, note, strike, sample } from '../../shell/audio.js';
+import { tone, noise, note, strike, foley } from '../../shell/audio.js';
 
 const WOOD = [
   [1, 1],
@@ -10,18 +10,6 @@ const WOOD = [
 ]; // a soft wooden key's
 const key = (n, dur, o) => strike(note(n), dur, WOOD, { vol: 0.08, cut: 2600, ...o });
 
-// A sound of the kit, rendered once per take (four takes each, picked at random, so repeats don't grate). Silent until
-// the kit has loaded, and without it.
-const kit = import('../../foley.js').catch(() => null),
-  takes = new Map();
-function foley(name, params = {}, { vol = 1, at = 0 } = {}) {
-  kit.then(k => {
-    if (!k) return;
-    const look = `${name}${JSON.stringify(params)}#${1 + Math.floor(Math.random() * 4)}`;
-    if (!takes.has(look)) takes.set(look, k.render(name, { ...params, seed: Number(look.at(-1)) }));
-    sample(takes.get(look), { vol: vol * 0.5, at });
-  });
-}
 const click = (size, pitch = 0, vol = 1) => foley('switch', { size, pitch }, { vol });
 
 export const sfx = {
@@ -44,8 +32,10 @@ export const sfx = {
     ),
   twinkle: () => foley('mallet', { body: 'chime', notes: ['E6', 'G6', 'B6'] }, { vol: 0.4 }),
   // Wire's own, played by its scene: a key dropping onto the board (v: how hard; p: semitones, so a row of them isn't
-  // one note), a key pressed, the big key turned over, a message landing on a key
+  // one note), the index-th key of the drop landing (a clack, softer at its bounce, the bounces after silent), a key
+  // pressed, the big key turned over, a message landing on a key
   clack: (v = 1, p = 0) => foley('clack', { hold: 0, size: 1.2, pitch: p - 4 }, { vol: v }),
+  landing: (index, bounce) => bounce < 2 && sfx.clack(bounce ? 0.35 : 1, (index * 5) % 12),
   press: () => click(1.1),
   flip: () => {
     click(1, 2, 0.8);

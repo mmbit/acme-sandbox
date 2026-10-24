@@ -17,14 +17,16 @@
 // no email key, and no remedies slot.
 import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { serve } from './serve.mjs';
+import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 
 const XSS = '<img src=x onerror=alert(1)>';
 const shots = mkdtempSync(join(process.env.TMPDIR || tmpdir(), 'care-check-'));
-const server = await serve(), base = `http://localhost:${server.address().port}`;
+// (on the foundation's mock data, whose brand runs care, never a company's own in theme/hq/mock/.)
+const server = await serve(p => p.startsWith('theme/hq/mock/') ? Promise.reject(new Error('the foundation’s mock')) : readFile(join(ROOT, p))), base = `http://localhost:${server.address().port}`;
 const browser = await playwright().chromium.launch();
 
 async function open(viewport, api) {
@@ -110,6 +112,10 @@ async function emailShown(page, sel, where) {
     await care(page); await page.waitForSelector('.cr-list');
   }
   assert.deepEqual(await page.$$eval(`${row(14)} a.job-link`, a => a.map(e => e.textContent)), ['PW-REPLY']);
+  // a row's button reads the row's whole text: its case, words, app, when, state and job
+  const named = id => page.getAttribute(`${row(id)} > .cover`, 'aria-label');
+  assert.match(await named(11), /^Asked for a person, H-1001, “The kite came this morning.*”, Pinwheel · .* · EN, Late, reply by .+, checked, New reply$/);
+  assert.match(await named(14), /, With the team \(job PW-REPLY\)$/);
   const onTop = sel => page.$eval(sel, e => { e.scrollIntoView({ block: 'center' }); const b = e.getBoundingClientRect(); return e.contains(document.elementFromPoint(b.x + b.width / 2, b.y + b.height / 2)); });
   for (const sel of [`${row(14)} a.job-link`, '[data-busy=on]', '.cr-find input', '.cr-sec h3']) assert.ok(await onTop(sel), `${sel} is under no row's button`);
   assert.equal(await page.getAttribute(`${row(14)} a.job-link`, 'href'), '/?open=jobs&job=4321');
@@ -237,12 +243,12 @@ async function emailShown(page, sel, where) {
   assert.equal(await page.locator('[data-send], [data-ask], #cr-draft').count(), 0, 'no reply on a bug card');
   assert.ok(!(await page.textContent('.cr-card')).includes('pat@example.com'));
   await page.click('[data-handoff]');
-  await until(page, '.toast:last-child', /job DUREK/);
+  await until(page, '.toast:last-child', /job #4015/);
   await page.waitForSelector('.cr-banner, .cr-acts.bug');
   await page.click('[data-open-card="13"]');
   await page.waitForFunction(() => / › H-1003$/.test(document.querySelector('.device header b span')?.textContent ?? ''));
   await page.click('[data-home]'); await page.waitForSelector('.cr .cr-sec');
-  assert.match(await page.textContent(row(15)), /Handed on \(job DUREK\)/);
+  assert.match(await page.textContent(row(15)), /Handed on \(job #4015\)/);
 
   // feedback the helper passed on: its own section, a note in the helper's words, nobody to reply to, Close where a reply would be
   assert.match(await page.textContent('.cr-sec.feedback'), /Feedback passed on · 1/);
@@ -372,7 +378,7 @@ async function emailShown(page, sel, where) {
   assert.match(await page.textContent('.cn-pair'), /Resolved without a person\s*126.*35\.1 per 100.*Emails to a person\s*31.*8\.6 per 100.*if resolved rises while emails fall/s);
   assert.match(await page.textContent('.cn-today'), /Today so far.*not in the numbers above/s);
   assert.match(await page.textContent('.cn-reply'), /aim to reply within 3 working days.*86\.7%.*Busy notice: on now: one has waited/s);
-  assert.match(await page.textContent('.cn-questions'), /job TAPIR \(running\), job SUDEK \(queued\), 1 waiting for you here in Care/);
+  assert.match(await page.textContent('.cn-questions'), /job CR-ANSWER \(running\), job CR-REFUND \(queued\), 1 waiting for you here in Care/);
   assert.match(await page.textContent('.cn-words'), /p50 ≤ 2\.5 s\s*the bands can’t tell/);
   assert.equal(await page.locator('.cn-words .cn-bar').count(), 2);
   // the day by day fold: a row a day, a day with nothing as a dash, still open after a redraw

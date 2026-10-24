@@ -157,6 +157,17 @@ export const callAgent = (token: string) => token ? db.prepare('select agent, ca
 // A job the call queued (hq job from its token): its agent may add to it until the call ends (addToJob).
 export const queuedOn = (call: number, job: number) =>
   db.prepare("update call_tokens set queued = json_insert(queued, '$[#]', ?) where call = ?").run(job, call);
+// Whether the call queued that job (queuedOn), and why a work job the call names for `to` isn't theirs: a misheard
+// number names someone else's (a promise's job: server.ts promisedWork; reach checks it too).
+export function queuedHere(call: number | undefined, job: number) {
+  const queued = call ? (db.prepare('select queued from call_tokens where call = ?').get(call) as { queued: string } | undefined)?.queued : undefined;
+  return (JSON.parse(queued ?? '[]') as number[]).includes(job);
+}
+export function notTheirs(to: string, id: number): [number, string] | undefined {
+  const job = db.prepare("select agent, title, step, round from jobs where id = ? and kind = 'work'").get(id) as { agent: string; title: string; step: string | null; round: number | null } | undefined;
+  if (!job) return [404, `there's no job #${id}: check the number`];
+  if (job.agent !== to) return [409, `job #${id} is ${job.agent}'s (${nameOf(job)}), not ${to}'s: check the number`];
+}
 // What the board adds or corrects on a call about a job the call queued (the add tool, hq extend on a call), so it never
 // waits for the follow-up or goes as a second job beside it. One that hasn't started takes it into its brief
 // (jobs.extendJob), signed as added on the call. One that has (running, or paused to resume in its session) gets it as a
@@ -169,8 +180,8 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
   text = text.trim();
   if (!text) return [400, 'say what the board added or changed'];
   if (text.length > messages.MAX) return [413, `too long (${text.length.toLocaleString('en')} > ${messages.MAX.toLocaleString('en')}): keep the addition short; the follow-up has the whole call`];
-  const call = me.callId, queued = call ? (db.prepare('select queued from call_tokens where call = ?').get(call) as { queued: string } | undefined)?.queued : undefined;
-  if (!call || !(JSON.parse(queued ?? '[]') as number[]).includes(id))
+  const call = me.callId;
+  if (!call || !queuedHere(call, id))
     return [409, `job #${id} wasn't queued on this call: only a job you queued on it takes an addition now. The call's follow-up adds to any other from the transcript`];
   const job = db.prepare('select agent, title, status from jobs where id = ?').get(id) as { agent: string; title: string; status: string };
   const customers = customerCall(call);
@@ -205,8 +216,7 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
   if (!text) return [400, 'say what the job needs to know'];
   if (!ledger.oneLine(what, ledger.WHAT)) return [400, `what needs one plain line of at most ${ledger.WHAT} characters: the board reads it`];
   if (customerCall(call)) return [409, "a call about a customer's details passes nothing on mid-call: the follow-up does, from the call"];
-  const queued = (db.prepare('select queued from call_tokens where call = ?').get(call) as { queued: string } | undefined)?.queued;
-  if ((JSON.parse(queued ?? '[]') as number[]).includes(id)) return [409, `job #${id} was queued on this call: put the board's word into it with add`];
+  if (queuedHere(call, id)) return [409, `job #${id} was queued on this call: put the board's word into it with add`];
   const job = db.prepare('select id, agent, title, step, status, kind, engine, session, pr, round, branch from jobs where id = ?').get(id) as
     ReachedJob | undefined;
   if (!job || job.kind === 'chat') return [404, `there's no job #${id} to reach`];
@@ -302,8 +312,10 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // thinking off; effort is low) and the board waits through it; Anthropic's advice for a fast first token is this line
   // (and the pictures sentence: the voice line shows the agent what the board shares on HQ's call screen. A phone call
   // has no screen.)
-  // a time told on the call goes on the promise, which its job carries (windows.ts); a time only when the board asks
-  // for one or a real date depends on the work, since every deadline jumps the queue.
+  // a time told on the call goes on the promise, which its job carries, or the work under way it names (askwindow.ts).
+  // The board's ask gets a time as it's queued, else it waits behind every window: the board's own, or the window of
+  // the deliverable it serves (its thread's, or one that needs it); with neither, the agent asks the board once and notes
+  // it with promise. Only an ask the board gives no time that serves nothing timed stays without one.
   // A time from the when tool: the work played into the plan (when.ts).
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
@@ -311,15 +323,17 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // add: what the board adds to a job the call queued goes into it (addToJob).
   // reach: the board's settled word to work under way, for real need only, as often as the board's word needs
   // No numbers aloud: the briefing and the tools number the work for the agent's tools, never for the board's ears.
-  // Every tool answer says it again (voice hq_tools.py ALOUD).
+  // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
   // WebSearch is enabled by guard.TOOLS.
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
   // only when an agreed deadline moves or it asks; whether one is safe or tight and where new work goes is the agent's
   // judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
 
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
-Your words are spoken aloud: reply in one to three short spoken sentences, in plain words. No lists, markdown,
-emoji or links. Be warm and direct, and ask one question when you need to. Speak ${LANGUAGES[lang].name}.
+Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
+lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. Speak ${LANGUAGES[lang].name}.
+When you give a time, say it plainly ("this evening", "in about an hour"). For example: "I've queued that for Ada; you'll see it this
+evening."
 Never say a number for work aloud (a job, card, pull request, call, item or pin), not even once: the board can't see
 them on a call, and hearing them makes the call run long. Say what the work is and whose it is. The numbers in this
 briefing and in your tools' answers are for your tools, and your written follow-up carries them.
@@ -334,20 +348,25 @@ outside the company (a fact, a price, the news).
 When these can answer the board's question, look it up now and answer on the call, never "I'll check after the call": only
 live state they can't see (logs, the servers, ad platforms) or work too long for a call waits for the follow-up.
 Hand work to a colleague with the job tool: a short
-title and the full brief, in their terms (it's all they get). When the board adds to or changes a job you queued on this
+title and the full brief, in their terms (it's all they get). Before queueing, use estimate to inspect past jobs' scopes
+and clean actual times. You know this task's context: judge its size between comparable jobs and give job your size,
+refs and why. With no comparable scope, give your reason and an empty refs list. That estimate is saved once at queue
+time. Only the CEO changes it when work slips. Use the same size with when. When the board adds to or changes a job you queued on this
 call, put it into that job with add and its number, then and there: never a second job beside it, nor a promise to add
 it after the call. When the board's settled word matters to work already under way before the call ends (a running job,
 or a pull request's review, by its number below), pass it on with reach, as often as the board's word needs; anything still
 being worked out goes to the follow-up. Anything you promise goes in with promise before you say
-it's done; the team follows it up after the call and the board sees whether it happened. Give the board a time only
-when it asks for one or a real date depends on the work (a launch, a partner's date); otherwise give none, and no
-deadline.
+it's done; the team follows it up after the call and the board sees whether it happened. Work the board asks for gets
+its time as it's queued, or it waits behind every window: the time the board names, or the window of the deliverable it
+serves (queue it on that deliverable's thread, or a thread it needs: the job tool's answer says what it serves). When it
+has neither, the job tool's answer says so: ask the board once by when, and note its answer with promise. Only work the
+board gives no time that serves nothing timed stays without one.
 Before you give a time, check it, never a feeling: for work already planned, eta; for new work, the when tool, which
 plays it into the plan, every seat and window counted (an AI hour is one agent working for an hour, waits for a seat left out). When the board names a time,
 give it by: only when the work doesn't make it, say what would. Give one plain time. When you tell the board a time,
-note it with promise, also for work already under way (a review, a running job), and give the job that does it its
-item: it becomes the window of the work's thread, so HQ orders its work by it and the CEO sees it if it slips. A job with
-a time names its thread. Never tell the board that HQ will tell it if a time slips: it knows that rule.
+note it with promise, and give the job that does it its item, or, for work already under way (a review, a running
+job), name that job in the promise: it becomes the window of the work's thread at once, while you're still on the line,
+so HQ orders its work by it and the CEO sees it if it slips. A job with a time names its thread. Never tell the board that HQ will tell it if a time slips: it knows that rule.
 New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
 board asks. The job and when tools give each agreed deadline (a thread's window, a time the board was given) its
 finish, its slack, and its slack some hours ago. When its finish lands past the deadline, the deadline moves: say so

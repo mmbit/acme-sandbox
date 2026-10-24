@@ -165,8 +165,9 @@ async function write(x: Item): Promise<Record<string, unknown> | null> {
     content: JSON.stringify({ subject: x.subject, email: x.words }),
   });
   if (!r) return null;
-  const lang = clip(r.lang, 8).toLowerCase();
-  if (!/^[a-z]{2}$/.test(lang)) return null;
+  // a language tag's first subtag is its language: 'pt-BR' is pt
+  const lang = /^([a-z]{2})(?:[-_][a-z\d]{1,8})*$/i.exec(String(r.lang ?? '').trim())?.[1].toLowerCase();
+  if (!lang) return null;
   // an email (and its reply) in the board's own language needs no translation, whatever the model wrote
   const summary = clip(r.summary, 600),
     own = lang === boardCode,

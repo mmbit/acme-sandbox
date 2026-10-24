@@ -41,12 +41,13 @@ await new Promise<void>(r => shop.listen(0, '127.0.0.1', r));
 // HQ's side of the line (hq.ts): the cards care posts (each try, the ones it answers 503 too), and a quiet state
 const cards: any[] = [];
 let hqStatus = (card: any) => 200;
+let hqHold = (_card: any): Promise<void> | void => undefined; // a card whose answer waits (a send still on its way)
 const hqServer = createServer((req, res) => {
   let body = '';
-  req.on('data', d => body += d).on('end', () => {
+  req.on('data', d => body += d).on('end', async () => {
     if (req.headers.authorization !== 'Bearer hq-test-token') return void res.writeHead(401).end();
     const card = req.url === '/api/care/cards' ? JSON.parse(body) : null;
-    if (card) cards.push(card);
+    if (card) { cards.push(card); await hqHold(card); }
     const status = card ? hqStatus(card) : 200;
     if (status !== 200) return void res.writeHead(status).end();
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(req.url === '/api/care/cards' ? { ok: true, id: String(cards.length) } : { busy: 'auto', queue: { waiting: 0, oldest: null } }));
@@ -119,7 +120,8 @@ async function customer(start = '', { renews = true, lang = 'en' } = {}) {
     }
   })();
   const replies = () => events.filter(e => e.t === 'reply');
-  const until = async (f: () => any, ms = 4000) => { const t0 = Date.now(); while (Date.now() - t0 < ms) { const x = f(); if (x) return x; await new Promise(r => setTimeout(r, 20)); } throw new Error('timed out waiting'); };
+  // waits as long as the state takes: the runner's test timeout (--test-timeout) ends a test whose state never comes
+  const until = async (f: () => any) => { for (;;) { const x = f(); if (x) return x; await new Promise(r => setTimeout(r, 20)); } };
   let n = 0;
   const say = (text: string, answer?: any) => post('say', { id: `c${++n}`, text, answer });
   return { hello, events, replies, until, say, post, close: () => ctl.abort(), cookie: () => cookie };
@@ -164,7 +166,7 @@ test('what the model writes is marked AI-generated in the stream and in hello’
   assert.equal(reply.aiGenerated, true);
   fake.script(() => [{ fail: 529 }]);
   await c.say('and my other one?');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.equal(card.aiGenerated, undefined);
   const { items } = await c.post('hello', { lang: 'en' });
   const marks = items.filter((it: any) => it.k === 'ai').map((it: any) => [it.text, !!it.aiGenerated]);
@@ -255,7 +257,7 @@ test('first words after 9 s: typing, then the answer, one call, no outage card a
   fake.script(() => { calls++; return [{ wait: 9000 }, { text: 'Here it is, just slower.' }]; });
   const c = await customer();
   await c.say('where is my order?');
-  await c.until(() => c.replies().find(r => r.text === 'Here it is, just slower.'), 15_000);
+  await c.until(() => c.replies().find(r => r.text === 'Here it is, just slower.'));
   assert.ok(c.events.some(e => e.t === 'typing' && e.on), 'typing shows while it waits');
   assert.ok(!c.replies().some(r => r.widget?.type === 'outage'), 'no outage card');
   assert.ok(!c.events.some(e => e.t === 'status' && e.online === false), 'never offline');
@@ -269,10 +271,10 @@ test('no first words at all (CARE_SILENT_MS): the outage card without a second w
   fake.script(() => ++calls === 1 ? [{ until: new Promise(() => {}) }] : [{ text: 'Back with your answer.' }]);
   const c = await customer();
   await c.say('where is my order?');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 15_000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.match(card.text, /isn’t responding/);
   assert.equal(calls, 1, 'no retry after a silent call');
-  await c.until(() => c.replies().find(r => r.text === 'Back with your answer.'), 5000);
+  await c.until(() => c.replies().find(r => r.text === 'Back with your answer.'));
   c.close();
 });
 
@@ -280,7 +282,7 @@ test('with the model down: one retry, then the outage card, and Email a person w
   fake.script(() => [{ fail: 529 }]);
   const c = await customer();
   await c.say('where is my order?');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.match(card.text, /can’t answer right now. The AI service it runs on isn’t responding/);
   assert.ok(c.events.some(e => e.t === 'status' && e.online === false));
   const person = card.widget.options.find((o: any) => o.label === 'Email a person');
@@ -301,7 +303,7 @@ test('with chatFirst and the model down: the outage card offers no person while 
   fake.script(() => [{ fail: 529 }]);
   const c = await customer();
   await c.say('where is my order?');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.match(card.text, /can’t answer right now. The AI service it runs on isn’t responding/);
   assert.deepEqual(card.widget.options, [], 'what they write waits for the helper: no person pushed');
   assert.ok(c.events.some(e => e.t === 'status' && e.online === false));
@@ -323,7 +325,7 @@ test('a stop never comes back: the header says so, not "paused", nothing is mark
   fake.script(() => [{ fail: 400 }]); // a request the provider refuses: no outage, this conversation stops
   const c = await customer();
   await c.say('where is my order?');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.equal(card.widget.cause, 'stop');
   assert.ok(c.events.some(e => e.t === 'status' && e.online === false && e.cause === 'stop'));
   await c.say('hello? is anyone there');
@@ -351,13 +353,13 @@ test('back after an outage: "I’m back" and one answer, kept in the chat for a 
   fake.script(() => [{ fail: 529 }]);
   const c = await customer();
   await c.say('is my parcel coming?');
-  await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   await c.say('also, do you ship to Belgium?');
   c.close(); // they leave
   await new Promise(r => setTimeout(r, 100));
   fake.script(() => [{ text: 'Yes, we ship to Belgium.' }]);
   ledger.breaker.ok();
-  await c.until(() => db.prepare("select 1 from messages where who = 'ai' and text = 'Yes, we ship to Belgium.'").get(), 4000);
+  await c.until(() => db.prepare("select 1 from messages where who = 'ai' and text = 'Yes, we ship to Belgium.'").get());
   const back = await c.post('hello', { lang: 'en' }); // they come back: the answer is there
   assert.deepEqual(back.items.filter((it: any) => it.k === 'ai').map((it: any) => it.text).slice(-2), [t('back', 'en'), 'Yes, we ship to Belgium.']);
   assert.ok(!back.items.some((it: any) => it.waiting), 'nothing is marked waiting any more');
@@ -371,10 +373,10 @@ test('a request always ends on the customer’s turn: after the outage card, and
   fake.script(() => [{ fail: 529 }]);
   const c = await customer();
   await c.say('is my blanket on its way?');
-  await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   fake.script(o => { asks.push(o); return [{ text: 'Let me look.' }]; });
   ledger.breaker.ok(); // the service is back: the retry answers what was waiting
-  await c.until(() => c.replies().find(r => r.text === 'Let me look.'), 4000);
+  await c.until(() => c.replies().find(r => r.text === 'Let me look.'));
   assert.equal(asks.at(-1)!.messages.at(-1).role, 'user');
   assert.match(words(asks.at(-1)!.messages.at(-1)), /is my blanket on its way\?$/);
   assert.match(asks.at(-1)!.system, /The server: .*can’t answer right now/s, 'the outage card is in the facts');
@@ -384,7 +386,7 @@ test('a request always ends on the customer’s turn: after the outage card, and
 
   const d = await checked('', 'ORD-MILO-Y6', 'mil@example.com'); // the code box: its "Thanks, that’s you." comes after the customer's turn
   fake.script(o => { asks.push(o); return [{ text: 'Here are your orders.' }]; });
-  await d.until(() => d.replies().find(r => r.text === 'Here are your orders.'), 4000);
+  await d.until(() => d.replies().find(r => r.text === 'Here are your orders.'));
   const last = asks.at(-1)!;
   assert.equal(last.messages.at(-1).role, 'user');
   assert.match(words(last.messages.at(-1)), /^\[typed the 6-digit code from their inbox into the code box/, 'the model is told what the dots were');
@@ -433,7 +435,7 @@ test('a tap carries only an id: a second tap, or another customer’s id, does n
   fake.script(() => [{ fail: 529 }]);
   const a = await customer(), b = await customer();
   await a.say('hello?');
-  const card = await a.until(() => a.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await a.until(() => a.replies().find(r => r.widget?.type === 'outage'));
   const id = card.widget.options.find((o: any) => o.label === 'Email a person').action;
   assert.ok((await b.say('', { widget: card.widget.id, action: id })).resync, 'rejected, on its own response');
   assert.ok(!b.replies().some(r => /A person answers by email/.test(r.text)), 'not in another session');
@@ -598,11 +600,11 @@ test('past the conversation’s cap for the day: no model call, the card says un
   fake.script(() => { calls++; return [{ text: `${'x'.repeat(400)} `.repeat(200) }]; });
   const c = await customer();
   await c.say('one');
-  await c.until(() => c.replies().some(r => r.text.startsWith('x')), 8000);
+  await c.until(() => c.replies().some(r => r.text.startsWith('x')));
   await new Promise(r => setTimeout(r, 300));
   const before = calls;
   await c.say('two, past the cap');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.equal(calls, before, 'no model call past the cap');
   assert.match(card.text, /can’t answer any more today, only again from tomorrow\. A person can/);
   assert.deepEqual(card.widget.options.map((o: any) => o.label), ['Email a person']);
@@ -618,7 +620,7 @@ test('past the conversation’s cap for the day: no model call, the card says un
   const shown = c.replies().length;
   fake.script(() => { calls++; return [{ text: 'x, and good morning.' }]; }); // short: a long stream would outlive the test
   await c.say('three, the next day');
-  await c.until(() => c.replies().slice(shown).some(r => r.text.startsWith('x')), 8000);
+  await c.until(() => c.replies().slice(shown).some(r => r.text.startsWith('x')));
   assert.equal(calls, before + 1, 'answered by the model');
   assert.ok(c.events.some(e => e.t === 'status' && e.online === true), 'and the header hears it');
   shift(864e5); // today's again: the tests after this one meet the app's day cap where they did
@@ -777,7 +779,7 @@ test('a draft that is dropped files nothing: "ask the team", held while they typ
   await c.post('typing', { on: true });     // they type on: when it finishes (its tool run), it's held
   await new Promise(r => setTimeout(r, 600));
   await c.say('about shipping to Austria, please ask the team'); // the follow-up drops the held draft
-  await c.until(() => c.replies().find(r => /Done: I’ve asked the team/.test(r.text)), 8000);
+  await c.until(() => c.replies().find(r => /Done: I’ve asked the team/.test(r.text)));
   await new Promise(r => setTimeout(r, 300));
   assert.equal(count() - before, 1, 'one case, from the answer that was shown');
   c.close();
@@ -796,13 +798,13 @@ test('pass_on_feedback: a note for the team, with no reply address and none of t
   const had = (db.prepare("select coalesce(max(id), 0) as n from cases").get() as any).n;
   const notes = () => db.prepare("select * from cases where kind = 'feedback' and id > ?").all(had) as any[];
   await c.say('mine: you are slow, pass it on');
-  await c.until(() => c.replies().find(r => /passed on/.test(r.text)), 8000);
+  await c.until(() => c.replies().find(r => /passed on/.test(r.text)));
   assert.deepEqual(notes(), [], 'an address in it: not passed on');
   await c.say('ring me: you are slow, pass it on');
-  await c.until(() => c.replies().filter(r => /passed on/.test(r.text)).length === 2, 8000);
+  await c.until(() => c.replies().filter(r => /passed on/.test(r.text)).length === 2);
   assert.deepEqual(notes(), [], 'a phone number as said, spaced: not passed on');
   await c.say('you are a little slow, pass it on');
-  await c.until(() => notes().length, 8000);
+  await c.until(() => notes().length);
   const [n] = notes();
   assert.deepEqual([n.words, n.email, n.checked, n.facts, n.kind], ['The chat felt a little slow to answer.', null, 'none', '{}', 'feedback']);
   c.close();
@@ -910,7 +912,7 @@ test('a send_code draft that is dropped leaves the code already in their inbox w
   await c.post('typing', { on: true });     // they type on: when it finishes (send_code ran), it's held
   await new Promise(r => setTimeout(r, 600));
   await c.say('oh wait, I found it');       // the follow-up drops the held draft
-  await c.until(() => c.replies().find(r => r.text === 'OK.'), 6000);
+  await c.until(() => c.replies().find(r => r.text === 'OK.'));
   assert.equal(codes().length, 1, 'no second email');
   assert.equal(codes()[0].headers, undefined, 'a code is a template, with no AI mark');
   assert.equal(rows(), 1, 'no second code made');
@@ -939,6 +941,53 @@ test('an email to a person carries the whole conversation, and what the customer
   const more = await c.until(() => cards.find(x => x.case === ref && x.kind === 'more'));
   assert.ok(more.chat.some((m: any) => m.who === 'customer' && /ORD-7Q4K-M2, if that helps/.test(m.text)));
   assert.ok(!more.chat.some((m: any) => /crease/.test(m.text)), 'only what came after');
+  c.close();
+});
+
+test("after a person's reply went, the helper knows, what it answers itself stays off the board's list, and an ask for a person goes back", async () => {
+  const systems: string[] = [];
+  fake.script(o => {
+    if (o.system.includes('language setting')) systems.push(o.system); // (the chat's, not the draft's)
+    if (Array.isArray(o.messages.at(-1).content)) return [{ text: 'Done.' }];
+    return /human/.test(words(o.messages.at(-1))) ? [{ tool: 'ask_for_person', input: { reason: 'asked', note: 'About the poster again.' } }] : [{ text: 'Happy to help.' }];
+  });
+  const c = await customer();
+  await c.say('Email a person', { menu: 'person' });
+  await c.say('greta@example.com');
+  const sum = await c.until(() => c.replies().find(r => r.widget?.type === 'summary'));
+  await c.say('', { widget: sum.widget.id, action: sum.widget.options[0].action, note: 'My poster came creased.' });
+  const ref = /Reference (H-\d+)/.exec((await c.until(() => c.replies().find(r => r.text.startsWith('Sent.')))).text)![1];
+  await c.until(() => cards.find(x => x.case === ref));
+  const mores = () => cards.filter(x => x.case === ref && x.kind === 'more');
+  // before the reply: what the customer adds goes with it, as the helper's own (HQ marks a waiting card new)
+  await c.say('It was the A3 one.');
+  await c.until(() => c.replies().find(r => r.text === 'Happy to help.'));
+  await c.until(() => mores().some(m => m.chat.some((l: any) => /A3 one/.test(l.text))));
+  assert.ok(mores().every(m => m.person === false));
+  assert.match(systems.at(-1)!, new RegExp(`An email to a person has gone \\(reference ${ref}\\)\\.`));
+  // HQ's state: the board's reply went on 23 October, and the card is done
+  assert.equal(hq.replies([{ case: ref, sent: '2026-10-23T09:00:00.000Z', settled: true }, { case: 'H-1', sent: null, settled: true }, 'junk']), 1);
+  assert.equal(hq.replies([{ case: ref, sent: '2026-10-23T09:00:00.000Z', settled: true }]), 0, 'nothing new');
+  await c.say('Can I write a review somewhere?');
+  await c.until(() => c.replies().filter(r => r.text === 'Happy to help.').length === 2);
+  assert.match(systems.at(-1)!, /a person on the team answered it by email on 23 October 2026: it's done, so never say a person will still get back/);
+  await c.until(() => mores().some(m => m.chat.some((l: any) => /review/.test(l.text))));
+  assert.ok(mores().every(m => m.person === false), 'answered here: no card back on the list');
+  // they want a person again: the helper's tool, the words say the reply went, and HQ hears it's for a person. HQ's
+  // answer to that is held, and they ask again meanwhile: that ask goes too, in a `more` of its own
+  let release = () => {};
+  const held = new Promise<void>(r => { release = r; });
+  hqHold = x => (x.case === ref && x.kind === 'more' && x.person === true ? held : undefined);
+  const answered = () => c.replies().filter(r => r.text === t('already_answered', 'en', { ref, to: 'g•••@example.com', day: '23 October 2026' })).length;
+  const forPerson = () => mores().filter(m => m.person === true).length;
+  await c.say('I want a human about the poster after all');
+  await c.until(() => answered() === 1 && forPerson() === 1);
+  await c.say('A human, please: one more thing about it');
+  await c.until(() => answered() === 2);
+  hqHold = () => undefined;
+  release();
+  await c.until(() => forPerson() === 2);
+  await c.until(() => (db.prepare('select asked from cases where id = ?').get(Number(ref.slice(2)) - 1000) as any).asked === null);
   c.close();
 });
 
@@ -977,7 +1026,7 @@ test('a cap reached between two rounds of one answer stops it: no further model 
   });
   const c = await customer();
   await c.say('show me everything');
-  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'), 8000);
+  const card = await c.until(() => c.replies().find(r => r.widget?.type === 'outage'));
   assert.equal(calls, 1, 'the second round never ran');
   assert.deepEqual(card.widget.options.map((o: any) => o.label), ['Email a person']);
   c.close();
@@ -993,7 +1042,7 @@ test('an answer still calling tools at its last model call says so, and makes no
   await c.say('look everything up');
   const out = () => numbers.counts('shop', numbers.dayOf(now())).timing['fake.chat.rounds.out']?.[String(TURN_ROUNDS)] ?? 0;
   const before = out();
-  await c.until(() => c.replies().find(r => r.text === t('rounds_out', 'en')), 8000);
+  await c.until(() => c.replies().find(r => r.text === t('rounds_out', 'en')));
   assert.equal(calls, TURN_ROUNDS);
   assert.equal(out(), before + 1, 'the bound reached is counted');
   c.close();
@@ -1075,10 +1124,10 @@ test('a follow-up sent between two bubbles of an answer gets its own answer', as
   });
   const c = await customer();
   await c.say('a question');
-  await c.until(() => c.replies().find(r => /^Two/.test(r.text)), 6000);
+  await c.until(() => c.replies().find(r => /^Two/.test(r.text)));
   await new Promise(r => setTimeout(r, 20));
   await c.say('and a second thing');
-  await c.until(() => c.replies().find(r => /second thing: yes/.test(r.text)), 6000);
+  await c.until(() => c.replies().find(r => /second thing: yes/.test(r.text)));
   assert.equal(calls, 1);
   c.close();
 });
@@ -1112,7 +1161,7 @@ test('a draft cut short by a follow-up counts every character it streamed, not o
   await c.say('where is my blanket');
   await new Promise(r => setTimeout(r, 1000));  // the paragraph is streamed (a bubble, waiting for the rest), the tail not yet
   await c.say('a second question');              // the follow-up drops the draft mid-stream
-  await c.until(() => c.replies().find(r => r.text === 'Got it.'), 6000);
+  await c.until(() => c.replies().find(r => r.text === 'Got it.'));
   const row = db.prepare("select output, estimate from ledger where conversation = ? and purpose = 'draft'").get(conv) as any;
   assert.ok(row, 'the dropped draft is in the ledger');
   assert.equal(row.estimate, 1);
@@ -1577,7 +1626,8 @@ async function emailPerson(c: any, address: string) {
   await c.say('', { widget: sum.widget.id, action: sum.widget.options[0].action, note: 'the blanket is creased' });
   return /Reference (H-\d+)/.exec((await c.until(() => c.replies().find((r: any) => r.text.startsWith('Sent.')))).text)![1];
 }
-const syncUntil = async (f: () => unknown) => { const t0 = Date.now(); while (!f()) { if (Date.now() - t0 > 4000) throw new Error('timed out waiting'); await hq.sync(); await new Promise(r => setTimeout(r, 50)); } };
+// (like until, as long as the state takes.)
+const syncUntil = async (f: () => unknown) => { while (!f()) { await hq.sync(); await new Promise(r => setTimeout(r, 50)); } };
 
 test('remove_health_detail after an email to a person reached HQ: HQ hears once that it’s a health case, asked again after a 5xx', async () => {
   takeOutScript();
@@ -1851,7 +1901,7 @@ test('words written before a lookup never reach the customer, and the next round
   assert.equal(seen.length, 3);
   for (const turn of seen.slice(1).flatMap(ms => ms.filter((m: any) => m.role === 'assistant')))
     assert.ok(!turn.content.some((b: any) => b.type === 'text'), 'no later round sees words the customer never did');
-  assert.equal(db.prepare("select count(*) as n from messages where conversation = ? and (text like '%look at your order%' or text like '%system note%')").get(chatOf(c)).n, 0);
+  assert.equal(db.prepare("select count(*) as n from messages where conversation = ? and (text like '%look at your order%' or text like '%system note%')").get(chatOf(c))!.n, 0);
   c.close();
 });
 

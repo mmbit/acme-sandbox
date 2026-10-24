@@ -119,11 +119,14 @@ new call's part only, correcting the earlier call's items where the board change
 
 The call agent's tools (`hq_tools.py`), each of which puts something on a list and says so, never "sent":
 
-- `job(agent, title, brief, item?, now?, after?)`: a job on a colleague's list ("Queued job #n for ada: … Not started yet").
+- `job(agent, title, brief, size, refs, why, item?, now?, after?)`: a job on a colleague's list ("Queued job #n for ada: … Not started yet").
   With `item` (a promise or a correction noted on this call), the job carries it, and it's handled when the job is done.
   It waits until the call ends (a wake, `wakes.ts` ended), so what the board adds on the call (`add`) goes into its
   brief and it starts whole. `now` (`hq job --now`) starts it at once, the agent's judgment or the board's word
   each time.
+  Use `estimate` first for clean past jobs, their scope and actual agent time. The call agent judges the scope and
+  supplies `size`, `refs` and `why` to `job`. `when` also requires that chosen `size`. The queued estimate stays fixed
+  until the CEO adjusts it after slippage.
   `after` (`hq job --after`) queues it behind another job, when the agent judges an agreed deadline worth protecting
   from it. The job tool's answer gives each agreed deadline's facts (a thread's window: its finish, its slack, what
   this job did to it and its slack 6 h and a day ago, `deadlines.ts`). It then names the other threads the job moves, for
@@ -156,6 +159,9 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   (planned finish, deadline, slack or by how much it misses), what it waits on and what goes on next, all by name: the
   coordinator's `outlooks.ts findOutlooks` reads the forecast as last played (the same outlook `hq thread` and the projects view
   show), so it answers in well under a second. Read-only.
+- `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
+  finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
+- `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish.
 - `hang_up()`: ends the call, only once the board has clearly wrapped up (a goodbye, asking to end it, or a thank-you that
   closes the business, not one mid-business), with a short goodbye of the agent's own that fits the call ("Thank you, talk
   soon." is one example, not a set line): no recap unless the board asks for one, no slip line (its description
@@ -211,9 +217,10 @@ A stranger who rings the shop's number can be put through to the voice line by
 the coordinator (`phone.ts`). Its ticket then says `kind: 'care'` and brings the agent who answers, the opening's
 languages in order (`langs`: brand.yaml's `phoneLine.languages` for the caller's country code, else its default), the
 agent's voice, and its voice per language where the company names one (`voices`): one of the line's Piper voices (alex
-for Dutch, thorsten for German, both native speakers, CC0) or one of Pocket TTS's preloaded voices in that language's
+for Dutch, thorsten and kerstin for German, native speakers, CC0; kerstin) or one of Pocket TTS's preloaded voices in that language's
 model. Pocket says the same words differently each time, so the fixed words kept in `SAID` (the opening) are made from
-one seed (`SEED`): the take every caller hears after a restart is a known one.
+one seed: the take every caller hears after a restart is a known one. The ticket names the seed per language where the
+company does (`seeds`: brand.yaml's `phoneLine.seeds`, a take it heard read back right in its voice), else the line's `SEED`.
 
 - **The brain**: `Care`, the second brain behind `Agent`'s surface. Its turns go to the care service, not the CLI:
   `POST /phone/start` (the call's CallSid, and the opening's first language, in which care reads its prompt into the

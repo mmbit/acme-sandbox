@@ -115,6 +115,7 @@
     "urgency": "now",
     "seat": null,
     "guest": { "request": 3, "name": "Robin", "address": "r••••@example.com", "needsEmail": false, "released": true, "revoked": false, "verified": "2026-09-25T15:02:00Z", "lang": "en",
+      "languages": [{ "code": "nl", "own": "Nederlands" }, { "code": "en", "own": "English" }, { "code": "de", "own": "Deutsch" }],
       "status": "open", "closed": null, "before": "1 November", "mail": true, "done": 2, "total": 4,
       "people": [{ "name": "Robin", "address": "r••••@example.com", "released": true, "verified": "2026-09-25T15:02:00Z", "lang": "en", "withdrawn": false, "revoked": false, "share": "https://hq.example/guest/mock-robin" }], "items": [
       { "n": 1, "section": "Documents", "kind": "document", "title": "The signed lease", "detail": null, "state": "done", "answer": null, "thread": [] },

@@ -11,7 +11,8 @@ import * as windows from './windows.ts';
 
 // followed: a call followed up (or given up on), the coordinator's own (ledger.ts followUp), never --when's. ended: the
 // call a job was queued on has ended (server.ts), never --when's either.
-export type Wake = { kind: 'deploy' | 'recreated' | 'deployed' | 'at' | 'followed' | 'ended'; arg: string };
+// sorted: HQ's own job from a template, sorted into the plan by its owner (sorting.ts), which meets it; never --when's.
+export type Wake = { kind: 'deploy' | 'recreated' | 'deployed' | 'at' | 'followed' | 'ended' | 'sorted'; arg: string };
 type WakeRow = Wake & { job: number; since: number };
 type Deploy = {
   file: string;
@@ -203,6 +204,7 @@ const describeWake = (w: WakeRow) => {
   if (w.kind === 'deployed') return `once ${workOf(w.arg)}'s work is merged and deployed`;
   if (w.kind === 'followed') return `once call #${w.arg}'s follow-up has finished`;
   if (w.kind === 'ended') return `once call #${w.arg} ends`;
+  if (w.kind === 'sorted') return "once its project's owner sorts it into the plan (hq inbox)";
   const n = Number(w.arg),
     deploysSoFar = successfulDeploysSince(w.since).length;
   return n === 1 ? 'after the next deploy' : `after ${n} deploys (${deploysSoFar} so far)`;
@@ -249,6 +251,7 @@ const toCome = (branch: string) =>
 
 // What met a wake, in words, or null while it waits
 function metBy(w: WakeRow, now: number): string | null {
+  if (w.kind === 'sorted') return null; // (sorting.ts meets it)
   if (w.kind === 'at') return Number(w.arg) <= now ? `the time came (${clock(Number(w.arg))})` : null;
   if (w.kind === 'deploy') {
     const n = Number(w.arg),

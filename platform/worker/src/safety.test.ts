@@ -96,7 +96,7 @@ test("a job compacts at the company's auto-compact window, and a value that isn'
 });
 
 test('the branch config the worker strips covers both CLIs code-running config', () => {
-  for (const f of ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.codex/config.toml'])
+  for (const f of ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.codex/config.toml', '.codex/hooks.json'])
     assert.ok(BRANCH_CONFIG.includes(f), `${f} is stripped from every clone`);
 });
 

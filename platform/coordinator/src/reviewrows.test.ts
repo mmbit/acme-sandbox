@@ -78,6 +78,7 @@ test("a review's findings list in its reviewer's first sentence, each with what 
     file: FILE,
     line: 10,
     issue: 'The fee is counted twice.',
+    task: 'Count the fee once',
     by: [first.agent],
     from: [{ by: first.agent, finding: 0 }],
   };
@@ -113,7 +114,7 @@ test("a reviewer's finding shows a fate only where it is the one finding at one 
   });
   for (const run of rest) await end(run);
   const [ruling] = await claim(n, 'consolidate');
-  const kept = (line: number, issue: string) => ({ file: FILE, line, issue, by: [first.agent] });
+  const kept = (line: number, issue: string) => ({ file: FILE, line, issue, task: `Fix: ${issue}`, by: [first.agent] });
   await end(ruling, {
     decision: 'changes',
     blocking: [kept(10, 'The fee is counted twice.'), kept(40, 'A stale price.'), kept(60, 'A refund skips the fee.')],
@@ -155,6 +156,7 @@ test('explicit sources give same-place findings separate fates and follow a move
         file: FILE,
         line: 100,
         issue: 'Fees are counted twice.',
+        task: 'Count fees once',
         by: [first.agent],
         from: [
           { by: first.agent, finding: 0 },
@@ -212,6 +214,7 @@ test("explicit sources count a reviewer's findings by their place in its report,
         file: FILE,
         line: 10,
         issue: 'The fee is counted twice.',
+        task: 'Count the fee once',
         by: [first.agent],
         from: [{ by: first.agent, finding: 1 }],
       },
@@ -261,7 +264,14 @@ for (const [index, invalid] of invalidSources.entries()) {
     for (const run of rest) await end(run);
     const [ruling] = await claim(n, 'consolidate');
     const source = { by: first.agent, finding: 1 };
-    const entry = { file: FILE, line: 10, issue: 'The fee is counted twice.', by: [first.agent], from: [source] };
+    const entry = {
+      file: FILE,
+      line: 10,
+      issue: 'The fee is counted twice.',
+      task: 'Count the fee once',
+      by: [first.agent],
+      from: [source],
+    };
     await end(ruling, {
       decision: 'changes',
       finding_sources: true,
@@ -302,7 +312,15 @@ test('a rejected ruling keeps its own reports when its round restarts on the sam
   const rejected = {
     decision: 'changes',
     finding_sources: true,
-    blocking: [{ file: FILE, line: 10, issue: 'The fee is counted twice.', from: [{ by: first.agent, finding: 1 }] }],
+    blocking: [
+      {
+        file: FILE,
+        line: 10,
+        issue: 'The fee is counted twice.',
+        task: 'Count the fee once',
+        from: [{ by: first.agent, finding: 1 }],
+      },
+    ],
   };
   await end((await claim(n, 'consolidate'))[0], rejected);
   db.prepare("update jobs set not_before = 0 where pr = ? and status = 'queued'").run(n);
@@ -360,9 +378,16 @@ test('a fix round says what it fixes: the findings its ruling sent back', async 
   await end(first, { summary: 'one', findings: [reported(11, 'The fee is counted twice. Twice.', 'blocking')] });
   for (const run of rest) await end(run);
   const [ruling] = await claim(n, 'consolidate');
-  await end(ruling, { decision: 'changes', blocking: [{ file: FILE, line: 11, issue: 'The fee is counted twice.' }] });
-  // the round's fix, under its work's title: the findings its ruling sent back
-  assert.deepEqual(fixesOf(queued(n, 'work')[0].id), { round: 1, findings: ['The fee is counted twice.'] });
+  await end(ruling, {
+    decision: 'changes',
+    blocking: [{ file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' }],
+  });
+  // the round's fix, under the task its ruling named: the findings it sent back
+  assert.deepEqual(fixesOf(queued(n, 'work')[0].id), {
+    round: 1,
+    findings: ['The fee is counted twice.'],
+    title: 'Count the fee once',
+  });
   // a fix outside a round says its step
   const update = h.queue({ agent: 'bolt', stage: 'fix', step: 'Bringing up to date', pr: n, branch: `review/${n}` });
   assert.equal(fixesOf(update), undefined);
@@ -384,7 +409,7 @@ test("a task drawn from the inbox says what it fixes: its findings, or its own n
       await end(consolidate, ruling);
       assert.equal(queued(n, 'work').length, 0); // (none drawn for it: the owner draws them)
     };
-    const fee = { file: FILE, line: 11, issue: 'The fee is counted twice.' };
+    const fee = { file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' };
     await rule(85670, 'counted', { decision: 'changes', blocking: [fee] });
     await rule(85671, 'touched', { decision: 'changes', blocking: [], nonblocking: [fee] });
     const [id] = (db.prepare('select id from findings where pr = 85670').all() as { id: number }[]).map(f => f.id);
@@ -394,9 +419,14 @@ test("a task drawn from the inbox says what it fixes: its findings, or its own n
       assert.equal(status, 200, JSON.stringify(body));
       return fixesOf(body.job ?? body.id!);
     };
-    const accept = (n: number, findings?: string) =>
-      drawn(h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt', findings }));
-    assert.deepEqual(await accept(85670, String(id)), { round: 1, findings: ['The fee is counted twice.'] });
+    const accept = (n: number, findings?: string, title?: string) =>
+      drawn(h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt', findings, title }));
+    // (under the task the reviewer named)
+    assert.deepEqual(await accept(85670, String(id)), {
+      round: 1,
+      findings: ['The fee is counted twice.'],
+      title: 'Count the fee once',
+    });
     h.cancelQueued();
     const named = h.agent('job', owner.token, {
       agent: 'bolt',
@@ -410,7 +440,12 @@ test("a task drawn from the inbox says what it fixes: its findings, or its own n
       findings: ['The fee is counted twice.'],
       title: 'Count the fee once',
     });
-    assert.deepEqual(await accept(85671), { round: 1, findings: [], touchups: true });
+    // (no touch-ups named by the reviewer: the accepter names the check.)
+    assert.deepEqual(await accept(85671, undefined, 'Check the review touch-ups'), {
+      round: 1,
+      findings: [],
+      touchups: true,
+    });
   } finally {
     remember(order.MODE, 'off');
   }

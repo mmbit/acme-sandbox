@@ -507,6 +507,7 @@ export function orderedFrom(p: Person) {
 
 // ---------------------------------------------------------------- the door on the guest desk
 // (view: a view-only share's, which asks for nothing; the pin's menu)
+// (German in each door's words, here to TESTER)
 const WORDS = {
   en: (what: string, company: string, until: string) => ({
     title: `${what}, for your notes`,
@@ -524,6 +525,14 @@ bij alles wat je anders zou doen, en zeg of typ wat je denkt. Iets dat over meer
 speld heeft een algemene notitie. Klaar? Tik op Stuur mijn notities in dat menu: ze gaan met een foto van het scherm naar \
 de crew. Het staat open tot ${until}.`,
   }),
+  de: (what: string, company: string, until: string) => ({
+    title: `${what}, für deine Notizen`,
+    button: `${what} öffnen`,
+    text: `Die Crew von ${company} möchte gern wissen, was du von ${what} hältst, bevor es live geht. Öffne es, tippe bei \
+allem, was du anders machen würdest, auf die rote Nadel und sag oder schreib, was du denkst. Etwas, das mehrere Seiten \
+betrifft? Das kleine Menü neben der Nadel hat eine allgemeine Notiz. Fertig? Tippe in diesem Menü auf Meine Notizen \
+senden: Sie gehen mit einem Bild des Bildschirms an die Crew. Offen bis ${until}.`,
+  }),
 };
 const VIEW = {
   en: (what: string, company: string, until: string) => ({
@@ -535,6 +544,11 @@ const VIEW = {
     title: what,
     button: `Open ${what}`,
     text: `De crew van ${company} deelt ${what} met je. Kijk gerust rond: het staat open tot ${until}.`,
+  }),
+  de: (what: string, company: string, until: string) => ({
+    title: what,
+    button: `${what} öffnen`,
+    text: `Die Crew von ${company} teilt ${what} mit dir. Schau dich gern um: Es ist offen bis ${until}.`,
   }),
 };
 // A notes share's door once its person sent theirs (reopenable): thanks, and its button takes them up again.
@@ -550,6 +564,12 @@ const SENT = {
     text: `Je notities over ${what} zijn naar de crew van ${company} gegaan. Nog iets bedacht? Meer notities toevoegen opent \
 het weer, tot ${until}.`,
   }),
+  de: (what: string, company: string, until: string) => ({
+    title: 'Gesendet, danke',
+    button: 'Mehr Notizen hinzufügen',
+    text: `Deine Notizen zu ${what} sind an die Crew von ${company} gegangen. Noch etwas eingefallen? Mehr Notizen \
+hinzufügen öffnet es wieder, bis ${until}.`,
+  }),
 };
 // A share's link once it's closed for good (the board ended it, its date passed, or its person was removed): why, in one
 // line.
@@ -557,6 +577,8 @@ const SHUT = {
   en: (sent: boolean) => (sent ? 'These notes were sent and this invite has ended.' : 'This invite has ended.'),
   nl: (sent: boolean) =>
     sent ? 'Deze notities zijn verstuurd en deze uitnodiging is afgelopen.' : 'Deze uitnodiging is afgelopen.',
+  de: (sent: boolean) =>
+    sent ? 'Diese Notizen wurden gesendet und diese Einladung ist beendet.' : 'Diese Einladung ist beendet.',
 };
 // A tester invite's door: a greeting, three steps with the voucher in the first (or that it is spent), the company's
 // testerFeedback as a fourth when set, a quieter aside on what happens to their notes, and a small line with its
@@ -631,6 +653,40 @@ const TESTER = {
       plan === null
         ? 'Je tegoedbon is gebruikt: dank je wel voor je bestelling.'
         : 'Je tegoedbon heeft je abonnement betaald: veel plezier.',
+  }),
+  de: (what: string, company: string, until: string, note: string, feedback: string[], plan: string | null) => ({
+    title: `${what}, zum Ausprobieren`,
+    button: `${what} öffnen`,
+    text: `Die Crew von ${company} würde sich freuen, wenn du ${what} ausprobierst, bevor es öffnet.`,
+    steps: [
+      plan === null
+        ? 'Schau dich um und bestell wirklich etwas: **Es wird wirklich hergestellt und an deine Adresse geschickt**. 🎁 Gib den Gutschein unten im Codefeld deines Warenkorbs ein.'
+        : plan ||
+          `Schau dich um und nimm ein Abo, wie es jeder tun würde. 🎁 Gib den Gutschein unten dort ein, wo ${what} fragt, wie du bezahlst: **Er bezahlt das Abo, es wird nichts abgebucht und du musst keine Karte angeben**.`,
+      `Tippe bei allem, was du anders machen würdest${plan === null ? ', bis zur Bestätigungsseite,' : ''} auf die rote Nadel und sag oder schreib, was du denkst. Etwas, das mehrere Seiten betrifft? Das kleine Menü neben der Nadel hat eine allgemeine Notiz.`,
+      'Fertig? Tippe in diesem Menü auf Meine Notizen senden: Sie gehen mit einem Bild des Bildschirms an die Crew. Noch etwas eingefallen? Mehr Notizen hinzufügen ist im selben Menü.',
+      ...feedback,
+    ],
+    aside: {
+      title: 'Was mit deinen Notizen passiert',
+      lines: [
+        plan === null
+          ? 'Du kannst überall Notizen anheften: im Shop und in jeder App darin.'
+          : `Du kannst überall in ${what} Notizen anheften.`,
+        'Funktioniert etwas nicht? Hefte eine Notiz an: Die Crew schaut es sich an und repariert, was eindeutig kaputt ist.',
+        'Wenn alle ihre Notizen gesendet haben, geht die Crew sie alle durch und entscheidet, was sich ändert.',
+      ],
+    },
+    small: `${note}Deine Notizen enthalten deine Bildschirmgröße und deinen Browser, damit wir sehen, was du gesehen hast. Offen bis ${until}.`,
+    more: 'Mehr Notizen hinzufügen',
+    voucher: (cap: string) =>
+      plan === null
+        ? `Dein Gutschein, für eine Bestellung bis ${cap}, Versand inklusive`
+        : `Dein Gutschein, für ein Abo bis ${cap}`,
+    spent:
+      plan === null
+        ? 'Dein Gutschein ist eingelöst: Danke für deine Bestellung.'
+        : 'Dein Gutschein hat dein Abo bezahlt: Viel Spaß damit.',
   }),
 };
 // €50, or €12.50: whole euros without cents

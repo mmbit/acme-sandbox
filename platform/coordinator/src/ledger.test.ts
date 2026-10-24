@@ -1,3 +1,4 @@
+// Queue-time estimate contract fixtures.
 // node --test src/ledger.test.ts   (throwaway DATA_DIR): the call ledger. Every call's asks and promises are recorded,
 // handed out and followed until they're done; a failed follow-up is sent again, three times at most, then said.
 import { test } from 'node:test';
@@ -843,7 +844,7 @@ printf 'Build the page with the second headline.' > brief
 items=$(hq items ${c.id})
 ids=$(printf '%s\\n' "$items" | grep -o '^#[0-9]*' | tr -d '#')
 for id in $ids; do
-  hq job --item "$id" --new kit "Item $id" brief --code "I$(echo "$id" | tr 0-9 A-J)" || echo "refused: $id"
+  hq job --item "$id" --new kit "Item $id" brief --size 30m --why "One call item with its recorded scope" --code "I$(echo "$id" | tr 0-9 A-J)" || echo "refused: $id"
   if [ -n "\${DIE:-}" ]; then kill -9 $$; fi
 done
 exit 0

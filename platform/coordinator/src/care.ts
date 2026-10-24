@@ -9,15 +9,20 @@
 //        (a data request that went without a reply address takes its `to` and the facts sent with it the same way)
 //        (health: true, a health detail went to a person with it: no draft, ever; a chat line's health: true, the message
 //        the customer sent to a person from the health card)
-//   POST /api/care/cards { kind: 'more', app, case, chat, health? }   what the customer wrote after HQ took the case → { ok, id }
+//   POST /api/care/cards { kind: 'more', app, case, chat, health?, person? }   what the customer wrote after HQ took the case → { ok, id }
 //        (health: true, care marked the case a health case since: the card becomes one, with or without chat)
+//        (person: false, the chat's assistant answered these lines itself: a settled card keeps them without coming back on
+//        the list; true, it handed the customer to a person again: the card is back, with or without chat. Absent: as true)
 //   POST /api/care/cards { kind: 'answered', case }           a question answered by email from the knowledge base → { ok, id }
 //   POST /api/care/cards { kind: 'draft', app, case, draft, summary?, translation?, ask? }   a draft that came after its card,
 //        or (with ask) the redraft for the board's "Ask for changes" with that id → { ok, id }
 //   POST /api/care/photos?case=H-1042&name=<order>-<n>-<shot>.jpg   a claim's photo, the JPEG as the body → { ok }
 //   GET  /api/care/state → { busy: auto|on|off, queue: { waiting, oldest }, redraft: [{ id, case, ask, draft }], fixed: ['H-1234', …],
 //        drafts: [{ id, case, kind, lang, words, subject, reply }], board: 'en'|'nl'|'de' (the board's language),
-//        erased: ['H-1234', 'E-7', …] }   (erased: the cases the board deleted at the customer's request; care deletes its copy)
+//        erased: ['H-1234', 'E-7', …], replies: [{ case: 'H-1234', sent: '2026-10-23T…' | null, settled: true }, …] }
+//        (erased: the cases the board deleted at the customer's request; care deletes its copy. replies: each of care's cards
+//        changed in REPLIES_DAYS: when its last reply went, and whether it's done, so the chat's assistant knows; one open
+//        again says so too)
 //   POST /api/care/cards { kind: 'draft', case: 'E-7', want, draft, summary?, translation?, boardWords?, lang?, none? }
 //   (a summary, a translation and boardWords are in the board's language)
 //   POST /api/care/numbers { app, day, counts, partial? }   the chat's numbers for a day, and state's numbers: [day, …], the
@@ -129,6 +134,9 @@ once('care-board-words', () => { if (columnsOf('care_cards').includes('words_en'
 db.exec(`create table if not exists care_lines (id integer primary key, card integer not null, at text not null, who text not null,
   text text not null, ext integer, mail integer, sender text, matches integer, health integer, auto integer)`);
 db.exec('create unique index if not exists care_lines_ext on care_lines (card, ext) where ext is not null');
+// quiet: a chat line the chat's assistant answered itself (a `more` with person: false): on the card, but it never puts a
+// settled card back on the list, nor keeps one whose reply went
+if (!columnsOf('care_lines').includes('quiet')) db.exec('alter table care_lines add column quiet integer');
 // The board's "Ask for changes": one row per ask, listed in care's state until its redraft comes, the board takes it back,
 // or an hour goes by (sweep). The ask's words are also on the card (`changes`), for the board to see.
 db.exec(`create table if not exists care_asks (id text primary key, card integer not null, ask text not null, draft text not null,
@@ -163,6 +171,7 @@ const OPEN_CARDS = 1000, TEAM_QUESTIONS = 20, PICTURE_BYTES = 256 * 1024, CARD_L
 // email can carry (the email service takes 25 MB with the attachments in base64); photos kept 6 months after the card closes
 export const PHOTO_BYTES = 3 * 1024 * 1024, PHOTO_SIDE = 2560, PHOTOS_A_CARD = 12, ATTACH_BYTES = 17 * 1024 * 1024, PHOTO_DAYS = 183;
 export const ERASED_DAYS = 90;   // a deleted case's reference stays in care's state this long, so care hears it after an outage
+export const REPLIES_DAYS = 30;  // a card's reply and settling stay in care's state this long after its last change (care keeps what it heard)
 export const ASK_MINUTES = 60;   // an ask with no redraft after this long is dropped, and the card says so
 // A care draft not answered within WANT_MINUTES is dropped (the card says so). At most EMAILS_A_DAY new email cards a day:
 // past that, Mail only (a flood of mail can't run up care's drafts).
@@ -384,8 +393,8 @@ function bundleOf(b: any) {
 // other senders: case numbers are guessable, so a stranger's mail has a small allowance of its own and never uses up the
 // customer's. HQ's own lines (the board's reply, a note) always go on. Returns what went on, and whether a line of the
 // customer's was left off (the card is full): heard() still puts the card in front of the board.
-function addLines(card: number, lines: { ext?: number; at: string; who: string; text: string; mail?: number; sender?: string; matches?: boolean; auto?: boolean; health?: boolean }[]) {
-  const ins = db.prepare('insert or ignore into care_lines (card, at, who, text, ext, mail, sender, matches, auto, health) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
+function addLines(card: number, lines: { ext?: number; at: string; who: string; text: string; mail?: number; sender?: string; matches?: boolean; auto?: boolean; health?: boolean; quiet?: boolean }[]) {
+  const ins = db.prepare('insert or ignore into care_lines (card, at, who, text, ext, mail, sender, matches, auto, health, quiet) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
   const other = (l: { who: string; matches?: boolean }) => l.who === 'email' && l.matches === false;
   const count = (sql: string) => (db.prepare(`select count(*) n from care_lines where card = ? and ${sql}`).get(card) as { n: number }).n;
   let n = 0, full = false, mine = count("who not in ('board', 'note') and not (who = 'email' and matches = 0)"), theirs = count("who = 'email' and matches = 0");
@@ -393,13 +402,13 @@ function addLines(card: number, lines: { ext?: number; at: string; who: string; 
     const outside = !['board', 'note'].includes(l.who);
     if (!l.text) continue;
     if (outside && (other(l) ? theirs >= OTHER_MAIL : mine >= CARD_LINES)) { if (!other(l)) full = true; continue; }
-    const added = Number(ins.run(card, l.at, l.who, l.text, l.ext ?? null, l.mail ?? null, l.sender ?? null, l.matches === undefined ? null : l.matches ? 1 : 0, l.auto ? 1 : null, l.health ? 1 : null).changes);
+    const added = Number(ins.run(card, l.at, l.who, l.text, l.ext ?? null, l.mail ?? null, l.sender ?? null, l.matches === undefined ? null : l.matches ? 1 : 0, l.auto ? 1 : null, l.health ? 1 : null, l.quiet ? 1 : null).changes);
     n += added; if (outside) { if (other(l)) theirs += added; else mine += added; }
   }
   // the note goes (again) at the end, as a new line (added before the old one goes, so its id is past any the board read):
   // a Send whose `seen` predates the message the card couldn't take is refused
   if (full) {
-    const id = Number(ins.run(card, new Date().toISOString(), 'note', FULL, null, null, null, null, null, null).lastInsertRowid);
+    const id = Number(ins.run(card, new Date().toISOString(), 'note', FULL, null, null, null, null, null, null, null).lastInsertRowid);
     db.prepare('delete from care_lines where card = ? and who = ? and text = ? and id != ?').run(card, 'note', FULL, id);
   }
   return { n, full };
@@ -407,17 +416,19 @@ function addLines(card: number, lines: { ext?: number; at: string; who: string; 
 const FULL = `This card holds ${CARD_LINES} messages, its most: the customer's newer ones aren't added here (their emails are in Mail).`;
 // The customer's lines after a given one (what they wrote since the board pressed Send): the chat's, and emails from the
 // address the card writes to (another sender's email is on the card, marked, but doesn't put it back on the list; nor
-// does an automatic one, an out-of-office from the customer's own address)
+// does an automatic one, an out-of-office from the customer's own address, nor a chat line the chat's assistant answered)
 const fromCustomerSince = (card: number, after: number | null) => (db.prepare(`select min(at) at from care_lines where card = ? and id > ?
-  and (who = 'customer' or (who = 'email' and matches = 1 and auto is null))`).get(card, after ?? 0) as { at: string | null }).at;
+  and ((who = 'customer' and quiet is null) or (who = 'email' and matches = 1 and auto is null))`).get(card, after ?? 0) as { at: string | null }).at;
 // Something new from the customer (more in the chat, an email to the case's address): the card is back on the board's list,
 // marked new, waiting from now (a card that was still waiting keeps its place and its reply-by: the customer has waited
 // since then). A question with the team stays with it, marked new, so the team's draft is still taken; one in Undo or
 // with the email service stays as it is: once its reply is out, flushNow() puts it back on the list.
 // A settled card that's back starts with an empty reply (what went is in the conversation, not the box).
+// (What the chat's assistant answered itself doesn't come here on a card that isn't waiting: take()'s `more`)
+const SETTLED = ['sent', 'closed', 'answered'], DONE = `(${SETTLED.map(s => `'${s}'`).join(', ')})`;
 const fresh: Partial<Card> = { draft: null, ai_draft: null, translation: null, before_redraft: null, team_draft: 0 };
 function heard(c: Card, now = new Date().toISOString()) {
-  const settled = ['sent', 'closed', 'answered'].includes(c.status);
+  const settled = SETTLED.includes(c.status);
   set(c.id, { new_reply: 1, last_message: now, ...(settled ? { status: 'waiting', since: now, ...fresh } : {}) });
 }
 
@@ -437,9 +448,15 @@ function take(b: any) {
     // person case of the chat), whether or not the card still has room for the line; so does `health: true` on the
     // `more` itself (care marked the case later: a detail the chat's assistant took out, a term added to the lists since), chat or none
     if (b.health != null && typeof b.health !== 'boolean') no(400, 'health: true or absent');
+    if (b.person != null && typeof b.person !== 'boolean') no(400, 'person: true, false or absent');
     if (b.health === true || lines.some(l => l.health)) toPerson(c!, lines.some(l => l.health));
-    const r = addLines(c.id, lines);
-    if (r.n || r.full) {
+    // only what's for a person puts the card back: lines the chat's assistant
+    // answered itself (person: false) go on the card quietly, and mark it new only while it still waits for its reply; a
+    // line the customer sent to a person from the health card is for a person whatever the `more` says
+    const quiet = b.person === false, forPerson = !quiet || lines.some(l => l.health);
+    const r = addLines(c.id, lines.map(l => quiet && !l.health ? { ...l, quiet: true } : l));
+    if (!forPerson && (r.n || r.full) && ['waiting', 'team'].includes(byId(c.id)!.status)) heard(c, now);
+    if (forPerson && (r.n || r.full || b.person === true)) {
       heard(c, now);
       // on a claim, the reply goes back to whoever wrote last: here the customer (mailIn() does the same for an email); a
       // send on its way keeps its own recipient (queued_to). Not while the claim is still in the box (claimGoes)
@@ -624,14 +641,22 @@ function wanted(c: Card, b: any) {
   db.prepare("update care_wants set state = 'done' where id = ?").run(w!.id);
   // care's own check found a health detail HQ's didn't (its lists newer than the coordinator's): a health case all the same
   if (b.none === 'health') { healthFound(c); return { ok: true, id: c.id }; }
-  if (b.none != null) { note(c.id, NONE[String(b.none)] ?? 'No draft came: write the reply yourself.'); return { ok: true, id: c.id }; }
+  if (b.none != null) { note(c.id, NONE[String(b.none)] ?? 'No draft came: write the reply yourself.'); readFirst(c.id, null); return { ok: true, id: c.id }; }
   // (with the team investigating it too: the board's if the job ends without one)
   const text = clean(b.draft, MAX.draft).trim(), fill = !!text && (c.status === 'waiting' || (c.status === 'team' && investigated(c))) && !c.draft;
   const summary = clean(b.summary, MAX.summary).trim() || null, words = clean(b.boardWords, MAX.words).trim() || null;
   const lang = /^[a-z]{2}$/.test(String(b.lang)) ? String(b.lang) : null;
   set(c.id, { ...(summary ? { summary } : {}), ...(words ? { board_words: words } : {}), ...(lang ? { lang } : {}),
     ...(fill ? { draft: text, ai_draft: text, translation: clean(b.translation, MAX.draft).trim() || null } : {}) });
+  readFirst(c.id, lang);
   return { ok: true, id: c.id };
+}
+// A customer's email goes to the team (toInvestigate) once care has read it, so its brief names the language care found
+// (null when no model read it: care's cap, its want expired). One the board took meanwhile (sent, closed), or the team
+// had, stays as it is.
+function readFirst(card: number, lang: string | null) {
+  const c = byId(card);
+  if (c?.kind === 'email' && c.status === 'waiting' && !c.job) toInvestigate(c, lang);
 }
 
 // ---- a customer's email to the company (hello@, or brand.yaml's care.inbox): a card with a draft, like the chat's email to
@@ -669,8 +694,7 @@ function emailIn(m: Hooked, health: boolean) {
   addLines(c.id, [{ at: now, who: 'email', text: words, mail: m.id, sender: from, matches: true }]);
   if (health) healthFound(c);
   else want(c.id);   // (HQ's health-detail check on what the model would read first: want())
-  log(`an email from a customer (${ref}, Mail #${m.id}).`);
-  toInvestigate(byId(c.id)!);
+  log(`an email from a customer (${ref}, Mail #${m.id}).`);   // (to the team once care has read it: readFirst())
 }
 // "Not a customer's": an email card goes back to Mail (closed, nothing sent), and its sender's later mail stays there
 // (Settings › Care lists them, with Back to Care)
@@ -691,10 +715,11 @@ function toCare(b: any) {
 }
 
 // A draft care didn't answer within WANT_MINUTES (care down, its model down): dropped, and the card says what to do. Run
-// whenever care or the board reads.
+// whenever care or the board reads, and every minute (start()), so an email reaches the team with care down and Care closed.
 export function expireWants(t = Date.now()) {
   for (const w of db.prepare("select * from care_wants where state = 'open' and at < ?").all(new Date(t - WANT_MINUTES * 60_000).toISOString()) as Want[]) {
     db.prepare("update care_wants set state = 'expired' where id = ?").run(w.id);
+    readFirst(w.card, null);
     if (!['waiting', 'unsure'].includes(byId(w.card)?.status ?? '')) continue;
     note(w.card, 'No draft came within the hour: write the reply yourself.');
   }
@@ -737,7 +762,7 @@ async function photoIn(req: IncomingMessage, url: URL) {
   // without) puts a settled card back on the list for the email that takes it; a card on the list, or with a send on its
   // way (flushNow()), gets there already
   const isNew = !had || !bytes.equals(had.bytes);
-  if (isNew && c!.claim_sent && ['sent', 'closed', 'answered'].includes(c!.status)) { const o = photosOwed(c!); if (o) set(c!.id, o); }
+  if (isNew && c!.claim_sent && SETTLED.includes(c!.status)) { const o = photosOwed(c!); if (o) set(c!.id, o); }
   return { ok: true };
 }
 // the photos not yet sent to the supplier (each goes with the first email there after it came)
@@ -781,14 +806,15 @@ function withTeam(c: Card, agent: string, title: unknown, fallback: string, prom
 // back: org.yaml's roles.care gets the card as a job of its own, with care-tickets.ts's brief and the company's part
 // (brand.yaml's care.investigate). The job reads the whole card with hq care (it needs the person to find their order),
 // and holds a customer's details from then on; its prompt holds nothing from the card. Care's own draft stays on the card
-// meanwhile, for the board if the job ends without one. Nobody in the role, or a health case: the board's straight away,
-// as before. HQ's own health-detail check comes first, as for care's model (want()).
-function toInvestigate(c: Card) {
+// meanwhile, for the board if the job ends without one (an email's comes first, with its language: readFirst()). Nobody
+// in the role, or a health case: the board's straight away, as before. HQ's own health-detail check comes first, as for
+// care's model (want()).
+function toInvestigate(c: Card, lang: string | null = c.lang) {
   const agent = String(org().roles?.care ?? ''), part = brand().care?.investigate ?? {};
   if (!agent || !jobs.findAgent(agent) || c.health) return;
   if (healthIn(...modelReads(c))) return healthFound(c);
   const job = withTeam(c, agent, part.title, 'A customer waiting: {case}, from {app}',
-    investigation({ ref: c.case_ref, kind: c.kind, app: c.app, appName: appName(c.app), lang: c.lang, checked: c.checked },
+    investigation({ ref: c.case_ref, kind: c.kind, app: c.app, appName: appName(c.app), lang, checked: c.checked },
       typeof part.brief === 'string' ? part.brief.trim() : ''));
   log(`${c.case_ref} went to ${agent} to investigate (job #${job.id}).`);
 }
@@ -826,7 +852,11 @@ export function state() {
     redraft: db.prepare(`select a.id, c.case_ref "case", a.ask, a.draft from care_asks a join care_cards c on c.id = a.card
       where a.state = 'open' and c.status = 'waiting' and c.kind != 'claim' and c.health is null order by a.at`).all(),
     fixed: (db.prepare("select case_ref from care_cards where fixed_at is not null and fixed_at > ? order by id").all(new Date(Date.now() - BUNDLE_DAYS * DAY).toISOString()) as { case_ref: string }[]).map(r => r.case_ref),
-    erased: (db.prepare('select case_ref from care_erased where at > ? order by at').all(new Date(Date.now() - ERASED_DAYS * DAY).toISOString()) as { case_ref: string }[]).map(r => r.case_ref) };
+    erased: (db.prepare('select case_ref from care_erased where at > ? order by at').all(new Date(Date.now() - ERASED_DAYS * DAY).toISOString()) as { case_ref: string }[]).map(r => r.case_ref),
+    // care's cards, whether a reply went and whether each is done: the chat's assistant says so when the chat goes on.
+    // Every one, so a card that's open again clears what care heard
+    replies: (db.prepare(`select case_ref, sent_at, status in ${DONE} settled from care_cards where case_ref like 'H-%' and updated > ? order by id`).all(new Date(Date.now() - REPLIES_DAYS * DAY).toISOString()) as { case_ref: string; sent_at: string | null; settled: number }[])
+      .map(r => ({ case: r.case_ref, sent: r.sent_at, settled: !!r.settled })) };
 }
 
 // ---- a customer's email to a case's address (case-<n>@) lands on that card too; Mail keeps it as before
@@ -1606,5 +1636,6 @@ export function start() {
   db.prepare("update care_cards set status = 'unsure', error = 'HQ restarted while sending it: it may or may not have gone.' where status = 'mailing'").run();
   sweep();
   setInterval(() => sweep(), 3_600_000).unref();
+  setInterval(() => expireWants(), 60_000).unref();
   setInterval(() => { flush().catch(e => console.error('Care: sending:', e)); }, 5_000).unref();
 }

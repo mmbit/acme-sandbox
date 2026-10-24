@@ -1,6 +1,4 @@
-// The projects view's covers kept decoded: each picture the board's work names (its businesses', projects' and groups'
-// covers) loaded and decoded once and kept while the page lives, so the tiles paint with their pictures however often
-// the view repaints.
+// The projects view's covers, decoded once so every repaint has them
 
 // by its file: its image, kept so it stays decoded, and the decode
 const covers = new Map();

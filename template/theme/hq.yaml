@@ -18,6 +18,10 @@ apps: []
 # kit's file HQ serves, kits/<kit>/hq/<file>.css at /kits/<kit>/<file>.css (template/kits/README.md). A company can set
 # HQ's depth scale this way (--depth-tile, --depth-hover, --depth-button, --depth-pressed).
 # styles: [/kits/<kit>/<file>.css]
+# A look wearing a kit: <look>.kit names a kit whose hq/style.css HQ lays over that look alone, after its own skin, and
+# takes off when another look is worn, and whose hq/icons/ the look draws its icons from (template/kits/README.md).
+# wire:
+#   kit: <kit>
 # Wire in the company's own colours: its colourways, each { id, name, ground, ink, muted, panel, accent, side, onAccent }
 # in #hex (the grounds and letters, and the one thing lit at a time: its colour, the lip under it and the letters on
 # it), and its font from Google Fonts. Settings › Look offers each, and Auto: the first light one, or the first dark one

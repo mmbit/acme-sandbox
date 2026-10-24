@@ -11,7 +11,6 @@ import {
   commandOf,
   processesFor,
   overShare,
-  runsOf,
   slowDown,
   stopRun,
   tally,
@@ -66,8 +65,6 @@ test('past its share a job has its heaviest run blocked, never its CLI; starved,
   assert.deepEqual([starved.root.pid, starved.share], [11, 1536], 'the job holding the most');
 });
 
-// The incident of 23 October: browsers under a tool's shell, each renderer small. Stopping the biggest process left the
-// browser to open another page; the run is the shell's command, everything under it.
 test('a run is the command the CLI started, with everything under it: the browser goes with all its pages', () => {
   const tree = [
     proc(10, 1501, 300, 0, { comm: 'claude' }),
@@ -80,18 +77,9 @@ test('a run is the command the CLI started, with everything under it: the browse
     proc(50, 1501, 90, 0, { comm: 'node' }), // (left behind: its parent is none of the job's)
   ];
   const cli = cliProcesses(tree, launch);
-  const runs = runsOf(tree, cli);
-  assert.deepEqual(
-    [...runs].map(([root, run]) => [root.pid, run.map(p => p.pid)]),
-    [
-      [30, [30, 31, 32, 33, 34, 35, 36, 37]],
-      [40, [40, 41]],
-      [50, [50]],
-    ],
-  );
   const block = overShare(tally(tree, tree, 1000), cli, opts).block!;
   assert.equal(block.root.pid, 30, 'the run holding the most, not the biggest process');
-  assert.equal(block.run.length, 8);
+  assert.deepEqual(new Set(block.run.map(p => p.pid)), new Set([30, 31, 32, 33, 34, 35, 36, 37]));
   assert.ok(!block.run.some(p => p.pid === 10), 'never the CLI');
 });
 

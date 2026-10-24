@@ -1,3 +1,4 @@
+// Queue-time estimate contract fixtures.
 // node --test src/reviewrounds.test.ts   (uses a throwaway DATA_DIR; GitHub is played by the harness)
 // The formal review process through the review's own routes: each round's briefing by its stage, and what the reviews
 // leave going to the project's follow-ups.
@@ -79,7 +80,15 @@ async function push(n: number, thread = 'game/world') {
   });
 }
 const json = (o: object) => ({ output: JSON.stringify(o) });
-const at = (line: number, issue: string, file = FILE) => ({ file, line, case: 'x', issue, fix: 'y', by: ['quill'] });
+const at = (line: number, issue: string, file = FILE) => ({
+  file,
+  line,
+  case: 'x',
+  issue,
+  fix: 'y',
+  task: `Fix ${issue}`,
+  by: ['quill'],
+});
 const findingsOf = (n: number) =>
   db.prepare('select id, kind, issue, outcome from findings where pr = ? order by id').all(n) as {
     id: number;
@@ -210,8 +219,35 @@ test('each round gets the briefing of its stage, and what the reviews leave goes
   await until(() => bundles()[0].brief.includes('a magic number'), 'the next follow-up joined');
   assert.equal(bundles().length, 2);
   const tidy = { project: 'game', name: 'Tidy the game code', goal: 'The follow-ups worth fixing are fixed' };
-  const accepted = proposals.accept(own.id, 'wren', { newThread: tidy, for: 'moss', code: 'TIDY' }) as { job: number };
-  assert.equal(h.job(accepted.job).agent, 'moss', 'the owner assigns it');
+  // (HQ's bundle under its template title: the owner names the task.)
+  assert.match(
+    String(
+      proposals.accept(own.id, 'wren', {
+        newThread: tidy,
+        for: 'moss',
+        code: 'TIDY',
+        size: '30m',
+        why: 'Name the bundled magic numbers',
+      }),
+    ),
+    /--title/,
+  );
+  const title = 'Name the magic numbers in the game code';
+  const accepted = proposals.accept(own.id, 'wren', {
+    newThread: tidy,
+    for: 'moss',
+    code: 'TIDY',
+    title,
+    size: '30m',
+    why: 'Name the bundled magic numbers',
+  }) as {
+    job: number;
+  };
+  assert.deepEqual(
+    [h.job(accepted.job).agent, h.job(accepted.job).title],
+    ['moss', title],
+    'the owner assigns and names it',
+  );
 });
 
 test("a first round near its thread's deadline is a later one, and the upstream round shows what went wrong before review", async t => {

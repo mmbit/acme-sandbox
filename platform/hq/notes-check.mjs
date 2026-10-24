@@ -357,8 +357,8 @@ await page.$eval('.device', d => Promise.all(d.getAnimations().map(a => a.finish
 const unasked = await actsRow();
 await page.click('section.wanted [data-discard]');
 assert.deepEqual(await actsRow(), unasked, 'the asking Discard keeps the row as it was');
-assert.equal(await page.textContent('section.wanted [data-discard]'), 'Tap again to discard 1', 'the asking Discard counts the ticked notes');
-assert.match(await page.textContent('section.wanted .msg'), /can’t be brought back/, 'the asking Discard says why it asks');
+assert.equal(await page.textContent('section.wanted [data-discard]'), 'Sure?', 'the asking Discard asks in a word no wider than its own');
+assert.equal(await page.textContent('section.wanted .msg'), 'Tap again to discard 1 note for good.', 'the asking Discard counts the ticked notes and says it lasts');
 await page.waitForTimeout(600);   // (askAgain's settling: a tap within 500 ms is the first one's)
 await page.click('section.wanted [data-discard]');   // (the second tap does it)
 await page.waitForFunction(id => !document.querySelector(`[data-note="${id}"]`), blue, { timeout: 10_000 });

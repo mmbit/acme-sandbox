@@ -89,6 +89,17 @@ at `/kits/<name>/<file>.css`. `theme/hq.yaml`'s `styles: [/kits/<name>/<file>.cs
 in that order, after its own stylesheet and before the renderer's, so a look can draw what it sets. A company can set
 HQ's depth scale this way, for example: the `--depth-*` properties that `platform/hq/style.css` defaults.
 
+A kit can dress one look instead: `theme/hq.yaml`'s `<look>.kit: <name>` lays the kit's `hq/style.css` (at
+`/kits/<name>/style.css`) over that look only, after the look's own skin, and takes it off when the viewer picks
+another look. Any look and any kit work the same way. A kit with an icon set, `hq/icons/<name>.svg` under HQ's icon
+names (`platform/hq/icons/<style>/`), gives that look its icons too: every one from the set, none from HQ's styles. Its
+`hq/icons/names.json` (`{ "mobile": "phone" }`) points HQ names that share one drawing to it. A kit that dresses a
+look ships `hq/sounds.js` too: `MOMENTS`, each moment's `[[sound, params], …]` of the platform's sound kit
+(`shared/demo/foley.js`), and `HQ`, HQ's sound names to the moment each plays (or a function of the sound's arguments
+giving its calls), `{}` for none. A sound `HQ` doesn't name stays the look's. A kit's stylesheet or sounds that
+fail to load fail the change of look: HQ keeps the look worn before, and says so.
+<!--. -->
+
 ```js
 export const app = { name: 'Things', what: 'What the board sees under the name', icon: 'things', group: 'business' };  // an icon's name (above); its group (optional)
 export async function draw(el, hq) { … }   // its screen: on opening, then every 15 s (not while a field has text)

@@ -36,9 +36,10 @@ function stallOf(o: ThreadOutlook) {
 }
 
 // GET /api/projects with each thread's outlook (projects.ts listProjectBoard gives the rest).
-// Each open job of a thread carries its estimate: its agent time as sized, and when it starts, is done and merges in the
-// play (each null where the play has none, as for a review run).
-// (start and done)
+// Each open job of a thread carries its estimate: its agent time as sized and what the play has left of it, and when it
+// starts, is done and merges in the play, and its finish: its work live, as a thread's finish is its last job's (each
+// null where the play has none, as for a review run).
+// (start and done; left_ms and finish)
 type BoardJob = { id: number; status: string };
 export function withOutlooks<B extends { projects: { threads: { id: string; jobs: BoardJob[] }[] }[] }>(
   board: B,
@@ -62,9 +63,11 @@ const estimateOf = (job: number, f: Forecast) => {
   const played = f.usual.get(job);
   return {
     size_ms: f.sizes.usual.get(job)?.agent_ms ?? null,
+    left_ms: played?.left_ms ?? null,
     start: played?.start ?? null,
     done: played?.done ?? null,
     merged: played?.merged ?? null,
+    finish: played?.merged == null ? null : played.merged + f.snapshot.deployLagMs,
   };
 };
 

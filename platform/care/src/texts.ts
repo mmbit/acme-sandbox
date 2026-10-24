@@ -34,6 +34,8 @@ const EN: T = {
   sent_more: 'If you think of anything else, write it here and I’ll add it.',
   sent_more_down: 'If you think of anything else, write it here: {helper} adds it when it’s back.',
   already: 'Your email to a person has already gone (reference {ref}): they’ll reply to {to}; {aim}.{busy} Anything you write here goes with it.',
+  // an ask after a person's reply went: the chat since goes back to them (person.ts again())
+  already_answered: 'A person answered your email (reference {ref}) on {day}. I’ve passed this on to them: they’ll reply to {to}: {aim}.{busy} Anything you write here goes with it.',
   kept_back: 'Kept. Nothing has gone to a person.',
   team_sent: 'Done: I’ve asked the team. The answer comes by email to {to}; {aim}.{busy} If it’s something other customers ask too, I’ll know it next time.',
   team_address: 'What email should the answer go to?',
@@ -152,3 +154,5 @@ export function heardBoardLang(l: unknown) {
     db.prepare("insert or replace into hq_said (key, value) values ('board', ?)").run(l);
 }
 export const locale = (l: Lang) => settings.locales[l] ?? l;
+// a day as it's written in a language: '23 October 2026'
+export const day = (at: number, l: Lang) => new Intl.DateTimeFormat(locale(l), { day: 'numeric', month: 'long', year: 'numeric', timeZone: settings.timeZone }).format(at);

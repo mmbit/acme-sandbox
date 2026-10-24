@@ -1,9 +1,11 @@
 // The projects view's levels drawn: each level's head and its keys, from the board's work as projects.js holds it.
 import * as keys from './projectkeys.js';
+import { threadBrief, threadTile } from './threadtile.js';
 import * as levels from './levels.js';
 import { taskRows } from './tasks.js';
 import { businessState, finished, inEtaOrder, running, stateOf } from './threads.js';
 import { nameText } from './jobs.js';
+import { icon } from './icons.js';
 
 // A level's head and keys
 export function levelHtml(l, { view, board, opening }) {
@@ -34,14 +36,15 @@ export function levelHtml(l, { view, board, opening }) {
     business = work.businesses.find(e => e.id === p.business),
     over = business?.name ?? '';
   if (l.at === 'project') {
-    const back = p.schedule ? keys.named('recurring', board.groups?.recurring).name : (business?.name ?? 'Projects');
+    const back = p.schedule ? keys.named('recurring', board.groups?.recurring).name : (business?.name ?? 'Projects'),
+      openThread = id => work.projects.flatMap(x => x.threads).find(x => x.id === id);
     // its ongoing threads, or its completed ones; the ongoing by ETA, waiting ones
     // first
     const completed = view.showDone && p.done.length > 0,
       switches = keys.sideKeys(p.done.length, completed) + keys.decisionKey(p.pause);
     const tiles = completed
       ? p.done.map(t => keys.doneThreadTile(t, opening?.project === p.id ? opening : null))
-      : inEtaOrder(p).map(t => keys.threadTile(t, p));
+      : inEtaOrder(p).map(t => threadTile(t, p, openThread));
     return `${keys.head({ back, over, title: nameText(p, 'name'), marks: keys.projectMarks(p), keys: switches })}
       <div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing threads.</p>'}</div>`;
   }
@@ -49,7 +52,7 @@ export function levelHtml(l, { view, board, opening }) {
   const t = l.t,
     decision = p.threads.includes(t) ? keys.decisionKey(t.pause ?? p.pause) : '';
   return `${keys.head({ back: nameText(p, 'name'), over: nameText(p, 'name'), title: nameText(t, 'name'), marks: keys.threadMarks(t, p), keys: keys.foldKeys(t, view) + decision })}
-    <ol class="pj-level pj-tasks">${taskRows(t, p, view)}</ol>`;
+    ${threadBrief(t)}<ol class="pj-level pj-tasks">${taskRows(t, p, view)}</ol>`;
 }
 // Home: a business each, then Recurring and the work outside the projects, each a plain tile. A company without
 // businesses has its projects here, but for the routines'.
@@ -78,3 +81,9 @@ const routinesOf = board => (board.projects ?? []).filter(p => p.schedule);
 const rowsOf = (key, board) => (key === 'recurring' ? routinesOf(board) : (board[key] ?? []).filter(j => !finished(j)));
 // and its latest finished runs (the coordinator's few, newest first)
 const doneOf = (key, board) => (board[key] ?? []).filter(finished);
+
+// A work link's thread while it loads: its page bare, its head and a few task rows.
+export const SKELETON = `<div class="pj-board pj-skeleton" role="status" aria-label="Opening its thread…">
+  <header class="pj-head"><span class="pj-key pj-back-key" aria-hidden="true">${icon('back')}</span><div class="pj-where"><small><i></i></small><h1><i></i></h1></div>
+  <button class="pj-key pj-close" data-leave aria-label="Close the projects">${icon('close')}</button></header>
+  <ol class="pj-level pj-tasks" aria-hidden="true">${'<li><div class="pj-task"><i></i><span><i></i><i></i></span></div></li>'.repeat(4)}</ol></div>`;

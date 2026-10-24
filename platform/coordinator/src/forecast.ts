@@ -8,6 +8,7 @@ import * as latency from './latency.ts';
 import * as predictions from './predictions.ts';
 import { heldTo } from './predictions.ts';
 import { onPublish } from './events.ts';
+import { priceAhead } from './headroom.ts';
 import {
   play as playQueue,
   PLAY_VERSION,
@@ -143,6 +144,18 @@ export function refresh(now = Date.now()): Forecast {
   return forecast;
 }
 
+// The minute's sweep (server.ts): new work's estimate, then the queue played, once: the new work's first outlook is this
+// play's (predictions.ts sweep).
+export function sweep(now = Date.now()) {
+  let forecast: Forecast | undefined;
+  try {
+    predictions.sweep(now, at => (forecast = refresh(at)).usual);
+  } catch (err) {
+    console.error('Could not estimate new work:', err);
+  }
+  return forecast ?? refresh(now);
+}
+
 // The latest forecast. While the server watches, it's shown as last played: it plays again a moment after each change
 // and every minute (server.ts), never on a request, which would hold HQ for the play's time. Without a play yet, or
 // with nothing watching for changes (a test, a one-off), it plays now.
@@ -161,17 +174,19 @@ export const afterEach = (after: (f: Forecast) => void) => void played.push(afte
 // The server's start: every change HQ publishes plays the queue again SETTLE_MS later, once for a burst, unless a play
 // came in between (hq job plays its own: moves.ts). An agent's own steps and status change nothing the play reads: a
 // running job's would play the queue every SETTLE_MS. Work sized on the spot keeps its size for the hour
-// (predictions.ts keepSpotSizes).
+// (predictions.ts keepSpotSizes), and the seats' readings are priced ahead of the first play, a slice at a time
+// (headroom.ts priceAhead).
 export function start() {
   if (watching) return;
   watching = true;
   predictions.keepSpotSizes();
+  priceAhead().catch(err => console.error('Could not price the seat readings:', err));
   onPublish((e, by) => {
     if ((e.type === 'log' || e.type === 'status') && by !== 'agent') playSoon();
   });
 }
 
-// Published changes and new sizes (sizer.ts) share one settled play per burst: a play holds the server.
+// Published changes and saved-size revisions share one settled play per burst: a play holds the server.
 // Nothing to do while nothing watches: current() plays on every read then.
 export function playSoon() {
   if (!watching) return;

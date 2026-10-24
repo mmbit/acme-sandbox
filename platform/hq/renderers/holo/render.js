@@ -1,5 +1,4 @@
-// One frame on the GPU: the floor, the table's pedestal and radar top, the hologram's reflections in both (stencil),
-// the beam, the hologram itself, then the labels, the bloom and the lens.
+// One frame of the holo deck on the GPU
 import { TAU, polar, mmul, mesh, targets, LINES, TRIS, POINTS } from './gl.js';
 import { programs, MAX_ROOMS } from './shaders.js';
 import { TABLE_Y, TABLE_R, RING_R, CROWN_Y, built } from './deck.js';
@@ -98,8 +97,8 @@ export function render(R, S, f, labels) {
   gl.useProgram(P.up.p); gl.enable(gl.BLEND); gl.blendFunc(gl.ONE, gl.ONE);
   for (let i = T.mips.length - 2; i >= 0; i--) {
     const m = T.mips[i], s = T.mips[i + 1];
-    // the first level is a half-res copy of every bright line and letter: kept whole, it laid a soft double over them
-    // (the "blurry" deck); a little of it keeps the glow hugging them, the wider levels carry the rest
+    // the first level is a half-res copy of every bright line and letter, which whole lays a soft double over them: a
+    // little of it keeps the glow hugging them, the wider levels carry the rest
     if (i === 0) { gl.blendColor(0, 0, 0, 0.35); gl.blendFunc(gl.ONE, gl.CONSTANT_ALPHA); }
     gl.bindFramebuffer(gl.FRAMEBUFFER, m.f); gl.viewport(0, 0, m.w, m.h); gl.bindTexture(gl.TEXTURE_2D, s.t);
     set(gl, P.up, 'uTx', [0.5 / s.w, 0.5 / s.h]); gl.drawArrays(gl.TRIANGLES, 0, 3);

@@ -495,11 +495,7 @@ export function requestForAgent(b: any, me: Me) {
     show = oneLine(b.show, MAX_NOTE),
     place = oneLine(b.where, MAX_NOTE),
     pages: string[] = (Array.isArray(b.pages) ? b.pages : []).map(String);
-  if (me.agent === s.keeper)
-    refuse(
-      403,
-      "the keeper answers shot requests: a page's owner asks for its photo (Growth, or whoever runs the page)",
-    );
+  if (me.agent === s.keeper) refuse(403, "the keeper answers shot requests: a page's owner asks for its photo");
   if (!s.products.some(p => p.id === product))
     refuse(400, `no product "${oneLine(product, 40)}" in the studio's settings (hq studio lists them)`);
   if (!show) refuse(400, 'say what the photo must show: --show "..."');
@@ -526,7 +522,7 @@ export function requestForAgent(b: any, me: Me) {
 }
 
 // hq studio return <request> --need: a shot the keeper can't make work goes back to whoever asked, with what it needs
-// (a new test print, a page that shows it some other way): a job for them. Its photos still in hand are dropped.
+// (a new print, a page that shows it some other way): a job for them. Its photos still in hand are dropped.
 export function returnForAgent(b: any, me: Me) {
   keeperOnly(me);
   const r = openRequest(b.id),
@@ -1095,6 +1091,7 @@ const photoLine = (s: Settings, p: Photo, extra = '') => {
 const requestLine = (s: Settings, r: Request) =>
   `- Request #${r.id} from ${r.by}: ${nameOf(s.products, r.product)}, for ${whereOf(r)}. It must show: ${r.show}`;
 
+// (where the prints and their cards come from is the company's, in the settings' notes)
 function requestBrief(s: Settings, list: Request[]) {
   const n = list.length;
   return {
@@ -1104,8 +1101,8 @@ function requestBrief(s: Settings, list: Request[]) {
 ${readFirst(s)}
 ${list.map(r => requestLine(s, r)).join('\n')}
 
-1. Plan each shot: what of the product, the angle, the setting (a shot style: \`hq studio\` lists them), and which of the board's test prints suits a shop (a test print's made-up name or details may not).
-2. The board's photo: a product shot already on a desk-phone card, or one asked for on the next test-print card as a product shot (\`--product-shot "..."\`, with its angle and setting: no ruler, a clean background), through whoever sends that card. Never a card of your own to the board, and never a check photo (one with a ruler, taken for us to judge a print): HQ refuses those.
+1. Plan each shot: what of the product, the angle, the setting (a shot style: \`hq studio\` lists them), and which of the board's prints suits a shop (a print made for a check, with made-up names or details, may not; the notes above say where the prints come from).
+2. The board's photo: a product shot already on a desk-phone card, or one asked for as a product shot on a desk-phone card (\`--product-shot "..."\`, with its angle and setting: no ruler, a clean background), through whoever sends that card (the notes above say who). Never a card of your own to the board, and never a check photo (one with a ruler, taken for us to judge a print): HQ refuses those.
 3. \`hq studio add --card <id> [--field <n>] --request <id> --style <id> [--note "..."] [--text "..."]\` brings it in for that request (HQ queues you its develop job).
 4. A shot you can't make work as asked (no fitting print, a page that needs another angle than the board can take): \`hq studio return <request> --need "..."\` hands it back to whoever asked, with what you need. Nothing goes to the board.`,
   };

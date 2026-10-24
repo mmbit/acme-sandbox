@@ -75,9 +75,6 @@ export const jobName = (id, code) => code ?? `#${Number(id)}`;
 export const roleHtml = d => `${esc(d.role)}${d.focus ? `<span class="role-focus">${d.role ? ' · ' : ''}${esc(d.focus)}</span>` : ''}`;
 export const titleCase = s => String(s).replace(/(^|[-_ ])(\w)/g, (_, p, c) => (p ? ' ' : '') + c.toUpperCase());
 export const cap = s => s[0].toUpperCase() + s.slice(1);
-// how long since t, in whole minutes ("7 min", "2 h 5 min", "3 d")
-export const mins = t => { const m = Math.max(1, Math.round((Date.now() - t) / 60000));
-  return m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} d`; };
 // a text box as tall as its text
 export function grow(t) { t.style.height = 'auto'; t.style.height = `${t.scrollHeight + 4}px`; }
 export const store = {

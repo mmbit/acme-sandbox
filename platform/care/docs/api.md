@@ -83,8 +83,10 @@ minute, and at once when a case is filed:
   and send, in the customer's language, with a `translation` into the board's language when it's another; `summary`
   is in the board's language too (state's `board`). **`health: true`**: a health detail went to a
   person with this case, so no model drafts it, ever, and HQ never sends it or its chat to a model.
-- `{ kind: 'more', app, case, chat, health? }`: what the customer wrote after HQ took a person case; also how HQ hears,
-  once, that a case it already has became a health case.
+- `{ kind: 'more', app, case, chat, health?, person? }`: what the customer wrote after HQ took a person case; also how HQ hears,
+  once, that a case it already has became a health case. `person`: `false` for lines the helper answered itself (a
+  settled card keeps them without coming back on the list), `true` once the helper handed the customer to a person
+  again (with `chat: []` if nothing is new).
 - `{ kind: 'draft', app, case, draft, summary?, translation?, ask? }`: a draft that came after its card, or the redraft
   for the board's "Ask for changes" (`ask`).
 - `{ kind: 'answered', case }`: a question answered by email from a new knowledge entry; the card closes.
@@ -92,12 +94,13 @@ minute, and at once when a case is filed:
   once HQ has it.
 - `POST /api/care/numbers { app, day, counts, partial? }`: each finished day's counts per app, for Care › Numbers.
   `emails` counts the emails the email service took for that app that day (its plan has a monthly limit).
-- `GET /api/care/state` → `{ busy, queue, redraft, fixed, erased, numbers?, drafts, board }`: the busy switch and the queue;
+- `GET /api/care/state` → `{ busy, queue, redraft, fixed, erased, numbers?, drafts, board, replies }`: the busy switch and the queue;
   the redrafts asked for; the bug cases marked fixed and the cases the board deleted at a customer's request (the
   service deletes its copies); days of numbers wanted again; and the drafts HQ wants for its own email cards, answered
   once each as cards with `want` (an email in another language than the board's with its words translated,
   `boardWords`); `board` is the board's language (`en`, `nl`, `de`), which every summary and translation for the board
-  is written in, kept through a restart.
+  is written in, kept through a restart; `replies` (`[{ case, sent, settled }]`) says when each case's last reply went and
+  whether its card is done, for the helper's facts and its words to a second ask for a person.
 
 **Retries**: a case stays in the service and is sent every minute until HQ has it. A 4xx about the card itself (not
 401, 403, 404, 408 or 429, which are the line, not the case) is retried for a day, then left unsent in the database

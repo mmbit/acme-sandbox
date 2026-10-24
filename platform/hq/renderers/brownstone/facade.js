@@ -1,10 +1,9 @@
-// The building's outside: warm brick over a sandstone ground floor, stone trim and cornices, tall shuttered
-// windows with window boxes (sky in the glass by day, lamplight and the odd silhouette by night), the front
-// door under a striped awning, ivy on the park end and a mural facing the street. It closes the dollhouse's
-// open sides. Each face is drawn flat, all floors tall, then sliced per level and sheared into place, so
-// every level's front can swing open on its own. The glass is repainted only when the sky changes.
+// The building's outside, closing the dollhouse's open sides
 import { rng, pick, mix, canvas, trim, clamp } from '../../util.js';
-import { FH, SLAB, PENT_H, CORE, ENTRANCE, INK, F, SX, SY, top, wallY, wallX, box, disc, text, wordmark, sprite, onWallY, onWallX, silhouette } from './iso.js';
+import {
+  FH, SLAB, PENT_H, CORE, ENTRANCE, INK, F, SX, SY, top, wallY, wallX, box, disc, line, text, wordmark, sprite,
+  onWallY, onWallX, silhouette,
+} from './iso.js';
 import { BILLBOARD, drawBillboard } from './billboard.js';
 import { roomAt } from './layout.js';
 
@@ -245,7 +244,6 @@ function fireEscape(L, i) {
   const flat = (g, a0, a1, n0, n1, zz, c) => { const [x0, y0] = pt(Math.min(a0, a1), n0), [x1, y1] = pt(Math.max(a0, a1), n1); top(g, Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), zz, c); };
   const front = (g, a0, a1, n, z0, z1, c) => X ? wallX(g, a0, a1, E + n, z0, z1, c) : wallY(g, a0, a1, E + n, z0, z1, c);
   const side = (g, a, n0, n1, z0, z1, c) => X ? wallY(g, E + n0, E + n1, a, z0, z1, c) : wallX(g, E + n0, E + n1, a, z0, z1, c);
-  const line = (g, [x1, y1], [x2, y2], c) => { const n = Math.max(1, Math.abs(x2 - x1), Math.abs(y2 - y1)); g.fillStyle = c; for (let k = 0; k <= n; k++) g.fillRect(Math.round(x1 + (x2 - x1) * k / n), Math.round(y1 + (y2 - y1) * k / n), 1, 1); };
   const ladder = (g, a, n, zb, zt) => { for (const u of [a, a + 0.22]) line(g, s(u, n, zb), s(u, n, zt), IRON); for (let zz = zb + 3; zz < zt; zz += 5) line(g, s(a, n, zz), s(a + 0.22, n, zz), IRON_HI); };
   const from = k => k % 2 ? 0.5 : 2.5, to = k => k % 2 ? 2.2 : 0.8; // the flight down to landing k starts over here and lands there
   const up = i === top1 ? (i > 1 ? (from(i - 1) < 1.5 ? 2.25 : 0.45) : 2.25) : null;

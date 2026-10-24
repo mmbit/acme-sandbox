@@ -2,8 +2,10 @@
 // of its title deciding which, each word weighed by how rare it is among past titles. A scheduled job stands on its own
 // schedule entry's runs first.
 import { db } from './db.ts';
+import { keysCondition } from './chat.ts';
 import { workBranch } from './jobs.ts';
 import { mean, wholeSeconds } from './arithmetic.ts';
+import { timingFlags, type TimingEvidence, type TimingFlag } from './timing.ts';
 
 // A work job's origin, how it was made: work an agent queued (or a pull request's re-land), the author's fixes for a
 // review or the board's notes, a pull request only brought up to date with main, or a job HQ made on its own (the
@@ -34,6 +36,9 @@ export type PastJob = {
   added: number | null;
   removed: number | null;
   thread: string | null;
+  timing_flags?: TimingFlag[];
+  customers?: number;
+  about_keys?: number;
 } & Run;
 
 // A scheduled job's run (schedule.ts schedule_runs): its entry, the entry's routine, and the slot run() puts at the end
@@ -48,25 +53,47 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // Done work with its runs: agent time, start to finish (waits included), its seat spend (the API-equivalent price
 // where the engine reports one, tokens where it doesn't; none where no usage was reported) and its latest pull request.
 // (made at its first use: jobs.ts, whose workBranch it reads, imports the deadline clock that reads this)
-// The runs summed by job first, then each one's job by its id in db.ts jobs_done_work, which `indexed by` names: stale
-// statistics (pragma optimize reads a table again only once it grew tenfold) otherwise let the planner read every done
-// job's row, brief and output included.
+// The runs summed by job first, then each one's job by its id through db.ts jobs_past.
+// Stale statistics
+// (pragma optimize reads a table again only once it grew tenfold) otherwise let the planner scan every job row and sum
+// the runs again for each.
+// Credential-call follow-ups include transcripts, even when no tool marked them as holding keys.
 const past =
   () => `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
-    p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}
-  from jobs j indexed by jobs_done_work
+    p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
+    (j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()})) about_keys,
+    exists(select 1 from job_replacement_links l where l.job = j.id) replaced
+  from jobs j indexed by jobs_past
   join (select job, count(*) runs, sum(ended_as = 'rebuilt' or seat is null) rebuilt, min(started) first, max(ended) last,
-    sum((julianday(ended) - julianday(started)) * 86400000) agent_ms from runs group by job) r on r.job = j.id
+    sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
+    group_concat(distinct coalesce(ended_as, 'unknown')) outcomes, sum(seat is null) unknown_seats,
+    sum(julianday(ended) is null or julianday(started) is null or julianday(ended) <= julianday(started)) invalid_runs
+    from runs group by job) r on r.job = j.id
   left join (select job, sum(cost) cost, sum(input + cache_write + cache_read + output) tokens from usage group by job) u
     on u.job = j.id
   left join (select branch, max(number) number from prs group by branch) b on b.branch = ${workBranch('j')}
   left join prs p on p.number = b.number
   ${RUN_JOIN}
-  where j.kind = 'work' and j.status = 'done' and not exists (select 1 from runs o where o.job = j.id and o.ended is null)`;
+  where j.kind = 'work' and j.status = 'done' and not exists (select 1 from runs o where o.job = j.id and o.ended is null)
+  order by j.id`;
 
-export const pastJobs = () => db.prepare(past()).all() as PastJob[];
+export const pastJobs = (): PastJob[] => {
+  const rows = db.prepare(past()).all() as unknown as (PastJob & TimingEvidence)[];
+  return rows.map(({ outcomes, invalid_runs, unknown_seats, replaced, ...job }) => ({
+    ...job,
+    timing_flags: timingFlags({ outcomes, invalid_runs, unknown_seats, replaced, runs: job.runs }),
+  }));
+};
+export const cleanPastJobs = (pool: PastJob[] = pastJobs()) =>
+  pool.filter(job => !job.timing_flags?.length && !job.customers && !job.about_keys);
+export function timingAudit(pool: PastJob[] = pastJobs()) {
+  const reasons: Partial<Record<TimingFlag, number>> = {};
+  for (const job of pool) for (const reason of job.timing_flags ?? []) reasons[reason] = (reasons[reason] ?? 0) + 1;
+  const clean = pool.filter(job => !job.timing_flags?.length).length;
+  return { total: pool.length, excluded: pool.length - clean, clean, reasons };
+}
 
 // The piece of work to match: its title, its origin, its agent when known (any agent's work matches otherwise), and
 // for a scheduled job its run.
@@ -85,7 +112,16 @@ export const PICKS = 8,
   LATEST = 20,
   FEWEST = 3;
 export function picksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis: Basis } {
+  return rawPicksFor(work, cleanPool(pool));
+}
+// Historical baseline only. Candidate comparisons always use picksFor.
+export function rawPicksFor(work: Work, pool: PastJob[]): { picks: PastJob[]; basis: Basis } {
   return runsLike(work, pool) ?? matched(work, pool);
+}
+const cleanPools = new WeakMap<PastJob[], PastJob[]>();
+function cleanPool(pool: PastJob[]) {
+  if (!cleanPools.has(pool)) cleanPools.set(pool, cleanPastJobs(pool));
+  return cleanPools.get(pool)!;
 }
 function matched(work: Work, pool: PastJob[]) {
   const sameOrigin = groupOf(pool, work.origin);

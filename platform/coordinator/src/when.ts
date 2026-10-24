@@ -1,14 +1,15 @@
-// hq when: when new work could be done, played into the plan as it stands. The work is sized like hq estimate (or by
-// the size given), then the queue is played several ways on one snapshot: without it, with it and no window (the room
+// hq when: new work played into the current plan with the caller's supplied estimate.
+// The queue is played several ways on one snapshot: without it, with it and no window (the room
 // every window leaves), and with it given a deadline in each span between the points where its place in the play's
 // order changes, the first that holds narrowed down. That is the earliest it can be done without making any window
 // miss, or there is none in the play's reach. With --by, whether it makes that time, with a sooner deadline if need be;
 // only when it doesn't, what would, as played: the windows ahead of it giving way, each against its deadline then, and
 // one more seat like one HQ has with measured rates, searched the same way. Seats the plays count as never filling are
 // named. Nothing is kept: the plays are no forecast, and the answer is a time and the window to set (hq window).
+import { oneMoreSeat } from './seatcapacity.ts';
+import * as seatreplay from './seatreplay.ts';
 import { db } from './db.ts';
 import { findAgent } from './jobs.ts';
-import { pastJobs, type Work } from './matching.ts';
 import * as predictions from './predictions.ts';
 import { readSize } from './sizes.ts';
 import { agreed, type Deadline } from './deadlines.ts';
@@ -24,7 +25,7 @@ const MINUTE_MS = 60_000,
 const STEP_MS = 5 * MINUTE_MS;
 const PLANNED = -1;
 
-export type Ask = { q?: unknown; size?: unknown; agent?: unknown; after?: unknown; by?: unknown };
+export type Ask = { q?: unknown; size?: unknown; agent?: unknown; after?: unknown; by?: unknown; extra_seat?: unknown };
 type Given = { title: string; agent: string; size: number | null; after?: number; by?: number };
 // A window against the work's play: the thread, how far past its deadline it ends (null: no finish in sight then).
 export type Give = { thread: string; project: string; name: string; deadline: number; past_ms: number | null };
@@ -45,10 +46,15 @@ type Trial = {
 type QueueTrials = { trial: (due: number | null) => Trial; crossings: (lo: number, hi: number) => number[] };
 
 export function when(ask: Ask, asker: string, now = Date.now()) {
+  if (ask.extra_seat !== undefined) {
+    if (ask.q || ask.size || ask.agent || ask.after || ask.by)
+      return [400, 'extra_seat replays the live plan. Omit new work and its flags.'] as const;
+    return seatreplay.replay(ask.extra_seat, now);
+  }
   const given = readAsk(ask, asker, now);
   if (typeof given === 'string') return [400, given] as const;
   const t0 = performance.now();
-  const { planned, sized } = plannedWork(given);
+  const planned = plannedWork(given);
   const { snapshot, trialsFor, relaxedTrial, plays } = trials(planned, now);
   const original = trialsFor(snapshot);
   const free = original.trial(null);
@@ -61,9 +67,9 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
     size: {
       agent_minutes: minutes(planned.size.agent_ms),
       given: given.size !== null,
-      compared: sized.picks.length,
-      basis: sized.basis,
-      guessed: sized.guessed,
+      compared: 0,
+      basis: { kind: 'work', agent: given.agent, words: [] },
+      guessed: false,
     },
     free,
     ...(given.by === undefined
@@ -86,6 +92,7 @@ function readAsk(ask: Ask, asker: string, now: number): Given | string {
     if (typeof read === 'string') return read;
     size = read;
   }
+  if (size === null) return 'judge the comparable scopes with hq estimate, then give your estimate with --size';
   let after: number | undefined;
   if (ask.after !== undefined && ask.after !== '') {
     after = Number(String(ask.after).replace(/^#/, ''));
@@ -105,13 +112,10 @@ function readAsk(ask: Ask, asker: string, now: number): Given | string {
 // The work as a job queued now, sized on done jobs like it, or by the size given (its slow size never below that).
 function plannedWork(given: Given) {
   const engine = findAgent(given.agent)!.engine;
-  const work: Work = { title: given.title, origin: 'work', agent: given.agent };
-  const sized = predictions.predict(work, pastJobs());
-  const size: Size = given.size === null ? sized.size : { ...sized.size, agent_ms: given.size };
-  const slow: Size =
-    given.size === null ? sized.slow : { ...sized.slow, agent_ms: Math.max(given.size, sized.slow.agent_ms) };
+  const size: Size = { agent_ms: given.size! };
+  const slow: Size = size;
   const planned = { id: PLANNED, agent: given.agent, title: given.title, engine, after: given.after };
-  return { planned: { ...planned, size, slow }, sized };
+  return { ...planned, size, slow };
 }
 
 // One snapshot with the work in it, and the plays on it or on one changed from it (trialsFor): the queue played with the work
@@ -119,7 +123,7 @@ function plannedWork(given: Given) {
 // crossings between two deadlines: where the work's place in the order the play runs work in changes (playOrder), as a
 // latest start that moves with its deadline (its own, its review stages', work it waits for) meets one that doesn't.
 // Between two crossings, that order is the same.
-function trials(planned: ReturnType<typeof plannedWork>['planned'], now: number) {
+function trials(planned: ReturnType<typeof plannedWork>, now: number) {
   const { snapshot, sizes } = predictions.prepared(now, [planned], ['usual']);
   let plays = 0;
   const played = (queue: Snapshot) => {
@@ -296,35 +300,6 @@ function relaxed(snapshot: Snapshot, by: number, threads: Set<string>): Snapshot
   if (!moved.length) return snapshot;
   const span = Math.max(0, by - Math.min(...moved.map(j => j.due!))) + HORIZON_DAYS * DAY_MS;
   return { ...snapshot, jobs: snapshot.jobs.map(j => (moved.includes(j) ? { ...j, due: j.due! + span } : j)) };
-}
-
-// The queue as it is with one more seat of the engine: a copy of one of its seats as HQ reads it, its windows fresh,
-// at that seat's measured fill rates (both windows'), and the slots one seat runs as the worker reports them. Null
-// without all of those: a seat with no measured rate would play as never filling.
-function oneMoreSeat(snapshot: Snapshot, engine: string): Snapshot | null {
-  const rate = snapshot.rates[engine];
-  const runs = snapshot.seatRuns?.[engine];
-  const slots = snapshot.slots[engine];
-  if (!rate || runs === undefined || slots === undefined) return null;
-  const perSeat = typeof rate.week === 'object' ? rate.week : null;
-  const weekOf = (seat: string) => (perSeat ? perSeat[seat] : rate.week);
-  const measured = (seat: string) => typeof rate.five[seat] === 'number' && typeof weekOf(seat) === 'number';
-  const like = snapshot.seats.find(s => s.engine === engine && measured(s.id));
-  if (!like) return null;
-  const id = `${engine}-more`;
-  const fresh = { state: 'ready', until: null, fiveHour: 0, fiveHourResets: null, week: 0, weekResets: null };
-  return {
-    ...snapshot,
-    seats: [...snapshot.seats, { ...like, ...fresh, id }],
-    rates: {
-      ...snapshot.rates,
-      [engine]: {
-        week: perSeat ? { ...perSeat, [id]: perSeat[like.id] } : rate.week,
-        five: { ...rate.five, [id]: rate.five[like.id] },
-      },
-    },
-    slots: { ...snapshot.slots, [engine]: slots + runs },
-  };
 }
 
 const minutes = (ms: number) => Math.round(ms / MINUTE_MS);

@@ -18,6 +18,7 @@ import {
   asksOf,
   planned,
   size,
+  left,
   clock,
   fateWords,
 } from './threads.js';
@@ -67,10 +68,10 @@ function frontOf(j, row) {
     : jobState(j) === 'waits' && before.length
       ? ''
       : `${cap(whereNow(j, { who, ago }))}.`;
-  const merged = j.estimate?.merged && !finished(j) ? ` Merged about ${clock(j.estimate.merged)}.` : '';
-  // (a review loop job's in plain words, doingOf.)
-  const what = [j.review ? doingOf(j) : kind === 'work' ? '' : cap(kind), size(j) ? `About ${size(j)} of work` : ''];
-  // the planner's times: when it starts, for one not started yet, and when it's done
+  // (a review loop job's in plain words, doingOf; one at work its size with what's left of it.)
+  const work = size(j) && `About ${size(j)} of work${s === 'working' && left(j) ? `, ${left(j)} left` : ''}`;
+  const what = [j.review ? doingOf(j) : kind === 'work' ? '' : cap(kind), work];
+  // the planner's times: when it starts, for one not started yet, and its one finish, its work live (threads.js planned)
   const { start, done } = planned(j);
   const times = [
     s !== 'working' && start && { words: start, icon: 'tour' },
@@ -78,11 +79,28 @@ function frontOf(j, row) {
   ].filter(Boolean);
   return `<small class="pj-code-line">${esc(jobName(j.id, j.code))}</small><h2>${nameHtml(j)}</h2>
     <div class="pj-who">${face(j.agent, 'big')}<div><b>${esc(who(j.agent))}</b><small>${withJobLinks(what.filter(Boolean).join(' · '))}</small></div></div>
-    <div class="pj-why-big ${lit ? 'you' : s}"><p><b>${esc(lit ? 'For you' : cap(word(j)))}</b>${esc(why)}${esc(merged)}</p>${asks.map(c => `<button class="pj-key on" data-card="${Number(c.id)}">${icon('phone')}<span>${asks.length > 1 ? esc(c.title) : 'Open the card'}</span></button>`).join('')}</div>
+    <div class="pj-why-big ${lit ? 'you' : s}"><p><b>${esc(lit ? 'For you' : cap(word(j)))}</b>${esc(why)}</p>${asks.map(c => `<button class="pj-key on" data-card="${Number(c.id)}">${icon('phone')}<span>${asks.length > 1 ? esc(c.title) : 'Open the card'}</span></button>`).join('')}</div>
     ${times.length ? `<p class="pj-times">${times.map(time => `<span class="pj-note">${icon(time.icon)}<span>${esc(cap(time.words))}</span></span>`).join('')}</p>` : ''}
     ${before.length ? `<h4>Starts once these are merged</h4><ul class="pj-rows">${before.map(x => row(x, AFTER[x.state] ?? x.state)).join('')}</ul>` : ''}`;
 }
 
+// A finished review's findings, loaded as its sheet opens (load: by its id), then painted on it (repaint): null while
+// they load, 'failed' when they didn't.
+let found = { job: null, list: null };
+export function findingsOf(j, load, repaint) {
+  if (!j?.findings) return (found = { job: null, list: null }).list;
+  if (found.job === j.id) return found.list;
+  found = { job: j.id, list: null };
+  load(j.id)
+    .then(r => r.findings)
+    .catch(() => 'failed')
+    .then(list => {
+      if (found.job !== j.id) return;
+      found.list = list;
+      repaint();
+    });
+  return null;
+}
 // A finished review's findings, each in a line marked blocking or a note, with what became of it.
 function foundOf(j, findings) {
   if (!j.findings) return '';

@@ -1,12 +1,14 @@
 // A project's plan: its threads, the threads each needs, and their tasks in order (../docs/projects.md).
-// Only the project's owner and the CEO change it (hq plan, hq project new | owner | rename, the CEO's); anyone else
+// Only the project's owner and the CEO change it (hq plan, hq project new | owner | rename | business, the CEO's); anyone else
 // proposes (hq propose, proposals.ts). Names show their level and no two levels share one (names.ts threadClash;
 // hq plan rename | title, hq project rename | done). Every change is logged in plan_changes (db.ts planChange). While the company's
 // planning setting is off (projects.yaml `planning:`), the claim, the worker and the review panel don't read any of it.
 import { db, planChange } from './db.ts';
 import * as redraws from './redraws.ts';
+import { publish } from './events.ts';
+import { oneTask } from './made.ts';
 import { ceo, projects, type Project } from './company.ts';
-import { findProject, findThread, needsOf, SLUG, slugRefusal, type Thread } from './projects.ts';
+import { findProject, findThread, listThreads, needsOf, SLUG, slugRefusal, type Thread } from './projects.ts';
 import { addNeed, newThread } from './newthread.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
@@ -249,6 +251,38 @@ export function setOwner(
     ownerChanged(id, by);
     return { ok: true as const };
   });
+}
+// hq project business: the CEO puts a project in one of projects.yaml's businesses (its product), moves it to another,
+// or takes it out of any (none). Its id, code and threads stay; a name its new product has already is refused, as for
+// a rename (names.ts projectClash), and so is one of its open threads' (threadClash; HQ's one-task threads aside, as when
+// they're made). The project, or why not.
+export function setBusiness(id: string, given: unknown, agent: string) {
+  if (agent !== ceo()) return 'only the CEO moves a project into a business';
+  const project = findProject(id);
+  if (!project) return noProject(id);
+  const to = String(given ?? '').trim(),
+    businesses = projects().businesses;
+  const business = to === 'none' ? null : businesses.find(b => b.id === to);
+  if (business === undefined)
+    return `there's no business "${to}": the businesses are ${businesses.map(b => b.id).join(', ') || 'none yet (company/projects.yaml businesses)'}, or none`;
+  if ((project.business ?? null) === (business?.id ?? null))
+    return business ? `${id} is in ${business.id} already` : `${id} is in no business already`;
+  const moved = { ...project, business: business?.id };
+  const clash =
+    projectClash(moved, project.name) ??
+    listThreads({ project: id })
+      .filter(t => !oneTask(t.id))
+      .map(t => threadClash(moved, t.name, t.id))
+      .find(Boolean);
+  if (clash) return clash;
+  db.prepare('update projects set business = ? where id = ?').run(business?.id ?? null, id);
+  planChange({ project: id, what: `business ${project.business ?? 'none'} → ${business?.id ?? 'none'}`, by: agent });
+  publish({
+    type: 'log',
+    agent,
+    text: business ? `${project.name} moved to ${business.name}` : `${project.name} is in no business now`,
+  });
+  return findProject(id)!;
 }
 
 // hq plan <project>: its open threads, those another needs first, each with its "done when", window, needs, planned finish,

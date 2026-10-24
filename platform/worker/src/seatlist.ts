@@ -17,6 +17,8 @@ export type Listed = {
   models?: Record<string, string>;
   paused: boolean;
   stop?: number | null; // the board's stop level, in percent (null: the seat's own).
+  week?: number; // the week's use HQ last heard, and when it resets (ms), till a run reads it again
+  weekResets?: number;
 };
 // A change the board made that the worker hasn't taken up yet
 export type SeatAction = { id: number; seat: string | null; what: string };

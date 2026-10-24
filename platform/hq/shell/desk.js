@@ -26,6 +26,7 @@ import { countBadge, paintComputerCount } from './hud.js';   // (a company app's
 import { numbers, numbersBack, numbersFor } from './numbers.js';
 import { artifactList } from './artifacts.js';
 import { openProjects } from './projects.js';
+import { closePanel } from './panel.js';
 import { onair } from './onair.js';
 import { oversight } from './oversight.js';
 import { seatSettings, seatsBack, seatsSummary, seatPages } from './seats.js';
@@ -309,7 +310,7 @@ function wireCap(box, s, redraw) {
     button.disabled = true;
     // (the amount, not the euros formatter)
     try { redraw(await setShareCap(world.dev, s.id, amount), `Each voucher now pays up to ${euros(amount)}.`); sfx.blip(); }
-    catch (err) { button.disabled = false; msg().textContent = refused(err); }
+    catch (err) { button.disabled = false; tell(msg(), refused(err)); }
   });
 }
 const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
@@ -368,7 +369,7 @@ function wireShare(el, s, o) {
     if (!end.dataset.sure) { end.dataset.sure = 1; end.textContent = 'Tap again to end it'; sfx.blip(); return; }
     end.disabled = true; msg().textContent = 'Ending…';
     let done;
-    try { done = await busy(() => endShare(world.dev, s.id)); } catch { msg().textContent = 'That didn’t go through. Try again in a minute.'; end.disabled = false; return; }
+    try { done = await busy(() => endShare(world.dev, s.id)); } catch { tell(msg(), 'That didn’t go through. Try again in a minute.'); end.disabled = false; return; }
     sfx.blip(); o.redraw(null, `Ended: ${went(done)}.`);
   };
 }
@@ -445,6 +446,16 @@ const FIELDS = 'input:not([type=checkbox]):not([type=radio]):not([type=hidden]):
 const typing = () => !!voice || !!dictation || photoBusy() || !!root().querySelector('.call-link') || [...root().querySelectorAll(FIELDS)].some(t => t.value !== t.defaultValue || document.activeElement === t);
 let stale = false; // the phone skipped a re-render for that; it catches up once the field is empty and left
 const refusedKeys = new Map(); // request id → { key: why the server refused it }, shown under the field until the next Save
+// An error or a done on a tool's own line (the intercom's, a card's, a call's) as the design system's alert part: its
+// sign, then what happened. Each look draws it its own way (style.css, controls.css, a look's kit). A line's plain words
+// (Sending…) replace it, and an empty line has none.
+const SIGNS = { problem: icon('alert'), done: icon('tick') };
+const alertHtml = (html, kind = 'problem') => `<span class="alert ${kind}" role="${kind === 'problem' ? 'alert' : 'status'}"><span class="sign">${SIGNS[kind]}</span><span class="words">${html}</span></span>`;
+// (and an empty or problem state's sign, which a look shows if it draws one: style.css hides it)
+const stateSign = name => `<span class="sign">${icon(name)}</span>`;
+function tell(line, words, kind = 'problem') {
+  if (line) line.innerHTML = words ? alertHtml(esc(words), kind) : '';
+}
 // ---------------------------------------------------------------- open requests: one source of truth
 // The HUD badge, the ringing desk phone, the board's panel and the phone overlay all read this list.
 // Responses that arrive out of order (a slow poll after a newer one, or after an answer) are dropped,
@@ -497,7 +508,7 @@ let listing = false, openingCard = null;
 // at: a card's id, to open the phone at that card (the projects view's "for you" jobs; a ping's notification, its id as
 // text)
 export async function openPhone(at) {
-  if (!show('phone', `<header><span class="handset" aria-hidden="true"></span><b>${esc(cap(names.phone))}</b><button class="past-btn" data-past aria-pressed="false">${FILED}<span>Answered</span></button><button class="x" data-close aria-label="Close">×</button></header><div class="screen" id="phone-screen"><p class="muted">Dialling…</p></div>`)) return;
+  if (!show('phone', `<header>${icon('phone', 'device-icon')}<b>${esc(cap(names.phone))}</b><button class="past-btn" data-past aria-pressed="false">${FILED}<span>Answered</span></button><button class="x" data-close aria-label="Close">×</button></header><div class="screen" id="phone-screen"><p class="muted">Dialling…</p></div>`)) return;
   idx = 0; past = null; listing = false; laterView = false; openingCard = at ?? null;
   const screen = $('#phone-screen');
   root().querySelector('[data-past]').onclick = () => { sfx.blip(); if (past) leavePast(); else openPast(); };
@@ -526,7 +537,7 @@ function renderPhone() {
   const held = reqs.findIndex(x => [...ages.values()].some(a => a.id === x.id && a.secret)); // mid-way through making a backup key: stay on it
   if (held >= 0) { idx = held; listing = false; laterView = false; }
   if (laterView) return renderLater(el);
-  if (!reqs.length) { listing = false; el.innerHTML = `${asideNote()}<div class="quiet"><b>No calls waiting.</b><span>Enjoy your day.</span><button class="past-link" data-past-link>Your answered cards ›</button>${laterLink('past-link')}</div>`;
+  if (!reqs.length) { listing = false; el.innerHTML = `${asideNote()}<div class="quiet">${stateSign('phone')}<b>No calls waiting.</b><span>Enjoy your day.</span><button class="past-link" data-past-link>Your answered cards ›</button>${laterLink('past-link')}</div>`;
     el.querySelector('[data-past-link]').onclick = () => { sfx.blip(); openPast(); }; wireLaterLink(el); wireAside(el); paintLines(); return; } // (the company's apps' lines, here and below)
   idx = Math.min(idx, reqs.length - 1);
   if (listing) return renderList(el, reqs);
@@ -551,7 +562,7 @@ function renderPhone() {
   const asked = !keys && r.questions?.length ? r.questions : null; // questions as fields
   const pics = !login && !asking && !keys && !back && r.kind !== 'credential' && r.kind !== 'mail' && !call ? cardTray(r) : null; // pictures with the answer, as on the intercom: the cards jobs.ts takesPictures lets take them
   el.innerHTML = `
-    <nav class="pager"><button data-step="-1" ${idx ? '' : 'disabled'} aria-label="Previous">‹</button><button class="to-list" data-list aria-label="All cards, by topic (${idx + 1} of ${reqs.length})">${LIST}${idx + 1} of ${reqs.length}</button><button data-step="1" ${idx < reqs.length - 1 ? '' : 'disabled'} aria-label="Next">›</button>${LATER_BTN}</nav>
+    <nav class="pager">${arrowsAround(idx, idx < reqs.length - 1, 'Previous', 'Next', `<button class="to-list" data-list aria-label="All cards, by topic (${idx + 1} of ${reqs.length})">${LIST}${idx + 1} of ${reqs.length}</button>`)}${LATER_BTN}</nav>
     ${asideNote()}<article class="req u-${esc((r.urgency || '').replace(/\s+/g, '-'))}">
       <p class="meta"><span class="tag-k">${esc(r.kind || 'request')}</span> ${r.agent ? `from <b>${esc(who(r.agent))}</b> · ` : ''}${esc(ago(r.created))}${r.urgency ? ` · <em>${esc(r.urgency)}</em>` : ''}</p>
       <h3>${withJobLinks(r.title)}</h3>
@@ -559,11 +570,11 @@ function renderPhone() {
       ${pairsHtml(card.pairs)}${cardHtml(r, shownCard, clipsHtml(unpaired) + picsHtml(unpaired) + filesHtml(r))}${guest ? guestHtml(r) : ''}
       ${r.grants ? `<p class="grant">${esc(r.grants)}</p>` : ''}
       ${login ? '' : mail ? mailHtml(r, mail) : call ? callHtml(call, true) : asking ? `<label class="key">${esc(guest.name)}’s email address<input type="email" id="guest-email" autocomplete="off" spellcheck="false"></label><p class="hint">Asked once. The page sends a code there before it shows anything, and never shows the address.</p>`
-        : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key">${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${esc(refusedKeys.get(r.id)[k])}</p>` : ''}`).join('')
+        : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key">${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${SIGNS.problem}<span>${esc(refusedKeys.get(r.id)[k])}</span></p>` : ''}`).join('')
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
       <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
-      <div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode ? `<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : `>${PHONE}<span class="w">Call </span>${esc(who(r.agent))}`}</button>` : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
+      <div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode ? `<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="w">Call </span><span class="name">${esc(who(r.agent))}</span>`}</button>` : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
     </article>`;
   el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { idx += +b.dataset.step; forgetAge(); sfx.blip(); renderPhone(); });
   el.querySelector('[data-list]').onclick = () => {
@@ -644,7 +655,7 @@ function renderPhone() {
       if (pics) {   // pictures no longer waiting leave the tray, and the board looks before sending again
         pics.sending(batch, false);
         const missing = err.refusal?.missing;
-        if (missing) { pics.refused(batch, missing); if (showing()) $('#answer-msg').textContent = `${missing.length === 1 ? 'A picture is' : `${missing.length} pictures are`} no longer there, so nothing was sent. Check the pictures, then send again.`; return; }
+        if (missing) { pics.refused(batch, missing); if (showing()) tell($('#answer-msg'), `${missing.length === 1 ? 'A picture is' : `${missing.length} pictures are`} no longer there, so nothing was sent. Check the pictures, then send again.`); return; }
       }
       if (keys && why) { // the server says why, per field: each under its own; the others in it were saved
         if (Object.keys(why).length) {
@@ -655,12 +666,12 @@ function renderPhone() {
         if (!showing()) return; // the board has moved to another card: this one shows the reasons when it's back
         if (Object.keys(why).length) renderPhone();
         const done = Object.keys(secrets).filter(k => !why[k]).length;
-        $('#answer-msg').textContent = Object.keys(why).length ? `${done ? 'The rest is saved. ' : ''}Not saved: the reason is under the field.` : err.refusal.error;
+        tell($('#answer-msg'), Object.keys(why).length ? `${done ? 'The rest is saved. ' : ''}Not saved: the reason is under the field.` : err.refusal.error);
         return;
       }
-      if (showing()) $('#answer-msg').textContent = status === 400 ? (keys ? 'That didn’t go through: fill in at least one key, each copied whole into its own field.' : asked ? 'That didn’t go through: a question still needs its answer.' : shots ? 'That didn’t go through: a photo is still missing.' : files ? 'That didn’t go through: a file is still missing.' : zipsAsked ? 'That didn’t go through: a zip is still missing or being unpacked.' : 'That didn’t go through.')   // (if showing())
+      if (showing()) tell($('#answer-msg'), status === 400 ? (keys ? 'That didn’t go through: fill in at least one key, each copied whole into its own field.' : asked ? 'That didn’t go through: a question still needs its answer.' : shots ? 'That didn’t go through: a photo is still missing.' : files ? 'That didn’t go through: a file is still missing.' : zipsAsked ? 'That didn’t go through: a zip is still missing or being unpacked.' : 'That didn’t go through.')   // (if showing())
         : status === 507 ? 'The server has no room to file these right now. Nothing was sent. Try again later.'
-        : status ? `The server couldn’t save that (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try again.';
+        : status ? `The server couldn’t save that (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try again.');
     }
   };
   $('#send-answer')?.addEventListener('click', () => send(false));
@@ -699,6 +710,10 @@ function renderList(el, reqs) {
 // the same way. Both are still open. The waiting cards' list (and the empty phone) ends in a quiet "n for later", the
 // list of them, each with Bring back.
 const MOON = icon('moon');
+// A pager: its count between ‹ and › (next: whether there's one after), or the count alone where there's nothing either way,
+// no arrows that go nowhere.
+const arrowsAround = (at, next, back, on, count) => !at && !next ? count
+  : `<button data-step="-1" ${at ? '' : 'disabled'} aria-label="${back}">‹</button>${count}<button data-step="1" ${next ? '' : 'disabled'} aria-label="${on}">›</button>`;
 const LATER_BTN = `<button class="later-btn" data-later aria-expanded="false" title="Put this card aside until a day you pick">${MOON}<span>Later</span></button>`;
 let later = [], laterView = false; // the cards for later (GET /api/requests/later, while the phone is open), and whether the phone lists them
 // The card just put aside: the next screen says until when, with Undo, for a few seconds (style.css fades it)
@@ -748,11 +763,18 @@ function wireSnooze(el, r) {
     el.querySelector('.pager').insertAdjacentHTML('afterend', `<div class="later-pick" role="group" aria-label="Back on">
       <p>Off your ${esc(names.phone)} until</p>
       <div class="days">${laterDays(now, first).map(d => `<button data-day="${isoDay(d.day)}"><b>${d.label}</b><span>${esc(backOn(isoDay(d.day)))}</span></button>`).join('')}
-        <label class="pick-day"><b>Pick a day</b><input type="date" min="${min}" max="${max}" aria-label="Pick a day"></label></div></div>`);
+        <label class="pick-day"><b>Pick a day</b><span>On the calendar</span><input type="date" min="${min}" max="${max}" aria-label="Pick a day"></label></div></div>`);
     const pick = el.querySelector('.later-pick');
     pick.querySelectorAll('[data-day]').forEach(b => b.onclick = () => snooze(el, r, b.dataset.day));
-    const input = pick.querySelector('input');
-    input.onchange = () => { if (input.value >= min && input.value <= max) snooze(el, r, input.value); }; // (a year typed digit by digit passes through 0002…)
+    // Pick a day: a key like the others, the date field unseen over it opening the device's own calendar, and the day
+    // picked written out as theirs are
+    const input = pick.querySelector('input'), day = pick.querySelector('.pick-day span');
+    input.onclick = () => { try { input.showPicker(); } catch { /* (opened by the tap itself, or no picker to show) */ } };
+    input.onchange = () => {
+      if (!(input.value >= min && input.value <= max)) return; // (a year typed digit by digit passes through 0002…)
+      day.textContent = backOn(input.value);
+      snooze(el, r, input.value);
+    };
   };
 }
 async function snooze(el, r, day) {
@@ -772,7 +794,7 @@ async function snooze(el, r, day) {
     setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
   } catch {
     pick.querySelectorAll('button, input').forEach(b => b.disabled = false);
-    if (msg) msg.textContent = 'That didn’t go through. Try again in a minute.';
+    tell(msg, 'That didn’t go through. Try again in a minute.');
   }
 }
 // Bring back: the card comes back now, first, and the phone shows it
@@ -791,7 +813,7 @@ function renderLater(el) {
     ${later.length ? `<p class="past-cap">${later.length} for later, soonest first. Each comes back on its day, as a new card.</p>
     <ul class="later-list">${later.map(r => `<li><div><b>${withJobLinks(r.title)}</b><span class="meta">Back ${esc(backOn(r.day))}${r.agent ? ` · ${esc(who(r.agent))}` : ''}</span></div>
       <button data-now="${+r.id}">Bring back</button></li>`).join('')}</ul>`
-    : '<div class="quiet"><b>Nothing for later.</b><span>Cards you put aside wait here until their day.</span></div>'}`;
+    : `<div class="quiet">${stateSign('moon')}<b>Nothing for later.</b><span>Cards you put aside wait here until their day.</span></div>`}`;
   el.querySelector('[data-waiting]').onclick = () => {
     laterView = false;
     sfx.blip();
@@ -842,8 +864,9 @@ function checklistHtml(g) {
 // One way to invite outside people, the same on a guest card (a checklist) and a share for outside notes (a preview):
 // who's on it, each with where they stand, Send link (their own link, through the share sheet) and Remove (two taps),
 // and Invite (a name and an address) under them while it's open. Removing one and inviting another is a swap.
-// list: [{ name, address, colour, state, link, lang }] (lang: a guest's, the language their page and code email are in)
-const langPick = (lang, person) => `<select data-lang data-person="${esc(person)}" aria-label="${esc(person)}’s language">${[['nl', 'Nederlands'], ['en', 'English']].map(([v, l]) => `<option value="${v}"${lang === v ? ' selected' : ''}>${l}</option>`).join('')}</select>`;
+// list: [{ name, address, colour, state, link, lang }] (lang: a guest's, the language their page and code email are in,
+// picked from o.langs, the card's languages: [{ code, own }])
+const langPick = (lang, person, langs = []) => `<select data-lang data-person="${esc(person)}" aria-label="${esc(person)}’s language">${langs.map(l => `<option value="${esc(l.code)}"${lang === l.code ? ' selected' : ''}>${esc(l.own)}</option>`).join('')}</select>`;
 // o.titled: each name with the board's title for them, or a plus on its corner to give one; o.again: Recent, the people
 // to invite again with a tap ({ name, title }).
 const nameHtml = p => {
@@ -855,7 +878,7 @@ const againHtml = list => list.length ? `<p class="again">${list.map(r => `<butt
 // open: Remove on each; o.invite: the Invite form (open, unless the share only reopens)
 function peopleHtml(list, open, o = {}) {
   const invite = o.invite ?? open;
-  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at">${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name)}</div>` : ''}</div>
+  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at">${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
       <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
   // (Recent atop the form)
   return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
@@ -922,7 +945,7 @@ function guestHtml(r) {
   const state = p => !open ? '' : !p.address ? 'Needs an email address' : !g.mail ? 'Their link opens once email is set up'
     : !p.released ? 'Link not sent yet' : p.verified ? `Opened it ${ago(p.verified)}` : 'Hasn’t opened it yet';
   const invited = p => p.invitedBy ? `Invited by ${p.invitedBy} · ` : '';
-  return `${checklistHtml(g)}<p class="gsec">People</p>${peopleHtml(on.map(p => ({ ...p, state: invited(p) + state(p), link: p.share ?? null })), open)}
+  return `${checklistHtml(g)}<p class="gsec">People</p>${peopleHtml(on.map(p => ({ ...p, state: invited(p) + state(p), link: p.share ?? null })), open, { langs: g.languages })}
     ${open ? colleaguesHtml(g.colleagues) : '<p class="hint">The request is closed. Its page stays readable for 30 days.</p>'}`;
 }
 // The switch that lets the card's guests invite colleagues at their own email domain from their page (guests.ts), with how
@@ -938,7 +961,7 @@ function wireGuest(el, r) {
     const f = $('#guest-email');
     if (!f.value.trim() || !f.checkValidity()) { f.focus(); return; }
     try { await guestEmail(world.dev, r.id, f.value.trim()); f.value = ''; f.blur(); sfx.blip(); await again(); renderPhone(); }
-    catch { msg.textContent = 'That didn’t go through: check the address.'; }
+    catch { tell(msg, 'That didn’t go through: check the address.'); }
   });
   // Send link: their link as the latest poll has it, opened on the server before it's sent (one shared before the server
   // took it would answer 404). The share sheet still needs the tap, so where the wait used it up, the next tap sends.
@@ -1029,7 +1052,7 @@ function wireMail(el, r) {
       setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
     } catch (err) {
       buttons().forEach(b => b.disabled = false);
-      msg.textContent = err.refusal?.error ?? 'Could not reach the coordinator. Try again.';
+      tell(msg, err.refusal?.error ?? 'Could not reach the coordinator. Try again.');
     }
   };
   // the letter as it will go follows this card's boxes: drawn from them as the card opens (an edit kept from before, or
@@ -1110,7 +1133,7 @@ function wireCall(el, r) {
       setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
     } catch (err) {
       buttons().forEach(b => b.disabled = false);
-      msg.textContent = err.refusal?.error ?? 'Could not reach the coordinator. Try again.';
+      tell(msg, err.refusal?.error ?? 'Could not reach the coordinator. Try again.');
     }
   };
   // a call room's link stays on screen until Done (typing() holds the phone's redraws back), its card already off the list
@@ -1123,7 +1146,7 @@ function wireCall(el, r) {
     msg.textContent = 'Approved.';
     setRequests(store.list.filter(x => x.id !== r.id));
     $('#call-copy').onclick = async () => {
-      try { await navigator.clipboard.writeText(link); msg.textContent = 'Copied: paste it into a message'; sfx.blip(); } catch { msg.textContent = 'Couldn’t copy on this device'; }
+      try { await navigator.clipboard.writeText(link); msg.textContent = 'Copied: paste it into a message'; sfx.blip(); } catch { tell(msg, 'Couldn’t copy on this device'); }
     };
     $('#call-share')?.addEventListener('click', () => share({ url: link }, msg));
     $('#call-done').onclick = () => { sfx.blip(); el.querySelector('.call-link').remove(); renderPhone(); };
@@ -1132,7 +1155,7 @@ function wireCall(el, r) {
     const button = e.currentTarget;
     button.disabled = true;
     try { $('#call-number').textContent = (await calloutNumber(world.dev, r.id)).number; button.remove(); sfx.blip(); }
-    catch (err) { button.disabled = false; msg.textContent = /404$/.test(err.message) ? 'The number shows only while the call is still to come.' : 'Could not reach the coordinator. Try again.'; }
+    catch (err) { button.disabled = false; tell(msg, /404$/.test(err.message) ? 'The number shows only while the call is still to come.' : 'Could not reach the coordinator. Try again.'); }
   });
   $('#call-go').addEventListener('click', () => act(() => calloutApprove(world.dev, r.id), 'Approving…', 'Calling is approved.'));
   askAgain($('#call-decline'), { status: msg, label: 'Don’t call', again: 'Tap again to decline', question: `Don’t call? Nobody is called, and ${who(r.agent)} hears so.`,
@@ -1172,7 +1195,7 @@ const answerLine = r => r.status === 'done' ? `Taken off your ${names.phone}` : 
 function renderPast() {
   const el = $('#phone-screen'); if (!el || !past) return;
   const list = past.list;
-  if (!list) { el.innerHTML = `<div class="quiet"><b>The files didn’t open.</b><span>Could not reach the coordinator.</span><button class="past-link" data-again>Try again</button></div>`; el.querySelector('[data-again]').onclick = openPast; return; }
+  if (!list) { el.innerHTML = `<div class="quiet problem">${stateSign('alert')}<b>The files didn’t open.</b><span>Could not reach the coordinator.</span><button class="past-link" data-again>Try again</button></div>`; el.querySelector('[data-again]').onclick = openPast; return; }
   if (past.at >= 0 && list[past.at]) return renderPastCard(el, list, past.at);
   // (what a card has beyond its words; a held call's transcript)
   const has = r => [r.call?.transcript?.length && 'transcript', deckOf(r.body) && 'presentation', videos(r.body).length && `${videos(r.body).length} ${videos(r.body).length === 1 ? 'clip' : 'clips'}`,
@@ -1181,7 +1204,7 @@ function renderPast() {
   el.innerHTML = list.length ? `<p class="past-cap">${total} answered ${total === 1 ? 'card' : 'cards'}, newest first</p><ul class="past-list">${list.map((r, i) => `
     <li>${covered('', `data-card="${i}"`, r.title, `<b>${withJobLinks(r.title)}</b><span class="meta">${esc(day(r.answered || r.created))}${r.agent ? ` · ${esc(who(r.agent))}` : ''}${answerLine(r) ? ` · ${esc(answerLine(r).slice(0, 80))}` : ''}</span>${has(r) ? `<span class="has">${esc(has(r))}</span>` : ''}`)}</li>`).join('')}</ul>
     ${past.more ? `<button class="past-older" data-older>Older cards ›</button>` : ''}`
-    : `<div class="quiet"><b>Nothing answered yet.</b><span>Cards you answer are kept here.</span></div>`;
+    : `<div class="quiet">${stateSign('filed')}<b>Nothing answered yet.</b><span>Cards you answer are kept here.</span></div>`;
   el.querySelectorAll('[data-card]').forEach(b => b.onclick = () => { past.at = +b.dataset.card; sfx.blip(); renderPast(); el.scrollTop = 0; });
   const older = el.querySelector('[data-older]');
   if (older) older.onclick = async () => {
@@ -1196,7 +1219,7 @@ function renderPastCard(el, list, at) {
   const r = list[at], deck = deckOf(r.body), card = cardOf(r.body || ''), unpaired = pairsOf(r.body || '').rest, said = (r.answer || '').trim();
   const pick = card?.choices.find(ch => said.split('\n')[0].trim() === ch.label)?.label;
   el.innerHTML = `
-    <nav class="pager"><button data-step="-1" ${at ? '' : 'disabled'} aria-label="Newer">‹</button><button class="to-list" data-list>All answered · ${at + 1} of ${Math.max(past.total, list.length)}</button><button data-step="1" ${at < list.length - 1 || past.more ? '' : 'disabled'} aria-label="Older">›</button></nav>
+    <nav class="pager">${arrowsAround(at, at < list.length - 1 || past.more, 'Newer', 'Older', `<button class="to-list" data-list>All answered · ${at + 1} of ${Math.max(past.total, list.length)}</button>`)}</nav>
     <article class="req past">
       <p class="meta"><span class="tag-k">${esc(r.kind || 'request')}</span> ${r.agent ? `from <b>${esc(who(r.agent))}</b> · ` : ''}asked ${esc(day(r.created))}${r.answered ? ` · ${r.status === 'done' ? 'filed' : 'answered'} ${esc(day(r.answered))}` : ''}</p>
       <h3>${withJobLinks(r.title)}</h3>
@@ -1347,7 +1370,7 @@ async function share(shareData, msg) {
     catch (e) { if (e.name === 'AbortError') return; } // closed the sheet; anything else falls back to copying
   }
   try { await navigator.clipboard.writeText(shareData.url ?? shareData.text); msg.textContent = 'Copied: paste it into a message'; sfx.blip(); }
-  catch { msg.textContent = 'Couldn’t share or copy on this device'; }
+  catch { tell(msg, 'Couldn’t share or copy on this device'); }
 }
 
 // ---------------------------------------------------------------- questions on the desk phone
@@ -1462,7 +1485,7 @@ function shotsOf(r) {
   ];
 }
 function wirePhotos(el, r) {
-  const msg = t => { const m = $('#answer-msg'); if (m) m.textContent = t; };
+  const msg = (t, problem = false) => { const m = $('#answer-msg'); if (problem) tell(m, t); else if (m) m.textContent = t; };
   const catchUp = () => { if (stale && !typing()) renderPhone(); };
   el.querySelectorAll('input[data-photo]').forEach(inp => {
     const i = +inp.dataset.photo, box = inp.closest('.photo'), p = r.photos[i], key = `${r.id}:${i}`;
@@ -1496,7 +1519,7 @@ function wirePhotos(el, r) {
         msg(err === 'decode' ? 'Couldn’t read that picture. Try a photo from the camera or a JPEG.'
           : status === 413 ? 'That picture is too big to send. Try another one.'
           : status === 409 ? 'This request was already answered.'
-          : status ? `The server couldn’t save that photo (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try the photo again.');
+          : status ? `The server couldn’t save that photo (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try the photo again.', true);
       } finally {
         uploading--; inp.value = ''; box.classList.remove('busy'); catchUp();
       }
@@ -1536,7 +1559,7 @@ function documentFields(r) {
     <p class="hint">Pick each file as you downloaded it (a PDF, JPEG or PNG). It's kept exactly as it is and filed as mail to ${esc(to)} when you send.</p></div>`;
 }
 function wireDocuments(el, r) {
-  const msg = t => { const m = $('#answer-msg'); if (m) m.textContent = t; };
+  const msg = (t, problem = false) => { const m = $('#answer-msg'); if (problem) tell(m, t); else if (m) m.textContent = t; };
   const catchUp = () => { if (stale && !typing()) renderPhone(); };
   el.querySelectorAll('input[data-document]').forEach(inp => {
     const i = +inp.dataset.document, box = inp.closest('.file'), d = r.documents[i];
@@ -1550,7 +1573,7 @@ function wireDocuments(el, r) {
       picking = false;
       const file = inp.files?.[0];
       if (!file) return catchUp();
-      if (file.size > MAX_DOCUMENT) { inp.value = ''; msg('That file is too big to send (10 MB at most).'); return catchUp(); }
+      if (file.size > MAX_DOCUMENT) { inp.value = ''; msg('That file is too big to send (10 MB at most).', true); return catchUp(); }
       uploading++; box.classList.remove('missing'); box.classList.add('busy');
       try {
         const sent = await uploadDocument(world.dev, r.id, i, file, pct => msg(`Sending “${d.label}”… ${pct}%`));
@@ -1565,7 +1588,7 @@ function wireDocuments(el, r) {
           : status === 413 ? 'That file is too big to send (10 MB at most).'
           : status === 409 ? 'This request was already answered, or that file already filed.'
           : status === 507 ? 'The server has no room for files right now. Try again later.'
-          : status ? `The server couldn’t save that file (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try the file again.');
+          : status ? `The server couldn’t save that file (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try the file again.', true);
       } finally {
         uploading--; inp.value = ''; box.classList.remove('busy'); catchUp();
       }
@@ -1628,7 +1651,7 @@ function zipFields(r) {
     <p class="hint">Pick the zip as it is. It goes in parts: if the connection drops, it carries on by itself, or pick the same file again. The server unpacks it as it arrives, and leaves out what a computer can rebuild, like node_modules.</p></div>`;
 }
 function wireZips(el, r) {
-  const msg = t => { const m = $('#answer-msg'); if (m) m.textContent = t; };
+  const msg = (t, problem = false) => { const m = $('#answer-msg'); if (problem) tell(m, t); else if (m) m.textContent = t; };
   const catchUp = () => { if (stale && !typing()) renderPhone(); };
   el.querySelectorAll('input[data-zip-input]').forEach(inp => {
     const i = +inp.dataset.zipInput;
@@ -1664,13 +1687,13 @@ function wireZips(el, r) {
         msg('Sent. Unpacking it now…');
         paint();
         learn(await unpacked(r.id, i));
-        msg(latest().state === 'imported' ? 'Unpacked. Add your answer and send.' : `Couldn’t unpack it: ${latest().error}.`);
+        msg(latest().state === 'imported' ? 'Unpacked. Add your answer and send.' : `Couldn’t unpack it: ${latest().error}.`, latest().state !== 'imported');
         if (latest().state === 'imported') sfx.blip();
       } catch (err) {
         const status = +String(err?.message ?? '').match(/\d{3}$/)?.[0];
         msg(status === 507 ? 'The server has no room for a zip that big. Try a smaller one, without node_modules.'
           : status === 409 || status === 404 ? 'This request was already answered or closed, or the last zip is still being unpacked.'
-          : status ? `The server couldn’t take the zip (error ${status}). Pick it again to carry on.` : 'The connection dropped for too long. Pick the same file again to carry on.');
+          : status ? `The server couldn’t take the zip (error ${status}). Pick it again to carry on.` : 'The connection dropped for too long. Pick the same file again to carry on.', true);
         learn(await loadZipField(world.dev, r.id, i).catch(() => ({})));
         if (latest().state === 'importing') zipsStopped.set(at, 'No longer waiting: the request was answered or closed.');
       } finally {
@@ -1766,7 +1789,7 @@ function wireAddress(el, address) {
       const { addresses } = await removeAddress(world.dev, address.use);
       for (const x of store.list) if (x.address) x.addresses = addresses;
       address.use = null; sfx.blip(); renderPhone();
-    } catch { remove.disabled = false; $('#answer-msg').textContent = 'That address wasn’t removed. Try again in a minute.'; }
+    } catch { remove.disabled = false; tell($('#answer-msg'), 'That address wasn’t removed. Try again in a minute.'); }
   });
 }
 
@@ -1782,8 +1805,8 @@ const keyLabel = k => AGE.test(k) ? `${keyLabel(k.replace(AGE, ''))} key (public
 const AGE = /_AGE_RECIPIENT$/, ages = new Map(); // `${request}:${key}` → { id, secret, recipient } | { id, recipient, ready } | { id, fail }
 const forgetAge = () => { for (const [at, a] of ages) if (!a.ready) ages.delete(at); };
 function ageFlow(a, done) {
-  if (a?.fail) return `<p class="warn">This browser can’t make the key. Open ${esc(names.hq)} in a current Safari or Chrome.</p>`;
-  if (a?.ready) return `<p class="ready">${TICK}Public key ready: <code>${esc(a.recipient.slice(0, 8))}…${esc(a.recipient.slice(-4))}</code></p>`;
+  if (a?.fail) return alertHtml(`This browser can’t make the key. Open ${esc(names.hq)} in a current Safari or Chrome.`);
+  if (a?.ready) return alertHtml(`Public key ready: <code>${esc(a.recipient.slice(0, 8))}…${esc(a.recipient.slice(-4))}</code>`, 'done');
   if (a?.secret) return `<p class="hint">Your private key, shown this once:</p><div class="secret"><code>${esc(a.secret)}</code><button type="button" class="copy" data-age-copy>Copy</button></div>
     <p class="hint">Save it in your password manager now. ${esc(names.hq)} never keeps it, and without it no backup can be read.</p>
     <label>Paste it back from your password manager<input type="password" data-age-check autocomplete="off" spellcheck="false" autocapitalize="off"></label>
@@ -1834,7 +1857,7 @@ function dictate(field, mic, msg) {
   const show = () => { field.value = [base, ...d.parts.filter(Boolean)].filter(Boolean).join(' '); };
   d.rec = record({ lang: voiceLang(), onSegment: clip => { const i = d.parts.push('') - 1; d.pending.push(transcribe(clip, voiceLang()).then(text => { d.parts[i] = text; show(); }, () => { d.failed = true; })); } });
   d.show = show; mic.closest('.row').classList.add('on-air'); msg.textContent = 'Listening… tap the mic to stop'; sfx.micOn();
-  d.rec.ready.catch(err => { if (dictation !== d) return; dictation = null; mic.closest('.row').classList.remove('on-air'); msg.textContent = err?.name === 'NotAllowedError' ? `The microphone is blocked for ${names.hq}.` : 'Could not start the microphone.'; });
+  d.rec.ready.catch(err => { if (dictation !== d) return; dictation = null; mic.closest('.row').classList.remove('on-air'); tell(msg, err?.name === 'NotAllowedError' ? `The microphone is blocked for ${names.hq}.` : 'Could not start the microphone.'); });
 }
 async function stopDictation() {
   const d = dictation; if (!d || d.stopping) return;
@@ -1842,7 +1865,7 @@ async function stopDictation() {
   const clip = await d.rec.stop();
   d.mic.closest('.row').classList.remove('on-air');
   await Promise.all(d.pending);
-  if ((!d.parts.length || d.failed) && clip) { try { d.parts = [await transcribe(clip, voiceLang())]; } catch { d.msg.textContent = 'The transcriber isn’t available right now. Type it instead?'; dictation = null; return; } }
+  if ((!d.parts.length || d.failed) && clip) { try { d.parts = [await transcribe(clip, voiceLang())]; } catch { tell(d.msg, 'The transcriber isn’t available right now. Type it instead?'); dictation = null; return; } }
   d.show(); d.msg.textContent = d.parts.some(Boolean) ? 'Check the words, then send.' : 'No words came through. Try again?';
   dictation = null; d.field.focus();
 }
@@ -1883,12 +1906,10 @@ let boardLang = 'en';
 const voiceLang = () => boardLang;
 const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 // The line under the intercom: empty in the normal run of things. A real error (a call, a line, the microphone, the words or
-// a picture that didn't go through) shows as one, with its mark; it and any hint go when the board does something next.
-const ERROR_MARK = icon('alert');
+// a picture that didn't go through) shows as one, an alert (tell); it and any hint go when the board does something next.
 const say = (s, error = false) => {
   const m = $('#dir-msg'); if (!m) return;
-  m.classList.toggle('err', error && !!s);
-  if (error && s) m.innerHTML = `${ERROR_MARK}<span>${esc(s)}</span>`; else m.textContent = s;
+  if (error) tell(m, s); else m.textContent = s;
 };
 const micWhy = !TRANSCRIBER ? 'Voice is coming soon: the transcriber isn’t installed yet' : !window.isSecureContext ? `Voice needs ${names.hq} over https` : !canRecord ? 'This browser can’t record audio' : '';
 
@@ -2049,7 +2070,7 @@ function connect(c, hello) {
     else if (ev.type === 'tick') { c.audio.startSentence('tick'); c.ticking = true; } // (the line's tick while a tool step runs: not a sentence, but its own start too)
     // the line's own words when the agent can't answer (its seat at its limit, signed out, an error), from pickup on, until a
     // reply gets through: shown apart from what's being said, so they stay in view
-    else if (ev.type === 'notice') { const n = $('#call-note'); if (n) { n.textContent = ev.text ?? ''; n.hidden = !ev.text; } }
+    else if (ev.type === 'notice') { const n = $('#call-note'); if (n) { tell(n, ev.text ?? ''); n.hidden = !ev.text; } }
     else if (ev.type === 'clear') stopPlayback(c);
     else if (ev.type === 'picture') pictureState(c, ev);
     // the agent hung up once the board had said goodbye: as the Hang up button does
@@ -2104,7 +2125,7 @@ function lagging(c) {
     c.lagAt = now; c.lagMax = Math.max(c.lagMax ?? 0, behind); c.lagShown = Math.round(behind);
   } else if (c.lagAt && now - c.lagAt > CAUGHT_UP_MS) { c.audio.mark('caught up', undefined, c.lagMax); c.lagAt = c.lagMax = 0; }
   const n = $('#call-net'), text = c.lagAt ? `Weak connection: ${c.name} hears you about ${c.lagShown} s late.` : '';
-  if (n && n.textContent !== text) { n.textContent = text; n.hidden = !text; }
+  if (n && n.textContent !== text) { tell(n, text); n.hidden = !text; }
 }
 // What the call's screen says under its state about the call's sound (callaudio.js warn), until it's fine again
 const soundNote = why => !why ? ''
@@ -2113,7 +2134,7 @@ const soundNote = why => !why ? ''
   : why === 'starting' ? `The microphone isn’t starting. Check ${names.hq}’s microphone permission.`
   : `No sound from your microphone. ${microphoneFix(why)}`;
 function showSoundNote(text) {
-  const n = $('#call-mic'); if (n && n.textContent !== text) { n.textContent = text; n.hidden = !text; }
+  const n = $('#call-mic'); if (n && n.textContent !== text) { tell(n, text); n.hidden = !text; }
 }
 // ---- pictures on a call
 // While the call is live the board attaches or pastes a picture. Each one is redrawn as a JPEG (shrink()), uploaded for
@@ -2402,11 +2423,13 @@ const APPS = [
   ['seats', 'Seats', 'The team’s AI capacity', icon('app-seats'), 'team'],
   ['settings', 'Settings', 'Seats, alerts, look', icon('app-settings'), 'team'],
 ];
-// A job's link: the projects view at that job. With words being typed or on a call, it opens in a new HQ, leaving this one
-// as it is.
+// A job's link, wherever it is (a machine's key, an agent's panel or key, a card, HQ's search): what it's in closes, and
+// the projects view opens on the job's thread with its card in front. With words being typed or on a call, it opens in
+// a new HQ, leaving this one as it is.
 export function openJob(id) {
   if (typing() || call) { window.open(`/?open=jobs&job=${Number(id)}`, '_blank', 'noopener'); return; }
-  closeTool();
+  closeTool(); closePanel();
+  if (scene?.carded?.()) scene.focus({ kind: 'home' });   // (a look’s key out big)
   openProjects({ job: id });
 }
 // (opts.mail opens Mail at that message; opts.call Calls at that call; opts.notes opens Reviews at a product's notes, see
@@ -2900,8 +2923,9 @@ async function notes(el) {
       notesBusy = false; notes(el); refreshWaitingNotes(); toldReview();
     };
     // discarding can't be undone: the first tap asks, the second does it. The discarded notes no longer count on the
-    // viewer's Send. (steady: the row beside it stays put.)
-    const ask = askAgain(drop, { status: msg, label: 'Discard', again: () => `Tap again to discard ${chosen().length}`, question: 'Discarded notes can’t be brought back.', steady: true,
+    // viewer's Send. (steady: the row beside it stays put. Asking, the key says only "Sure?", no wider than Discard, so
+    // it keeps its own word's size; the line under it says what a second tap does.)
+    const ask = askAgain(drop, { status: msg, label: 'Discard', again: 'Sure?', question: () => `Tap again to discard ${noteCount(chosen().length)} for good.`, steady: true,
       act: () => {
         const ids = chosen();
         busy('Discarding…', () => discardNotes(world.dev, ids), r => {

@@ -251,19 +251,20 @@ pockets = {'en': pocket, 'nl': TTSModel.load_model(language='dutch', temp=0.7),
 NOT_IN_DUTCH = {'bill_boerst'}
 voice_states = {}  # by language and voice
 # Pocket TTS says the same words differently each time (its noise from torch's one generator): fixed words kept in SAID
-# are made from this seed, so the take every caller hears after a restart is the same one, a known take rather than a
-# chance bad one. Another call's speech at that moment draws from the generator
-# too, and only then is the take another. 8 is the clearest of 16 seeds for the Dutch opening, which reads back word
-# for word (the note "The team's voices").
+# are made from a seed, so the take every caller hears after a restart is the same one, a known take rather than a
+# chance bad one. Another call's speech at that moment draws from the generator too, and only then is the take another.
+# A care call's ticket can name the seed per language (`seeds`: one the company heard read back right in its voice);
+# this one where it names none.
 SEED = 8
-# The audio of fixed words said before (a care call's opening), by language, voice and text: played at once the next
-# time, as synthesis can't start the first words sooner than its first piece
+# The audio of fixed words said before (a care call's opening), by language, voice, text and seed: played at once the
+# next time, as synthesis can't start the first words sooner than its first piece
 SAID = {}
-# Piper's voices, by speaker, each a native speaker of its language (both CC0): alex speaks Dutch for a voice Pocket TTS
-# garbles it in, and either speaks its language on a care call whose ticket names it (the company's voice there:
-# `voices`, which may name one of Pocket TTS's voices instead)
+# Piper's voices, by speaker, each a native speaker of its language (all CC0): alex speaks Dutch for a voice Pocket TTS
+# garbles it in, and any speaks its language on a care call whose ticket names it (the company's voice there:
+# `voices`, which may name one of Pocket TTS's voices instead). kerstin: a woman's German.
 PIPERS = {name: PiperVoice.load(str(MODELS / f'{model}.onnx'))
-          for name, model in (('alex', 'nl_NL-alex-medium'), ('thorsten', 'de_DE-thorsten-medium'))}
+          for name, model in (('alex', 'nl_NL-alex-medium'), ('thorsten', 'de_DE-thorsten-medium'),
+                              ('kerstin', 'de_DE-kerstin-low'))}
 # Letters Pocket TTS reads as a word of the language: "AI" was "een ei" in Dutch and "eine Key" in German, KI "Key"
 # too. Spelled as said, read back right through the phone 6 times in 6 ("aa-ie") and 5 in 6 ("Ka-I"); never with dots
 # ("A.I."), where it stops as at a sentence's end. Piper reads "AI" right as it is.
@@ -617,7 +618,7 @@ class Care:
     no seat, no pictures: care keeps the words, so the line keeps no transcript (kind 'care')."""
     kind = 'care'
 
-    def __init__(self, agent, sid, lang, langs=(), voice=None, voices=None, respell=None):
+    def __init__(self, agent, sid, lang, langs=(), voice=None, voices=None, respell=None, seeds=None):
         self.agent, self.sid, self.lang = agent, sid, lang
         # the opening's languages, in order (HQ's, by the caller's number), and the voice in a language where the company
         # names one of the line's own
@@ -626,6 +627,8 @@ class Care:
         self.voices = {k: v for k, v in (voices or {}).items()
                        if k in ('nl', 'de', 'en') and isinstance(v, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', v)}
         self.voice = voice if isinstance(voice, str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', voice) else VOICE
+        # the seed of the fixed words in a language where the company names one (SEED)
+        self.seeds = {k: v for k, v in (seeds or {}).items() if k in ('nl', 'de', 'en') and type(v) is int and v >= 0}
         self.respell = respell or {}
         self.conversation, self.words, self.langs = None, {}, []
         # Agent's settings that a care call has none of
@@ -1695,7 +1698,8 @@ class Call:
         named = named or ('alex' if lang == 'nl' and self.brain.voice in NOT_IN_DUTCH else None)
         piper = PIPERS.get(named)
         voice = named or self.brain.voice
-        kept = (lang, voice, text)
+        seed = getattr(self.brain, 'seeds', {}).get(lang, SEED)
+        kept = (lang, voice, text, seed)
         if keep and kept in SAID:
             for x in SAID[kept]:
                 if stop.is_set():
@@ -1720,7 +1724,7 @@ class Call:
                     if (lang, voice) not in voice_states:
                         voice_states[lang, voice] = model.get_state_for_audio_prompt(voice)
                     if keep:
-                        torch.manual_seed(SEED)
+                        torch.manual_seed(seed)
                     for c in model.generate_audio_stream(voice_states[lang, voice], spelled(text, lang), stop=stop):
                         loop.call_soon_threadsafe(q.put_nowait, resample(c.numpy().astype(np.float32), model.sample_rate, RATE))
             finally:
@@ -2073,9 +2077,10 @@ async def care_call(ws, send, clear, ticket, call_sid):
     ends. The care agent's hang_up tells HQ (phone-done) before the stream closes, so HQ hangs up; every other end closes the stream
     alone, and HQ plays its recorded message (care refused the start, a turn care can't answer, the time limit). Returns
     the call and its time limit's task, or no call (refused: the stream is closed)."""
-    langs, voices = ticket.get('langs'), ticket.get('voices')
+    langs, voices, seeds = ticket.get('langs'), ticket.get('voices'), ticket.get('seeds')
     brain = Care(ticket['agent'], call_sid, language(ticket.get('lang')), langs if isinstance(langs, list) else (),
-                 ticket.get('voice'), voices if isinstance(voices, dict) else {}, ticket.get('respell'))
+                 ticket.get('voice'), voices if isinstance(voices, dict) else {}, ticket.get('respell'),
+                 seeds if isinstance(seeds, dict) else {})
 
     async def hang_up():
         brain.ended = 'hung_up'

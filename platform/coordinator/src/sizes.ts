@@ -1,17 +1,13 @@
-// Every size a work job was given besides the estimate tool's own (its stored prediction, predictions.ts): the sizer's
-// (sizer.ts, by its model) and an agent's (hq estimate set), each with when, the done jobs it stands on, why, and which
-// version of the job's brief it sized. The latest counts (predictions.ts latestSizes); the earlier ones stay, so a miss
-// can be traced to whoever sized the job.
+// Saved queue-time estimates, their evidence, and the CEO's explicit revisions.
 import { createHash } from 'node:crypto';
 import { db, redacted } from './db.ts';
 import { ceo } from './company.ts';
-import { findThread, ownerOf } from './projects.ts';
-import { ORIGIN, type JobOrigin } from './matching.ts';
+import { ORIGIN, cleanPastJobs, type JobOrigin } from './matching.ts';
 import { MODEL as SIZER } from './smallmodel.ts';
 import { duration } from '../../worker/hq/waits.ts';
 
 // by: the sizer's model ('haiku') or an agent's id. low_ms and high_ms: none for an agent's one number. brief: the hash
-// of the prompt it sized (briefOf), so a brief changed by hq extend is due to be sized again.
+// of the prompt it sized (briefOf), kept as evidence when the brief changes.
 db.exec(`create table if not exists sizes (id integer primary key, job integer not null, at text not null, by text not null,
   agent_ms real not null, low_ms real, high_ms real, refs text not null, why text not null, brief text not null);
   create index if not exists sizes_job on sizes (job)`);
@@ -31,6 +27,26 @@ export type GivenSize = {
 type Row = Omit<GivenSize, 'refs'> & { refs: string };
 
 export const briefOf = (prompt: string) => createHash('sha256').update(prompt).digest('hex').slice(0, 16);
+
+export type QueuedSize = { agent_ms: number; refs: number[]; why: string };
+export function readQueuedSize(given: { size?: unknown; refs?: unknown; why?: unknown }): QueuedSize | string {
+  if (typeof given.size !== 'string')
+    return 'inspect hq estimate for comparable scopes, then give --size and --why when queueing the work';
+  const agentMs = readSize(given.size);
+  if (typeof agentMs === 'string') return agentMs;
+  if (typeof given.why !== 'string' || !given.why.trim())
+    return 'give --why: how the scope compares with the past jobs, or why none is comparable';
+  const refs = given.refs ?? [];
+  if (!Array.isArray(refs) || refs.some(id => !Number.isSafeInteger(id) || id <= 0))
+    return '--refs takes the comparable done job numbers';
+  const clean = new Set(cleanPastJobs().map(j => j.id));
+  if (refs.some(id => !clean.has(id))) return 'each estimate reference must be a done job with clean recorded time';
+  return { agent_ms: agentMs, refs: [...new Set(refs)], why: given.why.trim() };
+}
+
+export function recordQueued(job: number, by: string, prompt: string, size: QueuedSize) {
+  record({ job, by, brief: briefOf(prompt), low_ms: null, high_ms: size.agent_ms, ...size });
+}
 
 export function record(size: Omit<GivenSize, 'at'>, now = Date.now()) {
   db.prepare(
@@ -78,9 +94,7 @@ const shown = ({ id: _id, ...row }: Row & { id?: number }): GivenSize => ({
   refs: JSON.parse(row.refs) as number[],
 });
 
-// hq estimate set #n <time> ["why"]: the CEO, the job's queuer, its thread's owner or its own agent (once the work
-// outgrows its brief: the worker's briefing asks it) re-sizes a queued or running
-// work job, one number of agent time. The answer is the size, or why not with its status.
+// Only the CEO revises a saved estimate when a task slips. Earlier estimates remain in history.
 const WHY_MAX = 300,
   MOST_MS = 48 * 3_600_000;
 export function setSize(job: number, time: string, why: string, by: string, now = Date.now()) {
@@ -107,12 +121,9 @@ export function setSize(job: number, time: string, why: string, by: string, now 
     return refused(409, `job #${job} is ${found.status}: only a queued or running job is re-sized`);
   if (found.origin !== 'work')
     return refused(409, `job #${job} is HQ's own (a fix or a merge): the play sizes it from history`);
-  // (its thread's owner: its project's.)
-  const thread = found.thread ? findThread(found.thread) : undefined;
-  const owner = thread && ownerOf(thread);
-  if (![ceo(), found.queued_by, owner, found.agent].includes(by))
-    return refused(403, `only the CEO, whoever queued #${job}, its thread's owner or its own agent re-sizes it`);
-  const size = { job, by, agent_ms: agentMs, low_ms: null, high_ms: null, refs: [], why: oneLine(why, WHY_MAX) };
+  if (by !== ceo()) return refused(403, 'only the CEO changes a saved estimate when work slips');
+  if (!why.trim()) return refused(400, 'give the reason the saved estimate needs changing');
+  const size = { job, by, agent_ms: agentMs, low_ms: null, high_ms: agentMs, refs: [], why: oneLine(why, WHY_MAX) };
   record({ ...size, brief: briefOf(found.prompt) }, now);
   return size;
 }
@@ -125,10 +136,7 @@ export function readSize(time: string, field: 'time' | 'size' = 'time') {
   return ms;
 }
 
-// A claimed work job its agent may re-size (hq estimate set: work an agent queued, not a fix or a merge), with the size
-// the play counts and whose it is: its briefing asks the agent to re-size it once the work outgrows its brief, and an
-// agent that doesn't know its size can't tell. `size` is null while the job has none yet.
-//
+// The saved estimate and its author for a claimed task's briefing.
 export function withSize<T extends { id: number; kind: string } | null>(job: T) {
   if (job?.kind !== 'work') return job;
   const row = db
@@ -144,11 +152,7 @@ export function withSize<T extends { id: number; kind: string } | null>(job: T) 
 }
 
 const sizedBy = (given: GivenSize | undefined) =>
-  !given
-    ? 'the estimate tool, on done jobs like it'
-    : given.by === SIZER
-      ? 'the sizer'
-      : `${given.by}, with hq estimate set`;
+  !given ? 'the estimate tool, on done jobs like it' : given.by === SIZER ? 'the sizer' : given.by;
 
 const refused = (status: 400 | 403 | 404 | 409, why: string): [number, string] => [status, why];
 

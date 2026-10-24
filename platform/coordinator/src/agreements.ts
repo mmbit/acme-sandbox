@@ -1,6 +1,6 @@
 // What the board agreed on its calls that still stands, and the work on each: the CEO's follow-through check reads it
 // (followthrough.ts) and hands failed work on it back (takeover.ts).
-import { db } from './db.ts';
+import { db, prepared } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
 import * as memory from './memory.ts';
@@ -77,13 +77,11 @@ export function ended() {
 
 // The list for the CEO's job `reader`: the board's words only from a call hq call would show it.
 export function agreedPart(open: OpenByID, reader: jobs.Reader) {
+  const shown = callsShown(reader);
   const lines = agreements().map(a => {
-    if (a.status !== 'open') {
-      if (memory.callAccess(a.call, reader) !== true)
-        return `- item #${a.id} (call ${a.call}, ${a.kind}, ${a.status}): left out (hq call doesn't show this call to this job)`;
-      if (memory.customerCall(a.call)) jobs.handedCustomerData(reader.id);
-    }
-    const words = a.kind === 'decision' && a.ceo_call ? `\n  The board's words: ${wordsOf(a, reader)}` : '';
+    if (a.status !== 'open' && !shown(a.call))
+      return `- item #${a.id} (call ${a.call}, ${a.kind}, ${a.status}): left out (hq call doesn't show this call to this job)`;
+    const words = a.kind === 'decision' && a.ceo_call ? `\n  The board's words: ${wordsOf(a, shown)}` : '';
     const carriers = JSON.parse(a.carriers) as number[];
     const work = carriers.length
       ? carriers.map(id => workState(id, open)).join('; ')
@@ -97,12 +95,25 @@ export function agreedPart(open: OpenByID, reader: jobs.Reader) {
   return `What the board agreed and still stands:\n${lines.join('\n') || '- nothing'}`;
 }
 
-// The quote as hq call would give it to the reader (memory.ts callAccess: not a live call's, one carried from a card for
-// keys or one about a customer it may not read), and a customer call's reader holds their details from then on.
-function wordsOf(a: Pick<Agreement, 'call' | 'quote'>, reader: jobs.Reader) {
-  if (memory.callAccess(a.call, reader) !== true)
-    return `left out (hq call ${a.call} doesn't show this call to this job)`;
-  if (memory.customerCall(a.call)) jobs.handedCustomerData(reader.id);
+// Whether hq call would show a call to the CEO's job `reader` (memory.ts callAccess: not a live call's, one carried from
+// a card for keys or one about a customer it may not read), each call read once however many items it has; a customer
+// call's reader holds their details from then on.
+function callsShown(reader: jobs.Reader) {
+  const shown = new Map<number, boolean>();
+  return (call: number) => {
+    let ok = shown.get(call);
+    if (ok === undefined) {
+      ok = memory.callAccess(call, reader) === true;
+      if (ok && memory.customerCall(call)) jobs.handedCustomerData(reader.id);
+      shown.set(call, ok);
+    }
+    return ok;
+  };
+}
+
+// The quote as hq call would give it to the reader (`shown`: callsShown's)
+function wordsOf(a: Pick<Agreement, 'call' | 'quote'>, shown: (call: number) => boolean) {
+  if (!shown(a.call)) return `left out (hq call ${a.call} doesn't show this call to this job)`;
   return `"${clip(a.quote)}"`;
 }
 
@@ -112,21 +123,21 @@ export function itemWords(id: number, reader: jobs.Reader) {
   const item = db.prepare('select call, kind, what, quote from call_items where id = ?').get(id) as
     Pick<Agreement, 'call' | 'kind' | 'what' | 'quote'> | undefined;
   if (!item) return `item #${id} (not found)`;
-  if (memory.callAccess(item.call, reader) !== true)
-    return `item #${id}: left out (hq call doesn't show this call to this job)`;
-  return `item #${id} (call ${item.call}, ${item.kind}): ${item.what}\n    The board's words: ${wordsOf(item, reader)}`;
+  const shown = callsShown(reader);
+  if (!shown(item.call)) return `item #${id}: left out (hq call doesn't show this call to this job)`;
+  return `item #${id} (call ${item.call}, ${item.kind}): ${item.what}\n    The board's words: ${wordsOf(item, shown)}`;
 }
 
-// A job's state in a line: open (as hq jobs says it), or how it ended and where its pull request stands.
+// A job's state in a line: open (as hq jobs says it), or how it ended and where its pull request stands. (Its status and
+// branch from db.ts jobs_state.)
 function workState(id: number, open: OpenByID) {
   const known = open.get(id);
   if (known) return known.line;
-  const ended = db
-    .prepare(
-      `select j.status, (select '#' || p.number || ' ' || p.status from prs p
-        where p.branch = coalesce(j.branch, 'job/' || j.id) order by p.number desc limit 1) pr from jobs j where j.id = ?`,
-    )
-    .get(id) as { status: string; pr: string | null } | undefined;
+  const ended = prepared(
+    `select j.status, (select '#' || p.number || ' ' || p.status from prs p
+        where p.branch = coalesce(j.branch, 'job/' || j.id) order by p.number desc limit 1) pr from jobs j indexed by jobs_state
+        where j.id = ?`,
+  ).get(id) as { status: string; pr: string | null } | undefined;
   if (!ended) return `job #${id} (not found)`;
   const replacement = jobs.replacementOf(id);
   const taken = replacement

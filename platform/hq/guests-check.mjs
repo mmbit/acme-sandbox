@@ -61,6 +61,12 @@ const two = {
     revoked: false,
     verified: null,
     lang: 'nl',
+    // (the card's languages, German too)
+    languages: [
+      { code: 'nl', own: 'Nederlands' },
+      { code: 'en', own: 'English' },
+      { code: 'de', own: 'Deutsch' },
+    ],
     status: 'open',
     closed: null,
     before: null,
@@ -342,6 +348,11 @@ assert.equal(releases().length, 1, "Lot's open link is shared without opening it
 assert.deepEqual(await page.$$eval('[data-lang]', l => l.map(s => [s.dataset.person, s.value])), [
   ['Lot', 'nl'],
   ['Karen', 'nl'],
+]);
+assert.deepEqual(await page.$$eval('[data-lang][data-person="Karen"] option', l => l.map(o => o.textContent)), [
+  'Nederlands',
+  'English',
+  'Deutsch',
 ]);
 await Promise.all([
   page.waitForResponse(r => r.url().endsWith('/api/guest/lang')),

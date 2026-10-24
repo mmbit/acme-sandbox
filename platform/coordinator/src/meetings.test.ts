@@ -15,7 +15,6 @@ const memory = await import('./memory.ts');
 const { tick } = await import('./schedule.ts');
 const company = await import('./company.ts');
 const { planChange } = await import('./db.ts');
-const sizes = await import('./sizes.ts');
 const { codeOf } = await import('./jobcodes.ts');
 const { PROMPT_CHARS } = await import('./smallmodel.ts');
 
@@ -555,67 +554,12 @@ test("the tally is of the meeting's latest inputs: every size settled, gone with
   const { meeting } = await setMeeting();
   const { wren, bolt, juno } = await startSeats(3);
   t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
-  // (time passes for the sizer's tries while the seats' worker keeps reporting them, as it does every minute)
-  const pass = async (ms: number) => {
-    t.mock.timers.tick(ms);
-    for (const seat of [wren, bolt, juno]) await h.heartbeat(seat);
-  };
-  const ended = Date.now() - 24 * 3_600_000;
-  for (const minutes of [10, 20, 30])
-    h.pastJob({
-      agent: 'moss',
-      title: 'Due work',
-      run: { started: ended - minutes * 60_000, ended },
-      merged: ended + 3_600_000,
-    });
-  const work = h.jobs.createJob({
-    agent: 'moss',
-    title: 'Due work',
-    prompt: 'Build it',
-    thread: h.dueThread(),
-    queuedBy: 'moss',
-  }).id;
-  const first = (await h.worker('sizes/claim')).body;
-  assert.equal(first.job, work);
-  await h.worker('sizes/answer', { job: work, brief: first.brief, error: 'fetch failed' });
-  await pass(11 * 60_000);
-  const second = (await h.worker('sizes/claim')).body;
-  assert.equal(second.job, work);
-  const { brief } = second;
   for (const seat of [wren, bolt]) await h.agent('meetings/hand-in', seat.token, { changed: 'nothing' });
   const tallied = () => JSON.parse(meetings.meeting(meeting)!.tally ?? 'null');
   const close = () => h.agent('meetings/close', juno.token, post('We build it'));
 
   meetingseats.sweep();
-  assert.deepEqual(tallied(), { waiting: [{ job: work, failed: false }] }, 'a size still to come holds the tally');
-  await pass(11 * 60_000);
-  meetingseats.sweep();
-  assert.deepEqual(
-    tallied(),
-    { waiting: [{ job: work, failed: true }] },
-    'an unanswered final try expires: it needs a size by hand',
-  );
-  assert.match(JSON.stringify((await close()).body), new RegExp(`#${work}.*hq estimate set`));
-  await h.worker('sizes/answer', { job: work, brief, error: 'fetch failed' });
-  meetingseats.sweep();
-  assert.deepEqual(
-    tallied(),
-    { waiting: [{ job: work, failed: true }] },
-    'every try failed: it waits for a size by hand',
-  );
-  assert.match(JSON.stringify((await close()).body), new RegExp(`#${work}.*hq estimate set`));
-  sizes.record({
-    job: work,
-    by: 'moss',
-    agent_ms: 3_600_000,
-    low_ms: 1_800_000,
-    high_ms: 7_200_000,
-    refs: [],
-    why: 'x',
-    brief,
-  });
-  meetingseats.sweep();
-  assert.ok(tallied()?.at, 'settled: the tally plays');
+  assert.ok(tallied()?.at, 'saved queue-time estimates let the tally play immediately');
 
   planChange({ project: 'due', what: 'a task moved', by: 'juno' });
   assert.equal(tallied(), null, "the chair's own plan change takes the tally back");

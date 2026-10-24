@@ -278,7 +278,9 @@ const stream = (ticket: string) =>
 
 // The voice line trades a ticket (once) for who the caller wants to talk to. A care ticket also brings the languages
 // of the opening (openingLanguages), the agent's voice and its voice per language where brand.yaml's phoneLine.voices
-// names one (the line's own voices for a language), and the company's respellings (langs and voices for the hellos).
+// names one (the line's own voices for a language), the seed per language its fixed words are made from where
+// phoneLine.seeds names one (a take the company has heard read back right), and
+// the company's respellings (langs and voices for the hellos).
 export function redeem(ticket: string) {
   const t = tickets.get(ticket);
   tickets.delete(ticket);
@@ -288,6 +290,9 @@ export function redeem(ticket: string) {
   const voices = Object.entries(brand().phoneLine?.voices ?? {}).filter(
     ([l, v]) => l in SAY && typeof v === 'string' && /^[a-z][a-z0-9_-]{0,31}$/.test(v),
   );
+  const seeds = Object.entries(brand().phoneLine?.seeds ?? {}).filter(
+    ([l, s]) => l in SAY && Number.isSafeInteger(s) && (s as number) >= 0,
+  );
   return {
     agent: t.agent,
     lang: t.lang,
@@ -295,6 +300,7 @@ export function redeem(ticket: string) {
     langs: t.langs ?? [t.lang],
     ...(typeof voice === 'string' && voice ? { voice } : {}),
     ...(voices.length ? { voices: Object.fromEntries(voices) } : {}),
+    ...(seeds.length ? { seeds: Object.fromEntries(seeds) } : {}),
     respell: respellings(),
   };
 }

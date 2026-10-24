@@ -21,6 +21,7 @@ export function drop(pr: number) {
 }
 
 // Each statement names the relationship once. All predicates below read these relations, without further recursion.
+// A job read by id for its status or branch comes from db.ts jobs_state, never its row.
 export function query(sql: string, waiter?: string) {
   return `with recursive ${relations(waiter)} ${sql}`;
 }
@@ -163,7 +164,7 @@ function steps() {
         on coalesce(source.branch, 'job/' || source.id) = +r.branch and source.kind = 'work'
         where r.job is not null
       union all select r.replaces, r.job, 'lands', j.status = 'cancelled' from job_replacement_links r
-        join jobs j on j.id = r.job)`;
+        join jobs j indexed by jobs_state on j.id = r.job)`;
 }
 
 // Holds inherit every saved-work ancestor. Redraws follow only live takeovers and later accepted redraws.
@@ -182,7 +183,7 @@ function endpoints() {
     redraw_states as materialized (
       select t.origin, coalesce(j.branch, 'job/' || j.id, t.origin) branch, t.job,
         case when p.status = 'closed' and d.dropped then 'dropped' else coalesce(p.status, 'open') end state
-      from redraw_targets t left join jobs j on j.id = t.job
+      from redraw_targets t left join jobs j indexed by jobs_state on j.id = t.job
       left join review_branches p on p.branch = coalesce(j.branch, 'job/' || j.id, t.origin)
       left join redraw_origins d on d.pr = p.number),
     redraw_current as materialized (

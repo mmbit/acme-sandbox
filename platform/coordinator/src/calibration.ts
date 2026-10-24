@@ -24,7 +24,7 @@ function sizeMisses(done: PastJob[]) {
   const sizes = latestSizes();
   const sized = done.flatMap(j => {
     const size = sizes.get(j.id);
-    return size ? [{ j, size }] : [];
+    return size && size.at <= j.finished ? [{ j, size }] : [];
   });
   const grouped = (keyOf: (s: (typeof sized)[number]) => string) => {
     const groups = new Map<string, [number, number][]>();

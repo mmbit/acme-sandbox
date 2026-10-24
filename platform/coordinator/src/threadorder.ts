@@ -207,13 +207,15 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
 const DRAINING = "planning is switching off: it starts once its thread branch's work has opened its pull request";
 
 // The open threads with no task yet, each played as one piece of its owner's work under its name and "done when"
-// (sized by predictions.ts prepared), with ids of their own below hq when's
+// (sized by predictions.ts prepared), with ids of their own below hq when's. A thread's tasks are read from jobs_tasks,
+// whose condition is the task's: left to the planner, it takes jobs_thread_state and reads every job row of each open
+// thread for its kind and pull request, past the brief (a second a play on a cold file).
 export function placeholders(): Omit<Planned, 'size'>[] {
   if (!on()) return [];
   const empty = db
     .prepare(
-      `select t.* from threads t where t.status = 'open' and not exists (select 1 from jobs j where j.thread = t.id
-      and j.kind = 'work' and j.pr is null and j.status != 'cancelled') order by t.created, t.id`,
+      `select t.* from threads t where t.status = 'open' and not exists (select 1 from jobs j indexed by jobs_tasks
+      where j.thread = t.id and j.kind = 'work' and j.pr is null and j.status != 'cancelled') order by t.created, t.id`,
     )
     .all() as Thread[];
   return empty.flatMap((t, i) => {

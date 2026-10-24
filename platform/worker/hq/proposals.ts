@@ -67,15 +67,20 @@ export const inbox = {
                                                      for the CEO what no owner has), then what became of your own
                                                      proposals; <id>: one proposal's brief; --all: the CEO's view of
                                                      every open proposal, whoever's it is
-   hq inbox accept <id> --code WORD [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]
+   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]
                                                      its project's owner (or the CEO) queues it as a job with its
                                                      proposer's brief, in a thread of their plan: the one named, else the
                                                      one proposed, else the proposer's job's when it's in that project.
                                                      --code: its task's word, as hq job's; --for: who takes it (a review
-                                                     follow-up bundle's), else the one it was proposed for
-   hq inbox accept findings:<pr> --for <agent> --findings <id,id,...> [--thread <thread>]
-                                                     draw one fix task naming its review findings, in the reviewed thread
-                                                     a closed item: --for and --thread draw replacement work and move its waits
+                                                     follow-up bundle's), else the one it was proposed for; --title: the
+                                                     task's, else the proposal's. HQ's own from a template (a held job, a
+                                                     follow-up bundle) needs --title, for what it does: a held job keeps
+                                                     its brief and agent and starts (--code only if it has none)
+   hq inbox accept findings:<pr> --for <agent> --findings <id,id,...> [--title "..."] [--thread <thread>]
+                                                     draw one fix task naming its review findings, in the reviewed thread,
+                                                     under the reviewer's title for them (--title when they're under more
+                                                     than one); a closed item: --for and --thread draw replacement work
+                                                     and move its waits
    hq inbox drop <id> "why"                          its owner (or the CEO) drops it, why in a line the proposer hears${messageInbox.help}`,
 
   async run(given: string[]) {
@@ -114,7 +119,13 @@ function line(p: Proposal) {
 }
 
 async function accept(given: string[]) {
-  const { values, args: remaining } = takeValues(given, ['--for', '--findings', '--code'], 'Not accepted');
+  const { values, args: remaining } = takeValues(
+    given,
+    ['--for', '--findings', '--code', '--title', '--size', '--refs', '--why'],
+    'Not accepted',
+  );
+  if (values.refs !== undefined && !/^#?[1-9][0-9]*(,#?[1-9][0-9]*)*$/.test(values.refs))
+    stop('Not accepted: --refs takes past job numbers, comma-separated');
   const { thread, newThread, args } = takeThread(remaining);
   const [id, ...rest] = args;
   // Old briefs and memories pass a numeric priority after the proposal id.
@@ -124,21 +135,30 @@ async function accept(given: string[]) {
     );
   if (!INBOX_ID.test(id ?? '') || rest.length)
     stop(
-      'usage: hq inbox accept <id> --code WORD [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]',
+      'usage: hq inbox accept <id> --code WORD [--title "..."] [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]',
     );
   const body = {
+    ...(values.size && { size: values.size }),
+    ...(values.why && { why: values.why }),
+    refs: values.refs?.split(',').map(id => Number(id.replace('#', ''))) ?? [],
     id: id.startsWith(FINDINGS) ? id : Number(id),
     ...(values.for && { for: values.for }),
     ...(values.findings && { findings: values.findings }),
     ...(values.code && { code: values.code }),
+    ...(values.title && { title: values.title }),
     ...(thread !== undefined && { thread }),
     ...(newThread !== undefined && { newThread }),
   };
   const answer = await api.call('proposals/accept', { body });
-  const queued = api.parseOrNull(answer.body) as { job?: number; code?: string | null; thread?: string | null } | null;
+  const queued = api.parseOrNull(answer.body) as {
+    job?: number;
+    code?: string | null;
+    thread?: string | null;
+    sorted?: boolean;
+  } | null;
   if (!api.isSuccess(answer.status) || !queued?.job) stop(`Not accepted: ${api.errorIn(answer.body, 'no answer')}`);
   print(
-    `Queued as job #${queued.job}${queued.code ? ` ${text(queued.code)}` : ''}${queued.thread ? `, in ${text(queued.thread)}` : ''}.`,
+    `${queued.sorted ? 'Sorted' : 'Queued'} as job #${queued.job}${queued.code ? ` ${text(queued.code)}` : ''}${queued.thread ? `, in ${text(queued.thread)}` : ''}.`,
   );
 }
 

@@ -6,9 +6,10 @@ import { db, prepared } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as pauses from './pauses.ts';
 import { ORIGIN } from './matching.ts';
+import { configuredPlans } from './seatcapacity.ts';
 import { fillRates } from './headroom.ts';
 import { pacingOn, STOP_DEFAULT } from './seats.ts';
-import { reviewPlans } from './reviewplan.ts';
+import { reviewPlans, type ProspectiveRun } from './reviewplan.ts';
 import * as threadorder from './threadorder.ts';
 import { unloop } from './plancycles.ts';
 import { plannerCapacity } from './room.ts';
@@ -58,13 +59,16 @@ type Row = {
 //
 export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = []): Snapshot {
   const queue = orderingSnapshot(now, planned),
-    capacity = plannerCapacity(now);
+    capacity = plannerCapacity(now),
+    measured = fillRates(now);
   return {
     ...queue,
     seats: seats(),
+    seatPlans: configuredPlans(),
+    seatMeasurements: Object.fromEntries([...measured.values()].flatMap(r => [...r.measurements])),
     pacing: pacingOn(),
     rates: Object.fromEntries(
-      [...fillRates(now)].map(([engine, r]) => [
+      [...measured].map(([engine, r]) => [
         engine,
         { week: Object.fromEntries(r.week), five: Object.fromEntries(r.five) },
       ]),
@@ -79,8 +83,10 @@ export function orderingSnapshot(
   now: number,
   planned: Omit<Planned, 'size'>[] = [],
   keepLoops = false,
+  prospective?: ProspectiveRun,
 ): OrderingSnapshot {
   const rows = queueRows(now);
+  if (prospective) rows.push({ ...plannedRow({ ...prospective, title: 'Review round' }, now), ...prospective });
   const open = new Map(rows.map(r => [r.id, r]));
   const lastId = Math.max(0, ...rows.map(row => row.id));
   rows.push(...planned.map(p => plannedRow(p, now)));
@@ -101,7 +107,7 @@ export function orderingSnapshot(
       ),
     ),
     held = heldWindows(),
-    rounds = reviewPlans(now);
+    rounds = reviewPlans(now, prospective);
   const byPr = Map.groupBy(rows, row => row.pr);
   const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, pauses.holding(thread)]));
   const queued = rows.map((row, index) => {
@@ -316,7 +322,7 @@ const released = (id: number) =>
 type Wake = { kind: string; arg: string };
 function wakeOf(wake: Wake, c: Context): QueuedJob['wakes'][number] {
   if (wake.kind === 'at') return { at: Number(wake.arg) };
-  if (wake.kind === 'followed' || wake.kind === 'ended') return { at: c.now };
+  if (wake.kind === 'followed' || wake.kind === 'ended' || wake.kind === 'sorted') return { at: c.now }; // (sorted)
   if (wake.kind !== 'deployed')
     return { at: c.now + c.lag * (wake.kind === 'deploy' ? Number(wake.arg) : 1), deploy: true };
   const job = wake.arg.startsWith('pr:')

@@ -2,7 +2,7 @@
 // like it (matching.ts), which jobs those were and what they matched on, and when the queue's play (eta.ts) said it
 // would start, end and merge. The play runs again from these stored sizes whenever it's asked, with no agent involved,
 // and hq estimate --accuracy sets each prediction against what happened.
-import { db } from './db.ts';
+import { columnsOf, db, once } from './db.ts';
 import { OPEN_JOBS } from './jobs.ts';
 import {
   ORIGIN,
@@ -29,7 +29,13 @@ import * as threadorder from './threadorder.ts';
 // (storedSizes).
 db.exec(`create table if not exists predictions (job integer primary key, made text not null, agent_ms real not null,
   picks text not null, basis text not null, guessed integer not null default 0, start integer,
-  done integer, eta integer, slow_agent_ms real)`);
+  done integer, eta integer, slow_agent_ms real, outlook_saved integer not null default 0)`);
+once('2026-10-23-queued-outlooks', () => {
+  if (!columnsOf('predictions').includes('outlook_saved')) {
+    db.exec('alter table predictions add column outlook_saved integer not null default 0');
+    db.exec('update predictions set outlook_saved = 1');
+  }
+});
 
 // With fewer than a few done jobs of its origin to go on (a new company), a first guess, and the basis says so. A slow
 // size with too few picks to measure it (a guess, or a stored row whose picks left the record) is half as long again.
@@ -59,6 +65,31 @@ function slowOf(picks: PastJob[], usual: Size): Size {
 }
 
 type Row = Size & { job: number; picks: string; basis: string; guessed: number; slow_agent_ms: number | null };
+
+export function recordQueued(job: number, now = Date.now(), schedule?: Run) {
+  const work = db
+    .prepare(
+      `select j.agent, j.title, ${ORIGIN} origin from jobs j where j.id = ? and j.kind = 'work'
+      and not exists(select 1 from predictions p where p.job = j.id)`,
+    )
+    .get(job) as Work | undefined;
+  if (!work) return;
+  const given = latestGiven([job]).get(job);
+  const predicted = given ? undefined : predict({ ...work, ...(schedule ?? runOf(job)) });
+  const agentMs = given?.agent_ms ?? predicted!.size.agent_ms;
+  db.prepare(
+    `insert or ignore into predictions (job, made, agent_ms, picks, basis, guessed, slow_agent_ms)
+    values (?, ?, ?, ?, ?, ?, ?)`,
+  ).run(
+    job,
+    new Date(now).toISOString(),
+    agentMs,
+    JSON.stringify(given?.refs ?? predicted!.picks.map(j => j.id)),
+    JSON.stringify(predicted?.basis ?? { kind: work.origin, agent: work.agent, words: [] }),
+    predicted?.guessed ? 1 : 0,
+    given ? (given.high_ms ?? given.agent_ms) : predicted!.slow.agent_ms,
+  );
+}
 // A job's prediction as it was stored: its size, the done jobs it compared against (those still on record) and on what.
 export function stored(job: number, pool = pastJobs()): Prediction | undefined {
   const row = db.prepare('select * from predictions where job = ?').get(job) as Row | undefined;
@@ -70,16 +101,16 @@ export function stored(job: number, pool = pastJobs()): Prediction | undefined {
   return { size, slow: storedSizes([job]).get(job)!.slow, picks, basis: JSON.parse(row.basis) as Basis, guessed };
 }
 
-// Every minute (server.ts): open work that has no prediction yet gets one, and its first outlook with it. A scheduled
-// job's with its run.
-export function sweep(now = Date.now()) {
+// The minute's sweep stores missing sizes, then saves each open job's first outlook from that minute's play.
+// Saved queue-time sizes stay fixed. Legacy work gets its default once before the play.
+export function sweep(now = Date.now(), played: (now: number) => Map<number, Outlook> = outlook) {
   const missing = db
     .prepare(
       `select j.id, j.agent, j.title, ${ORIGIN} origin, ${RUN_COLUMNS} from jobs j ${RUN_JOIN} where j.kind = 'work'
       and j.status in ${OPEN_JOBS} and not exists (select 1 from predictions p where p.job = j.id)`,
     )
     .all() as ({ id: number; agent: string; title: string; origin: JobOrigin } & Run)[];
-  if (!missing.length) return;
+  if (!missing.length) return recordFirstOutlooks(now, played);
   const pool = pastJobs();
   const insert = db.prepare(`insert into predictions (job, made, agent_ms, picks, basis, guessed,
     slow_agent_ms) values (?, ?, ?, ?, ?, ?, ?)`);
@@ -89,12 +120,23 @@ export function sweep(now = Date.now()) {
     const made = new Date(now).toISOString();
     insert.run(job.id, made, size.agent_ms, picked, JSON.stringify(basis), guessed ? 1 : 0, slow.agent_ms);
   }
-  const outlooks = outlook(now);
+  recordFirstOutlooks(now, played);
+}
+
+function recordFirstOutlooks(now: number, played: (now: number) => Map<number, Outlook>) {
+  const unplayed = db
+    .prepare(
+      `select p.job from predictions p join jobs j on j.id = p.job
+    where p.outlook_saved = 0 and j.status in ${OPEN_JOBS}`,
+    )
+    .all() as { job: number }[];
+  if (!unplayed.length) return;
+  const outlooks = played(now);
   // (the column eta holds the outlook's merge time, as hq estimate --accuracy reads it)
-  const first = db.prepare('update predictions set start = ?, done = ?, eta = ? where job = ?');
-  for (const job of missing) {
-    const seen = outlooks.get(job.id);
-    if (seen) first.run(seen.start, seen.done, seen.merged, job.id);
+  const first = db.prepare('update predictions set start = ?, done = ?, eta = ?, outlook_saved = 1 where job = ?');
+  for (const { job } of unplayed) {
+    const seen = outlooks.get(job);
+    first.run(seen?.start ?? null, seen?.done ?? null, seen?.merged ?? null, job);
   }
 }
 
@@ -159,37 +201,34 @@ export function heldTo(usual: Outlook, slow: Outlook) {
   return Math.ceil(merged / ROUND_TO_MS) * ROUND_TO_MS;
 }
 
-// What both paces' sizes read from the record, read once a play: the stored predictions and the latest sizes of its jobs
-// only, the review runs' times, and work without a stored prediction sized on
-// the spot on done work, a scan of every done job: a job just queued, done work still in review, which the sweep never
-// sizes, or a drawn thread with no task yet (`drawn`). The server keeps each spot size for the hour (keepSpotSizes, at
-// its start: forecast.ts), and the done work it read with them, so a play doesn't size the same work again, nor read
-// every done job again for a job just queued; a test or a one-off keeps them for the play.
+// Each play reads saved task sizes and measured review times. Legacy tasks without a prediction get one persisted
+// default at first use. Drawn threads have no task yet, so their provisional sizes are cached for the hour.
 type FromRecord = ReturnType<typeof recordFor>;
 const SPOT_KEPT_MS = 3600_000;
 let spotKept: { made: Map<string, Prediction>; pool?: PastJob[] } | undefined,
   spotFrom = 0;
 export const keepSpotSizes = () => void (spotKept ??= { made: new Map() });
+// Provisional drawn-thread sizes renew each hour, or last for this read if none are kept.
+function spotSizes(now: number) {
+  if (spotKept && now - spotFrom >= SPOT_KEPT_MS) [spotKept, spotFrom] = [{ made: new Map() }, now];
+  return spotKept ?? { made: new Map<string, Prediction>() };
+}
 export function recordFor(now: number, jobs: Pick<QueuedJob, 'id'>[]) {
   const ids = jobs.flatMap(job => (job.id > 0 ? [job.id] : []));
-  const stored = storedSizes(ids);
-  if (spotKept && now - spotFrom >= SPOT_KEPT_MS) [spotKept, spotFrom] = [{ made: new Map() }, now];
-  const spot = spotKept ?? { made: new Map<string, Prediction>() };
+  const saved = storedSizes(ids);
+  const spot = spotSizes(now);
   const kept = (key: string, work: () => Work) => {
     if (!spot.made.has(key)) spot.made.set(key, predict(work(), (spot.pool ??= pastJobs())));
     return spot.made.get(key)!;
   };
-  const predicted = (job: QueuedJob) =>
-    kept(`${job.id}\n${job.agent}\n${job.origin}\n${job.title}`, () => ({
-      title: job.title,
-      origin: job.origin,
-      agent: job.agent,
-      ...runOf(job.id),
-    }));
+  const predicted = (job: QueuedJob) => {
+    recordQueued(job.id, now);
+    return stored(job.id, (spot.pool ??= pastJobs()))!;
+  };
   // (by its owner and words: its placeholder's number moves as other threads are drawn or get a task.)
   const drawn = (p: { agent: string; title: string }) =>
     kept(`drawn\n${p.agent}\n${p.title}`, () => ({ title: p.title, origin: 'work', agent: p.agent }));
-  return { stored, latest: latestSizes(ids, stored), loop: loopSizes(now), predicted, drawn };
+  return { stored: saved, latest: latestSizes(ids, saved), loop: loopSizes(now), predicted, drawn };
 }
 
 // The play's per-job hours: a work job's stored prediction (work older than the predictions, or one the sweep hasn't

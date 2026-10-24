@@ -109,20 +109,25 @@ test("an app on a shelf is asked under its own path", async () => {
 
 test('wrong email, wrong number and a real order give the same answer after the same minimum time', async () => {
   // four of each: a fifth failure on one order number would slow it down (the next test)
-  const run = (order: string, email: string) => Promise.all(Array.from({ length: 4 }, () =>
-    timed(() => gate.matchOrder(session.create('shop').session, ip(), order, email))));
-  // beside them, a plain timer of the floor's length: a busy machine is as late with it as with the floor's own
-  const [wrongEmail, wrongNumber, real, broken, plain] = await Promise.all([
+  const run = (order: string, email: string, shop = 'shop') => Promise.all(Array.from({ length: 4 }, () =>
+    timed(() => gate.matchOrder(session.create(shop).session, ip(), order, email))));
+  const [wrongEmail, wrongNumber, real, broken] = await Promise.all([
     run('ORD-7', 'someone@example.com'), run('ORD-999', 'ada@example.com'), run('ORD-3', 'ada@example.com'),
-    Promise.all([timed(() => gate.matchOrder(session.create('broken').session, ip(), 'ORD-3', 'ada@example.com'))]),
-    timed(() => new Promise(r => setTimeout(r, 600))),
+    run('ORD-3', 'ada@example.com', 'broken'),
   ]);
   for (const x of [...wrongEmail, ...wrongNumber, ...broken]) assert.equal(JSON.stringify(x.r), '{"ok":false,"why":"no-match"}');
   for (const x of real) assert.equal(x.r.ok, true);
   const times = [...wrongEmail, ...wrongNumber, ...real, ...broken].map(x => x.ms);
   assert.ok(Math.min(...times) >= 595, `all at the floor or above: ${Math.min(...times)} ms`);
-  const later = Math.max(...times) - plain.ms;
-  assert.ok(later < 150, `the real order's slower lookup doesn't show: ${later} ms after the floor`);
+  // each kind by its middle time, against every other kind either way: a busy machine makes a few of any kind late,
+  // while a lookup that shows (a floor counted after it instead of from the start) makes every one of its kind later
+  const middle = (xs: { ms: number }[]) => {
+    const ms = xs.map(x => x.ms).sort((a, b) => a - b);
+    return (ms[Math.floor((ms.length - 1) / 2)] + ms[Math.ceil((ms.length - 1) / 2)]) / 2;
+  };
+  const middles = [wrongEmail, wrongNumber, real, broken].map(middle);
+  const apart = Math.max(...middles) - Math.min(...middles);
+  assert.ok(apart < 150, `no kind of answer shows by its time: ${apart} ms between them (${middles.join(', ')})`);
 });
 
 test('failed matches are limited per IP, and a much-tried order slows down without locking its owner out', async () => {

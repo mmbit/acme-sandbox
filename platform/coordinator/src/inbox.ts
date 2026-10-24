@@ -1,5 +1,5 @@
 // Shared storage for proposals and owner-directed review findings.
-import { db, redacted, once } from './db.ts';
+import { db, redacted, once, lacks } from './db.ts'; // (lacks)
 
 // agent, job: the proposer and its job; for_agent: who it proposes does the work (the proposer when null); thread: the
 // thread it proposes; project: the project whose owner decides it (null: the CEO); heard_by: the owner's planning job
@@ -14,12 +14,17 @@ redacted('proposals', 'title', 'brief', 'why');
 
 db.exec(`create table if not exists review_inbox (pr integer primary key, proposal integer not null unique,
   round integer not null, branch text not null, agent text not null, decision text not null, summary text not null,
-  findings text not null, thread text, project text);
+  findings text not null, thread text, project text, touchups text);
   create table if not exists review_fix_tasks (job integer primary key, pr integer not null, round integer not null, findings text not null)`);
 db.exec(
   `create table if not exists review_holds (branch text not null, job integer not null, primary key (branch, job))`,
 );
 redacted('review_inbox', 'summary', 'findings');
+// touchups: the title the consolidator gave its touch-ups' check (reviewinbox.ts).
+once(
+  '2026-10-22-review-inbox-touchups',
+  () => lacks('review_inbox', 'touchups') && db.exec('alter table review_inbox add column touchups text'),
+);
 
 // A review inbox item names the ruling that made it (proposals.job): those from before, the round's last consolidation.
 once(

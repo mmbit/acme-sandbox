@@ -10,6 +10,7 @@ import { ORIGIN, REPO_DIR } from './config.ts';
 import { db } from './db.ts';
 import { frontmatter, names } from './company.ts';
 import { sendToBoard } from './push.ts';
+import { LANGUAGES, type BoardLanguage } from './language.ts';
 
 type Show = {
   id: string;
@@ -21,7 +22,6 @@ type Show = {
   about?: string;
   minutes?: number;
 };
-const LANGUAGE: Record<string, string> = { en: 'English', nl: 'Nederlands' };
 const ID = /^[a-z0-9-]+$/,
   EPISODE = /^\d{4}-\d{2}-\d{2}(-\d+)?$/;
 db.exec('create table if not exists onair_keys (show text primary key, key text not null)');
@@ -36,6 +36,8 @@ export function shows(): Show[] {
     return [];
   }
 }
+// a feed's language by its own name (Nederlands), from the platform's list
+const ownName = (l: string) => (Object.hasOwn(LANGUAGES, l) ? LANGUAGES[l as BoardLanguage].own : l);
 const languages = (s: Show) => (s.languages?.length ? s.languages : ['en']).filter(l => /^[a-z]{2}$/.test(l));
 
 // Newest first: per language its title and summary (the script's front matter), its sound and its video if it has one
@@ -103,7 +105,7 @@ export const board = () =>
       run: `show-${s.id}`,
       feeds: languages(s).map(l => ({
         lang: l,
-        language: LANGUAGE[l] ?? l,
+        language: ownName(l),
         url: feed(s, l),
         ...(all.some(e => e.langs[l]?.video) ? { video: feed(s, `${l}.video`) } : {}),
       })),
@@ -154,7 +156,7 @@ export function outside(path: string, given: string | null) {
         `<guid isPermaLink="false">${xml(`${s.id}/${e.id}/${lang}${video ? '/video' : ''}`)}</guid><pubDate>${new Date(`${e.date}T06:00:00Z`).toUTCString()}</pubDate></item>`
       );
     });
-  const also = [...(languages(s).length > 1 ? [LANGUAGE[lang] ?? lang] : []), ...(video ? ['video'] : [])],
+  const also = [...(languages(s).length > 1 ? [ownName(lang)] : []), ...(video ? ['video'] : [])],
     title = also.length ? `${s.name} (${also.join(', ')})` : s.name;
   return {
     xml:

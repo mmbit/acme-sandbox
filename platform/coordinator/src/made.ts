@@ -27,10 +27,9 @@ export function oneTaskThread(project: string | null | undefined, job: { id: num
     return null;
   }
   const { id: projectId } = named!;
-  const name = job.title.length > NAME_MAX ? `${job.title.slice(0, NAME_MAX - 1)}…` : job.title;
   const made = createThread({
     project: projectId,
-    name,
+    name: oneTaskName(job.title),
     goal: `Job #${job.id}'s work is done and merged`,
     slug: `job-${job.id}`,
     oneTask: true,
@@ -44,6 +43,9 @@ export function oneTaskThread(project: string | null | undefined, job: { id: num
   } else if (due) setWindow(made, due, 'hq');
   return made.id;
 }
+
+// The name of HQ's one-task thread for a job: its title, cut to a thread name's length with an ellipsis that shows it
+export const oneTaskName = (title: string) => (title.length > NAME_MAX ? `${title.slice(0, NAME_MAX - 1)}…` : title);
 
 // Whether a thread is HQ's one-task thread for a job of its own (as oneTaskThread names it).
 export function oneTask(thread: string) {
@@ -61,9 +63,11 @@ export function made(kind: MadeKind, app: string, job: { id: number; title?: str
 // A job HQ made about a product (the watch's about a live app: watch.ts), the same way in the project its product.yaml
 // declares (`project:`)
 export function madeForProduct(app: string, job: { id: number; title?: string }, due?: Due) {
-  oneTaskThread(manifest(app)?.project as string | undefined, titled(job), due);
+  oneTaskThread(productProject(app), titled(job), due);
   return job.id;
 }
+// The project a product's product.yaml declares (owed.ts, feedback.ts sort its jobs there.)
+export const productProject = (app: string) => manifest(app)?.project as string | undefined;
 
 // The code of a standing job of HQ's this kind and app (each run of it: jobcodes.ts), its word in the project made()
 // puts it in, as it's made.

@@ -85,6 +85,36 @@ export function days(now = Date.now()) {
   }));
 }
 
+// What's on the company's plate now (HQ's throughput, at the foot of its home): jobs waiting (queued, or held for the
+// board's card), at work, and done in the last 24 hours, each split into the review loop's (reviews and their rulings)
+// and the rest; the done ones also hour by hour, oldest first, [work, reviews] each. A call's chat isn't work.
+const HOURS = 24;
+export function piles(now = Date.now()) {
+  const out = { waiting: { work: 0, review: 0 }, active: { work: 0, review: 0 }, done: { work: 0, review: 0 } };
+  const rows = db
+    .prepare(
+      `select case status when 'running' then 'active' else 'waiting' end pile,
+        kind in ('review', 'consolidate') review, count(*) n
+      from jobs where kind != 'chat' and status in ('queued', 'blocked', 'running')
+      group by pile, review`,
+    )
+    .all() as { pile: 'waiting' | 'active'; review: number; n: number }[];
+  for (const { pile, review, n } of rows) out[pile][review ? 'review' : 'work'] += n;
+  const hours = Array.from({ length: HOURS }, () => [0, 0]),
+    done = db
+      .prepare(
+        `select finished, kind in ('review', 'consolidate') review from jobs
+        where kind != 'chat' and status = 'done' and finished >= ?`,
+      )
+      .all(new Date(now - HOURS * 36e5).toISOString()) as { finished: string; review: number }[];
+  for (const { finished, review } of done) {
+    const ago = Math.floor((now - Date.parse(finished)) / 36e5);
+    hours[HOURS - 1 - Math.min(HOURS - 1, Math.max(0, ago))][review]++;
+    out.done[review ? 'review' : 'work']++;
+  }
+  return { ...out, done: { ...out.done, hours } };
+}
+
 // Each agent's last 7 days: jobs done (and each day's, oldest first) and pull requests merged, and the last work job
 // they finished (Wire's cards), by its title as the board reads it (boardnames.ts)
 export function agents(now = Date.now()) {

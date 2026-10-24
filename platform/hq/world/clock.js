@@ -4,6 +4,7 @@
 import { clamp } from '../util.js';
 import { HOLIDAYS, holidaysOn } from '../../../shared/holidays/holidays.js';
 import { formats } from '../../../shared/format/format.js';
+import { clock, fromNow as fromNowAt } from '../../../shared/signs/signs.js';
 
 let fixedHour = NaN, fixedDate = null, lapsing = null, day; // day: the date and holidays checkDay last saw
 let founded, celebrated; // the brand's calendar: its founding 'MM-DD' and the holidays it keeps
@@ -78,8 +79,7 @@ export function dayTime(ms, { weekday = true, separator = ', ', timeZoneName = f
   const time = f.time(at, 'en', labelZone ? { timeZoneName: 'short' } : {});
   return `${f.day(f.dayAt(at), 'en', { weekday, short: true })}${separator}${time}`;
 }
-// "16:40" today, "Thu 09:00" on another day
-export function clockWhen(ms) {
-  const f = companyFormats(), day = f.dayAt(new Date(ms));
-  return day === f.today() ? timeOf(ms) : `${f.weekday(day, 'en', { short: true })} ${timeOf(ms)}`;
-}
+// The design system's time words (shared/signs) on the company's clock: "16:40" today, "Thu 09:00" on another day, and
+// when something's due, "25 min", "1½ h", "Thu", "Thu 29 Oct"
+export const clockWhen = ms => clock(ms, { timeZone: zone });
+export const fromNow = ms => fromNowAt(ms, { timeZone: zone });

@@ -3,6 +3,7 @@
 import * as api from './api.ts';
 import { present, print, stop, text } from './output.ts';
 
+// (in any of the platform's languages)
 export const search = {
   help: `
    hq search "query" [limit]                         search the Handbook, playbooks, department pages, briefs, the knowledge
@@ -10,9 +11,9 @@ export const search = {
                                                      make pictures, decks, films, sound and copy; the company's own notes
                                                      win where they disagree), the board's calls with everyone (and their
                                                      summaries), the intercom, and your own job reports and requests, by meaning and
-                                                     by words ("what we're for" finds the mission, in English or Dutch;
-                                                     "#32" and a product's name hit exactly); each hit says where to read it (a
-                                                     file:line, hq history '#id', hq call <id> or hq intercom <day>).
+                                                     by words ("what we're for" finds the mission, in any of the platform's
+                                                     languages; "#32" and a product's name hit exactly); each hit says where to
+                                                     read it (a file:line, hq history '#id', hq call <id> or hq intercom <day>).
                                                      The archive (knowledge/archive/: replaced or finished) comes last,
                                                      after every current hit, each with its "Archived … by …" line`,
 

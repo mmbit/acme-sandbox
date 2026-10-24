@@ -6,6 +6,7 @@ import { workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
 import { fitIn, mean, wholeSeconds } from './arithmetic.ts';
 import type { ReviewPlan, ReviewStage } from './rounds.ts';
+import { ownerOf } from './projects.ts';
 
 const WEEK_MS = 7 * 24 * 60 * 60_000,
   GUESS_MS = 15 * 60_000,
@@ -34,6 +35,7 @@ type Run = {
   status: string;
 };
 type Measurement = { engine: string; kind: string; ms: number };
+export type ProspectiveRun = Run & { branch: string; thread: string | null };
 type Work = {
   opensReview?: boolean;
   id: number;
@@ -46,8 +48,8 @@ type Work = {
   agent: string;
 };
 
-export function reviewPlans(now: number) {
-  const record = records(now),
+export function reviewPlans(now: number, prospective?: ProspectiveRun) {
+  const record = records(now, prospective),
     actors = panelActors(record);
   return (work: Work): ReviewPlan | undefined => {
     if (work.opensReview === false || work.kind !== 'work' || work.origin === 'fix' || work.origin === 'merge')
@@ -72,6 +74,8 @@ export function reviewPlans(now: number) {
     const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
     const current = Math.max(1, pr?.round ?? 1);
     const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
+    const undrawn = pr && !fixing && undrawnFix(pr, record.undrawn);
+    if (undrawn) return undrawn;
     const count = Math.max(current + Number(fixing), record.counts.get(pr?.review_class ?? panel) ?? 1);
     const selection = pr ? record.selections.get(pr.number) : undefined;
     const reviewers = panelMembers(
@@ -93,6 +97,27 @@ export function reviewPlans(now: number) {
   };
 }
 
+// Ruled "changes" with its findings in the owner's inbox and no fix task drawn: no merge until someone draws one
+function undrawnFix(pr: PullRequest, undrawn: Map<number, string>): ReviewPlan | undefined {
+  const owner = undrawn.get(pr.number);
+  if (owner === undefined) return undefined;
+  return {
+    ...{ panel: pr.panel ?? 'records', count: 0, stages: [], terminal: null, unresolved: true },
+    waiting: `its review asked for changes and no fix task is drawn (findings:${pr.number}, ${owner}'s to decide)`,
+  };
+}
+
+// Each pull request whose round's "changes" ruling waits in its owner's inbox, and that owner
+const undrawnOwners = () =>
+  new Map(
+    (
+      prepared(
+        `select r.pr, r.project from review_inbox r join proposals q on q.id = r.proposal join prs p on p.number = r.pr
+        where q.status = 'open' and r.decision = 'changes' and p.round = r.round and p.status in ('open', 'stuck')`,
+      ).all() as { pr: number; project: string | null }[]
+    ).map(u => [u.pr, ownerOf(u)]),
+  );
+
 function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
   if (!action?.merges) return undefined;
   if (!action.author) return { resolutionAt: now + RULING_SWEEP_MS };
@@ -100,7 +125,7 @@ function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
   return undefined;
 }
 
-function records(now: number) {
+function records(now: number, prospective?: ProspectiveRun) {
   const prs = prepared(
     'select number, branch, author, panel, review_class, round, status, files, links, sha, since from prs order by number',
   ).all() as PullRequest[];
@@ -113,6 +138,7 @@ function records(now: number) {
     left join review_fix_tasks f on f.job = j.id join prs p on p.number = coalesce(f.pr, j.pr)
     where p.status in ('open', 'board', 'stuck') order by coalesce(j.seq, j.id), j.id`,
   ).all() as Run[];
+  if (prospective) runs.push(prospective);
   // jobs_run_sizes covers the jobs columns here to skip wide job rows (db.ts).
   const measured = prepared(
     `select j.engine, case when j.stage = 'triage' then 'triage' else j.kind end kind,
@@ -130,6 +156,7 @@ function records(now: number) {
     branches: new Map(prs.map(pr => [pr.branch, pr])),
     selections: recordedSelections(),
     runs: Map.groupBy(runs, run => run.pr),
+    undrawn: undrawnOwners(),
     counts: new Map(
       [...panels].map(([panel, prs]) => [
         panel,

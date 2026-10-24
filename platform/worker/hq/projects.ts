@@ -40,6 +40,7 @@ export const projectLines = {
 };
 
 // (help reads the company's line for a project when it's shown)
+// (hq project business in the help and the usage line below)
 export const project = {
   get help() {
     return `
@@ -52,6 +53,8 @@ export const project = {
                                                      the prefix of its tasks' codes (HQ-COVERS), its own for good.${asHelp(companyLevels().lines.project)}
    hq project code <project> XX                      the CEO gives a project made before codes its prefix, once
    hq project owner <project> <agent>                the CEO names a project's owner
+   hq project business <project> <business | none>   the CEO moves a project into a business (one of projects.yaml's),
+                                                     or out of any: its id, code and threads stay
    hq project rename <project> "name"                the CEO's: the name only. A project under a new id is hq project
                                                      new, its threads moved there (hq thread move), then hq project done
    hq project done <project>                         a finished project leaves the lists (its owner or the CEO), once it
@@ -64,13 +67,14 @@ export const project = {
     if (action === 'resume') return pauses.resume('project', args);
     if (action === 'new') return newProject(args);
     if (action === 'owner') return setOwner(args);
+    if (action === 'business') return setBusiness(args);
     if (action === 'code') return setCode(args);
     if (action === 'rename') return renameProject(args);
     if (action === 'done') return projectDone(args);
     const [id, sentence, ...rest] = args;
     if (action !== 'say' || !id || !sentence?.trim() || rest.length)
       stop(
-        'usage: hq project say <project> "sentence", hq project new <id> "name" --code XX --owner <agent> [--business <id>], hq project code <project> XX, hq project owner <project> <agent>, hq project rename <project> "name", hq project done <project>, or hq project pause | resume <project>',
+        'usage: hq project say <project> "sentence", hq project new <id> "name" --code XX --owner <agent> [--business <id>], hq project code <project> XX, hq project owner <project> <agent>, hq project business <project> <business | none>, hq project rename <project> "name", hq project done <project>, or hq project pause | resume <project>',
       );
     const answer = await api.call('project-notes', { body: api.withSpeaker({ project: id, text: sentence }) });
     if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
@@ -109,6 +113,15 @@ async function setOwner([id, owner, ...rest]: string[]) {
   if (shown(api.parseOrNull(answer.body)?.ok) !== 'true')
     stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`${owner} owns ${id} now.`);
+}
+
+// hq project business (the coordinator's plan.ts setBusiness).
+async function setBusiness([id, business, ...rest]: string[]) {
+  if (!id || !business || rest.length) stop('usage: hq project business <project> <business | none>');
+  const answer = await api.call('projects/business', { body: api.withSpeaker({ id, business }) });
+  const moved = api.parseOrNull(answer.body) as { business?: string } | null;
+  if (!api.isSuccess(answer.status) || !moved) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
+  print(moved.business ? `${id} is in ${text(moved.business)} now.` : `${id} is in no business now.`);
 }
 
 // hq project rename and done (the coordinator's plan.ts).

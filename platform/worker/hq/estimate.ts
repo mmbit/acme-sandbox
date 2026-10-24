@@ -2,6 +2,7 @@
 // come from, and what the seats have left of their week; or how well past estimates held (--accuracy). When new work
 // could be done is hq when's (when.ts).
 import * as api from './api.ts';
+import { printJobs, printQuality, type Job, type Typical, type Quality } from './comparisons.ts';
 import { changeLines } from './deadlines.ts';
 import { minute, plural, print, stop } from './output.ts';
 import * as scoring from './scoring.ts';
@@ -9,23 +10,17 @@ import { duration, waitWords as wordsOf, type Wait } from './waits.ts';
 
 export { duration, type Wait };
 
-// (set's help: its own agent too)
 export const estimate = {
   help: `
    hq estimate ["what the work is" | '#<job>'] [--agent <id>] [--path <folder/>] [--limit n]
-                                                     size work on done jobs like it: the same agent's (--agent, else
-                                                     anyone's) and kind, by their titles' words: its agent time (when it
-                                                     could be done: hq when). A queued job (#n): its own estimate, its
-                                                     ETA now and what it waits on. Then each done job compared
-                                                     against, or an agent's or a folder's latest (no words): each one's
-                                                     agent time (an AI hour is one agent working for an hour, from each
-                                                     start to its end: a wait that ends the run, for a seat, a deploy or a
-                                                     card filed with hq request, is left out; an hq wait is not),
-                                                     its seat spend and size, then the seats' headroom (each week's share
-                                                     left, when it resets, the pace it goes at). Give the board the
-                                                     agent hours, and a time that counts the seats: work that won't fit
-                                                     before they run out waits for the reset. A job marked as waiting on
-                                                     tools (renders, test suites) took hours that cost the seats little
+                                                     inspect clean past jobs found by agent and title words. Judge
+                                                     scope yourself from their briefs, reports and changed files, then
+                                                     queue with --size <90m> --refs <job,job> --why "scope comparison".
+                                                     The quality audit says how many done jobs were excluded and why.
+                                                     A queued job (#n) shows its saved estimate, ETA and waits.
+                                                     An AI hour is one agent working for an hour, across its runs.
+                                                     The seats show their measured headroom and reset times.
+   hq estimate --audit                               count timing exclusions across all done work jobs, without scopes
    hq estimate --accuracy [--days n]                 how well the estimates held over the last n days (7): agent time and
                                                      ETA against what happened, the worst misses and what moved, and
                                                      the matching tried again on the work done since, beside simpler ways,
@@ -39,15 +34,15 @@ export const estimate = {
                                                      platform/coordinator/scripts/backtest.ts to score a branch's play
                                                      beside main's
    hq estimate set <job> <time> ["why"]              re-size a queued or running job: its agent time (90m, 2h, 1h30m)
-                                                     replaces the size the sizer or the tool gave it, and the threads
-                                                     whose ETA moved are named with their new time. The CEO, whoever
-                                                     queued the job, its thread's owner, or its own agent once the work
-                                                     outgrows its brief`,
+                                                     changes the saved queue-time estimate and names the threads whose
+                                                     ETA moved. Only the CEO may change it after work slips`,
 
   async run(given: string[]) {
     if (given[0] === 'set') return setSize(given.slice(1));
     const { words, flags } = takeFlags(given);
     const scored = new URLSearchParams(flags.days ? { days: flags.days } : {});
+    if ('audit' in flags)
+      return printQuality(JSON.parse(await api.orStop(api.get('estimate/audit'), "Couldn't audit past jobs.")));
     if ('calibration' in flags) return scoring.calibration(scored);
     if ('backtest' in flags) return scoring.backtest(scored, flags.save);
     if ('accuracy' in flags)
@@ -56,6 +51,7 @@ export const estimate = {
       );
     const query = new URLSearchParams({ q: words, ...flags });
     const found: Found = JSON.parse(await api.orStop(api.get(`estimate?${query}`), "Couldn't read past jobs."));
+    if (found.quality) printQuality(found.quality);
     if (found.estimate) printEstimate(found, words);
     if (words || flags.agent || flags.path) printJobs(found, words);
     printSeats(found.seats);
@@ -67,7 +63,7 @@ function takeFlags(given: string[]) {
   const rest: string[] = [];
   for (let i = 0; i < given.length; i++) {
     const name = given[i].match(/^--(agent|path|limit|days|save)$/)?.[1];
-    const mode = given[i].match(/^--(accuracy|calibration|backtest)$/)?.[1];
+    const mode = given[i].match(/^--(accuracy|calibration|backtest|audit)$/)?.[1];
     if (mode) flags[mode] = '';
     else if (!name) rest.push(given[i]);
     else if (!given[i + 1]) stop(`usage: --${name} needs a value`);
@@ -80,22 +76,6 @@ function takeFlags(given: string[]) {
 
 // ---- estimate types
 
-type Job = {
-  id: number;
-  agent: string;
-  title: string;
-  finished: string;
-  agent_minutes: number;
-  wall_minutes: number | null;
-  runs: number;
-  rebuilt: boolean;
-  spend: number | null;
-  unit: string;
-  files: number;
-  pr: { number: number; status: string; merged_at: string | null } | null;
-  tool_bound: boolean;
-};
-type Typical = { agent_minutes: number; low: number; high: number; spend: number | null; unit: string | null };
 type Seat = {
   id: string;
   engine: string;
@@ -129,6 +109,7 @@ type Found = {
   job?: Job;
   jobs: Job[];
   typical: Typical | null;
+  quality?: Quality;
   estimate?: { agent_minutes: number; compared: number; basis: Basis; guessed: boolean };
   outlook?: Outlook | null;
   sizes?: Sized[];
@@ -149,17 +130,14 @@ type Sized = {
 // Own agent time, its measurement basis, and the plan's merge time.
 function printEstimate({ estimate, outlook, sizes }: Found, words: string) {
   const e = estimate!;
-  const on = e.guessed
-    ? 'a first guess: too few done jobs to compare against'
-    : `the mean of ${comparedWords(e.compared, e.basis)}`;
-  print(`The estimate: ${duration(e.agent_minutes)} of agent time (${on}).`);
-  const resized = sizes?.filter(s => s.by !== 'tool') ?? [];
-  if (resized.length) print(sizedLine(resized[0], resized.length - 1));
+  const saved = sizes?.[0];
+  if (saved) print(sizedLine(saved, (sizes?.length ?? 1) - 1));
+  else print(`The saved estimate: ${duration(e.agent_minutes)} of agent time.`);
   if (outlook) print(outlookLine(outlook, words));
   print('');
 }
 
-// The size that counts, when the sizer or an agent gave one after the tool.
+// The saved estimate and the evidence the queuer or CEO supplied.
 function sizedLine(s: Sized, earlier: number) {
   const range =
     s.low_minutes !== null && s.high_minutes !== null
@@ -168,7 +146,7 @@ function sizedLine(s: Sized, earlier: number) {
   const on = s.refs.length ? `, on ${s.refs.map(id => `#${id}`).join(', ')}` : '';
   const why = s.why ? `: ${s.why}` : '';
   const before = earlier ? ` (${plural(earlier, 'earlier size')} kept)` : '';
-  return `Sized since: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)} UTC${on}${why}. The ETA plays on it${before}.`;
+  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)} UTC${on}${why}. The ETA plays on it${before}.`;
 }
 
 // What the mean stood on: done jobs like it, or a scheduled job's earlier runs.
@@ -209,38 +187,6 @@ function outlookLine(o: Outlook, words: string) {
 }
 
 export const waitWords = (w: Wait) => wordsOf(w, at);
-
-function printJobs({ job, jobs, typical }: Found, words: string) {
-  if (job) print(`Job #${job.id} itself:`, ...jobLines(job), '');
-  if (!jobs.length) return print('No done job like it.', '');
-  print(
-    `Done jobs like ${words ? `"${words}"` : 'that'}, best match first. Agent time is the agent working, from each start to its end;`,
-    'waits that end a run (a seat, a deploy, a card filed with hq request) are left out, an hq wait is not (≈: runs rebuilt from older records).',
-  );
-  for (const j of jobs) print(...jobLines(j));
-  if (typical) {
-    const spend = typical.spend === null ? '' : `, ${spendText(typical.spend, typical.unit!)} of seat spend`;
-    print(
-      `Typical of these: ${duration(typical.agent_minutes)} of agent time (the middle half ${duration(typical.low)} to ${duration(typical.high)})${spend}.`,
-    );
-  }
-  print('');
-}
-
-function jobLines(j: Job) {
-  const wall = j.wall_minutes === null ? '' : `, ${duration(j.wall_minutes)} from its first start to its end`;
-  const pr = j.pr
-    ? `, ${j.files} files changed, PR #${j.pr.number} ${j.pr.merged_at ? `merged ${minute(j.pr.merged_at)} UTC` : j.pr.status}`
-    : ', no pull request';
-  const spent = j.spend === null ? 'seat spend not reported' : `${spendText(j.spend, j.unit)} of seat spend`;
-  const lines = [
-    `#${j.id} ${j.agent}, done ${minute(j.finished)} UTC: ${j.title}`,
-    `  ${j.rebuilt ? '≈' : ''}${duration(j.agent_minutes)} of agent time in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
-  ];
-  if (j.tool_bound)
-    lines.push('  Mostly waiting on tools that use no tokens (renders, test suites): its hours cost the seats little.');
-  return lines;
-}
 
 // ---- seats
 
@@ -290,9 +236,6 @@ export const at = (ms: number) =>
     minute: '2-digit',
     timeZone: 'UTC',
   }) + ' UTC';
-
-const spendText = (amount: number, unit: string) =>
-  unit === '$' ? `$${amount.toFixed(2)}` : `${Math.round(amount).toLocaleString('en-GB')} tokens`;
 
 // ---- queue changes
 

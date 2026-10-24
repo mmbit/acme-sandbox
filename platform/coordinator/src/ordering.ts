@@ -9,6 +9,8 @@ import * as redraws from './redraws.ts';
 import { keepSpotSizes, recordFor, sizesFor } from './predictions.ts';
 import { expand } from './rounds.ts';
 import { backward, compare, ready, spareOnly, type Timing } from './planner.ts';
+import type { ProspectiveRun } from './reviewplan.ts';
+import { placeholders } from './threadorder.ts';
 
 // The plan is kept between reads and played again after a change HQ publishes (as forecast.ts start: an agent's own
 // steps change nothing it reads), a new job, or KEEP_MS: a play holds the server most of a second, and every slot's
@@ -67,8 +69,18 @@ export function current(now = Date.now()) {
   return plan;
 }
 
+// The queue the claim orders: open work, and each open thread with no task yet as one piece of its owner's work
+// (threadorder.ts placeholders), as the forecast plays it, so work a timed thread with no task needs takes its latest
+// start from that thread's deadline.
+const queueAt = (now: number, run?: ProspectiveRun) => orderingSnapshot(now, placeholders(), false, run);
+
+// Route a round before its next run is stored, with that run in both the queue and its remaining review stages.
+export function withRound(run: ProspectiveRun, now: number) {
+  return latestStarts(queueAt(now, run), now).timings;
+}
+
 function played(now: number) {
-  const queue = orderingSnapshot(now);
+  const queue = queueAt(now);
   const { timings, jobs: planned } = latestStarts(queue, now);
   const rows = new Map(planned.map(j => [j.id, j]));
   const resolved = db.prepare(
@@ -99,14 +111,21 @@ function played(now: number) {
 // start comes that long before it. A window ending that long after now has the job's latest start now (made.ts, a
 // window as soon as it can).
 export function leadOf(id: number, thread: string, now: number) {
-  const queue = orderingSnapshot(now);
+  const queue = queueAt(now);
   for (const row of queue.jobs) if (row.thread === thread) row.due = now;
   return now - latestStarts(queue, now).timings.get(id)!.latestStart!;
 }
 // The backward pass over the queue, at the slow sizes with each job's review rounds as runs.
 function latestStarts(queue: ReturnType<typeof orderingSnapshot>, now: number) {
   keepSpotSizes();
-  const sizes = sizesFor(queue, 'slow', recordFor(now, queue.jobs));
+  const record = recordFor(now, queue.jobs);
+  const sizes = sizesFor(queue, 'slow', record);
+  // (a placeholder sized on its thread's name and "done when", as the forecast sizes it: predictions.ts prepared)
+  for (const job of queue.jobs)
+    if (job.placeholder) {
+      const drawn = record.drawn(job);
+      sizes.set(job.id, drawn.slow ?? drawn.size);
+    }
   const expanded = expand(queue, sizes, 'slow');
   return { timings: backward(expanded.snapshot, expanded.sizes, expanded.terminals), jobs: expanded.snapshot.jobs };
 }

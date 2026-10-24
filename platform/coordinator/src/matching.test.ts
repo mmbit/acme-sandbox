@@ -1,6 +1,6 @@
 // node --test src/matching.test.ts   (throwaway DATA_DIR and the test company): a scheduled job is sized on its own
 // entry's earlier runs, else its routine's, else the title matching without its slot; other work is matched as it was.
-import { beforeEach, test } from 'node:test';
+import { beforeEach, mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
@@ -12,8 +12,11 @@ const predictions = await import('./predictions.ts');
 const accuracy = await import('./accuracy.ts');
 
 const MINUTE = 60_000,
-  DAY = 24 * 60 * MINUTE;
+  HOUR = 60 * MINUTE,
+  DAY = 24 * HOUR;
 const T = Date.now();
+mock.timers.enable({ apis: ['Date'], now: T });
+test.after(() => mock.timers.reset());
 
 // (shared/ is this repo's own: its refactoring routine)
 writeFileSync(
@@ -73,12 +76,15 @@ const storedFor = (job: number) => {
   return predictions.stored(job)!;
 };
 
-// (and the threads the schedule moved those runs into, whose job ids the next test's runs take again)
-beforeEach(() =>
+// (and the threads the schedule moved those runs into, whose job ids the next test's runs take again). Each test is an
+// hour on, past the hour the plays keep their spot sizes and the done jobs they read (predictions.ts recordFor), which
+// the sweep stores: the last test's are gone.
+beforeEach(() => {
   db.exec(
     'delete from jobs; delete from runs; delete from predictions; delete from schedule_runs; delete from threads',
-  ),
-);
+  );
+  mock.timers.setTime(Date.now() + HOUR);
+});
 
 test("a scheduled job is sized on its own entry's earlier runs, whoever ran them, not on HQ's small jobs", async () => {
   hqOwn('lark');
@@ -112,7 +118,7 @@ test("a scheduled job is sized on its own entry's earlier runs, whoever ran them
 
   const reader = await h.start({ agent: 'bolt', title: 'Sizing' });
   const { out } = await h.hq(reader, 'estimate', `#${job}`);
-  assert.match(out, /19 min of agent time.*\(the mean of 3 earlier runs of this entry \(refactor-hq\)\)/);
+  assert.match(out, /Saved estimate: 19 min of agent time by tool/);
 });
 
 test("an entry with too few runs stands on its routine's entries, its own first; with too few of those, on the matching without its slot", async () => {

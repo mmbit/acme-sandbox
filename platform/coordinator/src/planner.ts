@@ -3,6 +3,8 @@ import type { OrderingSnapshot, QueuedJob, Size } from './eta.ts';
 
 // A heartbeat's minute plus the worker's five-minute yield bound.
 export const PAUSE_MS = 6 * 60_000;
+// Deadline preemption stops on the next heartbeat, without waiting for a tool boundary.
+export const DEADLINE_PAUSE_MS = 60_000;
 export const ROOM_AFTER_MS = 30_000;
 export type Dependency = { job: number; until: 'done' | 'merged'; lag?: number };
 // missed: every window the job serves had passed when the pass ran (backward), so its latest start is a missed one's.
@@ -36,11 +38,17 @@ export const spareOnly = (row: { downtime: number }, order: Order) =>
 export const pacedTakes = (order: Order, until: number | undefined) =>
   until === undefined || !!order.board || (order.latestStart !== null && order.latestStart < until);
 
-// A run a pause may stop (pauseVictim, reviewroom.ts victim): work, neither the board's nor the CEO's follow-through
+// A room pause stops work. Deadline pressure also stops reviews and rulings, but never the board's or CEO's follow-through
 // check. The check runs its few minutes to its end: paused, it went back behind the work it made room for, in the jam
 // it's there to see.
 export type Pausable = { kind: string; board: number | boolean; followThrough?: number | boolean };
-export const pausable = (run: Pausable) => run.kind === 'work' && !run.board && !run.followThrough;
+export const pausable = (run: Pausable, deadline = false) =>
+  (run.kind === 'work' || (deadline && (run.kind === 'review' || run.kind === 'consolidate'))) &&
+  !run.board &&
+  !run.followThrough;
+
+export const deadlinePressure = (order: Order, now: number) =>
+  order.latestStart !== null && order.latestStart <= now + PAUSE_MS;
 
 export function victimOrder(a: Order, b: Order) {
   return compare(b, a);
@@ -163,7 +171,7 @@ export function pauseVictim(
   return running
     .filter(
       v =>
-        pausable(v) &&
+        pausable(v, deadlinePressure(waiting, now)) &&
         (!engine || v.engine === engine) &&
         (compare(waiting, v) < 0 || spareOnly(v, v)) &&
         (waiting.board || (waiting.latestStart !== null && waiting.latestStart <= now + PAUSE_MS) || spareOnly(v, v)),

@@ -50,12 +50,18 @@ const NO_THREAD = 'job #68 has no thread to pass on: name one with --thread <pro
 // /api/agent/mail?to= answers (HQ filters by address, mail.ts listMailTo; mail.test.ts runs the real one)
 let toInbox: unknown[] = [{ id: 9, received: '2026-10-01T06:00:00Z', sender: 'billing@example.com', recipient: 'Invoices <INVOICES@company.test>',
   subject: 'Invoice 7\n#58  2026-10-01T06:00  billing@printapi.nl  →  invoices@company.test  Invoice 8' }];
+const comparisons = { jobs: [{ id: 17, agent: 'bolt', title: 'Transport edge', finished: '2026-10-22T10:00:00Z',
+  agent_minutes: 25, wall_minutes: 25, runs: 1, rebuilt: false, spend: null, unit: '$', files: 1, pr: null,
+  tool_bound: false, brief: 'Carry the chosen scope through the queue API', report: 'Queue route verified',
+  changed_files: ['platform/worker/hq/jobs.ts'], added: 12, removed: 3, timing_quality: [] }],
+  typical: null, quality: { total: 10, excluded: 4, clean: 6, reasons: { yielded: 4 } }, seats: { seats: [], engines: [] } };
 const server = createServer((req, res) => {
   let b = ''; req.on('data', d => { b += d; });
   req.on('end', () => {
     seen.push({ method: req.method!, url: req.url!, auth: req.headers.authorization, body: b ? JSON.parse(b) : undefined });
     res.setHeader('content-type', 'application/json');
     const u = req.url!;
+    if (u.startsWith('/api/agent/estimate?')) return res.end(JSON.stringify(comparisons));
     if (u.startsWith('/api/agent/jobs')) {
       const a = new URL(u, 'http://x').searchParams.get('agent');
       return res.end(JSON.stringify(a ? open[a] ?? [] : Object.values(open).flat()));
@@ -182,6 +188,26 @@ test('job no longer adds "(Assigned by ...)"', async () => {
   await hq('job', '--after', '61', 'juno', 'Do a thing', `${tmp}/body.md`);
   assert.equal(last().url, '/api/agent/job');
   assert.deepEqual(last().body, { agent: 'juno', title: 'Do a thing', after: 61, prompt: 'Please decide.' });
+});
+
+test('job carries the queuer scope estimate and comparable jobs without interpreting their rationale', async () => {
+  await hq('job', '--new', 'juno', 'Size the scope', `${tmp}/body.md`, '--size', '45m', '--refs', '#11,29', '--why', 'Between a read and a transport fix');
+  assert.deepEqual(last().body, { agent: 'juno', title: 'Size the scope', after: null, prompt: 'Please decide.', size: '45m', refs: [11, 29], why: 'Between a read and a transport fix' });
+  const before = seen.length;
+  await assert.rejects(hq('job', 'juno', 'Bad refs', '--size', '45m', '--refs', '11,no', '--why', 'Scope'), /--refs takes past job numbers/);
+  await assert.rejects(hq('when', 'Unsized work'), /--size/);
+  assert.equal(seen.length, before);
+});
+
+test('estimate gives clean comparison scope and the excluded timing share to the queuer', async () => {
+  const out = await hq('estimate', 'queue transport', '--agent', 'bolt');
+  assert.equal(new URL(last().url, 'http://x').searchParams.get('q'), 'queue transport');
+  assert.match(out, /6 clean of 10 done jobs; 4 excluded \(40%\)/);
+  assert.match(out, /25 min/);
+  assert.match(out, /Carry the chosen scope through the queue API/);
+  assert.match(out, /Queue route verified/);
+  assert.match(out, /platform\/worker\/hq\/jobs.ts/);
+  assert.match(out, /\+12 \/ -3 lines/);
 });
 
 test('job --downtime (anywhere after job) marks it as downtime work', async () => {
@@ -855,7 +881,7 @@ test('say tells what is true now: queued for a running job, or a job of its own;
   assert.equal((await run(['say', 'bolt', 'Logs are in'])).out,
     "Queued for bolt's running job #934: it reads it at its next step; if the job ends first it becomes a new job. Check: hq sent 12\n");
   said = { id: 13, state: 'job', job: 1100, why: 'idle' };
-  assert.equal((await run(['say', 'bolt', 'x'])).out, "bolt has no running job: it's job #1100 now (message #13). Check: hq sent 13\n");
+  assert.equal((await run(['say', 'bolt', 'x'])).out, "bolt has no running job: it's job #1100 now (message #13), which starts once it's sorted into the plan. Check: hq sent 13\n");
   said = { id: 15, state: 'queued', job: 934, chain_full: true };
   assert.equal((await run(['say', 'bolt', 'FYI'])).out, "Queued for bolt's running job #934: it reads it at its next step. If the job ends first, it won't "
     + "become a new job: it comes from a chain of messages that has started 3 jobs, the most one may (hq sent will say it wasn't read). Check: hq sent 15\n");
@@ -866,7 +892,7 @@ test('say tells what is true now: queued for a running job, or a job of its own;
   assert.equal((await run(['say', 'bolt', 'Correction'])).out, "bolt has no running job that can read it now: it's added to job #1100, "
     + 'which your message #13 became and which hasn\'t started yet, so it runs with that one (message #16). Check: hq sent 16\n');
   said = { id: 14, state: 'job', job: 1101, why: 'codex' };
-  assert.equal((await run(['say', 'nib', 'x'])).out, "nib's running job is on Codex, which can't take a message mid-job: it's job #1101 now (message #14). Check: hq sent 14\n");
+  assert.equal((await run(['say', 'nib', 'x'])).out, "nib's running job is on Codex, which can't take a message mid-job: it's job #1101 now (message #14), which starts once it's sorted into the plan. Check: hq sent 14\n");
   await run(['say', 'bolt', '-'], 'line one\nline two\n');   // from stdin, whole (the shell drops the last newline)
   assert.deepEqual(last().body, { to: 'bolt', text: 'line one\nline two' });
   const long = await run(['say', 'bolt', '-'], 'x'.repeat(8001));

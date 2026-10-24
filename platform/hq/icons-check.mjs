@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // HQ's icons in a real browser: in every look, every icon on the HUD, the computer's home screen, the desk phone, the
 // intercom and the projects view (a business in it too, with its way back up) drawn from that look's own style
-// (icons/<style>/), none missing, and a change of look redrawing them all.
+// (icons/<style>/), or from the kit the theme dresses it in (/kits/<kit>/icons/), none missing, and a change of look
+// redrawing them all.
 //   node platform/hq/icons-check.mjs        (HQ in dev mode, on its mock data)
 import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
@@ -20,22 +21,23 @@ const SCREENS = {
 const browser = await playwright().chromium.launch();
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
-for (const [look, style] of Object.entries(STYLES)) await checkLook(look, style);
+for (const look of Object.keys(STYLES)) await checkLook(look);
 await swapLook();
 await browser.close();
 server.close();
 console.log('icons-check: every icon from its look’s own style');
 
-async function checkLook(look, style) {
-  const { page, errors } = await opened(look);
+async function checkLook(look) {
+  const { page, errors } = await opened(look),
+    from = await sourceOf(page, look);
   for (const [screen, open] of Object.entries(SCREENS)) {
     await open(page);
     const drawn = await drawnIcons(page);
     assert.ok(drawn.length, `${look}, ${screen}: icons on the page`);
     assert.deepEqual(
-      drawn.filter(d => !d.startsWith(`${style}/`)),
+      drawn.filter(d => !d.startsWith(from)),
       [],
-      `${look}, ${screen}: only ${style} icons`,
+      `${look}, ${screen}: only icons from ${from}`,
     );
   }
   assert.deepEqual(errors, [], `${look}: no icon missing`);
@@ -47,9 +49,10 @@ async function swapLook() {
   const { page, errors } = await opened('brownstone');
   await SCREENS.home(page);
   await page.evaluate(() => import('/shell/stage.js').then(m => m.pick('wire')));
-  const drawn = await drawnIcons(page, STYLES.wire);
+  const from = await sourceOf(page, 'wire'),
+    drawn = await drawnIcons(page, from);
   assert.deepEqual(
-    drawn.filter(d => !d.startsWith(`${STYLES.wire}/`)),
+    drawn.filter(d => !d.startsWith(from)),
     [],
     'a change of look redraws every icon',
   );
@@ -65,7 +68,13 @@ async function opened(look) {
   return { page, errors };
 }
 
-// Each icon's style/name once every one on the page is drawn (in `style`, when given)
+// Where a look's icons come from: the kit the theme dresses it in, else its style's folder
+async function sourceOf(page, look) {
+  const kit = await page.evaluate(l => import('/shell/brand.js').then(m => m.theme[l]?.kit), look);
+  return kit ? `/kits/${kit}/icons/` : `icons/${STYLES[look]}/`;
+}
+
+// Each icon's folder/name once every one on the page is drawn (in `style`, when given)
 async function drawnIcons(page, style = '') {
   await page
     .waitForFunction(

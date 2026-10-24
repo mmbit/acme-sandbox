@@ -2,9 +2,9 @@
 // partitions and furniture that fits the room kind. Static parts are baked into one canvas per room,
 // things people can walk behind become depth-sorted props, and animated bits become anchors.
 import { rng, pick, mix, canvas } from '../../util.js';
-import { toTile, FH, SLAB, WALL_H, INNER_WALL_H, PENT_H, CORE, CORE_X, ENTRANCE, SHAFT, STAIR, inWell, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, wallYCol, wallXCol, ellipse, text, textW } from './iso.js';
+import { toTile, FH, SLAB, WALL_H, INNER_WALL_H, PENT_H, CORE, CORE_X, ENTRANCE, SHAFT, STAIR, inWell, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, wallYCol, wallXCol, ellipse, text, textW, upright } from './iso.js';
 import { drawProp, DRINKS } from './sprites.js';
-import { levelName } from './layout.js';
+import { levelName, arcadeWall } from './layout.js';
 import { today } from './env.js';
 import { darkroomThing } from './darkroom.js';
 
@@ -90,10 +90,14 @@ const WALL = {
     F(g, x + 4, y + 4, 1, 1, '#fffaf0'); F(g, x + 5, y + 3, 1, 1, '#fffaf0'); F(g, x + 10, y + 4, 1, 1, '#fffaf0'); F(g, x + 11, y + 3, 1, 1, '#fffaf0'); F(g, x + 10, y + 10, 1, 1, '#fffaf0'); F(g, x + 11, y + 9, 1, 1, '#fffaf0'); }],
   cabletray: [24, (g, x, y) => { F(g, x, y - 1, 24, 2, '#8b8fa3'); F(g, x, y + 1, 24, 1, '#565a70'); // cables sagging from a tray
     for (const [c, sag, from, to] of [['#e8505b', 7, 1, 13], ['#5b8def', 10, 6, 22], ['#f2c14e', 5, 12, 23], ['#2b2230', 12, 2, 19]]) for (let i = from; i <= to; i++) F(g, x + i, y + 1 + Math.round(Math.sin((i - from) / (to - from) * Math.PI) * sag), 1, 1, c); }],
-  laptops: [20, (g, x, y, r) => { F(g, x, y + 10, 20, 2, '#6e4029'); F(g, x + 2, y + 12, 1, 2, '#5a3825'); F(g, x + 17, y + 12, 1, 2, '#5a3825'); // a shelf of everyday laptops: closed ones on end, one open
-    for (let i = 0; i < 5; i++) { const c = ['#c9ccd8', '#565a70', '#e6e8f0', '#2b2230', '#8b8fa3'][i], h = 6 + (i % 2); F(g, x + 1 + i * 2.4 | 0, y + 10 - h, 2, h, c); if (r() < 0.5) F(g, x + 1 + i * 2.4 | 0, y + 6, 1, 1, pick(r, ['#ff8fab', '#ffd966', '#7bd389'])); }
-    F(g, x + 13, y + 9, 7, 1, '#c9ccd8'); F(g, x + 14, y + 3, 5, 6, '#8b8fa3'); F(g, x + 15, y + 4, 3, 4, '#8fd3ff'); }],
-  neon: [20, (g, x, y) => { for (const [a, b, w, h] of [[0, 2, 20, 1], [0, 11, 20, 1], [0, 2, 1, 10], [19, 2, 1, 10]]) F(g, x + a, y + b, w, h, '#5ef2ff'); text(g, 'PLAY', x + 3, y + 4, '#ff8fab'); }],
+  // (three on end, narrow enough to hang beside the arcade's neon past its back row, and as high as it, clear of the
+  // monitors under them.)
+  laptops: [14, (g, x, y, r) => { F(g, x, y + 7, 14, 2, '#6e4029'); F(g, x + 2, y + 9, 1, 2, '#5a3825'); F(g, x + 11, y + 9, 1, 2, '#5a3825'); // a shelf of everyday laptops: closed ones on end, one open
+    for (let i = 0; i < 3; i++) { const c = ['#c9ccd8', '#565a70', '#e6e8f0'][i], h = 6 + (i % 2); F(g, x + 1 + i * 2, y + 7 - h, 2, h, c); if (r() < 0.5) F(g, x + 1 + i * 2, y + 3, 1, 1, pick(r, ['#ff8fab', '#ffd966', '#7bd389'])); }
+    F(g, x + 7, y + 6, 7, 1, '#c9ccd8'); F(g, x + 8, y, 5, 6, '#8b8fa3'); F(g, x + 9, y + 1, 3, 4, '#8fd3ff'); }],
+  // (two rows higher than the rest, so its lower tube clears the monitor of a desk under it; its letters upright on the
+  // wall's slant.)
+  neon: [20, (g, x, y, r, glass, leds, lit, tops) => { for (const [a, b, w, h] of [[0, 0, 20, 1], [0, 9, 20, 1], [0, 0, 1, 10], [19, 0, 1, 10]]) F(g, x + a, y + b, w, h, '#5ef2ff'); upright(g, 'PLAY', x + 3, y + 2, '#ff8fab', tops); }],
   wreath: [13, (g, x, y) => { for (let k = 0; k < 20; k++) { const a = k / 20 * 6.283, px = x + 6 + Math.round(Math.cos(a) * 5), py = y + 6 + Math.round(Math.sin(a) * 5); F(g, px, py, 2, 2, k % 2 ? '#2f7a47' : '#3f9b5c'); if (k % 5 === 2) F(g, px, py, 1, 1, '#e8505b'); } F(g, x + 4, y + 11, 5, 2, '#e8505b'); F(g, x + 5, y + 13, 1, 2, '#b8404f'); F(g, x + 7, y + 13, 1, 2, '#b8404f'); }], // Christmas: on the stairwell's wall downstairs
 };
 const KINDS = { // wall art, back-row furniture (from the near end), floor
@@ -119,7 +123,7 @@ const KINDS = { // wall art, back-row furniture (from the near end), floor
   booth: [['onair'], ['airrack', 'micdesk'], 'plush'], // (the foam is its wall's paper)
   darkroom: [[], ['sweep', 'darkbench'], 'quarry'], // (the photo studio: darkroom.js draws its walls' things.)
   engine: [['monitors', 'blueprint', 'cabletray', 'window', 'clock'], ['renderfarm', 'testrig'], 'metal'],
-  arcade: [['laptops', 'neon'], ['arcadecab', 'arcadecab', 'tvset', 'timeboard'], 'confetti'],
+  arcade: [['neon', 'laptops'], ['arcadecab', 'arcadecab', 'tvset', 'timeboard'], 'confetti'], // (in a row from the neon on, past the back row: layout.js arcadeWall.)
   meeting: [['window'], [], 'wood'], // (one, between its door sign and its board: buildRoom. Its table, board and door sign: meetingRoom.)
   bar: [[], ['record'], 'wood'], // (its wall's things are the back bar's and the sign: bar() draws them.)
 };
@@ -213,7 +217,7 @@ function floor(g, room, kind, wall, fl) {
 // ---- the back wall of a room, flat, then sheared into place ----
 function backWall(g, gm, room, F_, H, spec) {
   const [wallC, trim] = theme(room.kind), w = Math.round(F_.len * 16), r = rng(room.id + 'w');
-  const glassRects = [], litFlat = spec.lit && canvas(w, H);
+  const glassRects = [], litFlat = spec.lit && canvas(w, H), tops = Array.from({ length: w }, (_, u) => (F_.X ? wallYCol(room.x0, room.y0, room.z, H, u) : wallXCol(room.y1, room.x0, room.z, H, u))[1]);
   const flat = flatCanvas(w, H, (f) => {
     F(f, 0, 0, w, H, wallC);
     if (spec.paper === 'stripes') for (let i = 3; i < w; i += 6) F(f, i, 0, 2, H - 10, mix(wallC, '#ffffff', 0.08));
@@ -232,13 +236,16 @@ function backWall(g, gm, room, F_, H, spec) {
     const items = spec.items.slice();
     let cx = spec.at ?? (spec.start ?? 6) + (r() * 6 | 0), i = 0; // (at: exactly there. once: each item once, not round again)
     const band = H - 30 - (spec.high || 0);
+    const put = (name, x) => WALL[name][1](f, x, band, r, (x, y, gw, gh) => glassRects.push([x, y, gw, gh]), spec.leds && ((x, y, o) => spec.leds.push({ ...F_.pt(x / 16, 0), z: room.z + H - y, c: '#ffb35a', ...o })), // (a light on flat pixel (x, y) of an X wall, once its screen point is rounded)
+      litFlat && ((x, y, paint) => { paint(litFlat.getContext('2d')); spec.lit.glow = { ...F_.pt(F_.X ? x / 16 : F_.len - x / 16, 0), z: room.z + H - y }; }), // (what lights up on air, its glow at flat pixel (x, y))
+      tops); // (the screen row each of the wall's columns lands on, for words upright on it.)
+    for (const [name, x] of spec.pins ?? []) put(name, x); // (pins: [name, flat x], each exactly there.)
     while (items.length && i < (spec.once ? items.length : 30)) {
       const name = items[i % items.length];
       i++;
-      const [iw, draw] = WALL[name];
+      const [iw] = WALL[name];
       if (cx + iw > w - 4) break;
-      draw(f, cx, band, r, (x, y, gw, gh) => glassRects.push([x, y, gw, gh]), spec.leds && ((x, y, o) => spec.leds.push({ ...F_.pt(x / 16, 0), z: room.z + H - y, c: '#ffb35a', ...o })), // (a light on flat pixel (x, y) of an X wall, once its screen point is rounded)
-        litFlat && ((x, y, paint) => { paint(litFlat.getContext('2d')); spec.lit.glow = { ...F_.pt(F_.X ? x / 16 : F_.len - x / 16, 0), z: room.z + H - y }; })); // (what lights up on air, its glow at flat pixel (x, y))
+      put(name, cx);
       cx += iw + 6 + (r() * 8 | 0);
     }
     // a string just under the ceiling's edge (all that shows above the art): flags, or little bulbs that glow after dark
@@ -742,12 +749,14 @@ export function buildRoom(room, L, looks) {
     if (onAir) { onAir.g = onAir.img.getContext('2d'); onAir.g.translate(-bx, -by); }
     // (its sign hangs over the middle of the desk, BOOTH_DESK along the wall)
     // (and the meeting room's window between its door sign and its board, so neither hangs over it.)
+    // (and the arcade's things, an empty one's EMPTY sign among them, in a row from its neon on: arcadeWall.)
     const wallPosition = (u, name) => Math.round((F_.X ? u : F_.len - u) * 16 - WALL[name][0] / 2);
-    const meeting = room.kind === 'meeting';
+    const meeting = room.kind === 'meeting', arcade = room.kind === 'arcade';
     let at;
     if (onAir) at = wallPosition(BOOTH_DESK, 'onair');
     else if (meeting) at = wallPosition((MEET.sign[1] + MEET.board[0]) / 2, 'window');
-    win = backWall(g, gm, room, F_, H, terrace ? { items: [], paper: 'brick', parapet: true } : { items, paper, string, christmas, bulbs: anchors.bulbs, lit: onAir, at, once: meeting });
+    const pins = arcade ? arcadeWall(F_.len, items.map(name => [name, WALL[name][0]])).map(([name, u]) => [name, wallPosition(u, name)]) : [];
+    win = backWall(g, gm, room, F_, H, terrace ? { items: [], paper: 'brick', parapet: true } : { items: arcade ? [] : items, paper, string, christmas, bulbs: anchors.bulbs, lit: onAir, at, once: meeting, pins });
     if (onAir?.glow) anchors.onair = { img: onAir.img, x: bx, y: by, glow: onAir.glow };
     if (!(terrace && room.wing === 'y' && !L.pent)) partition(g, room, terrace ? (prev?.pent || room.wing === 'y' ? PENT_H : 10) : WALL_H - 12, terrace && !(prev?.pent || room.wing === 'y') ? '#a8452f' : null);
     if (terrace && prev?.pent) { seen = canvas(bw, bh); seen.getContext('2d').drawImage(c, 0, 0); } // (the room as it stands now, for the glass below)
@@ -928,9 +937,11 @@ function meetingWall(ctx, room, F_) {
 // how far out from the back wall a room's glass partition runs: a tile short of the room's front (partition)
 const partitionDepth = room => (room.wing !== 'y' ? room.y1 : room.x1) - 1;
 
+// the room's name on a plate on the slab under it, its letters upright on the wall's slant
 function slabLabel(g, room, F_, d = F_.depth, zb = -SLAB + 1) {
   const label = room.name.toUpperCase().slice(0, Math.floor((F_.len * 16 - 8) / 4));
-  const w = textW(label) + 4, f = flatCanvas(w, 7, f2 => { F(f2, 0, 0, w, 7, '#fdf3e1'); text(f2, label, 2, 1, INK); });
+  const w = textW(label) + 4, rows = F_.cols(0.25, 0.25 + w / 16, d, zb, w, 7).map(([, y]) => y);
+  const f = flatCanvas(w, 7, f2 => { F(f2, 0, 0, w, 7, '#fdf3e1'); upright(f2, label, 2, 1, INK, rows); });
   F_.flat(g, f, 0.25, 0.25 + w / 16, d, zb);
 }
 

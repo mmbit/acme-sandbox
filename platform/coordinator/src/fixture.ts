@@ -47,6 +47,17 @@ export function historicalDatabase(directory = mkdtempSync(`${tmpdir()}/historic
   return directory;
 }
 
+// A supported blocked-run database from before command-free receipts.
+export function historicalBlocks() {
+  const directory = historicalDatabase();
+  const database = new DatabaseSync(`${directory}/hq.db`);
+  database.exec(`create table blocks (id integer primary key, at text not null, job integer not null,
+    measure text not null, used real not null, share real not null, command text not null);
+    insert into blocks values (1, '2026-10-01', 7, 'memory', 3100, 2560, 'fixture-retained-command');`);
+  database.close();
+  return directory;
+}
+
 // Cancellations from before cancelJob kept their time, written into a started coordinator's database (its one-off for
 // them not yet run): #7 and #71 undated with their lines on the feed (one id the other's prefix), #72 undated with none,
 // and #73 cancelled since, dated, whose line is later. Returns each one's time as the one-off should leave it.

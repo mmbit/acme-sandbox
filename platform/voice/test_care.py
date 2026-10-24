@@ -33,6 +33,7 @@ AFTER = [WORDS['en']['ai'], WORDS['en']['fine']]
 # HQ's languages for the opening, by the caller's number (brand.yaml phoneLine.languages)
 LANGS = {'nl': ['nl', 'en'], 'de': ['de', 'en'], 'en': ['en']}
 POPPY = [('english', 'bill_boerst')]  # (Pocket TTS in Poppy's own voice; Dutch and German go through Piper's native ones)
+# (Poppy is she/her in the messages below)
 SID = 'CA' + '0' * 32
 
 
@@ -103,7 +104,7 @@ class CareCall(Juno):
         # (with the opening's first language: care reads its prompt into the model's cache in it while the opening plays)
         self.assertEqual(self.care.asked, [('/phone/start', {'call': SID, 'lang': 'nl'})])
         self.assertEqual(SPOKEN, OPENING['nl'] + AFTER)
-        self.assertEqual(VOICED, POPPY * 2, "Dutch in Piper's native voice, English in his own")
+        self.assertEqual(VOICED, POPPY * 2, "Dutch in Piper's native voice, English in her own")
         self.assertEqual(self.care.turned(), [], 'nothing is asked before the caller speaks')
         # the next call's opening plays from the audio kept from this one: nothing to wait for
         await self.ws.close()
@@ -115,10 +116,13 @@ class CareCall(Juno):
 
     async def test_a_pocket_voice_the_company_names_speaks_its_language_from_a_seeded_opening(self):
         self.ticket['voices'] = {'nl': 'daan', 'de': 'thorsten'}
+        self.ticket['seeds'] = {'nl': 5, 'de': -1}
         SEEDED.clear()
         await self.dial()
         self.assertEqual(VOICED, [('dutch', 'daan')] * len(OPENING['nl']) + POPPY * 2, "Dutch in Pocket TTS's daan")
-        self.assertEqual(SEEDED, [server.SEED] * len(VOICED), 'fixed words: the same take after every restart')
+        self.assertEqual(SEEDED, [5] * len(OPENING['nl']) + [server.SEED] * 2,
+                         "fixed words: the same take after every restart, from the company's seed for Dutch, the "
+                         "line's for English")
         self.care.turns = [[{'lang': 'nl'}, {'text': 'Natuurlijk.'}, {'end': True}]]
         VOICED.clear()
         SEEDED.clear()
@@ -161,7 +165,7 @@ class CareCall(Juno):
         self.assertEqual(SPOKEN[-3:], ['Sure.', 'Of in het Nederlands.', WORDS['en']['transcript']],
                          "English: only its transcript line, after the reply (the opening had its AI line); Dutch: "
                          'nothing')
-        self.assertEqual(VOICED, POPPY * 2, 'English in his voice, then Dutch in the native one')
+        self.assertEqual(VOICED, POPPY * 2, 'English in her voice, then Dutch in the native one')
         await self.talk('Nee, dank je.', 30)
         await self.quiet(20)
         await self.settle()
@@ -342,7 +346,7 @@ class CareCall(Juno):
                            [{'lang': 'en'}, {'text': 'Bye!'}, {'end': True}]]
         await self.say_first('Hi, where is my parcel?')
         said = [WORDS['en']['reply_ai'], 'Your parcel left yesterday.', WORDS['en']['transcript']]
-        self.assertEqual(SPOKEN[-3:], said, 'his AI line in their language, the answer, then the transcript line')
+        self.assertEqual(SPOKEN[-3:], said, 'her AI line in their language, the answer, then the transcript line')
         self.assertEqual(self.care.turned()[-1]['informed'], ['nl'], 'their words wait in care until it has played')
         await self.quiet(600)
         await self.talk('Thanks, bye.', 30)

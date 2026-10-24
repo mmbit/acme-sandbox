@@ -11,7 +11,7 @@ const chat = await import('./chat.ts');
 
 const TRANSCRIPT = 'Board: the support chat has no live person; a person is reached by email only.';
 // Each test starts with nothing queued, nothing unsent on the intercom and no calls.
-const fresh = () => db.exec('delete from jobs; delete from chat; delete from calls; delete from call_items; delete from call_tokens; delete from requests');
+const fresh = () => db.exec('delete from jobs; delete from wakes; delete from chat; delete from calls; delete from call_items; delete from call_tokens; delete from requests');
 // The board on the intercom, and what HQ's intercom shows.
 const say = async (text: string) => assert.equal((await h.board('/api/chat', { text })).status, 200);
 const messages = async () => (await h.board('/api/chat')).body.messages as { who: string; text: string }[];
@@ -101,6 +101,23 @@ test('an intercom line reaches Juno once: a message sent mid-turn waits for the 
   assert.doesNotMatch(second.note ?? '', /First question/);
   await h.finish(second, { status: 'done', result: 'Answer to the second' });
   assert.equal(h.job(j.id).status, 'done');
+});
+
+test("an intercom reply past about 80 words is the board's in full, and Juno's next turn hears its length once", async () => {
+  fresh();
+  const long = Array(130).fill('word').join(' ');
+  await say('How is the store link coming along?');
+  const j = chatJobs().at(-1)!;
+  await h.finish(await run(j.id), { status: 'done', result: long });
+  assert.equal((await messages()).at(-1)!.text, long, 'never cut or refused');
+  await say('Thanks, and the glow?');
+  const next = await run(j.id);
+  assert.match(next.note ?? '', /\b130 words\b[\s\S]*Thanks, and the glow\?$/);
+  await h.finish(next, { status: 'parked', request: { kind: 'decision', title: 'The glow?', body: 'Keep it?' } });
+  await say('Great');
+  const after = await run(j.id);
+  assert.doesNotMatch(after.note ?? '', /\bwords\b/, 'once, also when the turn that heard it parked');
+  await h.finish(after, { status: 'done', result: '🙂' });
 });
 
 // kit's job, parked on a card the board answered with the transcript's words: they're its note.

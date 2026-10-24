@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { play, type QueuedJob, type Snapshot } from './eta.ts';
-import { PAUSE_MS } from './planner.ts';
+import { DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
 import { paceChange, pacingLifts } from '../../worker/src/pace.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -266,7 +266,7 @@ test('reviewers and rulings occupy slots, fix runs have their own engine, and me
   assert.equal(parallel.get(1)!.time!.total_ms, 22 * MINUTE);
 });
 
-test('used slack pauses the last lower-order work at a step boundary and preserves its remaining run', () => {
+test('used slack immediately pauses lower work and preserves its remaining run', () => {
   const input = snapshot([work(1, { status: 'running', seat: 'codex' }), work(2, { due: 16 * MINUTE })]);
   const seen = play(
     input,
@@ -275,17 +275,17 @@ test('used slack pauses the last lower-order work at a step boundary and preserv
       [2, 10],
     ]),
   );
-  assert.equal(seen.get(2)!.start, PAUSE_MS);
-  assert.equal(seen.get(2)!.merged, 16 * MINUTE);
+  assert.equal(seen.get(2)!.start, DEADLINE_PAUSE_MS);
+  assert.equal(seen.get(2)!.merged, 10 * MINUTE + DEADLINE_PAUSE_MS);
   assert.deepEqual(seen.get(2)!.time, {
     work_ms: 10 * MINUTE,
     review_ms: 0,
-    waiting_ms: PAUSE_MS,
+    waiting_ms: DEADLINE_PAUSE_MS,
     deploy_ms: 0,
-    total_ms: 16 * MINUTE,
+    total_ms: 10 * MINUTE + DEADLINE_PAUSE_MS,
   });
   assert.ok(seen.get(2)!.waits.some(w => w.on === 'queue' && w.pausing));
-  assert.ok(seen.get(1)!.done! >= 76 * MINUTE);
+  assert.equal(seen.get(1)!.done, 70 * MINUTE + 2 * DEADLINE_PAUSE_MS);
 });
 
 test('memory pressure can pause another engine, but a quota wait never pauses work for room', () => {
@@ -300,7 +300,7 @@ test('memory pressure can pause another engine, but a quota wait never pauses wo
         [2, 10],
       ]),
     ).get(2)!.start,
-    PAUSE_MS,
+    DEADLINE_PAUSE_MS,
   );
   input.seats.find(s => s.id === 'codex')!.fiveHour = 0.85;
   input.seats.find(s => s.id === 'codex')!.fiveHourResets = 30 * MINUTE;
@@ -311,11 +311,11 @@ test('memory pressure can pause another engine, but a quota wait never pauses wo
       [2, 10],
     ]),
   );
-  assert.equal(seen.get(1)!.done, 82 * MINUTE);
-  assert.equal(seen.get(2)!.start, 30 * MINUTE + PAUSE_MS);
+  assert.equal(seen.get(1)!.done, 70 * MINUTE + 2 * DEADLINE_PAUSE_MS);
+  assert.equal(seen.get(2)!.start, 30 * MINUTE + DEADLINE_PAUSE_MS);
 });
 
-test('review, ruling and lane runs run to their end while urgent work waits', () => {
+test('deadline work preempts lower reviews and rulings while the board lane keeps its place', () => {
   for (const extra of [{ kind: 'review' }, { kind: 'consolidate' }, { board: 1 }]) {
     const seen = play(
       snapshot([work(1, { status: 'running', seat: 'codex', ...extra }), work(2, { due: 10 * MINUTE })]),
@@ -324,7 +324,7 @@ test('review, ruling and lane runs run to their end while urgent work waits', ()
         [2, 5],
       ]),
     );
-    assert.equal(seen.get(2)!.start, 30 * MINUTE);
+    assert.equal(seen.get(2)!.start, 'board' in extra ? 30 * MINUTE : DEADLINE_PAUSE_MS);
   }
 });
 
@@ -469,7 +469,7 @@ test('work waiting for a full seat makes room on that seat even with free engine
       [2, 10],
     ]),
   );
-  assert.equal(seen.get(2)!.start, PAUSE_MS);
+  assert.equal(seen.get(2)!.start, DEADLINE_PAUSE_MS);
 });
 
 test('downtime uses spare room, while downtime needed by a window runs in the shared order', () => {
@@ -626,4 +626,25 @@ test('the time split counts prerequisites as waiting and deployment separately f
   });
   const held = play(snapshot([work(1, { after: 'never' })]), sizes([[1, 10]])).get(1)!;
   assert.equal(held.time, null, 'unfinished work has no invented total');
+});
+
+test('putting a thirty-minute task first cannot strand a slipping thread behind four hours of lower review', () => {
+  const jobs = [
+    work(1, { kind: 'review', status: 'running', seat: 'codex' }),
+    work(2, { kind: 'consolidate', status: 'running', seat: 'codex' }),
+    work(3, { due: 45 * MINUTE }),
+  ];
+  const room = { slots: { codex: 2 }, seatRuns: { codex: 2 }, room: 2 };
+  const durations = sizes([
+    [1, 240],
+    [2, 240],
+    [3, 10],
+    [4, 30],
+  ]);
+  for (const pace of ['usual', 'slow'] as const) {
+    const before = play(snapshot(jobs, room), durations, { pace }).get(3)!;
+    const after = play(snapshot([...jobs, work(4, { due: 30 * MINUTE })], room), durations, { pace }).get(3)!;
+    assert.ok(after.merged! <= 45 * MINUTE, JSON.stringify({ before, after }));
+    assert.ok(after.merged! - before.merged! <= 30 * MINUTE + DEADLINE_PAUSE_MS);
+  }
 });

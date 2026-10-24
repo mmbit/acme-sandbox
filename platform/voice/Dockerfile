@@ -1,6 +1,6 @@
 # The voice line (server.py), built from platform/ (it borrows the worker's hq command): Silero VAD and Parakeet (sherpa-onnx) for the board's words,
 # Smart Turn for when it has finished, Pocket TTS (English, Dutch and German, in each agent's own voice) and Piper (native Dutch and German voices: for a voice Pocket TTS garbles
-# Dutch in, and a care call's voice per language thorsten) for the agent's, and the Claude CLI for the agent's side of the call. Internal only; audio
+# Dutch in, and a care call's voice per language thorsten or kerstin) for the agent's, and the Claude CLI for the agent's side of the call. Internal only; audio
 # is never stored. Every model is fetched at build time, so a call never waits for a download.
 FROM node:24.22.1-bookworm-slim
 # (tzdata: the line says when a seat's limit ends on the company's clock, company.timeZone.)
@@ -25,15 +25,22 @@ ARG PIPER_JSON_SHA256=9ea643871742c038511b6aaf20e6fc098a78a11968122d2f6ca3e50403
 ARG PIPER_DE=https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/de/de_DE/thorsten/medium
 ARG PIPER_DE_SHA256=7e64762d8e5118bb578f2eea6207e1a35a8e0c30595010b666f983fc87bb7819
 ARG PIPER_DE_JSON_SHA256=974adee790533adb273a1ac88f49027d2a1b8f0f2cf4905954a4791e79264e85
+# (kerstin: a woman's German voice, CC0, 16 kHz).
+ARG PIPER_DE_F=https://huggingface.co/rhasspy/piper-voices/resolve/c10ece1aade47bb51c153c893d14e5bf8e5b7117/de/de_DE/kerstin/low
+ARG PIPER_DE_F_SHA256=d352a7641892cebf2903859af94e9ba81a141110215fe3943bcda7f7da401b7a
+ARG PIPER_DE_F_JSON_SHA256=56e708556b7b9b7a53c4f8957e021421e69f11a600962bba554cffbe72cf2d47
 RUN curl -fsSL -o parakeet.tar.bz2 "$SHERPA_MODELS/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2" \
     && curl -fsSL -o silero_vad.onnx "$SHERPA_MODELS/silero_vad.onnx" \
     && curl -fsSL -o nl_NL-alex-medium.onnx "$PIPER_VOICES/nl_NL-alex-medium.onnx" \
     && curl -fsSL -o nl_NL-alex-medium.onnx.json "$PIPER_VOICES/nl_NL-alex-medium.onnx.json" \
     && curl -fsSL -o de_DE-thorsten-medium.onnx "$PIPER_DE/de_DE-thorsten-medium.onnx" \
     && curl -fsSL -o de_DE-thorsten-medium.onnx.json "$PIPER_DE/de_DE-thorsten-medium.onnx.json" \
+    && curl -fsSL -o de_DE-kerstin-low.onnx "$PIPER_DE_F/de_DE-kerstin-low.onnx" \
+    && curl -fsSL -o de_DE-kerstin-low.onnx.json "$PIPER_DE_F/de_DE-kerstin-low.onnx.json" \
     && printf '%s  %s\n' "$PARAKEET_SHA256" parakeet.tar.bz2 "$SILERO_SHA256" silero_vad.onnx \
          "$PIPER_SHA256" nl_NL-alex-medium.onnx "$PIPER_JSON_SHA256" nl_NL-alex-medium.onnx.json \
-         "$PIPER_DE_SHA256" de_DE-thorsten-medium.onnx "$PIPER_DE_JSON_SHA256" de_DE-thorsten-medium.onnx.json | sha256sum -c - \
+         "$PIPER_DE_SHA256" de_DE-thorsten-medium.onnx "$PIPER_DE_JSON_SHA256" de_DE-thorsten-medium.onnx.json \
+         "$PIPER_DE_F_SHA256" de_DE-kerstin-low.onnx "$PIPER_DE_F_JSON_SHA256" de_DE-kerstin-low.onnx.json | sha256sum -c - \
     && tar xjf parakeet.tar.bz2 && rm parakeet.tar.bz2 \
     && mv sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8 parakeet && rm -rf parakeet/test_wavs
 # (pocket-tts 3.3.0 names the commits: each language's model and tokenizer, and the voices' embeddings; bill_boerst: a

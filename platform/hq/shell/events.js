@@ -15,20 +15,35 @@ export function onEvent(ev) {
 }
 
 // (registered as the shell loads, before the scene: its listeners come second)
-world.on('status', ({ agent }) => { refreshAgent(agent); updateStatus(); });
+world.on('status', ({ agent }) => {
+  refreshAgent(agent);
+  updateStatus();
+});
 world.on('say', ({ agent, to, text }) => {
   const B = world.agents.get(to);
   refreshAgent(agent); // their log grew
   bubble(agent, text || '…', to ? `to ${B?.data.name || to}` : '');
   refreshAgent(to);
-  if (agent === world.company.ceo && to === 'board') refreshIntercomCount();   // a reply on the intercom
+  if (agent === world.company.ceo && to === 'board') refreshIntercomCount(); // a reply on the intercom
 });
 world.on('post', ({ agent, title, board }) => {
   const A = world.agents.get(agent);
   refreshAgent(agent);
-  toast(`<b>${board ? 'For the board' : `New in ${esc(names.newsletter)}`}</b><br>${esc(title || 'A fresh post')}${A ? ` · by ${esc(A.data.name)}` : ''}`, () => openGazette(board));
+  toast(
+    `<b>${board ? 'For the board' : `New in ${esc(names.newsletter)}`}</b><br>${esc(title || 'A fresh post')}${A ? ` · by ${esc(A.data.name)}` : ''}`,
+    () => openGazette(board),
+  );
   if (world.dev) {
-    if (!gazette.some(p => p.title === title)) gazette.unshift({ slug: 'dev-' + gazette.length, title, author: agent, date: new Date().toISOString().slice(0, 10), tags: ['demo'], cover: '', html: `<p>${esc(title)}. (A demo post from the dev event stream.)</p>` });
+    if (!gazette.some(p => p.title === title))
+      gazette.unshift({
+        slug: 'dev-' + gazette.length,
+        title,
+        author: agent,
+        date: new Date().toISOString().slice(0, 10),
+        tags: ['demo'],
+        cover: '',
+        html: `<p>${esc(title)}. (A demo post from the dev event stream.)</p>`,
+      });
     paintNews();
   } else reloadGazette(false).then(paintNews);
 });
@@ -39,5 +54,6 @@ world.on('log', ({ agent, text }) => {
 
 // a directive through the intercom: the CEO acknowledges (the real stream reports the new job itself)
 export function onDirective(title) {
-  if (world.dev) setTimeout(() => onEvent({ type: 'chat', agent: world.company.ceo, to: 'board', text: `On it: ${title}` }), 1200);
+  if (world.dev)
+    setTimeout(() => onEvent({ type: 'chat', agent: world.company.ceo, to: 'board', text: `On it: ${title}` }), 1200);
 }

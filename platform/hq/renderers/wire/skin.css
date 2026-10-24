@@ -2,7 +2,6 @@
    the one thing lit at a time) and its font, big and bold. Everything is a solid key with a lip under it, as on the
    company's site: no outlines, no shadows that blur, no frosted glass. The keys are scene.js's; the shell's HUD,
    devices, panels and buttons wear the same (the shell's --key-* settings, style.css). */
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap');
 @import url('../icons.css');
 @import url('../controls.css');
 
@@ -159,10 +158,11 @@ body.wire-dark .brand img {
 }
 
 /* ---- the shell in the same keys: the HUD, the board's devices, the panels and cards */
+/* (#status > span: the throughput's chips, not the words in them) */
 .brand,
 .tools button,
 .tools a.desk,
-#status span,
+#status > span,
 .toast {
   background: var(--k-panel);
   border-color: transparent;
@@ -180,14 +180,16 @@ body.wire-dark .brand img {
   border-color: transparent;
   box-shadow: var(--key-on-lip);
 }
-.tools button:active,
-.tools a.desk:active {
+/* (a key goes down from the touch until its tap lands, .down by shared/tactile/press.js holdPresses, so a tap on a phone
+   never goes down twice.) */
+.tools button:is(:active, .down),
+.tools a.desk:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--shadow-press);
 }
 /* (a HUD key that's on stays down on its lip) */
 .tools button[aria-pressed='true'],
-.tools button[aria-pressed='true']:active {
+.tools button[aria-pressed='true']:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--key-on-down-lip);
 }
@@ -238,6 +240,14 @@ body.wire-dark .brand img {
   background: var(--k-panel);
   box-shadow: var(--key-lip);
 }
+/* (rows apart by the gap and the lip under each key, so they look as far apart as the columns). */
+.crt .apps {
+  row-gap: calc(8px + var(--depth-button));
+}
+/* an app's count, flat as the keys it sits on: none of the screen's glow (which the screen's edge would cut). */
+.crt .apps .count {
+  box-shadow: none;
+}
 /* a ticked box lit like a picked key, its tick in the accent's words' colour */
 :is(.req .steps .tick, .notes li.pending) input:checked {
   background-color: var(--key-on-bg);
@@ -275,7 +285,7 @@ body.touring #card {
   color: var(--k-ink);
   box-shadow: var(--key-lip);
 }
-#panel-close:active {
+#panel-close:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--shadow-press);
 }
@@ -319,6 +329,14 @@ body.touring #card {
   border: 0;
   background: none;
   padding: 0 4px 4px;
+}
+/* Nor do the desk phone's cards: they lie on the device's own ground, as far in from its sides as the header's keys.
+   */
+.device.phone > .screen {
+  margin: 0;
+  border: 0;
+  background: none;
+  padding: 4px 16px 16px;
 }
 /* its keys' lip straight down, and the box under them its talk, 4 px in */
 .intercom header {
@@ -381,7 +399,7 @@ body.touring #card {
     flex-wrap: nowrap;
     gap: 5px;
   }
-  #status span {
+  #status > span {
     padding: 2px 8px;
     font-size: 12.5px;
     white-space: nowrap;
@@ -774,9 +792,10 @@ body.wire-dark .applist .pic img[data-ink] {
   height: calc(100% + 14px);
   opacity: 0;
 }
+/* (an agent's in their shirt's colour where it shows on the key, scene.js ringOn.) */
 .wire .avatar circle {
   fill: none;
-  stroke: var(--hue);
+  stroke: var(--ring, var(--hue));
   stroke-width: 5;
   stroke-linecap: round;
   stroke-dasharray: 100 120;
@@ -922,10 +941,6 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
 }
 .wire .since {
   margin-left: auto;
-}
-.wire .big.company rect {
-  transform-box: fill-box;
-  transform-origin: 50% 100%; /* (they grow back up when Today is pressed) */
 }
 /* the bars: ink, faint; the last one (now, today) in the accent on its side */
 .wire rect {
@@ -1149,7 +1164,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   position: relative;
   height: 0;
   --side-w: min(44px, max(var(--pad), (100vw - 520px) / 2)); /* (the gutter beside it, up to a tap's width) */
-  --side-ink: var(--k-ink);
+  --side-ink: var(--k-muted); /* (light as the turn mark) */
   animation: wire-dim-in 0.3s;
 }
 @keyframes wire-dim-in {
@@ -1326,13 +1341,13 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   position: relative; /* (for its turn mark) */
 }
 /* a face that turns over says so, quietly, in its bottom corner, set in by the face's padding, at the icon set's line
-   weight (scene.js key). */
+   weight (scene.js key), lighter than the face's words. */
 .wire .big .turns {
   position: absolute;
   right: var(--face-x);
   bottom: var(--face-b);
   display: grid;
-  color: var(--k-muted);
+  color: color-mix(in srgb, var(--k-muted) 55%, var(--k-panel));
   pointer-events: none;
 }
 .wire .big .turns svg {
@@ -1541,7 +1556,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   box-shadow: var(--key-lip);
   cursor: pointer;
 }
-.wire .close:active {
+.wire .close:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--shadow-press);
 }
@@ -1690,12 +1705,12 @@ body.wire-dark #projects {
   box-shadow: 0 var(--depth-tile) 0 var(--k-side);
 }
 @media (hover: hover) {
-  #projects .pj-tile.lit:not(.pj-lifted, :active):hover {
+  #projects .pj-tile.lit:not(.pj-lifted, :active, .down):hover {
     box-shadow: 0 var(--depth-hover) 0 var(--k-side);
   }
 }
-#projects :is(.pj-tile, .pj-key).lit:active,
-#projects .pj-key.on:active {
+#projects :is(.pj-tile, .pj-key).lit:is(:active, .down),
+#projects .pj-key.on:is(:active, .down) {
   box-shadow: var(--key-on-down-lip);
 }
 #projects .pj-key[aria-pressed='true'] {

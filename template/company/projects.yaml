@@ -16,10 +16,10 @@ groups:
 # made: the project HQ puts each job it makes from the same template in, each a one-task thread there, by the app it's
 # about. checks: the CEO's hourly follow-through check and the Process role's repair when it breaks, due by the end of
 # their hour; alarms: the CEO's job about a platform alarm (the disk, the backup, an app down), due as soon as it can
-# when it's urgent; notes: the board's notes on HQ. All the office's, running the company. A live app's repairs go to
+# when it's urgent. Both the office's, running the company. The board's notes become tasks in their projects as the
+# CEO routes them. A live app's repairs go to
 # the project its product.yaml names (`project:`). A kind or app with no entry goes to no project, for the CEO to sort,
 # but for the checks and an urgent alarm, which carry a window and need their project.
 made:
   checks: { hq: office }
   alarms: { hq: office }
-  notes: { hq: office }

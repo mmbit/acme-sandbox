@@ -5,7 +5,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { keepRecord, launch, records, type Checks, type Launched, type RunRecord } from './detached.ts';
+import { blockRun } from './blocks.ts';
+import { processesFor, type ProcessSnapshot } from './shares.ts';
+import {
+  alive,
+  procStat,
+  keepRecord,
+  launch,
+  records,
+  type Checks,
+  type Launched,
+  type RunRecord,
+} from './detached.ts';
 import type { CheckOptions, CheckOutcome, CheckSpec, TestsClaim, TestsOnce, TestsOutcome } from './pushchecks.ts';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -182,22 +193,85 @@ test("a reload keeps a lent launch's own limit, whatever the spec the next proce
   rmSync(dir, { recursive: true });
 });
 
-test("a check the job's shares stopped part of couldn't complete, whatever it said", async () => {
-  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
-  const said: string[] = [];
-  const checks: Checks = { body: pushed(), spent: {}, runs: {} };
-  const report = await (
-    await workerProcess()
-  ).runChecks(8, checks, [stand(dir, 'tests', 'sleep 0.3; echo ok')], {
-    ...options(dir, said),
-    watch: (_pid, stopped) => stopped.push('the worker stopped its process 9 (900 MB)'),
-  });
-  assert.deepEqual(report.tests, {
-    passed: null,
-    report: 'Could not complete: the worker stopped its process 9 (900 MB).\n\nok',
-  });
-  assert.deepEqual(said, ['tests could not complete (the worker stopped its process 9 (900 MB))']);
-  rmSync(dir, { recursive: true });
+test('a push check keeps its worker stop reason even when HQ cannot confirm the block report', async context => {
+  for (const confirmed of [true, false])
+    await context.test(confirmed ? 'HQ confirms' : 'HQ reply lost', async () => {
+      const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+      const said: string[] = [],
+        stoppedLog: string[] = [];
+      const checks: Checks = { body: pushed(), spent: {}, runs: {} };
+      const commandValue = 'fixture-argument-' + 'v'.repeat(400);
+      writeFileSync(
+        `${dir}/command.cjs`,
+        `require('node:fs').writeFileSync(process.argv[2], 'ready'); setTimeout(() => {}, 30000);`,
+      );
+      const checking = new Map<number, string[]>();
+      const owner = { job: 8, uid: process.getuid!(), gid: process.getgid!() };
+      let stopping: Promise<void> | undefined, failure: Error | undefined;
+      let run: ProcessSnapshot[] = [];
+      const report = await (
+        await workerProcess()
+      ).runChecks(
+        8,
+        checks,
+        [
+          stand(
+            dir,
+            'tests',
+            `sh -c 'node "$1/command.cjs" "$1/ready" "$2" & wait' sh "$1" "${commandValue}"; echo ok`,
+          ),
+        ],
+        {
+          ...options(dir, said),
+          watch: (pid, stopped) => {
+            checking.set(pid, stopped);
+            if (stopping) return;
+            stopping = (async () => {
+              await until(() => existsSync(`${dir}/ready`), 'check child ready');
+              const procs = await processesFor([owner]);
+              const root = procs.find(p => p.ppid === pid && p.comm === 'sh')!;
+              assert.ok(root, 'the check runs a child command');
+              run = procs.filter(p => p.pid === root.pid || p.ppid === root.pid);
+              await blockRun(owner, { uid: owner.uid, measure: 'memory', used: 3100, share: 2560, root, run }, procs, {
+                checking,
+                stopped: text => stoppedLog.push(text),
+                ask: async body => {
+                  assert.equal(typeof body.event, 'string', 'the blocked delivery has an identity');
+                  assert.ok(
+                    String(body.command).includes(commandValue),
+                    'HQ receives the full value before redaction and shortening',
+                  );
+                  await until(
+                    () => run.every(p => procStat(p.pid)?.state === 'T'),
+                    'the command tree is frozen while reporting',
+                  );
+                  assert.match(stopped[0], /the worker blocked its run/);
+                  if (!confirmed) throw new TypeError('fetch failed');
+                  return { text: 'HQ stopped this command. Offload it.' };
+                },
+              });
+            })().catch(err => {
+              failure = err;
+            });
+          },
+          unwatch: pid => {
+            checking.delete(pid);
+          },
+        },
+      );
+      await stopping;
+      const outcome = report.tests as CheckOutcome;
+      assert.equal(outcome.passed, null, 'the parent exits zero but this check could not complete');
+      assert.match(outcome.report, /Could not complete: the worker blocked its run/);
+      assert.match(outcome.report, /3,?100 MB.*2,?560 MB/);
+      assert.match(outcome.report, /ok/);
+      assert.equal(stoppedLog.length, 1, 'the worker records the stop even without a reply');
+      assert.ok(!stoppedLog.join().includes(commandValue), 'the worker log never includes the command');
+      assert.ok(run.length >= 2 && run.every(p => !alive(p.pid, p.start)), 'the whole tree ends');
+      if (confirmed) assert.equal(failure, undefined);
+      else assert.match(String(failure), /block report outcome is unknown.*may have recorded it/);
+      rmSync(dir, { recursive: true });
+    });
 });
 
 // ---- the tests, once on the same code

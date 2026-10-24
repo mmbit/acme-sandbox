@@ -13,7 +13,7 @@ import { onEvent } from './events.js';
 import { devHooks } from './dev.js';
 import { initPanel, panelOpen, refreshAgent } from './panel.js';
 import { reloadGazette, paintNews, openGazette } from './news.js';
-import { initDesk, openPhone, openIntercom, openComputer, onRequests, refreshRequests, refreshWaitingNotes, toolOpen, cardTime, refreshIntercomCount, paintIntercomCount } from './desk.js';   // (the intercom's count)
+import { initDesk, openPhone, openIntercom, openComputer, onRequests, refreshRequests, refreshWaitingNotes, toolOpen, cardTime, refreshIntercomCount, paintIntercomCount, openJob } from './desk.js';   // (the intercom's count; openJob)
 import { refreshSeen, seen, onSeen } from './seen.js';   // (seen, onSeen: job #7083)
 import { registerWorker, syncPush } from './push.js';
 import { names, brand, theme } from './brand.js';
@@ -61,7 +61,7 @@ async function boot() {
   const tools = { phone: ({ card }) => openPhone(card), intercom: openIntercom, computer: () => openComputer(), gazette: () => openGazette(q.get('board') === '1' || undefined),
     settings: () => openComputer('settings', { section: 'sys:seats' }),
     // (/?open=jobs&job=<id>: the projects view with that job open, its report in it.)
-    jobs: ({ job }) => openProjects({ job: Number(job) || null }), onair: () => openComputer('onair'),
+    jobs: ({ job }) => Number(job) ? openJob(Number(job)) : openProjects(), onair: () => openComputer('onair'),
     projects: () => openProjects(),   // (/?open=projects: HQ at the projects view)
     notes: ({ notes }) => openComputer('notes', { notes: { ids: new Set(String(notes ?? '').split(',').map(Number).filter(id => id > 0)) } }) };
   navigator.serviceWorker?.addEventListener('message', e => { if (tools[e.data?.open]) { refreshRequests(); tools[e.data.open](e.data); } });

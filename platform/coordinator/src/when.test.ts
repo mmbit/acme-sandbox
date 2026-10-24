@@ -1,6 +1,7 @@
 // node --test src/when.test.ts   (uses a throwaway DATA_DIR): hq when, new work played into the plan as it stands: the
 // earliest it can be done without making any window miss, and with --by whether it makes that time and, only if not,
 // what would, as played (windows giving, one more seat).
+import { writeFileSync } from 'node:fs';
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
@@ -69,7 +70,7 @@ test.before(async () => {
 test.afterEach(() => h.cancelQueued());
 
 const ask = async (query: Record<string, string>) =>
-  h.agent(`when?${new URLSearchParams({ agent: 'kit', ...query })}`, (await reader()).token);
+  h.agent(`when?${new URLSearchParams({ agent: 'kit', size: '40m', ...query })}`, (await reader()).token);
 // Spring: kit's queued work on its own thread, alone done (merged and deployed) at T0 + 90 min, with `slack` minutes past
 // that to its deadline: its thread's id. Anything queued before is cancelled. held: minutes it doesn't start before
 // (a time it waits for: hq job --when), which its deadline counts.
@@ -89,7 +90,8 @@ const spring = (slack: number, held = 0) => {
 };
 const utc = (ms: number) => `${new Date(ms).toISOString().slice(0, 16)}Z`;
 const hqWhen = async (...args: string[]) => {
-  const r = await h.hq(await reader(), 'when', 'paint the harbour map', '--agent', 'kit', ...args);
+  const size = args[0]?.match(/^\d+[mh]$/) ? args.shift()! : '40m';
+  const r = await h.hq(await reader(), 'when', 'paint the harbour map', '--agent', 'kit', '--size', size, ...args);
   assert.equal(r.code, 0, r.out);
   return r.out;
 };
@@ -97,7 +99,7 @@ const hqWhen = async (...args: string[]) => {
 test('the earliest without making any window miss: ahead of work whose window can give, never of work whose can not', async () => {
   spring(5 * 60);
   const loose = (await ask({ q: 'paint the harbour map' })).body;
-  assert.deepEqual([loose.size.agent_minutes, loose.size.given, loose.size.compared], [40, false, 3]);
+  assert.deepEqual([loose.size.agent_minutes, loose.size.given, loose.size.compared], [40, true, 0]);
   const time = loose.earliest.time;
   assert.equal(time.work_ms, 40 * MIN);
   assert.ok(time.review_ms > 0);
@@ -111,21 +113,15 @@ test('the earliest without making any window miss: ahead of work whose window ca
     loose.earliest.due >= loose.earliest.finish && loose.earliest.due < loose.free.finish,
     JSON.stringify(loose),
   );
-  assert.match(
-    await hqWhen(),
-    /paint the harbour map, as kit's work: 40 min of agent time \(the mean of 3 done jobs like it/,
-  );
+  assert.match(await hqWhen(), /paint the harbour map, as kit's work: 40 min of agent time \(as given\)/);
   assert.match(await hqWhen(), /Its window for that: deadline .*, aim .*\. With no window at all it's done about/);
-  // spring's window holds only if spring goes first: the new work waits for it, and needs no window
+  // A later window preserves spring's deadline and finishes at the unwindowed time.
   spring(0);
   const tight = (await ask({ q: 'paint the harbour map' })).body;
-  assert.deepEqual([tight.earliest.finish, tight.earliest.due], [tight.free.finish, null]);
+  assert.deepEqual([tight.earliest.finish, tight.earliest.due], [tight.free.finish, tight.free.finish]);
   assert.ok(tight.free.finish > SPRING_DONE);
   const out = await hqWhen();
-  assert.match(
-    out,
-    /At the earliest without making any window miss: done about .*\.\nThat's when it's done with no window at all/,
-  );
+  assert.match(out, /At the earliest without making any window miss: done about .*\.\nIts window for that:/);
   assert.match(out, /\(Played \d+ ways on the queue as it is, in \d+\.\d s\.\)/);
 });
 
@@ -149,9 +145,8 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
 });
 
 test("no time holds every window: work its window counts on starting later can't be overtaken, and the answer says so", async () => {
-  // spring can't start before T0 + 10 min, and its deadline leaves it 5 min: the new work, with or without a window,
-  // takes the slot first and spring misses
-  const thread = spring(5, 10);
+  // Spring has no margin for even an immediate deadline pause after it becomes ready.
+  const thread = spring(0, 10);
   const none = (await ask({ q: 'paint the harbour map' })).body.earliest;
   assert.equal(none.found, false);
   assert.deepEqual(
@@ -202,20 +197,10 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
     await hqWhen('--by', utc(T0 + 160 * MIN)),
     /By .*: yes, done about .* with every window held\. Its window: deadline/,
   );
-  // spring holds when the new work has no window; a deadline at the time asked would put it ahead of spring's reviews
   const thread = spring(0);
   const unwindowed = await by(T0 + 160 * MIN);
-  assert.deepEqual([unwindowed.makes, unwindowed.due], [true, null]);
-  assert.deepEqual(
-    unwindowed.pushed.map((g: { thread: string }) => g.thread),
-    [thread],
-  );
-  assert.match(
-    await hqWhen('--by', utc(T0 + 160 * MIN)),
-    new RegExp(
-      `yes, done about .* with no window set\\. A deadline at .* would move it ahead of work whose windows then miss:\\n- ${thread} \\(Due: Thread \\d+\\) past its deadline .* by \\d+ min`,
-    ),
-  );
+  assert.deepEqual([unwindowed.makes, unwindowed.due, unwindowed.gives], [true, T0 + 160 * MIN, []]);
+  assert.match(await hqWhen('--by', utc(T0 + 160 * MIN)), /yes, done about .* with every window held/);
   // sooner: with its windows held one claude slot can't. Ahead of spring, it's done in time if spring's window gives;
   // and one more seat does it with every window held
   const sooner = await by(T0 + 100 * MIN);
@@ -278,7 +263,19 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
   const unseated = (await ask({ q: 'paint the harbour map', agent: 'nib', by: utc(T0 + 20 * MIN) })).body.by;
   assert.deepEqual([unseated.makes, unseated.seat, unseated.unpriced], [false, null, ['codex-a']]);
   assert.match(
-    (await h.hq(await reader(), 'when', 'paint the harbour map', '--agent', 'nib', '--by', utc(T0 + 20 * MIN))).out,
+    (
+      await h.hq(
+        await reader(),
+        'when',
+        'paint the harbour map',
+        '--agent',
+        'nib',
+        '--size',
+        '40m',
+        '--by',
+        utc(T0 + 20 * MIN),
+      )
+    ).out,
     /With one more codex seat: not played, as HQ has no codex seat with measured fill rates and reported slots to copy\.\n(.*\n)*Seat fill rates are not measured yet for codex-a: the play counts them as never filling\./,
   );
 });
@@ -331,7 +328,7 @@ test('a quote for urgent work counts making room instead of waiting for the runn
   try {
     const query = { q: 'paint the harbour map', size: '10m', by: utc(T0 + 20 * MIN) };
     const quoted = (await ask(query)).body.by;
-    assert.equal(quoted.start, T0 + 6 * MIN);
+    assert.equal(quoted.start, T0 + MIN);
     assert.ok(quoted.waits.some((w: { on: string; pausing?: boolean }) => w.on === 'queue' && w.pausing));
     assert.ok(quoted.time.review_ms > 0);
     const { work_ms, review_ms, waiting_ms, deploy_ms, total_ms } = quoted.time;
@@ -342,4 +339,76 @@ test('a quote for urgent work counts making room instead of waiting for the runn
   } finally {
     await h.finish(running);
   }
+});
+
+test('an explicit added seat compares every project, thread and window without changing the plan', async () => {
+  writeFileSync(`${h.repo}/company/seatplans.yaml`, 'claude-a: 20\n');
+  spring(300);
+  const other = h.dueThread({ deadline: T0 + 400 * MIN });
+  h.queue({ agent: 'kit', title: 'Paint the harbour map at dusk', engine: 'claude', queuedBy: 'juno', thread: other });
+  const before = await ask({ q: 'paint the harbour map' });
+  const replay = async (plan: string) => h.agent(`when?extra_seat=${plan}`, (await reader()).token);
+  const small = await replay('5x');
+  const large = await replay('20x');
+  assert.equal(small.status, 200);
+  assert.equal(small.body.available, true);
+  assert.equal(small.body.capacity.confidence, 'low');
+  assert.equal(small.body.capacity.measured.fiveHours, 1);
+  assert.equal(small.body.capacity.measured.weekHours, 1);
+  assert.equal(small.body.capacity.five_per_agent_hour, large.body.capacity.five_per_agent_hour * 4);
+  assert.equal(small.body.capacity.week_per_agent_hour, large.body.capacity.week_per_agent_hour * 4);
+  const due = small.body.projects.find((p: { name: string }) => p.name === 'Due');
+  assert.ok(due.threads.length > 0);
+  assert.ok(due.threads.some((t: { window: { deadline: number | null } }) => t.window.deadline !== null));
+  assert.ok(due.threads.every((t: { before: unknown; after: unknown }) => t.before && t.after));
+  const after = await ask({ q: 'paint the harbour map' });
+  assert.deepEqual(after.body.free, before.body.free);
+  assert.ok(
+    due.threads.some(
+      (t: { before: { finish: number }; after: { finish: number } }) =>
+        t.after.finish !== null && t.before.finish !== null && t.after.finish < t.before.finish,
+    ),
+  );
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 1 } });
+  const fullRoom = (await replay('20x')).body;
+  for (const project of fullRoom.projects)
+    for (const thread of project.threads) assert.deepEqual(thread.after, thread.before);
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { codex: 1 }, room: 16 } });
+  assert.equal((await replay('20x')).body.available, true);
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
+
+  const cli = await h.hq(await reader(), 'when', '--extra-seat', '5x');
+  assert.equal(cli.code, 0, cli.out);
+  assert.match(cli.out, /Hypothetical added Claude Max 5x/);
+  const eta = await h.hq(await reader(), 'projects', 'Due', '--extra-seat', '20x');
+  assert.equal(eta.code, 0, eta.out);
+  assert.match(eta.out, /Hypothetical added Claude Max 20x/);
+  assert.equal((await replay('10x')).status, 400);
+  writeFileSync(`${h.repo}/company/seatplans.yaml`, 'unknown-seat: 20\n');
+  const unmeasured = await replay('5x');
+  assert.equal(unmeasured.body.available, false);
+  assert.equal(unmeasured.body.projects, undefined);
+});
+
+test('a 5x added seat exhausts its measured weekly allowance and waits for its own reset', async () => {
+  writeFileSync(`${h.repo}/company/seatplans.yaml`, 'claude-a: 20\n');
+  await reading('claude-a', 'claude', 0.99);
+  const thread = h.dueThread({ deadline: T0 + 2 * 24 * HOUR });
+  const job = h.queue({ agent: 'kit', title: 'Paint the harbour map', engine: 'claude', queuedBy: 'juno', thread });
+  const sizes = await import('./sizes.ts');
+  sizes.setSize(job, '15h', 'A measured long run', 'juno');
+  const replay = async (plan: string) => (await h.agent(`when?extra_seat=${plan}`, (await reader()).token)).body;
+  const small = await replay('5x');
+  const large = await replay('20x');
+  const name = (await h.agent(`thread?id=${thread}`, (await reader()).token)).body.name;
+  const find = (r: typeof small) =>
+    r.projects
+      .flatMap((p: { threads: { name: string }[] }) => p.threads)
+      .find((t: { name: string }) => t.name === name);
+  const smallThread = find(small),
+    largeThread = find(large);
+  assert.ok(largeThread.after.finish < T0 + 2 * 24 * HOUR, JSON.stringify(largeThread));
+  assert.ok(smallThread.after.finish > T0 + 5 * 24 * HOUR, JSON.stringify(smallThread));
+  assert.equal(largeThread.after.standing, 'holds');
+  assert.equal(smallThread.after.standing, 'misses');
 });

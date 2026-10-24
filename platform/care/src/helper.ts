@@ -18,7 +18,7 @@ import * as toollog from './toollog.ts';
 import * as numbers from './numbers.ts';
 import { healthTerm } from '../public/health.js';
 import { db, now } from './db.ts';
-import { t, mask, CODE_TYPED } from './texts.ts';
+import { t, mask, day, CODE_TYPED } from './texts.ts';
 import { settings, nameOf, base } from './company.ts';
 import { appsOf, withOrders } from './config.ts';
 import type { ToolResult } from './company.ts';
@@ -89,6 +89,17 @@ const tagged = (app: string, view: any) => {
   return { ...view, app: base(app), from: nameOf(app), ...(phoned.length ? { reported_by_phone: phoned } : {}) };
 };
 
+// The email to a person this chat sent, and how it stands: when a person's reply went, the helper never says one will
+// still come
+function handed(st: any) {
+  if (!st.handed) return '';
+  const h = person.handedCase(st), gone = `An email to a person has gone (reference ${st.handed})`;
+  if (!h?.replied && !h?.settled) return `${gone}.`;
+  const done = h.replied ? `a person on the team answered it by email on ${day(h.replied, 'en')}` : 'a person on the team has closed it';
+  if (!h.settled) return `${gone}, and ${done}; the customer wrote again since, and a person replies to that by email too.`;
+  return `${gone}, and ${done}: it's done, so never say a person will still get back to them about it. What they write now goes onto that case for the team to read, but nobody owes them a reply unless they ask for a person (ask_for_person).`;
+}
+
 function facts(c: Ctx, since: string[] = []) {
   const s = sessions.current(c.session) ?? c.session, lvl = sessions.level(s), st = c.conv.state;
   const d = new Date(now());
@@ -100,7 +111,7 @@ function facts(c: Ctx, since: string[] = []) {
       : lvl === 1 ? `Checked: order and email match for ${s.orders.map(o => `${o.id} (${nameOf(o.app)})`).join(', ')} (that order's status only). A code from their inbox is needed for more.`
       : 'Not checked yet: no order data.',
     settings.chatFirst && st.caseMade ? 'You already made your one case for trying here in this conversation: never make it again.' : '',
-    st.handed ? `An email to a person has gone (reference ${st.handed}).` : '',
+    handed(st),
     st.rights ? 'A data request from this chat has gone to the team: more words for it, or another request, go by privacy_request too.' : '',
     st.snapAsked ? 'You already offered the snapshot card in this conversation: never offer it again.' : '',
     c.busy ? 'It is a busy time: wherever you say how long a person takes, add that it may take longer.' : '',

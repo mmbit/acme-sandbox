@@ -2,7 +2,7 @@
 // each message, so the CEO remembers the conversation. The CEO's final message of each turn is the reply. What the board
 // says while the CEO is still answering waits, and goes in the next turn. Every line is shown and kept as it is: a key's
 // value is redacted where it's stored (db.ts).
-import { db, once } from './db.ts';
+import { db, once, setting, remember } from './db.ts';
 import { publish } from './events.ts';
 import { createJob, findAgent, preview, holdsCustomerData, handedCustomerData, holdsKeys, handedKeys, callSeat, workerQuiet } from './jobs.ts';   // (customer data; paused)
 import { STANDING } from './jobcodes.ts';
@@ -43,13 +43,19 @@ const ceoName = () => findAgent(ceo())?.name ?? 'the CEO';
 const ONBOARDING = `
 The company is new: you have no team yet, and this conversation is its onboarding. Follow company/playbooks/intake.md
 from wherever the conversation is now.`;
-// a time told on the intercom comes from hq when and goes on the work's thread as its window (hq window).
+// a time told on the intercom comes from hq when and goes on the work's thread as its window as it's queued (hq job --by:
+// askwindow.ts.).
 //
 // Shifted work: the agreed deadlines' facts come with hq job, hq cancel and hq when (deadlines.ts), the judgment is the
 // CEO's (call.ts says the same).
+// A long reply hears so in its next turn (LONG_REPLY).
 const brief = (fixer = roles().process) => `The board is talking with you over HQ's intercom: a chat, turn by turn, in this one session.
-Your final message of each turn is exactly what the board sees, so make it your reply: conversational, short
-(a few sentences; a short list when it helps), plain text, no summary of your process.
+Your final message of each turn is exactly what the board sees, so make it your reply: conversational and plain.
+Lead with the answer in one or two sentences; add at most three short bullets, only if they help. About 80 words or
+fewer. Leave out what goes without saying (that HQ tells the board if a time slips, review steps), your process, and
+job, pull request, item or message numbers: name the person and a rough time instead ("Ada, today"). A card
+number only for a card the board sees on its desk phone. A fitting emoji or two is welcome. For example: "Good catch,
+the glow came off but its margin stayed. Ada's fixing it today, no card needed. 👍"
 Answer questions from what you know and what's in the repo. When the board decides something (a priority, a
 playbook change, a new piece of work), act on it: hand work off with \`hq job\`, or make a small document change
 yourself in this session (it becomes a pull request for review), and say what you did. Anything that needs the
@@ -57,11 +63,17 @@ board's formal approval under company/AUTHORITY.md still goes to the desk phone.
 Fixes to how the company itself works (calls and the voice line, hand-offs, orchestration, knowledge search, HQ and
 the coordinator) are the Process team's to build: hand them to ${findAgent(fixer)?.name ?? fixer} with \`hq job\` and the full brief. Never suggest
 the board's own Claude Code for them; that's for quick fixes the board chooses to make itself.
-Before you tell the board when something will be done, play it into the plan with \`hq when "..."\` (\`--by\` the
-board's time: whether it makes it, and only if not, what would). Give one plain time, and put it on the work's thread
-as its window: \`hq window <thread | job | pr:<n>> <when>\`, so HQ
-orders the thread's work by it (its reviews and fixes too), and you see it in your summary if the thread slips. When the
-board says a line of work is urgent, its window's deadline is now: \`hq window <thread> 1m\`.
+Before queueing work, read \`hq estimate "..."\` for clean past-job scopes and actual times. Judge the scope yourself,
+then queue with \`--size <time> --refs <job,job> --why "scope comparison"\`. With no comparable job, omit refs and explain
+why. The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
+\`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
+board's time: whether it makes it, and only if not, what would). Give one plain time. What the board asks for here takes
+its window as you queue it, \`hq job ... --by <when>\`, so HQ orders the thread's work by it from the first minute (its
+reviews and fixes too) and pauses work in the way, and you see it in your summary if the thread slips: the board's time,
+else hq when's, or \`--by <project>/<slug>\` when it serves a deliverable with a window (the meeting it's needed for).
+Only when the board gave no time and it serves nothing timed, \`--by none\`. Work already queued: \`hq window <thread |
+job | pr:<n>> <when>\`. When the board says a line of work is urgent, its window's deadline is now:
+\`hq window <thread> 1m\`.
 New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
 board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a thread's window) its finish, its
 slack and its slack some hours ago. When its finish lands past the deadline, the deadline moves: say so plainly. A
@@ -103,6 +115,11 @@ export function fromBoard(text: string, picked: unknown) {
   if (p.missing.length) return [409, 'a picture is no longer waiting to be sent: it was sent already, removed, or went unsent for a day', { missing: p.missing }];
   return say(text, undefined, undefined, p.ids);
 }
+// A reply past LONG_REPLY words (about 80 asked, brief()) gets a gentle nudge in the CEO's next turn, never a refusal: the
+// board has read it already. Kept between runs as the reply's word count (the settings table) until a turn hears it,
+// once, even if that turn parks.
+const LONG_REPLY = 100, LONG = 'chat.long_reply';
+const words = (text: string) => text.split(/\s+/).filter(Boolean).length;
 // A turn ended: the CEO's reply, then anything the board said meanwhile. A turn that failed (three times, jobs.ts) hasn't
 // heard the board: its lines wait again, and a fresh session gets them once. If that fails too, they wait for the
 // board's next message, which brings them along. Only the batch the fresh session was started for goes without a
@@ -116,6 +133,8 @@ export function answered(job: { id: number; title?: string }, status: string, re
   const heard = db.prepare(`update chat set sent = ${done ? 1 : 0} where who in ('board', 'call') and sent = 2`).run().changes;
   const again = !done && heard > 0 && job.title !== AGAIN;
   if (done && job.title === AGAIN) db.prepare('update jobs set title = ? where id = ?').run(CHAT, job.id);
+  // (only a turn's own reply counts: one that ended done.)
+  if (done) remember(LONG, words(reply) > LONG_REPLY ? String(words(reply)) : null);
   const text = done ? reply
     : again ? "Sorry, I lost my train of thought there. I'm starting over with everything you said, so there's no need to repeat it."
     : heard ? "Sorry, I can't answer right now. Nothing you said is lost: I'll hear all of it with your next message."
@@ -202,7 +221,10 @@ function deliver(id: number, says = 'The board says:') {
   if (unsent.some(m => m.about_keys || (m.call && carriesKeys(m.call)))) handedKeys(id);
   db.prepare("update chat set sent = 2 where who in ('board', 'call') and sent in (0, 3) and id <= ?").run(unsent.at(-1)!.id);
   const job = db.prepare('select status, note from jobs where id = ?').get(id) as { status: string; note: string | null };
-  const before = job.status === 'queued' && job.note ? `${job.note}\n\n` : `${says}\n\n`;
+  const adds = job.status === 'queued' && job.note, long = adds ? undefined : setting(LONG);
+  if (long) remember(LONG, null);
+  const before = adds ? `${job.note}\n\n`
+    : `${long ? `(From HQ, not the board: your last reply ran ${long} words. Keep to about 80, the answer first.)\n\n` : ''}${says}\n\n`;
   db.prepare("update jobs set status = 'queued', seat = null, not_before = 0, note = ?, attempts = iif(status = 'queued', attempts, 0) where id = ?")
     .run(before + unsent.map(m => [m.text, pictures.mention(pictures.ofLine(m.id))].filter(Boolean).join('\n\n')).join('\n\n'), id);
 }

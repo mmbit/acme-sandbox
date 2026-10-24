@@ -47,7 +47,7 @@ const KEPT = `select p.*, j.agent, j.title, j.finished, r.started, r.spent_ms, p
   join (select job, min(started) started, sum((julianday(ended) - julianday(started)) * 86400000) spent_ms from runs
     where ended is not null group by job) r on r.job = j.id
   left join prs pr on pr.number = (select max(number) from prs where branch = ${workBranch('j')})
-  where j.status = 'done' and j.finished >= ?`;
+  where j.status = 'done' and j.finished >= ? and p.made <= j.finished`;
 
 function agentTime(since: string) {
   const kept = db.prepare(KEPT).all(since) as Kept[];

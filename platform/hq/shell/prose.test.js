@@ -174,6 +174,7 @@ test('a number is a job\'s after any word but another kind HQ numbers: a task, a
   assert.equal(withJobLinks('existing #6715, Petra #1395 and Lyra\'s note #41'), `existing ${job(6715)}, Petra ${job(1395)} and Lyra&#39;s note #41`);
   assert.equal(withJobLinks('The worker stopped process #48213 (2100 MB); Message from Sam (hq say #432)'),
     'The worker stopped process #48213 (2100 MB); Message from Sam (hq say #432)');
+  assert.equal(withJobLinks('Your call out #7 to Ada has ended; sorted out #12'), `Your call out #7 to Ada has ended; sorted out ${job(12)}`);
   assert.equal(withJobLinks('Process #1619 merged; its fix round #3420; new threads (#8325); the line #6321; let\'s say #4910'),
     `Process ${job(1619)} merged; its fix round ${job(3420)}; new threads (${job(8325)}); the line ${job(6321)}; let&#39;s say ${job(4910)}`);
   assert.equal(withJobLinks('fix rounds #3990, #3996; across projects (#5623); thread: **#8345 FN-LANGNOW**'),

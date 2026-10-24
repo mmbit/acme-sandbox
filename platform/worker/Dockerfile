@@ -2,9 +2,12 @@
 # test and make media (ffmpeg, Playwright + Chromium, ImageMagick, Python, SQLite).
 FROM node:24.22.1-bookworm
 # (python3-yaml: infra's tests, which the worker runs on every push: shared/gates/tests.ts)
+# APT_FRESH reruns this layer for a security fix; libbrotli1 comes with the base image, so it's named to take
+# bookworm-security's 1.0.9-2+deb12u1 (CVE-2026-111497, a Brotli decoder overflow behind curl and git, DLA-4855-1).
+ARG APT_FRESH=2026-10-24
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git jq ripgrep ffmpeg imagemagick python3 python3-pip python3-venv python3-yaml sqlite3 curl ca-certificates \
-      fonts-dejavu fonts-noto-color-emoji util-linux \
+      fonts-dejavu fonts-noto-color-emoji util-linux libbrotli1 \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright DISABLE_AUTOUPDATER=1 CI=1
 # Pinned: a rebuild installs exactly what was reviewed (bump deliberately).
@@ -15,9 +18,13 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.283 @openai/codex@0.160.1 playw
 # brings, as Debian 12 has 3.11) and Google's Antigravity CLI (a Go binary, checked against its manifest's sha512; it
 # also never updates itself: AGY_CLI_DISABLE_AUTO_UPDATE, clis/agy.ts).
 ENV UV_TOOL_DIR=/opt/uv/tools UV_PYTHON_INSTALL_DIR=/opt/uv/python UV_TOOL_BIN_DIR=/usr/local/bin
-RUN python3 -m pip install --break-system-packages --no-cache-dir uv==0.13.1 \
-    && uv tool install --python 3.12 mistral-vibe==2.26.1 \
-    && chmod -R a+rX /opt/uv
+# uv 0.13.5's own store leaves out emSign's compromised root (GHSA-hq85-5cpj-mr62). Vibe pins its certifi exactly
+# to a bundle that still trusts it, so the override installs certifi 2026.10.19, the first without it
+# (GHSA-6q48-6c7w-9gw2), which Vibe reads through certifi.where().
+RUN python3 -m pip install --break-system-packages --no-cache-dir uv==0.13.5 \
+    && echo 'certifi==2026.10.19' > /tmp/vibe-overrides.txt \
+    && uv tool install --python 3.12 --overrides /tmp/vibe-overrides.txt mistral-vibe==2.26.1 \
+    && rm -f /tmp/vibe-overrides.txt && chmod -R a+rX /opt/uv
 RUN curl -fsSL -o /tmp/agy.tar.gz https://storage.googleapis.com/antigravity-public/antigravity-cli/1.3.5-6164039479459840/linux-x64/cli_linux_x64.tar.gz \
     && echo "0fa5ff7ca8661ef6379da219dd30552327b0deaf112ea896882daaba8bd6abff76ff097ef7b38211bffb78be6871f7494a1739b7160b483cb68481a24d435c47  /tmp/agy.tar.gz" | sha512sum -c - \
     && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity && install -m 755 /tmp/antigravity /usr/local/bin/agy \
@@ -36,6 +43,11 @@ RUN curl -fsSL -o /tmp/age.tar.gz https://github.com/FiloSottile/age/releases/do
     && tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy \
     && chown root:root /usr/local/bin/age /usr/local/bin/age-keygen /usr/local/bin/versitygw /usr/local/bin/caddy \
     && rm -f /tmp/age.tar.gz /tmp/vgw.tar.gz /tmp/caddy.tar.gz
+# Compose resolves deployment limits in infra/test_limits.py without a Docker daemon.
+RUN curl -fsSL -o /tmp/docker-compose https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64 \
+    && echo "7af95166a730b87e172d4fc9aefea8725d3c6c7327d59149267b452114ddb7d4  /tmp/docker-compose" | sha256sum -c - \
+    && install -m 755 /tmp/docker-compose /usr/local/bin/docker-compose \
+    && rm -f /tmp/docker-compose
 # The worker process runs as root and holds the tokens. Each worker slot runs its jobs as its own user, slot1..slot16
 # (uid and gid 1501..1516), which owns only the folders of the job it runs (src/slots.ts); uid 1500 (worker) keeps
 # the seat sign-ins in /seats and runs no job. Every slot may clone from the root-owned mirror. slottest1 and slottest2

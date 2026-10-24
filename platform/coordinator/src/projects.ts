@@ -2,11 +2,11 @@
 // with a goal, in HQ's db, which any agent starts) and each project's sentence on where it stands, by its owner. A job
 // serves one thread (jobs.thread), and the work it leads to inherits it (jobs.ts threadFrom).
 import { db, mergePending, prepared } from './db.ts';
-import { ceo, projects, type Project } from './company.ts';
+import { ceo, coverOf, projects, type Project } from './company.ts';
 import { isOpenJob, jobRows, loopBranch, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts';
 import { publish } from './events.ts';
 import { anyProject, checkThreadName, noProject, taskClash, threadClash } from './names.ts';
-import { doneSince, linesOf, tally } from './tallies.ts';
+import { doneSince, linesOf, tallies, type Tallies } from './tallies.ts';
 import { inBoardOrder } from './projectorder.ts';
 import { routines } from './schedule.ts';
 import { boardJobs, boardProject, boardSentence, boardThread } from './boardnames.ts';
@@ -280,7 +280,7 @@ const threadChoices = () => {
 // completed: the projects done (hq project done, plan.ts), the latest first, each with its done time and threads, for the
 // view's ongoing / completed switch; their jobs aren't loose.
 // Each thread has its lines (tallies.ts linesOf), and the projects come in the board's order (projectorder.ts).
-// A project carries its cover where projects.yaml names one (company.ts covers).
+// A project carries its cover where projects.yaml names one, in its business's style (company.ts coverOf).
 // Its projects', sentences', threads' and jobs' names are the board's (boardnames.ts).
 export function listProjectBoard(t = Date.now()) {
   const threads = db.prepare('select * from threads order by created').all() as Thread[];
@@ -296,25 +296,30 @@ export function listProjectBoard(t = Date.now()) {
     ),
   );
   const schedules = routines();
-  const jobsOf = (id: string) => rows.filter(j => j.thread === id);
+  // (each thread's rows and tallies read once for the whole view.)
+  const byThread = Map.groupBy(rows, j => j.thread),
+    counted = tallies();
+  const jobsOf = (id: string) => byThread.get(id) ?? [];
   const ongoing = (th: Thread) => pending.has(th.id) || (th.status === 'open' && !jobsOf(th.id).length);
   const listed = projects().list.map(project => {
     const sentence = sentenceOf(project.id);
     const own = threads.filter(th => th.project === project.id);
     return {
       ...boardProject(project),
-      cover: projects().covers[project.id],
+      ...coverOf(project),
       ...(schedules.has(project.id) && { schedule: schedules.get(project.id) }),
       sentence: sentence ? { ...boardSentence(project.id, sentence), since: doneSince(project.id, sentence.at) } : null,
       threads: own.filter(ongoing).map(th => ({
-        ...shownThread(th),
+        ...shownThread(th, counted),
         owner: project.owner,
         jobs: jobsOf(th.id),
       })),
-      done: own.filter(th => !ongoing(th)).map(th => ({ ...boardThread(th), owner: project.owner, ...tally(th) })),
+      done: own
+        .filter(th => !ongoing(th))
+        .map(th => ({ ...boardThread(th), owner: project.owner, ...counted.tally(th) })),
     };
   });
-  const completed = completedProjects(threads),
+  const completed = completedProjects(threads, counted),
     placed = new Set([...listed, ...completed].map(p => p.id));
   const known = new Set(threads.filter(th => placed.has(th.project)).map(th => th.id));
   const loose = [...rows.filter(j => isOpenJob(j) && !(j.thread && known.has(j.thread))), ...recentLoose(known, t)];
@@ -342,7 +347,7 @@ const pendingThreads = () =>
   );
 
 // The projects done (hq project done), the latest first, each with when and its threads (all done) with their tallies.
-const completedProjects = (threads: Thread[]) =>
+const completedProjects = (threads: Thread[], counted: Tallies) =>
   (
     db
       .prepare(
@@ -353,7 +358,7 @@ const completedProjects = (threads: Thread[]) =>
     ...boardProject(Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null)) as Project & { done: string }),
     threads: threads
       .filter(th => th.project === p.id)
-      .map(th => ({ ...boardThread(th), owner: p.owner, ...tally(th) })),
+      .map(th => ({ ...boardThread(th), owner: p.owner, ...counted.tally(th) })),
   }));
 
 // The latest RECENT finished jobs outside known threads, newest first, but for meetings' seats (meetingSeats has
@@ -380,7 +385,11 @@ export function getThread(id: string, t = Date.now()) {
 }
 
 // A thread as the board's view shows it: with the threads it needs and its lines.
-const shownThread = (th: Thread) => ({ ...boardThread(th), needs: needsOf(th.id), lines: linesOf(th.id) });
+const shownThread = (th: Thread, counted: Tallies) => ({
+  ...boardThread(th),
+  needs: needsOf(th.id),
+  lines: counted.linesOf(th.id),
+});
 
 // The threads a thread needs (plan.ts draws them)
 export const needsOf = (thread: string) =>

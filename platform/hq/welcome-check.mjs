@@ -92,7 +92,7 @@ for (const [scheme, way] of [
 }
 
 await page.click('#chat .hint .langs button:has-text("Nederlands")');
-await page.waitForSelector('#dir-msg.err');
+await page.waitForSelector('#dir-msg .alert.problem');
 assert.equal(messages.length, 0, "a language that wasn't saved sends no line");
 assert.equal(await page.$$eval('#chat .hint .langs button:disabled', l => l.length), 0, 'and the choice is open again');
 

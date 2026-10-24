@@ -4,7 +4,7 @@
 // what follows: the email card, or first one case for trying here, made once per conversation, if the company chose that
 // (company.ts `chatFirst`).
 import { db, now } from './db.ts';
-import { t, mask } from './texts.ts';
+import { t, mask, day } from './texts.ts';
 import { settings, nameOf, thingOf, type Outage } from './company.ts';
 import * as sessions from './session.ts';
 import * as hq from './hq.ts';
@@ -77,7 +77,7 @@ export function card(c: Ctx, note?: string) {
   // the model wrote this note: the card marks it while it's still the model's words (summary()).
   if (note) st.note = st.modelNote = String(note).slice(0, 1500);
   const r = replyTo(c);
-  if (st.handed) { c.live.save(); return c.out.say(tx(c, 'already', { ref: st.handed, to: mask(r?.to ?? '') })); }
+  if (st.handed) { c.live.save(); return again(c, r?.to ?? ''); }
   if (!r) { st.step = 'person-email'; c.live.save(); return c.out.say(`${tx(c, 'person_lead')} ${tx(c, 'person_address')}`); }
   c.out.say(tx(c, 'person_lead'));
   summary(c, r);
@@ -163,7 +163,7 @@ function open(c: Ctx, kind: string, r: { to: string; checked: string }, words: s
 function send(c: Ctx, note: string | undefined, shown: { to?: string; checked?: string }) {
   const st = c.conv.state, r = replyTo(c);
   if (!r) return card(c);
-  if (st.handed) return c.out.say(tx(c, 'already', { ref: st.handed, to: mask(r.to) }));
+  if (st.handed) return again(c, r.to);
   if (shown.to !== r.to || shown.checked !== r.checked) { c.out.say(tx(c, 'person_changed')); return summary(c, r); }
   const words = [note ?? st.note ?? '', ...(st.afterCap ?? [])].filter(Boolean).join('\n\n');
   st.note = null; st.afterCap = null;
@@ -195,7 +195,7 @@ export function health(c: Ctx, mid: number) {
   const st = c.conv.state, r = replyTo(c);
   // a person case already filed from this chat gets it as `more` (hq.ts): no model drafts for that one from now on either
   db.prepare("update cases set health = 1 where conversation = ? and kind = 'person'").run(c.conv.id);
-  if (st.handed) return c.out.say(tx(c, 'already', { ref: st.handed, to: mask(r?.to ?? '') }));
+  if (st.handed) return again(c, r?.to ?? '');
   if (!r) { st.step = 'health-email'; st.healthMsg = mid; c.live.save(); return c.out.say(tx(c, 'person_address')); }
   healthCase(c, r, mid);
 }
@@ -205,6 +205,23 @@ function healthCase(c: Ctx, r: { to: string; checked: string }, mid: number) {
   st.handed = open(c, 'person', r, words, {}, true); st.caseMade = true; st.healthMsg = null; c.live.save();
   c.out.say(tx(c, 'sent', { to: mask(r.to), ref: st.handed }));
   sentMore(c);
+}
+
+// The email to a person this chat sent (state.handed), as HQ's state last said it stands (hq.ts replies()): when the
+// board's last reply to it went, and whether its card is done (not while an ask for a person waits for HQ to hear it)
+export function handedCase(st: any): { id: number; replied: number | null; settled: boolean } | null {
+  const m = /^H-(\d+)$/.exec(String(st.handed ?? ''));
+  const r = m ? (db.prepare('select id, replied, settled, asked from cases where id = ?').get(Number(m[1]) - 1000) as any) : null;
+  return r ? { id: r.id, replied: r.replied ?? null, settled: r.settled === 1 && r.asked == null } : null;
+}
+// An ask for a person after this chat's email to one went: what the chat has since goes to that case's card as for a
+// person (hq.ts, a `more` with person: true), back on the board's list, and the words say whether a reply went already.
+// Without an ask, what the helper answers itself stays off the list
+function again(c: Ctx, to: string) {
+  const h = handedCase(c.conv.state), ref = c.conv.state.handed;
+  if (h) c.out.effect(() => { db.prepare('update cases set asked = ? where id = ?').run(now(), h.id); hq.nudge(); });
+  if (!h?.replied) return c.out.say(tx(c, 'already', { ref, to: mask(to) }));
+  return c.out.say(tx(c, 'already_answered', { ref, to: mask(to), day: day(h.replied, c.lang) }));
 }
 
 // What they add goes with the email. A stop never comes back, so the line doesn't say the chat carries on

@@ -1,6 +1,4 @@
-// The deck's writing, on a 2d canvas laid into the hologram: each room's name tag with its people as pips, the
-// company's name engraved in the table's rim, words and hearts floating up, the ring round whoever is picked out,
-// what people feel (their emotes); and the panels' portraits.
+// The holo deck's writing on a 2d canvas, and portraits
 import { canvas } from '../../util.js';
 import { EMOTES, fade } from '../../world/emotes.js';
 import { TAU, add, polar } from './gl.js';
@@ -9,11 +7,13 @@ import { area } from './camera.js';
 import { ART } from './draw.js';
 
 const FACE = "Rajdhani, 'DejaVu Sans', 'Segoe UI', sans-serif";
-// the deck's lettering, from Google Fonts (the only fonts HQ's CSP allows), once per page; until it's there, the fallbacks
+// the deck's lettering, its labels' and its UI's (skin.css), from Google Fonts (the only fonts HQ's CSP allows), once per
+// page; until it's there, or if it never comes, the fallbacks. (On a <link> of its own, not skin.css's @import, so a
+// blocked font doesn't fail the change of look)
 export function loadFont() {
   if (document.querySelector('link[data-holo]')) return;
   const l = document.createElement('link');
-  l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Rajdhani:wght@600&display=swap'; l.dataset.holo = '';
+  l.rel = 'stylesheet'; l.href = 'https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&display=swap'; l.dataset.holo = '';
   document.head.append(l);
 }
 const rgba = (c, a) => `rgba(${c.map(v => Math.round(Math.min(1, v) * 255)).join(',')},${a})`;

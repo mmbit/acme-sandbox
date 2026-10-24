@@ -41,6 +41,8 @@ import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
 import * as storage from './storage.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
+import * as sorting from './sorting.ts';
+import { productProject } from './made.ts';
 
 const SHOTS = `${DATA_DIR}/review`;
 const MAX_SHOT = 1536 * 1024; // a viewport JPEG is ~100-600 KB; review.js steps down to fit
@@ -875,11 +877,17 @@ function gatherShare(s: shares.Share) {
   try {
     const { id: job } = createJob({ agent, title: `Outside notes on ${name}: ${notes.length} from ${guests.listed(authors)}`.slice(0, 200), prompt: outsideText(s, notes, name) });
     db.prepare("update review_notes set status = 'sent', job = ? where share = ? and status = 'outside'").run(job, s.id);
+    sortOutside(job, s.about, `HQ made this job from the outside notes on ${name}.`);
     shares.markGathered(s.id, job);
     db.exec('commit');
     publish({ type: 'log', agent, text: `The outside ${count} on ${s.about} (${guests.listed(authors)}) went to job #${job}` });
   } catch (e) { db.exec('rollback'); throw e; }
 }
+
+// Outside notes' jobs start under a template title, and wait until the owner of the product's project sorts them
+// (sorting.ts).
+const sortOutside = (job: number, about: string, why: string) =>
+  sorting.hold(job, { from: 'hq', project: productProject(about) ?? null, why });
 
 // The owner's job: everyone's notes, each signed, made into one short presentation for the board in our own words
 function outsideText(s: shares.Share, notes: any[], name: string) {
@@ -943,6 +951,7 @@ function lookAt(s: shares.Share) {
   try {
     const { id: job } = createJob({ agent, title: `Outside notes on ${name} so far: fix what's plainly broken (${notes.length} from ${guests.listed(authors)})`.slice(0, 200), prompt: earlyText(s, notes, name) });
     db.prepare(`update review_notes set early = ? where id in (${notes.map(() => '?').join(',')})`).run(job, ...notes.map(n => n.id));
+    sortOutside(job, s.about, `HQ made this job from the outside notes on ${name} so far.`);
     db.exec('commit');
     publish({ type: 'log', agent, text: `The outside ${count} on ${s.about} so far (${guests.listed(authors)}) went to job #${job} for an early look` });
   } catch (e) { db.exec('rollback'); throw e; }

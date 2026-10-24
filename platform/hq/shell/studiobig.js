@@ -1,10 +1,4 @@
-// Photos › one photo, big (studio.js): the edit, a switch flipping to the original and back, a tap for it full size,
-// and under it what the board does with it. Approvals: the page it goes on, what it should show and what to check, then
-// Accept, or Reject back to the keeper, with an optional comment (once there is one, Reject is the lit button); the next
-// one waiting follows.
-// History: the pages it's on, and "This should change" with a note, which takes it off the sites and back to the keeper.
-// A photo's pane is drawn from the photo alone, so a note being typed stays as the studio changes around it: what
-// changes with the rest (Approvals' "2 of 5", the pages, a refusal's line) are parts of their own inside it.
+// Photos › one photo, big: the edit, the original, the board's choice
 import { esc, grow } from '../util.js';
 import { studioAction } from './data.js';
 import { part } from './parts.js';
@@ -26,7 +20,9 @@ import {
   send,
 } from './studiophotos.js';
 
-// The picture, big: the edit first, the switch for the original, a tap for the one shown full size
+// The picture, big: the edit first, the switch for the original, a tap for the one shown full size. A pane is drawn
+// from its photo alone, so a note being typed stays as the studio changes round it: what changes with the rest (the
+// count, the pages, a refusal's line) are parts of their own inside it.
 function bigHtml(p, top, below) {
   const edited = p.edit != null;
   const sides = Object.entries(SIDE).map(

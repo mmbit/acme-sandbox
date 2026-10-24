@@ -6,9 +6,10 @@ import { loadSeen, saveSeen } from './data.js';
 export let seen = null;
 // A mark only moves forward, here as on the coordinator, so an answer that arrives late can't bring back older marks.
 // `unsaved`: marks the coordinator hasn't confirmed (a save that failed), sent again with the next read.
-let marks = {}, loaded = false;
+let marks = {},
+  loaded = false;
 const unsaved = new Map();
-const later = (a, b) => a == null || b > a ? b : a;
+const later = (a, b) => (a == null || b > a ? b : a);
 // Counts drawn outside the screen that marks them (the desk phone's badge) repaint when a mark moves, here or on another
 // device
 const watchers = [];
@@ -25,12 +26,14 @@ export async function refreshSeen() {
   for (const [list, newest] of unsaved) save(list, newest);
   const answer = await loadSeen(world.dev).catch(() => null);
   if (!answer) return;
-  loaded = true; take(answer);
+  loaded = true;
+  take(answer);
 }
 // The board has seen `list` up to `newest`: kept here at once, then on the coordinator
 export function markSeen(list, newest) {
   if (marks[list] != null && newest <= marks[list]) return;
-  take({ [list]: newest }); unsaved.set(list, newest);
+  take({ [list]: newest });
+  unsaved.set(list, newest);
   save(list, newest);
 }
 function save(list, newest) {

@@ -274,7 +274,12 @@ test('owner-assigned discipline fixes stay in task order before review and retai
     });
     h.cancelQueued();
     const owner = await h.start({ agent: 'wren', title: 'Assign review fixes' });
-    const engine = await h.agent('proposals/accept', owner.token, { id: `findings:${pr}`, for: 'kit', findings: '12' });
+    const engine = await h.agent('proposals/accept', owner.token, {
+      id: `findings:${pr}`,
+      for: 'kit',
+      findings: '12',
+      title: 'Let the world finish',
+    });
     assert.equal(engine.status, 200, JSON.stringify(engine.body));
     const art = await h.agent('job', owner.token, {
       agent: 'moss',

@@ -117,6 +117,17 @@ export function sample({ L, R, sr }, { vol = 1, at = 0 } = {}) {
   s.buffer = b; g.gain.value = vol;
   s.connect(g).connect(packBus); s.start(context.currentTime + at);
 }
+// A sound of the platform's sound kit (/foley.js), rendered once per take (four takes each, picked at random, so repeats
+// don't grate), once the kit has loaded.
+const kit = import('../foley.js'),
+  takes = new Map();
+export function foley(name, params = {}, { vol = 1, at = 0 } = {}) {
+  kit.then(k => {
+    const look = `${name}${JSON.stringify(params)}#${1 + Math.floor(Math.random() * 4)}`;
+    if (!takes.has(look)) takes.set(look, k.render(name, { ...params, seed: Number(look.at(-1)) }));
+    sample(takes.get(look), { vol: vol * 0.5, at });
+  });
+}
 
 // ---- the chiptune pack (the brownstone's, and every look's fallback)
 function whirr(up) {
@@ -186,9 +197,15 @@ const CHIPTUNE = {
 
 // ---- packs
 // The look's pack: { sfx: its sounds by name, music: its band (see voice()), or score: music of its own (see schedule()) };
-// what it lacks, the chiptune plays.
+// what it lacks, the chiptune plays. play(name, ...a) also plays a sound only the pack has (Wire's and a kit's
+// 'landing'). (play)
 let pack = {};
 export const sfx = Object.fromEntries(Object.keys(CHIPTUNE).map(name => [name, (...a) => (pack.sfx?.[name] ?? CHIPTUNE[name])(...a)]));
+export function play(name, ...a) {
+  const sound = sfx[name] ?? pack.sfx?.[name];
+  if (!sound) throw new Error(`HQ has no sound called ${name}`);
+  sound(...a);
+}
 // The stage puts on a look's pack as its scene goes on. The sounds play through a bus of the pack's own, which a swap
 // fades and drops, so the last look's (its van's whirr) never ring on under the new one's.
 export function wear(next) {
@@ -261,13 +278,13 @@ function schedule() {
 // A part of the band (bass, arp, lead, hat, snare) as the look's pack plays it: its settings over the chiptune's, its
 // gain on the level
 const voice = (part, o) => ({ ...o, ...pack.music?.[part], vol: o.vol * (pack.music?.[part]?.gain ?? 1), bus: musicBus });
-// Halloween's bass walks the root and a minor third, both sagging a little flat, then glides from a tritone into
-// the next bar's root
+// Halloween's bass walks the root, its fifth and the root again, all in the chord, then creeps in from a semitone
+// above the next bar's root and slides down onto it: one dark note a bar, on its weakest beat, and it always lands
 function hauntedBass(step, s, root, at, spb) {
-  if (s % 2 || s > 4) return;
+  if (s % 2) return;
   const next = step + 8 - s, nextRoot = ((next >> 6) % 3 === 2 ? CHORDS_B : CHORDS)[(next >> 3) % 4][0];
-  const from = note(root - 24 + [0, 3, 6][s / 2]), slide = s === 4 ? note(nextRoot - 24) / from : 0.985;
-  tone(from, spb * (s === 4 ? 3.9 : 1.9), voice('bass', { type: 'triangle', vol: 0.4, at, slide }));
+  const from = note((s === 6 ? nextRoot + 1 : root + [0, 7, 0][s / 2]) - 24);
+  tone(from, spb * 1.9, voice('bass', { type: 'triangle', vol: 0.4, at, slide: s === 6 ? note(nextRoot - 24) / from : 0 }));
 }
 // December's sleigh bells: a shake of three tiny jingles on each beat, and a softer, swung one at the end of each half bar
 function sleighBells(s, ringNote, at, spb, hush) {

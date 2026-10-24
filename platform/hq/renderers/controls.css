@@ -205,16 +205,6 @@ mark {
 }
 
 /* ---- the desk phone */
-.handset {
-  width: 30px;
-  height: 14px;
-  background: none;
-  border: 1px solid var(--cy);
-  border-radius: 7px 7px 3px 3px;
-  box-shadow:
-    var(--cy-glow),
-    inset 0 -3px 0 var(--cy-soft);
-}
 .req .rec {
   background: var(--cy-fill);
   border-left: 2px solid var(--cy);
@@ -275,20 +265,18 @@ mark {
   background: var(--cy-fill);
   border: 1px dashed var(--cy);
 }
-.req .agekey .ready {
-  background: var(--cy-fill);
-  border-left: 2px solid var(--cy);
+/* an alert (style.css): a pane of the glass with its line, its sign the alarm's (a done's the accent). */
+.alert {
+  background: var(--glass);
+  border: 1px solid var(--line);
 }
-.req .agekey .warn,
-.device .msg.err {
-  background: var(--alarm-fill);
-  border-left: 2px solid var(--alarm);
+.alert .sign {
+  border-radius: 50%;
+  background: var(--alarm);
+  color: var(--scr-ink);
 }
-.device .msg.err {
-  color: var(--alarm-ink);
-}
-.device .msg.err > svg.icon {
-  color: var(--alarm);
+.alert.done .sign {
+  background: var(--cy);
 }
 .req .agekey [data-age-msg] {
   color: var(--alarm);
@@ -489,7 +477,6 @@ mark {
     .device .mic,
     .req .agekey .make,
     .intercom .chat .call,
-    .req .agekey .ready,
     #viewer .bar .pin,
     #viewer .bar .share,
     .device header .past-btn,

@@ -82,6 +82,14 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   followThroughSweep(t0);
   assert.match(prompt(), /^HQ's hourly check/);
   assert.doesNotMatch(prompt(), /Our own additions/);
+  // A slip's cause, the scheduler's or the task's, never work cut by hand (board, call 120).
+  assert.match(prompt(), /never hand-pick work to cut, pause or move ahead/);
+  assert.match(prompt(), /The scheduler failed to act[^]*The scheduler acted and the task itself overruns/);
+  // A quota wait or a server short of room is capacity, not a scheduler fault, and there are more than two causes.
+  assert.match(prompt(), /could have used and should\s+have taken from it/);
+  assert.match(prompt(), /The scheduler acted and capacity is short[^]*That is no scheduler\s+fault/);
+  assert.doesNotMatch(prompt(), /one of two causes/);
+  assert.doesNotMatch(prompt(), /cut what's in the way/);
   try {
     writeFileSync(orgFile, `${orgChart}\nfollowThrough:\n  prompt: |\n    Only ever this board's words.\n`);
     assert.deepEqual(recordVerdict(checks().at(-1)!.job, 'ok', ''), { ok: true });

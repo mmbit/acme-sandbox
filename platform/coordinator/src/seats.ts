@@ -465,6 +465,13 @@ export function seedSeats(seats: unknown) {
 // What the worker runs: each seat with its provider's address and models, whether it's paused, its stop level (null: the
 // worker's own), whether pacing is on, and the board's changes it hasn't taken up yet. Seats it no longer has leave HQ's
 // report.
+// The week a seat last reported, so a worker that starts again paces it from its first claim instead of waiting for its
+// next run's reading.
+const lastWeek = (id: string) => {
+  const row = db.prepare('select week, week_resets from seats where id = ?').get(id) as
+    { week: number | null; week_resets: number | null } | undefined;
+  return row?.week != null && row.week_resets ? { week: row.week, weekResets: row.week_resets } : {};
+};
 export function workerSeats() {
   const seats = listed();
   const kept = JSON.stringify(seats.filter(s => !s.removing).map(s => s.id));
@@ -487,6 +494,7 @@ export function workerSeats() {
             models: p.models,
             paused: !!seat.paused,
             stop: seat.stop ?? null,
+            ...lastWeek(seat.id),
           },
         ];
       }),

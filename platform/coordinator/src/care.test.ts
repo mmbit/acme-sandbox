@@ -164,7 +164,7 @@ test('the care token: none, a wrong one, one of another length and a product tok
   assert.equal((await careCall('/api/care/cards', card(), signed('pay:pinwheel:live'))).status, 401, "a product's payments token isn't care's");
   const s = await careCall('/api/care/state');
   assert.equal(s.status, 200);
-  assert.deepEqual(Object.keys(s.body).sort(), ['board', 'busy', 'drafts', 'erased', 'fixed', 'queue', 'redraft']);
+  assert.deepEqual(Object.keys(s.body).sort(), ['board', 'busy', 'drafts', 'erased', 'fixed', 'queue', 'redraft', 'replies']);
   // and the board's session doesn't reach care's routes, nor care's token the board's
   assert.equal((await boardCall('/api/care/state')).status, 401);
   assert.equal((await careCall('/api/care')).status, 401);
@@ -394,6 +394,50 @@ test("a stranger's mail to a guessable case address can't use up the customer's 
   await careCall('/api/care/cards', { kind: 'more', app: 'pinwheel', case: ref, chat: [{ id: 50, at: new Date().toISOString(), who: 'customer', text: 'Hello again' }] });
   assert.equal(await count(l => l.who === 'customer' && l.text === 'Hello again'), 1);
   assert.equal((await one(id)).status, 'waiting'); assert.equal((await one(id)).newReply, true);
+});
+
+test("what the chat's assistant answered itself after a reply went stays off the list; a hand to a person brings the card back", async () => {
+  const id = (await careCall('/api/care/cards', card())).body.id, ref = (await one(id)).case;
+  const line = (n: number, text: string, extra: Record<string, unknown> = {}) => [{ id: n, at: new Date().toISOString(), who: 'customer', text, ...extra }];
+  const lines = async () => (await boardCall(`/api/care/card?id=${id}`)).body.lines.map((l: any) => l.text);
+  // still waiting for its reply: a line the assistant answered marks it new, as context for the reply
+  assert.equal((await more(ref, line(40, 'It was the A3 one.'), { person: false })).status, 200);
+  assert.equal((await one(id)).status, 'waiting'); assert.equal((await one(id)).newReply, true);
+  assert.deepEqual((await careState()).replies.find((r: any) => r.case === ref), { case: ref, sent: null, settled: false }, 'no reply yet');
+  await send(id); await pastUndo(id);
+  const went = (await careState()).replies.find((r: any) => r.case === ref);
+  assert.equal(went.settled, true); assert.ok(Date.parse(went.sent) > Date.now() - 60_000, 'when the reply went');
+  // the customer chats on about something else: on the card, not back on the list
+  const before = (await careState()).queue.waiting;
+  assert.equal((await more(ref, line(41, 'Can I write a review?'), { person: false })).status, 200);
+  assert.ok((await lines()).includes('Can I write a review?'));
+  assert.equal((await one(id)).status, 'sent'); assert.equal((await one(id)).newReply, false);
+  assert.equal((await careState()).queue.waiting, before);
+  assert.equal((await more(ref, line(42, 'x'), { person: 'yes' })).status, 400);
+  // the assistant hands them to a person: back, with or without new lines
+  assert.equal((await more(ref, [], { person: true })).status, 200);
+  assert.equal((await one(id)).status, 'waiting'); assert.equal((await one(id)).newReply, true);
+  assert.equal((await careState()).replies.find((r: any) => r.case === ref).settled, false, 'open again, its last reply still said');
+  // a line the assistant answered during the next reply's Undo doesn't keep the card from settling
+  await send(id); await more(ref, line(43, 'Thanks!'), { person: false }); await pastUndo(id);
+  assert.equal((await one(id)).status, 'sent');
+  // a message sent to a person from the health card is for a person whatever the `more` says
+  await more(ref, line(44, 'I was in hospital.', { health: true }), { person: false });
+  assert.equal((await one(id)).status, 'waiting');
+  // a `more` without `person` (a care from before it) brings it back as before
+  await send(id); await pastUndo(id);
+  await more(ref, line(45, 'Hello again'));
+  assert.equal((await one(id)).status, 'waiting');
+});
+
+test("a card closed without a reply and opened again by a hand to a person: care's state says it's open", async () => {
+  const id = (await careCall('/api/care/cards', card())).body.id, ref = (await one(id)).case;
+  const replyOf = async () => (await careState()).replies.find((r: any) => r.case === ref);
+  assert.equal((await boardCall('/api/care/close', { id })).status, 200);
+  assert.deepEqual(await replyOf(), { case: ref, sent: null, settled: true });
+  assert.equal((await more(ref, [], { person: true })).status, 200);
+  assert.equal((await one(id)).status, 'waiting');
+  assert.deepEqual(await replyOf(), { case: ref, sent: null, settled: false });
 });
 
 test('Send answers only what the board read: a message that came in while the reply was written is refused, then shown', async () => {
@@ -720,17 +764,32 @@ test('a customer waiting on a person goes to roles.care to investigate: its job 
     const back = await one(id3);
     assert.deepEqual([back.status, back.newReply, back.draft], ['waiting', true, 'Sorry to hear that.']);
     assert.ok(back.lines.some((l: any) => l.who === 'note' && /ended without a reply/.test(l.text)));
-    // a customer's email: investigated too, and care is still asked for its draft meanwhile
-    const m = await toCompany('ben@example.org', 'Where is my parcel? It has been two weeks.', { subject: 'My parcel' });
-    const e = await cardOfMail(m.id);
-    assert.equal(e.status, 'team'); assert.ok(e.job);
-    assert.ok((await careState()).drafts.some((w: any) => w.case === e.case));
-    assert.match((db.prepare('select prompt from jobs where id = ?').get(e.job) as any).prompt, /a customer emailed/i);
+    // a customer's email: investigated too, once care has read it, so its brief names the language care found
+    const m = await toCompany('ben@example.org', 'Onde está a minha encomenda? Já faz duas semanas.', { subject: 'A minha encomenda' });
+    const unread = await cardOfMail(m.id);
+    assert.deepEqual([unread.status, unread.job], ['waiting', null]);
+    await drafted(unread, { draft: 'Olá Ben, vamos verificar.', lang: 'pt', translation: 'Hello Ben, we will check.', summary: 'Asks where the parcel is.' });
+    const e = await one(unread.id);
+    assert.deepEqual([e.status, e.lang, e.draft], ['team', 'pt', 'Olá Ben, vamos verificar.']); assert.ok(e.job);
+    const brief = (db.prepare('select prompt from jobs where id = ?').get(e.job) as any).prompt;
+    assert.match(brief, /a customer emailed/i); assert.match(brief, /, language pt\./);
+    // no model read it (care's cap, its want expired): the team's all the same, its brief naming no language
+    const unreadJobs: number[] = [];
+    // (the second: care silent and nobody reading, only start()'s timer, an hour on; no other card's want is open by now)
+    for (const [i, unanswered] of [(c: any) => drafted(c, { none: 'limit' }),
+      () => care.expireWants(Date.now() + (care.WANT_MINUTES + 1) * 60_000)].entries()) {
+      const u = await cardOfMail((await toCompany(`unread${i}@example.org`, 'Where is my parcel?', { subject: 'Parcel' })).id);
+      await unanswered(u);
+      const t = await one(u.id);
+      assert.equal(t.status, 'team');
+      assert.match((db.prepare('select prompt from jobs where id = ?').get(t.job) as any).prompt, /, language not read yet \(the one they wrote in\)\./);
+      unreadJobs.push(t.job);
+    }
     // a health case never goes to a job
     const sick = (await careCall('/api/care/cards', card({ health: true }))).body.id;
     assert.deepEqual([(await one(sick)).status, (await one(sick)).job], ['waiting', null]);
     for (const j of [job, other, nextJob]) await h.finish(j);
-    await h.finish(await take(e.job));
+    for (const j of [e.job, ...unreadJobs]) await h.finish(await take(j));
   } finally {
     writeFileSync(org, before);
   }
@@ -1986,9 +2045,10 @@ test("an investigating job lists the live orders placed with its card's address 
     ok(await h.send('/api/pay/line/forget', as('pinwheel'), { id: (db.prepare("select id from pay_lines where reference = 'pin-gone'").get() as any).id }));
     await parcels.tick();   // each paid basket's parcel
     // their email to hello@, from the address in lower case, as mail keeps a sender
-    const c = await cardOfMail((await toCompany('sam@example.com', 'I never got a confirmation for my poster.', { subject: 'My order' })).id);
-    assert.equal(c.to, 'sam@example.com');
-    const job = await take(c.job);
+    const e = await cardOfMail((await toCompany('sam@example.com', 'I never got a confirmation for my poster.', { subject: 'My order' })).id);
+    assert.equal(e.to, 'sam@example.com');
+    await drafted(e, { draft: 'Hello Sam, we are looking into it.', lang: 'en' });   // (with the team once care has read it)
+    const c = await one(e.id), job = await take(c.job);
     const listed = await h.agent(`care-orders?case=${c.case}`, job.token);
     assert.equal(listed.status, 200, JSON.stringify(listed.body));
     const placed = listed.body.orders;

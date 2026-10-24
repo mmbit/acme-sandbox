@@ -353,3 +353,14 @@ test("a Codex log line says the tokens its session has written, when it has them
   assert.equal(codexTokens(line('2026-09-29T11:59:00Z', 42)), undefined);
   assert.equal(codexTokens('not json'), undefined);
 });
+
+test('a deadline heartbeat requests an immediate stop and can withdraw it when the waiter starts elsewhere', () => {
+  const asked = new Map<number, Asked>();
+  heard(asked, 8, { yield: 'waiting' }, {}, 10);
+  assert.equal(asked.get(8)?.immediate, undefined);
+  heard(asked, 8, { yield: 'waiting', immediate: true }, {}, 20);
+  assert.equal(asked.get(8)?.immediate, true);
+  assert.equal(asked.get(8)?.at, 10);
+  heard(asked, 8, {}, {}, 30);
+  assert.equal(asked.has(8), false);
+});

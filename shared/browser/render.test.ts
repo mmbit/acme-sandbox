@@ -120,6 +120,25 @@ test('an away helper goes straight to the worker queue', async () => {
   assert.equal(JSON.parse(readFileSync(join(output, 'facts.json'), 'utf8')).kind, 'local');
 });
 
+test("renders go to the kind org.yaml's runs.browser names, and stay here while it's away", async () => {
+  const { dir } = repository();
+  const kinds = (shots: boolean) =>
+    JSON.stringify([
+      { name: 'render', present: true },
+      { name: 'shots', present: shots },
+    ]);
+  for (const [shots, kind] of [
+    [true, 'shots'],
+    [false, 'local'],
+  ] as const) {
+    const output = join(dir, `pictures-${kind}`);
+    const env = await playedHq(undefined, { HELPER_BROWSER: 'shots', HELPER_KINDS: kinds(shots) });
+    const ran = await run(dir, ['--ref', 'main', '--out', output], env);
+    assert.equal(ran.code, 0, ran.output);
+    assert.equal(JSON.parse(readFileSync(join(output, 'facts.json'), 'utf8')).kind, kind);
+  }
+});
+
 function processFixture(source: string) {
   const dir = mkdtempSync(join(tmpdir(), 'render-process-'));
   const file = join(dir, 'fixture.mjs');

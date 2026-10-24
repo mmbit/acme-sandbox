@@ -1,3 +1,4 @@
+// Queue-time estimate contract fixtures.
 // node --test src/noseat.test.ts   (work for an agent no seat runs, the test company's Poppy on `engine: api`, is refused
 // where it's made, in words the caller acts on)
 import { test } from 'node:test';
@@ -37,7 +38,19 @@ test("a call agent's job tool hears the refusal while the board is on the line",
   const r = await new Promise<{ code: number; err: string }>(resolve => {
     const child = execFile(
       'bash',
-      [hq, 'job', 'poppy', 'Test every support path', '-', '--code', 'SUPPORT'],
+      [
+        hq,
+        'job',
+        'poppy',
+        'Test every support path',
+        '-',
+        '--code',
+        'SUPPORT',
+        '--size',
+        '30m',
+        '--why',
+        'Check all support paths',
+      ],
       { env: { PATH: process.env.PATH, HQ_URL: h.base, HQ_TOKEN: ctx.token, HQ_AGENT: 'juno', HQ_CALL: '1' } },
       (e, _out, err) => resolve({ code: e ? Number(e.code) : 0, err }),
     );

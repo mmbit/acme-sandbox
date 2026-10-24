@@ -23,7 +23,11 @@ const proposals = await import('./proposals.ts');
 const forecast = await import('./forecast.ts');
 const file = `${h.repo}/company/projects.yaml`;
 
-beforeEach(() => db.exec('delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes'));
+beforeEach(() =>
+  db.exec(
+    'delete from jobs; delete from wakes; delete from threads; delete from thread_needs; delete from plan_changes',
+  ),
+);
 
 const thread = (slug: string, project = 'game') => {
   const t = projects.createThread({ project, name: `Thread ${slug}`, goal: 'It works', slug });
@@ -505,10 +509,69 @@ test("a job HQ makes goes to its kind's project for its app, a one-task thread t
     const due = Date.now() + 3_600_000;
     const check = hqMade.made('checks', 'hq', { id: job() }, { deadline: due, aim: due });
     assert.deepEqual({ ...placed(check) }, { thread: `game/job-${check}`, deadline: due, aim: due, by: 'hq' });
-    const loose = hqMade.made('notes', 'hq', { id: job() });
+    const loose = hqMade.made('errors', 'hq', { id: job() });
     assert.deepEqual({ ...placed(loose) }, { thread: null, deadline: null, aim: null, by: null });
     assert.throws(() => hqMade.made('alarms', 'hq', { id: job() }, { deadline: due, aim: due }), /has no project/);
   } finally {
     writeFileSync(file, FILE);
   }
+});
+
+test("a project moved into a business by the CEO, or out of any: its name and its threads' checked against its new product, logged", async () => {
+  const wren = await h.start({ agent: 'wren' });
+  const juno = await h.start({ agent: 'juno' });
+  const refused = await h.agent('projects/business', wren.token, { id: 'shop', business: 'play' });
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /only the CEO moves a project into a business/);
+  assert.equal(
+    plan.setBusiness('shop', 'games', 'juno'),
+    `there's no business "games": the businesses are play, tools, or none`,
+  );
+  assert.match(String(plan.setBusiness('game', 'play', 'juno')), /game is in play already/);
+  assert.match(String(plan.setBusiness('shop', 'none', 'juno')), /shop is in no business already/);
+  // a name its new product has: refused, as a rename is
+  const sibling = thread('shop-thread');
+  assert.equal(typeof plan.rename(sibling, { name: 'Shop' }, 'wren'), 'object');
+  assert.match(
+    String(plan.setBusiness('shop', 'play', 'juno')),
+    /"The shop" is the name of the open thread game\/shop-thread/,
+  );
+  plan.done(sibling, 'wren');
+  // and so is one of its open threads', but for HQ's one-task threads, named after their jobs
+  for (const project of ['shop', 'game'])
+    assert.equal(typeof projects.createThread({ project, name: 'Rumble', goal: 'It works', slug: 'rumble' }), 'object');
+  const made = h.jobs.createJob({ agent: 'bolt', title: 'The game', prompt: 'Do it.' }).id;
+  assert.equal(hqMade.oneTaskThread('shop', { id: made, title: 'The game' }), `shop/job-${made}`);
+  assert.match(
+    String(plan.setBusiness('shop', 'play', 'juno')),
+    /^"Rumble" is the name of the open thread game\/rumble: No two levels share a name\. A thread /,
+  );
+  plan.done('game/rumble', 'wren');
+  const moved = await h.hq(juno, 'project', 'business', 'shop', 'play');
+  assert.match(moved.out, /shop is in play now\./);
+  assert.deepEqual(projects.findProject('shop'), {
+    id: 'shop',
+    name: 'The shop',
+    owner: 'moss',
+    product: 'shop',
+    business: 'play',
+  });
+  assert.match((await h.hq(juno, 'project', 'business', 'shop', 'none')).out, /shop is in no business now\./);
+  assert.equal(projects.findProject('shop')?.business, undefined);
+  // a done project stays where it ended
+  assert.equal(
+    typeof plan.newProject({ id: 'moved-done', name: 'Over', owner: 'wren', code: 'MV' }, 'juno', () => true),
+    'object',
+  );
+  assert.deepEqual(plan.projectDone('moved-done', 'juno'), { ok: true });
+  assert.match(String(plan.setBusiness('moved-done', 'tools', 'juno')), /moved-done is done: a finished area/);
+  assert.deepEqual(
+    changes()
+      .filter((c: any) => c.project === 'shop' && c.thread === null)
+      .map((c: any) => [c.what, c.by]),
+    [
+      ['business none → play', 'juno'],
+      ['business play → none', 'juno'],
+    ],
+  );
 });

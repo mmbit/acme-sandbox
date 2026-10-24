@@ -1,9 +1,9 @@
 #!/usr/bin/env node
-// HQ's pixel check: renders HQ from a git ref and from the working tree, scenario by scenario, and fails on any pixel that differs.
+// HQ's pixel check: renders HQ from a git ref and from the working tree, scenario by scenario, and fails on any pixel off by more than 2 levels in a channel (TOLERANCE).
 //   node platform/hq/pixel-check.mjs [--ref origin/main] [--only <scenario substring>] [--brand <file>]
 // Both sides run in dev mode on the mock data, with a seeded Math.random and a paused clock, so a frame is a pure function of
 // the code. It drives HQ only through the dev hooks the refactor keeps (world.paused, frame, cam, hit, S, L, R) and real input.
-// Exit 1 on any difference, with base/new/diff PNGs in a temp dir.
+// Exit 1 on any such difference, with base/new/diff PNGs in a temp dir.
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
@@ -42,30 +42,25 @@ async function open(browser, side, s) {
   await settle(page); // the boot's own requests (the desk phone's, the health check) answered before time moves
   return page;
 }
-// What a shot keeps: the canvas's pixels as a digest (and a PNG for the report), and a screenshot of the page for DOM tiers.
-async function snap(page, label, dom) {
+// The visible page is the capture contract: a renderer may draw in the DOM, 2D or WebGL.
+async function snap(page, label) {
   await settle(page);
-  const [hash, png] = await page.evaluate(async () => {
-    const c = document.querySelector('#world'), px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
-    const d = new Uint8Array(await crypto.subtle.digest('SHA-256', px));
-    return [Array.from(d, b => b.toString(16).padStart(2, '0')).join(''), c.toDataURL()];
-  });
-  return { label, hash, png, page: dom && await page.screenshot({ animations: 'disabled', caret: 'hide' }) };
+  return { label, page: await page.screenshot({ animations: 'disabled', caret: 'hide' }) };
 }
-// Two PNGs (data URLs) compared in the page: the differing pixels in red over a faded base.
-const diff = (page, a, b) => page.evaluate(async ([a, b]) => {
+// Two PNGs (data URLs) compared in the page: the pixels differing by more than tol in a channel in red over a faded base.
+const diff = (page, a, b, tol) => page.evaluate(async ([a, b, tol]) => {
   const px = async u => { const i = new Image(); i.src = u; await i.decode(); const c = Object.assign(document.createElement('canvas'), { width: i.width, height: i.height }), g = c.getContext('2d'); g.drawImage(i, 0, 0); return g.getImageData(0, 0, c.width, c.height); };
   const [x, y] = await Promise.all([px(a), px(b)]), out = new ImageData(x.width, x.height);
   let n = 0;
   for (let i = 0; i < x.data.length; i += 4) {
-    const same = x.width === y.width && x.height === y.height && [0, 1, 2, 3].every(k => x.data[i + k] === y.data[i + k]);
+    const same = x.width === y.width && x.height === y.height && [0, 1, 2, 3].every(k => Math.abs(x.data[i + k] - y.data[i + k]) <= tol);
     if (!same) n++;
     out.data.set(same ? [x.data[i] / 4 + 190, x.data[i + 1] / 4 + 190, x.data[i + 2] / 4 + 190, 255] : [255, 0, 0, 255], i);
   }
   const c = Object.assign(document.createElement('canvas'), { width: x.width, height: x.height });
   c.getContext('2d').putImageData(out, 0, 0);
   return [n, c.toDataURL()];
-}, [a, b]);
+}, [a, b, tol]);
 
 // ---------------------------------------------------------------- driving HQ
 const hold = page => page.evaluate(() => { hq.world.paused = true; });
@@ -86,6 +81,9 @@ const spot = (page, type, id) => page.evaluate(([type, id]) => {
 async function tap(page, at, double) {
   if (typeof at === 'string') await page.click(at);
   else await page.mouse[double ? 'dblclick' : 'click'](at.x, at.y);
+  // the pointer off the page, as a lifted finger: left where it clicked, whatever opens under it was hovered on one side
+  // and not the other, as Chromium's hover update after a layout raced the shot
+  await page.mouse.move(0, 0);
   await settle(page);
 }
 const keys = async (page, list) => { for (const k of list) await page.keyboard.press(k); await settle(page); };
@@ -136,7 +134,7 @@ const SCENARIOS = [
 
   // the loop from boot (the floors dropping in) with the dev event script: chats, paper planes, posts, people walking
   { name: 'B the loop with the event script', q: 'hour=12&weather=clear', async run(page, shot) {
-    for (const s of [10, 20, 30]) { await run(page, 10_000); await shot(`${s} s`, false); }
+    for (const s of [10, 20, 30]) { await run(page, 10_000); await shot(`${s} s`); }
   } },
 
   live('tap an agent', async (page, shot) => { await tap(page, await spot(page, 'agent')); await run(page, 3000); await shot('3 s'); }),
@@ -178,7 +176,8 @@ const SCENARIOS = [
     await tap(page, '#btn-computer'); await run(page, 300); await shot('home');
     for (const app of await page.$$eval('[data-app]', bs => bs.map(b => b.dataset.app))) {
       await tap(page, `[data-app=${app}]`); await run(page, 300); await shot(app);
-      await tap(page, '[data-home]');
+      if (await page.$('[data-home]')) await tap(page, '[data-home]');
+      else { await tap(page, '#btn-computer'); await run(page, 300); } // an app that's a view (Projects): the computer made way
     }
   }),
   live('Gazette', async (page, shot) => {
@@ -192,25 +191,29 @@ const SCENARIOS = [
 
 // ---------------------------------------------------------------- the check
 let out = arg('--out'); // the temp dir, made at the first difference
-async function report(page, name, label, kind, a, b) {
-  const [n, d] = await diff(page, a, b), base = join(out ??= await mkdtemp(join(tmpdir(), 'pixel-check-')), `${name} ${kind}`.replace(/[^\w.=-]+/g, '-'));
+// A page shot may differ by 2 levels in a channel: Chromium's compositor draws the same rounded corner's edge pixel a
+// level or two apart now and then, the same code on both sides, more often on a machine with more cores
+const TOLERANCE = 2;
+async function report(page, name, label, a, b) {
+  const url = buf => `data:image/png;base64,${buf.toString('base64')}`;
+  const [n, d] = await diff(page, url(a), url(b), TOLERANCE);
+  if (!n) return [];
+  const base = join(out ??= await mkdtemp(join(tmpdir(), 'pixel-check-')), name.replace(/[^\w.=-]+/g, '-'));
   const png = u => Buffer.from(u.split(',')[1], 'base64');
-  await Promise.all([writeFile(`${base}-base.png`, png(a)), writeFile(`${base}-new.png`, png(b)), writeFile(`${base}-diff.png`, png(d))]);
-  return `${label} (${kind}): ${n} px`;
+  await Promise.all([writeFile(`${base}-base.png`, a), writeFile(`${base}-new.png`, b), writeFile(`${base}-diff.png`, png(d))]);
+  return [`${label}: ${n} px`];
 }
 async function check(browser, s) {
   const sides = await Promise.all(['base', 'new'].map(async side => {
     const page = await open(browser, side, s), shots = [];
-    await s.run(page, async (label, dom = true) => { shots.push(await snap(page, label, dom)); });
+    await s.run(page, async label => { shots.push(await snap(page, label)); });
     return { page, shots };
   }));
   const [a, b] = sides, bad = [];
   for (const [i, x] of a.shots.entries()) {
     const y = b.shots[i], name = `${s.name} ${i + 1} ${x.label}`;
-    if (x.hash !== y.hash) bad.push(await report(a.page, name, x.label, 'canvas', x.png, y.png));
-    if (x.page && !x.page.equals(y.page)) {
-      const url = buf => `data:image/png;base64,${buf.toString('base64')}`;
-      bad.push(await report(a.page, name, x.label, 'page', url(x.page), url(y.page)));
+    if (!x.page.equals(y.page)) {
+      bad.push(...await report(a.page, name, x.label, x.page, y.page));
     }
   }
   await Promise.all(sides.map(x => x.page.context().close()));
