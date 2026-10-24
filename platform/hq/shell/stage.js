@@ -34,44 +34,72 @@ export const later = (fn, ms) => timer(timers)(fn, ms);
 // one can't become WebGL) and scene, swapped in for the old ones once it's made. A swap that fails keeps the old
 // scene (false); at boot it throws. intro: the scene opens with its intro (at boot).
 export async function mount(name, intro = false) {
-  const next = cv.cloneNode(), mine = new Set(), dress = skin(name);
+  const next = cv.cloneNode(), mine = new Set();
   next.removeAttribute('style'); // (where the last scene placed its canvas)
-  const sound = { play: (sfx, ...a) => audio.sfx[sfx](...a), weather: audio.setWeather, ready: audio.ready };
-  let fresh, sounds;
+  const sound = { play: audio.play, weather: audio.setWeather, ready: audio.ready };
+  let kit, links = [], fresh, sounds;
   try {
     if (!RENDERERS.includes(name)) throw new Error(`HQ has no renderer called ${name}`);
-    const { createScene } = await import(`../renderers/${name}/scene.js`);
-    sounds = DRESSED.has(name) ? await import(`../renderers/${name}/sounds.js`) : {};
+    kit = kitOf(name); links = skin(name, kit);
+    let createScene;
+    [{ createScene }, sounds] = await Promise.all([
+      import(`../renderers/${name}/scene.js`),
+      wornSounds(DRESSED.has(name) ? import(`../renderers/${name}/sounds.js`) : {}, kit),
+      ...links.map(loaded),
+    ]);
     fresh = await createScene({ canvas: next, world, brand, settings: { ...theme[name], intro }, shell: { sound, toast, card: overlay.card, tap: press, chrome, store, later: timer(mine) } });
   } catch (e) {
-    dress.then(l => l?.remove());
+    links.forEach(l => l.remove());
     if (!scene) throw e;
     console.error('HQ could not switch the view:', e);
     toast(`<b>That view didn't load.</b> Staying with this one.`);
     return false;
   }
-  const worn = await dress;
-  document.querySelectorAll('link[data-skin]').forEach(l => l !== worn && l.remove());
+  document.querySelectorAll('link:is([data-skin], [data-kit])').forEach(l => !links.includes(l) && l.remove());
   if (scene) {
     tour.stopTour(); scene.dispose();
     for (const id of timers) clearTimeout(id);
     bindCanvas(next);
   }
   cv.replaceWith(next); cv = next; scene = fresh; timers = mine; look = name;
-  wearIcons(name);
+  wearIcons(name, kit);
   audio.wear(sounds);
   resize(); scene.focus({ kind: 'home' }, { instant: true });
   bindControls();
   return true;
 }
-// A look's skin, loading beside the one worn now (which goes when the scene swaps, so the UI is never bare): its <link>
-// once it has loaded (or failed to), null for a look without one.
-function skin(name) {
-  if (!DRESSED.has(name)) return Promise.resolve(null);
-  const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: `renderers/${name}/skin.css` });
-  l.dataset.skin = name;
-  document.head.append(l);
-  return new Promise(done => { l.onload = l.onerror = () => done(l); });
+// A look's skin, linked beside the one worn now (which goes when the scene swaps, so the UI is never bare): its <link>s,
+// none for a look without a skin or a kit. The look's own skin.css, then the kit the company dresses it in (the kit's
+// hq/style.css, served at /kits/<kit>/), laid over it. (the kit)
+function skin(name, kit) {
+  const sheets = [DRESSED.has(name) && ['skin', `renderers/${name}/skin.css`], kit && ['kit', `/kits/${kit}/style.css`]];
+  return sheets.filter(Boolean).map(([as, href]) => {
+    const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href });
+    l.dataset[as] = name;
+    document.head.append(l);
+    return l;
+  });
+}
+// (our own sheets: a look's fonts from Google come on links of their own, which nothing waits for.)
+const loaded = l => new Promise((done, fail) => { l.onload = done; l.onerror = () => fail(new Error(`${l.href} didn't load`)); });
+// The kit the company dresses a look in (theme/hq.yaml <look>.kit), its stylesheet, icons and sounds; null for none
+//
+function kitOf(name) {
+  const kit = theme[name]?.kit ?? null;
+  if (kit !== null && !(typeof kit === 'string' && KIT.test(kit))) throw new Error(`hq.yaml: ${name}.kit, ${JSON.stringify(kit)}, isn't a kit's name`);
+  return kit;
+}
+const KIT = /^[a-z0-9][a-z0-9-]*$/; // (a kit's folder, as the servers' /kits/<kit>/ route takes it)
+// A look's sounds (own: its sounds.js, as it loads) with its kit's laid over them: every kit that dresses a look ships
+// hq/sounds.js, which gives MOMENTS (a moment's [[sound, params], ...] of the platform's sound kit, /foley.js, each with
+// its own vol and delay) and HQ (HQ's sound name, then the moment it plays or a function of the sound's arguments giving
+// its calls; {} for none).
+async function wornSounds(own, kit) {
+  if (!kit) return own;
+  const [look, { MOMENTS, HQ }] = await Promise.all([own, import(`/kits/${kit}/sounds.js`)]);
+  const play = calls => calls.forEach(([sound, { vol = 1, delay = 0, vary: _, ...params }]) => audio.foley(sound, params, { vol, at: delay }));
+  const worn = Object.entries(HQ).map(([name, moment]) => [name, (...a) => play(typeof moment === 'function' ? moment(...a) : MOMENTS[moment])]);
+  return { ...look, sfx: { ...look.sfx, ...Object.fromEntries(worn) } };
 }
 // The look a viewer picks in Settings, on stage now and kept on this device for their next visit; null: the company's
 // (theme.renderer), whichever that is then.

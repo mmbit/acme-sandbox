@@ -32,12 +32,14 @@ import { tooling } from './tooling.ts';
 import { when } from './when.ts';
 import { studio } from './studio.ts';
 import { seatWarning } from './seatwarning.ts';
+import { complete } from './completion.ts';
 
 // run: what it ends hq with (a command it runs for the agent: that command's exit code), or nothing for 0.
 type Command = { help: string; run: (args: string[]) => Promise<void | number> };
 
 // In the order of the help
 const COMMANDS: Record<string, Command> = {
+  complete,
   status: messages.status,
   say: messages.say,
   sent: messages.sent,
@@ -48,6 +50,7 @@ const COMMANDS: Record<string, Command> = {
   meeting,
   cancel: jobs.cancel,
   stop: jobs.stopJob,
+  expedite: jobs.expedite,
   waits: jobs.waits,
   review: jobs.review,
   window: jobs.window,

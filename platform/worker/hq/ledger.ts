@@ -55,7 +55,7 @@ function itemInFull(item: Record<string, unknown>) {
 }
 
 const ADD_USAGE =
-  'usage: hq item add <kind> <owner> "what" <quote-file | -> [a-b] [--call <id>] [--replaces <item>] [--deadline <when>]';
+  'usage: hq item add <kind> <owner> "what" <quote-file | -> [a-b] [--call <id>] [--replaces <item>] [--deadline <when> [--job <id> [--thread <project>/<slug>]]]';
 const REPLACE_USAGE = 'usage: hq item replace <item> "what" <quote-file | -> [a-b] [--call <id>] [--deadline <when>]';
 const LINK_USAGE =
   'usage: hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"';
@@ -76,7 +76,10 @@ export const item = {
                                                      time, 14:30 or 2026-10-06T14:30Z; 2h counts from now): the thread of
                                                      the job that carries it (hq job --item) or of the job it's linked to
                                                      takes it as its window (hq window); a correction keeps the
-                                                     earlier time
+                                                     earlier time. --job <id>, on a live call: a promise about
+                                                     its owner's work under way, linked to it as it's recorded (handled
+                                                     when it ends done), whose thread takes the time at once;
+                                                     --thread puts a job the call queued in no thread on that one
    hq item replace <item> "what" <quote-file | -> [a-b] [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is
@@ -108,9 +111,22 @@ export const item = {
     const replaces = flags.replaces === undefined ? null : Number(flags.replaces);
     const callId = flags.call === undefined ? null : Number(flags.call);
     if (action === 'add') {
-      if (rest.length < 4) stop(ADD_USAGE);
-      const [kind, owner, what, quote, lines = ''] = rest;
-      return recordItem({ action, kind, owner, what, quote, lines, replaces, callId, deadline: flags.deadline });
+      // (--thread: with --job, on a live call)
+      const { values, args: given } = takeValues(rest, ['--thread'], 'Nothing recorded');
+      if (given.length < 4 || (values.thread !== undefined && flags.job === undefined)) stop(ADD_USAGE);
+      const [kind, owner, what, quote, lines = ''] = given;
+      return recordItem({
+        action,
+        kind,
+        owner,
+        what,
+        quote,
+        lines,
+        replaces,
+        callId,
+        deadline: flags.deadline,
+        work: flags.job === undefined ? undefined : { job: flags.job, thread: values.thread },
+      });
     }
     if (action === 'replace') {
       if (!/^[0-9]+$/.test(rest[0] ?? '') || rest.length < 3) stop(REPLACE_USAGE);
@@ -127,6 +143,7 @@ export const item = {
         deadline: flags.deadline,
       });
     }
+    if (flags.job !== undefined) stop('--job goes with hq item add, on a live call');
     if (flags.deadline !== undefined) {
       stop("--deadline goes with hq item add or replace: a linked item's time goes to the job it's linked to");
     }
@@ -164,9 +181,10 @@ type NewItem = {
   replaces: number | null;
   callId: number | null;
   deadline?: string;
+  work?: { job: string; thread?: string };
 };
 
-async function recordItem({ action, kind, owner, what, quote, lines, replaces, callId, deadline }: NewItem) {
+async function recordItem({ action, kind, owner, what, quote, lines, replaces, callId, deadline, work }: NewItem) {
   const onCall = Boolean(process.env.HQ_CALL);
   // On a live call the words come on stdin (-), never from a file (as for hq job).
   if (onCall && quote !== '-') stop(`hq item ${action} on a call takes no file: the words come on stdin (-)`);
@@ -179,21 +197,14 @@ async function recordItem({ action, kind, owner, what, quote, lines, replaces, c
     ...(replaces !== null && { replaces }),
     ...(callId !== null && { call: callId }),
     ...(deadline !== undefined && { deadline }),
+    ...(work && { job: Number(work.job), ...(work.thread !== undefined && { thread: work.thread }) }),
   };
   const recorded = await record(body);
   const id = shown(recorded.id);
   // replace: the earlier item's kind and owner
   const recordedKind = text(recorded.kind ?? kind);
   const recordedOwner = text(recorded.owner ?? owner);
-  if (onCall) {
-    // the call's agent: it's on the list, nobody has it yet
-    const noted = `Noted as ${recordedKind} #${id} on this call, for ${recordedOwner}`;
-    if (replaces === null) print(`${noted}.`);
-    else print(`${noted}: it replaces #${replaces} (${text(recorded.replacedWhat ?? '?')}), which the board changed.`);
-    print("It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.");
-    if (replaces !== null) print(...stoppedOnCall(recorded));
-    return;
-  }
+  if (onCall) return printNotedOnCall(recorded, { kind: recordedKind, owner: recordedOwner, replaces });
   const recordedAs = `Recorded item #${id} (${recordedKind} for ${recordedOwner}) on call #${text(recorded.call)}.`;
   // A message item corrected from the transcript: handled, as the one it replaces was (the coordinator's ledger.ts add)
   if (recorded.status === 'handled') {
@@ -210,6 +221,24 @@ async function recordItem({ action, kind, owner, what, quote, lines, replaces, c
         : '';
     print(`Item #${replaces} is replaced by this one${stays}.`, ...stopped(recorded));
   }
+}
+
+// The call's agent's answer: it's on the list, nobody has it yet, or (a promise about work under way) it's that job's,
+// whose thread has its time already.
+function printNotedOnCall(
+  recorded: Record<string, unknown>,
+  { kind, owner, replaces }: { kind: string; owner: string; replaces: number | null },
+) {
+  const noted = `Noted as ${kind} #${shown(recorded.id)} on this call, for ${owner}`;
+  if (replaces === null) print(`${noted}.`);
+  else print(`${noted}: it replaces #${replaces} (${text(recorded.replacedWhat ?? '?')}), which the board changed.`);
+  print(
+    present(recorded.job)
+      ? `It's job #${shown(recorded.job)}'s, done when that ends done, and the deadline of ${text(recorded.thread)} ` +
+          `now: ${minute(String(recorded.deadline))} UTC.`
+      : "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.",
+  );
+  if (replaces !== null) print(...stoppedOnCall(recorded));
 }
 
 async function record(body: object) {

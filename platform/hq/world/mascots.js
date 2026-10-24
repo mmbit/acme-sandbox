@@ -14,8 +14,19 @@ const NAP_S = [20, 40];
 // list: brand.yaml's mascots, each sitting where it is, about to move on
 export function init(list = []) {
   mascots = list.map(m => {
-    const home = m.home ?? 'board', favours = m.favours ?? [home];
-    return { ...m, home, favours, rules: { ...RULES, ...m.rules }, activity: 'sit', want: favours[0], love: 0, moves: 0, stay: 2 };
+    const home = m.home ?? 'board',
+      favours = m.favours ?? [home];
+    return {
+      ...m,
+      home,
+      favours,
+      rules: { ...RULES, ...m.rules },
+      activity: 'sit',
+      want: favours[0],
+      love: 0,
+      moves: 0,
+      stay: 2,
+    };
   });
 }
 
@@ -24,19 +35,28 @@ export function init(list = []) {
 // of rules.day or, in full daylight, nap (rules.nap: the chance). Not while someone's making a fuss of it.
 export function tick(dt, dark) {
   for (const m of mascots) {
-    m.love = Math.max(0, m.love - dt); m.stay -= dt;
+    m.love = Math.max(0, m.love - dt);
+    m.stay -= dt;
     if (m.rules.night === 'sleep' && dark > 0.6) m.activity = 'sleep';
-    else if (m.activity === 'sleep') { if (dark < 0.5) Object.assign(m, { activity: 'sit', stay: 2 }); }
-    else if (m.stay <= 0 && !m.love) {
+    else if (m.activity === 'sleep') {
+      if (dark < 0.5) Object.assign(m, { activity: 'sit', stay: 2 });
+    } else if (m.stay <= 0 && !m.love) {
       m.activity = dark < 0.3 && Math.random() < m.rules.nap ? 'nap' : pick(Math.random, m.rules.day);
       m.stay = m.activity === 'nap' ? rand(...NAP_S) : rand(...m.rules.wander);
-      m.want = pick(Math.random, m.favours); m.moves++;
+      m.want = pick(Math.random, m.favours);
+      m.moves++;
     }
   }
 }
 
-const love = (id, s) => { const m = mascots.find(x => x.id === id); if (m) m.love = s; };
+const love = (id, s) => {
+  const m = mascots.find(x => x.id === id);
+  if (m) m.love = s;
+};
 // a pat: it stays put and enjoys it (feel love)
-export function pet(id) { love(id, 3); emit('feel', { mascot: id, emote: 'love' }); }
+export function pet(id) {
+  love(id, 3);
+  emit('feel', { mascot: id, emote: 'love' });
+}
 // someone from the room it's visited by (rules.visitedBy) is on the way over: it stays put a while for them
 export const visit = id => love(id, 4);

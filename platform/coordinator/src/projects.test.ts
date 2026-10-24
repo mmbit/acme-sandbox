@@ -7,10 +7,9 @@ import { harness, type Running } from './harness.ts';
 // The test company's projects, which ask every job for a thread, under their businesses, and a schedule entry in one.
 const PROJECTS = `requireThread: true
 made:
-  notes: { hq: game }
   errors: { care: shop }
 businesses:
-  - { id: play, name: Play, cover: covers/play.png, owner: wren }
+  - { id: play, name: Play, cover: covers/play.png, owner: wren, style: pixel }
   - { id: trade, name: Trade }
 groups:
   recurring: { cover: covers/recurring.png }
@@ -358,9 +357,9 @@ test("an owner's thread and HQ's other one-task threads keep a failed task's thr
   const owners = started('owners');
   const task = await inThread('wren', owners);
   assert.equal((await h.finish(task, { status: 'failed', result: 'It crashed' })).status, 200);
-  const note = jobs.createJob({ agent: 'wren', title: 'A note on HQ', prompt: 'x', thread: null }).id;
+  const note = jobs.createJob({ agent: 'wren', title: "The chat's errors", prompt: 'x', thread: null }).id;
   const made = await import('./made.ts');
-  made.made('notes', 'hq', { id: note });
+  made.made('errors', 'care', { id: note });
   const noteRun = await h.claim(h.job(note).engine);
   assert.equal(noteRun?.id, note);
   assert.equal((await h.finish(noteRun!, { status: 'failed', result: 'It crashed' })).status, 200);
@@ -568,7 +567,7 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
     'one without an owner is left out',
   );
   assert.deepEqual(r.body.businesses, [
-    { id: 'play', name: 'Play', cover: 'covers/play.png', owner: 'wren' },
+    { id: 'play', name: 'Play', cover: 'covers/play.png', owner: 'wren', style: 'pixel' },
     { id: 'trade', name: 'Trade' },
   ]);
   assert.deepEqual(r.body.groups, { recurring: { cover: 'covers/recurring.png' } }, 'the side groups as declared');
@@ -580,10 +579,13 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   );
   assert.equal(game.sentence.since, 0);
   assert.deepEqual([r.body.projects[1].product, r.body.projects[1].business], ['shop', 'trade']);
-  // a project's cover where projects.yaml names one
+  // a project's cover where projects.yaml names one, in its business's style
   assert.deepEqual(
-    r.body.projects.map((p: { cover?: string }) => p.cover),
-    ['covers/game.png', undefined],
+    r.body.projects.map((p: { cover?: string; style?: string }) => [p.cover, p.style]),
+    [
+      ['covers/game.png', 'pixel'],
+      [undefined, undefined],
+    ],
   );
   assert.deepEqual(
     [
@@ -620,7 +622,14 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   const job = shown.jobs[0];
   assert.deepEqual([job.status, job.check, job.thread, job.ready], ['queued', 1, levels, 1]);
   const sized = outlooks.detail(levels, forecast.current())!.jobs;
-  type Estimate = { size_ms: number; start: number | null; done: number | null; merged: number | null };
+  type Estimate = {
+    size_ms: number;
+    left_ms: number | null;
+    start: number | null;
+    done: number | null;
+    merged: number | null;
+    finish: number | null;
+  };
   for (const j of shown.jobs as { id: number; estimate: Estimate }[]) {
     assert.equal(j.estimate.size_ms, sized.find(s => s.id === j.id)!.size_ms, 'its size, as hq thread has it');
     assert.ok(j.estimate.size_ms > 0 && j.estimate.merged! > Date.now(), 'and when it merges in the play');
@@ -629,6 +638,16 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   const [queued, running] = shown.jobs as { estimate: Estimate }[];
   assert.ok(queued.estimate.start! <= queued.estimate.done! && queued.estimate.done! <= queued.estimate.merged!);
   assert.ok(Date.now() < running.estimate.done! && running.estimate.done! <= running.estimate.merged!);
+  // and its finish, its work live, as its thread's: the thread is done when its last job is
+  for (const { estimate } of shown.jobs as { estimate: Estimate }[]) {
+    assert.ok(estimate.finish! >= estimate.merged!, 'live after it merges');
+    assert.ok(estimate.left_ms! > 0 && estimate.left_ms! <= estimate.size_ms, 'the part of its size it has left');
+  }
+  assert.equal(
+    shown.outlook.finish,
+    Math.max(...(shown.jobs as { estimate: Estimate }[]).map(j => j.estimate.finish!)),
+    "the thread's finish is its last job's",
+  );
   assert.deepEqual(
     game.done.map((t: { id: string; jobs: number; done: number }) => [t.id, t.jobs, t.done]),
     [
@@ -693,28 +712,6 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
 
 // The jobs HQ makes from the same template every time go to the project projects.yaml's made sets for their kind and
 // app, each a one-task thread there; an app with no entry leaves them in no project
-test("the board's notes on HQ go to the project set for them, each a one-task thread there", async () => {
-  reset();
-  const feedback = await import('./feedback.ts');
-  const pinned = () =>
-    Number(
-      db
-        .prepare(
-          "insert into review_notes (created, slug, page, element, note) values (?, 'hq', '/', '{}', 'The key is too pale')",
-        )
-        .run(new Date().toISOString()).lastInsertRowid,
-    );
-  // (routed by the CEO's check to the Process role, HQ's owner)
-  const { routed } = await (await import('./routing.fixture.ts')).routingFixture();
-  const sent = (note: number) => routed((feedback.send({ slug: 'hq', ids: [note] }) as { job: number }).job).job;
-  const first = sent(pinned());
-  assert.equal(thread(first), `game/job-${first}`);
-  const own = projects.findThread(`game/job-${first}`)!;
-  assert.deepEqual([own.name, projects.ownerOf(own), own.status], ['Board notes on HQ', 'wren', 'open']);
-  const later = sent(pinned());
-  assert.equal(thread(later), `game/job-${later}`, 'a thread of its own each time');
-});
-
 test("the error scan's triage goes to the project set for the app that threw them, else to none", async () => {
   reset();
   const { scanErrors } = await import('./triage.ts');

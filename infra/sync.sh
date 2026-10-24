@@ -300,7 +300,7 @@ echo "exit $deployed at $(date -Is)" >> "$log"
 # The build cache goes only whole, never in part. A partial prune (by age, size
 # or least recent use) drops steps today's images still stand on. After that every deploy rebuilds every image and
 # recreates every container, the worker and the voice line included, until a full prune.
-# So the whole cache goes, with every unused image, in two cases. Under 10 GB free the next build can't fit, and a full
+# So the whole cache goes, with every unused image, in two cases. Under 15 GB free the next build may not fit, and a full
 # disk fails every deploy. Over a quarter of the disk the cache has outgrown its share.
 # Docker's own cache GC is off (harden.sh). The status report's "== disk" says what holds the rest.
 # (buildx's builder prune says "Total:", the classic one "Total reclaimed space:")
@@ -311,8 +311,10 @@ freeKb=$(df --output=avail -k / | tail -1)
 diskKb=$(df --output=size -k / | tail -1)
 diskQuarterBytes=$((diskKb * 1024 / 4))
 pruneReason=
-if [ "$freeKb" -lt $((10 << 20)) ]; then
-  pruneReason="under 10 GB free"
+# (15 GB: HQ refuses outside files, a note's screenshot say, under 10 GB free (storage.ts FLOOR), and a deploy's builds
+# take a few GB of it for a while.)
+if [ "$freeKb" -lt $((15 << 20)) ]; then
+  pruneReason="under 15 GB free"
 elif [ "$cacheBytes" -gt "$diskQuarterBytes" ]; then
   pruneReason="the build cache ($cacheSize) over a quarter of the disk"
 fi

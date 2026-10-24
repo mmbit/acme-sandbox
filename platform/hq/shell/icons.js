@@ -1,12 +1,17 @@
 // HQ's icons: one folder per style (icons/<style>/<name>.svg), each look drawing only from its own style's folder. An
 // icon a folder lacks shows nothing and says so in the console, never another style's drawing. icons.test.js fails
 // any folder that lacks one.
+// A look the company dresses in a kit (theme/hq.yaml <look>.kit) draws from the kit's set instead: its hq/icons/<name>.svg,
+// served at /kits/<kit>/icons/, under HQ's names, with hq/icons/names.json pointing HQ names that share one drawing to
+// it ({ "mobile": "phone" }).
 
 // Each look's style: a new look adds its line here and a complete folder (icons.test.js checks both).
 export const STYLES = { brownstone: 'pixel', holo: 'smooth', wire: 'smooth' };
 
-let worn = null; // the style on stage now
-const drawings = new Map(); // `${style}/${name}` → a promise of the file's <svg>
+let worn = null; // where the look on stage draws from: { from: its folder, kit: the kit it's dressed in, or null }
+const drawings = new Map(); // `${folder}/${file}` → a promise of the file's <svg>
+const kitNames = new Map(); // kit → a promise of its names.json
+const NONE = Promise.resolve({}); // (a style's folder: every drawing under its own name)
 
 // An icon as markup: an empty <svg> that the style worn now fills in, now and on each change of look. With a label it's
 // an image for screen readers, without one it's decoration.
@@ -15,11 +20,11 @@ export function icon(name, cls = '', label = '') {
   return `<svg class="icon i-${name}${cls ? ` ${cls}` : ''}" data-icon="${name}" ${role}></svg>`;
 }
 
-// The look on stage wears its style's icons: every icon on the page redrawn, and every one added later drawn as it
-// comes.
-export function wearIcons(look) {
+// The look on stage wears its style's icons, or the set of the kit it's dressed in: every icon on the page redrawn, and
+// every one added later drawn as it comes.
+export function wearIcons(look, kit = null) {
   if (!worn) watch();
-  worn = STYLES[look];
+  worn = { from: kit ? `/kits/${kit}/icons` : `icons/${STYLES[look]}`, kit };
   for (const svg of document.querySelectorAll('svg[data-icon]')) draw(svg);
 }
 
@@ -36,33 +41,32 @@ function drawWithin(node) {
 }
 
 async function draw(svg) {
-  const style = worn,
+  const source = worn,
     name = svg.dataset.icon;
-  if (svg.dataset.drawn === `${style}/${name}`) return;
+  if (svg.dataset.drawn === `${source.from}/${name}`) return;
   svg.replaceChildren();
   svg.removeAttribute('viewBox');
   delete svg.dataset.drawn;
-  const drawing = await drawingOf(style, name);
-  if (style !== worn) return;
+  const drawing = await drawingOf(source.from, (await namesOf(source.kit))[name] ?? name);
+  if (source !== worn) return;
   svg.setAttribute('viewBox', drawing.getAttribute('viewBox'));
   const g = document.createElementNS(drawing.namespaceURI, 'g');
   for (const { name: attr, value } of drawing.attributes)
     if (!['xmlns', 'viewBox', 'width', 'height'].includes(attr)) g.setAttribute(attr, value);
   g.append(...[...drawing.childNodes].map(n => document.importNode(n, true)));
   svg.replaceChildren(g);
-  svg.dataset.drawn = `${style}/${name}`;
+  svg.dataset.drawn = `${source.from}/${name}`;
 }
 
-// A style's drawing of an icon, fetched once
-function drawingOf(style, name) {
-  const key = `${style}/${name}`;
-  if (!drawings.has(key)) drawings.set(key, fetchDrawing(style, name));
-  return drawings.get(key);
+// A folder's drawing of an icon, fetched once
+function drawingOf(from, file) {
+  const url = `${from}/${file}.svg`;
+  if (!drawings.has(url)) drawings.set(url, fetchDrawing(url));
+  return drawings.get(url);
 }
 
 // A failed request is removed from the cache so the next drawing can fetch it again.
-async function fetchDrawing(style, name) {
-  const url = `icons/${style}/${name}.svg`;
+async function fetchDrawing(url) {
   try {
     const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -70,7 +74,31 @@ async function fetchDrawing(style, name) {
     if (drawing.localName !== 'svg') throw new Error('Response is not an SVG');
     return drawing;
   } catch (error) {
-    drawings.delete(`${style}/${name}`);
+    drawings.delete(url);
+    throw new Error(`[hq] ${url}: ${error.message}`, { cause: error });
+  }
+}
+
+// A kit's names for HQ names that share a drawing, fetched once: none when the kit has no names.json, or for a style's
+// folder
+function namesOf(kit) {
+  if (!kit) return NONE;
+  if (!kitNames.has(kit)) kitNames.set(kit, fetchNames(kit));
+  return kitNames.get(kit);
+}
+
+// A failed request is removed from the cache so the next drawing can fetch it again.
+async function fetchNames(kit) {
+  const url = `/kits/${kit}/icons/names.json`;
+  try {
+    const response = await fetch(url);
+    if (response.status === 404) return {};
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const names = await response.json();
+    if (!names || typeof names !== 'object' || Array.isArray(names)) throw new Error('not a table of names');
+    return names;
+  } catch (error) {
+    kitNames.delete(kit);
     throw new Error(`[hq] ${url}: ${error.message}`, { cause: error });
   }
 }

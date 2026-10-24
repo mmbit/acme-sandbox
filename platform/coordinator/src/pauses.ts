@@ -52,8 +52,19 @@ export type Pause = {
 };
 
 const targetOf = (p: Pick<Row, 'project' | 'thread'>) => p.thread ?? p.project;
-// The jobs on what a pause pauses (`j`'s thread): its thread, or every thread of its project
-const ON = `(j.thread = $thread or $thread is null and j.thread like $project || '/%')`;
+// The queued and running work on threads, read once for all the pauses described and split per pause in JS: a per-pause
+// query matching its thread or any of its project's can't use jobs_status, so it would scan every job's row each time.
+type OnThread = Pause['running'][number] & { thread: string };
+const workOnThreads = () =>
+  db
+    .prepare(
+      `select j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.started, j.thread from jobs j
+      where j.status in ('queued', 'running') and j.kind != 'chat' and j.thread is not null order by j.id`,
+    )
+    .all() as OnThread[];
+// Whether job `j` is on what pause `p` pauses: its thread, or every thread of its project
+const isOn = (j: OnThread, p: Pick<Row, 'project' | 'thread'>) =>
+  p.thread ? j.thread === p.thread : j.thread.startsWith(`${p.project}/`);
 
 // hq thread pause | hq project pause: the CEO or the project's owner pauses it, why in a line, and --until jobs that
 // resume it once they're all done and merged. A pause for a decision (decisions.ts) is the CEO's, and waits for
@@ -162,13 +173,14 @@ export const redrawing = (branch: string, job: number) =>
     )
     .run(job, branch);
 
-// The open pauses, oldest first (the jobs they wait for in one read)
+// The open pauses, oldest first (the jobs they wait for, and the work on them, in one read each)
 export function open() {
   const rows = db
     .prepare(redraws.query(`select * from pauses p where ${jobs.pauseHolds('p')} order by p.id`))
     .all() as Row[];
   const untils = untilsOf(rows.map(p => p.id));
-  return rows.map(p => described(p, untils.get(p.id) ?? []));
+  const work = rows.length ? workOnThreads() : [];
+  return rows.map(p => described(p, untils.get(p.id) ?? [], work));
 }
 // Whether any pause is open (the follow-through check's)
 export const anyOpen = () =>
@@ -239,19 +251,11 @@ export function withPauses<B extends { projects: { id: string; threads: { id: st
 
 // ---- in words
 
-function described(p: Row, until = untilsOf([p.id]).get(p.id) ?? []): Pause {
-  const params = { thread: p.thread, project: p.project };
-  const held = db
-    .prepare(`select count(*) n from jobs j where j.kind != 'chat' and j.status = 'queued' and ${ON}`)
-    .get(params) as { n: number };
+function described(p: Row, until = untilsOf([p.id]).get(p.id) ?? [], work = workOnThreads()): Pause {
+  const on = work.filter(j => isOn(j, p));
   // (a job back in the queue after it started, paused by a limit or a restart, is held mid-run)
-  const running = db
-    .prepare(
-      `select j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.started from jobs j where j.kind != 'chat' and ${ON}
-      and (j.status = 'running' or j.status = 'queued' and j.started is not null) order by j.id`,
-    )
-    .all(params) as Pause['running'];
-  const heldQueued = held.n - running.filter(r => r.status === 'queued').length;
+  const running = on.filter(j => j.status === 'running' || j.started !== null).map(({ thread: _thread, ...j }) => j);
+  const heldQueued = on.filter(j => j.status === 'queued' && j.started === null).length;
   return {
     id: p.id,
     target: targetOf(p),

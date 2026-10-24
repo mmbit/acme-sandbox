@@ -1,5 +1,6 @@
 // Review rulings in the project owner's inbox, and the findings each ordered fix task answers.
 import { unassignedFindings } from './inbox.ts';
+import { oneLine } from './agreements.ts';
 import { db, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as reviewwork from './reviewwork.ts';
@@ -14,6 +15,7 @@ export type Finding = {
   files: string[];
   issue: string;
   fix?: string;
+  task?: string;
 };
 export type Delivery = {
   ruling?: number;
@@ -24,10 +26,11 @@ export type Delivery = {
   decision: 'changes' | 'close';
   summary: string;
   findings: Finding[];
+  touchups?: string;
   brief?: string;
 };
 export type Item = Delivery & { proposal: number; thread: string | null; project: string | null };
-type Stored = Omit<Item, 'findings'> & { findings: string };
+type Stored = Omit<Item, 'findings' | 'touchups'> & { findings: string; touchups: string | null };
 type Fix = {
   item: Item;
   findings: Finding[];
@@ -64,7 +67,7 @@ export function deliver(details: Delivery) {
   db.prepare('update proposals set job = ? where id = ?').run(details.ruling ?? null, proposal);
   db.prepare(
     `insert or replace into review_inbox
-    (pr, proposal, round, branch, agent, decision, summary, findings, thread, project) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    (pr, proposal, round, branch, agent, decision, summary, findings, thread, project, touchups) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     details.pr,
     proposal,
@@ -76,6 +79,7 @@ export function deliver(details: Delivery) {
     JSON.stringify(details.findings),
     thread,
     project,
+    details.touchups ?? null,
   );
   return { ...details, proposal, thread, project };
 }
@@ -96,6 +100,7 @@ export const get = (pr: number): Item | undefined => {
     row && {
       ...row,
       ruling: row.ruling ?? undefined,
+      touchups: row.touchups ?? undefined,
       findings: JSON.parse(row.findings) as Finding[],
     }
   );
@@ -126,6 +131,8 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
       (ask.newThread != null || (ask.thread != null && findThread(String(ask.thread))?.id !== item.thread))
     )
       return 'review fix tasks belong to the reviewed thread';
+    const title = ask.title == null ? reviewed(fix) : taskTitle(ask.title);
+    if (!title) return ask.title == null ? UNNAMED : BAD_TITLE;
     const target = reviewwork.target(item, ask, by);
     if ('refusal' in target) return target.refusal;
     const thread = 'thread' in target ? target.thread : null;
@@ -135,9 +142,7 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
     }
     const job = jobs.createJob({
       agent: String(ask.for),
-      title: fix.findings.length
-        ? `Fix ${fix.findings.map(f => `finding ${f.id}`).join(', ')}`
-        : 'Check the review touch-ups',
+      title,
       prompt: instructions(fix),
       thread,
       branch: fix.branch,
@@ -150,6 +155,22 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
     recordTask(job.id, fix);
     return { job: job.id, thread };
   });
+}
+
+// The author's fix tasks for a ruling's blocking findings, or its touch-ups' check, accepted as its owner would (hq inbox
+// accept findings:<pr> --for <author> --findings <ids>): one per task the consolidator named, in its order, under its
+// title. For a company with review.drawWindowedChanges (proposals.ts deliverFindings). A refusal stops delivery.
+export function drawnAtOnce(item: Item, owner: string) {
+  const { author } = db.prepare('select author from prs where number = ?').get(item.pr) as { author: string };
+  const tasks = new Map<string | undefined, number[]>();
+  for (const f of item.findings.filter(f => f.kind !== 'nonblocking'))
+    tasks.set(f.task, [...(tasks.get(f.task) ?? []), f.id]);
+  const drawn = (tasks.size ? [...tasks.values()] : [undefined]).map(findings => {
+    const made = accept(`${FINDINGS}${item.pr}`, owner, { for: author, findings });
+    if (typeof made === 'string') throw new Error(made);
+    return made.job;
+  });
+  return { jobs: drawn, author };
 }
 
 export function fixFor(
@@ -281,6 +302,40 @@ export function reports(pr: number) {
 }
 
 const NAME_FINDINGS = 'name the findings this task fixes with --findings <id,id,...>';
+const UNNAMED =
+  'name the task for what it fixes with --title "...": the reviewer put these findings under more than one task, or none';
+const TITLE_MAX = 140;
+export const BAD_TITLE = `a task's title is one line of up to ${TITLE_MAX} characters`;
+
+// A task's title as the consolidator or the accepter wrote it (model output: anything but a line is none)
+export const taskTitle = (given: unknown) => {
+  const line = typeof given === 'string' ? oneLine(given) : '';
+  return line && line.length <= TITLE_MAX ? line : undefined;
+};
+// The fix task's title the consolidator gave: its findings' one task, or for touch-ups alone their check's
+function reviewed(fix: Fix) {
+  if (!fix.findings.length) return fix.item.touchups;
+  const tasks = new Set(fix.findings.map(f => f.task));
+  return tasks.size === 1 ? [...tasks][0] : undefined;
+}
+// The tasks a fix round without thread order goes under (review.ts), as the consolidator named them (model output):
+// each blocking finding's, and its touch-ups' check when it made touch-ups
+type Ruling = { blocking?: unknown[]; touchups_task?: unknown };
+const blockingOf = (v: Ruling) => (Array.isArray(v.blocking) ? (v.blocking as { task?: unknown }[]) : []);
+const roundTasks = (v: Ruling, touchedUp: boolean) => [
+  ...blockingOf(v).map(e => e?.task),
+  ...(touchedUp ? [v.touchups_task] : []),
+];
+// Why those tasks can't title the round, so its ruling can't be read (review.ts misjudged): one isn't a title
+export function untitledRound(v: Ruling, touchedUp: boolean) {
+  const bad = roundTasks(v, touchedUp).findIndex(task => !taskTitle(task));
+  if (bad < 0) return undefined;
+  return `${bad < blockingOf(v).length ? `blocking finding ${bad + 1}'s "task"` : '"touchups_task"'} isn't one: ${BAD_TITLE}`;
+}
+// The round's title, once its ruling reads: every task it names, together and in full (none for a ruling that names
+// no fix: no blocking finding and no touch-ups)
+export const roundTitle = (v: Ruling, touchedUp: boolean) =>
+  [...new Set(roundTasks(v, touchedUp).map(task => oneLine(task as string)))].join('; ') || undefined;
 
 function readIds(named: unknown): number[] | string {
   const ids = Array.isArray(named) ? named : typeof named === 'string' ? named.split(',').map(Number) : [];
@@ -289,8 +344,12 @@ function readIds(named: unknown): number[] | string {
     : ([...new Set(ids)] as number[]);
 }
 
-function describe(item: Pick<Delivery, 'pr' | 'decision' | 'summary' | 'findings'>) {
+function describe(item: Pick<Delivery, 'pr' | 'decision' | 'summary' | 'findings' | 'touchups'>) {
+  const touchups = item.touchups ? `\n\nTouch-ups to check, as the task: ${item.touchups}` : '';
   return `PR #${item.pr}: ${item.decision}. ${item.summary}\n\n${item.findings
-    .map(f => `#${f.id} [${f.domain}] ${f.files.join(', ')}: ${f.issue}${f.fix ? `\nFix: ${f.fix}` : ''}`)
-    .join('\n\n')}`;
+    .map(
+      f =>
+        `#${f.id} [${f.domain}] ${f.files.join(', ')}: ${f.issue}${f.fix ? `\nFix: ${f.fix}` : ''}${f.task ? `\nTask: ${f.task}` : ''}`,
+    )
+    .join('\n\n')}${touchups}`;
 }

@@ -20,20 +20,24 @@ db.exec('pragma secure_delete = on');
 // it nests where a plain begin can't. A trial (keep: false) rolls back after reading its answer too.
 // What a step does outside the database (afterStep: the events it publishes) waits for the outermost step to be kept,
 // and is dropped with a step rolled back.
+// The outermost step is undone with a plain rollback, which no lock turns away. Its release is a commit, which another
+// process's read can turn away ("database is locked"), and a failed one would leave the connection in a transaction no
+// later step commits, every write after it lost when the process ends.
 const afterSteps: (() => void)[][] = [];
 export function inOneStep<T>(run: () => T, { keep = true } = {}): T {
+  const undo = db.isTransaction ? 'rollback to step; release step' : 'rollback';
   db.exec('savepoint step');
   afterSteps.push([]);
   try {
     const done = run();
     const after = afterSteps.pop()!;
-    db.exec(keep ? 'release step' : 'rollback to step; release step');
+    db.exec(keep ? 'release step' : undo);
     if (keep && afterSteps.length) afterSteps.at(-1)!.push(...after);
     else if (keep) for (const then of after) then();
     return done;
   } catch (err) {
     afterSteps.pop();
-    db.exec('rollback to step; release step');
+    db.exec(undo);
     throw err;
   }
 }
@@ -219,7 +223,8 @@ db.exec(`
     effort text, stage text, started text, held_by text, call integer, item integer, answers integer,
     about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
     is_check integer not null default 0, seq real, suspending text, step text,
-    code text, landing text, engine_only text, judges text, off_worker integer not null default 0);
+    code text, landing text, engine_only text, judges text, off_worker integer not null default 0,
+    expedite integer not null default 0);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -233,7 +238,7 @@ db.exec(`
     since integer not null default 0, review_since integer not null default 0,
     files text not null default '[]', added integer, removed integer, links text not null default '[]', why text,
     panel text, review_class text, gate_fails integer not null default 0, fixes_from text, checks_note text not null default '',
-    tests_incomplete integer not null default 0, merged_at text, merge_refused text);
+    tests_incomplete integer not null default 0, merged_at text, merge_refused text, expedited integer not null default 0);
   create table if not exists schedule_runs (id text not null, slot text not null, job integer, kind text,
     routine text, primary key (id, slot));
   create table if not exists settings (key text primary key, value text not null);
@@ -279,8 +284,14 @@ db.exec(`create index if not exists jobs_done_by on jobs (finished, agent) where
 // row read: status, kind and finished sit after the brief and output. Those queries name it with `indexed by`.
 db.exec('create index if not exists jobs_counts on jobs (created, kind, status, finished)');
 // And the jobs carrying the board's call items (agreements.ts), each one's kind, status and branch: by id, and by item.
+// By id also every job waited for or replacing one in the redraw and wait relations (redraws.ts, jobs.ts waitRelations),
+// which each statement wrapped in redraws.query reads whole.
 db.exec(`create index if not exists jobs_state on jobs (id, kind, status, branch);
   create index if not exists jobs_carried on jobs (item, kind) where item is not null`);
+// A pull request's review loop as the hourly check's summary reads it (threats.ts latestMove, when work last moved),
+// without each review's brief. That query names it with `indexed by`.
+db.exec(`create index if not exists jobs_pr_loop on jobs (pr, kind, round, sha, stage, created, status, finished, voided)
+  where pr is not null`);
 // An agent's own work jobs, newest first (memory.ts history: hq history, a call's history tool), without reading other
 // agents' job rows. That query names it with `indexed by`.
 db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where kind = 'work'`);
@@ -294,8 +305,9 @@ db.exec(`create index if not exists jobs_done_work on jobs (id, agent, title, en
 db.exec('create table if not exists addresses (id integer primary key autoincrement, label text not null, created text not null)');
 redacted('prs', 'checks_note');
 // pushes: the files each of a pull request's pushed commits changes against main (review.ts), and the lines it adds or
-// alters per file (findings.ts ChangedLines, JSON; null for a touch-up commit, whose lines shift the later ones).
-db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, primary key (pr, sha))');
+// alters per file (findings.ts ChangedLines, JSON; null for a touch-up commit, whose lines shift the later ones). `at`:
+// when that commit was first pushed (threats.ts, when work last moved).
+db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, at text, primary key (pr, sha))');
 // What a pull request's pushes still owe before a review: work only one engine does that a run on another changed, to
 // restore from \`since\` and redo (engineonly.ts), and changed files people see whose previews no push recorded yet
 // (visual.ts).
@@ -313,6 +325,8 @@ db.exec('create table if not exists review_followups (finding integer primary ke
 db.exec('create table if not exists finding_rulings (ruling integer primary key, blocking text not null)');
 // The reviewer runs whose reports a ruling was given.
 db.exec('create table if not exists ruling_reports (ruling integer not null, report integer not null, primary key (ruling, report))');
+db.exec('create table if not exists review_refusals (job integer primary key, at integer not null, reason text not null)');
+redacted('review_refusals', 'reason');
 // The accepted rulings whose nonblocking findings went to the project's follow-ups, not the author (findings.ts record),
 // and what each ruling from the upstream round on said went wrong before review, in its owner's proposal (followups.ts
 // upstream).
@@ -417,18 +431,24 @@ db.exec(`create index if not exists jobs_work_titles on jobs (coalesce(branch, '
 // a row's prompt and output (each a walk through its overflow pages on a cold file).
 db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
   where kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')`);
+// The covering index keeps claim-time history reads (matching.ts pastJobs, named by `indexed by`) off the jobs table's
+// prompt and output overflow pages.
+db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
+  round, queued_by, pr) where kind = 'work' and status = 'done'`);
 // Token use per job run, for Finance's seat economics (usage.ts): numbers and model names only. `totals` is the engine's
-// running total for the session at that point, so the next run of the job can be stored as what it added.
+// running total for the session at that point, so the next run of the session can be stored as what it added.
 db.exec(`create table if not exists usage (id integer primary key, job integer not null, ts text not null, engine text not null,
   seat text, session text, models text not null, input integer not null, cache_write integer not null, cache_read integer not null,
   output integer not null, cost real, totals text not null)`);
-// usage.ts and the status report's cost per job look usage up by job. The index keeps those reads short, so a report reader
-// doesn't block HQ's writes past its 1.5 s lock wait
+// The status report's cost per job looks usage up by job (usage.ts reads by session: usage_session). The index keeps
+// that read short, so a report reader doesn't block HQ's writes past its 1.5 s lock wait
 db.exec('create index if not exists usage_job on usage (job)');
 // The seats' spend in a window (headroom.ts), a seat's and an engine's, read several times a play of the queue: each its
 // window's rows, not the whole table.
 db.exec(`create index if not exists usage_seat on usage (seat, ts) where seat is not null;
   create index if not exists usage_engine on usage (engine, ts)`);
+// A run's base is its session's latest report, whichever job made it (usage.ts recordUsage).
+db.exec('create index if not exists usage_session on usage (session) where session is not null');
 // The board's seats (seats.ts), kept here and changed in HQ's Settings › Seats: the worker runs jobs on these, each served by a
 // provider (the platform's, the company's company/providers.yaml, or one the board added: seat_providers, with the CLI it
 // speaks to beside its engine's, none: that engine's own). A removed seat keeps its row until the worker has removed it.
@@ -582,12 +602,25 @@ export function companyOnce(file = `${REPO_DIR}/company/migrations.sql`) {
 // ---- columns added since their table was made
 // Each only where its table is older: a database from before the migrations table makes its tables at this start, with
 // every column.
-const lacks = (table: string, column: string) =>
+// (exported for inbox.ts)
+export const lacks = (table: string, column: string) =>
   !(db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).some(c => c.name === column);
 once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table jobs add column code text'));
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
 once('2026-10-22-findings-routing', () => lacks('findings', 'cross_project') && db.exec('alter table findings add column cross_project integer not null default 0'));
 once('2026-10-22-prs-review-since', () => lacks('prs', 'review_since') && db.exec('alter table prs add column review_since integer not null default 0'));
+// An expedited fix (jobs.expedite: the CEO's hq job --expedite) and the pull request it merged ahead of its review
+// (prs.expedited).
+once('2026-10-23-expedite', () => {
+  if (lacks('jobs', 'expedite')) db.exec('alter table jobs add column expedite integer not null default 0');
+  if (lacks('prs', 'expedited')) db.exec('alter table prs add column expedited integer not null default 0');
+});
+// When each push was first pushed (pushes.at): those from before, when the first run on that commit was made.
+once('2026-10-23-pushes-at', () => {
+  if (!lacks('pushes', 'at')) return;
+  db.exec(`alter table pushes add column at text;
+    update pushes set at = (select min(created) from jobs where jobs.pr = pushes.pr and jobs.sha = pushes.sha)`);
+});
 // engine_only: the rule of work only one engine does (engineonly.ts) that keeps its job there; judges: the files a review
 // judges.
 once('2026-10-21-jobs-engine-only', () => {

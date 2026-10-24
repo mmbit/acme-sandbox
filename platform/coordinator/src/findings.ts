@@ -77,7 +77,7 @@ export const REVIEWER_PLACES = `   One finding per mistake: where the same mista
    "caused_by": then it's the change's. Leave "caused_by" out otherwise. A secret in code is no pre-existing finding:
    set "secret": true. It blocks without "caused_by", and is a Security incident, wherever it sits.`;
 
-// The consolidator, on the panel's reports.
+// The consolidator, on the panel's reports. (neutral reviewer ids in the example)
 export const CONSOLIDATOR_PLACES = `
 Pre-existing findings don't block. The round set apart each reviewer finding on lines this change doesn't add or alter
 (a report's "pre_existing", told from the diff): it isn't the author's, so it never goes in "blocking" or
@@ -94,8 +94,8 @@ For every entry in "blocking", "nonblocking" and "pre_existing", add "from": [{"
 Use the original zero-based index supplied as "finding" on each reported finding, including those set apart in
 "pre_existing". List every source a merged class stands for, even if you move its file or line. Each source belongs to
 one entry only. Use "from": [] for your own new findings. A reviewer finding no entry names is dropped.
-For example, a merged class reported by rook at indices 0 and 2 and nib at index 1 has
-"by": ["rook", "nib"], "from": [{"by": "rook", "finding": 0}, {"by": "rook", "finding": 2}, {"by": "nib", "finding": 1}].
+For example, a merged class reported by reviewer-a at indices 0 and 2 and reviewer-b at index 1 has
+"by": ["reviewer-a", "reviewer-b"], "from": [{"by": "reviewer-a", "finding": 0}, {"by": "reviewer-a", "finding": 2}, {"by": "reviewer-b", "finding": 1}].
 Set the ruling's "finding_sources": true even when all three entry lists are empty.
 This source list is the ruling's format. A reviewer's "from" still labels where its case comes from.
 Set "cross_project": true only for a follow-up belonging outside this pull request's project. The CEO routes those.

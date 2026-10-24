@@ -31,8 +31,10 @@ assert.deepEqual(errors, []);
 
 ## Heavy renders
 
-HQ's `harness.mjs` dispatches its caller automatically. Room previews and pixel comparisons use the company's
-`render` run kind while a lent helper is present. Busy helpers keep the work queued. The snapshot includes
+HQ's `harness.mjs` dispatches its caller automatically. Room previews and pixel comparisons use the run kind org.yaml's
+`runs.browser` names (`render` when it names none) while a lent helper of it is
+present. Give it a kind of its own when the films' image lacks git: the snapshot arrives as a git bundle, and the
+harnesses read the comparison ref with git. Busy helpers keep the work queued. The snapshot includes
 uncommitted files, the selected comparison ref and an optional brand file. Pictures return to `--out` (a new temporary
 folder by default), and `--record` keeps the original branch, commit and command. Remote failures and timeouts are
 final, with the render's exit code.
@@ -48,6 +50,10 @@ the 30-minute run budget shared with the test helper. Harness operations report 
 console output. Cancellation, script failures and normal exits also clean up descendants before releasing the slot.
 Pixel comparisons run two scenarios at once, with two pages per comparison, instead of increasing their page count
 with the host's core count. Room previews retain their two-page pool.
+
+Pixel comparisons capture the visible viewport through Playwright, including DOM, 2D and WebGL renderers. Each shot
+compares the selected reference's page with the working tree's page. The dev fixture's `mock/brand.json` picks the
+initial renderer. `--brand <file>` supplies the same brand and renderer settings to both sides.
 
 `shared/browser/package-lock.json` pins the helper's Playwright and YAML dependencies. Keep Playwright's version in
 step with the worker image and the company's render image. The official Playwright image supplies Node 24, browsers,

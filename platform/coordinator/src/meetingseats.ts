@@ -328,8 +328,8 @@ export function close(job: number, given: Record<string, unknown>, stalled: unkn
     return out.length
       ? `not everyone has handed in (${out.join(', ')}): wait, or close it as stalled (hq meeting close --stalled)`
       : failed.length
-        ? `the tally waits for sizes the sizer couldn't give (${failed.join(', ')}): their owners set them (hq estimate set), or close it as stalled (--stalled)`
-        : "the tally hasn't run yet (it waits for the sizes to settle): wait, or close it as stalled (--stalled)";
+        ? `the old tally is waiting for estimates (${failed.join(', ')}): wait for its next play, or close it as stalled (--stalled)`
+        : "the tally hasn't run yet: wait, or close it as stalled (--stalled)";
   }
   db.prepare('update meetings set summary = ?, headline = ? where id = ?').run(laid.summary, laid.headline, s.meeting);
   end(s.meeting, stalled === true ? 'the chair closed it as stalled' : 'the chair closed it', now);

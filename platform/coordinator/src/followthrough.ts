@@ -290,6 +290,7 @@ const currentAlarm = () => JSON.parse(setting(ALARM) ?? 'null') as Alarm | null;
 
 // The check's own text, every company's. The company's own words for it (org.yaml's followThrough.prompt) come after
 // it, as a routine's additions do (schedule.ts). (Acting from the run when the way out is itself held.)
+// (a slip's cause, the scheduler's or the task's, instead of cutting by hand)
 const PROMPT = `HQ's hourly check: it sets what the board agreed and what threatens the plan against the work actually
 running, to make sure work gets done. HQ queues it while the board's agreements stand or the summary has something in
 it. It is a short read, not a report: the board hears nothing from it unless something needs its judgment.
@@ -299,7 +300,9 @@ it. It is a short read, not a report: the board hears nothing from it unless som
    is yours, and what it asked to hear the moment it's ready goes to it as a notice marked \`now\`), the alarms on now,
    what threatens the plan (windows the plan misses and what holds them, threads giving past their aim, and the threats
    before anything slips: work past its size, a stuck pull request, tests slow or failing, timeouts, the worker's room
-   down to a couple of jobs, a seat near its limit, and from the owners' plans), what waits for the board's decision,
+   down to a couple of jobs, a seat near its limit, and from the owners' plans; a missed window and a stuck pull request
+   with when their work last moved: a new commit pushed, a review round opened or ruled, the merge or its deploy, never
+   a job queued, started, re-sent or ended with nothing pushed), what waits for the board's decision,
    and the queue. \`hq followthrough\`: the paused projects and threads (why, until what, the board's item, and work on
    each still running from before the pause), what the board agreed that still stands (in its own words for your
    calls' decisions), the work on each and where it stands, what's running now, what starts next, and what the last
@@ -313,23 +316,32 @@ it. It is a short read, not a report: the board hears nothing from it unless som
    line in a brief.
 3. On track, and nothing in the summary needs you since the last check: \`hq followthrough ok\`, and stop. No
    report, no message, no card.
-4. Off track: fix the cause now, never one job moved by hand. The plan orders the work by its threads' windows; you keep
-   it running where the plan can't, and make sure the plan gets what it needs.
-   - A window missed or a thread giving: re-plan with the windows. \`hq window <thread> <deadline> --try\` shows what a
-     change moves before you make it; widen a window set tighter than needed that now holds other work up. \`hq when\`
-     says when new work can be done. Whether the board hears, and the new time it's given, is your call.
-   - Something stuck or about to slip: queue its cause's owner a job with what you found. HQ, the platform, the tests,
-     the worker's room and the seats are Process's, and so are sizes or plays that proved wrong. \`hq stop\` work
-     running against an agreement, \`hq waits <job> add <job>\` to hold queued work behind what must land first, hand
-     failed agreed work back (\`hq followthrough requeue <failed job> "what was off"\`: the agent whose call it is takes
-     it over).
+4. Off track: find the cause on real state and fix it now, never one job moved by hand. The plan orders the work by
+   its threads' windows and the scheduler (the play and the claim) makes room for it, taking seats and run places from
+   lower work: never hand-pick work to cut, pause or move ahead to win time back. The summary, \`hq report\` and \`hq
+   thread\` say what a slip, or a window under threat, comes from:
+   - The scheduler failed to act: lower work kept a seat or a place that ready deadline work could have used and should
+     have taken from it, a pause didn't free one, the plan mis-ordered the work. That is a scheduler fault, never
+     written off as the plan's forecast: say it is one, and queue its structural fix to the play's owner at once (\`hq
+     job --expedite\` when the fault could hold up its own fix).
+   - The scheduler acted and capacity is short: the deadline work's eligible seat is out of quota until its reset, or
+     the server is short of room, so pausing the holder frees nothing the deadline work could use. That is no scheduler
+     fault: the shortage goes to its owner, and decide whether the board hears the new time.
+   - The scheduler acted and the task itself overruns: re-size it (\`hq estimate set\`) so the plan plays its real
+     size, decide whether the board hears the new time, and find why it runs long: a heavy run that belongs off the
+     worker (\`hq run\`), the server short of memory or cores, tests slow or hung, or something else. Its cause goes
+     to its owner.
+   - Something stuck: queue its cause's owner a job with what you found. HQ, the platform, the tests, the worker's room
+     and the seats are Process's, and so are sizes or plays that proved wrong. \`hq stop\` work running against an
+     agreement, \`hq waits <job> add <job>\` to hold queued work behind what must land first, hand failed agreed work
+     back (\`hq followthrough requeue <failed job> "what was off"\`: the agent whose call it is takes it over).
    - A repair fixes the cause: never another flag, rule or reminder on top of it.
    Before you act, ask whether the way you reach for is itself held by what's wrong: a job you queue waits for the same
    seats, room and queue as the work it should free, so behind a jammed worker or a stuck queue it does nothing. Then act
-   from this run: stop or cut what's in the way yourself, and what only the outside can do goes out on the two lines
-   that never stick behind HQ: the Overseer (\`hq overseer\`, let out when this run ends) and the board on the desk
-   phone, one or both. After you act, think on: what happens next, and what if it doesn't work? Tell the Overseer ahead
-   so it watches, and put a card to the board early when the Overseer can't act.
+   from this run: what only the outside can do goes out on the two lines that never stick behind HQ: the Overseer (\`hq
+   overseer\`, let out when this run ends) and the board on the desk phone, one or both. After you act, think on: what
+   happens next, and what if it doesn't work? Tell the Overseer ahead so it watches, and put a card to the board early
+   when the Overseer can't act.
    When you can't see the fix, take it to the board on the desk phone. Then \`hq followthrough acted "what was off and
    what you did, in one line"\`: the next check reads it. After a note to the Overseer, end the run at once after that
    line: your notes go out when it ends.

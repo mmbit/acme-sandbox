@@ -62,58 +62,63 @@ export function withFindings<J extends Job>(
 
 // ---- what a fix round fixes
 
-type Fixing = { id: number; pr: number; round: number; title: string; step: string | null; work: string | null };
+type Fixing = {
+  id: number;
+  pr: number;
+  round: number;
+  title: string;
+  step: string | null;
+  work: string | null;
+  task: string | null;
+  sent: string | null;
+};
 // Each fix round of a review's findings (a fix job with its round): the round, the findings it takes in a line each
 // (those its task names, else the ones the round's ruling sent back), whether it only checks the review's own edits
 // (a task with none to fix), and its own title when that names them: not the work's (a step under it), nor the one HQ
 // gave a task drawn from the findings before the consolidator named its tasks (reviewinbox.ts until job #8103). None
 // for a fix outside a round (bringing the branch up to date and the like), or one whose findings and name aren't known.
-// A task drawn from the inbox has its pull request and round in review_fix_tasks, not on its job (reviewinbox.ts).
+// A task drawn from the inbox has its pull request and round in review_fix_tasks, not on its job (reviewinbox.ts), and
+// the findings it fixes (task); the blocking findings the round's ruling sent back to the author before this fix
+// (findings.ts finding_rulings) are `sent`, none for a ruling not acted on. One read for every fix, and one for their
+// findings' words.
 function fixesOf(jobs: { id: number }[]) {
   const rows = db
     .prepare(
-      `select j.id, coalesce(t.pr, j.pr) pr, coalesce(t.round, j.round) round, j.title, j.step,
+      `select j.id, coalesce(t.pr, j.pr) pr, coalesce(t.round, j.round) round, j.title, j.step, t.findings task,
         (select w.title from jobs w indexed by jobs_work_titles where w.kind in ('work', 'chat') and w.stage is null
-        and coalesce(w.branch, 'job/' || w.id) = coalesce(j.branch, 'job/' || j.id) order by w.id limit 1) work
+        and coalesce(w.branch, 'job/' || w.id) = coalesce(j.branch, 'job/' || j.id) order by w.id limit 1) work,
+        (select r.blocking from finding_rulings r join jobs c on c.id = r.ruling
+        where c.pr = coalesce(t.pr, j.pr) and c.round = coalesce(t.round, j.round) and c.id < j.id
+        order by c.id desc limit 1) sent
       from jobs j left join review_fix_tasks t on t.job = j.id where j.id in (select value from json_each(?))
       and j.stage = 'fix' and coalesce(t.pr, j.pr) is not null and coalesce(t.round, j.round) is not null`,
     )
     .all(JSON.stringify(jobs.map(j => j.id))) as Fixing[];
-  return new Map(rows.map(r => [r.id, fixOf(r)]));
+  const findingIds = (job: Fixing) => {
+    const task = job.task === null ? undefined : (JSON.parse(job.task) as number[]);
+    return { task, ids: task ?? (job.sent === null ? [] : (JSON.parse(job.sent) as number[])) };
+  };
+  const fixing = rows.map(row => ({ row, ...findingIds(row) }));
+  const issues = new Map(
+    (
+      db
+        .prepare('select id, issue from findings where id in (select value from json_each(?))')
+        .all(JSON.stringify(fixing.flatMap(f => f.ids))) as { id: number; issue: string }[]
+    ).map(f => [f.id, f.issue]),
+  );
+  return new Map(fixing.map(f => [f.row.id, fixOf(f.row, f, issues)]));
 }
-function fixOf(job: Fixing) {
-  const task = taskIds(job.id),
-    ids = task ?? sentBack(job) ?? [];
+function fixOf(job: Fixing, { task, ids }: { task?: number[]; ids: number[] }, issues: Map<number, string>) {
   const drawn = [`Fix ${ids.map(id => `finding ${id}`).join(', ')}`, 'Check the review touch-ups'];
   const named = !job.step && job.title !== job.work && !drawn.includes(job.title);
   if (!task && !ids.length && !named) return undefined;
-  const issues = db
-    .prepare('select issue from findings where id in (select value from json_each(?)) order by id')
-    .all(JSON.stringify(ids)) as { issue: string }[];
   return {
     round: job.round,
-    findings: issues.map(f => plain(f.issue)),
+    findings: [...new Set(ids)].sort((a, b) => a - b).flatMap(id => (issues.has(id) ? [plain(issues.get(id))] : [])),
     ...(task && !task.length && { touchups: true }),
     ...(named && { title: job.title }),
   };
 }
-// The findings a task drawn from the review's inbox fixes (review_fix_tasks), none for one that wasn't
-const taskIds = (job: number) => {
-  const row = db.prepare('select findings from review_fix_tasks where job = ?').get(job) as
-    { findings: string } | undefined;
-  return row && (JSON.parse(row.findings) as number[]);
-};
-// The blocking findings the round's ruling sent back to the author before this fix (findings.ts finding_rulings), none
-// for a ruling not acted on
-const sentBack = (job: Fixing) => {
-  const row = db
-    .prepare(
-      `select r.blocking from finding_rulings r join jobs c on c.id = r.ruling
-      where c.pr = ? and c.round = ? and c.id < ? order by c.id desc limit 1`,
-    )
-    .get(job.pr, job.round, job.id) as { blocking: string } | undefined;
-  return row && (JSON.parse(row.blocking) as number[]);
-};
 
 // GET /api/projects/findings: one review's or ruling's findings, each with what became of it
 export function findingsOf(id: number) {

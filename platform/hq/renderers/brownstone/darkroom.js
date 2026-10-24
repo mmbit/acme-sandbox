@@ -1,10 +1,6 @@
-// The photo studio's darkroom, there while the company runs a studio (world.studio; layout.js adds the room). At its near
-// end a backdrop sweep with a product on it, a camera on a tripod and a softbox; then a bench with an enlarger and three
-// trays; a line of prints drying above it, one per photo in the board's batch; a red safelight that's on while an edit is
-// in the model; and the keeper's desk at the far end. rooms.js builds the things (darkroomThing), render.js draws what
-// changes every frame (drawDarkroom), the safelight's red over the room (darkroomTint) and its glow (safelightGlow).
+// The photo studio's darkroom, there while the company runs one
 import { mix } from '../../util.js';
-import { INK, F, SX, SY, sprite, silhouette, wallX, wallY } from './iso.js';
+import { INK, F, SX, SY, line, sprite, silhouette, wallX, wallY } from './iso.js';
 import { PRINT_W, PRINT_H, PITCH, sag, lineFlat, printFlat, safelightFlat } from './darkroomwall.js';
 
 const PAPER = '#f6efe2',
@@ -70,7 +66,7 @@ function sweep(ctx, st, a, room, F_) {
           [0.02, -0.1],
         ].map(([da, dd]) => F_.s(sb.a + da, sb.d + dd)),
         top1 = F_.s(sb.a, sb.d, 6);
-      for (const p of foot) line(g2, top1[0], top1[1], p[0], p[1], '#565a70');
+      for (const p of foot) line(g2, top1, p, '#565a70');
       F_.box(g2, sb.a - 0.02, sb.d - 0.02, sb.a + 0.02, sb.d + 0.02, 6, 24, '#8b8fa3');
       F_.box(
         g2,
@@ -105,7 +101,7 @@ function sweep(ctx, st, a, room, F_) {
           [0.16, 0.12],
           [0, -0.17],
         ].map(([da, dd]) => F_.s(cm.a + da, cm.d + dd));
-      for (const p of feet) line(g2, top1[0], top1[1], p[0], p[1], '#3b3355');
+      for (const p of feet) line(g2, top1, p, '#3b3355');
       F_.box(g2, cm.a - 0.03, cm.d - 0.03, cm.a + 0.03, cm.d + 0.03, 9, 14, '#565a70');
       F_.box(g2, cm.a - 0.05, cm.d - 0.22, cm.a + 0.05, cm.d - 0.07, 15, 19, ['#c9ccd8', '#565a70', '#3b3355']); // the lens, towards the sweep
       F_.box(g2, cm.a - 0.13, cm.d - 0.07, cm.a + 0.13, cm.d + 0.08, 14, 20, ['#8b8fa3', '#3b3355', '#2b2230']);
@@ -338,15 +334,10 @@ function wallSprite(g, st, key, draw, a0, zb) {
   }
   g.drawImage(sp.img, sp.x, sp.y);
 }
-// a 1 px ring (an ellipse outline) and a 1 px line
+// a 1 px ring (an ellipse outline)
 function ring(g, cx, cy, rx, ry, c) {
   for (let k = 0; k < 16; k++) {
     const a = (k / 16) * Math.PI * 2;
     F(g, cx + Math.round(Math.cos(a) * rx), cy + Math.round(Math.sin(a) * ry), 1, 1, c);
   }
-}
-function line(g, x1, y1, x2, y2, c) {
-  const n = Math.max(1, Math.round(Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1))));
-  for (let k = 0; k <= n; k++)
-    F(g, Math.round(x1 + ((x2 - x1) * k) / n), Math.round(y1 + ((y2 - y1) * k) / n), 1, 1, c);
 }

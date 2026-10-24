@@ -87,26 +87,28 @@ export const theme = () => optional('theme/hq.yaml');
 // which a company turns on once its open work is in threads. A missing or empty file means none. YAML that cannot be
 // parsed throws. planning: `threads` once the company plans by threads in order (../docs/projects.md),
 // else off.
-// made: the project each kind of job HQ makes goes to, by its app (made.ts): notes, the board's notes on HQ (hq;
-// others' join their return); errors, the error scan's triage (the app's slug, care: the chat); checks, the hourly
-// check and its repair, alarms, the CEO's (hq): those two carry a window, so a company needs their project (a new one
-// has the template's file: template/company/projects.yaml).
+// made: the project each kind of job HQ makes goes to, by its app (made.ts): errors, the error scan's triage (the app's
+// slug, care: the chat); checks, the hourly check and its repair, alarms, the CEO's (hq): those two carry a window, so a
+// company needs their project (a new one has the template's file: template/company/projects.yaml). The board's notes
+// become tasks in their projects as the CEO routes them (routing.ts).
 // businesses: what the projects are grouped under, in the board's order, each an id, a name, maybe a cover (a file
-// under theme/hq/) and maybe its owner (an agent id). A project names its
-// business. groups: the projects view's side groups beside the businesses (recurring: the routines' projects, schedule.ts
-// keepProjects; unsorted: the work outside the projects), each maybe with a cover the same way. Both as declared.
+// under theme/hq/), maybe its owner (an agent id) and maybe the style its covers are drawn in (its own and its projects':
+// `pixel` shows them at whole pixels, any other word or none smooth.). A project
+// names its business. groups: the projects view's side groups beside the businesses (recurring: the routines'
+// projects, schedule.ts keepProjects; unsorted: the work outside the projects), each maybe with a cover and its style
+// the same way. Both as declared.
 // A group may carry its own name for the view: a company that names
 // unsorted, the CEO's desk (call follow-ups and the CEO's own work, projects.ts listProjectBoard), has it as a standing
 // tile.
 // covers: each project's cover by its id, a file under theme/hq/ the same way (the projects are HQ's data, their pictures
 // the company's).
-export type Business = { id: string; name: string; cover?: string; owner?: string };
+export type Business = { id: string; name: string; cover?: string; owner?: string; style?: string };
 export type GroupKind = 'recurring' | 'unsorted' | 'meetings'; // (meetings: the meetings' seats.)
-export type MadeKind = 'notes' | 'errors' | 'checks' | 'alarms';
+export type MadeKind = 'errors' | 'checks' | 'alarms';
 export type Project = { id: string; name: string; owner: string; product?: string; business?: string };
 export type ProjectSettings = {
   list: Project[]; businesses: Business[];
-  groups: Partial<Record<GroupKind, { cover?: string; name?: string; code?: string }>>; // (code: its tasks' prefix, as a project's: jobcodes.ts.)
+  groups: Partial<Record<GroupKind, { cover?: string; style?: string; name?: string; code?: string }>>; // (code: its tasks' prefix, as a project's: jobcodes.ts.)
   covers: Record<string, string>;
   made: Partial<Record<MadeKind, Record<string, string>>>;
   requireThread: boolean; planning: 'threads' | 'off';
@@ -124,6 +126,11 @@ export function projects(): ProjectSettings {
   return { list, businesses: file.businesses ?? [], groups: file.groups ?? {}, covers: file.covers ?? {}, made: file.made ?? {},
     requireThread: file.requireThread === true, planning: file.planning === 'threads' ? 'threads' : 'off' };
 }
+// A project's cover where projects.yaml names one, and the style its business gives its covers.
+export const coverOf = (project: Project) => ({
+  cover: projects().covers[project.id],
+  style: projects().businesses.find(b => b.id === project.business)?.style,
+});
 // The file's `projects:` entries the table hasn't got, put in it (once the file's text changes: readOnce)
 function liftProjects(file: any) {
   const text = (v: unknown) => typeof v === 'string' && v.trim() ? v.trim() : null;

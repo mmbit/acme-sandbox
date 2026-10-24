@@ -29,17 +29,19 @@ export function buildRoofBits(R, L, brand, party) {
   R.sign = R.bunting = R.splashAreas = null;
   const P = L.pent, z = L.roofZ;
   if (P) {
-    const s = brand.sign, w = s.pixels[0].length + 16, H = s.pixels.length + 11, len = w / 16;
+    const faces = [0, 1, 2].map(phase => signFace(brand.sign, brand.logo.colours, phase));
+    const { width: w, height: H } = faces[0], len = w / 16;
     const x0 = Math.max(1.3, (P.x1 - len) / 2 + 0.6), base = z + PENT_H + 6; // the sign's bottom edge, on posts above the penthouse's back wall
-    const face = phase => signFace(s, brand.logo.colours, phase);
-    const l = Math.floor(SX(x0, 0)) - 2, t0 = Math.floor(SY(x0, 0, base + H + 6)) - 2, imgs = [0, 1, 2].map(k => {
+    const l = Math.floor(SX(x0, 0)) - 2, t0 = Math.floor(SY(x0, 0, base + H + 6)) - 2, imgs = faces.map(face => {
       const c = canvas(w + 4, Math.ceil(len * 8) + H + 22), g = c.getContext('2d');
       g.translate(-l, -t0);
       for (const u of [0.4, len - 0.4]) wallY(g, x0 + u, x0 + u + 0.08, 0.1, z + PENT_H, z + PENT_H + 6, '#565a70');
-      onWallY(g, face(k), x0, 0.1, base);
+      onWallY(g, face, x0, 0.1, base);
       return c;
     });
-    R.sign = { img: imgs[0], imgs, x: l, y: t0, glow: signGlow(face(0), x0, base), hot: { x0: SX(x0, 0.1), x1: SX(x0 + len, 0.1), y0: SY(x0, 0.1, base + H + 2), y1: SY(x0 + len, 0.1, base - 2) } };
+    const x1 = x0 + len;
+    const hot = { x0: SX(x0, 0.1), x1: SX(x1, 0.1), y0: SY(x0, 0.1, base + H + 2), y1: SY(x1, 0.1, base - 2) };
+    R.sign = { img: imgs[0], imgs, x: l, y: t0, glow: signGlow(faces[0], x0, base), hot };
   }
   if (party) {
     const tr = L.rooms.find(r => r.id === 'terrace-x') || L.rooms.find(r => r.kind === 'terrace');
@@ -56,8 +58,6 @@ export function buildRoofBits(R, L, brand, party) {
     }
   }
 }
-// The neon's halo: soft bands around the sign's rectangle, drawn flat and then sheared onto the same
-// wall plane as the sign, so it leans exactly like the sign does.
 // The rooftop sign at night: `lit` keeps the panel itself out of the night shade (exactly its own shape), and
 // `img` is a soft halo round only its bright pixels (letters, bulbs, stars), so the glow doesn't enlarge it.
 function signGlow(flat, x0, base) {

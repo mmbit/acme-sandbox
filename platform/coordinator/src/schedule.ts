@@ -94,6 +94,7 @@ function run(e: Entry, slot: string) {
   const word = e.code?.toUpperCase(), code = word && codeIn({ project }, word);
   const title = `${e.title} (${slot})`;
   const jobs = e.with ? meet(e, slot, text, code) : [createJob({ agent: e.agent, title, prompt: text,
+    schedule: { entry: e.id, routine: e.routine ?? null, slot },
     downtime: e.downtime === true, model: e.model, effort: e.effort, thread: null, code: code || undefined }).id];
   db.prepare('update schedule_runs set job = ?, kind = ?, routine = ? where id = ? and slot = ?')
     .run(jobs[0], typeof e.kind === 'string' ? e.kind : null, e.routine ?? null, e.id, slot);

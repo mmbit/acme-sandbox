@@ -4,6 +4,8 @@ import type { Wait } from '../../worker/hq/waits.ts';
 // The queue as it stands at `now`: plain data (JSON as it is), so it can be kept and played again.
 export type Snapshot = {
   now: number;
+  seatPlans?: Record<string, 5 | 20>;
+  seatMeasurements?: Record<string, import('./headroom.ts').Measurement>;
   planner?: 3;
   planningSizes?: [number, Size][];
   windows?: Record<string, { deadline: number | null; aim: number | null }>;

@@ -3,7 +3,8 @@
 // board's own card first where one waits on it; Recurring (the routines' projects) and the work outside the projects
 // beside the businesses. Each level's head says where the board is and keeps its
 // keys in reach above the tiles. Lit in the one accent wherever something waits on the board (threads.js forBoard), the
-// same at every level, and work under way shows as moving bars.
+// same at every level, and work under way shows as moving bars. (A thread's tile is threadtile.js's, with the pieces
+// it shares from here.)
 import { esc, cap } from '../util.js';
 import * as world from '../world/world.js';
 import { scene, look } from './stage.js';
@@ -16,7 +17,6 @@ import {
   word,
   kindOf,
   doingOf,
-  cardsOf,
   stepsOf,
   finished,
   doneCount,
@@ -28,14 +28,12 @@ import {
   businessState,
   atWork,
   running,
-  threadNow,
   projectNow,
-  taskHtml,
   size,
   threadEta,
   projectLit,
-  fromNow,
 } from './threads.js';
+import { fromNow } from '../world/clock.js';
 
 // The keys after the businesses: Recurring, the routines' projects (projects.ts gives each its schedule), and the work
 // outside the projects, each its name and a line icon (or the cover projects.yaml's groups name for it). A company's own
@@ -72,7 +70,7 @@ export function businessTile(b, projects) {
     threads = projects.flatMap(p => p.threads);
   const owner = b.owner ? [person(b.owner, true, atWork(threads).includes(b.owner))] : [];
   return `<button class="pj-tile pj-business${state.lit ? ' lit' : ''}" data-business="${esc(b.id)}">
-    ${art(b.cover, b.name, owner, state, running(threads))}<span class="pj-tile-body"><b>${esc(b.name)}</b></span></button>`;
+    ${art(b, b.name, owner, state, running(threads))}<span class="pj-tile-body"><b>${esc(b.name)}</b></span></button>`;
 }
 // A project: a business's tile with whoever else is at work on it beside its owner, and its deliverables up next (a
 // routine's interval and next run first). The board sorts these by dragging
@@ -82,27 +80,7 @@ export function projectTile(p) {
     on = atWork(p.threads),
     people = [p.owner, ...on.filter(a => a !== p.owner)].map((a, i) => person(a, i === 0, on.includes(a)));
   return `<button class="pj-tile pj-project${state.lit ? ' lit' : ''}" data-project="${esc(p.id)}" data-sort="${esc(p.id)}">
-    ${art(p.cover, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}</button>`;
-}
-// A thread, a deliverable: who's on it, its name, its tasks running (each with its bars) or else the one up next, how
-// much it changed so far and when it's done. What waits on the board or is paused is a mark in its corner.
-export function threadTile(t, p) {
-  const state = threadLine(t, p),
-    on = atWork([t]),
-    people = [...new Set([...on, ...openCards(t).map(j => j.agent)])],
-    { running: now, next } = threadNow(t);
-  const rows = (now.length ? now : [next].filter(Boolean)).map(
-    j => `<li>${now.length ? pulse(1) : ''}<span>${taskHtml(j, t)}</span></li>`,
-  );
-  return tile({
-    attrs: `data-thread="${esc(t.id)}"`,
-    label: nameText(t, 'name'),
-    state,
-    top: faces(people, on),
-    name: nameHtml(t, 'name'),
-    rows: rows.length ? `<ul class="pj-next pj-now">${rows.join('')}</ul>` : '',
-    foot: lines(t.lines) + (state.finish ? `<span class="pj-when">${esc(fromNow(state.finish))}</span>` : ''),
-  });
+    ${art(p, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}</button>`;
 }
 // A done thread, quieter: its owner, its name and how many of its jobs were done (projects.ts tally), or while it's
 // being opened, how that goes (opening: projects.js's, for one of the project's done threads). One closed with no
@@ -147,7 +125,7 @@ function jobTile(j, t) {
     top: whoTop(j.agent),
     name: nameHtml(j),
     rows: where.length
-      ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span>`
+      ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}<span>${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span></span>` // (one line of text, its links in it)
       : '',
     foot: (size(j) ? `<span class="pj-size">${esc(size(j))}</span>` : '') + code(j),
   });
@@ -159,7 +137,7 @@ export function groupTile(key, rows, done, set, on) {
   const group = named(key, set);
   if (!rows.length && !done && !group.standing) return '';
   return `<button class="pj-tile pj-business" data-group="${key}">
-    ${art(set?.cover, group.name, [], {}, on, group.icon)}<span class="pj-tile-body"><b>${esc(group.name)}</b></span></button>`;
+    ${art(set, group.name, [], {}, on, group.icon)}<span class="pj-tile-body"><b>${esc(group.name)}</b></span></button>`;
 }
 // Where a job is in a word, or for one waiting on others what it waits on: the code of each task it follows (its
 // --after, then the others it waits on), one without a code by its agent, and each card it waits on that isn't on the
@@ -242,19 +220,19 @@ const tile = ({ attrs = '', label, state = {}, top, name, rows = '', foot = '', 
     `<span class="pj-tile-top">${top}${mark(state)}</span><b>${name}</b><span class="pj-tile-rows">${rows}</span><span class="pj-foot"${live ? ' aria-live="polite"' : ''}>${foot}</span>`,
   );
 // Faces in a row, those of the agents in on at work marked so
-const faces = (ids, on = []) =>
+export const faces = (ids, on = []) =>
   ids.length ? `<span class="pj-faces">${ids.map(a => face(a, on.includes(a) ? 'on' : '')).join('')}</span>` : '';
 // One person's face and name, a group's job's
 const whoTop = id => `${face(id)}<span class="pj-who-line">${esc(who(id))}</span>`;
 // ----
-// A tile's picture: its cover with its people over one corner, the bars of the n jobs running there over another, and
-// its mark (state) over a third
-const art = (src, name, people, state, n, fallback) =>
-  `<span class="pj-art">${cover(src, name, fallback)}${people.length ? `<span class="pj-corner">${people.join('')}</span>` : ''}${mark(state)}${pulse(n)}</span>`;
+// A tile's picture: its cover (pictured: the business, project or group that names it) with its people over one corner,
+// the bars of the n jobs running there over another, and its mark (state) over a third
+const art = (pictured, name, people, state, n, fallback) =>
+  `<span class="pj-art">${cover(pictured, name, fallback)}${people.length ? `<span class="pj-corner">${people.join('')}</span>` : ''}${mark(state)}${pulse(n)}</span>`;
 // What a tile's state means to the board, as a mark: its desk phone when something there waits on it, a pause sign when
 // it's paused, an hourglass when it waits on other work with no time yet,
 // nothing otherwise
-const mark = state =>
+export const mark = state =>
   state.lit
     ? litMark(state.words)
     : state.words === 'Paused'
@@ -291,11 +269,10 @@ function when(t, p) {
   return line.finish ? `<small>${esc(fromNow(line.finish))}</small>` : '';
 }
 // How much a thread changed so far: its pull requests' lines (projects.ts lines)
-const lines = l =>
+export const lines = l =>
   l
     ? `<span class="pj-lines" aria-label="${l.added} lines added, ${l.removed} removed">+${l.added} −${l.removed}</span>`
     : '';
-const openCards = t => cardsOf(t).filter(j => !finished(j));
 export const code = j => (j.code ? `<span class="pj-code">${esc(j.code)}</span>` : ''); // (none for a job without one)
 // The live sign of work under way: each job running a voice of three bars, each bar on an uneven run of its own like a
 // level meter's, each voice at its own point in the run, so where more runs, more moves.
@@ -311,11 +288,13 @@ export function pulse(n) {
     });
   return `<span class="pj-pulse" role="img" aria-label="${n} ${n === 1 ? 'job' : 'jobs'} running">${voices.join('')}</span>`;
 }
-// A cover: the picture projects.yaml names (under theme/hq), a pixel image shown at whole pixels, decoded before it's
-// shown so a repaint never flashes the ground; where it names none, the quiet ground with the fallback (the name's
-// initial) on it
-function cover(src, name, fallback = `<i class="pj-initial">${esc(String(name)[0] ?? '')}</i>`) {
-  return `<span class="pj-cover${src ? '' : ' pj-bare'}">${src ? `<img src="${esc(src)}" alt="" draggable="false" decoding="sync">` : fallback}</span>`;
+// A cover: the picture projects.yaml names (under theme/hq) in the style it gives (data-style, a pixel one shown at whole
+// pixels), decoded before it's shown so a repaint never flashes the ground; where
+// it names none, the quiet ground with the fallback (the name's initial) on it
+function cover(pictured, name, fallback = `<i class="pj-initial">${esc(String(name)[0] ?? '')}</i>`) {
+  const src = pictured?.cover,
+    style = pictured?.style ? ` data-style="${esc(pictured.style)}"` : '';
+  return `<span class="pj-cover${src ? '' : ' pj-bare'}"${style}>${src ? `<img src="${esc(src)}" alt="" draggable="false" decoding="sync">` : fallback}</span>`;
 }
 
 // An agent's face: the look's own portrait of them (the scene draws it), or their initial. cls: 'big', or 'on' while

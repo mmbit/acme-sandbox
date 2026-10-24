@@ -29,7 +29,7 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
 
 test("a bundle with a shell or Python run carries the worker's tools, first on the helper's PATH, and one with only node runs doesn't", async () => {
   const bin = mkdtempSync(join(tmpdir(), 'tests-tools-'));
-  for (const tool of ['age', 'age-keygen', 'versitygw', 'caddy'])
+  for (const tool of ['age', 'age-keygen', 'versitygw', 'caddy', 'docker-compose'])
     writeFileSync(join(bin, tool), `#!/bin/sh\necho ${tool}\n`, { mode: 0o755 });
   const env = { ...(await playedHq()), TESTS_TOOLS_BIN: bin };
   const onHelper = {
@@ -39,12 +39,15 @@ test("a bundle with a shell or Python run carries the worker's tools, first on t
     'kits/adds/sum.ts': sum('a + b'),
     'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
   };
-  const shell = { 'infra/test_tools.sh': 'test "$(caddy)" = caddy && test "$(age)" = age\n' };
+  const shell = {
+    'infra/test_tools.sh':
+      'test "$(caddy)" = caddy && test "$(age)" = age && test "$(docker-compose)" = docker-compose\n',
+  };
   const infra = clone({ ...kits, ...onHelper, ...shell }, { 'infra/notes.md': 'touched\n' }).run(env, 'tests.ts', [
     '--helper',
   ]);
   assert.equal(infra.status, 0, infra.out);
-  assert.match(infra.out, /^tools: age age-keygen caddy versitygw$/m);
+  assert.match(infra.out, /^tools: age age-keygen caddy docker-compose versitygw$/m);
   assert.match(infra.out, /^- infra \(in infra: bash test_tools.sh\): 0 passed/m);
   assert.doesNotMatch(infra.out, /failing|flaky/); // its exit 0, with the copies on PATH, not failing on main too
   const node = clone({ ...kits, ...onHelper }, { 'kits/adds/notes.md': 'touched\n' }).run(env, 'tests.ts', [

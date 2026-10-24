@@ -62,7 +62,7 @@ export const SHA = /^[0-9a-f]{40}$/;
 // `mcp_servers` (its `notify` it ignores from a project-local file). A branch with any of these could run code inside a
 // job — forging a reviewer/consolidator's .hq/review.json verdict (so a change merges unreviewed) or a work job's
 // .hq/request.json. None of our branches carry them, so the worker strips them from every clone before it runs the CLI.
-export const BRANCH_CONFIG = ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.codex/config.toml'];
+export const BRANCH_CONFIG = ['.claude/settings.json', '.claude/settings.local.json', '.mcp.json', '.codex/config.toml', '.codex/hooks.json'];
 // A reviewer or consolidator's clone loses the CLIs' whole project folders too: a branch's agents, skills and commands
 // (frontmatter hooks, `!`-command blocks) are config the CLI may load, and a reviewer reads the change through git
 // (`git diff origin/main...HEAD`, `git show`), which doesn't need these in the working tree. It never commits. Codex

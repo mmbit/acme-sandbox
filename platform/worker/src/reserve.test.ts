@@ -64,16 +64,3 @@ test('measured claims and reported starts use only memory above the free reserve
   assert.equal(reserve.starts(available), 0);
   assert.equal(reserve.claimMb(available, false), JOB_MB + SEAT_MB + 250);
 });
-
-test('the captured host room admits five allowances while retaining the free reserve', () => {
-  const reserve = reservations(() => 0);
-  const available = 5404499968 / 2 ** 20;
-  let admitted = 0;
-  while (reserve.room(available)) {
-    reserve.take();
-    admitted++;
-  }
-  assert.equal(admitted, 5);
-  assert.equal(reserve.starts(available), 0);
-  assert.ok(reserve.freeMb(available) >= FREE_MB);
-});

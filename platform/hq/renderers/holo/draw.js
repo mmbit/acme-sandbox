@@ -1,6 +1,4 @@
-// The hologram, frame by frame, as glowing lines, triangles and points (gl.js' batches): the core and the board on
-// its rings, each room's platform and its people, hand-offs, parcels, mascots, the radar, the crown, the room around
-// the table, the sky's weather and the particles.
+// The hologram frame by frame, in gl.js' batches
 import { rng, rgb } from '../../util.js';
 import { TAU, add, sub, scl, mix3, nrm, polar, sstep, begin, line, pt, tri, arc, dashes, disc } from './gl.js';
 import { TABLE_Y, TABLE_R, RING_R, CORE, CROWN_Y, CYAN, TEAL, AMBER, MAG, WHITE, GOLD, VIOLET, CORAL, MASCOT, built, agentAt, agentColour, coreRing, mascotAt } from './deck.js';

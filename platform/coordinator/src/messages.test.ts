@@ -12,6 +12,8 @@ const h = await harness('messages');
 const { db, jobs } = h;
 const messages = await import('./messages.ts');
 const { status: agentStatus } = await import('./events.ts');
+const proposals = await import('./proposals.ts');
+const { ceo } = await import('./company.ts');
 
 const say = (j: Running, to: string, text: string, as?: string) => h.agent('message', j.token, { to, text, ...(as ? { as } : {}) });
 // hq sent: where the sender's message went (its job, offered, delivered, the job it became or joined, lapsed)
@@ -23,8 +25,15 @@ const brief = (id: number) => (db.prepare('select prompt from jobs where id = ?'
 const events = (since: number) => db.prepare('select * from events where id > ? order by id').all(since) as any[];
 const lastEventId = () => (db.prepare('select max(id) n from events').get() as any).n ?? 0;
 // Earlier tests' messages and queued jobs gone: a claim takes this test's own.
-const clear = () => db.exec("delete from messages; delete from jobs where status = 'queued'");
+// (and their wakes: a later job may take a deleted one's id)
+const clear = () =>
+  db.exec("delete from messages; delete from wakes where job in (select id from jobs where status = 'queued'); delete from jobs where status = 'queued'");
 test.beforeEach(clear);
+// A message's job waits for its sort (sorting.ts): the CEO names it, as its sender's job is in no project, and it may start
+function sort(job: number, title: string, code: string) {
+  const { proposal } = db.prepare('select proposal from sorts where job = ?').get(job) as { proposal: number };
+  assert.deepEqual(proposals.accept(proposal, ceo(), { title, code }), { job, code, thread: null, sorted: true });
+}
 
 // A running job for `agent` on `engine`: the Claude engine is the only one that takes messages mid-run.
 const running = (agent: string, engine = 'claude') => h.start({ agent, engine });
@@ -176,6 +185,8 @@ test("a second message to an idle colleague goes into the job the first became w
   // another sender job's message is a job of its own; so is one after the job started
   const theirs = await say(other, 'rivet', 'Separate thing.');
   assert.notEqual(theirs.body.job, made);
+  assert.equal(await h.claim(h.job(made).engine), null, 'it waits for its sort');
+  sort(made, 'Check the rivetlamp wiring in the lobby', 'LAMP');
   const started = await h.claim(h.job(made).engine);
   assert.equal(started?.id, made);
   await h.finish(started!, { status: 'interrupted', session: 'its-session' });   // started, and paused
@@ -291,6 +302,7 @@ test('a chain of messages starts at most 3 jobs; past that, a message reaches on
     assert.deepEqual([r.status, r.body.state], [200, 'job']);
     made.push(r.body.job);
     await end(from);
+    sort(r.body.job, text, ['CHECK', 'CHECKED', 'THANKS'][made.length - 1]);
     const next = await h.claim(h.job(r.body.job).engine);
     assert.equal(next?.id, r.body.job);
     from = next!; to = to === 'rivet' ? 'bolt' : 'rivet';
@@ -319,6 +331,7 @@ test('refusals: empty, too long (never cut), not a colleague who runs jobs, too 
   const count = () => (db.prepare('select count(*) n from messages').get() as any).n;
   const before = count();
   assert.equal((await say(bolt, 'moss', '  ')).status, 400);
+  assert.equal((await h.agent('message', bolt.token, { to: 'moss', text: 'Which revision?', needsAnswer: 'yes' })).status, 400);
   assert.equal((await say(bolt, 'moss', 'x'.repeat(8001))).status, 413);
   for (const to of ['board', 'nobody-here', '']) assert.equal((await say(bolt, to, 'hi')).status, 404, to);
   assert.equal(count(), before, 'nothing stored');

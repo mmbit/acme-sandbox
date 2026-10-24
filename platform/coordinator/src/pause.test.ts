@@ -352,3 +352,24 @@ test("the board's word runs through a pause to its merge: a call's follow-up, an
   paused(null);
   assert.equal(await claim(), other);
 });
+
+test("the CEO's expedited fix starts first, through a pause and ahead of the board's word, and the latest-started work makes room for it at once", async () => {
+  paused(null);
+  await seatReady('claude');
+  const first = await h.start({ agent: 'bolt', engine: 'claude', title: 'First' });
+  const late = await h.start({ agent: 'moss', engine: 'claude', title: 'Late' });
+  const word = h.queue({ agent: 'kit', engine: 'claude', title: 'Follow up on your call with the board', call: 10 });
+  h.storedCall(10, 'kit', word);
+  const fix = h.queue({ agent: 'juno', engine: 'claude', title: 'Fix the claim', expedite: true });
+  assert.deepEqual(
+    [await yieldOf(first), await yieldOf(late)],
+    [undefined, 'waiting'],
+    'the latest started yields, at once',
+  );
+  paused({ since: 'now', allow: [] });
+  const started = await h.claim('claude', { util: 0 });
+  assert.equal(started?.id, fix, 'it starts first, through the pause');
+  paused(null);
+  for (const j of [first, late, started!]) await h.finish(j);
+  assert.ok(cancelJob(word, 'Test finished'));
+});

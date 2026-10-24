@@ -17,7 +17,7 @@
 // changes: the board writes its reply alone, as that card promised.
 // An HQ app on the interface a company's own apps use (template/kits/README.md): desk.js loads it once this module ran,
 // when the company runs the care service (GET /api/brand's care), and calls the exports under "what HQ calls".
-import { esc, grow, stylesheet } from '../util.js';
+import { esc, grow, jobName, stylesheet } from '../util.js';   // (jobName)
 import { emailHtml } from './emailtext.js';
 import { icon } from './icons.js';
 import { covered, jobNameLink, prose } from './prose.js';   // (covered, jobNameLink)
@@ -205,7 +205,8 @@ const when = ts => dayTime(ts, { weekday: false });
 const ago = ts => { const m = Math.round((Date.now() - new Date(ts)) / 60000); return !ts || isNaN(m) ? '' : m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 const kindOf = c => KIND[c.kind] ?? 'A customer';
 const toPartner = c => c.sendTo === 'partner';
-const due = c => c.replyBy ? `<span class="cr-due${c.late ? ' late' : ''}">${c.late ? '<b>Late</b> · ' : ''}${toPartner(c) && !c.claim?.sent ? 'send by' : 'reply by'} ${esc(dayOf(c.replyBy))}</span>` : '';
+const dueBy = c => `${toPartner(c) && !c.claim?.sent ? 'send by' : 'reply by'} ${dayOf(c.replyBy)}`;
+const due = c => c.replyBy ? `<span class="cr-due${c.late ? ' late' : ''}">${c.late ? '<b>Late</b> · ' : ''}${esc(dueBy(c))}</span>` : '';
 const mark = c => { const [k, t] = CHECK[c.check] ?? CHECK.none; return `<span class="cr-check ${k}">${esc(t)}</span>`; };
 const tag = (t, cls = '') => `<span class="cr-tag ${cls}">${t}</span>`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -258,15 +259,23 @@ function listHtml(d) {
     ${d.slots?.remedies ? foldHtml('remedies', 'Every remedy', 'Reprints, vouchers and refunds, newest first') : ''}</div>
     <p class="cr-foot">EVERY REPLY IS READ AND SENT BY YOU · NOTHING GOES OUT BY ITSELF</p></div>`;
 }
+// A list row, with its tap target named by the row's whole text, as the toast's is
 function rowHtml(c) {
-  const state = c.status === 'team' ? tag(`With the team${c.job ? ` (job ${jobNameLink(c.job, c.job_code)})` : ''}`, 'team')
-    : c.status === 'unsure' ? tag('May not have gone', 'warn') : c.status === 'sending' ? tag('Sending: Undo on the card', 'ok') : c.status === 'mailing' ? tag('Sending', 'ok')
-    : c.kind === 'bug' && c.job ? tag(`Handed on (job ${jobNameLink(c.job, c.job_code)})`, 'team') : '';
-  return `<li>${covered('cr-row', `data-card="${Number(c.id)}"`, `${kindOf(c)} ${c.case ?? ''}`, `<span class="ic">${kindIcon(c)}</span>
+  const job = c.job && [jobName(c.job, c.job_code), jobNameLink(c.job, c.job_code)];   // (in words, and as its link)
+  const state = c.status === 'team' ? ['With the team', 'team', job] : c.status === 'unsure' ? ['May not have gone', 'warn']
+    : c.status === 'sending' ? ['Sending: Undo on the card', 'ok'] : c.status === 'mailing' ? ['Sending', 'ok'] : c.kind === 'bug' && c.job ? ['Handed on', 'team', job] : null;
+  const tags = [c.newReply && ['New reply', 'new'], c.asking && ['Redrafting as you asked', 'team'], c.health && ['Health detail: no AI', 'health'],
+    c.error && c.status !== 'unsure' && ['Last send failed', 'warn'], state].filter(Boolean);
+  const dated = !feedbackNote(c) && c.replyBy, checked = !(c.kind === 'bug' || feedbackNote(c) || toPartner(c));
+  const quote = c.kind === 'claim' ? c.preview : c.preview ? `“${c.preview}”` : '';
+  const meta = `${c.appName ?? c.app ?? ''} · ${ago(c.since ?? c.created)} · ${String(c.lang ?? '').toUpperCase()}`;
+  const name = [kindOf(c), c.case, quote, meta, dated && `${c.late ? 'Late, ' : ''}${dueBy(c)}`, checked && (CHECK[c.check] ?? CHECK.none)[1],
+    ...tags.map(([t, , j]) => (j ? `${t} (job ${j[0]})` : t))].filter(Boolean).join(', ');
+  return `<li>${covered('cr-row', `data-card="${Number(c.id)}"`, name, `<span class="ic">${kindIcon(c)}</span>
     <span class="t"><b>${esc(kindOf(c))}</b><span class="cs">${esc(c.case)}</span></span>
-    <span class="q">${c.kind === 'claim' ? esc(c.preview) : c.preview ? `“${esc(c.preview)}”` : ''}</span>
-    <span class="m">${esc(c.appName ?? c.app)} · ${esc(ago(c.since ?? c.created))} · ${esc(String(c.lang ?? '').toUpperCase())}</span>
-    <span class="r">${feedbackNote(c) ? '' : due(c)}${c.kind === 'bug' || feedbackNote(c) || toPartner(c) ? '' : mark(c)}${c.newReply ? tag('New reply', 'new') : ''}${c.asking ? tag('Redrafting as you asked', 'team') : ''}${c.health ? tag('Health detail: no AI', 'health') : ''}${c.error && c.status !== 'unsure' ? tag('Last send failed', 'warn') : ''}${state}</span>`)}</li>`;
+    <span class="q">${esc(quote)}</span>
+    <span class="m">${esc(meta)}</span>
+    <span class="r">${dated ? due(c) : ''}${checked ? mark(c) : ''}${tags.map(([t, cls, j]) => tag(`${esc(t)}${j ? ` (job ${j[1]})` : ''}`, cls)).join('')}</span>`)}</li>`;
 }
 // The busy notice: Auto · On · Off, what it does in a line under its name, why it's on now, and when it stays on whatever
 // the switch says

@@ -4,7 +4,17 @@ import { cap } from '../util.js';
 import * as world from '../world/world.js';
 import { names } from './brand.js';
 import { loadProjects, loadRequests, loadArchive, loadArtifacts, loadCalls, loadMail } from './data.js';
-import { computerApps, openComputer, openPhone, openAnswered, openLink, who, ago, settingsSections } from './desk.js';
+import {
+  computerApps,
+  openComputer,
+  openPhone,
+  openAnswered,
+  openLink,
+  openJob,
+  who,
+  ago,
+  settingsSections,
+} from './desk.js'; // (openJob)
 import { openProjects } from './projects.js';
 import { stepName } from './threads.js';
 import { nameText } from './jobs.js'; // (the board's names)
@@ -43,7 +53,7 @@ async function work() {
     codes: [j.code, `#${j.id}`].filter(Boolean),
     sub: [stepName(j), where].filter(Boolean).join(' · '),
     at: j.finished, // (work not done yet is never old)
-    open: () => openProjects({ job: j.id }),
+    open: () => openJob(j.id), // (as any work link opens)
   });
   return [
     ...board.businesses.map(b => ({

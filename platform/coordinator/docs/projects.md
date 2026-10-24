@@ -3,7 +3,7 @@
 HQ groups work in three tiers. A **project** is one line of work with one owner (HQ's db, made by the CEO with `hq
 project new`). A **thread** is one piece of work inside it, with a "done when" line (drawn by the project's owner with
 `hq plan thread`). A **job** serves one thread (`jobs.thread`). Work a job leads to stays in its thread by itself: hand-offs, a pull request's
-reviews and fixes, the job for a card's answer, the job a message becomes. HQ's projects view draws the tiers over the
+reviews and fixes, the job for a card's answer, the job an ordinary message becomes. HQ's projects view draws the tiers over the
 agents view: the desktop's Projects app opens it, and the way out in the HUD's tools goes back to the building. It reads
 `GET /api/projects` (`platform/hq/shell/projects.js`, its looks in `style.css` and the skins, checked by
 `platform/hq/projects-check.mjs`). On top it puts the businesses `projects.yaml` groups the projects under, then
@@ -15,6 +15,15 @@ thread's lines changed (its pull requests') and time, and a thread's tasks as a 
 what it waits on (the tasks by their codes behind an hourglass) and its code (`jobs.code`, the name the board reads instead
 of a number); a card held off the desk phone sits under the task whose work it waits on to go live. The board sorts a
 grid's projects by dragging (`POST /api/projects/order`), and every device follows that order.
+
+Use `hq say --needs-answer <agent> "question"` when the caller needs a colleague's answer during its run.
+HQ stores `needsAnswer` with the message. If no session reads it, including when a recipient ends without
+acknowledging it, its job gets a one-task thread in the caller's project with its own branch and no dependency on
+the caller. Without a project it stays in no thread. The project owner, else the CEO, still sorts and names it
+before it starts. Keep it independent of the caller when sorting or splitting it. Capacity and other existing
+holds still apply. Answer requests from the same caller to the same colleague join an unstarted answer job.
+Ordinary messages join only ordinary message jobs and retain their inherited thread and task order.
+The flag is explicit. HQ never infers it from the message's words.
 
 A task's code is its project's prefix and a word for what it does (`HQ-COVERS`), easy to say on a call. The prefix is
 the project's, two or three capitals given as the CEO makes it (`hq project new --code`, or once for an older project:
@@ -137,6 +146,9 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
 - `hq project new <id> "name" --owner <agent> [--business <id>]`, `hq project owner <project> <agent>` and `hq project
   rename <project> "name"` (the name only): the CEO's. A project under a new id is a new project, its threads moved
   there with `hq thread move`, the old one then done.
+- `hq project business <project> <business | none>`, the CEO's too, puts an open project in one of `projects.yaml`'s
+  businesses or moves it to another (`none`: out of any), keeping its id, code and threads; a name its new product has
+  already, the project's or an open thread's, is refused, as for a rename.
 - `hq project done <project>`, by its owner or the CEO, ends a finished project: refused while it has open threads,
   work still to run or in review, or proposals waiting, naming them. It leaves `hq projects`, `hq thread list`, the
   proposals' choices and `GET /api/projects`' projects, which lists it under `completed` with its done time and
@@ -147,14 +159,33 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
   (queued, running or blocked, on any engine), takes it: it reads the inbox at its start and again before it ends, and
   what reached the owner after it started (new, or handed on with its project) and is still open when it ends gets the
   owner's next one (`proposals.sweep`, every minute). With none open, a running Claude session of the owner hears it
-  at its next step; otherwise HQ queues a new planning job, a one-task thread in the project. A review's findings on a
-  thread with a window wait in no planning job that isn't running: the owner's running session hears them first and
-  holds them while it runs (once it ends, yields or parks on a card, the sweep hands them on and its unread notice
-  lapses rather than becoming a message job), and a planning job holding any orders by the earliest of their windows, as
-  the thread's own work does (job #8577). A proposal whose owner can't be told (the messages refuse the line)
+  at its next step; otherwise HQ queues a new planning job, a one-task thread in the project. With org.yaml's
+  `review.drawWindowedChanges: true` (off unless set), a review's "changes" on a thread with a window is drawn at once,
+  as `hq inbox accept findings:<pr> --for <author> --findings <blocking ids>` would: the PR's author fixes every
+  blocking finding (or checks the touch-ups) in the reviewed thread, and the owner's running session hears of the task
+  (a held notice, which lapses unread) and may cancel and redraw it (job #9562). Other findings on a thread with a
+  window (a close, or any of them without that setting) wait in no planning job that isn't running:
+  the owner's running session hears them first and holds them while it runs (once it ends, yields or parks on a card,
+  the sweep hands them on and its unread notice lapses rather than becoming a message job), and a planning job holding
+  any orders by the earliest of their windows, as the thread's own work does (job #8577). A "changes" item a later
+  round or the merge has left closes by itself in the sweep, and while one waits with no fix task drawn, the thread's
+  ETA says so, with no merge in sight. A proposal whose owner can't be told (the messages refuse the line)
   is refused, and nothing of it is kept, nor shown in HQ's feed. The CEO hears its own at the hourly check instead. When `hq project owner`
   hands a project on, its open proposals reach the new owner the same way, and the old owner's planning job that
   hasn't started stands down if nothing is left for it.
+- Nothing HQ makes runs under a template name or as a bundle (`sorting.ts`). A
+  job HQ makes from a template or holding several things (a colleague's message no session took in, the board's
+  feedback on a product and its return to the board, outside notes on a preview) starts under a template title but
+  waits, on a `sorted` wake, until the owner of its project (else the CEO) sorts it in that same planning job: `hq
+  inbox accept <id> --title "..." [--code WORD]` names it for what it does and lets it start in its thread (`hq job
+  move` first for another), and work that joins it before it starts holds it again. Unrelated parts become tasks of
+  their own (`hq job`) and the rest is accepted, or it's dropped, which cancels it; a return to the board is only ever
+  named. A review's follow-up bundle is accepted only under the accepter's title. A review's fix tasks are named by
+  their consolidator: each blocking finding's `task`, and `touchups_task` for its touch-ups' check. `hq inbox accept
+  findings:<pr>` takes that title when the findings it names share one, else needs `--title`; without threads in
+  order, the fix round takes them together. A closed review's redrawn work keeps its work's own title. HQ's other
+  jobs (alarms, checks, errors, watch, backups, a care bug report, an email's answer) are each one thing titled by
+  what it is, and retries keep their job's title.
 
 `planning: threads` in `projects.yaml` switches on threads in order (each thread's tasks one at a time on one branch,
 one pull request at its end). Without it, the platform's default, the claim, the worker and the review panel work as
@@ -227,8 +258,10 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
    `org.yaml`) and maybe the `business` it belongs to. A `projects:` list of those in `company/projects.yaml` (each
    maybe with a `product`, a `products/<slug>`) is lifted into HQ as the file is read, each id HQ hasn't got yet, and
    then leaves the file: from there the projects are HQ's. The file keeps `requireThread: false` until step 4. `businesses` lists those in the board's order, each an `id`, a `name` and
-   maybe a `cover` (a picture under `theme/hq/`); `groups` can give Recurring and the work being placed
-   (`recurring`, `unsorted`), and the meetings (`meetings`), a `cover` the same way. With no businesses, the projects come first. The routines'
+   maybe a `cover` (a picture under `theme/hq/`) and the `style` its covers are drawn in, its projects' too (`pixel`
+   shows them at whole pixels, any other word or none smooth); `groups` can give
+   Recurring and the work being placed (`recurring`, `unsorted`), and the meetings (`meetings`), a `cover` and `style`
+   the same way. With no businesses, the projects come first. The routines'
    projects (`company/schedule.yaml`) show under Recurring.
 2. **Draw the plans.** Once that's merged, each project's owner draws its threads (`hq plan thread`). The job's
    agent, the CEO or Process places unthreaded work in them (`hq job move <job> <project>/<slug>`, its reviews and fixes
@@ -241,15 +274,16 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
    inherit unless it names one (`--thread <project>/<slug>`, or `--thread new:<project> "name" "done when"`). That
    keeps every new piece of work inside one of the board's projects.
 5. **Give HQ's own jobs a home.** The jobs HQ makes from the same template every time have no job to inherit a thread
-   from. `made:` in `projects.yaml` sets a project per kind, by the app it's about: `notes` (the board's notes on HQ,
-   `hq`), `errors` (the error scan's triage, by the app's slug, `care` for the support chat), `checks` (the CEO's
-   hourly follow-through check and its repair, `hq`) and `alarms` (the CEO's job about a platform alarm, `hq`), as in
-   `made: { errors: { care: company } }`. The watch's repairs of a live app go to the project its `product.yaml`
-   names (`project:`). Each such job starts a one-task thread of its own there (`<project>/job-<id>`, done when its
-   work is merged), which its owner can fold into a thread of the plan. A kind or app with no entry, or whose project
+   from. `made:` in `projects.yaml` sets a project per kind, by the app it's about: `errors` (the error scan's
+   triage, by the app's slug, `care` for the support chat), `checks` (the CEO's hourly follow-through check and its
+   repair, `hq`) and `alarms` (the CEO's job about a platform alarm, `hq`), as in `made: { errors: { care: company }
+   }`. The watch's repairs of a live app go to the project its `product.yaml` names (`project:`), and so do a
+   product's return to the board and the job for the board's answer on a card about it (`owed.ts`); the board's notes
+   become tasks in their threads as the CEO routes them (`routing.ts`). Each
+   such job starts a one-task thread of its own there (`<project>/job-<id>`, done when its work is merged), which its owner can fold into a thread of the plan. A kind or app with no entry, or whose project
    is done, goes to no project for the CEO to sort, but for a job with a window (a check, due by the end of its hour;
    an urgent alarm or repair, due as soon as it can), which throws instead and isn't made. A new company starts with
-   the template's `projects.yaml` (its CEO's `office`, and checks, alarms and notes there). A company without the file
+   the template's `projects.yaml` (its CEO's `office`, and checks and alarms there). A company without the file
    adds it once, the template's with its own CEO as the office's owner, before it takes this change: HQ lifts the
    office as it first reads it.
 

@@ -13,17 +13,17 @@
 //     stopped) gets a follow-up for the owner, queued after it, so it starts once the fix is on main. sweep() checks
 //     every minute, whatever ended the job; after FOLLOW_UPS of those it stays open for whoever reads the status
 //     (hq owed, STATUS.md).
-import { existsSync, readFileSync, statSync } from 'node:fs';   // (statSync)
-import { execFileSync } from 'node:child_process';
-import { parse } from 'yaml';
-import { db, redacted } from './db.ts';   // (redacted)
-import { REPO_DIR } from './config.ts';
+import { db, mergePending, redacted } from './db.ts';   // (redacted)
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
-import { ceo, infra } from './company.ts';   // (infra)
+import { ceo } from './company.ts';
 import { codeOf } from './jobcodes.ts';
+import { madeForProduct, productProject } from './made.ts';
+import * as sorting from './sorting.ts';
+// (the products, the cycles' pages, their owners and folders: owedproducts.ts.)
+import { folder, isProduct, isKey, ownerOf } from './owedproducts.ts';
+export { CYCLES, folder, isProduct, isKey, about, ownerOf, slugs } from './owedproducts.ts';
 
-const SLUG = /^[a-z0-9][a-z0-9-]{0,40}$/;
 const FOLLOW_UPS = 2;   // follow-ups sweep() queues for one return before it waits for the status report
 const LIVE = "status in ('queued', 'running', 'blocked')";
 // owed: job is the job that holds it now; follow_ups how many sweep() queued; stalled when it gave up queuing them;
@@ -45,63 +45,6 @@ redacted('owed', 'outcome');
 type Owed = { id: number; slug: string; agent: string; opened: string; job: number | null; follow_ups: number;
   stalled: string | null };
 type Piece = { kind: 'notes' | 'answer'; request?: number; notes?: number[]; text: string };
-
-// ---------------------------------------------------------------- products
-// The venture cycles' pages (products/_cycles, at cycles.preview.<zone>: decks, brand directions, sketched sites) take the
-// board's feedback like a product, under their host's label (infra/products.py reserves it, so no product has it). No
-// product.yaml: each folder in it is one of its own, `cycles/<folder>`, its maker's (maker()); the pages outside any
-// folder (`cycles`) and a folder none of our agents made are the CEO's, who hands them on.
-export const CYCLES = 'cycles';
-const CYCLE = /^cycles\/([a-z0-9][a-z0-9-]{0,60})$/;
-export const folder = (slug: string) => slug === CYCLES ? 'products/_cycles'
-  : CYCLE.test(slug) ? `products/_cycles/${slug.slice(CYCLES.length + 1)}` : `products/${slug}`;
-export const isProduct = (slug: unknown) => typeof slug === 'string' && (CYCLE.test(slug) ? isDir(`${REPO_DIR}/${folder(slug)}`)
-  : SLUG.test(slug) && existsSync(slug === CYCLES ? `${REPO_DIR}/products/_cycles` : `${REPO_DIR}/products/${slug}/product.yaml`));
-// A product's slug or a cycle folder's key, whether or not it's there now.
-export const isKey = (slug: unknown) => typeof slug === 'string' && (SLUG.test(slug) || CYCLE.test(slug));
-const isDir = (path: string) => { try { return statSync(path).isDirectory(); } catch { return false; } };
-// What a note on one of slug's pages is about: the product, or the cycle folder the page is in (`/<folder>/...`).
-export function about(slug: string, page: string) {
-  if (slug !== CYCLES) return slug;
-  const key = `${CYCLES}/${page.split(/[/?#]/)[1] ?? ''}`;
-  return isProduct(key) ? key : CYCLES;
-}
-export function ownerOf(slug: string) {
-  const cycle = CYCLE.exec(slug)?.[1];
-  if (cycle) return { agent: maker(cycle) ?? ceo(), name: cycle };
-  let meta: any = {};
-  try { meta = parse(readFileSync(`${REPO_DIR}/products/${slug}/product.yaml`, 'utf8')) ?? {}; } catch { /* no yaml: the CEO's */ }
-  const agent = typeof meta.owner === 'string' && jobs.findAgent(meta.owner) ? meta.owner : ceo();
-  return { agent, name: typeof meta.name === 'string' ? meta.name : slug === CYCLES ? 'Venture cycle pages' : slug };
-}
-// Who made a cycle folder: the author of the first commit that added a file to it, among our agents on a desk (the worker
-// commits a job's work as <agent>@<AGENT_EMAIL_DOMAIN>, and agents commit their own under the same name). A folder's first
-// commit never changes, so git is read once for it; a folder without a maker yet (none of its authors is on a desk, or
-// git can't be read) is asked again after MAKER_AGAIN.
-const makers = new Map<string, { agent: string | null; at: number }>(), MAKER_AGAIN = 10 * 60e3;
-function maker(name: string) {
-  const onDesk = (id: string | null) => !!id && !!jobs.findAgent(id) && !jobs.findAgent(id)!.temp;
-  const known = makers.get(name);
-  if (known && (known.agent || Date.now() - known.at < MAKER_AGAIN)) return onDesk(known.agent) ? known.agent : null;
-  const domain = `@${String(infra().AGENT_EMAIL_DOMAIN ?? '').toLowerCase()}`;
-  let agent: string | null = null;
-  try {
-    // safe.directory: the checkout is root's on the server, mounted read-only (as committed.ts reads it)
-    const authors = execFileSync('git', ['-c', `safe.directory=${REPO_DIR}`, '--literal-pathspecs', '-C', REPO_DIR, 'log',
-      '--reverse', '--diff-filter=A', '--format=%ae', 'HEAD', '--', `products/_cycles/${name}`],
-      { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 16 << 20 });
-    agent = authors.split('\n').map(email => email.trim().toLowerCase()).filter(email => domain.length > 1 && email.endsWith(domain))
-      .map(email => email.slice(0, -domain.length)).find(onDesk) ?? null;
-  } catch (err) { console.error(`Could not read who made products/_cycles/${name}:`, (err as Error).message); }
-  makers.set(name, { agent, at: Date.now() });
-  return agent;
-}
-// A card's --product / --back slugs: real products (or the cycles' pages), at most 12; null if any isn't.
-export function slugs(value: unknown) {
-  if (value === undefined || value === null) return [];
-  const list = Array.isArray(value) ? [...new Set(value)] : null;
-  return list && list.length <= 12 && list.every(isProduct) ? list as string[] : null;
-}
 
 // ---------------------------------------------------------------- the desk phone
 // createRequest: the card is about these products (its answer is feedback on them), and brings back these.
@@ -173,13 +116,16 @@ export function feedback(slug: string, piece: Piece, heardBy?: number) {
     db.prepare('update owed set agent = ? where id = ?').run(owner, owing.id);
     owing.agent = owner;
   }
-  let job: number;
+  let job: number, made = false;
   if (heardBy && holds(slug, heardBy) && isLive(heardBy) && agentOf(heardBy) === owing.agent) job = heardBy;
   else if (owing.job && waiting(owing.job)) job = owing.job;
   else {
+    made = true;
     job = jobs.createJob({ agent: owing.agent, title: 'Board feedback', prompt: '', after: previous(slug, owing) }).id;
     db.prepare('insert into owed_jobs (job, owed) values (?, ?)').run(job, owing.id);
   }
+  // (a holder still to start waits for every task with a piece of it too.)
+  if (waiting(job)) waitForPieces(owing, job, previous(slug, owing));
   // new words from the board: the follow-ups count again
   db.prepare('update owed set job = ?, follow_ups = 0, stalled = null where id = ?').run(job, owing.id);
   owing.job = job;
@@ -192,9 +138,44 @@ export function feedback(slug: string, piece: Piece, heardBy?: number) {
   // parked one has the answer in its session already)
   else if (waiting(job) && job !== heardBy) db.prepare(`update jobs set prompt = prompt || ? where id = ?
     and status = 'queued' and session is null`).run(`\n\nMore feedback on ${name}, which you also bring back:\n\n${piece.text}`, job);
+  // (in the product's project, named by its brief's title.)
+  if (made) madeForProduct(slug, { id: job });
   const what = piece.kind === 'notes' ? 'review notes' : `card #${piece.request}`;
   publish({ type: 'log', agent: owing.agent, text: `Board feedback on ${slug} (${what}) is with job #${job}` });
   return { job, agent: agentOf(job) ?? owing.agent };
+}
+
+// ---------------------------------------------------------------- the board's notes in a task (routing.ts)
+// Whether a task of agent's (job: an open one, null: one still to make) holds slug's return with its notes: the
+// product's owner's, and no other job has had a piece of it or holds it still (holds).
+export const canHold = (slug: string, agent: string, job: number | null) => ownerOf(slug).agent === agent && holds(slug, job);
+// What a task's brief says about the return of the product its notes are on: how it ends when the task holds it, else
+// that the owner's return follows it.
+export function returnWords(slug: string, holding: boolean) {
+  const { agent, name } = ownerOf(slug);
+  if (holding) return `You own bringing ${name} (${folder(slug)}) back to the board after these notes. HQ keeps that open, \
+as owed to the board, until you do.\n\n${duty(slug, name)}`;
+  return `HQ brings ${name} back to the board once this work is done: a job of ${jobs.findAgent(agent)!.name}'s, \
+queued after it, shows the board each change. Say in your report what changed for each note on ${name}.`;
+}
+// A task's notes on slug, a piece of the product's return. The task holds the return when it can (canHold, as its brief
+// said), else the return follows it: sweep() queues it once no job with a piece is still on it, and the job that holds
+// it, while it hasn't started, waits for this task's merge too.
+export function carried(slug: string, piece: Piece, job: number, holding: boolean) {
+  const owing = open(slug) ?? start(slug);
+  db.prepare('insert into owed_pieces (owed, at, kind, request, notes, job, text) values (?, ?, ?, ?, ?, ?, ?)')
+    .run(owing.id, new Date().toISOString(), piece.kind, null, piece.notes ? JSON.stringify(piece.notes) : null, job, piece.text);
+  // new words from the board: the follow-ups count again
+  if (holding) {
+    owing.agent = ownerOf(slug).agent;
+    owing.job = job;
+  } else if (owing.job && owing.job !== job && waiting(owing.job)) {
+    holdFor(owing.job, job);
+    if (ours(owing.job)) brief(owing, owing.job);
+  }
+  db.prepare('update owed set agent = ?, job = ?, follow_ups = 0, stalled = null where id = ?').run(owing.agent, owing.job, owing.id);
+  if (waiting(job) && ours(job)) brief(owing, job);
+  publish({ type: 'log', agent: owing.agent, text: `Board feedback on ${slug} (review notes) is with job #${job}` });
 }
 
 const open = (slug: string) => db.prepare('select * from owed where slug = ? and closed is null order by id desc limit 1')
@@ -226,6 +207,18 @@ function previous(slug: string, owing?: Owed) {
     .get(slug) as { job: number } | undefined;
   return last && isLive(last.job) ? last.job : undefined;
 }
+// A holder of the return still to start, queued after `after`, also waits for every other job with a piece of it, still
+// on it or its pull request still to merge: it starts once all their work is on main.
+function waitForPieces(owing: Owed, job: number, after: number | undefined | null) {
+  for (const other of holders(owing).filter(other => other !== after && other !== job && toMerge(other)))
+    holdFor(job, other);
+}
+// holder waits for other's merge, unless other needs holder first (a later task in its thread, its waits): neither
+// would ever start. Then presented() keeps the return open until other merges, and sweep() queues it after holder.
+function holdFor(holder: number, other: number) {
+  if (!jobs.prerequisites([other], { ordered: true }).some(prior => prior.id === holder)) jobs.holdForMerge(holder, other, 'hq');
+}
+const toMerge = (job: number) => !!db.prepare(`select 1 from jobs j where id = ? and ${mergePending('j')}`).get(job);
 const isLive = (job: number) => !!db.prepare(`select 1 from jobs where id = ? and kind = 'work' and ${LIVE}`).get(job);
 // queued and never started: its prompt can still take more (a started session has read it already)
 const waiting = (job: number) => !!db.prepare(`select 1 from jobs where id = ? and kind = 'work' and status = 'queued'
@@ -262,8 +255,11 @@ as owed to the board, until you do.`,
 already cover all of it, close it (below).` : '',
     `## How this ends\n\n${duty(owing.slug, name)}`,
     pieces.some(piece => piece.kind === 'answer') ? jobs.AUDIENCE : ''];
-  db.prepare("update jobs set title = ?, prompt = ? where id = ? and status = 'queued' and session is null")
-    .run(title, parts.filter(Boolean).join('\n\n'), job);
+  // (its template title until its owner names it, and held for that sort again: sorting.ts.)
+  db.prepare("update jobs set title = coalesce(?, title), prompt = ? where id = ? and status = 'queued' and session is null")
+    .run(sorting.named(job) ? null : title, parts.filter(Boolean).join('\n\n'), job);
+  sorting.hold(job, { from: 'hq', project: productProject(owing.slug) ?? null, keep: true,
+    why: `HQ made this job for the board's feedback on ${name}, and to bring ${name} back to the board.` });
 }
 const noteCount = (count: number) => `${count} review note${count === 1 ? '' : 's'}`;
 function opening(result: string | null | undefined) {
@@ -285,20 +281,21 @@ after it merges, so the card shows what's on the preview.
 More feedback on ${name} that arrives meanwhile joins this job if it hasn't started, or the next one, never a parallel job.`;
 
 // ---------------------------------------------------------------- closing
-// A card filed with --back slug. Closes the return unless a job that holds a piece is still to run, or one that holds
-// the return now is still on it (the card came from someone else's job, before its fix).
+// A card filed with --back slug. Closes the return unless another job that holds a piece is still to run or on it (the
+// card came from someone else's job, before its fix), or its pull request is still to merge (the card can't show it):
+// sweep() then queues the return after it.
 function presented(slug: string, request: number, job?: number) {
   const owing = open(slug);
   if (!owing) return;
-  const busy = holders(owing).filter(holder => holder !== job && isLive(holder));
+  const busy = holders(owing).filter(holder => holder !== job && toMerge(holder));
   if (busy.length) return publish({ type: 'log', agent: owing.agent,
-    text: `Card #${request} brings ${slug} back, but its return stays open: job #${busy[0]} still holds feedback on it` });
+    text: `Card #${request} brings ${slug} back, but its return stays open: job #${busy[0]} has feedback on it not on main yet` });
   db.prepare('update owed set closed = ?, card = ?, outcome = ? where id = ?')
     .run(new Date().toISOString(), request, `brought back on card #${request}`, owing.id);
   publish({ type: 'log', agent: owing.agent, text: `${slug} is back on the board's desk phone (card #${request})` });
 }
 function holders(owing: Owed) {
-  const pieces = db.prepare('select job from owed_pieces where owed = ?').all(owing.id) as { job: number }[];
+  const pieces = db.prepare('select job from owed_pieces where owed = ? order by id').all(owing.id) as { job: number }[];
   const pieceJobs = pieces.map(piece => piece.job);
   return [...new Set([owing.job, ...pieceJobs])].filter((job): job is number => !!job);
 }
@@ -348,7 +345,9 @@ export function close(slug: string, agent: string, job: number, why: string) {
 // (so it waits for the job's pull request), up to FOLLOW_UPS; past that it's logged once, and the status report (hq owed, STATUS.md) shows it.
 export function sweep() {
   for (const owing of db.prepare('select * from owed where closed is null').all() as Owed[]) {
-    if (owing.job && isLive(owing.job)) continue;
+    // (every job with a piece of it: a task routed its notes)
+    const held = holders(owing);
+    if (held.some(isLive)) continue;
     if (owing.follow_ups >= FOLLOW_UPS) {
       if (!owing.stalled) {
         db.prepare('update owed set stalled = ? where id = ?').run(new Date().toISOString(), owing.id);
@@ -362,13 +361,18 @@ export function sweep() {
       owing.agent = ownerOf(owing.slug).agent;
       db.prepare('update owed set agent = ? where id = ?').run(owing.agent, owing.id);
     }
+    // After the job that held it, else the last task with a piece of it, and every other such job's pull request still
+    // to merge; in the product's project, named by its brief's title
+    const last = owing.job ?? held.at(-1) ?? null;
     const job = jobs.createJob({ agent: owing.agent, title: 'Back to the board', prompt: '',
       // (the task it brings back carries its code: jobcodes.ts.)
-      after: owing.job ?? undefined, code: codeOf(owing.job ?? null) ?? undefined }).id;
+      after: last ?? undefined, code: codeOf(last) ?? undefined }).id;
+    waitForPieces(owing, job, last);
     db.prepare('update owed set job = ?, follow_ups = follow_ups + 1 where id = ?').run(job, owing.id);
     db.prepare('insert into owed_jobs (job, owed) values (?, ?)').run(job, owing.id);
     brief({ ...owing, job }, job);
-    const after = owing.job ? ` after job #${owing.job}` : '';
+    madeForProduct(owing.slug, { id: job });
+    const after = last ? ` after job #${last}` : '';
     publish({ type: 'log', agent: owing.agent,
       text: `${owing.slug} still owes the board its return: job #${job} brings it back${after}` });
   }

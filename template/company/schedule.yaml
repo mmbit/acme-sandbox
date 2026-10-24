@@ -40,3 +40,12 @@
 #   title: Nightly test run on main
 #   code: TESTS
 #   routine: tests
+# Suggested from the start, since every company runs a server:
+# - id: cve-watch
+#   agent: <the security lead, or the CEO>
+#   at: "every 12h"
+#   title: Check for major CVEs in what we run
+#   code: CVE
+#   routine: cve-watch
+#   prompt: |
+#     Where the security note with its list of checks is.

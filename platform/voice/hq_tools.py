@@ -23,8 +23,10 @@ LINE = {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
 # a promise's time, for work new or already under way (a review, a running job)
 WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you told the board it will be done, at our '
         'pace: 2h, 90m or 1h30m from now, or a UTC time (14:30; the board says its own local time, so convert). Give '
-        'it whenever you tell the board a time, also for work already under way (a review, a running job): after the '
-        "call it becomes the window of that work\'s thread"}
+        'it whenever you tell the board a time, also for work already under way (a review, a running job): with job, '
+        "the promise is that work\'s, and its thread takes the time at once; the job tool\'s with its item takes it as "
+        "it\'s queued"}
+SIZE = {'type': 'string', 'description': 'your scope estimate of agent time, from clean past jobs: 90m, 2h or 1h30m'}
 TOOLS = [
     {'name': 'job', 'description': "Put work on a colleague's list as a separate job. It doesn't reach them live: "
      "nobody is on it until it runs, so tell the board it's queued, never that it's sent or that they're on it. The "
@@ -32,10 +34,13 @@ TOOLS = [
      "queued only when this answers with a job number; if it answers 'Not confirmed', it may be, so don't send it "
      'again. If the board then adds to it or changes it, use add with that number: never a second job beside it, and '
      "never a promise to add it after the call. Its answer gives each agreed deadline's facts and the other threads it "
-     'moves: your briefing says what the board hears of them.',
-     'inputSchema': {'type': 'object', 'required': ['agent', 'title', 'code', 'brief'],
+     'moves: your briefing says what the board hears of them. First use estimate, compare the scopes, and give your own size, refs and why. HQ saves it once. Only the CEO changes it later.',
+     'inputSchema': {'type': 'object', 'required': ['agent', 'title', 'code', 'brief', 'size', 'refs', 'why'],
                      'additionalProperties': False, 'properties': {
          'agent': ID,
+         'size': SIZE,
+         'refs': {'type': 'array', 'items': {'type': 'integer', 'minimum': 1}, 'description': 'clean past jobs you judged comparable; empty when no scope fits'},
+         'why': {'type': 'string', 'minLength': 1, 'description': 'why these jobs fit, how this scope differs, or why no job fits'},
          'code': {'type': 'string', 'pattern': CODE.pattern, 'description': "the task's code word: one word for what "
                   'it does, in capitals, at most 8 letters (COVERS, FLIGHT, IMPRINT). HQ puts the project in front '
                   '(HQ-COVERS) and refuses a word another task holds: then pick another'},
@@ -58,7 +63,10 @@ TOOLS = [
                        'board adds to it on the call (add) goes into its brief and it starts whole. True starts it at '
                        'once: your judgment each time, or the board\'s word, on whether the work can\'t wait for the end '
                        'of the call (the site is down: someone looks now. Needed by tomorrow: it waits the few minutes, '
-                       'since one whole brief is worth more)'}}}},
+                       'since one whole brief is worth more)'},
+         'expedite': {'type': 'boolean', 'description': "the CEO's only, for a structural fix to HQ itself when a fault "
+                      'could also stall its own fix: it starts first, ahead of the plan, pacing and pauses, and merges '
+                      'on its checks, its review after. Never for ordinary work'}}}},
     {'name': 'promise', 'description': "Note a promise on this call's list the moment you make it: whenever you tell "
      "the board that you, or a colleague, will do something. Note it before you say it's done. It's on the call's list "
      'straight away, even if the line drops, but it reaches nobody live: after the call, the follow-up hands it out, '
@@ -66,7 +74,14 @@ TOOLS = [
      'inputSchema': {'type': 'object', 'required': ['owner', 'what'], 'additionalProperties': False, 'properties': {
          'owner': {**ID, 'description': "who sees it through: your own id, or a colleague's (lowercase, e.g. ada)"},
          'what': LINE,
-         'deadline': WHEN}}},
+         'deadline': WHEN,
+         # (askwindow.ts: the board's ask takes its window as it's queued, not after the call.)
+         'job': {'type': 'integer', 'minimum': 1, 'description': "the owner's job already queued or running that the "
+                 'promise is about (its number, from your briefing or the job tool), with deadline: the promise is '
+                 "that job's, done when it is, and its thread takes the time at once, so it goes ahead of work that "
+                 'can wait while the call is still on'},
+         'thread': {'type': 'string', 'pattern': THREAD.pattern, 'description': 'with job, for a job you queued on this '
+                    'call in no thread: the open thread it serves (<project>/<slug>), which it goes on, with the time'}}}},
     {'name': 'replace', 'description': 'When the board changes something still open that your briefing lists with its '
      "number, or something you noted on this call, note the change now: it goes on this call's list in place of the "
      "earlier item, whose jobs that haven't started are cancelled. It reaches nobody live: a job already running runs "
@@ -84,6 +99,11 @@ TOOLS = [
 # Adding to a job the call queued (hq extend on a call: call.ts addToJob), when the board adds or corrects something
 # after the job tool answered: into its brief while it hasn't started, else to its running session at its next step.
 TOOLS += [
+    {'name': 'expedite', 'description': "The CEO's only: a structural fix to HQ itself goes first (hq expedite). A "
+     'queued or running job starts ahead of everything and merges on its checks; one that has pushed, its pull request '
+     'still in review, merges now if its last push passed them. Its review follows on what merged.',
+     'inputSchema': {'type': 'object', 'required': ['job'], 'additionalProperties': False, 'properties': {
+         'job': {'type': 'integer', 'minimum': 1, 'description': 'the fix\'s job number'}}}},
     {'name': 'add', 'description': 'When the board adds to or changes a job you queued on this call, add it to that '
      'job now, by the number the job tool answered with: before the job starts it goes into its brief; once it has, '
      "the job's session reads it at its next step. Only jobs you queued on this call (any other is refused: then the "
@@ -138,12 +158,12 @@ TOOLS += [
 # Handbook, knowledge, the board's calls with everyone (with their summaries), the intercom, and the agent's own jobs
 # and requests, so a call about past work, or something the board asked on the intercom, finds it.
 # Read-only; the call token sees only its own agent's work, and a call the coordinator won't show (one still going on)
-# comes back as hq's refusal.
+# comes back as hq's refusal. (The platform's languages)
 TOOLS += [
     {'name': 'search', 'description': "Search the company's handbook, playbooks, briefs and knowledge base, the "
      "board's earlier calls with everyone and their summaries, the intercom, and your own job reports and desk phone "
-     'requests, by meaning and by words (in English or Dutch; names and numbers like #32 hit exactly). Each hit says '
-     'where it is. '
+     "requests, by meaning and by words (in any of the platform's languages; names and numbers like #32 hit exactly). "
+     'Each hit says where it is. '
      'The archive (what was replaced or finished) comes last, marked, with what replaced it: history, never the '
      'current answer.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
@@ -169,21 +189,31 @@ TOOLS += [
      "a project or a thread by its name or a few words ('The checkout', 'the game's levels'), each open thread's "
      'ETA, the agent time it has left, its window (the time agreed with the board) with its planned finish and the slack '
      'that leaves or by how much it misses, what it waits on and what goes on next, all by name, live from the plan '
-     'HQ plays, in a second. For new work, use when.',
-     'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
+     'HQ plays, in a second. For new work, use when. With extra_seat (5x or 20x), replay the whole live plan '
+     'with a hypothetical added Claude Max seat at any time. Returns every project, thread and window before and '
+     'after, measured capacity, assumptions and confidence. Query is optional for that replay. Nothing changes.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
-                   'description': "the project's or thread's name, or a few words"}}}},
-    {'name': 'when', 'description': 'Before you tell the board when work will be done: it sizes the work on done jobs '
-     'like it (or takes the size given) and plays it into the plan as it stands, every seat and window counted, in a '
+                   'description': "the project's or thread's name, or a few words"},
+         'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
+    {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and actual agent times. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
+     'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
+         'query': {'type': 'string', 'minLength': 1, 'maxLength': 500, 'description': 'the scope of work to compare'},
+         'agent': ID}}},
+    {'name': 'when', 'description': 'Before you tell the board when work will be done: use estimate to compare clean past jobs, '
+     'choose size yourself, then it plays that size into the plan as it stands, every seat and window counted, in a '
      'few seconds: the earliest it can be done without making any window miss, and the window to set. With by (the '
      "board's time), whether it makes that time, and only if not, what would: windows giving or one more seat. "
-     'Give the board the time it says.',
-     'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
+     'Give the board the time it says. With extra_seat (5x or 20x), omit what and its flags to replay the whole '
+     'existing plan before and after an added Claude Max seat, with every window and capacity confidence. '
+     'Use this whenever the board asks whether another seat would help, even if no deadline misses. Nothing changes.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'what': {'type': 'string', 'minLength': 1, 'description': 'the work, in a few words'},
          'agent': {'type': 'string', 'description': "who would do it (its id; yours if left out)"},
-         'size': {'type': 'string', 'description': 'its agent time, when known: 90m, 2h or 1h30m'},
+         'size': SIZE,
          'after': {'type': 'integer', 'minimum': 1, 'description': 'the job that must merge before this work starts'},
-         'by': {'type': 'string', 'description': "the board's time in UTC: 14:30 or 2026-10-06T14:30Z"}}}},
+         'by': {'type': 'string', 'description': "the board's time in UTC: 14:30 or 2026-10-06T14:30Z"},
+         'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
 ]
 # Ending the call: the agent can hang up once the board has clearly said goodbye.
 # The tool itself does nothing: the voice line sees the agent use it in the reply's stream (server.py, Call.leave) and
@@ -230,27 +260,35 @@ PARTNER_TOOLS = [
 ]
 
 
-LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta')  # (eta)
+LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')  # (eta)
 
 
 def look(name, a):
     """(ok, text): runs `hq search|history|call|intercom` (or `hq projects` for eta) from an argument list, in the
     allowlisted environment."""
+    extra = a.get('extra_seat')
+    if name == 'eta' and 'extra_seat' in a and extra not in ('5x', '20x'):
+        return False, 'extra_seat takes 5x or 20x'
     query = a.get('query', '')
     if name == 'call':
         cid = a.get('id')
         if type(cid) is not int or cid < 1:
             return False, 'call needs its number, like 12'
         query = str(cid)
-    elif not isinstance(query, str) or (name in ('search', 'intercom', 'eta') and not query.strip()):
+    elif not isinstance(query, str) or (name in ('search', 'intercom', 'eta', 'estimate') and not query.strip() and not (name == 'eta' and extra)):
         return False, f'{name} needs a query'
     if len(query) > 500:
         return False, f'query too long ({len(query):,} > 500): ask something shorter'
+    agent = a.get('agent')
+    if name == 'estimate' and agent is not None and not (isinstance(agent, str) and COLLEAGUE.fullmatch(agent)):
+        return False, 'agent must be a colleague id, like ada'
     commands = {
         'search': ['hq', 'search', query, '5'],
+        'estimate': ['hq', 'estimate', query, *(['--agent', agent] if agent else [])],
         'call': ['hq', 'call', query],
         'intercom': ['hq', 'intercom', query],
-        'eta': ['hq', 'projects', query],
+        'eta': ['hq', 'projects', *([query] if query.strip() else []),
+                *(['--extra-seat', extra] if extra else [])],
         'history': ['hq', 'history'] + ([query] if query.strip() else []),
     }
     return looked(name, commands[name])
@@ -259,19 +297,25 @@ def look(name, a):
 def when(a):
     """(ok, text): runs `hq when` from an argument list: the work, its size, whose it is, its prerequisite and the
     board's time, each checked so none reads as another's flag."""
+    if 'extra_seat' in a:
+        if a['extra_seat'] not in ('5x', '20x'):
+            return False, 'extra_seat takes 5x or 20x'
+        if any(k in a for k in ('what', 'agent', 'size', 'by', 'after')):
+            return False, 'extra_seat replays the existing plan: omit new work and its flags'
+        return looked('when', ['hq', 'when', '--extra-seat', a['extra_seat']])
     what, agent, size, by = (a.get(k, '') for k in ('what', 'agent', 'size', 'by'))
     if not isinstance(what, str) or not what.strip() or what.startswith('-'):
         return False, 'when needs what the work is'
     if not isinstance(agent, str) or (agent and not re.fullmatch(r'[a-z][a-z0-9-]{0,31}', agent)):
         return False, "agent is an agent's id, like juno"
-    if not isinstance(size, str) or (size and not re.fullmatch(r'(\d{1,2}h)?(\d{1,4}m)?', size)):
+    if not valid_size(size):
         return False, 'size is agent time: 90m, 2h or 1h30m'
     if not isinstance(by, str) or (by and not re.fullmatch(r'[0-9:TZ -]{4,20}', by)):
         return False, 'by is a UTC time: 14:30 or 2026-10-06T14:30Z'
     after = a.get('after')
     if 'after' in a and (type(after) is not int or after < 1):
         return False, 'after is a job number, like 123'
-    argv = ['hq', 'when', what, *([size] if size else []), *(['--agent', agent] if agent else []),
+    argv = ['hq', 'when', what, '--size', size, *(['--agent', agent] if agent else []),
             *(['--after', str(after)] if after is not None else []), *(['--by', by] if by else [])]
     return looked('when', argv)
 
@@ -310,6 +354,11 @@ def hq(name, a):
         return job(a)
     if name == 'add':
         return add(a)
+    if name == 'expedite':
+        n = a.get('job')
+        if type(n) is not int or n < 1:
+            return False, 'job is a job number, like 123'
+        return answered(run(['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
     if name == 'hang_up':
         return True, HANG_UP_ANSWER
     if name in ('pin_words', 'pin_sent'):
@@ -328,8 +377,14 @@ def hq(name, a):
     deadline = a.get('deadline')
     if refused := readable(deadline):
         return False, refused
+    work, thread = (a.get('job'), a.get('thread')) if name == 'promise' else (None, None)
+    if work is not None and (type(work) is not int or work < 1 or not deadline):
+        return False, 'job is a job number, like 123, and goes with deadline'
+    if thread is not None and (work is None or not (type(thread) is str and THREAD.fullmatch(thread))):
+        return False, 'thread goes with job, and is one of the open threads, like shop/launch-deck'
     # (the words, as the agent gave them, are the quote: the follow-up has the call's own around them)
-    when = ['--deadline', deadline] if deadline else []
+    when = [*(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
+            *(['--thread', thread] if thread else [])]
     args = ['item', 'add', 'promise', owner] if name == 'promise' else ['item', 'replace', str(item)]
     r = run([*args, what, '-', *when], what)
     return answered(r, 'Nothing recorded', 'it may or may not be on the list', UNNOTED)
@@ -362,11 +417,24 @@ def job(a):
     after = a.get('after')  # (before the agent: hq job reads --after there only)
     if after is not None and (type(after) is not int or after < 1):
         return False, 'after is a job number, like 123'
+    size, refs, why = a.get('size'), a.get('refs'), a.get('why')
+    if not valid_size(size):
+        return False, 'size is required agent time: 90m, 2h or 1h30m'
+    if not isinstance(refs, list) or any(type(ref) is not int or ref < 1 for ref in refs):
+        return False, 'refs must list the clean past job numbers, or [] when none fits'
+    if not isinstance(why, str) or not why.strip():
+        return False, 'why must explain the scope comparison, or why no past job fits'
     flags = [*(['--item', str(item)] if item else []), *(['--thread', thread] if thread else []),
-             *(['--now'] if now else []), '--code', code]
+             *(['--now'] if now else []), *(['--expedite'] if a.get('expedite') is True else []), '--code', code, '--size', size, '--why', why,
+             *(['--refs', ','.join(map(str, refs))] if refs else [])]
     r = run(['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags], brief)
     ok, text = answered(r, 'No job was queued', 'the job may or may not be queued', by='hq job')
     return ok, f"{text}\nNot started yet: it's on {agent}'s list, and nobody is on it until it runs." if ok else text
+
+
+def valid_size(size):
+    """Agent time uses positive hours and minutes, checked before they enter argv."""
+    return isinstance(size, str) and bool(re.fullmatch(r'(\d+h)?(\d+m)?', size)) and any(c in '123456789' for c in size)
 
 
 def add(a):

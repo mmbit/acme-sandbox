@@ -104,6 +104,8 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
     },
   );
   assert.match(row.prompt, /\n\n\(Proposed by bolt, accepted by wren\.\)$/);
+  const saved = (await h.agent(`estimate?q=%23${job}`, wren.token)).body.sizes[0];
+  assert.deepEqual([saved.by, saved.agent_minutes], ['wren', 30]);
   assert.match((await h.hq(bolt, 'inbox')).out, new RegExp(`: accepted as job #${job}$`, 'm'));
   assert.equal((await h.hq(wren, 'inbox', 'accept', id)).code, 1, 'once');
   const logged = db

@@ -216,7 +216,8 @@ async function broughtBack(call: Call, id: number, names: string[]) {
   const dir = mkdtempSync(join(tmpdir(), 'lent-files-'));
   try {
     writeFileSync(join(dir, FILES), files);
-    execFileSync('tar', ['-xzf', FILES, ...names], { cwd: dir, stdio: 'ignore' });
+    // (-m: no file times set, as the base tree's in gates.ts).
+    execFileSync('tar', ['-xzmf', FILES, ...names], { cwd: dir, stdio: 'ignore' });
     return new Map(names.map(name => [name, readFileSync(join(dir, name))]));
   } finally {
     rmSync(dir, { recursive: true, force: true });

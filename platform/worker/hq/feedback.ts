@@ -152,21 +152,23 @@ async function fixed(id: string, action: string, [first, second, ...more]: strin
 }
 
 const ROUTE_USAGE =
-  "usage: hq route | hq route <agent> [note ids] [--thread <project>/<slug>] [--after <job>] | hq route '#<job>' [note ids] | hq route log [--since <time>]";
+  'usage: hq route | hq route \'#<job>\' [note ids] | hq route log [--since <time>] (a new task of them: hq job <agent> "title" --code WORD --thread <project>/<slug> --notes <ids>)';
 const LOG_DAY_MS = 24 * 3_600_000;
 
 // The CEO's routing check (the coordinator's routing.ts). A refusal (4xx) changed nothing (exit 1); anything else may
-// have (exit 3).
+// have (exit 3). A new task of the notes is hq job --notes.
 export const route = {
   help: `
    hq route                                          the CEO, in a check routing the board's sent notes: the notes still to
                                                      route (a check that ended left some: any CEO job), and the open
-                                                     work by thread
-   hq route <agent> [note ids]                       those notes (all still to route, without ids) go to a new job for that
-            [--thread <project>/<slug>]              colleague (--after: once that open job is merged, on its thread);
-            [--after <job>]                          a product's notes to its owner go on as its return
-   hq route '#<job>' [note ids]                      those notes go into the brief of that job, open work an agent queued
-                                                     that hasn't started
+                                                     work by thread. A task of them: hq job <agent> "title" --code WORD
+                                                     --thread <project>/<slug> --notes <ids> --by <when | project/slug |
+                                                     none>: the notes are the board's ask, so the task takes its time
+                                                     (the board's, else hq when's), the window of the deliverable it
+                                                     serves, or none; not needed on a thread with a window or one a
+                                                     windowed thread needs
+   hq route '#<job>' [note ids]                      those notes (all still to route, without ids) go into the brief of
+                                                     that job, open work an agent queued that hasn't started
    hq route log [--since <time>]                     every note sent since then (ISO time, UTC; the last 24 h without):
                                                      when it was sent, its check started and it was routed, and where
                                                      it went`,
@@ -175,23 +177,9 @@ export const route = {
     if (!args.length)
       return print(JSON.parse(await api.orStop(api.get('route'), "Couldn't read the notes to route.")).text);
     if (args[0] === 'log') return print(...routeLog(await api.getJson(`route-log?since=${api.uri(logSince(args))}`)));
-    const flags: Record<string, string> = {},
-      rest: string[] = [];
-    for (let i = 0; i < args.length; i++) {
-      if (args[i] !== '--thread' && args[i] !== '--after') rest.push(args[i]);
-      else if (args[i] in flags || !args[i + 1]) stop(ROUTE_USAGE);
-      else flags[args[i]] = args[++i];
-    }
-    const [to, ...ids] = rest,
-      { '--thread': thread, '--after': after } = flags;
-    if (!to || !/^(#?[0-9]+|[a-z][a-z0-9-]*)$/.test(to) || !ids.every(id => /^#?[0-9]+$/.test(id))) stop(ROUTE_USAGE);
-    if (after !== undefined && !/^#?[0-9]+$/.test(after)) stop(ROUTE_USAGE);
-    const body = {
-      to,
-      notes: ids.map(id => Number(id.replace('#', ''))),
-      ...(thread ? { thread } : {}),
-      ...(after ? { after: Number(after.replace('#', '')) } : {}),
-    };
+    const [to, ...ids] = args;
+    if (!/^#?[0-9]+$/.test(to) || !ids.every(id => /^#?[0-9]+$/.test(id))) stop(ROUTE_USAGE);
+    const body = { to, notes: ids.map(id => Number(id.replace('#', ''))) };
     const answer = await api.orNoAnswer(api.call('route', { body, timeoutMs: 30_000 }));
     if (api.isRefusal(answer.status)) stop(`Nothing was routed: ${api.errorIn(answer.body, 'refused')}`);
     if (!api.isSuccess(answer.status))
@@ -199,15 +187,9 @@ export const route = {
     const went = api.parseOrNull(answer.body);
     if (went === null) stop('Not confirmed: HQ replied with unreadable JSON. The notes may or may not be routed.', 3);
     print(
-      `Notes ${went.notes.map((n: number) => `#${n}`).join(', ')} went to job #${went.job} (${went.agent}): ${ROUTED[went.how as string]}.`,
+      `Notes ${went.notes.map((n: number) => `#${n}`).join(', ')} went into the brief of job #${went.job} (${went.agent}), as it hasn't started.`,
     );
   },
-};
-
-const ROUTED: Record<string, string> = {
-  new: 'a new job',
-  brief: "into its brief, as it hasn't started",
-  return: "the product's return, which brings them back to the board",
 };
 
 type RouteRow = {

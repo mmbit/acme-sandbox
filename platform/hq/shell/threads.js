@@ -3,6 +3,7 @@
 // which lights it in the accent.
 import { state as jobState, CHIP } from './jobs.js';
 import { clockWhen } from '../world/clock.js';
+import { glance } from '../../../shared/signs/signs.js';
 import { cap } from '../util.js';
 import { withJobLinks } from './prose.js';
 
@@ -138,11 +139,12 @@ export function rowState(j) {
   if ((s === 'blocked' && j.request_shown !== false) || asksOf([j]).length) return 'board';
   return s === 'waits' || s === 'blocked' ? 'after' : 'planned';
 }
-// Where a task's played times stand (the coordinator's outlooks.ts estimate): when it starts and when it's done,
-// each in words where the play has one
+// Where a task's played times stand (the coordinator's outlooks.ts estimate): when it starts and when it's done, each
+// in words where the play has one. Done is its finish, its work live, the time a thread's "Done about" gives for its
+// last task
 export const planned = j => ({
   start: j.estimate?.start ? `starts ${clock(j.estimate.start)}` : null,
-  done: j.estimate?.done ? `done ${clock(j.estimate.done)}` : null,
+  done: j.estimate?.finish ? `done about ${clock(j.estimate.finish)}` : null,
 });
 // A task's title under its thread, without the thread's name in front: "The shop's checkout: gift wrap" under
 // "The shop's own checkout" reads "Gift wrap". The name counts with or without a leading "The", an "own" after a
@@ -262,22 +264,22 @@ export function threadEta(t) {
   if (!o) return null;
   if (o.finish === null)
     return { time: 'No time yet', sums: `${cap(o.stall ?? 'nothing in the queue lets it merge')}.` };
-  return { time: `Done about ${clock(o.finish)}`, sums: `${hours(o.left_ms)} of agent time left.${windowWords(o)}` };
+  return { time: `Done about ${clock(o.finish)}`, sums: `${glance(o.left_ms)} of agent time left.${windowWords(o)}` };
 }
 // standing (forecast.ts): 'misses' | 'gives' | 'holds', or null without a window
 function windowWords(o) {
   if (o.standing === null) return '';
   if (o.standing === 'misses') return ` ${missed(o)}.`;
-  const spare = `${hours(o.slack)} to spare before its deadline ${clock(o.deadline)}`;
+  const spare = `${glance(o.slack)} to spare before its deadline ${clock(o.deadline)}`;
   return o.standing === 'gives'
-    ? ` ${hours(o.finish - o.aim)} past its aim of ${clock(o.aim)}, ${spare}.`
+    ? ` ${glance(o.finish - o.aim)} past its aim of ${clock(o.aim)}, ${spare}.`
     : ` ${cap(spare)}.`;
 }
 // A thread's outlook that misses its deadline (forecast.ts standing), in words: by how much, or that nothing finishes it
 export const missed = o =>
   o.finish === null
     ? `Misses its deadline ${clock(o.deadline)}`
-    : `${hours(o.finish - o.deadline)} past its deadline ${clock(o.deadline)}`;
+    : `${glance(o.finish - o.deadline)} past its deadline ${clock(o.deadline)}`;
 export function projectState(p) {
   if (p.pause?.decision) return { lit: true, words: 'Waits for your decision' };
   const lit = p.threads.filter(t => threadLit(t, p)).length;
@@ -303,30 +305,11 @@ export const running = threads => threads.reduce((n, t) => n + count(t.jobs, 'wo
 
 // ---------------------------------------------------------------- words
 // a job's size, as the sizer has it: its agent time, rounded the way a glance reads it
-export const size = j => (j.estimate?.size_ms ? glance(j.estimate.size_ms / 60000) : '');
+export const size = j => (j.estimate?.size_ms ? glance(j.estimate.size_ms) : '');
+// what the play has left of a job at work, the same way
+export const left = j => (j.estimate?.left_ms ? glance(j.estimate.left_ms) : '');
 // A job's size as a share of a long one, for a bar: on a log scale, so 5 minutes still shows, and full from eight hours
 // of agent time.
 const SIZE_FULL_MIN = 8 * 60;
 export const sizeShare = j => Math.min(1, Math.log1p(j.estimate.size_ms / 60000 / 5) / Math.log1p(SIZE_FULL_MIN / 5));
-// How long until a time: as a size, then the day, with its date past six days. A time past reads as a clock time.
-export function fromNow(ms) {
-  const m = (ms - Date.now()) / 60000;
-  if (Math.abs(m) >= 6 * 24 * 60)
-    return new Date(ms).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
-  if (m <= 0) return clock(ms);
-  return m < 24 * 60 ? glance(m) : new Date(ms).toLocaleDateString('en-GB', { weekday: 'short' });
-}
-// minutes as a glance reads them: to the five, then hours to the half, then whole hours
-function glance(minutes) {
-  const m = Math.max(5, Math.round(minutes / 5) * 5);
-  return m < 60
-    ? `${m} min`
-    : m < 600
-      ? `${Math.round(m / 30) / 2} h`.replace('.5 h', '½ h')
-      : `${Math.round(m / 60)} h`;
-}
 export const clock = clockWhen;
-export function hours(ms) {
-  const m = Math.round(ms / 60000);
-  return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ` ${m % 60}` : ''}`;
-}

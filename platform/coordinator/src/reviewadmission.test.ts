@@ -87,21 +87,27 @@ test('an undated review with a free seat place does not pause work for a general
   await h.finish(startedReview);
 });
 
-test('a second review with a tight window waits for the review place while ordinary work progresses', async () => {
-  const work = await h.start({ agent: 'kit', engine: 'codex' }, { seat });
+test('a second review whose window is slipping takes lower work’s place on the next claim', async () => {
   const active = await h.start({ agent: 'quill', engine: 'codex', kind: 'review' }, { seat });
+  const work = await h.start({ agent: 'kit', engine: 'codex' }, { seat });
   const tight = h.queue({
     agent: 'rook',
     engine: 'codex',
     kind: 'review',
     thread: h.dueThread({ deadline: Date.now() }),
   });
-  assert.equal((await h.heartbeat(work, { capped: [seat] })).body.yield, undefined);
-  await h.finish(active);
+  const answer = (await h.heartbeat(work, { capped: [seat] })).body;
+  assert.equal(answer.yield, 'waiting');
+  assert.equal(answer.immediate, true, 'deadline preemption does not wait for a tool boundary');
+  await h.finish(work, { status: 'yielded', session: 'deadline-work' });
   const next = (await claim())!;
   assert.equal(next.id, tight);
   await h.finish(next);
-  await h.finish(work);
+  await h.finish(active);
+  const resumed = (await claim())!;
+  assert.equal(resumed.id, work.id);
+  assert.equal(resumed.session, 'deadline-work');
+  await h.finish(resumed);
 });
 
 test('a blocked review takes no room and the board call still claims before a ready review', async () => {
@@ -153,3 +159,28 @@ test('a review on another seat does not occupy the bound review place or free it
   assert.equal(resumed.id, b.id);
   await h.finish(resumed);
 });
+
+for (const engine of ['codex', 'claude'])
+  for (const kind of ['review', 'consolidate'])
+    test(`slipping ${engine} work preempts a lower ${kind} and the paused session resumes`, async () => {
+      await h.capacity({ [engine]: 1 });
+      const bound = `capacity-${engine}`;
+      const active = await h.start({ agent: 'quill', engine, kind, forSeat: bound }, { seat: bound });
+      const waiting = h.queue({
+        agent: 'kit',
+        engine,
+        forSeat: bound,
+        thread: h.dueThread({ deadline: Date.now() + 60_000 }),
+      });
+      const answer = (await h.heartbeat(active, { capped: [bound] })).body;
+      assert.equal(answer.yield, 'waiting');
+      assert.equal(answer.immediate, true);
+      await h.finish(active, { status: 'yielded', session: 'kept-review' });
+      const next = (await h.claim(engine, { seat: bound, util: 0 }))!;
+      assert.equal(next.id, waiting);
+      await h.finish(next);
+      const resumed = (await h.claim(engine, { seat: bound, util: 0 }))!;
+      assert.equal(resumed.id, active.id);
+      assert.equal(resumed.session, 'kept-review');
+      await h.finish(resumed);
+    });

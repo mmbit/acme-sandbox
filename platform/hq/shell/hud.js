@@ -9,7 +9,7 @@ import { startTour, stopTour, touring } from './tour.js';
 import { openAgent } from './panel.js';
 import { openGazette } from './news.js';
 import { openPhone, openIntercom, openComputer, ceoName } from './desk.js';
-import { jobCounts } from './jobs.js';
+import { loadPiles } from './data.js';
 import { openProjects } from './projects.js';
 import { names } from './brand.js';
 
@@ -26,11 +26,13 @@ export function bindHud() {
   $('#btn-intercom').onclick = () => openIntercom();
   $('#btn-computer').onclick = () => openComputer();
   $('#btn-news').onclick = () => openGazette();
-  // (the projects view, at Recurring for its count.)
-  const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from, ...(from.dataset.jobs === 'recurring' && { group: 'recurring' }) }); };
+  // (the projects view, from what was tapped)
+  const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from }); };
   $('#status').onclick = jobsAt;
   $('#status').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jobsAt(e); } };
   setInterval(updateStatus, 15000);   // (jobs start and finish between the agents' status events)
+  // (the hint above it, by its height)
+  new ResizeObserver(() => document.documentElement.style.setProperty('--status-h', `${$('#status').offsetHeight}px`)).observe($('#status'));
   $('#zin').onclick = () => { scene.camera.zoom(1); audio.sfx.blip(); dropCard(); };
   $('#zout').onclick = () => { scene.camera.zoom(-1); audio.sfx.blip(); dropCard(); };
   $('#zfit').onclick = () => { scene.focus({ kind: 'home' }); audio.sfx.blip(); dropCard(); };
@@ -78,18 +80,37 @@ function nameHud() {
   $('#btn-intercom').title = `${cap(names.intercom)}: a directive for ${ceoName()}`; $('#btn-intercom .sr').textContent = cap(names.intercom);
   $('#btn-computer').title = `${cap(names.computer)}: AI seats and jobs`; $('#btn-computer .sr').textContent = cap(names.computer);
 }
-// How many jobs are active, waiting and recurring, bottom left; a tap on one opens the projects view (Recurring at its
-// group). Redrawn only when a count changed (aria-live).
-let counting = false;
+// HQ's throughput, bottom left (the coordinator's work.ts piles), counted in tasks: those done in the last 24 hours, hour
+// by hour as bars of work and, lighter, reviews, then those at work and those waiting, each over a bar split the same
+// way. A tap on one opens the projects view. Read at most every few seconds (agents' status events come in bursts), and
+// redrawn only when it changed (aria-live).
+let counting = false, counted = 0;
 export async function updateStatus() {
-  if (counting) return;
+  if (counting || Date.now() - counted < 5000) return;
   counting = true;
-  const n = await jobCounts(world.dev).catch(() => null);
+  const piles = await loadPiles(world.dev).catch(() => null);
   counting = false;
-  if (!n) return;
-  const count = (tab, colour) => `<span role="button" tabindex="0" data-jobs="${tab}"><i style="background:${colour}"></i>${n[tab]} ${tab}</span>`;
-  const html = count('active', '#5cc26a') + count('waiting', '#f2c14e') + count('recurring', '#9b72cf');
+  counted = Date.now();
+  if (!piles) return;
+  const html = throughput(piles.done) + pile('active', 'at work', piles.active) + pile('waiting', 'waiting', piles.waiting);
   if ($('#status').innerHTML !== html) $('#status').innerHTML = html;
+}
+const many = (n, one) => `${n.toLocaleString('en')} ${one}${n === 1 ? '' : 's'}`;
+function throughput({ work, review, hours }) {
+  const W = 3, GAP = 1, H = 22, top = Math.max(1, ...hours.map(([w, r]) => w + r));
+  const bar = ([w, r], i) => {
+    const x = i * (W + GAP), hw = (w / top) * H, hr = (r / top) * H;
+    return `<rect x="${x}" y="${H - hw}" width="${W}" height="${hw}"/><rect class="review" x="${x}" y="${H - hw - hr}" width="${W}" height="${hr}"/>`;
+  };
+  const words = `${many(work, 'task')} and ${many(review, 'review')} done in the last 24 hours, hour by hour`;
+  return `<span role="button" tabindex="0" data-jobs="done" class="flow" title="${words}" aria-label="${words}">
+    <svg class="flow-bars" viewBox="0 0 ${hours.length * (W + GAP) - GAP} ${H}" preserveAspectRatio="none" aria-hidden="true">${hours.map(bar).join('')}</svg>
+    <span class="flow-words"><span><b>${work.toLocaleString('en')}</b> ${work === 1 ? 'task' : 'tasks'} · <b>${review.toLocaleString('en')}</b> ${review === 1 ? 'review' : 'reviews'}</span><small>done in 24 h</small></span></span>`;
+}
+function pile(key, label, { work, review }) {
+  const n = work + review, words = `${n.toLocaleString('en')} ${label}: ${many(work, 'task')}, ${many(review, 'review')}`;
+  return `<span role="button" tabindex="0" data-jobs="${key}" class="flow" title="${words}" aria-label="${words}">
+    <span class="flow-words"><span><b>${n.toLocaleString('en')}</b></span><small>${label}</small></span><i class="flow-split" style="--review:${n ? (review / n).toFixed(2) : 0}"></i></span>`;
 }
 
 // What waits on the board in the computer's apps, their counts summed, on the computer's button (desk.js

@@ -10,18 +10,22 @@ import { db, inOneStep } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
 import * as messages from './messages.ts';
-import { ceo } from './company.ts';
+import { ceo, reviewSettings } from './company.ts';
 import { findProject, findThread, ownerOf, threadForJob, type JobThreadAsk } from './projects.ts';
 import { openPlanning, planningJob } from './planning.ts';
+import * as sorting from './sorting.ts';
 import { newThread } from './plan.ts';
 import { refusal } from './threadorder.ts';
 import { oneLine } from './agreements.ts';
+import { OwnerNotificationError } from './ownernotice.ts';
 import * as ledger from './ledger.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as reviewwork from './reviewwork.ts';
 import * as redraws from './redraws.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import { claim } from './jobcodes.ts';
+import * as sizes from './sizes.ts';
+import * as acceptance from './acceptance.ts';
 
 const TITLE_MAX = 140,
   WHY_MAX = 300;
@@ -82,14 +86,38 @@ export function propose(
   });
 }
 
-// One item per pull request, delivered with the owner's existing planning notifications.
+// One item per pull request, delivered with the owner's existing planning notifications. With the company's
+// review.drawWindowedChanges, a "changes" ruling on a thread with a window is drawn at once, as the owner almost always
+// draws it: the PR's author fixes every blocking finding (or checks the touch-ups) in the reviewed thread. The owner
+// hears of that task, and may cancel and redraw it; nothing waits on a session or a planning job that may not look at it
 export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: string; job: number }) {
   return inOneStep(() => {
     const previous = reviewinbox.get(details.pr);
     const item = reviewinbox.deliver(details);
-    if (!reviewinbox.sameDelivery(previous, item))
+    if (reviewinbox.sameDelivery(previous, item)) return item;
+    const owner = ownerOf(item);
+    const drawn =
+      item.decision === 'changes' && reviewSettings().drawWindowedChanges && windowed(item.proposal)
+        ? reviewinbox.drawnAtOnce(item, owner)
+        : undefined;
+    if (drawn) {
+      messages.withdraw(item.proposal);
+      const tasks = drawn.jobs.map(job => `#${job}`).join(' and ');
+      const running = by && messages.runningSession(owner);
+      const line = `Review ${reviewinbox.externalId(item.proposal)} from ${item.agent} for ${item.project}: its thread has a window, so HQ drew ${tasks} for ${drawn.author} to answer it. To draw it another way, cancel ${drawn.jobs.length > 1 ? 'them' : 'it'} and accept the item again (hq inbox ${reviewinbox.externalId(item.proposal)}).`;
+      // held: unread when the session ends, it lapses rather than becoming a job
+      if (running) {
+        const sent = messages.send(by, owner, line, running.id, item.proposal);
+        if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
+      }
+      publish({
+        type: 'log',
+        agent: drawn.author,
+        text: `PR #${item.pr}'s review asked for changes: ${tasks} drawn at once, as its thread has a window`,
+      });
+    } else
       tell(
-        ownerOf(item),
+        owner,
         {
           id: item.proposal,
           agent: item.agent,
@@ -104,7 +132,8 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
 
 // The project's review follow-ups (followups.ts): a new open proposal from the consolidator, or the open one (`into`)
 // with the brief that now covers more. Its owner hears of it as of any other (no session is told: a planning job), and
-// again when it grows: one a planning job left open was that job's to leave only as it stood (sweep).
+// again when it grows: one a planning job left open was that job's to leave only as it stood (sweep). Its accepter names
+// the task (sorting.ts template).
 export function bundle(p: { agent: string; title: string; brief: string; project: string | null }, into?: number) {
   return inOneStep(() => {
     if (into) {
@@ -116,6 +145,7 @@ export function bundle(p: { agent: string; title: string; brief: string; project
       .prepare('insert into proposals (created, agent, title, brief, project) values (?, ?, ?, ?, ?)')
       .run(new Date().toISOString(), p.agent, p.title, p.brief, p.project);
     const id = Number(lastInsertRowid);
+    sorting.template(id); // (its accepter names the task)
     tell(ownerOf(p), { id, ...p });
     return id;
   });
@@ -150,7 +180,24 @@ export function ownerChanged(project: string, by: { agent: string; job: number }
 // (heard_at: a new one, or one handed on with its project; or whose job never started), go to their owner again, by a
 // planning job (no session is told). One it had at its start it decided to leave open. Findings a session holds (tell)
 // go on as soon as it stops running (ended, yielded back to the queue, parked on a card), their notice withdrawn.
+// Review changes a later round or the merge has left behind close first: nobody has anything left to decide on them
 export function sweep() {
+  const stale = db
+    .prepare(
+      `select q.id, r.round, p.round now, p.status from review_inbox r join proposals q on q.id = r.proposal
+      join prs p on p.number = r.pr where q.status = 'open' and r.decision = 'changes'
+      and (p.round > r.round or p.status = 'merged')`,
+    )
+    .all() as { id: number; round: number; now: number; status: string }[];
+  for (const s of stale) {
+    const why = s.status === 'merged' ? 'its pull request merged' : `round ${s.now} has started`;
+    db.prepare("update proposals set status = 'dropped', decided = ?, why = ? where id = ?").run(
+      new Date().toISOString(),
+      `Round ${s.round}'s findings closed by themselves: ${why}`,
+      s.id,
+    );
+    messages.withdraw(s.id);
+  }
   const left = db
     .prepare(
       `select p.id, p.agent, p.title, p.project from proposals p join jobs j on j.id = p.heard_by where p.status = 'open'
@@ -162,6 +209,8 @@ export function sweep() {
     messages.withdraw(p.id);
     tell(ownerOf(p), p);
   }
+  sorting.settle(); // (HQ's own work to sort)
+  for (const p of sorting.untold()) tell(ownerOf(p), p);
 }
 
 // hq inbox: the open proposals waiting for the agent (each project it owns, and for the CEO those no owner has), then
@@ -188,17 +237,20 @@ export function list(agent: string, all = false) {
 // "done when"), else the one proposed, else the proposer's job's when that's in the proposal's project. A thread of a
 // plan `by` may change only. The answer is the job, or why not, with an HTTP status for a refusal.
 // Its code's word is the accepter's (--code), as hq job's is the queuer's (jobcodes.ts claim).
-export function accept(
-  id: number | string,
-  by: string,
-  o: JobThreadAsk & { for?: unknown; findings?: unknown; code?: unknown },
-) {
+export function accept(id: number | string, by: string, o: acceptance.Ask) {
   const external = typeof id === 'string' ? id : reviewinbox.externalId(id);
   if (typeof external === 'string') return reviewinbox.accept(external, by, o);
   const p = openProposal(external);
   if (typeof p === 'string') return p;
   const theirs = notTheirs(p, by);
   if (theirs) return theirs;
+  // (HQ's own from a template: a held job is sorted, a bundle named by its accepter.)
+  const sort = sorting.of(p.id);
+  if (sort?.job) return sorting.accept(p, sort.job, by, o);
+  const size = sizes.readQueuedSize(o);
+  if (typeof size === 'string') return size;
+  const title = sorting.acceptedTitle(p, sort, o.title);
+  if (typeof title !== 'string') return title.refused;
   // the owner assigns it (--for), else it's for whom it was proposed
   if (o.for != null && !jobs.findAgent(String(o.for))) return `${o.for} isn't a colleague in org.yaml`;
   const own = p.job ? jobs.threadOf(p.job) : null;
@@ -213,25 +265,17 @@ export function accept(
   const project = target ? findProject(target) : undefined;
   const refused = project && refusal(project, by);
   if (refused) return refused;
-  const thread = acceptedIn(p, ask, { by, inherited, code: o.code });
+  const thread = acceptedIn({ title }, ask, { by, inherited, code: o.code });
   if (typeof thread === 'string') return thread;
   const named = claim(o.code, 'thread' in thread ? thread.thread : thread.from ? jobs.threadOf(thread.from) : null);
   if ('refused' in named) return named.refused;
-  const job = jobs.createJob({
+  return acceptance.queue(p, by, {
     code: named.code,
     agent: o.for != null ? String(o.for) : (p.for_agent ?? p.agent),
-    title: p.title,
-    prompt: `${p.brief}\n\n(Proposed by ${p.agent}, accepted by ${by}.)`,
-    queuedBy: p.agent,
-    plannedBy: by,
+    title,
+    size,
     ...thread,
   });
-  db.prepare("update proposals set status = 'accepted', decided = ?, accepted = ? where id = ?").run(
-    new Date().toISOString(),
-    job.id,
-    id,
-  );
-  return { job: job.id, code: job.code, thread: jobs.threadOf(job.id) };
 }
 
 // The thread an accepted proposal is queued in (accept), or why not: one drawn for it in the plan, its word for its code
@@ -275,7 +319,10 @@ export function drop(given: number | string, by: { agent: string; job: number },
   }
   const said = oneLine(String(why ?? ''));
   if (!said || said.length > WHY_MAX) return `say why in one line of up to ${WHY_MAX} characters: ${p.agent} reads it`;
+  const sort = sorting.of(id); // (a held job goes with it, one that keeps never.)
+  if (sort?.keep) return sorting.KEEPS;
   inOneStep(() => {
+    if (sort?.job) ledger.cancelJob(sort.job, said);
     db.prepare("update proposals set status = 'dropped', decided = ?, why = ? where id = ?").run(
       new Date().toISOString(),
       said,
@@ -310,10 +357,10 @@ const notTheirs = (p: Proposal, by: string) =>
 
 // The owner hears of a proposal: through its planning job (the one open, queued, running or blocked, which reads the
 // inbox at its start and again before it ends), else in its running Claude session at its next step (`by` sends that
-// line; none: no session is told), else through a new planning job. Findings on a thread with a window (inbox.ts) wait in
-// no planning job that isn't running: the session hears them first and holds them while it runs (then the sweep).
+// line; none: no session is told), else through a new planning job. A review's close on a thread with a window (inbox.ts)
+// waits in no planning job that isn't running: the session hears it first and holds it while it runs (then the sweep).
 // The CEO reads every proposal in its summary (summary.ts) instead. A refused line throws OwnerNotificationError.
-function tell(
+export function tell(
   owner: string,
   p: { id: number; agent: string; title: string; project: string | null },
   by?: { agent: string; job: number },
@@ -335,17 +382,4 @@ function tell(
     return heardBy(urgent ? running.id : null);
   }
   heardBy(planningJob(owner));
-}
-
-// A proposal whose owner couldn't be told (messages.ts send refused the line, with its status): nothing that came with
-// it is kept. untold runs the change in one step and answers the refusal instead.
-class OwnerNotificationError extends Error {
-  status: number;
-  constructor(status: number, owner: string) {
-    const why: Record<number, string> = {
-      429: 'the job sending it has sent its messages for this hour',
-    };
-    super(`${owner} couldn't be told: ${why[status] ?? `the message was refused (${status})`}. Nothing changed`);
-    this.status = status;
-  }
 }

@@ -155,16 +155,16 @@ export const sleepUntil = (limit: number, s: Windows, now = Date.now()) => Math.
 // A downtime job asked to yield: since when, why ('waiting': other work, 'window': its seat's window), and held: a
 // probe's first reading was already at the start threshold, so later heartbeats (held to the higher yield threshold)
 // can't take it back.
-export type Asked = { at: number; why: string; held?: boolean };
+export type Asked = { at: number; why: string; held?: boolean; immediate?: boolean };
 
 // A heartbeat's answer for a job selected to yield by the coordinator. It stays asked only while heartbeats keep
 // saying so (the work it would make room for may start elsewhere). first: this heartbeat carried the probe's first
 // reading. Returns what changed.
-export function heard(yielding: Map<number, Asked>, id: number, r: { yield?: string } | undefined,
+export function heard(yielding: Map<number, Asked>, id: number, r: { yield?: string; immediate?: boolean } | undefined,
   o: { first?: boolean }, now = Date.now()): 'yielding' | 'carrying on' | undefined {
   const asked = yielding.get(id), held = !!o.first && r?.yield === 'window';
   if (!r?.yield) { if (asked && !asked.held) { yielding.delete(id); return 'carrying on'; } return; }
-  if (asked) { Object.assign(asked, { why: asked.held ? asked.why : r.yield, held: asked.held || held }); return; }
-  yielding.set(id, { at: now, why: r.yield, held });
+  if (asked) { Object.assign(asked, { why: asked.held ? asked.why : r.yield, held: asked.held || held, immediate: r.immediate }); return; }
+  yielding.set(id, { at: now, why: r.yield, held, ...(r.immediate ? { immediate: true } : {}) });
   return 'yielding';
 }

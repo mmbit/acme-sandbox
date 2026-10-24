@@ -1,3 +1,4 @@
+// Queue-time estimate contract fixtures.
 // node --test src/threadorder.test.ts   (throwaway DATA_DIR and the test company): threads in order while the company
 // plans by threads: a task after the one before it is done, a thread's first task after the threads it needs merge, the
 // thread's branch, its one pull request opened by every push, the next task held while a fix of it is open, the profile
@@ -35,7 +36,8 @@ const planning = (on: boolean) => {
 beforeEach(async () => {
   planning(true);
   h.cancelQueued();
-  db.exec(`delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes; delete from prs;
+  // Job IDs are reused here: their timing and saved estimates must leave with them.
+  db.exec(`delete from runs; delete from usage; delete from sizes; delete from predictions; delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes; delete from prs;
     delete from waits; delete from wakes; delete from meetings; delete from meeting_seats; delete from meeting_asks;
     delete from review_fix_tasks; delete from review_inbox; delete from proposals`);
 });
@@ -376,8 +378,9 @@ test('the play plays the order: a task after the one before it, a need after its
 // The play runs every minute and after each change, so a bare thread's size is worked out once for the hour, as a spot
 // size is, not read off every done job at every play.
 test("a bare thread's placeholder keeps its size for the hour, then sizes on the done work since", () => {
-  const now = Date.now(),
-    HOUR = 3_600_000;
+  // Start a fresh cache hour after the earlier cases have played their queues.
+  const HOUR = 3_600_000,
+    now = Date.now() + 2 * HOUR;
   const done = (hours: number) => {
     for (let i = 0; i < 3; i++)
       h.pastJob({

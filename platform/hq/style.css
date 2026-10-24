@@ -64,7 +64,7 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
 #hud { position: fixed; z-index: 6; top: 0; left: 0; right: 0; display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
   padding: max(10px, var(--sat)) max(12px, var(--sar)) 0 max(12px, var(--sal)); pointer-events: none; }
 #hud > * { pointer-events: auto; }
-.brand, .tools button, .tools a.desk, #zoom button, #status span, .toast {
+.brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast {
   background: var(--cream); border: var(--bw) solid var(--line); box-shadow: var(--shadow); border-radius: var(--r); }
 .brand { display: flex; align-items: center; gap: 8px; padding: 4px 10px 4px 6px; }
 .brand img { width: auto; height: 30px; flex: none; } /* the foundation's 15 px wordmark at 2x (whole pixels), any logo at its own shape */
@@ -99,12 +99,24 @@ svg.icon .accent { fill: var(--gold); }
 .sides button:active svg { transform: scale(.8); }
 @media (hover: hover) { .sides button:hover { opacity: 1; } }
 #status { position: fixed; left: max(12px, var(--sal)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none; max-width: 60vw; }
-#status span { padding: 2px 8px; font-size: 14px; pointer-events: auto; }
+#status > span { padding: 2px 8px; font-size: 14px; pointer-events: auto; }
 #status [data-jobs] { cursor: pointer; }
-#status i { display: inline-block; width: 8px; height: 8px; margin-right: 5px; border: 1px solid var(--line); }
+/* HQ's throughput (hud.js): what was done in the last day as bars by the hour, at work and waiting each over a bar, tasks
+   in ink and reviews lighter. */
+#status > .flow { display: flex; align-items: center; gap: 9px; padding: 6px 11px; line-height: 1.15; }
+.flow-words { display: grid; white-space: nowrap; }
+.flow-words b { font-variant-numeric: tabular-nums; }
+.flow-words small { color: var(--muted); font-size: 12px; }
+.flow-bars { width: 95px; height: 22px; flex: none; fill: currentColor; }
+.flow-bars .review, .flow-split { --flow-review: color-mix(in srgb, currentColor 35%, transparent); }
+.flow-bars .review { fill: var(--flow-review); }
+.flow-split { width: 40px; height: 6px; flex: none; border-radius: 3px;
+  background: linear-gradient(to right, currentColor calc((1 - var(--review)) * 100%), var(--flow-review) 0); }
 #zoom { position: fixed; right: max(12px, var(--sar)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; flex-direction: column; gap: 8px; }
 #zoom button { font-size: 24px; line-height: 1; }
-#hint { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - 18px - var(--sab)); transform: translate(-50%, -100%); color: var(--on-deep); background: rgba(29, 26, 47, .75);
+/* the first visit's hint, 8px over the throughput as it stands (--status-h, hud.js): its chips wrap in a wide font.
+  . */
+#hint { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - max(12px, var(--sab)) - var(--status-h, 0px) - 8px); transform: translate(-50%, -100%); color: var(--on-deep); background: rgba(29, 26, 47, .75);
   padding: 4px 12px; border-radius: var(--r); font-size: 14px; pointer-events: none; transition: opacity .6s; white-space: nowrap; }
 #hint.gone { opacity: 0; }
 #toasts { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 5; width: min(92vw, 420px); }
@@ -217,8 +229,9 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   .brand b { font-size: 16px; } .brand img { height: 15px; } .brand small { display: none; }
   .tools { gap: 6px; } .tools .lbl { display: none; }
   .tools button, .tools a.desk { min-width: 40px; height: 40px; padding: 0 8px; }
-  #status { max-width: 70vw; } #status span { font-size: 12px; }
-  #hint { top: calc(var(--app-h, 100dvh) - 70px - var(--sab)); font-size: 12px; }
+  #status { max-width: calc(100vw - 80px); } #status > span { font-size: 12px; }
+  #status > .flow { gap: 7px; padding: 5px 9px; } .flow-bars { width: 47px; } .flow-split { display: none; } /* (room for the three across a phone) */
+  #hint { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { #panel, .toast { transition: none; animation: none; } }
 
@@ -338,8 +351,12 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 :is(#viewer .sharebox, .notes) .invites .again small { margin-left: 6px; font-size: 11px; color: var(--tag-dim, var(--muted)); }
 .device { width: min(440px, 100%); max-height: 100%; display: flex; flex-direction: column; border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-xl);
   border-radius: var(--r-xl); animation: drop .25s var(--ease, steps(4)); overflow: hidden; }
-.device header { display: flex; align-items: center; gap: 10px; padding: 8px 8px 8px 14px; color: var(--on-deep); }
+.device header { display: flex; align-items: center; gap: var(--keys-gap); padding: 10px 16px; color: var(--on-deep); }
+/* One gap between keys on the devices (the design system's between a row's keys, kits/design/layers.css), in the header, the
+   pager, a card's answers and Later's days, and a box's keys as far in from its sides. */
+.device { --keys-gap: 12px; }
 .device header b { flex: 1; font-size: 20px; letter-spacing: .5px; }
+.device header .device-icon { width: 24px; height: 24px; flex: none; } /* (the desk phone's) */
 .device .x { width: 40px; height: 40px; font-size: 26px; line-height: 1; background: var(--paper); color: var(--ink); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
 .device .screen { background: var(--paper); margin: 0 10px 10px; border: var(--bw) solid var(--line); border-radius: var(--r); padding: 12px 14px; overflow-y: auto; }
 .device textarea, .device input { width: 100%; font: inherit; font-size: 16px; padding: 8px 10px; border: var(--bw) solid var(--line); border-radius: var(--r); background: var(--cream); box-shadow: var(--inset, inset 2px 2px 0 #e3dccb); }
@@ -389,23 +406,26 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .req .agekey .secret { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; margin: 4px 0 6px; padding: 8px 10px; background: var(--tint-gold, #fff3c4); border: var(--bw) dashed var(--line); border-radius: var(--r); }
 .req .agekey .secret code { font: 600 15px/1.35 ui-monospace, 'Cascadia Mono', monospace; letter-spacing: .5px; word-break: break-all; user-select: all; }
 .req .agekey .secret .copy { min-height: 36px; padding: 0 8px; font-size: 14px; background: var(--paper); }
-.req .hint.refused { margin-top: -4px; color: var(--red); }
+.req .hint.refused { display: flex; gap: 6px; align-items: start; margin-top: -4px; color: var(--red); }
+.req .hint.refused svg { width: 14px; height: 14px; flex: none; margin-top: 2px; shape-rendering: var(--icons, crispEdges); }
 .req .agekey .hint { margin: 0 0 4px; } .req .agekey .hint:empty { display: none; } .req .agekey [data-age-msg] { color: var(--red); }
-.req .agekey .ready { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 4px 0 0; padding: 6px 10px; background: var(--tint-green, #e2f5e4); border-left: 4px solid var(--green); font-size: 15px; }
-.req .agekey .ready svg { width: 14px; height: 14px; color: var(--ink); shape-rendering: var(--icons, crispEdges); } .req .agekey .ready code { font: 600 14px ui-monospace, monospace; }
-.req .agekey .warn, .device .msg.err { margin: 4px 0 0; padding: 6px 10px; background: var(--tint-red, #fde2e2); border-left: 4px solid var(--red); font-size: 15px; }
+.req .agekey .alert { margin: 4px 0 0; } .req .agekey .alert code { font: 600 14px ui-monospace, monospace; }
 .req .grant { margin: 0 0 10px; padding: 8px 10px; border: var(--bw) solid var(--line); border-radius: var(--r-lg); font-size: 15px; font-weight: 600; }
 .device .row { display: flex; gap: 8px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
 .device .send { background: var(--gold); color: var(--on-accent); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); padding: 8px 16px; min-height: 44px; font-weight: 600; }
 .device .send:active, .device .x:active { transform: var(--press); box-shadow: var(--shadow-press); }
 .device .send[disabled] { opacity: .6; }
 .device .msg { color: var(--muted); font-size: 14px; margin: 6px 0 0; }
-/* the intercom's error, its only line: as HQ's other errors */
-.device .msg.err { display: flex; align-items: center; gap: 8px; color: var(--ink); text-align: left; }
-.device .msg.err svg { width: 16px; height: 16px; flex: none; color: var(--red); shape-rendering: var(--icons, crispEdges); }
+/* An alert (desk.js alertHtml): an error or a done on a tool's own line (the intercom's, a card's, a call's), as the
+   design system's part in this look's own way: a card of its own on the paper, with its line, and its sign (an error's red,
+   a done's green) before the words. */
+.alert { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 10px; padding: 8px 12px 8px 8px; background: var(--paper); color: var(--ink);
+  border: var(--bw) solid var(--line); border-radius: var(--r-lg); font-size: 15px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
+.alert .sign { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r); background: var(--red); color: var(--paper); }
+.alert.done .sign { background: var(--green); color: var(--ink); }
+.alert .sign svg { width: 16px; height: 16px; shape-rendering: var(--icons, crispEdges); }
 .device.phone { background: var(--red); }
-.handset { width: 34px; height: 16px; background: var(--deep); border-radius: 8px 8px 3px 3px; box-shadow: inset 0 -4px 0 #8e2c35; }
-.pager { display: flex; align-items: center; justify-content: space-between; margin: -4px 0 8px; font-size: 14px; color: var(--muted); }
+.pager { display: flex; align-items: center; justify-content: space-between; gap: var(--keys-gap); margin: 0 0 var(--keys-gap); font-size: 14px; color: var(--muted); }
 .pager button { width: 40px; height: 36px; font-size: 22px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); }
 .pager button[disabled] { opacity: .3; }
 .req h3 { margin: 4px 0 6px; font-size: 20px; line-height: 1.2; } .req .meta { margin: 0; font-size: 13px; color: var(--muted); }
@@ -478,6 +498,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .signin { display: block; text-align: center; margin: 4px 0 12px; padding: 14px; background: var(--green); color: var(--on-accent); font-size: 18px; font-weight: 600; text-decoration: none;
   border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
 .quiet { text-align: center; padding: 26px 0; } .quiet b { display: block; font-size: 22px; } .quiet span { color: var(--muted); }
+.quiet .sign { display: none; } /* (a look that draws a state's sign shows it). */
 /* the answered cards (desk.js: the archive): the header's Answered button (the intercom's Larger wears it too), the list, and a card as it was */
 .device header .past-btn { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink);
   border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
@@ -491,7 +512,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .past-list b { font-size: 16px; line-height: 1.25; } .past-list .meta { font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
 .past-list .has { font-size: 13px; font-weight: 600; color: var(--blue); }
 .past-older { display: block; margin: 12px auto 0; min-height: 40px; padding: 0 14px; font: inherit; font-size: 15px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); cursor: pointer; }
-.pager .to-list { flex: 1; width: auto; margin: 0 8px; font: inherit; font-size: 14px; color: var(--ink); }
+.pager .to-list { flex: 1; width: auto; margin: 0; font: inherit; font-size: 14px; color: var(--ink); }
 /* the open cards' list, by topic (desk.js renderList) */
 .pager .to-list svg { width: 12px; height: 12px; margin-right: 8px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .topic { margin: 10px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); } .topic span { font-weight: 400; }
@@ -500,21 +521,24 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .card-list .covered { min-height: 40px; padding: 6px 10px; font-size: 14px; line-height: 1.25; overflow-wrap: anywhere; }
 .card-list .covered:has(> [aria-current]) { background: var(--tint-gold, #fff3c4); font-weight: 600; }
 /* cards for later (desk.js: Later on a card, its days, and the list of them) */
-.pager .later-btn { display: flex; align-items: center; gap: 5px; width: auto; margin-left: 8px; padding: 0 10px; font: inherit; font-size: 14px; color: var(--ink); }
+.pager .later-btn { display: flex; align-items: center; gap: 6px; width: auto; margin: 0; padding: 0 14px; font: inherit; font-size: 14px; color: var(--ink); }
 .pager .later-btn[aria-expanded=true] { background: var(--gold); color: var(--on-accent); }
 .pager .later-btn svg, .later-link svg, .later-note svg { width: 12px; height: 12px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .later-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 0 0 0 10px; font-size: 14px; background: var(--tint-gold, #fff3c4);
   border: var(--bw) solid var(--line); border-radius: var(--r); overflow: hidden; max-height: 60px; animation: later-gone .5s 7.5s forwards; }
 .later-note span { flex: 1; } .later-note button { min-height: 36px; padding: 0 12px; font: inherit; font-size: 14px; font-weight: 600; background: none; border: 0; border-left: 1px solid var(--line); cursor: pointer; }
 @keyframes later-gone { to { opacity: 0; max-height: 0; margin: 0; border-width: 0; } }
-.later-pick { margin: -2px 0 10px; padding: 8px 10px 10px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r-lg); }
-.later-pick p { margin: 0 0 6px; font-size: 13px; color: var(--muted); }
-.later-pick .days { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.later-pick { margin: 0 0 var(--keys-gap); padding: 12px var(--keys-gap) var(--keys-gap); background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r-lg); }
+.later-pick p { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
+.later-pick .days { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--keys-gap); }
 .later-pick button, .later-pick .pick-day { display: grid; align-content: center; gap: 1px; min-height: 48px; padding: 4px 8px; font: inherit; text-align: left; background: var(--paper);
   border: var(--bw) solid var(--line); border-radius: var(--r); cursor: pointer; }
 .later-pick b { font-size: 14px; } .later-pick span { font-size: 12px; color: var(--muted); }
-.later-pick .pick-day input { width: 100%; min-width: 0; padding: 0; font: inherit; font-size: 12px; color: var(--muted); background: none; border: 0; }
-.later-pick button:active { transform: var(--press); } .later-pick [disabled] { opacity: .5; }
+/* (Pick a day: a key like the others, with the date field unseen over it, opening the device's calendar.) */
+.later-pick .pick-day { position: relative; cursor: pointer; }
+.later-pick .pick-day input { position: absolute; inset: 0; width: 100%; height: 100%; min-width: 0; margin: 0; padding: 0; opacity: 0; cursor: pointer; }
+.later-pick .pick-day:focus-within { outline: 2px solid currentColor; outline-offset: 2px; }
+.later-pick :is(button, .pick-day):active { transform: var(--press); } .later-pick [disabled] { opacity: .5; }
 .later-link, .quiet .later-link { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--muted); } .quiet .later-link { margin-top: 10px; }
 .later-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
 .later-list li { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r-lg); }
@@ -579,7 +603,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call { text-align: center; padding: 8px 4px; }
 .intercom .call .who { margin: 0; font-size: 14px; color: var(--muted); }
 .intercom .call .state { margin: 6px 0; font-size: 22px; font-weight: 600; }
-.intercom .call .note { margin: 8px 0 0; padding: 8px 10px; background: var(--tint-gold, #fff3c4); border-left: 4px solid var(--gold); font-size: 15px; text-align: left; }
+.intercom .call .note { margin: 8px 0 0; } /* (an alert) */
 .intercom .call .said { min-height: 3.5em; max-height: 30dvh; overflow-y: auto; margin: 8px 0 14px; font-size: 16px; }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
@@ -657,7 +681,8 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
 .rows li > button.act, .oa-bar > button.act { all: revert; grid-column: 1; justify-self: start; width: auto; font: inherit; font-size: 12px; color: var(--scr-hi); background: none; border: 1px solid var(--scr-dim); border-radius: var(--r-sm); padding: 2px 8px; cursor: pointer; } .rows li > button.act:disabled, .oa-bar > button.act:disabled { color: var(--scr-dim); cursor: default; }
 .rows .st { grid-column: 2; grid-row: 1; align-self: baseline; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; white-space: nowrap; }
 .rows .st::before { content: ''; display: inline-block; width: 6px; height: 6px; margin-right: 5px; vertical-align: 1px; background: currentColor; }
-.st-ready, .st-done { color: var(--scr); } .st-busy, .st-running { color: #ffd966; } .st-sleeping, .st-queued { color: #9bb0ff; } .st-login, .st-blocked { color: #ff9b4a; } .st-failed { color: #ff5c6a; } .st-closed { color: #ff5c6a; }   /* (a seat whose account was closed) */
+/* (the screen's state words only, at their own weight: a panel's state chip keeps its ink on its tint.) */
+.st:where(.st-ready, .st-done) { color: var(--scr); } .st:where(.st-busy, .st-running) { color: #ffd966; } .st:where(.st-sleeping, .st-queued) { color: #9bb0ff; } .st:where(.st-login, .st-blocked) { color: #ff9b4a; } .st:where(.st-failed, .st-closed) { color: #ff5c6a; }   /* (a seat whose account was closed) */
 .cursor { display: inline-block; width: 8px; height: 13px; background: var(--scr); margin-left: 4px; vertical-align: -2px; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
 @media (max-width: 700px) {
@@ -924,7 +949,7 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 }
 @media (prefers-reduced-motion: reduce) { .on-air .onair, .bell.ringing svg { animation: none; } }
 /* the desk phone's bottom row: one kind of button, in three colours */
-.req .btns { gap: 8px; }
+.req .btns { gap: var(--keys-gap); }
 .req .btns button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; min-height: 0; padding: 0 14px; margin: 0;
   font: inherit; font-size: 16px; font-weight: 600; color: var(--ink); white-space: nowrap; border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
 .req .btns button svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
@@ -1108,7 +1133,7 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .calls .missed .chars { font-size: 12px; color: var(--scr-dim); margin-left: auto; } .calls .missed .chars.over { color: #ff5c6a; }
 .calls .missed .msg { flex-basis: 100%; font-size: 13px; color: #ffd966; } .calls .missed .msg:empty { display: none; }
 /* a platform app's line on the desk phone (shell/care.js phone(), shell/studio.js phone()). */
-.app-line { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0 0 10px; padding: 6px 12px; font: inherit; font-size: 15px; text-align: left; cursor: pointer;
+.app-line { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0 0 var(--keys-gap); padding: 6px 18px; font: inherit; font-size: 15px; text-align: left; cursor: pointer;
   color: var(--on-accent); background: var(--tint-gold, #fff3c4); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
 .app-line svg { flex: none; width: 16px; height: 16px; fill: var(--red); shape-rendering: var(--icons, crispEdges); }
 .app-line span { flex: 1; min-width: 0; } .app-line i { font-style: normal; font-size: 20px; line-height: 1; }
@@ -1128,27 +1153,42 @@ body.keys :is(.device header .past-btn, .device .send, .device .x, .pager button
   .jb-tabs button, .notes .acts button, .computer .home, .cta, .act, .app-line, .danger, .crt .seg button, .past-link, .past-older) {
   background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip);
   text-shadow: none; }
-body.keys.keys :is(.device .send, .req .opts .on, .req .questions .chip.on, .invites .go, .invite button, .cta, .app-line, .pic-keys [aria-pressed=true],
-  :is(.past-btn, .later-btn, .gz-tabs button, .seg button, .looks button, .look-settings button, .oversight button, .pills button, .jb-tabs button):is([aria-pressed=true], [aria-selected=true], [aria-checked=true], [aria-expanded=true])) {
+/* (one key lit in a row: a card's other answers, .later, stay plain keys, and Approve wears the knop as every one to press
+   does.) */
+body.keys.keys :is(.device .send:not(.later), .invite button, .cta, .app-line, .pic-keys [aria-pressed=true], .past-btn[aria-pressed=true]) {
   background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
-/* (one that's on or picked stays down on its lip, so it reads as pressed. The one to press stands up.) */
-body.keys.keys :is(.req .opts .on, .req .questions .chip.on,
-  :is(.past-btn, .later-btn, .gz-tabs button, .seg button, .looks button, .look-settings button, .oversight button, .pills button, .jb-tabs button):is([aria-pressed=true], [aria-selected=true], [aria-checked=true], [aria-expanded=true])) {
-  transform: var(--key-down); box-shadow: var(--key-on-down-lip); }
+/* (a toggle that's on stays down on its lip, so it reads as pressed. The one to press stands up.) */
+body.keys.keys .past-btn[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-on-down-lip); }
+/* One of several that's picked (a tab, a segment, a card's option) and Later while its days are open latch down in their
+   own face, their words bold, as the design system's tabs and choices do (kits/design/fields.css): the knop lights only
+   the key to press. */
+body.keys.keys :is(.req .opts .on, .req .questions .chip.on, .later-btn[aria-expanded=true],
+  :is(.gz-tabs button, .seg button, .looks button, .look-settings button, .oversight button, .pills button, .jb-tabs button):is([aria-pressed=true], [aria-selected=true], [aria-checked=true])) {
+  transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }
 body.keys.keys :is(.intercom .call .row .hangup, .on-air .mic) { background: var(--red); color: #fff; box-shadow: 0 var(--depth-button) 0 color-mix(in srgb, var(--red) 60%, #000); }
-body.keys.keys .req .btns .approve { background: var(--green); color: var(--key-on-ink); box-shadow: 0 var(--depth-button) 0 color-mix(in srgb, var(--green) 60%, #000); }
 body.keys.keys :is(.danger, [data-sure]) { color: var(--red); }
 /* A key on a panel (a card's question, Later's days, the cards for later, Jobs' bar, a person's panel, Share's box, Care's panels) takes
    the look's face for a panel (--key-panel-bg), so it stands apart from what it sits on. Later's days are keys of two
    lines, their words clear of the round ends. Pick a day is one of them. */
 body.keys :is(.req .questions > li, .later-pick, .later-list li, #panel, #viewer .sharebox, .cr-busy, .cr-remedy, .cr-owed, .cr-held) { --key-bg: var(--key-panel-bg); }
+/* A row's keys each as wide as its words with the design system's padding (kits/design/keys.css .key), none stretched
+   across the row: a card's answers, Reviews' send row. A key for an icon alone is round. */
+body.keys :is(.req .btns button, .notes .acts button) { flex: none; min-width: 0; height: auto; min-height: 48px; padding: 0 22px; }
+body.keys .req .btns :is(.mic, .talk.icon) { width: 48px; padding: 0; }
+/* (three keys or more on a card: a chip's padding, and Call as its phone alone, round, its name in its label, so they
+   share the device's one line) */
+body.keys .req .btns:has(> button:nth-of-type(3)) > button:not(.mic, .talk) { padding: 0 16px; }
+body.keys .req .btns:has(> button:nth-of-type(3)) .talk { width: 48px; padding: 0; }
+body.keys .req .btns:has(> button:nth-of-type(3)) .talk > span { display: none; }
 body.keys .later-pick :is(button, .pick-day) { padding: 6px 18px; }
 body.keys .later-pick .pick-day { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: var(--key-r); box-shadow: var(--key-lip); }
 /* A tile that opens something (an answered card, a search result, a person, a post, a post's read in the Library): the key's
    face with its lip, not a line, and the look's corners, so a title of two or three lines stays clear of a key's round ends.
    (.post .reads); .covered for a list's tap targets that hold job links */
 body.keys :is(.past-list .covered, .results .covered, .people button, .cards > .card, .post .reads button) { background: var(--key-bg); border-color: var(--key-edge); box-shadow: var(--key-lip); }
-body.keys :is(.past-list .covered, .results .covered, .people button, .cards > .card, .post .reads button):active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
+/* (.down: a key held down from the touch until its tap lands, shared/tactile/press.js holdPresses, as the keys below.
+  .) */
+body.keys :is(.past-list .covered, .results .covered, .people button, .cards > .card, .post .reads button):is(:active, .down) { transform: var(--key-down); box-shadow: var(--key-down-lip); }
 /* A field (a text, a number, a pick from a list): a flat well a little sunk, in the key's ink, with no line round it
    until it has the focus. A list's pick has its own small arrow. */
 body.keys :is(input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea, select) {
@@ -1165,7 +1205,7 @@ body.keys .artifacts .tilefilter:focus { border-color: var(--key-ink); }
 body.keys.keys :is(.device header .past-btn, .device .send, .device .x, .pager button, .pic-keys button, .pic-head button, .req .opts button, .req .questions .chip, .req .btns button, .invites button,
   .later-note button, .later-pick button, .later-list button, .mic, .call-agent, .intercom .call .row button, .gz-tabs button,
   .sharebox button, .crt .looks button, .crt .look-settings button, .oversight button, .crt .pills button,
-  .jb-tabs button, .notes .acts button, .computer .home, .cta, .act, .app-line, .danger, .crt .seg button, .past-link, .past-older):not(:disabled):active {   transform: var(--key-down); box-shadow: var(--key-down-lip); }
+  .jb-tabs button, .notes .acts button, .computer .home, .cta, .act, .app-line, .danger, .crt .seg button, .past-link, .past-older):not(:disabled):is(:active, .down) {   transform: var(--key-down); box-shadow: var(--key-down-lip); }
 /* Settings › Seats as keys. The switch: a groove with a key in it, low on its lip, that slides
    across and lights when it's on, pressed down on a tap like every key. A seat's word in the muted ink, one that needs the
    board lit as a key. HQ-OS › Seats' windows: solid bars in a sunken track. */
@@ -1175,7 +1215,7 @@ body.keys .crt .switch i { top: 3px; left: 3px; width: 26px; height: 23px; borde
   box-shadow: var(--key-down-lip); transition: left .18s var(--ease, ease), background .15s, transform .06s; }
 body.keys .crt .switch[aria-checked=true] { background: color-mix(in srgb, var(--key-ink) 70%, transparent); box-shadow: inset 0 2px 0 color-mix(in srgb, #000 30%, transparent); }
 body.keys .crt .switch[aria-checked=true] i { left: 25px; background: var(--key-on-bg); box-shadow: var(--key-on-down-lip); }
-body.keys .crt .switch:not(:disabled):active i { transform: translateY(var(--depth-pressed)); box-shadow: none; }
+body.keys .crt .switch:not(:disabled):is(:active, .down) i { transform: translateY(var(--depth-pressed)); box-shadow: none; }
 body.keys .seats-app .seat-now { color: var(--key-ink); opacity: .7; }
 body.keys .seats-app .seat-now:is(.is-login, .is-new, .is-closed) { opacity: 1; padding: 2px 9px 3px; border-radius: 999px; font-size: 12.5px; font-weight: 650; background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
 body.keys .seats-app .seat-now.is-closed { background: var(--red); color: #fff; box-shadow: 0 2px 0 color-mix(in srgb, var(--red) 60%, #000); }
@@ -1185,8 +1225,8 @@ body.keys .seat-status .bar i { background: var(--key-ink); box-shadow: none; bo
 body.keys { --paced: #d49a12; }
 /* (Share's box on a preview: its own rules name #viewer, so its keys do too) */
 body.keys #viewer .sharebox button { background: var(--key-bg); color: var(--key-ink); border-radius: var(--key-r); box-shadow: var(--key-lip); }
-body.keys #viewer .sharebox :is(.seg button[aria-pressed=true], .invite button) { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
-body.keys #viewer .sharebox .seg button[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-on-down-lip); }
+body.keys #viewer .sharebox .invite button { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); }
+body.keys #viewer .sharebox .seg button[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; } /* (picked: down, unlit.) */
 
 /* ---- the projects view (shell/projects.js), over the building: the board's four levels as keys, a level at a time, each
    under its head, in the brownstone's pixel look by default (inked paper keys with hard shadows over the town, a pixel
@@ -1228,6 +1268,21 @@ body.projects #hud .tools > :is(#btn-walls, #btn-tour) { max-width: 0; min-width
 .pj-loading i:nth-child(3) { animation-delay: .8s; }
 @keyframes pj-press { 0% { transform: var(--press); box-shadow: var(--pj-press); background: var(--pj-you); } 33.3% { transform: none; box-shadow: var(--pj-lift-sm); background: var(--pj-tile); } }
 @media (prefers-reduced-motion: reduce) { .pj-loading i { animation: none; } }
+/* a work link's thread while it loads: its page bare, the head's words and each task row's face and lines as quiet bars
+   breathing together */
+.pj-skeleton i { display: block; border-radius: var(--pj-pill); background: currentColor; opacity: .12; animation: pj-bare 1.4s ease-in-out infinite alternate; }
+.pj-skeleton .pj-where { flex: 1 1 auto; gap: 6px; }
+.pj-skeleton .pj-where small i { width: 28%; height: 11px; }
+.pj-skeleton .pj-where h1 i { width: 55%; height: 24px; }
+.pj-skeleton .pj-tasks .pj-task { pointer-events: none; }
+.pj-skeleton .pj-task > i { flex: none; width: 36px; height: 36px; }
+.pj-skeleton .pj-task > span { flex: 1; display: grid; gap: 8px; }
+.pj-skeleton .pj-task > span i { height: 13px; width: 70%; }
+.pj-skeleton .pj-task > span i + i { width: 40%; }
+.pj-skeleton li:nth-child(2) .pj-task > span i:first-child { width: 52%; }
+.pj-skeleton li:nth-child(3) .pj-task > span i:first-child { width: 62%; }
+@keyframes pj-bare { to { opacity: .05; } }
+@media (prefers-reduced-motion: reduce) { .pj-skeleton i { animation: none; } }
 /* one column for the whole view: the HUD's logo and tools and every level's head, notice and keys share its two edges, at
    any width. The board's scrollbar is hidden, so it takes no width from the column and its edges stay under the HUD's.
  */
@@ -1245,12 +1300,12 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 
 /* the keys: white on the ground, a lip that goes down when pressed; the one accent only where something waits on the board */
 #projects :is(.pj-tile, .pj-key, .pj-row, .pj-task) { background: var(--pj-tile); border: var(--bw) solid var(--line); box-shadow: var(--pj-lift-sm); color: var(--pj-ink); }
-#projects :is(.pj-tile, .pj-key, .pj-row, .pj-task):not(.pj-flat):active { transform: var(--press); box-shadow: var(--pj-press); }
+#projects :is(.pj-tile, .pj-key, .pj-row, .pj-task):not(.pj-flat):is(:active, .down) { transform: var(--press); box-shadow: var(--pj-press); }
 /* (a tile: the deepest lip, in a little under a pointer and all the way pressed. Keys, rows and tasks are buttons.
   ) */
 #projects .pj-tile { box-shadow: var(--pj-lift-tile); transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); }
-@media (hover: hover) { #projects .pj-tile:not(.pj-flat, .pj-lifted, :active):hover { transform: var(--hover-tile); box-shadow: var(--pj-lift-hover); } }
-#projects .pj-tile:not(.pj-flat):active { transform: var(--press-tile); }
+@media (hover: hover) { #projects .pj-tile:not(.pj-flat, .pj-lifted, :active, .down):hover { transform: var(--hover-tile); box-shadow: var(--pj-lift-hover); } }
+#projects .pj-tile:not(.pj-flat):is(:active, .down) { transform: var(--press-tile); }
 #projects :is(.pj-tile, .pj-key, .pj-row, .pj-task).pj-flat { box-shadow: none; background: transparent; border: var(--bw-2, 2px) dashed var(--rule, rgba(29, 26, 47, .25)); cursor: default; }
 #projects :is(.pj-tile, .pj-key, .pj-task).lit, #projects .pj-key.on { background: var(--pj-you); color: var(--pj-on-you); }
 #projects .pj-key { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 40px; padding: 0 16px; border-radius: var(--pj-pill);
@@ -1325,7 +1380,8 @@ body.projects #hud { padding-left: max(var(--pj-inline), var(--sal)); padding-ri
 .pj-home { display: flex; flex-direction: column; gap: 22px; }
 #projects .pj-business { padding: 0; gap: 0; min-height: 0; }
 .pj-cover { position: relative; display: grid; place-items: center; aspect-ratio: 16 / 9; background: var(--pj-ground); overflow: hidden; color: var(--muted); }
-.pj-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; pointer-events: none; -webkit-user-drag: none; }
+.pj-cover img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; -webkit-user-drag: none; }
+.pj-cover[data-style='pixel'] img { image-rendering: pixelated; } /* (projects.yaml's business style) */
 .pj-cover > .pj-initial { font-size: 26px; font-style: normal; font-weight: 700; opacity: .55; }
 /* a cover the company hasn't drawn: the ground, softly dotted, with a small mark */
 .pj-cover.pj-bare { background-image: radial-gradient(circle, color-mix(in srgb, currentColor 22%, transparent) 1.2px, transparent 1.7px); background-size: 14px 14px; }
@@ -1438,19 +1494,45 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
 .pj-tile-rows > * { margin-top: 6px; }
 .pj-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 10px; min-height: 22px; align-self: end; }
 .pj-foot .pj-when, .pj-foot .pj-size { margin-left: auto; padding: 0; font-size: 14px; font-weight: 700; white-space: nowrap; }
+/* a thread on its project's page, more than the project's tile said of it (projectkeys.js threadTile): its done-when,
+   what runs and comes next, what it waits on, its tasks as a strip and its time with its sums. */
+#projects .pj-rich { grid-row: span 7; }
+.pj-goal { margin-top: 4px; color: var(--muted); font-size: 14px; line-height: 1.35; }
+.pj-now small { margin-left: auto; padding-left: 6px; }
+.pj-now .pj-tag { margin-left: 0; padding-left: 0; }
+.pj-next.pj-waits li > span { white-space: normal; }
+.pj-waits li { align-items: flex-start; } .pj-waits .pj-wait-icon { margin-top: 3px; }
+.pj-wait-icon { flex: none; width: 13px; height: 13px; }
+.pj-waits .pj-you { font-weight: 700; }
+.pj-rich .pj-tile-rows:has(> .pj-strip) { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.pj-strip { flex: 1; display: flex; gap: 2px; height: 6px; }
+.pj-strip i { flex: 1; max-width: 22px; border-radius: 2px; background: color-mix(in srgb, currentColor 16%, transparent); }
+.pj-strip :is(.done, .working) { background: currentColor; }
+.pj-strip .working { animation: pj-strip-work 1.2s ease-in-out infinite alternate; }
+.pj-strip .board { background: var(--pj-you); box-shadow: inset 0 0 0 1.5px currentColor; }
+.pj-strip .ended { background: color-mix(in srgb, currentColor 40%, transparent); }
+@keyframes pj-strip-work { to { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .pj-strip .working { animation: none; opacity: .6; } }
+.pj-strip-words { flex: none; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
+.pj-eta-foot .pj-when { margin-left: 0; }
+.pj-eta-foot .pj-lines { margin-left: auto; }
+.pj-eta-foot small { flex-basis: 100%; color: var(--muted); font-size: 13px; line-height: 1.35; }
+.pj-tile.lit :is(.pj-goal, .pj-strip-words, .pj-eta-foot small) { color: inherit; }
+.pj-brief { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0 0 10px; color: var(--muted); font-size: 14px; line-height: 1.35; }
+.pj-brief span:first-child { color: var(--pj-ink); }
 .pj-task-text small .pj-pulse { height: 12px; margin-right: 6px; vertical-align: -1px; }
 /* a wait: an hourglass in the line's own muted colour, then what it waits on */
 .pj-wait svg { width: 12px; height: 12px; margin-right: 5px; vertical-align: -1px; fill: currentColor; }
 .pj-lines { font-size: 13px; font-weight: 600; color: var(--muted); font-variant-numeric: tabular-nums; }
 .pj-tile.lit :is(.pj-lines, .pj-next small, .pj-was) { color: inherit; } /* (a deliverable's time and the one before) */
-.pj-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-#projects .pj-task { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 10px 14px; border-radius: var(--pj-round); text-align: left; }
-.pj-task-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.pj-task-text b { font-size: 16px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
-.pj-task-text small { color: var(--muted); font-size: 14px; }
+.pj-tasks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; } /* (compact: a thread's tasks on one screen) */
+#projects .pj-task { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 4px 12px 4px 8px; border-radius: var(--pj-round); text-align: left; }
+.pj-task-text { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 10px; } /* (its words beside its title where there's room) */
+.pj-task-text b { font-size: 15px; line-height: 1.25; font-weight: 700; overflow-wrap: anywhere; }
+.pj-task-text small { color: var(--muted); font-size: 13px; }
 .pj-task.lit .pj-task-text small { color: inherit; }
-.pj-task-side { flex: none; display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
-.pj-task-side .pj-size { margin: 0; padding: 0; font-size: 14px; color: var(--pj-ink); }
+.pj-task-side { flex: none; display: flex; align-items: center; gap: 8px; }
+.pj-task-side .pj-size { margin: 0; padding: 0; font-size: 13px; color: var(--pj-ink); white-space: nowrap; }
 /* a task's row in its own state, each its own look (tasks.js): working a lifted key with its bars and its face at work,
    the board's lit with its desk phone, planned hollow, after other work hollow with an hourglass and its wait in its
    words, done (or ended) quiet with a tick; a step under its task on a branch of its own that ends at the step's edge.
@@ -1460,29 +1542,29 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
 #projects .pj-task:is(.done, .ended) { border-color: transparent; }
 #projects .pj-task:is(.done, .ended) .pj-task-text b { font-weight: 500; color: var(--muted); }
 .pj-task-who { position: relative; flex: none; display: grid; }
-#projects .pj-task .pj-face { width: 36px; height: 36px; }
+#projects .pj-task .pj-face { width: 26px; height: 26px; }
 #projects .pj-task:is(.planned, .after) .pj-face { opacity: .7; }
 #projects .pj-task:is(.done, .ended) .pj-face { opacity: .5; filter: grayscale(1); }
 #projects .pj-task.working .pj-face { animation: pj-at-work 1.2s var(--ease, steps(2)) infinite; }
 @keyframes pj-at-work { 0%, 100% { transform: none; } 50% { transform: translateY(-3px); } }
-.pj-row-mark { position: absolute; right: -8px; bottom: -8px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%;
+.pj-row-mark { position: absolute; right: -7px; bottom: -6px; display: grid; place-items: center; width: 16px; height: 16px; border-radius: 50%;
   background: var(--pj-tile); color: var(--pj-ink); box-shadow: 0 0 0 2px var(--line); }
-.pj-row-mark svg { width: 13px; height: 13px; }
+.pj-row-mark svg { width: 10px; height: 10px; }
 .pj-task.lit .pj-row-mark { background: var(--pj-on-you); color: var(--pj-you); box-shadow: none; }
 .pj-task:is(.done, .ended) .pj-row-mark { color: var(--muted); }
 .pj-size-bar { display: inline-block; width: 34px; height: 6px; margin-right: 7px; vertical-align: 1px;
   background: linear-gradient(to right, currentColor calc(var(--share) * 100%), color-mix(in srgb, currentColor 20%, transparent) 0); }
-.pj-step { position: relative; margin-left: 46px; }
-.pj-step::before { content: ''; position: absolute; left: -14px; top: -10px; bottom: 50%; width: 14px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
-#projects .pj-step .pj-task { min-height: 52px; }
-#projects .pj-step .pj-face { width: 28px; height: 28px; }
+.pj-step { position: relative; margin-left: 34px; }
+.pj-step::before { content: ''; position: absolute; left: -12px; top: -4px; bottom: 50%; width: 12px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
+#projects .pj-step .pj-task { min-height: 32px; }
+#projects .pj-step .pj-face { width: 20px; height: 20px; }
 .pj-board-task.pj-flat .pj-phone { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { #projects .pj-task.working .pj-face { animation: none; } }
 /* (on a phone a task's size and code go under its words, so its title has the row's whole width) */
 @media (max-width: 700px) {
-  #projects .pj-task { flex-wrap: wrap; row-gap: 6px; }
-  .pj-task-side { flex-direction: row; align-items: center; gap: 10px; width: 100%; padding-left: 48px; }
-  .pj-step { margin-left: 34px; }
+  #projects .pj-task { flex-wrap: wrap; row-gap: 2px; padding-block: 5px; }
+  .pj-task-side { width: 100%; padding-left: 36px; }
+  .pj-step { margin-left: 26px; }
 }
 .pj-code { padding: 3px 6px; font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; color: var(--pj-ink); background: var(--pj-ground);
   border-radius: 4px; flex: none; white-space: nowrap; } /* (whole beside a review's badge) */

@@ -112,11 +112,13 @@ host, for review mode's polaroid and HQ's note thumbnails alike (`node --test sh
 3. The board ticks the notes it recognises and taps **Send N**. Every note starts unticked, and one that
    arrives while the tab is open stays unticked, so it never rides along unseen. At most 50 go per send, to the CEO's
    short routing check (`platform/coordinator/src/routing.ts`; a send before it starts joins it). It runs first and
-   below the worker's room line, and gives each note to the colleague it's about with `hq route`: into the brief of a
-   job in that area that an agent queued and that hasn't started (as `hq extend` adds), a new job `--after` open work
-   there that has, or a new job. A product's notes to its owner (`owner:` in `product.yaml`) go on as the product's
-   return to the board (`platform/coordinator/src/owed.ts`), which ends with the product back on the desk phone (a
-   card filed with `--back <slug>`). A note the check leaves stays unrouted until a later CEO job routes it (HQ's
+   below the worker's room line, and turns the notes into the work they ask for (`hq route` lists them): one task per
+   improvement, related notes in one, each with its own title, code, owner and thread in the notes' project (`hq job
+   ... --notes <ids>`), or into the brief of a job in that area that an agent queued and that hasn't started (`hq route
+   '#<job>'`, as `hq extend` adds). A product's notes are a piece of its return to the board
+   (`platform/coordinator/src/owed.ts`), which ends with the product back on the desk phone (a card filed with `--back
+   <slug>`): its owner's task holds it when it can, else HQ queues the owner's return after the tasks, in the product's
+   project (`project:` in `product.yaml`). A note the check leaves stays unrouted until a later CEO job routes it (HQ's
    summary lists it). The board can discard the rest (and a discarded note's screenshot is deleted).
 4. The job carries only what the board saw in HQ: the note, its page, and the element's tag, selector and text
    (quoted, one line each). The owner reads the rest (screenshot, HTML, browser, trail) with `hq note <id>`,

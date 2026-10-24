@@ -271,7 +271,7 @@ test('phone diagnostics distinguish lookup failures and missing settings from co
 
 // ---- the agent who answers callers who aren't the board
 // brand.yaml's phoneLine.care names one of org.yaml's agents (Wren here, whose voice is jane), with the opening's
-// languages by country code and a native voice for Dutch
+// languages by country code, a native voice for Dutch and the seed of its fixed words
 async function withCare<T>(work: () => Promise<T>) {
   const file = `${h.repo}/company/brand.yaml`,
     was = readFileSync(file, 'utf8');
@@ -281,7 +281,8 @@ async function withCare<T>(work: () => Promise<T>) {
       was.replace(
         /^phoneLine:\n/m,
         'phoneLine:\n  care: wren\n  hello: { nl: Hallo, de: Guten Tag, en: Hello }\n' +
-          '  languages: { 31: [nl, en], 32: [nl, en], 49: [de, en], 4: [de], default: [en] }\n  voices: { nl: alex, xx: x }\n',
+          '  languages: { 31: [nl, en], 32: [nl, en], 49: [de, en], 4: [de], default: [en] }\n  voices: { nl: alex, xx: x }\n' +
+          '  seeds: { nl: 2, de: -1, en: x }\n',
       ),
     );
     return await work();
@@ -296,7 +297,7 @@ const CARE_CONNECT =
   /<Response><Connect action="\/api\/twilio\/after"><Stream url="wss:\/\/hq\.company\.test\/voice\/twilio"><Parameter name="ticket" value="[\w-]+"\/><\/Stream><\/Connect><\/Response>$/;
 const sid = (n: number) => 'CA' + n.toString(16).padStart(32, '0');
 
-test("with phoneLine.care, a caller who is not the board gets the agent: a care ticket the voice line trades once for the opening's languages and its voices", () =>
+test("with phoneLine.care, a caller who is not the board gets the agent: a care ticket the voice line trades once for the opening's languages, its voices and seeds", () =>
   withCare(async () => {
     h.db.exec('delete from phone_misses'); // (the five wrong PINs above)
     const r = await twilio('/api/twilio/voice', { From: '+31611110001', CallSid: sid(1) });
@@ -312,6 +313,7 @@ test("with phoneLine.care, a caller who is not the board gets the agent: a care 
       langs: ['nl', 'en'],
       voice: 'jane',
       voices: { nl: 'alex' }, // (a language the line doesn't speak is left out)
+      seeds: { nl: 2 }, // (a seed that isn't a whole number from 0 is left out)
       respell: {}, // (brand.yaml speech.respell: none in the test company)
     });
     assert.equal((await h.voice('call-ticket', { ticket })).status, 404);

@@ -73,7 +73,9 @@ create index if not exists ledger_conversation on ledger (conversation);
 -- answer_tried: a question answered from a knowledge entry (answers.ts), the email waiting to go, when it went, when HQ
 -- heard, the knowledge it couldn't answer from. health: 1 if a health detail
 -- went to a person with it, so no model drafts for it; health_hq: when HQ heard so (with the first card, or in a 'more'
--- for a case marked after HQ had it, hq.ts)
+-- for a case marked after HQ had it, hq.ts). replied, settled: when the board's last reply to it went and whether HQ's
+-- card is done (1), as HQ's state says (hq.ts replies()); asked: when the chat's assistant last handed the customer to a
+-- person again after it went, until HQ hears (hq.ts, a 'more' with person: true)
 create table if not exists cases (id integer primary key autoincrement, app text not null,
   conversation integer references conversations on delete set null, kind text not null, email text, checked text not null,
   words text not null default '', summary text, facts text, lang text, created integer not null, sent_hq integer, hq_id text,
@@ -116,6 +118,9 @@ create table if not exists downtime (id integer primary key, kind text not null,
   until integer, end integer);
 create table if not exists numbers (app text not null, day text not null, counts text not null, made integer not null, sent integer, primary key (app, day));
 `);
+// (replied, settled, asked, on a database from before them)
+for (const col of ['replied', 'settled', 'asked'])
+  if (!(db.prepare('pragma table_info(cases)').all() as { name: string }[]).some(c => c.name === col)) db.exec(`alter table cases add column ${col} integer`);
 // A phone call's codes (phone.ts): one per stall of the shop for each code asked for, each hash with its stall and the order
 // number as said. `round` groups one ask's codes (a new ask replaces the last), and its tries are counted on every row of
 // the round

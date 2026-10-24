@@ -256,3 +256,22 @@ export function standBeside(L, level, p) {
   const [dx, dy] = BESIDE.find(([bx, by]) => floor(p.x + bx, p.y + by)) ?? [0, 0];
   return { x: p.x + dx, y: p.y + dy };
 }
+
+// the middle of the arcade's neon, in tiles from the room's start: just past its back row (cabinets, TV and timeboard,
+// 3.5 tiles, all taller than the sign, the timeboard's top seen 0.3 nearer the start), so the whole of PLAY shows, and
+// clear of the park end's fire escape where the arcade ends its wing
+const ARCADE_NEON = 4;
+// The arcade's wall art: its things ([name, width in px], the neon among them, and
+// an empty one's EMPTY sign) in a row from the neon on to the room's far end, 2 px apart so a shelf fits beside the neon
+// in the smallest room that has people (6 tiles: 36 px of wall past the back row, 4 of them kept clear at the end as on
+// every wall). An empty one has 4 tiles, all behind its back row: nothing fits, so nothing peeks out cut off. Each as
+// [name, its middle in tiles from the room's start].
+export function arcadeWall(roomLen, things) {
+  const order = [things.find(([name]) => name === 'neon'), ...things.filter(([name]) => name !== 'neon')], row = [];
+  for (let u = ARCADE_NEON - order[0][1] / 32, i = 0; ; i++) {
+    const [name, px] = order[i % order.length], len = px / 16;
+    if (u + len > roomLen - 0.25) return row;
+    row.push([name, u + len / 2]);
+    u += len + 2 / 16;
+  }
+}

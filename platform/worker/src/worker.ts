@@ -23,11 +23,12 @@ import { roomTurns } from './roomturns.ts';
 import { capacityCapture, capacitySample } from './capacity.ts';
 import { pacedUntil, paceTo, reserveElsewhere, windowUsed } from './pace.ts';
 import { checkDue, claimAnswered, codexLogLine, codexReading, codexTokens, drainPauses, drainUntil, healthiest, heard, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
-import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS, reservations } from './reserve.ts';
+import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS } from './reserve.ts';
+import { admission, cgroup, hostAvailableBytes } from './admission.ts';
 import { CHAT_SLOT, KEEPER, SLOT_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep, type Ids } from './slots.ts';
 import { limitReset, observe, outcome, parkedRequest, preview, tail, verdict, whole } from './outcome.ts';   // (parkedRequest)
 import { detailOf, stepOf, shown, guard, memberReturned, memberOf, writtenTokens, type Shown } from './steps.ts';
-import { inboxHooks } from './inbox.ts';
+import { completionHooks } from './completion.ts';
 import { claudeEnv, cliOf, codexArgs, credentialFile, modelFor, type SeatProvider } from './providers.ts';
 import { CLIS, CLI_CONFIG, refreshOnly, resumeOn, sessionTag, type Cli } from './clis.ts';
 import { carrySession, project, type Resumes } from './carry.ts';
@@ -35,7 +36,8 @@ import { applyList, carryOut, off, type Listed, type SeatAction } from './seatli
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
-import { cliProcesses, commandOf, processesFor, overShare, slowDown, stopRun, tally, type Block, type JobUse, type ProcessSnapshot } from './shares.ts';
+import { blockRun } from './blocks.ts';
+import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks, ResponseError } from './handback.ts';
 import { openPullRequest as openOn } from './pulls.ts';
@@ -99,8 +101,8 @@ const onSeat = new Map<string, number>();
 const roomOn = (s: Seat) => (onSeat.get(s.id) ?? 0) < (SEAT_RUNS[s.engine] ?? Infinity);
 const lastClaimAt = new Map<string, number>();   // when each Codex seat last claimed (inTurn)
 // How many jobs run at once is the room's to decide: the worker has a hard memory cap (infra/compose.yaml), and a free
-// slot (WORK_SLOTS, any engine's) only starts a job while FREE_MB of it is left (and of the server's), after reserve.ts
-// sets aside memory for jobs still starting and held meeting seats. Jobs started in the last minute reserve JOB_MB
+// slot (WORK_SLOTS, any engine's) only starts an ordinary job if its JOB_MB allowance fits above FREE_MB in both the
+// worker and server, after reservations for young starts and held meeting seats. Young starts reserve JOB_MB
 // each until they reach their full size. Usage limits are watched per seat (drainUntil in downtime.ts), and a Codex
 // seat carries SEAT_RUNS at most.
 // Below a full starting allowance a slot may claim a job whose measured memory fits above FREE_MB, once a minute for each
@@ -109,13 +111,13 @@ const lastClaimAt = new Map<string, number>();   // when each Codex seat last cl
 const SHORT_EVERY_MS = 60_000;
 const shortAskedAt = new Map<string, number>();
 function shortClaim(engine: string) {
-  const free = reserve.claimMb(availableMb());
+  const free = reserve.claimMb();
   if (Date.now() - (shortAskedAt.get(engine) ?? 0) < SHORT_EVERY_MS || free <= 0) return undefined;
   shortAskedAt.set(engine, Date.now());
   return free;
 }
 // The claims' starts and the slots holding a meeting's seat (reserve.ts): a hold also keeps its seat's place (onSeat).
-const reserve = reservations<Seat>(), holding = reserve.holding;
+const reserve = admission<Seat>(), holding = reserve.holding;
 // The seat a slot holds on, while it can still take work as pickSeat takes it (ready, not off, still listed): one that hit
 // its limit, drains, signed out or was held off gives the hold's room and place back, and the slot claims as any other
 // (HQ then lets the hold go: its runner changed or isn't ready).
@@ -128,21 +130,11 @@ function heldOn(slot: string) {
   onSeat.set(seat.id, onSeat.get(seat.id)! - 1);
   return undefined;
 }
-const cgroup = (f: string) => { try { return readFileSync(`/sys/fs/cgroup/${f}`, 'utf8').trim(); } catch { return ''; } };
-// Available memory in MB (the worker's and the server's), less the reservations (reserve.ts) when young.
-function availableMb() {
-  const host = hostAvailableBytes() / 2 ** 20;
-  const cache = Number(cgroup('memory.stat').match(/^inactive_file (\d+)/m)?.[1] ?? 0); // (the kernel frees that on demand)
-  const cap = Number(cgroup('memory.max')), used = Number(cgroup('memory.current')) - cache;
-  const mine = cap && used ? (cap - used) / 2 ** 20 : host; // (no cap: the server's is all there is)
-  return Math.min(mine, host);
-}
-const freeMb = (young = true) => reserve.freeMb(availableMb(), young);
-const room = (young = true) => reserve.room(availableMb(), young);
+const { freeMb, room } = reserve;
 
 // --- Each job's share ---
-// Each job's share of the room (shares.ts): past JOB_MOST_MB in all a job has its heavy run blocked (blockRun), and past
-// JOB_SHARE_MB too once no slot could start for STARVED_MS while work waits (HQ says so, and tells the CEO once: the
+// Each job's share of the room (shares.ts): past JOB_MOST_MB in all a job has its heavy run blocked (blocks.ts blockRun).
+// Past JOB_SHARE_MB too once no slot could start for STARVED_MS while work waits (HQ says so, and tells the CEO once: the
 // coordinator's room.ts); so does a job running more than JOB_PROCESSES processes. Past half the cores its processes get
 // nice 10, and past them for JOB_HOT_MS its busiest run is blocked. Looked at every SHARES_MS, reported to HQ every
 // REPORT_MS. (The defaults suit this server's worker; the offload machine has caps of its own: org.yaml's runs.)
@@ -181,7 +173,10 @@ async function watchShares() {
       const { block, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
       pending = still;
       const owner = block && jobs.find(j => j.uid === block.uid);
-      if (block && owner) await blockRun(owner, block, procs);
+      if (block && owner) await blockRun({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
+        ask: body => insist('blocked', body, BLOCK_ASK_MS), checking,
+        stopped: text => { log(text); capacityTrial.note(text); },
+      });
       if (block?.measure === 'cores') hotSince.delete(block.uid);
       await slowDown(jobs, slow, groups);
       capacityTrial.record(() => sampleCapacity(jobs, uses, intervalMs, t));
@@ -212,7 +207,6 @@ function sampleCapacity(sampled: SlotJob[], uses: Map<number, JobUse>, intervalM
     starting, held: holding.size, reservationMb: reserve.reservedMb(starting) });
   return sample;
 }
-const hostAvailableBytes = () => Number(readFileSync('/proc/meminfo', 'utf8').match(/^MemAvailable:\s+(\d+)/m)![1]) * 1024;
 
 // HQ hears the room and each job's share, and answers how much ready work only memory keeps from starting (room.ts):
 // what the claims of the engines with a free slot and a seat to start on would take (memoryClaims).
@@ -231,7 +225,7 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
   finally { watch.reporting = false; }
 }
 function plannerCapacity() {
-  const starts = reserve.starts(availableMb()),
+  const starts = reserve.starts(),
     occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
   const slots = Object.fromEntries(ENGINES.map(engine => [engine, WORK_SLOTS.length]));
   const room = Math.min(WORK_SLOTS.length - holding.size, occupied + starts);
@@ -242,28 +236,8 @@ const memoryClaims = () => allSlotsTaken([...inSlot.keys()]) ? [] : ENGINES.flat
   return seat ? [claimOn(seat, engine)] : [];
 });
 
-// A job's run past its share is blocked (shares.ts stopRun), if it's still the one looked at: frozen at once (SIGSTOP: it
-// neither grows nor starts anything while HQ is asked, again while it can't be reached: insist), told in its own output
-// what to do instead (HQ's words, the coordinator's blocks.ts: the deployment's offload machine, or what to do without
-// one), then every process of it stopped. Its command ends Killed with those words before it, or with none if HQ never
-// answered (the shares loop logs why): only HQ counts the job's blocks. Said in the worker's log, the job's log in HQ
-// (blocks.ts), and to the push check it belongs to (checking), which then can't complete.
+// Each blocked-report attempt has its own network deadline while the run is frozen.
 const BLOCK_ASK_MS = 5_000;
-async function blockRun(owner: SlotJob, block: Block, procs: ProcessSnapshot[]) {
-  const live = block.run.filter(p => procStat(p.pid)?.start === p.start);
-  if (!live.includes(block.root)) return;   // (ended meanwhile)
-  const command = commandOf(live), used = shareWords(block.measure, block.used), share = shareWords(block.measure, block.share);
-  await stopRun(live, { uid: owner.uid, gid: owner.gid }, block.root, () => insist('blocked',
-    { job: owner.job.id, measure: block.measure, used: block.used, share: block.share, command }, BLOCK_ASK_MS));
-  const stopped = `job #${owner.job.id}: blocked its run ${block.root.pid} (${live.length} processes), ${used} past ${share}`;
-  log(stopped);
-  capacityTrial.note(stopped);
-  const parent = new Map(procs.map(p => [p.pid, p.ppid]));
-  for (let pid: number | undefined = block.root.pid; pid !== undefined; pid = parent.get(pid))
-    checking.get(pid)?.push(`the worker blocked its run ${block.root.pid} (the job's ${used}, past a job's share of ${share})`);
-}
-const shareWords = (measure: Block['measure'], n: number) =>
-  measure === 'memory' ? `${Math.round(n)} MB` : measure === 'cores' ? `${Math.round(n * 10) / 10} cores` : `${n} processes`;
 // Which engine a free slot claims for: each in turn (roomturns.ts).
 const turns = roomTurns();
 const pct = (s: Seat) => s.util === undefined ? 'not measured yet' : `${Math.round(s.util * 100)}%`;
@@ -323,7 +297,7 @@ async function api(path: string, body: unknown = {}, signal?: AbortSignal) {
 // finished run as failed (an intercom reply lost, its turn tried again). So one that can't reach it (fetch throws) is
 // sent again for two minutes; a second report of a finished run changes nothing (jobs.ts finish). Whether a job holds a
 // customer's details at its run's end is asked the same way (holdsCustomerData), and so is the mask (masked).
-// (ms: each try's own limit, for an ask something waits on: blockRun)
+// (ms: each try's own limit, for an ask something waits on: blocks.ts blockRun)
 async function insist(path: string, body: Record<string, unknown>, ms?: number) {
   for (let wait = 1000; ; wait *= 2) {
     try { return await api(path, body, ms ? AbortSignal.timeout(ms) : undefined); }
@@ -545,16 +519,6 @@ async function recheckLoop() {
   }
 }
 
-// The sizer (the coordinator's sizer.ts): every minute, up to SIZES_PER_MINUTE jobs sized by the small model.
-const SIZES_PER_MINUTE = 3;
-async function sizeLoop() {
-  while (!shuttingDown) {
-    await sleep(60_000);
-    try { for (let i = 0; i < SIZES_PER_MINUTE; i++) if (!await smallCall('sizes', ['job', 'brief'])) break; }
-    catch (err) { log('sizer:', err); }
-  }
-}
-
 // A live meeting's bubbles (the coordinator's meetinggist.ts): the new lines of its transcript put in a few plain words by
 // the same small model, one call at a time. The room shows the latest point, so the loop asks again soon after each
 // answer: GIST_POLL_MS is how late a bubble may come after its line, beside the call's own time.
@@ -583,14 +547,17 @@ async function namesLoop() {
 // `${kind}/answer` with the claim's own `keys`: on the healthiest ready Claude seat, one short call with no tools (the
 // prompt holds outside input) and the prompt on stdin. Its spend counts on the seat, and its rate-limit reading updates
 // the seat's windows as a run's does. Whether there was a call to make.
-async function smallCall(kind: 'sizes' | 'gists' | 'names', keys: string[]) {
+async function smallCall(kind: 'gists' | 'names', keys: string[]) {
   wakeSeats();
   const seat = healthiest(SEATS.filter(s => cliOf(s) === 'claude' && s.signIn === 'login' && !off(s)), 'claude');
   const token = seat && readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
   if (!seat || !token) return false;
   const next = await api(`${kind}/claim`);
   if (!next?.prompt) return false;   // (nothing due: an empty claim)
+  // (thinking off: the CLI gives Haiku a 31,999-token thinking budget by default, which can outrun oneLine's 90 s
+  // kill.)
   const args = ['--model', next.model, '--tools', '', '--strict-mcp-config', '--no-session-persistence',
+    '--settings', '{"alwaysThinkingEnabled":false}',
     '--output-format', 'stream-json', '--verbose', '--json-schema', next.schema];
   const r = await oneLine(seat, token, args, next.prompt);
   const events = r.out.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
@@ -606,7 +573,7 @@ async function smallCall(kind: 'sizes' | 'gists' | 'names', keys: string[]) {
 const seatNote = (s: Seat) => (s.util !== undefined ? `${pct(s)} of the 5-hour window`
   : s.week === undefined ? '5-hour window not measured yet' : 'no 5-hour window') +
   (s.week === undefined ? '' : `, ${Math.round(s.week * 100)}% of the week`) +   // a full week drains a seat too
-  (s.credits ? ', on credits past its limits' : '');
+  (s.credits ? ', credits available' : '');
 // (each seat's pacing as last reported, whether paced and on credits: keepSeats reports a change)
 const reportedPace = new Map<string, string>();
 const paceKey = (s: Seat) => `${pacedOf(s)}:${!!s.credits}`;
@@ -629,7 +596,7 @@ function reportSeat(s: Seat) {
   const until = reportedUntil(s), held = until !== s.until ? `held until ${new Date(s.until).toISOString()}, one job an hour` : '';
   const paced = pacedOf(s), pace = paced === undefined ? undefined : true;
   reportedPace.set(s.id, paceKey(s));
-  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? 'on credits past its limits' : '', held];
+  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? 'credits available' : '', held];
   const note = s.paused ? 'Paused: it takes no new work'
     : s.state === 'login' ? s.signIn === 'key' ? 'Needs a key' : 'Needs signing in'
     : s.state === 'closed' ? `closed by its provider (${s.closed ?? 'no reason given'}): its share of the work waits, and no other account takes it over until the board decides`
@@ -938,6 +905,12 @@ function syncSeats(list: Listed[]) {
     log(`${seat.id}: stops at ${Math.round(seat.drainAt! * 100)}% now`);
     drain(seat);
   }
+  // (a seat not read since this process started is paced by the week HQ last heard)
+  for (const l of list) {
+    const seat = SEATS.find(s => s.id === l.id);
+    if (seat && seat.week === undefined && l.week !== undefined && l.weekResets && l.weekResets > Date.now())
+      Object.assign(seat, { week: l.week, weekResets: l.weekResets });
+  }
   const kept = JSON.stringify(list.map(l => ({ id: l.id, engine: l.engine, cli: l.cli })));
   if (kept !== keptList) { saveAs(SEAT_LIST, kept); keptList = kept; }
 }
@@ -999,7 +972,7 @@ type Job = { id: number; agent: string; title: string; prompt: string; engine: s
   resumes?: Resumes;   // its author's last session on its branch (jobs.ts claim)
   ownsProject?: OwnedProject;   // the project its agent owns through its thread (closing.ts).
   inThread?: InThread;   // a task in a thread, when the company plans by threads (threads.ts)
-  resize?: { size: string | null };   // work its agent may re-size, and its size (sizes.ts withSize)
+  resize?: { size: string | null };   // its saved size and author (sizes.ts withSize)
   stopping?: string | null;   // hq stop: who stopped it, and why (jobs.ts stopJob)
   landing?: string | null;   // JSON: its last run ended well, but its push or pull request snagged; this run only lands it (land).
   agentInfo?: { name: string; role: string; department: string; charter: string; model?: string | null; effort?: string | null;
@@ -1178,7 +1151,10 @@ How work happens here:
 - Need the board mid-work? \`hq ask ... --topic "..."\` then \`hq wait <id>\` (repeat until answered): your team stays alive.
 - Plan in AI time, never developer time. An AI hour is one agent working for an hour, from its start to its end (a wait
   that ends the run, for a seat, a deploy or a card filed with \`hq request\`, is left out; an \`hq wait\` is not).
-  Size work with \`hq estimate "..."\` on done work like it. For new work, get the time for the board with \`hq when "..."\`,
+  Inspect \`hq estimate "..."\` for clean past jobs and compare their scope, briefs, reports and changes.
+  Choose the agent time yourself, then queue with \`hq job ... --size <90m> --refs <job,job> --why "scope comparison"\`.
+  Omit --refs only when no comparable job fits, and say why. HQ saves this estimate once, when queued.
+  For new work, get the time for the board with \`hq when "..." --size <90m>\`,
   with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq thread <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
   log. Write them as a report on the work, never as a reply to the board, even when you're acting on its answer.
@@ -1199,12 +1175,11 @@ const THREAD_PUSH = `pushes them to the thread's branch, which opens the thread'
   Propose it to the project's owner with \`hq propose\`. The owner or CEO queues it with
   \`hq job --when deployed:<this job>\`, which gives it a thread of its own after the release.`;
 
-// Its "Plan in AI time" line, for work its agent may re-size: re-size it once the work outgrows its brief, at the size it
-// has, so its ETA and the threads behind it play on the real one.
+// The saved size stays fixed until the CEO changes it after reported slippage.
 const resizeLine = (job: Job) => !job.resize ? '' : `
-  ${job.resize.size ? `This job is sized at ${job.resize.size}. ` : ''}When the work turns out bigger than its brief (a read
-  that finds something to fix, a fix that needs a refactor), re-size it with \`hq estimate set ${job.id} <time> "why"\`,
-  so its ETA and the threads behind it play on its real size.`;
+  ${job.resize.size ? `This job is sized at ${job.resize.size}. ` : ''}When the work turns out bigger than its brief, tell
+  the CEO what scope changed and your new estimate through \`hq say\` or a follow-up job. Only the CEO changes the
+  saved estimate. Hourly checks and plan updates replay the saved sizes without re-estimating.`;
 
 // The gates' line in the briefing, once the branch has them.
 const gatesLine = (dir: string) => existsSync(`${dir}/${GATES}`) ? `
@@ -1245,19 +1220,7 @@ async function runJob(seat: Seat, job: Job, slot: string, probe = false, adopted
   capacityTrial.note(`Job #${job.id}: ${adopted ? 'taken over' : 'claimed'}, slot ${slot}, seat ${seat.id}, engine ${job.engine}, kind ${job.kind}`);
   // A downtime job may be asked to yield (to other work, or a filling window): runJobIn stops it at its next step. A
   // probe stays one until a heartbeat with its first reading is answered.
-  const beat = setInterval(() => {
-    const util = windowUsed(seat), first = probe && util !== undefined;
-    api('heartbeat', { job: job.id, seat: seat.id, util, probe: first || undefined, ...inTheWay() }).then(r => {
-      if (first) probe = false;
-      if (!active.has(job.id)) return;
-      if (r?.stop && !stopAsked.has(job.id)) {
-        stopAsked.set(job.id, String(r.stop));
-        log(`job #${job.id}: hq stop heard`);
-      }
-      const change = heard(yielding, job.id, r, { first });
-      if (change) log(`job #${job.id}: ${change} (downtime${change === 'yielding' ? `, ${r.yield}` : ''})`);
-    }).catch(() => {});
-  }, 60_000);
+  const beat = keepHeartbeat(seat, job, slot, probe);
   let body: Record<string, unknown> | undefined, thrown: unknown;
   const spent = spentOn(cliOf(seat)), launches: Launched[] = [];
   const measured = ['claude', 'codex'].includes(cliOf(seat));
@@ -1284,6 +1247,31 @@ async function runJob(seat: Seat, job: Job, slot: string, probe = false, adopted
   finally { reporting--; }
   capacityTrial.note(`Job #${job.id}: reported ${body!.status}`);
   dropRun(RUNS, job.id, ...launches);   // (reported: nothing left for a next worker process to take over)
+}
+
+// A deadline yield stops the CLI as soon as the coordinator answers, without a tool-boundary wait.
+function keepHeartbeat(seat: Seat, job: Job, slot: string, probe: boolean) {
+  return setInterval(() => {
+    const util = windowUsed(seat), first = probe && util !== undefined;
+    api('heartbeat', { job: job.id, seat: seat.id, util, probe: first || undefined, ...inTheWay() }).then(r => {
+      if (first) probe = false;
+      if (!active.has(job.id)) return;
+      if (r?.stop && !stopAsked.has(job.id)) {
+        stopAsked.set(job.id, String(r.stop));
+        log(`job #${job.id}: hq stop heard`);
+      }
+      const change = heard(yielding, job.id, r, { first });
+      if (r?.immediate) running.get(slot)?.stop();
+      if (change) log(`job #${job.id}: ${change} (downtime${change === 'yielding' ? `, ${r.yield}` : ''})`);
+    }).catch(err => {
+      // HQ no longer has this run on this seat (it went back to the queue while this process was away): it ends here, so
+      // it stops holding its slot and its seat's place.
+      if (!(err instanceof ResponseError && err.status === 409) || !active.has(job.id) || stopAsked.has(job.id)) return;
+      stopAsked.set(job.id, 'HQ no longer has this run');
+      log(`job #${job.id}: HQ no longer has this run, so it ends here`);
+      running.get(slot)?.stop();
+    });
+  }, 60_000);
 }
 
 // Claude's auto memory, shared by work jobs.
@@ -1558,11 +1546,11 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   } else {
     await refreshing;
     syncMirror();
-    // A fresh run starts clean; a resumed one takes its folders back from root (reviewers always read a new clone).
+    // A fresh run starts clean. A paused review keeps its verdict file with its session.
     if (!job.session) remove(home);
-    if (reviewing || !job.session) remove(dir);
+    if (!job.session) remove(dir);
     for (const p of [dir, home]) if (existsSync(p)) own([p], me);
-    if (existsSync(dir) && !resumable(me, dir, branch)) remove(dir);
+    if (existsSync(dir) && !reviewing && !resumable(me, dir, branch)) remove(dir);
     const newHome = !existsSync(home), fresh = !existsSync(dir);
     if (newHome) makeDir(home, me);
     if (fresh) { makeDir(dir, me); g.clone(dir, branch, reviewing ? { sha: job.sha } : undefined, cloneIdentity(job)); }
@@ -1596,6 +1584,8 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     runAs(me, 'mkdir', ['-p', hqDir]);
     runAs(me, 'chmod', ['700', hqDir]);
     await prepareHome(seat, job, me, reviewing);
+    const gatesRoots = { checkout: dir, readable: [`${WORK}/mirror.git`] };   // what a work job's gates may touch (completion.ts)
+    if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, gatesRoots) }));
     // a resumed session (the intercom's every turn, work back from the board) gets what's in flight now, after its note,
     // and what a stop of the worker's container cut (the coordinator's cut).
     const prompt = ownSession ? (job.note ?? 'Continue where you left off.') + (job.cut ? `\n\n${job.cut}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
@@ -1604,13 +1594,13 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     const args = other ? other.run({ home, model, effort: effort ?? undefined, session, reviewing })
       : cli === 'codex'
       // Codex: automatic review of each action, sandboxed to the worktree (network allowed for installs and APIs).
-      ? codexArgs(seat, ['exec', '--json', '--approve-for-me', '-c', 'sandbox_workspace_write.network_access=true', '--skip-git-repo-check',
+      ? codexArgs(seat, ['exec', '--json', '--approve-for-me', '--dangerously-bypass-hook-trust', '-c', 'sandbox_workspace_write.network_access=true', '--skip-git-repo-check',
          ...(model ? ['-m', model] : []), ...(effort ? ['-c', `model_reasoning_effort="${effort}"`] : []),
          ...(session ? ['resume', session] : []), '-'])
       // Claude Code: auto mode, where a classifier approves safe actions and blocks risky ones. A reviewer loads only user
       // settings (claudeArgs, safety.ts), so no branch-committed config runs while it reviews.
       : claudeArgs({ reviewing, model, effort, autocompact: autocompact == null ? undefined : String(autocompact), session,
-          settings: { autoMode: AUTO_MODE, ...(job.kind === 'work' || meeting ? { hooks: inboxHooks() } : {}) },
+          settings: { autoMode: AUTO_MODE, hooks: completionHooks(job.kind, { messages: true, ...gatesRoots }) },
           agents: reviewing || meeting ? [] : teamMember(dir, me) });
     first = launch(String(job.id), args, prompt, dir, await launchEnv());
     resumed = !!carried || (!!session && !newHome);
@@ -1638,6 +1628,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   const stop = () => { if (!ended && !stopped) endRun(); };
   // hq stop's: even a session that has answered and only waits for its background team members
   const halt = () => { if (!stopped) endRun(); };
+  run.stop = halt;
   // A run taken over reads its output again from the start, for its state (its session, last message, verdict, team),
   // but what the last worker process already sent (HQ's lines, team, seat readings, a yield) isn't sent twice: quiet is
 
@@ -1808,7 +1799,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
       return;
     }
     const asked = yielding.get(job.id)?.at ?? drained.get(job.id);
-    if (asked && Date.now() - asked > YIELD_MS) stop();
+    if (yielding.get(job.id)?.immediate || (asked && Date.now() - asked > YIELD_MS)) stop();
   }, 5_000);
   // a Codex seat's window is read from the run's session log while it runs, and once more at the end
   const started = Date.now(), measure = async () => {
@@ -1834,17 +1825,8 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   clearInterval(looking);
   let code = await first.code();
   cliEnded(home, code);
-  // A reviewer that ended with its verdict neither in its final message nor in a file the stream still vouches for (it
-  // wrote the file, or a Codex one said it, then ran a command and summed up in prose): a fresh session is asked once
-  // whether that write stands, from what this stream showed (askAgainPrompt, verdict.ts), never from the session's log,
-  // which the reviewed code could rewrite. It launches only once what the run left running has ended, in a home of its
-  // own made anew outside the review's home (askHome, slots.ts), with an empty working folder, so it inherits no
-  // instructions, skills, settings or hooks from the review, and
-  // the review's session stays to resume in if it's cut short. Its answer counts only as the verdict the stream wrote,
-  // and only from a session that took no step: its stream shows Claude's, and for Codex, whose stream leaves code-mode
-  // calls out, its own log there is read too (verdictFromAnswer, seeSessionLogs). For Codex, the review's refreshed
-  // sign-in goes back to the seat before the confirmation gets the seat's sign-in. The confirmation's refreshed
-  // sign-in goes back after it ends.
+  // CLIs without completion hooks may confirm a witnessed verdict after exit (askAgainPrompt, verdict.ts), in an
+  // empty home that inherits no branch instructions. Claude Code and Codex correct answers in their Stop hooks.
   async function askVerdictAgain(ask: string) {
     const reviewAuth = handed.get(job.id), reviewFiles = handedFiles.get(job.id);
     let confirmationHome: string | undefined;
@@ -1901,7 +1883,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     return logs.every(l => l !== undefined) ? logs : undefined;
   }
   // one it can't ask says why in the log (cantAsk, verdict.ts).
-  const askable = reviewing && code === 0 && !stopped && !shuttingDown;
+  const askable = !!other && reviewing && code === 0 && !stopped && !shuttingDown;
   const ask = askable ? askAgainPrompt(verdictFile, last) : undefined;
   if (ask !== undefined) await askVerdictAgain(ask);
   else if (askable && lacksVerdict(verdictFile, last)) log(`job #${job.id}: ended without its verdict as JSON, not asked again: ${cantAsk(verdictFile)}`);
@@ -2586,7 +2568,6 @@ function startWork() {
   moveLogins();
   keepSeats();   // (each seat on HQ's list starts its loginLoop: syncSeats)
   recheckLoop();
-  sizeLoop();
   gistLoop();
   namesLoop();
   voiceLoop();

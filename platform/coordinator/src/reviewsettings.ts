@@ -1,4 +1,4 @@
-// The company's formal stage boundaries and required visual checks.
+// The company's formal stage boundaries, required visual checks and who draws a windowed thread's fixes.
 import { yamlFile } from './company.ts';
 
 // A visual check (visual.ts): the paths (those in except aside), the command that renders their previews, what to look
@@ -8,10 +8,13 @@ export type VisualCheck = { paths: string[]; except?: string[]; run: string; loo
 // block, the one from which a pull request shows something went wrong before review, and how near a thread's deadline
 // turns its first round into a later one
 const ROUNDS = { later: 2, upstream: 6, nearDeadlineHours: 12 };
+// drawWindowedChanges: a "changes" ruling on a thread with a window gives the PR's author its fix task at once
+// (proposals.ts deliverFindings) rather than waiting for the project owner to draw it
 export function reviewSettings() {
   const r = yamlFile('company/org.yaml').review ?? {};
   return {
     rounds: { ...ROUNDS, ...r.rounds } as typeof ROUNDS,
     visual: (r.visual ?? []) as VisualCheck[],
+    drawWindowedChanges: r.drawWindowedChanges === true,
   };
 }

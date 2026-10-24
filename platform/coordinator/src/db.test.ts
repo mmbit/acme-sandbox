@@ -2,10 +2,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { fixtureRepo, historicalDatabase, madeUpCodes, openFollowUps, undatedCancellations } from './fixture.ts';
+import { fixtureRepo, historicalDatabase, historicalBlocks, madeUpCodes, openFollowUps, undatedCancellations } from './fixture.ts';
 
 
 // The real coordinator on DATA_DIR and REPO_DIR, until it listens; then stopped.
@@ -137,4 +137,28 @@ test('a work follow-up briefed before replies were set is asked for hq reply whe
   for (const [role, texts] of Object.entries(inbox)) if (role !== 'running') assert.deepEqual(texts, [], role);
   assert.equal(reads(ids.fresh).prompt.match(/hq reply/g)!.length, 1, 'asked once across restarts');
   assert.equal(reads(ids.paused).note!.match(/hq reply/g)!.length, 1);
+});
+
+
+test('the normal startup migration removes old command values and preserves block strikes across restarts', async () => {
+  const directory = historicalBlocks(), repo = fixtureRepo();
+  await start(directory, repo);
+  await start(directory, repo);
+  const db = new DatabaseSync(`${directory}/hq.db`);
+  assert.deepEqual({ ...db.prepare('select job, measure, used, share from blocks').get() },
+    { job: 7, measure: 'memory', used: 3100, share: 2560 });
+  db.close();
+  assert.ok(!readFileSync(`${directory}/hq.db`).includes('fixture-retained-command'), 'old command bytes are erased too');
+});
+
+test("a step another process's read turns away is undone whole, and the server's later writes reach the file", async () => {
+  Object.assign(process.env, { DATA_DIR: mkdtempSync(`${tmpdir()}/db-test-`), REPO_DIR: fixtureRepo() });
+  const { inOneStep, remember } = await import('./db.ts');
+  const reader = new DatabaseSync(`${process.env.DATA_DIR}/hq.db`);   // as infra/report.sh reads it
+  reader.exec('begin');
+  reader.prepare('select count(*) from settings').get();
+  assert.throws(() => inOneStep(() => remember('test.turned-away', 'yes')));
+  reader.exec('commit');
+  inOneStep(() => remember('test.after', 'yes'));
+  assert.deepEqual(reader.prepare("select key from settings where key like 'test.%'").all().map((s: any) => s.key), ['test.after']);
 });

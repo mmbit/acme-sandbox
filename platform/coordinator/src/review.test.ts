@@ -39,8 +39,12 @@ github.wait = async (method, n, signal) => {
   asking++;
   try { await hold?.(method, n, signal); } finally { asking--; lastAsked = Date.now(); }
 };
-// (a refused merge is tried again within 9 ms, and the worker's merge of main comes within a poll)
-const settled = () => until(() => !asking && Date.now() - lastAsked >= 25, 'GitHub to go quiet');
+// (a refused merge is tried again within 9 ms). A merge of main the coordinator asks for is GitHub's next step too, so
+// settled also waits until the worker has taken every one (`taken`, by its poll below, which a loaded machine runs late).
+const taken = new Set<string>();
+const asked = (ask: { pr: number; head: string }) => `${ask.pr} ${ask.head}`;
+const settled = () => until(() => !asking && Date.now() - lastAsked >= 25 &&
+  review.mainMerges().every(ask => taken.has(asked(ask))), 'GitHub to go quiet');
 // No answer until the call gives up (held open as a real connection is: the call's own timer doesn't keep the process up)
 const never = (signal?: AbortSignal | null) => new Promise<void>((_, reject) => {
   const open = setInterval(() => {}, 1000);
@@ -69,9 +73,10 @@ setInterval(async () => {
   try {
     for (const ask of (await worker('main-merges')).body as Ask[]) {
       asking++;   // (the worker's answer is GitHub's next step: settled waits for it)
+      taken.add(asked(ask));
       try {
         const report = await answer(ask);
-        if (report) { await worker('main-merged', report); lastAsked = Date.now(); }
+        if (report) { await worker('main-merged', report); taken.delete(asked(ask)); lastAsked = Date.now(); }
       } finally { asking--; }
     }
   } finally { polling = false; }
@@ -487,7 +492,7 @@ async function ruleFindings(n: number, blocking: object[], outcomes?: object[]) 
   await end(ruling, { output: JSON.stringify({ decision: blocking.length ? 'changes' : 'merge', blocking, outcomes }) });
   return ruling;
 }
-const blocker = (issue: string, earlier?: number) => ({ file: ONE_FILE, line: 10, issue, earlier, caused_by: { file: ONE_FILE, line: 10 }, by: ['quill'] });
+const blocker = (issue: string, earlier?: number) => ({ file: ONE_FILE, line: 10, issue, earlier, caused_by: { file: ONE_FILE, line: 10 }, task: `Fix ${issue}`, by: ['quill'] });
 
 test('fix attempts that retire none of the blockers close nothing: each gets another round on the same pull request', async () => {
   const n = 61320;
@@ -499,7 +504,7 @@ test('fix attempts that retire none of the blockers close nothing: each gets ano
     await ruleFindings(n, [blocker('A still', a.id), blocker('B still', b.id)],
       [{ finding: a.id, outcome: 'not fixed' }, { finding: b.id, outcome: 'not fixed' }]);
     assert.deepEqual(prs(n), { round, status: 'open' });
-    assert.deepEqual(doing(n), ['Fixing review notes']);
+    assert.deepEqual(doing(n), [null]);
   }
   assert.deepEqual(findingsOf(n).map(f => f.outcome), ['not fixed', 'not fixed']);
 });
@@ -539,7 +544,7 @@ test('an unruled push stays in the same round, and a ruling without outcomes dec
   later(n);
   await ruleFindings(n, [blocker('another instance', a.id)], [{ finding: a.id, outcome: 'not fixed' }]);
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
-  assert.deepEqual(doing(n), ['Fixing review notes']);
+  assert.deepEqual(doing(n), [null]);
 });
 
 test('a reintroduced blocker is judged on the next fix attempt before a new blocker can decide it', async () => {
@@ -680,7 +685,7 @@ test("each finding that reached the author gets its outcome from the check after
   const [quill] = await claim(n, j => j.kind === 'consolidate');
   assert.doesNotMatch(quill.prompt, /"outcomes"/, 'nothing reached the author yet');
   await end(quill, { output: JSON.stringify({
-    blocking: [{ file: ONE_FILE, line: 3, case: 'x', issue: 'the total counts the fee twice', also: [{ file: ONE_FILE, line: 9 }], fix: 'y', by: [reviewer.agent, 'quill'] }],
+    blocking: [{ file: ONE_FILE, line: 3, case: 'x', issue: 'the total counts the fee twice', also: [{ file: ONE_FILE, line: 9 }], fix: 'y', task: 'Count the fee once', by: [reviewer.agent, 'quill'] }],
     nonblocking: [{ file: ONE_FILE, line: 7, issue: 'a name that says nothing', fix: 'z', by: ['quill'] }], decision: 'changes', summary: 'two' }) });
   const [fee, name] = findingsOf(n);
   assert.deepEqual([fee.kind, name.kind], ['blocking', 'nonblocking']);
@@ -695,18 +700,19 @@ test("each finding that reached the author gets its outcome from the check after
   assert.match(check.prompt, /\{"outcomes": \[/);
   // the fee is still counted twice in its other place: the same finding, sent back, not a new one
   const sentBack = (outcomes: object[]) => ({ output: JSON.stringify({ outcomes,
-    blocking: [{ file: ONE_FILE, line: 9, issue: 'the fee still counts twice here', earlier: fee.id, by: ['quill'] }], decision: 'changes', summary: 'one left' }) });
+    blocking: [{ file: ONE_FILE, line: 9, issue: 'the fee still counts twice here', earlier: fee.id, task: 'Count the fee once', by: ['quill'] }], decision: 'changes', summary: 'one left' }) });
   // an outcome it doesn't know judges nothing and decides nothing: the check runs again
   await end(check, sentBack([{ finding: fee.id, outcome: 'not fixd' }, { finding: name.id, outcome: 'disputed', right: 'author' }]));
   assert.deepEqual(findingsOf(n).map(f => f.outcome), [null, null]);
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
   later(n);
   const [retry] = await claim(n);
-  assert.equal(retry.prompt, check.prompt);
+  assert.ok(retry.prompt.startsWith(check.prompt), 'the retry keeps the original review brief');
+  assert.ok(retry.prompt.includes(`finding #${fee.id}'s outcome "not fixd"`), 'the retry names the refused outcome');
   await end(retry, sentBack([{ finding: fee.id, outcome: 'not fixed' }, { finding: name.id, outcome: 'disputed', right: 'author' }]));
   assert.equal(findingsOf(n).length, 2);
   assert.deepEqual(prs(n), { round: 2, status: 'open' }, 'no progress closes nothing: the work carries on here');
-  assert.deepEqual(doing(n), ['Fixing review notes']);
+  assert.deepEqual(doing(n), [null]);
   assert.deepEqual(findingsOf(n).map(f => [f.outcome, f.right]), [['not fixed', null], ['disputed', 'author']]);
   const rows = db.prepare("select substr(created, 1, 10) day, pr, kind, file, line, issue, by, outcome, right from findings where pr = ?").all(n);
   const read = reading(rows as Parameters<typeof reading>[0]);
@@ -720,7 +726,7 @@ test("a check after the author's fixes that leaves a finding without its outcome
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
-  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', by: ['quill'] }, { file: ONE_FILE, line: 30, issue: 'two', by: ['quill'] }],
+  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }, { file: ONE_FILE, line: 30, issue: 'two', task: 'Fix two', by: ['quill'] }],
     decision: 'changes', summary: 'two' }) });
   const [one, two] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed both.' });
@@ -744,7 +750,7 @@ test('hq review acts on a completed replacement ruling left behind by an older s
   const n = 1363;
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
-  await end((await claim(n))[0], { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
+  await end((await claim(n))[0], { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
   const [one] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] } });
   const [first] = await claim(n);
@@ -768,7 +774,7 @@ test('a verdict whose outcomes decide nothing is no ruling: `hq review` runs the
     await submit(n, { files: [ONE_FILE] });
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const [quill] = await claim(n, j => j.kind === 'consolidate');
-    await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
+    await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
     const [one] = findingsOf(n);
     await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed it.' });
     for (let i = 0; i < 2; i++) {
@@ -800,7 +806,7 @@ test("a merge check judges no findings: one left open by the pass it checks does
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
-  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', by: ['quill'] }],
+  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }],
     nonblocking: [{ file: ONE_FILE, line: 30, issue: 'a name that says nothing', by: ['quill'] }], decision: 'changes', summary: 'two' }) });
   const [one, name] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed the one; the name stays.' });
@@ -1001,7 +1007,8 @@ test('a push of the same head while its ruling runs leaves that ruling standing:
   assert.equal(ruling.stage, 'ruling');
   await submit(n, { sha });
   await end(ruling, verdict('changes'));
-  assert.deepEqual(doing(n), ['Fixing review notes']);
+  // (its author's fix, under the work's title: the ruling names no task.)
+  assert.deepEqual(queued(n).map(j => [j.kind, j.stage]), [['work', 'fix']]);
   await submit(n);
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
@@ -1265,6 +1272,9 @@ test("a pull request from a call item's job is reviewed against the board's word
     assert.doesNotMatch(run.prompt, /"asked"/, 'only Quill rules on it');
   }
   assert.ok(quill.prompt.includes(WORDS_IN) && quill.prompt.includes('"asked"'));
+  const triage = db.prepare("select prompt from jobs where pr = ? and stage = 'triage' order by id desc").get(n) as { prompt: string };
+  assert.ok(triage.prompt.includes(WORDS_IN), 'the triage chooses readers who can judge the ask');
+  assert.doesNotMatch(triage.prompt, /"asked"/, "judging it is the ruling's, not the triage's");
   assert.ok(quill.prompt.indexOf(WORDS_IN) < quill.prompt.indexOf("The panel's reports:"), 'the words come before the reports');
   await submit(n);   // the fix job's round: same branch, same item
   const second = await decide(n, 'changes');
@@ -1838,7 +1848,7 @@ test('a ruling GitHub never took is acted on after all: merged, or back to its a
   const ch = 965;
   await submit(ch); await decide(ch, 'changes');
   await review.actOnRulings();
-  assert.deepEqual(doing(ch), ['Fixing review notes']);
+  assert.deepEqual(doing(ch), [null]);
 });
 
 test('a merge that went through but was never heard back is recorded as merged, not sent back to its author', async () => {
@@ -2532,7 +2542,7 @@ const writes = (run: Run) => JSON.parse(run.writes ?? '[]');
 async function ruleWithTouchups(n: number, ruling: Record<string, unknown>, touchup: Record<string, unknown>) {
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n);
-  await end(quill, { output: JSON.stringify({ summary: 'ok', touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], ...ruling }), touchup });
+  await end(quill, { output: JSON.stringify({ summary: 'ok', touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name', ...ruling }), touchup });
 }
 // The author's job on the branch ends with a push at `sha`, its branch at `before` until then
 const pushAt = (n: number, files: string[], sha: string, before: string, changed: string[], triage?: string[]) =>
@@ -2563,7 +2573,7 @@ test('a kept security touch-up permits its co-author to rule in the same round',
   await pushFix(n, [file]);
   await ruleWithTouchups(n, { decision: 'changes', blocking: [] }, { sha: head, files: [file] });
   const [check] = await claim(n);
-  assert.match(check.title, /^Checking review touch-ups/);
+  assert.deepEqual([check.title, check.step], ['Keep the clearer name', null], "the consolidator's title for its touch-ups");
   assert.ok(check.prompt.includes(head));
   await submit(n, { files: [file], sha: head, pushedSince: { sha: head, files: [] } }, check);
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
@@ -2578,12 +2588,24 @@ test('a kept security touch-up permits its co-author to rule in the same round',
   assert.deepEqual(queued(n), []);
 });
 
+test("a changes ruling's fix round is named by the tasks its consolidator gave the findings, never a template", async () => {
+  const n = 1519;
+  await pushFix(n, [PAGE]);
+  for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+  const [quill] = await claim(n, j => j.kind === 'consolidate');
+  const finding = (issue: string, task: string) => ({ file: PAGE, line: 1, case: 'a visit', issue, fix: 'fix it', task });
+  await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'two fixes', blocking: [
+    finding('The level cannot finish', 'Let the level finish'), finding('The ship is invisible', 'Show the ship'),
+    finding('The ship flickers', 'Show the ship')] }) });
+  assert.deepEqual(queued(n).map(j => [j.title, j.step]), [['Let the level finish; Show the ship', null]]);
+});
+
 test('a ruling that lists touch-ups is a "changes" even when it says merge, and a touch-up its author changed gets the fix check', async () => {
   const n = 1503, head = newSha();
   await pushFix(n, [PAGE]);
   await ruleWithTouchups(n, { decision: 'merge' }, { sha: head, files: [PAGE] });
   assert.equal(github.pr(n).merged, false, 'not merged before its author checked the touch-up');
-  assert.deepEqual(doing(n), ['Checking review touch-ups']);
+  assert.deepEqual(doing(n), [null]);
   await pushAt(n, [PAGE], newSha(), head, [PAGE]);
   const [quill] = await claim(n);
   assert.equal(quill.stage, 'ruling');
@@ -2667,18 +2689,39 @@ test('a failed same-round touch-up check retries against its ruling and leaves a
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
 
+// Without thread order a fix round runs under the tasks its ruling names, all of them in full; a task that isn't a
+// title makes the ruling unreadable, so the consolidator runs again, and the log says why.
+test("a fix round's title is every task its ruling names in full, and a task that isn't a title leaves the ruling unread", async () => {
+  const rule = async (n: number, tasks: string[]) => {
+    await pushFix(n, [PAGE]);
+    for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+    const [quill] = await claim(n, j => j.kind === 'consolidate');
+    const blocking = tasks.map((task, i) => ({ file: PAGE, line: i + 1, issue: `wrong ${i}`, task, by: ['quill'] }));
+    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking }) });
+    return quill;
+  };
+  const long = ['Count the fee once in the total the basket shows before checkout', 'Show the delivery date the shop promised on the order page',
+    'Keep the voucher field open after a code the shop refuses'];
+  await rule(1531, long);
+  assert.deepEqual(queued(1531).map(j => [j.kind, j.title]), [['work', long.join('; ')]], 'every task, none clipped');
+
+  const quill = await rule(1532, ['Count the fee once', 'x'.repeat(141)]);
+  assert.deepEqual(queued(1532).map(j => [j.kind, j.agent]), [['consolidate', quill.agent]], 'no fix job: the ruling runs again');
+  const said = (await h.feed()).filter(e => e.type === 'log' && e.text.startsWith('PR #1532:')).map(e => e.text);
+  assert.ok(said.some(t => t.includes(`its fix tasks can't title the round: blocking finding 2's "task" isn't one: a task's title is one line of up to 140 characters`)), said.join('\n'));
+});
 test('touch-ups that never reached the branch, or beside blocking findings, go to the author as notes to fix', async () => {
   const n = 1505;
   await pushFix(n, [PAGE]);
   await ruleWithTouchups(n, { decision: 'changes', blocking: [] }, { refused: "review/1505 isn't at abc1234 any more" });
   const [fix] = await claim(n);
-  assert.match(fix.title, /^Fixing review notes/);
+  assert.doesNotMatch(fix.title, /review notes|touch-ups/, "no template: its work's own title");
   assert.ok(fix.prompt.includes("review/1505 isn't at abc1234 any more"), 'the author hears why');
 
   const m = 1506, head = newSha();
   await pushFix(m, [PAGE]);
-  await ruleWithTouchups(m, { decision: 'changes', blocking: [{ file: PAGE, line: 2, issue: 'wrong total', fix: 'add the fee' }] }, { sha: head, files: [PAGE] });
-  assert.deepEqual(doing(m), ['Fixing review notes']);
+  await ruleWithTouchups(m, { decision: 'changes', blocking: [{ file: PAGE, line: 2, issue: 'wrong total', fix: 'add the fee', task: 'Add the fee' }] }, { sha: head, files: [PAGE] });
+  assert.deepEqual(queued(m).map(j => [j.title, j.step]), [['Add the fee; Keep the clearer name', null]]);
   await pushAt(m, [PAGE], head, head, []);
   assert.deepEqual(stages(m), ['ruling'], 'blocking findings left: the push is checked, not merged');
 });
@@ -2750,9 +2793,9 @@ test("touch-ups kept after the board's word their ruling went by was withdrawn g
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const told = await tell(queued(n).find(j => j.kind === 'consolidate')!, 'Only something insecure blocks the site now.');
     const [quill] = await claim(n, j => j.kind === 'consolidate');
-    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking: [], touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }] }),
+    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking: [], touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' }),
       touchup: { sha: head, files: [PAGE] } });
-    assert.deepEqual(doing(n), ['Checking review touch-ups']);
+    assert.deepEqual(doing(n), [null]);
     return told;
   };
   const n = 1510, head = newSha();
@@ -2842,12 +2885,12 @@ test('a changes ruling reaches the project owner once and only the last named fi
     h.cancelQueued();
     const owner = await h.start({ agent: 'juno', title: 'Draw the review fixes' });
     const ids = inbox.get(8007)!.findings.map(finding => finding.id);
-    assert.equal((await h.hq(owner, 'inbox', 'accept', 'findings:8007', '--for', 'wren', '--findings', String(ids[0]))).code, 0);
+    assert.equal((await h.hq(owner, 'inbox', 'accept', 'findings:8007', '--for', 'wren', '--findings', String(ids[0]), '--title', 'Make the movement right')).code, 0);
     const first = await h.claim('claude');
     assert.equal(first!.id, inbox.tasks(8007, 1)[0].id);
     await submit(8007, { files, result: 'Movement report from Wren' }, first!);
     assert.equal(prs(8007).round, 1, 'the unassigned finding holds the round');
-    assert.equal((await h.hq(owner, 'inbox', 'accept', 'findings:8007', '--for', 'moss', '--findings', String(ids[1]))).code, 0);
+    assert.equal((await h.hq(owner, 'inbox', 'accept', 'findings:8007', '--for', 'moss', '--findings', String(ids[1]), '--title', 'Draw the art right')).code, 0);
     const last = await h.claim('claude');
     assert.equal(last!.id, inbox.tasks(8007, 1)[1].id);
     await h.finish(last!, { status: 'failed', result: 'The worker clone failed' });
@@ -2915,7 +2958,7 @@ test('a changes ruling on work with no thread queues its author\'s fix at once, 
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
     await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'Movement needs a fix', blocking: [
-      { file: files[0], line: 1, issue: 'Movement cannot finish', fix: 'Complete movement' }
+      { file: files[0], line: 1, issue: 'Movement cannot finish', fix: 'Complete movement', task: 'Let movement finish' }
     ] }) });
     const inbox = await import('./reviewinbox.ts');
     await until(() => queued(n).some(job => job.kind === 'work'), "the author's fix to be queued");
@@ -3022,11 +3065,11 @@ test('an owner reassigns a twice-failed automatic fix and its final push starts 
     await submit(n, {files}, work);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish'}]})});
+    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
     const inbox = await import('./reviewinbox.ts');
     await until(() => !!inbox.get(n), 'the finding to arrive');
     const id = inbox.get(n)!.findings[0].id;
-    assert.equal((await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'wren', findings:String(id)})).status, 200);
+    assert.equal((await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'wren', findings:String(id), title:'Make what the review found right'})).status, 200);
     const first = await h.claim('claude');
     assert.equal(first?.agent, 'wren');
     await h.finish(first!, {status:'failed', result:'The worker clone failed'});
@@ -3035,7 +3078,7 @@ test('an owner reassigns a twice-failed automatic fix and its final push starts 
     assert.equal(retry?.agent, 'wren');
     await h.finish(retry!, {status:'failed', result:'The worker clone failed again'});
     assert.equal(prs(n).status, 'stuck');
-    const reassigned = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', findings:String(id)});
+    const reassigned = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', findings:String(id), title:'Make what the review found right'});
     assert.equal(reassigned.status, 200, JSON.stringify(reassigned.body));
     const last = await h.claim('claude');
     assert.equal(last?.id, reassigned.body.job);
@@ -3236,7 +3279,7 @@ test('a redraw refuses a destination with a pending review fix without holding t
     await decide(n + 1, 'close');
     await submit(n, {}, existing);
     await decide(n, 'changes');
-    const fix = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark'});
+    const fix = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', title:'Make what the review found right'});
     assert.equal(fix.status, 200, JSON.stringify(fix.body));
     const count = h.jobs.listJobs().length;
     const refused = await h.agent('proposals/accept', owner.token, {id:`findings:${n + 1}`, for:'bolt', thread:destination});
@@ -3330,12 +3373,12 @@ for (const assignment of ['inbox', 'job'])
     await submit(replacementPr, {branch, files}, replacement!);
     for (const run of await claim(replacementPr)) await end(run);
     const [ruler] = await claim(replacementPr);
-    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish'}]})});
+    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
     const inbox = await import('./reviewinbox.ts');
     await until(() => !!inbox.get(replacementPr), 'the replacement findings');
     const finding = inbox.get(replacementPr)!.findings[0].id;
     const fixed = assignment === 'inbox'
-      ? await h.agent('proposals/accept', owner.token, {id:`findings:${replacementPr}`, for:'wren', findings:String(finding)})
+      ? await h.agent('proposals/accept', owner.token, {id:`findings:${replacementPr}`, for:'wren', findings:String(finding), title:'Make what the review found right'})
       : await h.agent('job', owner.token, {agent:'wren', thread:destination, title:'Fix the redraw', prompt:'Fix movement', findings:String(finding)});
     assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
     const first = await h.claim('claude');

@@ -41,7 +41,7 @@ export function lines(f: Forecast) {
     ...giving(open, f.now),
     ...[...stalled(), ...[getRoom().line ?? []].flat(), ...roomLow(f.now), ...seatsNear(f)],
     ...[...tests(f.now), ...timedOut(f.now), ...pastSize(f)],
-    ...[...stuckPrs(), ...failed(f.now)],
+    ...[...stuckPrs(f.now), ...failed(f.now)],
     ...[...heldByNeeds(open, f.now), ...inboxes(f.now), ...meetingAsks(f.now), ...sprawl(f.now)],
   ];
 }
@@ -77,7 +77,7 @@ function missed(open: OpenThread[], now: number) {
         o.finish === null
           ? `no finish in sight for ${deadline}`
           : `finish ${clock(o.finish, now)}, ${span(-o.slack!)} past ${deadline}`;
-      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}`;
+      return `${threadName(t)}: ${where}. Held by: ${causeOf(o, now)}. ${movedWords(threadMoved(t.id), now)}`;
     });
 }
 
@@ -186,17 +186,47 @@ function pastSize(f: Forecast) {
   });
 }
 
-function stuckPrs() {
+function stuckPrs(now: number) {
   const prs = db.prepare("select number, author, round, why from prs where status = 'stuck' order by number").all() as {
     number: number;
     author: string;
     round: number;
     why: string | null;
   }[];
-  return prs.map(
-    p => `pull request #${p.number} (${p.author}'s, round ${p.round}) is stuck${p.why ? `: ${p.why}` : ''}`,
-  );
+  return prs.map(p => {
+    const stuck = `pull request #${p.number} (${p.author}'s, round ${p.round}) is stuck${p.why ? `: ${p.why}` : ''}`;
+    return `${stuck}. ${movedWords(prMoved(p.number), now)}`;
+  });
 }
+
+// When work last moved, for the hourly check to tell work that moved since the last check from work only acted on: a new
+// commit pushed, a review round opened or its panel or ruling asked (a run that isn't a re-run of one), a ruling given,
+// the merge and its deploy. A job queued, started, re-sent or ended with no push or ruling moves nothing. A thread's
+// work is its tasks' pull requests'. Their review loops' jobs from db.ts jobs_pr_loop.
+const threadMoved = (thread: string) =>
+  latestMove(
+    "select number from prs where branch in (select coalesce(branch, 'job/' || id) from jobs where thread = $thread)",
+    { thread },
+  );
+const prMoved = (pr: number) => latestMove('select $pr', { pr });
+const latestMove = (prs: string, args: Record<string, string | number>) =>
+  (
+    db
+      .prepare(
+        `select max(at) at from (select at from pushes where pr in (${prs})
+        union all select min(created) from jobs indexed by jobs_pr_loop where pr in (${prs}) and kind in ('review', 'consolidate')
+          group by pr, round, sha, kind, coalesce(stage, '')
+        union all select finished from jobs indexed by jobs_pr_loop where pr in (${prs}) and kind = 'consolidate'
+          and coalesce(stage, '') != 'triage' and status = 'done' and voided is null
+          and id in (select ruling from finding_rulings)
+        union all select merged_at from prs where number in (${prs})
+        union all select (select min(finished) from deploys where ok = 1 and fetched > p.merged_at) from prs p
+          where number in (${prs}))`,
+      )
+      .get(args) as { at: string | null }
+  ).at;
+const movedWords = (at: string | null, now: number) =>
+  at ? `Last moved ${age(now - Date.parse(at))} ago` : 'Nothing on it has moved yet (no push, round, merge or deploy)';
 
 // Work that failed lately with nothing in its place.
 function failed(now: number) {

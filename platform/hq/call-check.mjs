@@ -325,16 +325,16 @@ async function callScreen() {
   // a line that doesn't go through (the coordinator answers 404) says so as an error, gone once the board types again
   await page.fill('#dir-title', 'Hello');
   await page.click('#dir-send');
-  await page.waitForSelector('#dir-msg.err svg');
+  await page.waitForSelector('#dir-msg .alert.problem svg');
   await page.type('#dir-title', '!');
-  seen.typed = [await message(), await page.evaluate(() => document.querySelector('#dir-msg').classList.contains('err'))];
+  seen.typed = [await message(), await page.evaluate(() => document.querySelector('#dir-msg .alert') !== null)];
   await page.fill('#dir-title', '');
   await page.click('#call');
   while (!line) await page.waitForTimeout(50);
   line.close({ code: 4000 }); line = null; // (the line drops the call)
   await page.waitForSelector('#call-screen', { state: 'hidden' });
   seen.dropped = await message();
-  seen.droppedError = await page.evaluate(() => document.querySelector('#dir-msg.err svg') !== null);
+  seen.droppedError = await page.evaluate(() => document.querySelector('#dir-msg .alert.problem svg') !== null);
   await page.click('#call');
   seen.next = await message();
   while (!line) await page.waitForTimeout(50);

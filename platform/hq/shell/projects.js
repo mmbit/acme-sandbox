@@ -8,9 +8,9 @@ import { scene } from './stage.js';
 import { panelOpen } from './panel.js';
 import { flyTo } from './hud.js';
 import './projectkeys.js';
-import { levelHtml } from './projectlevels.js';
+import { levelHtml, SKELETON } from './projectlevels.js'; // (SKELETON)
 import { rowState } from './threads.js';
-import { jobSheet, followSteps } from './jobsheet.js';
+import { jobSheet, followSteps, findingsOf } from './jobsheet.js';
 import * as levels from './levels.js';
 import { sortable, sorting, sortGesture } from './sorting.js';
 import { sides } from './sides.js';
@@ -38,7 +38,7 @@ let board = null,
   room = null,
   // where the board is: a business, a project and a thread in it, or a group (recurring, unsorted); jobId: the job open
   // over it (lookedUp: one asked for by a link that the board no longer holds); steps: whether the open job's steps
-  // show; back: whether it's turned over
+  // show; back: whether it's turned over; notice: what came of a work link's job, if it isn't there (gone, unopened)
   view = {
     business: null,
     project: null,
@@ -48,10 +48,12 @@ let board = null,
     showDone: false,
     steps: false,
     back: false,
-    gone: false,
+    notice: null,
     unkept: false,
   },
   lookedUp = null,
+  // the job a work link asked for, until the view has moved to its thread (placeOf).
+  landing = null,
   // the done threads the board opened, each with its jobs, by id
   closed = new Map(),
   // the latest move about the view, a token: one that a later move, closing or opening the view supersedes (supersede)
@@ -101,8 +103,8 @@ export function initProjects() {
   });
 }
 // The view is one big key over the dimmed page, as the home page's keys come out big: it flies out of from (the element
-// tapped to open it) and back. at: a job to open (a link to its report), a group (the HUD's line), or a business, a
-// project or a thread in it (HQ's search; done: a done thread, refresh() loads it.).
+// tapped to open it) and back. at: a job to open (a work link: desk.js openJob), on its own thread, a group (the HUD's
+// line), or a business, a project or a thread in it (HQ's search; done: a done thread, refresh() loads it.).
 export async function openProjects(at = {}) {
   const was = projectsOpen() && !shutting();
   switched(true);
@@ -111,7 +113,12 @@ export async function openProjects(at = {}) {
     sfx.open();
     levels.fly(modal(), at.from);
   }
-  view = { ...view, jobId: at.job ?? null, group: at.group ?? null, steps: false, back: false, gone: false };
+  view = { ...view, jobId: at.job ?? null, group: at.group ?? null, steps: false, back: false, notice: null };
+  // (a work link lands on the job's thread, the job's card in front: at once where the board read before holds it,
+  // else once refresh() has it.)
+  landing = at.job ?? null;
+  if (landing !== null) origin = null;
+  land();
   if (at.group) view = { ...view, business: null, project: null, thread: null };
   if (at.business || at.project)
     view = {
@@ -125,6 +132,7 @@ export async function openProjects(at = {}) {
   // it up to date in place: the keys never drop in twice.)
   const ready = Boolean(board) && levels.holds(view, work());
   if (ready) paint(was ? '' : 'down');
+  else if (landing !== null) modal().innerHTML = SKELETON;
   else if (!board || !was) modal().innerHTML = LOADING;
   await refresh(ready || was ? '' : 'down');
   clearInterval(timer);
@@ -160,10 +168,11 @@ async function refresh(motion = '') {
     if (view.jobId && !jobsOnBoard().some(j => j.id === view.jobId) && lookedUp?.id !== view.jobId) {
       lookedUp = await loadJob(world.dev, view.jobId);
       if (!lookedUp) {
-        view.gone = true;
-        view.jobId = null;
+        view.notice = 'That job isn’t there any more.';
+        view.jobId = landing = null;
       }
     }
+    await land(true);
     await keepCovers(board);
   } catch {
     if (!board)
@@ -189,18 +198,34 @@ function jobsOnBoard() {
   const placed = threads.flatMap(([p, t]) => t.jobs.map(j => ({ ...j, project: p, projectThread: t })));
   return [...placed, ...(board?.unsorted ?? []), ...(board?.meetings ?? []), ...(lookedUp ? [lookedUp] : [])];
 }
+const onBoard = id => jobsOnBoard().find(x => x.id === id && x.projectThread);
+// A work link's job, once its place is known: the view moves there, the job's card still in front. read: the board's
+// work is read, so a job of a done thread has it loaded (as a tap on its tile does), and one in none opens where the view
+// is. One whose thread doesn't load opens there too, saying so; a move made while it loads ends the landing (supersede).
+async function land(read = false) {
+  const id = landing;
+  if (id === null || id !== view.jobId) return;
+  const thread = read && !onBoard(id) && lookedUp?.id === id && lookedUp.thread;
+  const loaded = thread && !closed.has(thread) ? await loadThread(world.dev, thread).catch(() => 'failed') : null;
+  if (landing !== id) return;
+  if (loaded === 'failed') view.notice = 'This job’s thread didn’t open. Open its link again to try.';
+  else if (loaded) closed.set(thread, loaded);
+  const place = levels.placeOf(onBoard(landing));
+  if (place) view = { ...view, ...place };
+  if (place || read) landing = null;
+}
 // ---------------------------------------------------------------- moving about
 // A move to a change of the view: the level's keys leave, and it commits unless a later move came meanwhile
 async function go(change, motion = '') {
   const mine = supersede();
   await levels.leave($('#projects .pj-level'), motion);
   if (move !== mine) return;
-  view = { ...view, gone: false, unkept: false, ...change };
+  view = { ...view, notice: null, unkept: false, ...change };
   paint(motion);
 }
-// A new move: the one before it, and a done thread's load or failure on its tile, end
+// A new move: the one before it, a done thread's load or failure on its tile, and a work link's landing, end
 function supersede() {
-  opening = null;
+  opening = landing = null;
   return (move = {});
 }
 function tapped(e) {
@@ -331,24 +356,6 @@ function toggled(e) {
   if (d.open && j) followSteps(d, j, id => loadJobLog(world.dev, id));
 }
 
-// ---------------------------------------------------------------- the open review's findings
-// loaded as its sheet opens, then painted on it: null while they load, 'failed' when they didn't.
-let found = { job: null, list: null };
-function findingsOf(j) {
-  if (!j?.findings) return (found = { job: null, list: null }).list;
-  if (found.job === j.id) return found.list;
-  found = { job: j.id, list: null };
-  loadFindings(world.dev, j.id)
-    .then(r => r.findings)
-    .catch(() => 'failed')
-    .then(list => {
-      if (found.job !== j.id) return;
-      found.list = list;
-      paint();
-    });
-  return null;
-}
-
 // ---------------------------------------------------------------- drawing
 function paint(motion = '') {
   const el = $('#projects');
@@ -364,12 +371,16 @@ function paint(motion = '') {
   };
   const sameJob = el.querySelector('.pj-card')?.dataset.jobOpen === String(view.jobId ?? '');
   const job = view.jobId ? jobsOnBoard().find(x => x.id === view.jobId) : null;
-  const gone = view.gone ? '<p class="pj-notice" role="status">That job isn’t there any more.</p>' : '',
+  const notice = view.notice ? `<p class="pj-notice" role="status">${view.notice}</p>` : '',
     unkept = view.unkept ? UNKEPT : '';
   const starved = room ? `<p class="pj-notice" role="status">${esc(room)}</p>` : '';
-  modal().innerHTML = `<div class="pj-board">${starved}${gone}${unkept}${levelHtml(l, { view, board, opening })}</div>`;
+  modal().innerHTML = `<div class="pj-board">${starved}${notice}${unkept}${levelHtml(l, { view, board, opening })}</div>`;
   el.querySelector('.pj-pop')?.remove();
-  const listed = findingsOf(job);
+  const listed = findingsOf(
+    job,
+    id => loadFindings(world.dev, id),
+    () => paint(),
+  );
   el.insertAdjacentHTML(
     'beforeend',
     jobSheet(job, jobsOnBoard(), { steps: view.steps, back: view.back, findings: listed }),

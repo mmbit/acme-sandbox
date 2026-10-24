@@ -1,7 +1,4 @@
-// Background life around HQ: townsfolk on the sidewalks and in the park (walkers, joggers, someone
-// with a dog, a cyclist) and now and then a car or the bus on the street. They follow the time of day
-// and the weather, are few and calm, and are drawn simpler than our agents (smaller, no faces) so the
-// board never mistakes them for staff. They're scenery: never tappable.
+// Townsfolk round HQ, and now and then a car or bus: scenery, never tappable
 import { canvas, rng, pick, clamp, rand } from '../../util.js';
 import { SX, SY, box, ellipse, F, sprite, INK } from './iso.js';
 
@@ -60,7 +57,7 @@ export function updateTown(T, S, dt) {
   }
 }
 
-// ---- drawing: small, faceless, muted figures, cached per look and frame
+// ---- drawing: small, faceless, muted figures, so the board never mistakes them for staff, cached per look and frame
 const cache = new Map();
 function figure(p, frame) {
   const key = `${p.kind}${p.coat}${p.seed % 4}${frame}${p.front}${p.umbrella}`;

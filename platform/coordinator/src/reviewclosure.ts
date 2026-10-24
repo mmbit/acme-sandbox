@@ -4,7 +4,7 @@ import * as redraws from './redraws.ts';
 import * as pauses from './pauses.ts';
 import * as jobs from './jobs.ts';
 import * as reviewwork from './reviewwork.ts';
-import type { Item } from './reviewinbox.ts';
+import { BAD_TITLE, taskTitle, type Item } from './reviewinbox.ts';
 import { findThread, type JobThreadAsk } from './projects.ts';
 
 export function hold(branch: string, pr: number) {
@@ -59,6 +59,9 @@ function draw(item: Item, by: string, ask: JobThreadAsk & { for?: unknown }) {
   if (latest.status !== 'closed') return 'this branch has a newer review: use its current findings';
   const proposal = db.prepare('select status from proposals where id = ?').get(item.proposal) as { status: string };
   if (proposal.status !== 'open') return 'this closed review has already been redrawn or dropped';
+  // (the accepter's title, else its work's own.)
+  const title = ask.title == null ? redrawnTitle(item.branch) : taskTitle(ask.title);
+  if (!title) return ask.title == null ? 'name the redrawn work for what it does with --title "..."' : BAD_TITLE;
   const target = reviewwork.target(item, ask, by);
   if ('refusal' in target) return target.refusal;
   const thread = 'thread' in target ? target.thread : null;
@@ -67,7 +70,7 @@ function draw(item: Item, by: string, ask: JobThreadAsk & { for?: unknown }) {
   db.prepare('update threads set branch = null where branch = ?').run(item.branch);
   const job = jobs.createJob({
     agent: String(ask.for),
-    title: `Redraw work from PR #${item.pr}`,
+    title,
     thread,
     code: jobs.codeFrom({ pr: item.pr }) ?? undefined, // (the work redrawn keeps its task's code.)
     prompt: `${item.brief}\n\nRedraw this work on the replacement thread. Keep the intended outcome and address the named findings.`,
@@ -189,3 +192,14 @@ function paused(branch: string) {
 }
 
 const workOnBranch = "select id from jobs where kind = 'work' and coalesce(branch, 'job/' || id) = ?";
+
+// The redrawn work keeps the title of the task that opened its branch
+const redrawnTitle = (branch: string) =>
+  (
+    db
+      .prepare(
+        `select title from jobs where kind = 'work' and stage is null and coalesce(branch, 'job/' || id) = ?
+      order by id limit 1`,
+      )
+      .get(branch) as { title: string } | undefined
+  )?.title;

@@ -1,6 +1,7 @@
 // hq projects and hq thread <id>: each thread's live estimate from HQ's forecast (the coordinator's forecast.ts and
 // outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its planned finish
 // against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of the status report.
+import { when } from './when.ts';
 import * as api from './api.ts';
 import { at, duration, waitWords, type Wait } from './estimate.ts';
 import { print, stop, text } from './output.ts';
@@ -43,6 +44,8 @@ export const projectsHelp = `
                                                      has left, what it waits on, its planned finish against its window
                                                      and the slack that leaves, and the job that goes on next (HQ's live
                                                      estimate, played on the queue as it is)
+   hq projects [words] --extra-seat 5x|20x            the whole live plan before and after an added Claude Max seat,
+                                                     all windows included, with capacity assumptions and confidence
    hq projects <words>                               the same for the threads a project's or thread's name or a few words
                                                      find ("The checkout"), by project, everything in names: what
                                                      the board hears on a call (its eta tool)`;
@@ -52,6 +55,11 @@ export const help = `
                                                      waits`;
 
 export async function projects(args: string[]) {
+  if (args.includes('--extra-seat')) {
+    const i = args.indexOf('--extra-seat');
+    if (i !== args.length - 2) stop('usage: hq projects [words] --extra-seat 5x|20x');
+    return when.run(args.slice(i));
+  }
   if (args.length) return printOutlooks(args.join(' '));
   const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the threads."));
   if (!threads.length) return print('No open threads.');

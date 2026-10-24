@@ -92,11 +92,12 @@ mail: { domain: example.com, boardOnly: [board], groups: [board, hello] }
 #   buttonRadius: 12
 #   dark: false
 # A tester invite's door (the board's Share, To try out): a line of the company's own for testers, in the small line
-# under the door's steps, per language (en, nl). Left out: none.
+# under the door's steps, per language (the platform's: language.ts). Left out:
+# none.
 # testerNote:
 #   en: "Read the Product safety page before you use what you ordered."
-# The tester door's last step, after its own three, per language (en, nl): a line of the company's own, such as where
-# to send a word about the parcel. Left out: none.
+# The tester door's last step, after its own three, per language (the platform's: language.ts): a line of the company's
+# own, such as where to send a word about the parcel. Left out: none.
 # testerFeedback:
 #   en: "Tell us how unpacking it went at hello@example.com."
 # The phone line's message for callers who aren't the board, per language (en, nl, de, …): hello's one word per
@@ -165,7 +166,8 @@ phoneLine:
 #     (1K, 2K, 4K); default gemini-nano-banana-2.1 at 2K
 #   monthly_usd: the month's cap on edits, in USD as the model's provider bills them (default 20): past it, HQ refuses
 #     edits until the 1st (UTC)
-#   notes: repo paths the keeper reads first (the company's rules for such photos)
+#   notes: repo paths the keeper reads first: the company's rules for such photos, where the prints come from and who
+#     sends the board's photo cards
 #   products: { id, name, about }: what the board photographs; about tells the model what the product is (its size,
 #     material, print), the more exactly the better it keeps it
 #   styles: { id, name, prompt, ratio }: the shots on offer; prompt describes the setting and light; ratio is one of

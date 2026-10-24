@@ -93,6 +93,7 @@ const answer = async (req, res) => {
   }
   if (req.method === 'GET' && disconnects-- > 0) return res.destroy();
   if (req.url === '/api/agent/runs/helper') return res.end(JSON.stringify({
+    browser: process.env.HELPER_BROWSER ?? 'render',
     kinds: JSON.parse(process.env.HELPER_KINDS ?? '[{"name":"render","present":true}]') }));
   if (req.url === '/api/agent/runs') {
     const spec = JSON.parse(Buffer.from(req.headers['x-run'], 'base64url').toString());

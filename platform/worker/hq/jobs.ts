@@ -31,7 +31,13 @@ export const job = {
   // (the title's step alone)
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--thread <project>/<thread> | --thread new:<project> "name" "done when"] [--check]
-          [--item <item> | --lands <job>] [--findings <id,id,...>] [--now] [--only <id>]
+          [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
+          [--by <when | project/slug | none>] --size <90m> [--refs <job,job>] --why "scope comparison"
+                                                     first inspect hq estimate for clean past jobs and judge their scope.
+                                                     --size is your estimate of agent time (90m, 2h, 1h30m), --refs names
+                                                     the past jobs you leaned on, and --why explains the comparison or
+                                                     why no past job fits. This estimate is saved when queued and stays
+                                                     fixed. Only the CEO changes it later when work slips.
                                                      hand work to someone as a separate job, with the brief in the file
                                                      (- : on stdin); prints the job number. The title is what the board
                                                      reads in its projects view: plain words for the work, no job, card,
@@ -76,7 +82,12 @@ export const job = {
                                                      It carries any call item, handled when it ends done.
                                                      A time for the work is its thread's window (hq window): a call
                                                      item's time goes there by itself, and a job with one that would
-                                                     be in no open thread is refused.
+                                                     be in no open thread is refused. --by <when> gives it one as it's
+                                                     queued (never later than its thread's), --by <project>/<slug> the
+                                                     window of the deliverable it serves. The board's ask (handing out
+                                                     an item, on a call, from the intercom) with no time, on a thread
+                                                     nothing timed waits on, asks the CEO: the CEO's own is refused
+                                                     until it says --by <when>, <project>/<slug> or none.
                                                      --when <event>: it starts once that has happened, and reads what did
                                                      (repeat it: all of them). deploy or deploy:<n>, the next n deploys from
                                                      now; recreated:<service>, a deploy that recreates that container
@@ -90,6 +101,12 @@ export const job = {
                                                      --only <id>: the task does work only one engine and model do
                                                      (company/org.yaml engineOnly, by its id), so it runs on them
                                                      from the start, whoever it's for.
+                                                     --notes: the CEO, routing the board's sent notes (hq route): the
+                                                     task takes on those notes, at the end of its brief.
+                                                     --expedite (the CEO only): a structural fix to HQ itself, when a fault
+                                                     could also stall its own fix. It starts first, ahead of the plan,
+                                                     pacing and pauses, in no thread; once a push passes its gates and
+                                                     tests it merges and deploys, and its review comes after (hq expedite)
    hq job move <job id> <project>/<slug>             move work still going on into another thread, its pull request's
                                                      reviews and fix rounds with it (its agent, its thread's owner, the CEO
                                                      or Process), naming threads that need the old one for their owners to decide`,
@@ -100,9 +117,11 @@ export const job = {
     // (--only)
     const { values: review, args: withoutReview } = takeValues(
       given,
-      ['--findings', '--code', '--only'],
+      ['--findings', '--code', '--only', '--notes', '--by', '--size', '--refs', '--why'],
       'No job was queued',
     );
+    if (review.refs !== undefined && !/^#?[1-9][0-9]*(,#?[1-9][0-9]*)*$/.test(review.refs))
+      stop('No job was queued: --refs takes past job numbers, comma-separated');
     const { flags, args: withWhen } = takeItemFlags(withoutReview, 'job');
     const { when, args: withThread } = takeWhen(withWhen);
     const { thread, newThread, args: withSwitches } = takeThread(withThread);
@@ -110,20 +129,29 @@ export const job = {
     const downtime = withSwitches.includes('--downtime');
     const check = withSwitches.includes('--check');
     const now = withSwitches.includes('--now');
+    const expedite = withSwitches.includes('--expedite');
     if (now && !process.env.HQ_CALL) stop('No job was queued: --now is for a call, where work waits for its end');
-    const args = withSwitches.filter(arg => !['--new', '--downtime', '--check', '--now'].includes(arg));
+    const args = withSwitches.filter(arg => !['--new', '--downtime', '--check', '--now', '--expedite'].includes(arg));
     // A call's agent isn't asked: it has what's in flight in its call context, and its tool runs one command.
     const { agent, title, after, afterRequest, more, briefPath } = readArguments(args);
-    if (!isNew && !process.env.HQ_CALL) await refuseOverlap(agent);
+    // (--notes: the routing check has read the open work in hq route.)
+    if (review.notes !== undefined && !/^#?[0-9]+(,#?[0-9]+)*$/.test(review.notes))
+      stop('No job was queued: --notes takes the note numbers, comma-separated (hq route lists them)');
+    if (!isNew && !process.env.HQ_CALL && review.notes === undefined) await refuseOverlap(agent);
     // The brief is read from the file, never passed in argv. HQ adds who assigned it.
     const brief = readTextOrStdin(briefPath).replace(/\s+$/u, '');
     const body = {
       agent,
       title,
       after,
+      ...(review.size && { size: review.size }),
+      ...(review.size && { refs: review.refs ? review.refs.split(',').map(id => Number(id.replace('#', ''))) : [] }),
+      ...(review.why && { why: review.why }),
       ...(review.findings && { findings: review.findings }),
       ...(review.code && { code: review.code }),
       ...(review.only && { only: review.only }),
+      ...(review.notes && { notes: review.notes.split(',').map(id => Number(id.replace('#', ''))) }),
+      ...(review.by && { by: review.by }),
       ...(afterRequest !== null && { afterRequest }),
       prompt: brief === '' ? title : brief,
       ...(downtime && { downtime: true }),
@@ -131,6 +159,7 @@ export const job = {
       ...(newThread !== undefined && { newThread }),
       ...(check && { check: true }),
       ...(now && { now: true }),
+      ...(expedite && { expedite: true }),
       ...(flags.item !== undefined && { item: Number(flags.item) }),
       ...(flags.lands !== undefined && { lands: Number(flags.lands) }),
       ...(when.length > 0 && { when }),
@@ -229,8 +258,13 @@ function printQueued(
   if (when.length > 0) print(`It starts once these have happened: ${when.join(', ')}.`);
   if (present(queued.untilCall))
     print("It starts once this call ends: what's added to it before then goes into its brief.");
-  // (the time given, or its item's, on its thread now)
+  // (the time given, or its item's, on its thread now; or the window of the deliverable it serves, or none: askwindow.ts.
   if (present(queued.deadline)) print(`Its thread's deadline: ${minute(String(queued.deadline))} UTC.`);
+  const serves = queued.serves as { thread: string; deadline: string } | undefined;
+  if (serves) print(`It serves ${text(serves.thread)}'s window: ${minute(serves.deadline)} UTC.`);
+  if (present(queued.untimed)) print(text(queued.untimed));
+  if (present(queued.askedCeo))
+    print(`It's the board's ask with no window: ${text(queued.askedCeo)}, the CEO, is asked for its time.`);
   if (item !== undefined) {
     print(`It carries item #${item}: handled when #${id} ends done (it hasn't started yet).`, ...stopped(queued));
   }
@@ -283,6 +317,28 @@ async function moveJob([id, thread, ...rest]: string[]) {
   const moved = JSON.parse(answer.body) as { thread: string; jobs: number[]; notices?: string[] };
   print(`${moved.jobs.map(n => `#${n}`).join(', ')} on ${text(moved.thread)} now.`, ...(moved.notices ?? []).map(text));
 }
+
+export const expedite = {
+  help: `
+   hq expedite <job id>                              (the CEO only) a structural fix to HQ itself goes first: a queued or
+                                                     running job starts ahead of everything and merges on its gates and
+                                                     tests; one that has pushed, its pull request still in review, merges
+                                                     now if its last push passed them. Its review follows on what merged,
+                                                     and anything blocking is its author's next job. Not a thread's task
+                                                     (queue the fix with hq job --expedite), nor ordinary work`,
+
+  async run([id, ...rest]: string[]) {
+    if (!/^[0-9]+$/.test(id ?? '') || rest.length) stop('usage: hq expedite <job id>');
+    const answer = await api.call('expedite', { body: { id: Number(id) } });
+    const done = api.parseOrNull(answer.body);
+    if (shown(done?.ok) !== 'true') stop(`Couldn't expedite #${id}: ${api.errorIn(answer.body, 'no answer')}`);
+    print(
+      done.merged !== undefined
+        ? `PR #${shown(done.merged)} merged expedited; it deploys within a minute, and its review follows on what merged.`
+        : `#${id} is expedited: it starts ${shown(done.starts)}, and merges once a push passes its gates and tests.`,
+    );
+  },
+};
 
 export const stopJob = {
   help: `

@@ -1153,6 +1153,18 @@ test('notes not yet sent get an early look about hourly; a fix it made thanks th
   assert.notEqual(next.id, look.id);
   assert.match(next.prompt, new RegExp(`## Note #${total} `));
   assert.doesNotMatch(next.prompt, /Pay does nothing|pink/);
+  // the look waits for its sort (sorting.ts): the CEO names it, and it may start.
+  const proposals = await import('./proposals.ts'),
+    { ceo } = await import('./company.ts');
+  const { proposal } = db
+    .prepare(
+      "select s.proposal from sorts s join proposals p on p.id = s.proposal where s.job = ? and p.status = 'open'",
+    )
+    .get(look.id) as { proposal: number };
+  const sorted = proposals.accept(proposal, ceo(), { title: 'Make Pay work in the basket', code: 'PAY' }) as {
+    job: number;
+  };
+  assert.equal(sorted.job, look.id);
   // the look marks what it fixed (hq note <id> fixed): its agent's notes only, in a line
   db.prepare("update jobs set engine = 'test' where id = ?").run(look.id);
   const claimed = await call('/api/worker/claim', {

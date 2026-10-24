@@ -67,7 +67,14 @@ async function callHandedOut(
   const { call, item } = agreed(what);
   const followUp = await h.start({ agent: 'bolt', title: 'Follow up on your call with the board', thread });
   h.db.prepare('update calls set job = ? where id = ?').run(followUp.id, call);
-  const handed = await h.agent('job', followUp.token, { agent: 'chime', title: 'Wire the key', prompt: 'Do it', item });
+  // (an item with no time says it has none, so the CEO isn't asked for one: askwindow.ts)
+  const handed = await h.agent('job', followUp.token, {
+    agent: 'chime',
+    title: 'Wire the key',
+    prompt: 'Do it',
+    item,
+    ...(what.due == null && { by: 'none' }),
+  });
   assert.equal(handed.status, 200, JSON.stringify(handed.body));
   await h.finish(followUp);
   const wire = (await h.claim(jobEngine(handed.body.id)))!;

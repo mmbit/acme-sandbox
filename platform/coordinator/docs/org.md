@@ -1,7 +1,11 @@
 # Review configuration in org.yaml
 
 The company supplies general review candidates in `roles.reviewers` and eligible consolidators in
-`roles.consolidator` (one ID or a preference list). The first eligible consolidator triages each round.
+`roles.consolidator` (one ID or a preference list). Each round's triage goes to the eligible consolidator whose
+seats start it soonest: the fewest review runs ahead of it per ready seat of its engine, the list's order breaking
+ties. Running reviews count ahead. Queued runs count ahead according to the shared plan's board lane, latest
+start and job order. A paced seat counts when the prospective run's shared scheduling key passes
+`planner.pacedTakes`: its latest start precedes the weekly reset, or it serves the board lane (`panel.ts`).
 The default is the company's CEO. Co-authors may review and rule on work they wrote together. A sole author is
 excluded from panel and consolidator candidates, including the CEO and on retries. If the listed consolidators
 are ineligible, general reviewers are considered next, then other Claude or Codex staff.
@@ -25,7 +29,10 @@ reason, consolidator and `reviewers: [{agent, reason, files, domain, security}]`
 
 With thread planning on, a `changes` or `close` ruling creates one item in the project owner's inbox. Each finding
 carries its domain and files. The owner draws fix tasks on the thread, naming the finding IDs they address. HQ does
-not create an author's fix job. The last fix task's push starts the next round and its fix check. A `close`
+not create an author's fix job, unless the company sets `review.drawWindowedChanges: true`: then a `changes` ruling on
+a thread with a window is accepted at once for the pull request's author, with every blocking finding (or the
+touch-ups' check) on the reviewed thread, and the owner's running session hears of the task and may cancel and redraw
+it (`projects.md`). The last fix task's push starts the next round and its fix check. A `close`
 item (the change shouldn't land at all) lets the owner drop the work, or redraw it only if it's still wanted in another
 form. A `board` ruling waits for the board's decision. Work that isn't right yet stays on its pull request for as many
 rounds as it takes: nothing closes it for that. With thread planning off, `changes` makes the author's fix job on the

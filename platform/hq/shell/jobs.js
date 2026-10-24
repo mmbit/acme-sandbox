@@ -1,16 +1,13 @@
-// Jobs as the board reads them, shared by the projects view (projects.js, threads.js, jobsheet.js), the HUD's line and
-// the looks: a job's state and its chip's word, where it is now in words, what another waits for, and a title with its
+// Jobs as the board reads them, shared by the projects view (projects.js, threads.js, jobsheet.js) and the looks: a job's state and its chip's word, where it is now in words, what another waits for, and a title with its
 // asides quieter.
 import { esc } from '../util.js';
 import { withJobLinks } from './prose.js';
 import { timeOf } from '../world/clock.js';
-import { loadJobs, loadSchedule } from './data.js';
 import { engineName } from './engine.js';
 
-// Where a job is, as the board reads it: its chip's word, and whether it's active, waiting or done
+// Where a job is, as the board reads it: its chip's word
 export const state = j => j.status === 'queued' ? (j.paused ? 'paused' : j.ready ? 'next' : holdsOf(j).length ? 'waits' : 'later') : j.status;
 export const CHIP = { running: 'working', blocked: 'for you', paused: 'paused', next: 'next', waits: 'waits', later: 'later' };
-export const tabOf = j => j.status === 'running' ? 'active' : j.status === 'queued' || j.status === 'blocked' ? 'waiting' : 'done';
 // The job another waits for: where it is now, or how a further wait's job ended without merged work
 export const AFTER = { queued: 'not started yet', running: 'being worked on', board: 'waiting for you', review: 'in review', call: 'waiting for your call',
   unmerged: 'finished without merged work', failed: 'stopped with an error', cancelled: 'cancelled' };
@@ -30,12 +27,6 @@ export function titleHtml(j) {
 export const nameText = (x, field = 'title') => x[field];
 export const nameHtml = (x, field = 'title') => (field === 'title' ? withJobLinks(x[field]) : esc(x[field]));
 
-// The HUD's status line (hud.js): how many jobs are active, waiting and recurring
-export async function jobCounts(dev) {
-  const [list, rec] = await Promise.all([loadJobs(dev), loadSchedule(dev).catch(() => [])]);
-  const n = t => list.filter(j => tabOf(j) === t).length;
-  return { active: n('active'), waiting: n('waiting'), recurring: rec.length };
-}
 // Where a job is now, in words: what it waits for (a --when job's events too, holdsOf), or when it started or ended
 export function whereNow(j, { who, ago }) {
   const s = state(j), engine = engineName(j.engine);

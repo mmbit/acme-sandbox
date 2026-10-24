@@ -106,11 +106,13 @@ export async function sync(t = now()) {
     }
     await photos.push(); // a claim's photos, once HQ has its card (photos.ts)
     // what the customer wrote after their email to a person reached HQ ("Anything you write here goes with it"), with
-    // the helper's answers in between, as more on the same card. And a case marked a health case after HQ had it (a detail
+    // the helper's answers in between, as more on the same card: for a person (person: true) once the helper handed them
+    // to one again (person.ts again()), else as lines the helper answered itself, which put no settled card back on the
+    // board's list. And a case marked a health case after HQ had it (a detail
     // the helper took out, engine.ts dropNotes(); a term added to the lists since, drafts.ts write()): HQ hears it once, as
     // `health: true` on a `more`, with chat or none, so its card drops an open ask and no AI redrafts it
-    const more = db.prepare(`select c.id, c.app, c.kind, c.conversation, c.chat_to, c.health, c.health_hq from cases c where c.sent_hq is not null
-      and ((c.health = 1 and c.health_hq is null) or (c.kind = 'person'
+    const more = db.prepare(`select c.id, c.app, c.kind, c.conversation, c.chat_to, c.health, c.health_hq, c.asked from cases c where c.sent_hq is not null
+      and ((c.health = 1 and c.health_hq is null) or (c.kind = 'person' and c.asked is not null) or (c.kind = 'person'
       and exists (select 1 from messages m where m.conversation = c.conversation and m.who = 'me' and m.text != '' and (m.health is null or m.health = 'person') and m.id > coalesce(c.chat_to, 0))))
       order by c.id limit 20`).all() as any[];
     for (const c of more) {
@@ -121,9 +123,12 @@ export async function sync(t = now()) {
         const lines = person ? chat(c.conversation, c.chat_to ?? 0, true) : [];
         const upto = person ? (db.prepare(`select max(id) as id from messages where conversation = ? and id > ? and text != '' and (health is null or health = 'person')`)
           .get(c.conversation, c.chat_to ?? 0) as any).id : null;
-        if (lines.length || health) await call('/api/care/cards', { kind: 'more', app: c.app, case: `H-${1000 + c.id}`, chat: lines, ...(health ? { health: true } : {}) });
-        db.prepare('update cases set chat_to = ?, health_hq = coalesce(health_hq, ?) where id = ?')
-          .run(person ? Math.max(c.chat_to ?? 0, upto ?? 0, lines.at(-1)?.id ?? 0) : c.chat_to, health ? t : null, c.id);
+        const asked = person && c.asked != null;
+        if (lines.length || health || asked) await call('/api/care/cards', { kind: 'more', app: c.app, case: `H-${1000 + c.id}`, chat: lines,
+          ...(health ? { health: true } : {}), ...(person ? { person: asked } : {}) });
+        // (an ask that came while it went stays, for the next run)
+        db.prepare('update cases set chat_to = ?, health_hq = coalesce(health_hq, ?), asked = case when asked is ? then null else asked end where id = ?')
+          .run(person ? Math.max(c.chat_to ?? 0, upto ?? 0, lines.at(-1)?.id ?? 0) : c.chat_to, health ? t : null, c.asked, c.id);
       } catch (err: any) { logSyncFailure(t, err, `care: HQ didn't take more for case H-${1000 + c.id}:`); }
     }
     // a draft that came after its card (the model was slow or down when the case was filed), and the board's redrafts
@@ -194,6 +199,7 @@ export async function sync(t = now()) {
     // consent card's "ask us to delete it"): care's copy goes too, a bug report's bundle with it (ON DELETE CASCADE)
     const erased = erase(s?.erased);
     if (erased) console.log(`care: ${erased} case(s) deleted: the customer asked`);
+    replies(s?.replies); // whether a person's reply went, for the helper's facts (helper.ts) and its words (person.ts again())
     heardBoardLang(s?.board); // before the drafts below, so they're written in it
     busy.set({ busy: ['on', 'off'].includes(s?.busy) ? s.busy : 'auto', queue: { waiting: Number(s?.queue?.waiting) || 0, oldest: s?.queue?.oldest ?? null } });
     drafts.redraft(s?.redraft, t); // the board's "Ask for changes": each id once, posted above when it's written
@@ -221,6 +227,18 @@ function withFaults(facts: any) {
 export function erase(refs: unknown) {
   const del = db.prepare('delete from cases where id = ?');
   return byRef(refs, id => del.run(id).changes);
+}
+
+// HQ's `replies`: when the board's last reply to each case went, and whether its card is done. HQ lists the cards changed in
+// its last 30 days; a case keeps what it heard last after that
+export function replies(list: unknown) {
+  if (!Array.isArray(list)) return 0;
+  const put = db.prepare('update cases set replied = ?, settled = ? where id = ? and (replied is not ? or settled is not ?)');
+  const of = new Map(list.map(r => [String(r?.case), r]));
+  return byRef([...of.keys()], id => {
+    const r = of.get(`H-${1000 + id}`), sent = Date.parse(r?.sent), replied = Number.isFinite(sent) ? sent : null, settled = r?.settled === true ? 1 : null;
+    return put.run(replied, settled, id, replied, settled).changes;
+  });
 }
 
 export const nudge = () => { sync().catch(() => { /* logged in sync */ }); };

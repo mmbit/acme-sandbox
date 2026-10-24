@@ -2,7 +2,8 @@
 // Each job it has running, with the project and thread it serves as the projects view names them, its latest words for
 // it, its own time and lines. With several, one at a time, its place among them and a step either way (a tap or the
 // arrow keys); the one shown stays through the panel's redraws until it ends.
-import { esc, mins } from '../util.js';
+import { esc } from '../util.js';
+import { lasted } from '../../../shared/signs/signs.js';
 import * as world from '../world/world.js';
 import { sfx } from './audio.js';
 import { body, panelOpen, refreshAgent } from './panel.js';
@@ -16,7 +17,7 @@ export function initRightNow() {
 // the job in hand as the Wire look's panes show it: how long it's been on, and the lines it has added and removed
 const onJob = (A, job = A) =>
   A.state === 'working' && job.since
-    ? `<small class="on-job">${mins(job.since)} on it · +${job.lines?.add ?? 0} −${job.lines?.del ?? 0} lines</small>`
+    ? `<small class="on-job">${lasted(Date.now() - job.since)} on it · +${job.lines?.add ?? 0} −${job.lines?.del ?? 0} lines</small>`
     : '';
 let shownJob = null; // { agent, job }: the running job stepped to
 export function rightNow(A) {
@@ -41,7 +42,7 @@ export function rightNow(A) {
 // A panel opened anew reads who's at work again before it says (main.js refreshOrg): what the building holds can be old,
 // a feed cut off while a tablet slept misses one job ending and the next starting. Until a read is in (that one, or the
 // next after it failed), or the feed brings a status of theirs after it was asked, a quiet line instead, and one that
-// says so when the read failed (the board's picture #67.)
+// says so when the read failed.
 let reading = null; // { agent, asked, failed }
 export function readFresh(agent) {
   if (world.dev) return; // (the mock org runs no jobs)

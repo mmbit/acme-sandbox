@@ -5,10 +5,11 @@
 // A uid's processes in /proc are therefore the job's, counted together.
 // A job past its share has its heavy run blocked: the command its CLI started that holds the most of what it's past, with
 // everything under it (runsOf), never the CLI. The worker tells the job's agent in that command's own output where to run
-// it instead (worker.ts blockRun, the coordinator's blocks.ts). One run per look, so it goes on only while it's still past.
+// it instead (the worker's blocks.ts blockRun, the coordinator's blocks.ts). One run per look, so it goes on only while
+// it's still past.
 // - Memory: a job past mostMb in all, and the job holding the most past shareMb while the worker is starved (no slot
 //   could start long enough, and work is waiting).
-// - Processes: a job with more than `processes` of them.
+// - Processes: a job with more than `processes` non-CLI processes.
 // - CPU: a job's processes using more than half the cores get nice 10, and their sessions' groups too (the kernel shares
 //   the CPU between sessions first: sched_autogroup), so the others' come first. Renicing another uid's process takes
 //   CAP_SYS_NICE, which the container hasn't got, so it runs as the slot's uid: lowering one's own priority needs nothing.
@@ -164,7 +165,7 @@ export type Block = {
 // A job's runs, each by its first process: a command its CLI started (its parent is the CLI's, or none of the job's
 // processes: a push's checks, run after the CLI has ended, or one left behind) with every process under it, the first
 // one first. The CLI's own processes are in none.
-export function runsOf(processes: ProcessSnapshot[], cli: Set<number>) {
+function runsOf(processes: ProcessSnapshot[], cli: Set<number>) {
   const byPid = new Map(processes.map(p => [p.pid, p]));
   const rootOf = (p: ProcessSnapshot) => {
     const seen = new Set([p.pid]);
@@ -294,17 +295,16 @@ export async function stopRun(
 }
 
 // The command the agent ran, as the words about its block name it: the run's first program that isn't a shell (a tool's
-// bash -c around it says nothing), its arguments redacted (a command line can hold a token) and cut short.
+// bash -c around it says nothing). HQ redacts full saved secret values before shortening it for the run output.
 export function commandOf(run: ProcessSnapshot[]) {
   const named = run.find(p => !WRAPPERS.has(p.comm)) ?? run[0];
   try {
     const args = readFileSync(`/proc/${named.pid}/cmdline`, 'utf8').split('\0').filter(Boolean).join(' ');
-    return redact(args).slice(0, COMMAND_SHOWN) || named.comm;
+    return redact(args) || named.comm;
   } catch {
     return named.comm;
   }
 }
-const COMMAND_SHOWN = 300;
 
 // The words about a block go where the agent reads its command's end: the run's first process's stderr (what its tool
 // returns), opened as the job's own user and appended to (root opening another's descriptor could write where the job may

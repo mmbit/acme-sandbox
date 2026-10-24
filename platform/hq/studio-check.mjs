@@ -396,7 +396,7 @@ for (const [size, viewport] of Object.entries(SIZES)) {
   await context.close();
 }
 {
-  const { ctx, page, problems } = await open({ width: 1440, height: 900 });
+  const { context, page, errors } = await open({ width: 1440, height: 900 });
   await photos(page);
   await bigShown(page, approval, 'desktop: Approvals');
   await zoomed(page, approval, 'desktop, Approvals', { touch: false });
@@ -413,8 +413,8 @@ for (const [size, viewport] of Object.entries(SIZES)) {
     'This should change: the box grows, none is cut off',
   );
   await shot(page, 'change-desktop');
-  assert.deepEqual(problems, []);
-  await ctx.close();
+  assert.deepEqual(errors, []);
+  await context.close();
 }
 
 // ---- part two: the real routes (not dev mode)

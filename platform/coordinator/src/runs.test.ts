@@ -596,10 +596,10 @@ test("a job's runs waiting for a helper are four at most: each holds its bundle 
 });
 
 // Kinds of run as a company declares them in org.yaml, for one test
-function declareKinds(t: TestContext, kinds: string) {
+function declareKinds(t: TestContext, kinds: string, settings = '  helper: the lent machine\n') {
   const file = `${h.repo}/company/org.yaml`;
   const before = readFileSync(file, 'utf8');
-  writeFileSync(file, `${before}\nruns:\n  helper: the lent machine\n  kinds:\n${kinds}`);
+  writeFileSync(file, `${before}\nruns:\n${settings}  kinds:\n${kinds}`);
   t.after(() => writeFileSync(file, before));
 }
 
@@ -996,6 +996,25 @@ test('a kinds list is refused instead of silently becoming the default kind', as
   const machine = (await h.agent('runs/helper', job.token)).body;
   assert.deepEqual(machine.kinds, []);
   assert.deepEqual(machine.leftOut, [{ name: 'kinds', why: 'a map of kinds, keyed by name' }]);
+  await h.finish(job);
+});
+
+test("the browser harnesses' kind is runs.browser, render when it names none, left out when it names no kind", async t => {
+  const job = await h.start({ agent: 'bolt' });
+  for (const [browser, expected, leftOut] of [
+    ['', 'render', false],
+    ['  browser: shots\n', 'shots', false],
+    ['  browser: Shots!\n', '', true],
+  ] as const)
+    await t.test(browser || 'none', async row => {
+      declareKinds(row, TWO_KINDS, browser);
+      const machine = (await h.agent('runs/helper', job.token)).body;
+      assert.equal(machine.browser, expected);
+      assert.equal(
+        machine.leftOut.some((kind: { name: string }) => kind.name === 'browser'),
+        leftOut,
+      );
+    });
   await h.finish(job);
 });
 

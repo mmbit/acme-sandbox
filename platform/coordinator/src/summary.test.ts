@@ -1,3 +1,4 @@
+// Queue-time estimate contract fixtures.
 // node --test src/summary.test.ts   (throwaway DATA_DIR and the test company): hq summary, the CEO's picture, and the
 // hourly follow-through check that carries it, the one job HQ makes the CEO of it (an alarm aside: alarms.ts). What
 // finished since the last check (finished.ts) and what threatens the plan (threats.ts) have a case for each kind of
@@ -7,7 +8,7 @@ import { test, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness, type Running } from './harness.ts';
 import { followthroughFixture } from './followthrough.fixture.ts';
-import { recordedDeploy } from './reviewfixture.ts';
+import { completeTriage, recordedDeploy } from './reviewfixture.ts';
 
 const RUNS_TOKEN = 'runs-secret';
 const h = await harness('summary', { env: { RUNS_TOKEN } });
@@ -89,7 +90,10 @@ test('hq summary: what the board asked for and how long it has waited, what thre
     ),
   );
   assert.match(text, new RegExp(`^- #${notes} \\(bolt: The board's notes: The deck\\), waiting \\d+ min$`, 'm'));
-  assert.match(text, /^- pull request #71 \(kit's, round 2\) is stuck: no head commit$/m);
+  assert.match(
+    text,
+    /^- pull request #71 \(kit's, round 2\) is stuck: no head commit\. Nothing on it has moved yet \(no push, round, merge or deploy\)$/m,
+  );
   assert.match(text, new RegExp(`^- #${failed.id} \\(kit: The importer\\) failed \\d+ min ago$`, 'm'));
   assert.match(text, /^Queue: \d+ open jobs\. In the last 6 h, \d+ came in and \d+ ended: it grew by \d+\.$/m);
   assert.deepEqual(
@@ -429,12 +433,49 @@ test('a thread giving: its finish past its aim inside its deadline, by how much 
   assert.deepEqual(threatsNaming(giving), [], 'aimed at its deadline, it holds');
 });
 
+test('a late thread and a stuck pull request say when their work last moved: a push or a round, never a job queued, re-sent or ended with nothing pushed', async () => {
+  reset();
+  const start = held();
+  const late = h.dueThread({ deadline: start - 10 * MIN });
+  const task = await h.start({ agent: 'moss', title: 'The shop page', thread: late });
+  assert.equal((await h.finish(task, { pr: 73, branch: 'job/shop', sha: 'a'.repeat(40) })).status, 200);
+  await completeTriage(h, 73, []);
+  const ruling = db.prepare("select id from jobs where pr = 73 and stage = 'ruling' and status = 'queued'").get() as {
+    id: number;
+  };
+  const reviewed = await h.start({ agent: 'kit', title: 'The importer' });
+  const branch = `job/${reviewed.id}`;
+  assert.equal((await h.finish(reviewed, { pr: 72, branch, sha: 'b'.repeat(40) })).status, 200);
+  h.stuckReview(72);
+  mock.timers.setTime(start + 20 * MIN);
+  // what last hour's check did about them: the reviews re-sent (hq review), whose triage runs and fails again, and a fix
+  // on each that pushes the same commit, a ruling that ends without a verdict, and one more only queued
+  const asker = await h.start({ agent: 'juno', title: 'Follow-through check' });
+  const [resent] = (await h.agent('review', asker.token, { pr: 72 })).body.jobs as number[];
+  await h.finish(asker);
+  assert.equal((await h.finish(await h.claimJob(resent), { status: 'failed' })).status, 200);
+  const fix = await h.start({ agent: 'kit', title: 'Fix the review', branch, pr: 72 });
+  assert.equal((await h.finish(fix, { pr: 72, branch, sha: 'b'.repeat(40) })).status, 200);
+  h.stuckReview(72);
+  assert.equal((await h.finish(await h.claimJob(ruling.id), { output: '{}' })).status, 200);
+  const unstick = await h.start({ agent: 'moss', title: 'Unstick the shop page', thread: late });
+  assert.equal((await h.finish(unstick, { pr: 73, branch: 'job/shop', sha: 'a'.repeat(40) })).status, 200);
+  h.queue({ agent: 'moss', title: 'Unstick it again', thread: late });
+  const later = start + 40 * MIN;
+  mock.timers.setTime(later);
+  assert.match(threatsNaming(late, later)[0], /\. Held by: .+\. Last moved 40 min ago$/);
+  assert.match(threatsNaming('pull request #72', later)[0], /is stuck.*\. Last moved 40 min ago$/);
+});
+
 test('a running job past its size by 15 minutes, with the agent time it ran and its size', async () => {
   reset();
   const start = held();
-  const job = await h.start({ agent: 'bolt', title: 'The shop deck', queuedBy: 'juno' });
-  const sized = await h.agent('sizes', job.token, { job: job.id, time: '10m', why: 'A deck like the last' });
-  assert.equal(sized.status, 200, JSON.stringify(sized.body));
+  const job = await h.start({
+    agent: 'bolt',
+    title: 'The shop deck',
+    queuedBy: 'juno',
+    size: { agent_ms: 10 * MIN, refs: [], why: 'A deck like the last' },
+  });
   assert.deepEqual(threatsNaming(`#${job.id} `, start + 24 * MIN), [], '14 minutes past it is no news');
   assert.deepEqual(threatsNaming(`#${job.id} `, start + 26 * MIN), [
     `#${job.id} (bolt: The shop deck) has run 26 min of agent time, 16 min past its size of 10 min`,

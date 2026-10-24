@@ -2,7 +2,7 @@
 // sidewalk, a street with a loading bay, a park with a duck pond), trees, lamps, the delivery van,
 // and the sky backdrop with sun, moon, stars, clouds and a distant city.
 import { rng, pick, mix, clamp, lerp, canvas, trim } from '../../util.js';
-import { FH, SLAB, CORE, PLAZA, ENTRANCE, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, ellipse, text, textW } from './iso.js';
+import { FH, SLAB, CORE, PLAZA, ENTRANCE, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, wallYCol, wallXCol, ellipse, text, textW, upright } from './iso.js';
 import { today, season, holidays, darkness } from '../../world/clock.js';
 // the calendar and the weather are the world's; the rest of the brownstone still imports them from here
 export { today, season, holidays, darkness };
@@ -259,12 +259,15 @@ function bikeFlat(col, basket) {
   return c;
 }
 
+// the room's name on a plate on the wall at depth d (the basement's soil face, or the island's curb when curb), its
+// letters upright on the wall's slant
 function label(g, rm, X, d, zb, curb) {
   const len = X ? rm.x1 - rm.x0 : rm.y1 - rm.y0;
   const s = rm.name.toUpperCase().slice(0, Math.floor((len * 16 - 12) / 4)), w = textW(s) + 4;
-  const f = canvas(w, 7), fg = f.getContext('2d');
-  F(fg, 0, 0, w, 7, curb ? '#3b3355' : '#fdf3e1'); text(fg, s, 2, 1, curb ? '#fdf3e1' : INK);
-  X ? onWallY(g, f, rm.x0 + 0.25, d, zb) : onWallX(g, f, rm.y0 + 0.25 + w / 16, d, zb);
+  const f = canvas(w, 7), fg = f.getContext('2d'), a = X ? rm.x0 + 0.25 : rm.y0 + 0.25 + w / 16;
+  const rows = Array.from({ length: w }, (_, u) => (X ? wallYCol : wallXCol)(a, d, zb, 7, u)[1]);
+  F(fg, 0, 0, w, 7, curb ? '#3b3355' : '#fdf3e1'); upright(fg, s, 2, 1, curb ? '#fdf3e1' : INK, rows);
+  (X ? onWallY : onWallX)(g, f, a, d, zb);
 }
 
 // ---- the delivery van (drawn per frame from two cached poses) ----

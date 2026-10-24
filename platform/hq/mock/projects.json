@@ -357,7 +357,8 @@
         "size_ms": 5400000,
         "start": 1790413800000,
         "done": 1790419200000,
-        "merged": null
+        "merged": 1790420700000,
+        "finish": 1790421000000
        },
        "code": "SH-SHIPPING"
       },
@@ -429,9 +430,9 @@
       "jobs": [],
       "deadline": null,
       "stall": null,
-      "eta": 1790415000000,
+      "eta": 1790420700000,
       "left_ms": 12000000,
-      "finish": 1790415600000,
+      "finish": 1790421000000,
       "aim": null,
       "slack": null,
       "standing": null
@@ -529,9 +530,11 @@
        "branch": "job/50",
        "estimate": {
         "size_ms": 1080000,
+        "left_ms": 360000,
         "start": null,
         "done": 1790416500000,
-        "merged": null
+        "merged": 1790418000000,
+        "finish": 1790418300000
        },
        "code": "SH-GIFTWRAP"
       },
@@ -620,7 +623,8 @@
         "size_ms": 3600000,
         "start": 1790420100000,
         "done": 1790423700000,
-        "merged": null
+        "merged": 1790425200000,
+        "finish": 1790425500000
        },
        "code": "SH-RIBBON"
       }
@@ -711,9 +715,11 @@
        "branch": null,
        "estimate": {
         "size_ms": 10800000,
+        "left_ms": 3600000,
         "start": null,
         "done": 1790418600000,
-        "merged": null
+        "merged": 1790420100000,
+        "finish": 1790420400000
        },
        "code": "OF-BACKUP"
       }
@@ -774,7 +780,8 @@
         "size_ms": 3600000,
         "start": null,
         "done": 1790416800000,
-        "merged": null
+        "merged": 1790418300000,
+        "finish": 1790418600000
        },
        "code": "OF-PARCELS"
       },
@@ -818,7 +825,8 @@
         "size_ms": 1800000,
         "start": null,
         "done": 1790417700000,
-        "merged": null
+        "merged": 1790419200000,
+        "finish": 1790419500000
        },
        "code": "OF-INBOX"
       }
@@ -900,9 +908,11 @@
        "branch": null,
        "estimate": {
         "size_ms": 3600000,
+        "left_ms": 1200000,
         "start": null,
         "done": 1790417100000,
-        "merged": null
+        "merged": 1790418600000,
+        "finish": 1790418900000
        },
        "code": "NW-AUTUMN"
       },

@@ -5,7 +5,7 @@
 // away, hq run waits for it; with none, the work goes in pieces under the share, or the agent says in its report that
 // it can't. Never the same run again here: a job blocked STOP_AT times is stopped, so no agent loops against the share.
 // What the share can't free (the worker short of memory for long all the same) goes outside HQ: jam.ts.
-import { db, redacted } from './db.ts';
+import { db, redacted, once, columnsOf, inOneStep } from './db.ts';
 import { publish, redact } from './events.ts';
 import * as jobs from './jobs.ts';
 import { offloadPlaces } from './runs.ts';
@@ -16,26 +16,58 @@ const MEASURES = ['memory', 'processes', 'cores'] as const;
 type Measure = (typeof MEASURES)[number];
 
 db.exec(`create table if not exists blocks (id integer primary key, at text not null, job integer not null,
-  measure text not null, used real not null, share real not null, command text not null)`);
-redacted('blocks', 'command');
+  measure text not null, used real not null, share real not null, event text, report text, count integer)`);
+once('blocks-command-free-receipts', () => {
+  const columns = columnsOf('blocks');
+  if (columns.includes('command')) db.exec('alter table blocks drop column command');
+  for (const column of ['event text', 'report text', 'count integer'])
+    if (!columns.includes(column.split(' ')[0])) db.exec(`alter table blocks add column ${column}`);
+});
+db.exec('create unique index if not exists blocks_event on blocks (event)');
+redacted('blocks', 'report');
 
-// POST /api/worker/blocked: the worker blocked a run of `job` ({ measure, used, share, command }). Kept, said in HQ's
-// feed, and answered with the words for the run's output.
+type Receipt = { job: number; measure: Measure; used: number; share: number; report: string; count: number };
+
+// A receipt keeps the command-free report and stop in one step. Retries reuse it even if the job or machines changed.
 export function blocked(b: Record<string, unknown>) {
   const job = Number(b.job),
     agent = jobs.jobAgent(job);
   const measure = MEASURES.find(m => m === b.measure);
   const used = Number(b.used),
     share = Number(b.share);
-  if (!agent || !measure || !(used >= 0) || !(share > 0)) return 400;
-  const command = redact(String(b.command ?? '').slice(0, COMMAND_MAX)) ?? '';
-  db.prepare('insert into blocks (at, job, measure, used, share, command) values (?, ?, ?, ?, ?, ?)').run(
+  const event = b.event;
+  if (
+    !agent ||
+    !measure ||
+    !Number.isFinite(used) ||
+    !(used >= 0) ||
+    !Number.isFinite(share) ||
+    !(share > 0) ||
+    typeof event !== 'string' ||
+    !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(event)
+  )
+    return 400;
+  const receipt = inOneStep(() => {
+    const kept = db
+      .prepare('select job, measure, used, share, report, count from blocks where event = ?')
+      .get(event) as Receipt | undefined;
+    if (kept)
+      return kept.job === job && kept.measure === measure && kept.used === used && kept.share === share ? kept : 409;
+    return recordBlock(event, job, agent, measure, used, share);
+  });
+  if (typeof receipt === 'number') return receipt;
+  const command = (redact(String(b.command ?? '')) ?? '').slice(0, COMMAND_MAX);
+  return { text: `HQ's worker stopped this command (${command}): ${redact(receipt.report)}`, count: receipt.count };
+}
+
+function recordBlock(event: string, job: number, agent: string, measure: Measure, used: number, share: number) {
+  db.prepare('insert into blocks (at, job, measure, used, share, event) values (?, ?, ?, ?, ?, ?)').run(
     new Date().toISOString(),
     job,
     measure,
     used,
     share,
-    command,
+    event,
   );
   const count = (db.prepare('select count(*) n from blocks where job = ?').get(job) as { n: number }).n;
   publish({
@@ -46,16 +78,18 @@ export function blocked(b: Record<string, unknown>) {
   const off =
     count >= STOP_AT &&
     jobs.offWorker(job, `blocked ${count} times for running past its share of the worker: it runs here no more`);
-  return { text: words(measure, used, share, command, count, off), count };
+  const report = words(measure, used, share, count, off);
+  db.prepare('update blocks set report = ?, count = ? where event = ?').run(report, count, event);
+  return { report, count };
 }
 
 // What the run's output says: what happened, where to run it instead, and what comes of running it here again. At
 // STOP_AT, what HQ did with the job (jobs.ts offWorker): stopped it, put it back in the queue (a review), or nothing.
 type Off = ReturnType<typeof jobs.offWorker> | false;
-export function words(measure: Measure, used: number, share: number, command: string, count: number, off: Off) {
+function words(measure: Measure, used: number, share: number, count: number, off: Off) {
   const took = measure === 'cores' ? `kept ${amount(measure, used)} busy for long` : `used ${amount(measure, used)}`;
   const what =
-    `HQ's worker stopped this command (${command}): this job ${took} on the HQ server's worker, past a job's share ` +
+    `this job ${took} on the HQ server's worker, past a job's share ` +
     `of ${amount(measure, share)}. It runs here no more, whole or in bigger pieces.`;
   const strikes = !off
     ? `This is this job's block ${count} of ${STOP_AT}: at ${STOP_AT}, HQ stops the job.`

@@ -424,6 +424,8 @@ const mockLog = () => ['Read platform/coordinator/src/jobs.ts', 'Grep “claimNe
   .map((text, i, all) => ({ ts: new Date(Date.now() - (all.length - i) * 47e3).toISOString(), agent: null, text }));
 // what the company got done each day, the last 14 (Wire's numbers: the coordinator's work.ts)
 export const loadWork = dev => dev ? mockList('work') : get('/api/work');
+// what's on the plate and done in the last 24 hours, hour by hour (HQ's throughput: the coordinator's work.ts piles).
+export const loadPiles = dev => dev ? mockList('work').then(w => w.piles) : get('/api/work/piles');
 // Numbers (numbers.js): a line per app, and one app's dashboard for a period and mode. Dev mode reads mock/numbers.json
 // and mock/numbers/<slug>.json, which holds an answer per "<mode>:<days>".
 export const loadNumbers = (dev, days = 28) => get(dev ? 'mock/numbers.json' : `/api/numbers?days=${Number(days)}`);

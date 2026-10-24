@@ -1,6 +1,4 @@
-// The company's mascots on the brownstone: the kinds it has art for, where each sleeps, how they get about the roof
-// terraces, and how they're drawn. Who they are and what they're doing is the world's (world.mascots); every one drawn
-// here lives on the roof, whatever room it wants.
+// The mascots as drawn on the brownstone's roof. Who they are: world/mascots.js
 import { SX, SY, CORE, CORE_X, roundWell, ellipse, text } from './iso.js';
 import { pick, rand } from '../../util.js';
 import { catFrame, penguinFrame } from './sprites.js';

@@ -3,7 +3,7 @@
 // change), and the next planned meetings running across the door sign: time, topic and who. While the meetings can't be
 // read, the door sign says so. rooms.js builds the room (meetingRoom), sim.js seats its people.
 import { canvas } from '../../util.js';
-import { F, text, textW } from './iso.js';
+import { F, text, textW, upright } from './iso.js';
 import { clockWhen } from '../../world/clock.js';
 
 const INK = '#3b3355',
@@ -11,8 +11,8 @@ const INK = '#3b3355',
   LIT = '#ffd966',
   AMBER = '#ffb35a',
   RED = '#e8505b',
-  PIP = '#7dffb0', // the turn's pip for the meeting on the board and for the others: greens no chip, word or ledge
-  PIP_OFF = '#3fae6e', // marker uses, that show on the dark ledge
+  PIP = '#7dffb0', // the ledge's pip for the meeting on the board: a green none of its chips, words or markers use
+  PIP_OFF = '#3fae6e', // the ledge's pip for each other meeting the room holds: a darker green, still clear on the ledge
   ROW = 8, // px from one row of the board's words to the next (a letter takes 5, and the wall's slant 1 more)
   TURN_S = 6, // s each live meeting's topic stays on the board when the room holds more than one
   LIT_MS = 60_000, // how long a project's tag stays lit after its plan changed
@@ -38,16 +38,16 @@ function drawBoard(g, board, m, k, n, t) {
     board.img = canvas(board.w, board.h);
     const f = board.img.getContext('2d'),
       letters = Math.floor((board.w + 1) / 4),
-      top = board.F.cols(...wallPlace(board), board.w, board.h).map(([, y]) => y);
+      rows = board.F.cols(...wallPlace(board), board.w, board.h).map(([, y]) => y);
     // the topic in two rows over the tags, in three when there are none
     const lines = wrap(m.topic, tags.length ? [letters, letters] : [letters, letters, letters]);
-    lines.forEach((line, row) => upright(f, line, 0, row * ROW, INK, top));
+    lines.forEach((line, row) => upright(f, line, 0, row * ROW, INK, rows));
     let x = 0;
     for (const chip of tagRow(tags, lit, board.w)) {
       const w = textW(chip.s) + 2;
       F(f, x, 2 * ROW - 1, w, 8, chip.lit && blink % 2 === 0 ? LIT : TAG);
       if (chip.lit) F(f, x, 2 * ROW + 6, w, 1, RED);
-      upright(f, chip.s, x + 1, 2 * ROW, INK, top);
+      upright(f, chip.s, x + 1, 2 * ROW, INK, rows);
       x += w + 2;
     }
     board.pips = n > 1 ? canvas(board.w, 2) : null; // as wide as the words, so the pips start where they do
@@ -58,14 +58,14 @@ function drawBoard(g, board, m, k, n, t) {
 }
 // the turn's pips on the ledge, 2 px square with 2 px of ledge between them so each reads apart at the shots' size:
 // turn k of n lit
-export const turnPips = (k, n) => Array.from({ length: n }, (_, j) => ({ x: 4 * j, c: j === k ? PIP : PIP_OFF }));
+const turnPips = (k, n) => Array.from({ length: n }, (_, j) => ({ x: 4 * j, c: j === k ? PIP : PIP_OFF }));
 // where the board's words go on its wall (rooms.js meetingWall)
 const wallPlace = board => [board.a0, board.a1, 0, board.zb];
 
 // the tags' chips in a row at most w px wide, in the order they come (the coordinator's: the oldest change first): the
 // latest that fit and, when some don't, a first chip with how many earlier ones, lit when one of them is. The latest
 // is always named: a board is wide enough for it and a count (rooms.js meetingWall)
-export function tagRow(tags, lit, w) {
+function tagRow(tags, lit, w) {
   const chips = tags.map((p, k) => ({ s: plain(p.name).slice(0, 6), lit: lit[k] })).filter(chip => chip.s),
     more = k => ({ s: `+${chips.length - k}`, lit: chips.slice(0, chips.length - k).some(chip => chip.lit) }),
     row = k => (k < chips.length ? [more(k), ...chips.slice(chips.length - k)] : chips),
@@ -75,22 +75,9 @@ export function tagRow(tags, lit, w) {
   return row(k);
 }
 
-// s in the pixel font at (x, y), each letter shifted against the wall's slant so it stands upright once drawn onto it
-// (top: the screen row each column of the drawing lands on). The slant steps a pixel every second column, inside a
-// letter as often as not: drawn flat, its bars break, and P reads F and S reads Z. A letter takes the rows y to y + 5
-function upright(f, s, x, y, c, top) {
-  const flat = canvas(textW(s), 5);
-  text(flat.getContext('2d'), s, 0, 0, c);
-  for (let u = 0; u < flat.width; u++) {
-    const x0 = x + u - (u % 4),
-      low = Math.max(top[x0], top[x0 + 1], top[x0 + 2]);
-    f.drawImage(flat, u, 0, 1, 5, x + u, y + low - top[x + u], 1, 5);
-  }
-}
-
 // words on lines of at most widths[k] letters, a line for each width at most. Cut short, the last runs on into the
 // words left and ends in '..'; a word longer than its line ends the words there, cut and ending in '..' too
-export function wrap(s, widths) {
+function wrap(s, widths) {
   const lines = [];
   let words = plain(s).split(' ').filter(Boolean);
   while (words.length && lines.length < widths.length) {

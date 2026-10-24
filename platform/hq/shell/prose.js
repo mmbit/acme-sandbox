@@ -1,7 +1,7 @@
 // An agent's words as HQ shows them: a call's notes, the intercom's replies, a job's report, a card's details. Agents
 // write a little Markdown (paragraphs, lists, bold, links, pictures), and HQ shows it as such in every one of those
 // places, from this one renderer. Anything else in the text stays text.
-import { esc, jobName } from '../util.js';
+import { esc, jobName } from '../util.js'; // (jobName)
 
 // The text as HTML blocks: paragraphs, bulleted and numbered lists, a heading as a bold line, a table, and a fenced block
 // (``` lines) as a block of text kept exactly. A wrapped line goes on with the one before it, as Markdown joins them: in a
@@ -211,6 +211,7 @@ const LAST_WORD = /([\p{L}\p{N}'’]+)\s*$/u;
 // inbox, notes, pins, messages, meetings and their asks, decisions, helper runs, tester shares, spare parts,
 // questions, posts) and what the world numbers (issues, tickets, orders, invoices, colours, a machine's process ids)
 const OTHER_KIND = /^(?:cards?|prs?|requests?|calls?|items?|e?mails?|drafts?|pictures?|photos?|findings?|proposals?|inbox|notes?|pins?|messages?|msgs?|meetings?|asks?|decisions?|runs?|shares?|parts?|questions?|posts?|issues?|tickets?|orders?|invoices?|colou?rs?|pids?)$/i;
-// and the two words that do where either alone doesn't: an "hq say" message (not "let's say #12") and the worker's
-// "stopped process #48213" (worker.ts; a department's "Process #12" is a job's)
-const OTHER_PHRASE = /\b(?:hq\s+say|stopped\s+process)$/i;
+// and the two words that do where either alone doesn't: an "hq say" message (not "let's say #12"), the worker's
+// "stopped process #48213" (worker.ts; a department's "Process #12" is a job's) and a "call out #7" (callwords.ts
+// followUp)
+const OTHER_PHRASE = /\b(?:hq\s+say|stopped\s+process|call\s+out)$/i;

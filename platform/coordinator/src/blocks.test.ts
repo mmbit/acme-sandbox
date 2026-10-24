@@ -1,6 +1,11 @@
 // node --test src/blocks.test.ts   (the test company): a run the worker blocked for its job's share, the words its output
 // gets (where to run it instead) and the job's last block; a jam the shares can't free, to the Overseer, then the board
 import { test } from 'node:test';
+import { randomUUID } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { commandOf } from '../../worker/src/shares.ts';
+import { procStat } from '../../worker/src/detached.ts';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
 
@@ -16,6 +21,7 @@ const stopping = (id: number) =>
 const blocked = (job: number, body: Record<string, unknown> = {}) =>
   h.worker('blocked', {
     job,
+    event: randomUUID(),
     measure: 'memory',
     used: 3100,
     share: 2560,
@@ -34,7 +40,7 @@ test("a blocked run hears where to run it instead, from HQ's machines as they ar
   assert.match(none.body.text, /This deployment has no offload machine\..*if it can't be split, don't run it/s);
   assert.match(none.body.text, /This is this job's block 1 of 3/);
 
-  const { id } = machines.addMachine('Skynet') as { id: number };
+  const { id } = machines.addMachine('Cloudberry') as { id: number };
   machines.heard(id, 'default', { cpus: 24, memoryGb: 40 }, true);
   const lent = await blocked(job.id, { measure: 'cores', used: 7.4, share: 4 });
   assert.match(
@@ -42,11 +48,14 @@ test("a blocked run hears where to run it instead, from HQ's machines as they ar
     /this job kept 7\.4 cores busy for long on the HQ server's worker, past a job's share of 4 cores/,
   );
   assert.match(lent.body.text, /Offload it, even if it takes longer there: hq run --kind <kind> -- <command>/);
-  assert.match(lent.body.text, /Skynet \(24 cores, 40 GB\) takes default/, 'the machine by its name and size, from HQ');
+  assert.match(
+    lent.body.text,
+    /Cloudberry \(24 cores, 40 GB\) takes default/,
+    'the machine by its name and size, from HQ',
+  );
   assert.match(lent.body.text, /block 2 of 3/);
   assert.equal(stopping(job.id), null);
 
-  h.db.prepare("update machine_kinds set seen = '2026-01-01T00:00:00Z', asked = null where machine = ?").run(id);
   const away = await blocked(job.id, { measure: 'processes', used: 512, share: 400 });
   assert.match(away.body.text, /used 512 processes/);
   assert.doesNotMatch(away.body.text, /Offload it/, 'the last block says what happens, not where to go');
@@ -82,15 +91,16 @@ test("a review blocked a third time goes back to the queue, to go on in its sess
   );
 });
 
-test('a lent machine that is away: hq run waits for it, and the agent goes on without the result', async () => {
+test('a lent machine that is away: hq run waits for it, and the agent goes on without the result', async context => {
+  context.mock.timers.enable({ apis: ['Date'], now: Date.now() });
   const job = await h.start({ agent: 'bolt' });
-  const { id } = machines.addMachine('Skynet') as { id: number };
+  const { id } = machines.addMachine('Cloudberry') as { id: number };
   machines.heard(id, 'default', { cpus: 24, memoryGb: 40 }, true);
-  h.db.prepare("update machine_kinds set seen = '2026-01-01T00:00:00Z', asked = null where machine = ?").run(id);
+  context.mock.timers.tick(2 * M);
   const { text } = (await blocked(job.id)).body;
   assert.match(
     text,
-    /Offload it with hq run --kind <kind> -- <command>, even if it takes longer: Skynet isn't taking work now, and hq run waits for it\./,
+    /Offload it with hq run --kind <kind> -- <command>, even if it takes longer: Cloudberry isn't taking work now, and hq run waits for it\./,
   );
   assert.match(text, /if nothing can, say so in your report/);
   machines.removeMachine(id);
@@ -223,4 +233,78 @@ test('when the worker has room again, an open card leaves the desk phone; a new 
     before + 1,
     'a new spell is told the Overseer first',
   );
+});
+
+test('repeated delivery keeps the first report and counts each event once, including the third strike', async () => {
+  const job = await h.start({ agent: 'bolt' });
+  const event = randomUUID();
+  const first = await blocked(job.id, { event });
+  const { id } = machines.addMachine('Thimble') as { id: number };
+  machines.heard(id, 'default', { cpus: 12, memoryGb: 20 }, true);
+  assert.deepEqual(
+    await blocked(job.id, { event }),
+    first,
+    'a lost reply is safe to resend even after availability changes',
+  );
+  assert.equal((await blocked(job.id)).body.count, 2, 'a distinct event adds a strike');
+  assert.equal((await blocked(job.id, { event, used: 3200 })).status, 409, 'an identity cannot describe another event');
+  const thirdEvent = randomUUID();
+  const third = await blocked(job.id, { event: thirdEvent });
+  assert.equal(third.body.count, 3);
+  assert.match(stopping(job.id) ?? '', /blocked 3 times/);
+  await h.finish(job);
+  assert.deepEqual(
+    await blocked(job.id, { event: thirdEvent }),
+    third,
+    'replaying a committed stop never stops it again',
+  );
+  assert.equal((h.db.prepare('select count(*) n from blocks where job = ?').get(job.id) as { n: number }).n, 3);
+  assert.equal((await blocked(job.id, { event: undefined })).status, 400, 'delivery needs an event identity');
+  machines.removeMachine(id);
+});
+
+test('command values are redacted before shortening and reach only the stopped command output', async () => {
+  const secrets = await import('./secrets.ts');
+  secrets.registerKeys({ BLOCK_TEST_VALUE: /^.+$/ });
+  const value = 'private-fixture-' + 'v'.repeat(400);
+  secrets.saveSecrets(['BLOCK_TEST_VALUE'], { BLOCK_TEST_VALUE: value });
+  const job = await h.start({ agent: 'bolt' });
+  const command = 'fixture-command ' + value;
+  const { body, status } = await blocked(job.id, { command });
+  assert.equal(status, 200);
+  assert.match(body.text, /fixture-command \[BLOCK_TEST_VALUE\]/);
+  assert.ok(!body.text.includes('private-fixture-'));
+  const rows = h.db.prepare('select * from blocks where job = ?').all(job.id);
+  assert.ok(!JSON.stringify(rows).includes('fixture-command'), 'no command retained in any block column');
+  assert.ok(!JSON.stringify(await h.feed()).includes('fixture-command'), 'no command on the public feed');
+});
+
+test('a valid long command records one strike across repeated endpoint delivery', async context => {
+  const args = Array(16).fill('\u0001'.repeat(100_000));
+  const child = spawn(process.execPath, ['-e', 'process.stdin.resume()', '--', ...args], {
+    env: {},
+    stdio: ['pipe', 'ignore', 'ignore'],
+  });
+  context.after(async () => {
+    const closed = once(child, 'close');
+    child.kill('SIGKILL');
+    await closed;
+  });
+  await once(child, 'spawn');
+  const pid = child.pid!;
+  const command = commandOf([{ ...procStat(pid)!, pid, uid: process.getuid!(), memoryMb: 0, memoryMeasure: 'rss' }]);
+  assert.ok(command.includes(args.join(' ')), 'the running command reaches reporting in full');
+  assert.ok(
+    Buffer.byteLength(JSON.stringify({ command })) > 3_000_000,
+    'JSON escaping exceeds the ordinary body budget',
+  );
+  const job = await h.start({ agent: 'bolt' });
+  const event = randomUUID();
+  const first = await blocked(job.id, { event, command });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.count, 1);
+  assert.deepEqual(await blocked(job.id, { event, command }), first);
+  assert.equal((h.db.prepare('select count(*) n from blocks where job = ?').get(job.id) as { n: number }).n, 1);
+  assert.equal(stopping(job.id), null);
+  assert.equal((await h.worker('room', { command })).status, 400, 'other worker endpoints keep their body budget');
 });

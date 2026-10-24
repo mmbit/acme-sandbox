@@ -5,7 +5,7 @@
 // key, and in "at work first" the keys slide into their new places like a slide puzzle. Drawn in the DOM, which scrolls
 // natively; the shell's canvas lies under it, empty, and the page hands its taps to the shell (shell.tap), which asks
 // hit() what's there.
-import { esc, mins, store, rgb, roleHtml } from '../../util.js';
+import { esc, store, rgb, roleHtml } from '../../util.js';
 import { contrastChannels } from '/contrast.js'; // WCAG's contrast ratio (shared/contrast/contrast.js)
 import { EMOTES, fade } from '../../world/emotes.js';
 import { companyFormats } from '../../world/clock.js';
@@ -17,14 +17,17 @@ import { engineMark } from '../../shell/engine.js';
 import { icon } from '../../shell/icons.js';
 import { sides } from '../../shell/sides.js';
 import { theme } from '../../shell/brand.js';
-import { sfx as keys } from './sounds.js';
 import { pace } from './pace.js';
 // Slate's motion, the brand guide's too (shared/tactile).
-import { pressBriefly } from '../../../../shared/tactile/press.js';
+import { holdPresses, pressBriefly, PRESS_MIN_MS } from '../../../../shared/tactile/press.js';
 import { flip } from '../../../../shared/tactile/flip.js';
 import { flyOut, flyBack, zoomIn } from '../../../../shared/tactile/fly.js';
 import { followSwipes, slideIn } from '../../../../shared/tactile/swipe.js';
 import { dropTiles } from '../../../../shared/tactile/drop.js';
+// its statistics, the brand guide's too (shared/stats).
+import { bars, lineGraph, compact, growBars, rollFigures } from '../../../../shared/stats/stats.js';
+// and the ring's colour and the times' words (shared/signs).
+import { ringColour, ago, lasted } from '../../../../shared/signs/signs.js';
 
 export const info = {
   id: 'wire', // (what a viewer's pick and theme/hq.yaml store)
@@ -59,6 +62,8 @@ const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // One scene at a time
 let S, world, shell, cv, root;
+// Its sounds by name, through the shell: Wire's own (sounds.js), under those of the kit it wears
+const keys = new Proxy({}, { get: (_, name) => shell.sound.play.bind(null, name) });
 
 export function createScene({ canvas, world: w, shell: s, settings }) {
   world = w;
@@ -87,7 +92,10 @@ export function createScene({ canvas, world: w, shell: s, settings }) {
   numbers();
   touch();
   if (settings?.intro) drop();
-  const offHud = hud();
+  const offHud = hud(),
+    // every key of the shell's goes down from the touch until its tap lands (skin.css .down; the board's keys press
+    // their own way).
+    unhold = holdPresses(document, { keys: 'button, a.desk' });
   const poll = setInterval(numbers, 60_000),
     tick = setInterval(paintAll, 15_000),
     offs = listen(),
@@ -119,6 +127,7 @@ export function createScene({ canvas, world: w, shell: s, settings }) {
     },
     dispose() {
       offHud();
+      unhold();
       for (const off of offs) off();
       clearInterval(poll);
       clearInterval(tick);
@@ -246,6 +255,9 @@ function rainfall(dt) {
 }
 
 // ---------------------------------------------------------------- the look's own settings (Settings › Look)
+// Wire's own face (skin.css --font) where the company names none, on a <link> of its own that the change of look doesn't
+// wait for: a blocked font leaves the fallback
+const FACE = 'https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap';
 // The company's colourways (theme/hq.yaml wire.colourways: id, name, ground, ink, muted, panel, accent, side,
 // onAccent, as #hex; wire.font: family, href on Google Fonts), or a light and a dark one of Wire's own. Auto: the first
 // light one, or the first dark one when the device is dark. And the keys' order: the org chart's, or everyone at work
@@ -301,14 +313,19 @@ function appear() {
   for (const k of WAY) body.style.setProperty(`--k-${kebab(k)}`, way[k]);
   body.style.setProperty('--k-tick', tickOn(way.onAccent));
   if (font?.family) body.style.setProperty('--k-font', `'${String(font.family).replace(/['"\\]/g, '')}'`);
-  if (/^https:\/\/fonts\.googleapis\.com\//.test(font?.href ?? '') && !document.querySelector('link[data-wire-font]')) {
-    const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: font.href });
+  const href = font?.family ? font.href : FACE;
+  if (/^https:\/\/fonts\.googleapis\.com\//.test(href ?? '') && !document.querySelector('link[data-wire-font]')) {
+    const link = Object.assign(document.createElement('link'), { rel: 'stylesheet', href });
     link.dataset.wireFont = '';
     document.head.append(link);
   }
   body.classList.toggle('wire-dark', darkGround(way.ground));
   body.classList.add('keys'); // (every button a key: style.css)
+  for (const el of root?.querySelectorAll('.key[data-shirt]') ?? []) ringOn(el);
 }
+// The ring round a face at work: their shirt's colour where it shows on the key, else the least step from it that does
+// (shared/signs ringColour), so a cream shirt rings on Oat's white key and a dark one on Night's.
+const ringOn = el => el.style.setProperty('--ring', ringColour(el.dataset.shirt, colourway().panel));
 // A ticked box's tick, in the colour of the accent's words: a background image (skin.css), which takes no CSS colour.
 const tickOn = colour =>
   `url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='${encodeURIComponent(colour)}' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'><path d='m4.5 12.5 5 5 10-11'/></svg>")`;
@@ -417,6 +434,8 @@ function key(t, big = false) {
       head = `<header class="head"><div class="avatar"><div class="face"></div><svg viewBox="0 0 76 76" aria-hidden="true"><circle cx="38" cy="38" r="35"/></svg><b class="emote"></b></div>
         <div class="id"><b>${esc(A.data.name ?? A.id)}</b><small>${roleHtml(A.data)}</small></div></header>`;
     el.style.setProperty('--hue', look.shirt);
+    el.dataset.shirt = look.shirt;
+    ringOn(el);
     // (each face's corner says it turns over, in the job sheet's icon for it.)
     const turns = `<span class="turns">${icon('redo')}</span>`;
     el.innerHTML = big
@@ -473,7 +492,7 @@ function company(el) {
           (d, i) =>
             `${i === S.days.length - 1 ? 'Today' : long(d.day)}: ${d[k] === null ? 'not counted yet' : `${d[k].toLocaleString('en')} ${label}`}`,
         );
-      return `<div class="stat"><b>${big && k === 'tokens' ? thousands(today[k] ?? 0) : (today[k] ?? 0).toLocaleString('en')}</b><small>${label}</small>${bars(all, big ? 280 : 140, big ? 40 : 24, { tips })}</div>`;
+      return `<div class="stat"><b>${big && k === 'tokens' ? compact(today[k] ?? 0) : (today[k] ?? 0).toLocaleString('en')}</b><small>${label}</small>${bars(all, { width: big ? 280 : 140, height: big ? 40 : 24, tips })}</div>`;
     };
   if (!big) return set(el.querySelector('.stats'), STATS.slice(0, 4).map(stat).join(''));
   // big: the day's five numbers, each over the last 14 days (a bar's title says which day), and the company now
@@ -492,7 +511,7 @@ function company(el) {
   set(
     el.querySelector('.stats'),
     `${STATS.map(stat).join('')}<p class="span">The bars: the last 14 days, today on the right.</p>
-    <div class="now"><span class="lbl">Right now</span><p><b>${at('working')}</b> at work · <b>${at('waiting')}</b> queued · <b>${at('sleeping')}</b> asleep${speed ? ` · <b>${thousands(speed)}</b> tokens a minute` : ''}</p></div>
+    <div class="now"><span class="lbl">Right now</span><p><b>${at('working')}</b> at work · <b>${at('waiting')}</b> queued · <b>${at('sleeping')}</b> asleep${speed ? ` · <b>${compact(speed)}</b> tokens a minute` : ''}</p></div>
     ${leaders('jobs', 'Jobs this week')}${leaders('prs', 'Merged this week')}`,
   );
 }
@@ -584,56 +603,23 @@ function tower({ size, gpuCount }) {
 // use now under them; nothing for a machine that doesn't say.
 const resting = m =>
   m.cpu?.length
-    ? `${bars(m.cpu.slice(-RESTING_BARS), 120, 22, { scale: 100 })}<small>${USE.filter(([k]) => m[k]?.length)
+    ? `${bars(m.cpu.slice(-RESTING_BARS), { width: 120, height: 22, scale: 100 })}<small>${USE.filter(
+        ([k]) => m[k]?.length,
+      )
         .map(([k, label]) => `<b>${Math.round(m[k].at(-1))}%</b> ${label}`)
         .join(' · ')}</small>`
     : '';
 // The machine's CPU, memory and GPU over the last minutes (each a list of percentages, the last now), a line each on
-// one small graph, with their figures now under it; nothing for a machine that doesn't say. The lines keep clear of
-// the graph's edges and end on a dot in their colour, so one at 0% reads as a line, not as the graph's border. Drawn in
-// the graph's own pixels, its points in percentages, never a stretched viewBox: Safari thickens a stretched graph's
-// lines whatever vector-effect says.
+// one small graph, with their figures now under it; nothing for a machine that doesn't say.
 function usage(m) {
   const shown = USE.filter(([k]) => m[k]?.length > 1);
   if (!shown.length) return '';
-  const point = (v, i, all) =>
-    [(i / (all.length - 1)) * 100, 100 - Math.min(100, Math.max(0, v))].map(n => `${n.toFixed(2)}%`);
-  const series = k => {
-    const points = m[k].map(point),
-      [x, y] = points.at(-1);
-    return `<g class="${k}">${points
-      .slice(1)
-      .map(([x2, y2], i) => `<line x1="${points[i][0]}" y1="${points[i][1]}" x2="${x2}" y2="${y2}"/>`)
-      .join('')}<circle cx="${x}" cy="${y}" r="4"/></g>`;
-  };
-  return `<div class="graph"><svg aria-hidden="true">${shown.map(([k]) => series(k)).join('')}</svg></div>
+  return `<div class="graph">${lineGraph(shown.map(([k]) => ({ name: k, values: m[k] })))}</div>
     <small>${shown.map(([k, label]) => `<span class="${k}"><b>${Math.round(m[k].at(-1))}%</b> ${label}</span>`).join('')}</small>`;
 }
 const long = day => companyFormats().day(day, 'en', { weekday: true, short: true });
 // an agent's tokens a minute (pace.js)
 const paceNow = A => pace(A.tokens, A.since)?.perMinute;
-// A bar each, the last full in the key's colour; one not counted yet (null) a faint stub, so every row runs the whole
-// width. tips: what each bar is, shown on hover. scale: the top of a fixed scale, such as 100 for percentages.
-function bars(all, w = 140, h = 24, { tips = [], stubs = true, scale } = {}) {
-  if (!all?.length) return '';
-  const max = scale ?? Math.max(1, ...all.filter(v => v !== null && v !== undefined)),
-    bw = w / all.length;
-  return `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="none"${tips.length ? '' : ' aria-hidden="true"'}>${all
-    .map((v, i) => {
-      const none = v === null || v === undefined;
-      if (none && !stubs) return '';
-      const bh = none ? 2 : Math.max(2, (v / max) * h),
-        tip = tips[i] ? `<title>${esc(tips[i])}</title>` : '';
-      return `<rect x="${(i * bw + bw * 0.16).toFixed(1)}" y="${(h - bh).toFixed(1)}" width="${(bw * 0.68).toFixed(1)}" height="${bh.toFixed(1)}" rx="1.5"${none ? ' class="none"' : i === all.length - 1 ? ' class="now"' : ''}>${tip}</rect>`;
-    })
-    .join('')}</svg>`;
-}
-// how long ago, short: now, 4m, 2h, 3d
-const ago = t => {
-  const m = Math.round((Date.now() - (typeof t === 'string' ? Date.parse(t) : t)) / 60_000);
-  return m < 1 ? 'now' : m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h` : `${Math.floor(m / 1440)}d`;
-};
-const thousands = n => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}k` : String(n));
 function agent(el, t) {
   const A = world.agents.get(t.id);
   if (!A) return;
@@ -647,7 +633,7 @@ function agent(el, t) {
     next = mine.filter(j => j.status === 'queued' || j.status === 'blocked'),
     p = working ? pace(A.tokens, A.since) : null,
     last = week.last
-      ? `${titleHtml(week.last)}<span class="aside"> · ${mins(Date.parse(week.last.finished))} ago</span>`
+      ? `${titleHtml(week.last)}<span class="aside"> · ${lasted(Date.now() - Date.parse(week.last.finished))} ago</span>`
       : '<span class="aside">Nothing finished yet</span>';
   for (const [cls, on] of [
     ['working', working],
@@ -657,13 +643,11 @@ function agent(el, t) {
   ])
     el.classList.toggle(cls, on);
   const job = run ? titleHtml(run) : titleHtml({ title: A.task || (working ? 'At work' : '') }),
-    rate = p?.perMinute ? `<b>${thousands(p.perMinute)}</b> tokens a minute` : '',
+    rate = p?.perMinute ? `<b>${compact(p.perMinute)}</b> tokens a minute` : '',
     tokens = p?.bars.some(n => n > 0)
       ? bars(
           p.bars.map(n => n || undefined),
-          120,
-          22,
-          { stubs: false },
+          { width: 120, height: 22, stubs: false },
         )
       : '',
     days = week.days.map(
@@ -679,13 +663,16 @@ function agent(el, t) {
       q('.foot'),
       working
         ? `${tokens}<small>${rate}</small>`
-        : `${bars(week.days, 120, 22, { tips: days })}<small><b>${week.jobs}</b> job${week.jobs === 1 ? '' : 's'} · <b>${week.prs}</b> merged</small>`,
+        : `${bars(week.days, { width: 120, height: 22, tips: days })}<small><b>${week.jobs}</b> job${week.jobs === 1 ? '' : 's'} · <b>${week.prs}</b> merged</small>`,
     );
     return;
   }
   // big, its front: how they are, the job, its log and its pace; its back: the last job, what's next, the week and who
   for (const s of qa('.state'))
-    set(s, working && A.since ? `<i></i>${STATE.working} · ${mins(A.since)}` : esc(STATE[A.state] ?? A.state));
+    set(
+      s,
+      working && A.since ? `<i></i>${STATE.working} · ${lasted(Date.now() - A.since)}` : esc(STATE[A.state] ?? A.state),
+    );
   set(q('.doing'), job || '<span class="aside">Not on a job</span>');
   logFill(el);
   set(
@@ -703,7 +690,7 @@ function agent(el, t) {
   );
   set(
     q('.week'),
-    `${bars(week.days, 140, 30, { tips: days })}<p><b>${week.jobs}</b> job${week.jobs === 1 ? '' : 's'} · <b>${week.prs}</b> merged <span class="aside">this week</span></p>`,
+    `${bars(week.days, { width: 140, height: 30, tips: days })}<p><b>${week.jobs}</b> job${week.jobs === 1 ? '' : 's'} · <b>${week.prs}</b> merged <span class="aside">this week</span></p>`,
   );
   const dept = world.rooms.find(r => r.id === A.roomId)?.name;
   // (their engine's mark, then where they work and how they look, on one line)
@@ -721,7 +708,7 @@ function drop() {
   const shown = S.tiles.filter(t => t.el.getBoundingClientRect().top < innerHeight);
   dropTiles(
     shown.map(t => t.el),
-    { onBounce: (i, bounce) => bounce < 2 && keys.clack(bounce ? 0.35 : 1, (i * 5) % 12) },
+    { onBounce: keys.landing },
   );
 }
 
@@ -813,7 +800,7 @@ function logFill(card) {
     ? all
         .map(
           l =>
-            `<li data-k="${esc(keyOf(l))}"${open.has(keyOf(l)) ? ' class="open"' : ''}><span>${esc(l.text)}</span><time>${ago(l.ts)}</time></li>`,
+            `<li data-k="${esc(keyOf(l))}"${open.has(keyOf(l)) ? ' class="open"' : ''}><span>${esc(l.text)}</span><time>${ago(new Date(l.ts).getTime())}</time></li>`,
         )
         .join('')
     : '<li class="aside">No steps yet</li>';
@@ -854,30 +841,12 @@ function turn() {
   });
 }
 // Today's numbers spin like a slot machine's and stop one digit at a time, left to right, as its bars grow back up
+// (shared/stats); a press mid-count starts over from the real numbers
 function recount(el) {
   pressBriefly(el, { soft: true });
   keys.press();
-  if (still()) return;
-  el.querySelectorAll('.stats rect').forEach((r, i) =>
-    r.animate([{ transform: 'scaleY(0)' }, { transform: 'none' }], {
-      duration: 420,
-      delay: (i % 14) * 30,
-      easing: 'cubic-bezier(.2, .9, .3, 1.3)',
-      fill: 'backwards',
-    }),
-  );
-  const all = [...el.querySelectorAll('.stat b')].map(b => [b, b.textContent]),
-    t0 = performance.now(),
-    roll = now => {
-      const k = Math.min(1, (now - t0) / 900);
-      for (const [b, text] of all) {
-        let i = 0;
-        b.textContent = text.replace(/\d/g, d => (++i / (text.length + 1) < k ? d : (Math.random() * 10) | 0));
-      }
-      if (k < 1) requestAnimationFrame(roll);
-      else keys.land();
-    };
-  requestAnimationFrame(roll);
+  growBars(el);
+  rollFigures(el.querySelectorAll('.stat b'), { onDone: keys.land });
 }
 // a key on the board in view (between the HUD's band and the bottom of the screen)
 function shown(el) {
@@ -1129,7 +1098,7 @@ function act({ kind, id }) {
   if (t && what === 'key' && S.solo === null) {
     keys.press();
     pressBriefly(t.el);
-    setTimeout(() => solo(S.tiles.indexOf(t)), still() ? 0 : 90);
+    setTimeout(() => solo(S.tiles.indexOf(t)), still() ? 0 : PRESS_MIN_MS); // (once its press is seen)
   }
 }
 // home: the board; an agent, a mascot or a room's agent: their key, big (out of from, an element of the shell's, where

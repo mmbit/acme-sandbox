@@ -397,7 +397,9 @@ for (const look of RENDERERS)
     await tap(page, '.pj-sides [data-side="-1"]');
     await level('The shopfront');
 
-    // a project: its owner, its threads, each a deliverable: who's on it, what it's for, its lines and when it's done
+    // a project: its owner, its threads, each a deliverable with more than the project's tile said of it: who's on it,
+    // what it's for, what runs and comes next, what it waits on, its tasks as a strip, its lines and when it's done with
+    // its sums
     await tap(page, '[data-project=shop]');
     await level('The sticker shop');
     assert.deepEqual(await texts(page, '.pj-head small'), ['The shopfront'], `${at}: the level above, over its name`);
@@ -409,19 +411,40 @@ for (const look of RENDERERS)
     assert.deepEqual(await texts(page, '.pj-head .pj-keys button'), [], at);
     assert.deepEqual(await texts(page, `${box('[data-thread]')} b`), ['The sticker shop opens', 'Gift wrap'], at);
     assert.deepEqual(
-      await texts(page, `${box('[data-thread]')} .pj-tile-rows`),
-      ['Pick a domain for the sticker shop', 'Gift wrap at checkout'],
-      `${at}: its task running, else the one up next`,
+      await texts(page, `${box('[data-thread]')} .pj-goal`),
+      ['Customers can buy stickers on our own domain.', 'A buyer can wrap an order and pick a ribbon.'],
+      `${at}: what each is for`,
+    );
+    assert.deepEqual(
+      await texts(page, `${box('[data-thread]')} .pj-now li > span:not(.pj-pulse)`),
+      ['Pick a domain for the sticker shop', 'Gift wrap at checkout', 'Gift wrap at checkout: the ribbon picker'],
+      `${at}: its tasks running, then the one up next`,
+    );
+    assert.deepEqual(
+      await texts(page, `${box('[data-thread]')} .pj-now .pj-tag`),
+      ['Next', 'Next'],
+      `${at}: the one up next named so`,
+    );
+    assert.deepEqual(
+      await texts(page, `${box('[data-thread="shop/launch"]')} .pj-waits li`),
+      [
+        'On your desk phone: Which domain for the sticker shop?',
+        'Not on your desk phone yet: Which printer for the price tags?',
+      ],
+      `${at}: what a thread waits on, the board's part first`,
+    );
+    assert.deepEqual(
+      await texts(page, `${box('[data-thread]')} .pj-strip-words`),
+      ['0 of 5 done', '0 of 2 done'],
+      `${at}: its tasks as a strip`,
     );
     assert.deepEqual(await texts(page, `${box('[data-thread]')} .pj-lines`), ['+52 −10', '+172 −17'], at);
     assert.deepEqual(await marks(box('[data-thread]')), ['Waits for you', ''], at);
-    const times = await texts(page, `${box('[data-thread]')} .pj-foot .pj-when`);
-    assert.equal(times.length, 1, `${at}: a thread waiting for the board shows no time`);
-    assert.match(
-      times[0],
-      /^(\d+ min|[\d½]+ h|\d{2}:\d{2}|[A-Z][a-z]{2}(?: \d{1,2} [A-Z][a-z]+| \d{2}:\d{2})?)$/,
-      `${at}: when it's done, the planner's`,
-    );
+    const times = await texts(page, `${box('[data-thread]')} .pj-eta-foot .pj-when`),
+      sums = await texts(page, `${box('[data-thread]')} .pj-eta-foot small`);
+    assert.equal(times.length, 2, `${at}: each its time, as its page's head has it`);
+    for (const time of times) assert.match(time, /^Done about /, `${at}: when it's done, the planner's`);
+    assert.match(sums[1], /of agent time left\. .* past its deadline /, `${at}: the agent time left and its window`);
     assert.deepEqual(await offScreen(), [], at);
     await shot('project');
 
@@ -463,7 +486,7 @@ for (const look of RENDERERS)
     assert.match(cards[1], /^Landing page for the sticker shop ?Kit · Done, in review ?SH-LANDING$/, at);
     assert.ok(
       cards.some(t =>
-        /^Shipping costs per country.* ?Penny · starts \w{3} \d\d:\d\d · done \w{3} \d\d:\d\d ?1½ h ?SH-SHIPPING$/.test(
+        /^Shipping costs per country.* ?Penny · starts \w{3} \d\d:\d\d · done about \w{3} \d\d:\d\d ?1½ h ?SH-SHIPPING$/.test(
           t,
         ),
       ),
@@ -593,7 +616,7 @@ for (const look of RENDERERS)
     await tap(page, '.pj-eta summary');
     assert.match(
       (await texts(page, '.pj-eta'))[0],
-      /^Done about Sat \d\d:10 ?40 min of agent time left\. 1 h 40 past its deadline Sat \d\d:30\.$/,
+      /^Done about Sat \d\d:10 ?40 min of agent time left\. 1½ h past its deadline Sat \d\d:30\.$/,
       at,
     );
     assert.deepEqual(await reds(), [], `${at}: a later time is never red`);
@@ -1221,19 +1244,39 @@ for (const look of RENDERERS)
       !(await page.evaluate(() => document.body.classList.contains('projects'))),
       `${at}: the building's controls are back`,
     );
-    // every one of the HUD's counts opens the view, Recurring at its group; a tap on the page round the view closes it
+    // the HUD's throughput, in tasks: done in the last day by the hour, at work and waiting, each opening the view; a tap
+    // on the page round the view closes it
     await page.waitForSelector('#status [data-jobs]');
     assert.deepEqual(
-      await page.$$eval('#status span', s => s.map(e => e.dataset.jobs)),
-      ['active', 'waiting', 'recurring'],
+      await page.$$eval('#status > span', s => s.map(e => e.dataset.jobs)),
+      ['done', 'active', 'waiting'],
       at,
     );
-    await tap(page, '#status [data-jobs=recurring]');
-    await level('Recurring');
+    assert.equal(await page.$$eval('#status .flow-bars rect', r => r.length), 48, `${at}: 24 hours, tasks and reviews`);
+    assert.deepEqual(
+      await page.$$eval('#status > span', s => s.map(e => e.ariaLabel)),
+      [
+        '206 tasks and 371 reviews done in the last 24 hours, hour by hour',
+        '13 at work: 9 tasks, 4 reviews',
+        '58 waiting: 46 tasks, 12 reviews',
+      ],
+      at,
+    );
+    // the first visit's hint over the throughput, never on it, in each look's font (Wire shows none)
+    assert.ok(
+      await page.evaluate(() => {
+        const hint = document.querySelector('#hint').getBoundingClientRect();
+        return !hint.height || hint.bottom + 8 <= document.querySelector('#status').getBoundingClientRect().top + 0.5;
+      }),
+      `${at}: the hint clears the throughput`,
+    );
+    const opened = () => page.waitForFunction(() => !document.querySelector('#projects').hidden);
+    await tap(page, '#status [data-jobs=done]');
+    await opened();
     await tap(page, '#projects');
     await shut();
     await tap(page, '#status [data-jobs=waiting]');
-    await level('Projects');
+    await opened();
     await tap(page, '#projects .pj-head [data-leave]');
     await shut();
 

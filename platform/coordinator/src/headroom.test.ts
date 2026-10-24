@@ -4,13 +4,43 @@ import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
 
 const h = await harness('headroom');
-const { fillRates, seatProjection } = await import('./headroom.ts');
+const { fillRates, priceAhead, seatProjection } = await import('./headroom.ts');
 const HOUR = 3_600_000,
   T0 = Math.floor(Date.now() / HOUR) * HOUR;
 mock.timers.enable({ apis: ['Date'], now: T0 });
 test.after(() => mock.timers.reset());
 const report = (seat: string, util: number, week: number, resets = T0 + 5 * HOUR) =>
   h.worker('seat', { seat, engine: 'claude', state: 'ready', util, week, resets, weekResets: T0 + 7 * 24 * HOUR });
+
+// (first: the module's kept prices are empty, as after a restart)
+test("the readings priced ahead at the server's start, a slice at a time, give the rates one read gives", async () => {
+  mock.timers.setTime(T0 - 14 * HOUR);
+  await report('claude-ahead', 0.1, 0.1);
+  const job = await h.start({ agent: 'bolt' }, { seat: 'claude-ahead' });
+  for (const [hour, used] of [
+    [10, 0.2],
+    [4, 0.3],
+  ]) {
+    mock.timers.setTime(T0 - hour * HOUR);
+    await report('claude-ahead', used, used);
+  }
+  mock.timers.setTime(T0 - 1.5 * HOUR);
+  await h.finish(job);
+  mock.timers.setTime(T0 - HOUR);
+  await report('claude-ahead', 0.3, 0.3);
+  // (six-hour slices, ending 12.5 and 6.5 hours before T0 among them: the readings fall in three)
+  await priceAhead(T0 - HOUR / 2);
+  mock.timers.setTime(T0);
+  const rates = fillRates().get('claude')!;
+  // (0.2 of the five hours' gain over the run's 12.5 hours, in three intervals)
+  assert.ok(Math.abs(rates.five.get('claude-ahead')! - 0.016) < 1e-10);
+  assert.deepEqual(rates.measurements.get('claude-ahead'), {
+    fiveHours: 12.5,
+    weekHours: 12.5,
+    fiveIntervals: 3,
+    weekIntervals: 3,
+  });
+});
 
 test('each seat prices its own usage gains against all active run hours, without finished-job spend', async () => {
   await report('claude-a', 0.2, 0.3);
@@ -87,4 +117,29 @@ test('staggered concurrent runs price partial reading intervals and exclude idle
   const measured = fillRates().get('claude')!;
   assert.ok(Math.abs(measured.five.get('claude-overlap')! - 0.2) < 1e-10);
   assert.ok(Math.abs(measured.week.get('claude-overlap')! - 0.1) < 1e-10);
+  const evidence = { fiveHours: 2, weekHours: 2, fiveIntervals: 2, weekIntervals: 2 };
+  assert.deepEqual(measured.measurements.get('claude-overlap'), evidence);
+  assert.deepEqual(fillRates().get('claude')!.measurements.get('claude-overlap'), evidence);
+});
+
+test("a lost run's hours end at its last heartbeat in readings already read", async () => {
+  const { runsLost } = await import('./agenttime.ts');
+  mock.timers.setTime(T0 + 10 * HOUR);
+  await report('claude-lost', 0.1, 0.1, T0 + 20 * HOUR);
+  const job = await h.start({ agent: 'bolt' }, { seat: 'claude-lost' });
+  mock.timers.setTime(T0 + 10.5 * HOUR);
+  await h.heartbeat(job);
+  for (const [hour, used] of [
+    [11, 0.2],
+    [12, 0.3],
+  ]) {
+    mock.timers.setTime(T0 + hour * HOUR);
+    await report('claude-lost', used, used, T0 + 20 * HOUR);
+    assert.ok(Math.abs(fillRates().get('claude')!.five.get('claude-lost')! - 0.1) < 1e-10);
+  }
+  runsLost(T0 + 11 * HOUR);
+  mock.timers.setTime(T0 + 13 * HOUR);
+  await report('claude-lost', 0.4, 0.4, T0 + 20 * HOUR);
+  // (the hour to 11:00 had half an hour of the run, the hours after none)
+  assert.ok(Math.abs(fillRates().get('claude')!.five.get('claude-lost')! - 0.2) < 1e-10);
 });

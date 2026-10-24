@@ -23,7 +23,11 @@ export const MAX_TITLE = 140,
   MAX_QUESTIONS = 40;
 const TYPES = ['text', 'yes-no', 'number'];
 // The words a yes-or-no shows, in the reader's language (the guest page's languages; HQ reads English)
-export const WORDS = { en: { yes: 'Yes', no: 'No', point: '.' }, nl: { yes: 'Ja', no: 'Nee', point: ',' } };
+export const WORDS = {
+  en: { yes: 'Yes', no: 'No', point: '.' },
+  nl: { yes: 'Ja', no: 'Nee', point: ',' },
+  de: { yes: 'Ja', no: 'Nein', point: ',' },
+};
 // a stored number as the reader writes it (3,5 in Dutch)
 const written = (a, lang) => String(a).replace('.', (WORDS[lang] ?? WORDS.en).point);
 

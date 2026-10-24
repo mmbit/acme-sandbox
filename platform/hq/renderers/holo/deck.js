@@ -1,6 +1,4 @@
-// The company on the deck: a hologram platform for each room in a ring round the projector, the board as the core
-// above it, each agent a light orbiting their room (how high, fast and bright says what they're doing), the mascots
-// on the table top, and how it all grows when the org does.
+// The company on the holo deck: rooms, people, mascots, growth
 import { rng, clamp, lerp } from '../../util.js';
 import { TAU, polar, mix3, add } from './gl.js';
 

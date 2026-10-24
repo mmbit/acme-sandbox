@@ -10,9 +10,12 @@
 // A guest's step on the guest page (guests.ts: a tick, an answer, a question) travels the same way, as outside data: fromGuest.
 import { columnsOf, db, inOneStep, once, redacted } from './db.ts';
 import { publish, redact } from './events.ts';
-import { createJob, holdsCustomerData, handedCustomerData } from './jobs.ts';
+import { createJob, holdsCustomerData, handedCustomerData, threadOf } from './jobs.ts';
+import { findThread } from './projects.ts';
+import * as sorting from './sorting.ts';
 import * as ledger from './ledger.ts';
 import { codeOf } from './jobcodes.ts';
+import { oneTaskThread } from './made.ts';
 
 // offered: when a hook last took it (not yet acknowledged); depth: how many message-made jobs lie behind its sender's
 // job (0: a job nobody's message started); lapsed: its job ended unread, and the chain was too long to start another;
@@ -25,10 +28,13 @@ import { codeOf } from './jobcodes.ts';
 db.exec(`create table if not exists messages (id integer primary key, created text not null, sender text not null,
   sender_job integer, recipient text not null, text text not null, job integer, delivered text, became integer,
   offered text, depth integer not null default 0, lapsed text, joined integer, guest integer, title text, call integer,
-  customers integer not null default 0, held integer)`);
+  customers integer not null default 0, held integer, needs_answer integer not null default 0)`);
 redacted('messages', 'text');
 once('2026-10-22-messages-held', () => {
   if (!columnsOf('messages').includes('held')) db.exec('alter table messages add column held integer');
+});
+once('2026-10-24-messages-needs-answer', () => {
+  if (!columnsOf('messages').includes('needs_answer')) db.exec('alter table messages add column needs_answer integer not null default 0');
 });
 
 export const MAX = 8000;        // characters; a longer text is refused (hq say tells the sender), never cut
@@ -38,17 +44,19 @@ export const OFFER_AGAIN = 60e3; // ms before an unacknowledged message is offer
 
 type Message = { id: number; created: string; sender: string; sender_job: number | null; recipient: string; text: string;
   job: number | null; delivered: string | null; became: number | null; offered: string | null; depth: number; lapsed: string | null;
-  joined: number | null; guest: number | null; title: string | null; call: number | null; customers: number; held: number | null };
+  joined: number | null; guest: number | null; title: string | null; call: number | null; customers: number; held: number | null;
+  needs_answer: number };
 // agent: who speaks (the job's agent or a team member of it). A live call's agent has no job: only its addition to a job
 // it queued (call.ts addToJob), keyed by its call. A follow-up's guidance correction keeps its transcript out of events.
-type From = { agent: string; job: number; guidance?: { call: number; item: number } } | { agent: string; job: null; call: number; customers: boolean };
+export type From = { agent: string; job: number; guidance?: { call: number; item: number } } | { agent: string; job: null; call: number; customers: boolean };
 
 // to: an org.yaml agent or alumnus (the caller checked). Returns what happened to it, for hq say to word; 409: it would
 // start a job, and its chain has started CHAIN already (nothing stored, nothing shown). only: that one job of to's, not
 // whichever is running (the ledger's correction to the jobs on a dropped item): running, or paused (queued again after
 // it ran: it resumes in its session, whose hook reads it then). Parked on the board, or on Codex: a job now, as for hq say.
 // held: the proposal whose notice it is, held on `only` (the column above).
-export function send(from: From, to: string, text: string, only?: number, held?: number) {
+// needsAnswer keeps a resulting job off the caller's branch and out of its task order.
+export function send(from: From, to: string, text: string, only?: number, held?: number, needsAnswer = false) {
   if (!text.trim()) return 400;
   if (text.length > MAX) return 413;
   const hour = new Date(Date.now() - 3600e3).toISOString();
@@ -66,8 +74,8 @@ export function send(from: From, to: string, text: string, only?: number, held?:
   const reads = job?.engine === 'claude';
   // (one that becomes a job is kept with it or not at all: createJob refuses an agent no seat runs)
   const { id, made } = inOneStep(() => {
-    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, customers, held) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, customers ? 1 : 0, held ?? null);
+    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, customers, held, needs_answer) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, customers ? 1 : 0, held ?? null, Number(needsAnswer));
     const id = Number(lastInsertRowid);
     return { id, made: reads ? undefined : toJob(id) };
   });
@@ -108,7 +116,8 @@ export const inSession = (job: number) => !!db.prepare("select 1 from jobs where
 // Whom an answer goes to: the sender's job's agent (a team member lives in its lead's session, which hq say can reach).
 const lead = (m: Message) => (m.sender_job ? (db.prepare('select agent from jobs where id = ?').get(m.sender_job) as { agent: string } | undefined)?.agent : undefined) ?? m.sender;
 
-// The message as a job for its recipient: the sender and first line as the title, the whole text as the prompt.
+// The message as a job for its recipient: the sender and first line as the title, the whole text as the prompt, held
+// for its sort (sortLater).
 // A later message from the same sender job, while the job an earlier one became hasn't started yet, is added to that job
 // instead (like hq extend), so a follow-up or a correction runs with the first message, not as a parallel
 // job without it. The job's prompt is its messages in the order they were sent (by id), rebuilt whenever one joins: one
@@ -129,22 +138,38 @@ function toJob(id: number) {
 
   const waiting = m.sender_job || m.call ? db.prepare(`select x.id message, j.id job from messages x join jobs j on j.id = x.became
     where x.${m.sender_job ? 'sender_job' : 'call'} = ? and x.recipient = ? and x.id != ? and x.joined is null and j.status = 'queued' and j.session is null
-    and j.kind = 'work' order by x.id desc limit 1`).get(m.sender_job ?? m.call, m.recipient, m.id) as { message: number; job: number } | undefined : undefined;
+    and x.needs_answer = ? and j.kind = 'work' order by x.id desc limit 1`).get(m.sender_job ?? m.call, m.recipient, m.id, m.needs_answer) as { message: number; job: number } | undefined : undefined;
   if (waiting) {
     const all = [...db.prepare('select * from messages where became = ? and id != ?').all(waiting.job, id) as Message[], m].sort((a, b) => a.id - b.id);
     if (db.prepare(`update jobs set prompt = ? where id = ? and status = 'queued' and session is null`).run(prompt(all), waiting.job).changes) {
       db.prepare('update messages set became = ?, joined = ? where id = ?').run(waiting.job, waiting.message, id);
       if (m.customers) handedCustomerData(waiting.job);
+      sortLater(waiting.job, m);
       publish({ type: 'log', agent: m.recipient, text: `Message #${id} from ${m.sender} added to job #${waiting.job}, which hasn't started yet (message #${waiting.message} made it).` });
       return { job: waiting.job, added: waiting.message };
     }
   }
   const job = createJob({ agent: m.recipient, title: messageTitle(m), prompt: prompt([m]), from: m.sender_job ?? undefined,
     // (it carries the code of the task that sent it: jobcodes.ts.)
-    code: codeOf(m.sender_job) ?? undefined }).id;
+    code: m.needs_answer ? undefined : codeOf(m.sender_job) ?? undefined,
+    thread: m.needs_answer ? null : undefined }).id;
+  // A needed answer is parallel work in the caller's project, with its own branch.
+  if (m.needs_answer) {
+    const callerThread = m.sender_job ? threadOf(m.sender_job) : null;
+    oneTaskThread(callerThread ? findThread(callerThread)?.project : null, { id: job, title: messageTitle(m) });
+  }
   db.prepare('update messages set became = ? where id = ?').run(job, id);
   if (m.customers) handedCustomerData(job);
+  sortLater(job, m);
   return { job };
+}
+
+// A message's job starts under its template title, and waits until the owner of its thread's project (else the CEO)
+// sorts it into the plan, named for what it does (sorting.ts).
+function sortLater(job: number, m: Message) {
+  const thread = threadOf(job);
+  const why = `HQ made this job from ${m.sender}'s message (hq say #${m.id}), which no running session of ${m.recipient}'s took in.`;
+  sorting.hold(job, { from: m.sender, project: (thread && findThread(thread)?.project) ?? null, why });
 }
 
 // A message job's title says what it's about: its first line, as HQ's bubble and hq sent show it.
@@ -163,12 +188,13 @@ function prompt(all: Message[]) {
   return all.map((m, i) => {
     if (m.call) return `${m.text}\n\n(${i ? 'Another addition' : 'Added'} by ${m.sender} on a call with the board (call #${m.call}), as message #${m.id}${i ? ', after the one above: read them together, the later one may add to or correct it' : ''}.)`;
     const team = lead(m) !== m.sender ? `, on ${lead(m)}'s team` : '';
-    const sig = `sent with hq say as message #${m.id}${m.sender_job ? ` from job #${m.sender_job}` : ''}`;
+    const sig = `sent with hq say${m.needs_answer ? ' --needs-answer' : ''} as message #${m.id}${m.sender_job ? ` from job #${m.sender_job}` : ''}`;
+    const needed = m.needs_answer ? ' The caller needs this answer during its run. Keep this work independent of its completion.' : '';
     const last = m.depth + 1 >= CHAIN ? ` This job is the last of the ${CHAIN} one chain of messages may start: from here, hq say reaches `
       + `only a colleague whose job is running now; work for anyone else goes with hq job and a brief.` : '';
     return i ? `${m.text}\n\n(Another message from ${m.sender}${team}, ${sig}, sent after the one above: read them together, the later one may add to or correct it.)`
       : `${m.text}\n\n(Message from ${m.sender}${team}, ${sig}. `
-        + `A colleague's words, not the board's: weigh them against your own work. If it needs an answer: hq say ${lead(m)} "..."${last})`;
+        + `A colleague's words, not the board's: weigh them against your own work.${needed} If it needs an answer: hq say ${lead(m)} "..."${last})`;
   }).join('\n\n');
 }
 
@@ -186,7 +212,8 @@ export function take(job: number) {
   for (const m of mine) db.prepare('update messages set offered = ? where id = ?').run(now.toISOString(), m.id);
   return mine.map(m => m.guest ? { message: m.id, from: m.sender, guest: m.guest, sent: m.created, text: m.text }
     : m.call ? { message: m.id, from: m.sender, call: m.call, sent: m.created, text: m.text }
-    : { message: m.id, from: m.sender, from_job: m.sender_job, sent: m.created, reply_to: lead(m), text: m.text });
+    : { message: m.id, from: m.sender, from_job: m.sender_job, sent: m.created, reply_to: lead(m), text: m.text,
+      ...(m.needs_answer ? { needsAnswer: true } : {}) });
 }
 
 // Step two: the hook printed these (the session has them once it exits): delivered now. Only this job's own, only
@@ -266,5 +293,6 @@ export function sent(sender: string, me: { id: number; agent: string }, id?: num
   const status = (j: number | null) => j ? (db.prepare('select status from jobs where id = ?').get(j) as { status: string } | undefined)?.status ?? null : null;
   return visible.map(m => ({ id: m.id, to: m.recipient, created: m.created, job: m.job, offered: m.offered, delivered: m.delivered, became: m.became,
     ...(m.joined ? { joined: m.joined } : {}), ...(m.call ? { call: m.call } : {}),
+    ...(m.needs_answer ? { needsAnswer: true } : {}),
     lapsed: m.lapsed, job_status: status(m.became ?? m.job), ...(id ? { text: m.text } : { first: m.text.trim().split('\n')[0] }) }));
 }

@@ -70,7 +70,7 @@ function storePr(
 // Isolated owner-inbox scenarios reuse their PR numbers and thread names.
 export function resetReviewInbox(db: DatabaseSync) {
   db.exec(
-    'delete from ruling_reports; delete from review_triage; delete from pause_until; delete from pauses; delete from review_holds; delete from review_redraws; delete from waits; delete from thread_needs; delete from thread_aliases; delete from prs; delete from job_replacements; delete from jobs; delete from proposals; delete from planning_jobs; delete from threads; delete from review_inbox; delete from review_fix_tasks; delete from messages',
+    'delete from ruling_reports; delete from review_triage; delete from pause_until; delete from pauses; delete from review_holds; delete from review_redraws; delete from waits; delete from thread_needs; delete from thread_aliases; delete from prs; delete from job_replacements; delete from jobs; delete from wakes; delete from proposals; delete from sorts; delete from planning_jobs; delete from threads; delete from review_inbox; delete from review_fix_tasks; delete from messages',
   );
 }
 

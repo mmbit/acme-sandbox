@@ -3,6 +3,8 @@ import type { QueuedJob, Size, Snapshot, Wait } from './eta.ts';
 import {
   backward,
   compare,
+  deadlinePressure,
+  DEADLINE_PAUSE_MS,
   dependencyRun,
   PAUSE_MS,
   ROOM_AFTER_MS,
@@ -262,7 +264,8 @@ function holdFullRoom(
     if ('id' in roomSeat) {
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : 'memory';
       const sharedReview = typeof resource !== 'string' && reviewroom.shared(limits[roomSeat.engine] ?? Infinity);
-      const key = typeof resource === 'string' ? resource : `${resource.id}:${sharedReview}`;
+      const pressure = Number(deadlinePressure(run.order, seats.now));
+      const key = `${typeof resource === 'string' ? resource : `${resource.id}:${sharedReview}`}:${pressure}`;
       const earlier = unpausable.get(key);
       // A lower-order non-board claim cannot pause work that an earlier one could not. Shared reviews have the
       // same victim rule on a seat. Spare claims and the board's initial pause delay do not establish that bound.
@@ -298,13 +301,13 @@ function makeRoom(
   const { victim, needsReview } = roomVictim(play, waiting, running, now, resource, seat);
   if (!victim) return false;
   const run = play.runs.get(victim.id)!;
-  // Room stays occupied until the worker can stop at a step boundary.
-  run.left = Math.max(0, run.ends - now) + PAUSE_MS;
-  run.readyAt = now + PAUSE_MS;
+  const pauseMs = deadlinePressure(waiting.order, now) ? DEADLINE_PAUSE_MS : PAUSE_MS;
+  run.left = Math.max(0, run.ends - now) + pauseMs;
+  run.readyAt = now + pauseMs;
   run.state = 'pausing';
   run.reviewSeat = needsReview && typeof resource !== 'string' ? seat.id : null;
-  run.ends = now + PAUSE_MS;
-  waiting.readyAt = now + PAUSE_MS;
+  run.ends = now + pauseMs;
+  waiting.readyAt = now + pauseMs;
   return true;
 }
 

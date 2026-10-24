@@ -78,3 +78,54 @@ test('a bad report never stops the finish, and a finished job records nothing mo
   await finish(id, { status: 'done', usage: { models: { [SONNET]: t(9) } } });   // reported twice
   assert.deepEqual(rows(id).map(r => r.input), [0]);   // ({ models: { m: null } } is a model with no figures)
 });
+
+// A fix round, a touch-up check and the board's notes go on in the author's last session on the branch (the worker's
+// carry.ts): the same session, its running totals restored, in a new job.
+const carried = async (session: string, totals: number[], seat = 'claude-1', engine?: string) => {
+  const jobs: number[] = [];
+  for (const input of totals) {
+    const id = await running(seat, engine);
+    await finish(id, { status: 'done', session, usage: { models: { [SONNET]: t(input, input / 1000) }, cost: input / 1000, resumed: jobs.length > 0 } });
+    jobs.push(id);
+  }
+  return jobs;
+};
+
+test("build, fix and merge in one carried session: each job is stored as what its run added", async () => {
+  const jobs = await carried('s5', [1000, 1300, 1350]);
+  assert.deepEqual(jobs.map(j => rows(j).map(r => [r.input, r.cache_read, r.cost])),
+    [[[1000, 10000, 1]], [[300, 3000, 0.3]], [[50, 500, 0.05]]]);
+});
+
+test('Codex: a session carried on the same seat is stored the same way', async () => {
+  const jobs = await carried('c2', [700, 900], 'codex-1', 'codex');
+  assert.deepEqual(jobs.map(j => rows(j).map(r => r.input)), [[700], [200]]);
+});
+
+test('a carried session that started over is stored whole', async () => {
+  const jobs = await carried('s6', [1000, 400]);
+  assert.deepEqual(jobs.map(j => rows(j).map(r => r.input)), [[1000], [400]]);
+});
+
+test('stored rows that hold a carried session whole: each becomes what its run added, and nothing else changes', async () => {
+  const { rebaseCarried } = await import('./usage.ts');
+  // a carried job's first run whole (reported as not resumed), its later runs against its own report
+  const report = async (job: number, session: string, input: number, resumed: boolean, status = 'done') =>
+    finish(job, { status, session, usage: { models: { [SONNET]: t(input, input / 1000) }, cost: input / 1000, resumed } });
+  const build = await running(), fix = await running(), over = await running(), other = await running();
+  await report(build, 'old-a', 1000, false);
+  await report(fix, 'old-a', 1200, false, 'limited');   // carried: stored whole
+  await again(fix);
+  await report(fix, 'old-a', 1500, true);   // the fix's own resume, against its own report
+  await report(over, 'old-a', 200, false);   // carried, but started over
+  await report(other, 'old-b', 5000, false);
+  assert.deepEqual([build, fix, over].map(j => rows(j).map(r => r.input)), [[1000], [1200, 300], [200]]);
+  const before = rows(other);
+  const stored = () => [build, fix, over].map(j => rows(j).map(r => [r.input, r.cache_read, r.cost]));
+  rebaseCarried();
+  const after = stored();
+  assert.deepEqual(after, [[[1000, 10000, 1]], [[200, 2000, 0.2], [300, 3000, 0.3]], [[200, 2000, 0.2]]]);
+  rebaseCarried();   // once more: the same figures
+  assert.deepEqual(stored(), after);
+  assert.deepEqual(rows(other), before);
+});

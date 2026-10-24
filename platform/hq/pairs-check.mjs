@@ -404,6 +404,8 @@ async function linkOpensViewer(page) {
 // HQ's two answers, no box to type changes in; "Add notes" answers with review, nothing typed
 async function leavesNotes(page) {
   assert.deepEqual(await page.locator('.req .btns .send').allTextContents(), ['Good now', 'Add notes']);
+  // (Good now the one to press, Add notes a plain key: one lit key a row, deskkeys-check.mjs.)
+  assert.deepEqual(await page.locator('.req .btns .send:not(.later)').allTextContents(), ['Good now']);
   await oneRow(page);
   assert.equal(await page.locator('.req #answer, .req #answer-mic, .req .choices').count(), 0);
   const before = sent.length;

@@ -1,6 +1,4 @@
-// The camera: an orbit round the deck (turn, tilt, distance, the point it looks at) that eases to what it's asked to
-// frame, drifts slowly round when left alone, keeps the deck in the part of the screen the shell's chrome leaves free,
-// and answers the shell's gestures.
+// The holo deck's camera: an orbit round the deck, and gestures
 import { clamp, lerp } from '../../util.js';
 import { TAU, persp, lookAt, mmul, add, sub, scl, nrm, cross } from './gl.js';
 import { TABLE_Y, CROWN_Y, CORE, agentAt, mascotAt } from './deck.js';
@@ -25,8 +23,8 @@ function free() {
   return { fw: a.x1 - a.x0, fh: a.y1 - a.y0, cx: (a.x0 + a.x1) / view.w - 1, cy: 1 - (a.y0 + a.y1) / view.h };
 }
 // A wide lens on a tall screen so the whole table fits across it, then as close as the free area allows. Tall
-// screens look down on the deck a little more, and at a lower point: the hologram stands on the table, so looking at
-// its middle left the deck in the bottom half of a phone with the top half empty (the board's screenshot).
+// screens look down on the deck a little more, and at a lower point: the hologram stands on the table, so its middle
+// would leave the deck in the bottom half of a phone.
 function home() {
   const { fw, fh } = free(), tan = Math.tan(view.fov / 2), aspect = view.w / view.h;
   const tall = view.h > view.w, dist = Math.max((tall ? 2.5 : 3.05) * view.w / (fw * tan * aspect), 2.05 * view.h / (fh * tan)) + 1.2;
@@ -96,7 +94,7 @@ function frameRoom(S, r, instant) {
 }
 
 // ---- the shell's gestures, in CSS px (and px/s)
-// One finger: across turns the deck, up and down pans it (the board's ask: like the other looks); two fingers: a pinch
+// One finger: across turns the deck, up and down pans it, as in the other looks; two fingers: a pinch
 // zooms, moving up or down together tilts; the arrow keys turn and tilt.
 let pinched = null; // { dist, y }: the distance a pinch started from, and where its fingers' middle was last
 const touch = () => { cam.goal = null; cam.idle = 0; };

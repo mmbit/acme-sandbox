@@ -27,6 +27,7 @@ import * as meetingrecord from './meetingrecord.ts';
 import { jobsOfCode } from './jobcodes.ts';
 import { carriesKeys, keysCondition } from './chat.ts';
 import * as latency from './latency.ts';
+import { SMALL_WORDS } from './language.ts';
 
 // Texts in, one unit-length vector each (a model may embed a question and a passage differently, like e5's "query: ").
 export type Embedder = (texts: string[], kind: 'query' | 'passage') => Promise<Float32Array[]>;
@@ -60,6 +61,9 @@ redacted('memory', 'title', 'body');
 // A search counts the chunks, and the archive's, on each question (ranked()): from this index, not by reading every chunk's
 // row with its text and vector.
 db.exec('create index if not exists memory_source on memory (source)');
+// And ranks its words' hits by whose they are (ranked()): from this one, as `shared` is the row's last column, after the
+// text and the vector.
+db.exec('create index if not exists memory_whose on memory (id, source, agent, shared)');
 
 // The shared files, and why. Out, on purpose: mail (customer data, and outside text); products/ and code
 // (grep finds them better, and a product folder can hold order data); people/ profiles (each agent is given its own; the
@@ -438,10 +442,7 @@ const live = (r: { doc: string; agent: string | null }, reader: Reader) => {
   return !!LIVE[kind] && !!db.prepare(LIVE[kind]).get(Number(id), r.agent, reader.agent, ...(job ? [Number(job)] : [])) && readsDoc(r.doc, reader);
 };
 
-const STOP = new Set(`a about an and are as at be but by can could did do does for from had has have how i if in into is it its me my
-  no not of on or our so than that the their them then there these they this to us was we were what when where which who why will with would you
-  your aan al als bij dan dat de die dit door een en er had heb heeft hebben het hij hoe hun ik in is je jij kan maar mag me met mijn moet na naar
-  niet nog of om onze ons ook op over te tot u uit van voor waar wanneer waarom wat was we wie wij worden wordt ze zij zijn`.split(/\s+/));
+const STOP = new Set(Object.values(SMALL_WORDS).flatMap(words => words.split(/\s+/)));
 // Words (bm25), '#n' numbers and meaning, fused by reciprocal rank (k = 60), best chunk per document. The scope is in the
 // query itself, so chunks outside it never push the ones in it past its limit: 'own' is only the agent's own jobs,
 // requests and calls (history), 'intercom' only the intercom's chunks, each a hit of its own (a day holds many asks).
@@ -452,19 +453,27 @@ async function ranked(q: string, reader: Reader, n: number, scope: Scope = 'all'
   // embeds (and reuse an id), and nothing read before them is trusted after. Every hit is still checked against its live row below.
   const m = await meaning(q), vs = 'v' in m ? [...(await vectors()).values()] : [];
   const terms = [...new Set(q.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [])];
-  // Small words (English and Dutch: the board speaks both) and words in more than a fifth of all chunks ("company") only
+  // Small words (each language's, language.ts) and words in more than a fifth of all chunks ("company") only
   // drown the rest: dropped, unless that's all there is and the index isn't all embedded yet ("what are we for": by
   // meaning, which reads the whole question, and not by four words that are everywhere).
   // The live chunks judge their words on live counts alone: archived copies of a word can't make it common for them (their
   // words' pass would then be skipped, and a live chunk only its words find would drop out under archived hits). The
   // archive judges on the whole index, as before: on its own few chunks, every word its pieces are about would be common.
   const all = db.prepare(`select count(*) n, coalesce(sum(source = '${ARCHIVE}'), 0) a from memory`).get() as { n: number; a: number }, total = all.n;
-  const df = db.prepare(`select count(*) n, coalesce(sum(m.source = '${ARCHIVE}'), 0) a from memory_fts f join memory m on m.id = f.rowid where memory_fts match ?`);
-  const counts = terms.filter(t => !STOP.has(t)).map(t => [t, df.get(`"${t}"`) as { n: number; a: number }] as const);
+  // How many chunks hold each word, from the word index alone, and the archive's share of them only where it decides the
+  // word for the live chunks: one a fifth of them or fewer hold is rare for them whatever the archive's share, and one
+  // more than a fifth hold with every archived chunk taken off is common.
+  const kept = total - all.a, holding = db.prepare('select count(*) n from memory_fts where memory_fts match ?');
+  // (never `rowid in (…)` beside the match: FTS5 then looks each id up apart, seconds)
+  const archived = db.prepare(`select coalesce(sum(rowid in (select id from memory where source = '${ARCHIVE}')), 0) n from memory_fts where memory_fts match ?`);
+  const counts = terms.filter(t => !STOP.has(t)).map(t => {
+    const { n } = holding.get(`"${t}"`) as { n: number }, decides = n > kept / 5 && n - all.a <= kept / 5;
+    return { t, n, a: decides ? (archived.get(`"${t}"`) as { n: number }).n : 0 };
+  });
   const archivedVs = vs.filter(c => c.source === ARCHIVE).length;
   const sides = [
-    { is: '!=', n: total - all.a, rare: counts.filter(([, c]) => c.n - c.a <= (total - all.a) / 5).map(([t]) => t), unread: vs.length - archivedVs < total - all.a },
-    { is: '=', n: all.a, rare: counts.filter(([, c]) => c.n <= total / 5).map(([t]) => t), unread: vs.length < total },
+    { is: '!=', n: kept, rare: counts.filter(c => c.n - c.a <= kept / 5), unread: vs.length - archivedVs < kept },
+    { is: '=', n: all.a, rare: counts.filter(c => c.n <= total / 5), unread: vs.length < total },
   ];
   const mine = (r: { agent: string | null; shared: number; source: string }) =>
     scope === 'intercom' ? r.source === INTERCOM : r.agent === agent || (scope === 'all' && !!r.shared);
@@ -473,9 +482,12 @@ async function ranked(q: string, reader: Reader, n: number, scope: Scope = 'all'
   // Live and archived candidates are taken apart, each its own top 50: the archive after every live hit (below) holds only
   // if no number of archived chunks can crowd the live ones out of the candidates first.
   const apart = (rows: { id: number; source: string }[]) => [rows.filter(r => r.source !== ARCHIVE), rows.filter(r => r.source === ARCHIVE)].forEach(g => fuse(g.slice(0, 50).map(r => r.id)));
-  for (const { is, n, rare, unread } of sides) if (n && (rare.length || (terms.length && unread))) apart((db.prepare(`select m.id, m.doc, m.agent, m.source, m.shared from memory_fts f join memory m on m.id = f.rowid
-    where memory_fts match ? and ${whose} and m.source ${is} '${ARCHIVE}' order by bm25(memory_fts, 3, 1) limit 300`)
-    .all((rare.length ? rare : terms).map(t => `"${t}"`).join(' OR '), ...whom) as Row[]).filter(mine));
+  for (const { is, n, rare, unread } of sides) {
+    const words = rare.length ? rare.map(c => c.t) : unread ? terms : [];
+    if (n && words.length) apart((db.prepare(`select m.id, m.agent, m.source, m.shared from memory_fts f join memory m indexed by memory_whose on m.id = f.rowid
+      where memory_fts match ? and ${whose} and m.source ${is} '${ARCHIVE}' order by bm25(memory_fts, 3, 1) limit 300`)
+      .all(words.map(t => `"${t}"`).join(' OR '), ...whom) as Row[]).filter(mine));
+  }
   // "#32": that number exactly, titles first (the tokenizer drops the #, and 32 alone is everywhere). Looked for among the
   // chunks with the word 32, so a colour like #32a4ff is no hit.
   for (const n of [...new Set(q.match(/#\d+/g) ?? [])].slice(0, 5)) {   // a pasted list can't stall HQ

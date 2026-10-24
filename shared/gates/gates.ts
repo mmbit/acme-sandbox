@@ -191,7 +191,8 @@ async function newTypeErrors(tools: Tools, base: string, changes: Change[]): Pro
   const baseDir = mkdtempSync(join(tmpdir(), 'gates-base-'));
   try {
     const listedBase = gitFiles(root, 'ls-tree', '-r', '--name-only', base);
-    const archive = 'git archive --format=tar "$0" -- "$@" | tar -x -C "$GATES_BASE_DIR"';
+    // (-m: no file times set, a call the work Stop hook's confinement refuses, platform/worker/hq/confine.py)
+    const archive = 'git archive --format=tar "$0" -- "$@" | tar -x -m -C "$GATES_BASE_DIR"';
     const env = { ...process.env, GATES_BASE_DIR: baseDir, GIT_LITERAL_PATHSPECS: '1' };
     execFileSync('sh', ['-c', archive, base, ...listedBase.filter(p => BASE_FILES.test(p))], { cwd: root, env });
     linkModules(root, root, baseDir);

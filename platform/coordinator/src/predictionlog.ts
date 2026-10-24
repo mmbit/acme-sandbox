@@ -32,8 +32,8 @@ export type LogRow = {
 
 export const MOVE_MS = 5 * 60_000;
 
-// The last row of each job and thread the plays have had, read from the log the first time it shows up: by its index,
-// never the whole log. null: the log has none.
+// The last row of each job and thread the plays have had, read from the log the first time it shows up (LAST_ROW).
+// null: the log has none.
 const last = new Map<string, LogRow | null>();
 
 forecast.afterEach(record);
@@ -90,13 +90,18 @@ function moved(before: LogRow, now: LogRow) {
 const keyOf = (row: { job: number | null; thread: string | null }) =>
   row.job === null ? `thread:${row.thread}` : `job:${row.job}`;
 
+// A job's and a thread's last row: one seek on its index, never the whole log. A thread's is its latest `at`, the order
+// of prediction_log_thread_at: by id, the first play after a restart sorted every row of each open thread (~0.9 s on
+// HQ's log).
+export const LAST_ROW = {
+  thread: 'select * from prediction_log where thread = ? order by at desc, id desc limit 1',
+  job: 'select * from prediction_log where job = ? order by id desc limit 1',
+};
+
 function lastOf(row: LogRow) {
   const key = keyOf(row);
   if (!last.has(key)) {
-    const before =
-      row.job === null
-        ? prepared('select * from prediction_log where thread = ? order by id desc limit 1').get(row.thread)
-        : prepared('select * from prediction_log where job = ? order by id desc limit 1').get(row.job);
+    const before = row.job === null ? prepared(LAST_ROW.thread).get(row.thread) : prepared(LAST_ROW.job).get(row.job);
     last.set(key, (before as LogRow | undefined) ?? null);
   }
   return last.get(key);

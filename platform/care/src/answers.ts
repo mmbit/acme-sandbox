@@ -12,7 +12,7 @@ import * as hq from './hq.ts';
 import { linksOk } from './engine.ts';
 import { healthTerm } from '../public/health.js';
 import { db, now } from './db.ts';
-import { t, lang as toLang, languageName, locale } from './texts.ts';
+import { t, lang as toLang, languageName, day } from './texts.ts';
 import { settings, nameOf } from './company.ts';
 
 const CALL_MS = 60_000;      // one model call at most
@@ -21,7 +21,6 @@ const RETRY_MS = 5 * 60_000;
 const MAIL_TRIES = 5, MAIL_RETRY_MS = Number(process.env.CARE_MAIL_RETRY_MS ?? 60_000); // like the answer email (engine.ts)
 const EVERY_MS = 60_000;
 const ref = (id: number) => `H-${1000 + id}`;
-const day = (at: number, l: string) => new Intl.DateTimeFormat(locale(l), { day: 'numeric', month: 'long', year: 'numeric', timeZone: settings.timeZone }).format(at);
 
 const ANSWER: model.ToolDef = { name: 'write_answer', description: 'The answer to the customer\'s question from the knowledge, or known: false if the knowledge doesn\'t answer it.',
   input_schema: { type: 'object', properties: { known: { type: 'boolean' }, answer: { type: 'string' } }, required: ['known', 'answer'], additionalProperties: false } };

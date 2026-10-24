@@ -13,4 +13,5 @@ only one company's goes in its entry's `prompt`.
 | `tests.md` | Every night, the full test run on main: a test that's red is fixed (the code or the test) or deleted |
 | `support-articles.md` | Every night, support articles for what's new (products, features, offers, policies) in the knowledge base the customer helper answers from <!-- --> |
 | `foundation-sweep.md` | A weekly sweep of the foundation for the foundation keeper: company-specific code and one-of-each assumptions, a note and jobs for the fixes <!-- --> |
+| `cve-watch.md` | Twice a day, major vulnerabilities in what the company runs (Node, the server and its images, Docker, dependencies): patched or mitigated at once, the rest to the Overseer or the board |
 | `show.md` | An episode of one of the company's On Air shows (`company/shows.yaml`): written, translated and spoken |

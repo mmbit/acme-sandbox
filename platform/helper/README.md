@@ -220,7 +220,9 @@ all those runs, just as each image on a lent machine must be trusted with that m
 ## Limits
 
 org.yaml's `runs:` sets them. `helper` names the lent machines where agents read them, and the first machine. `maxMinutes` is the longest run, and
-`takeMinutes` how long a run waits to be taken. `kinds` maps each kind's name to its settings:
+`takeMinutes` how long a run waits to be taken. `browser` names the kind HQ's browser harnesses send their renders to
+(shared/browser/README.md, "Heavy renders"; `render` when it names none, left out when it isn't a kind's name, and the
+harnesses stay on the worker). `kinds` maps each kind's name to its settings:
 
 - `about`: a line on what the kind is for, shown in `hq run helper` and HQ's refusals;
 - `image`: the kind's Docker image (default `node:24.22.1-slim`);

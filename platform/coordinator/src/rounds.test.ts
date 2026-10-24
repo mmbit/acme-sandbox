@@ -170,7 +170,7 @@ test('due work pauses a predicted follow-through fix while the check itself keep
   ]);
   const forecast = play(input, sizes);
   assert.equal(forecast.get(check.id)!.done, 2 * minute);
-  assert.equal(forecast.get(due.id)!.start, 9 * minute);
+  assert.equal(forecast.get(due.id)!.start, 4 * minute);
   assert.ok(forecast.get(due.id)!.done! <= due.due!);
 
   sizes.set(check.id, { agent_ms: 60 * minute });

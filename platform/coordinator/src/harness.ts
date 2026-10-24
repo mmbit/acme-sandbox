@@ -176,6 +176,11 @@ export async function harness(
     if (planningSlots) await reportCapacity();
     return r.body && { ...r.body, seat };
   };
+  // A job HQ made (a follow-up, an intercom turn), alone on an engine of its own, its wait over.
+  const claimJob = async (id: number) => {
+    const row = db.prepare("update jobs set engine = 'own-' || id, not_before = 0 where id = ? returning kind").get(id);
+    return (await claim(`own-${id}`, (row as { kind: string }).kind === 'chat' ? { kind: 'chat' } : {}))!;
+  };
   const queue = (j: JobFields) =>
     jobs.createJob({ title: `${j.agent}'s job`, prompt: 'x', engine: `engine-${++engines}`, word: word(), ...j } as any)
       .id as number;
@@ -286,6 +291,7 @@ export async function harness(
     capacity,
     cancelQueued,
     claim,
+    claimJob,
     start,
     heartbeat,
     finish,

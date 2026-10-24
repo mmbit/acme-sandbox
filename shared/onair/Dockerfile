@@ -4,7 +4,9 @@
 # image (node, perl, tar, find, sh). PyTorch's wheels bring CUDA; the machine brings its driver (`--gpus all`).
 # Built and published by .github/workflows/onair-voice.yml; org.yaml's kind names it by digest.
 FROM node:24.22.1-bookworm-slim
-COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /usr/local/bin/uv
+# The build downloads Python and the packages through uv's own root store, which leaves out emSign's compromised ECC
+# G3 root (GHSA-hq85-5cpj-mr62).
+COPY --from=ghcr.io/astral-sh/uv:0.13.5 /uv /usr/local/bin/uv
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates libsndfile1 \
     && rm -rf /var/lib/apt/lists/*
 # Python 3.13: the one where both take NumPy 2 (Chatterbox pins NumPy 1 below it), on Chatterbox's PyTorch 2.6

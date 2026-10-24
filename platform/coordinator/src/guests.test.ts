@@ -521,6 +521,13 @@ test("the page and its code email speak the guest's language, in plain sentences
   assert.match(p.html, /Even checken of jij het bent/);
   const sent = await guest(`${path}/send`, { form: {} });
   assert.match(sent.html, /Je code om je pagina van Testco te openen: \d{6}/);
+  // each of the platform's languages has the page's words (language.ts), German too
+  assert.deepEqual(await board('/api/guest/lang', { id: c.id, lang: 'de' }), { ok: true });
+  p = await guest(path);
+  assert.match(p.html, /<html lang="de">/);
+  assert.match(p.html, /Kurz prüfen, ob du es bist/);
+  await board('/api/guest/lang', { id: c.id, lang: 'nl' });
+  p = await guest(path);
   // every page a guest can see: no semicolons or dashes between clauses (the board's copy rules)
   const cookie = await verify(path);
   const pages = [
@@ -529,6 +536,8 @@ test("the page and its code email speak the guest's language, in plain sentences
     (await guest(path, { cookie })).html,
     (await guest(`/guest/${'A'.repeat(43)}`)).html,
   ];
+  // a link that opens nothing says so in every language
+  assert.match(pages[3], /Deze link opent niets[^]*This link doesn’t open anything[^]*Dieser Link öffnet nichts/);
   await hq(vera, 'guest', 'close', String(c.guest.request));
   pages.push((await guest(path, { cookie })).html);
   await board('/api/guest/lang', { id: c.id, lang: 'en' });

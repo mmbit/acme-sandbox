@@ -8,7 +8,6 @@ import { ceo, companyFormats, feedFrom, projects } from './company.ts';
 import { ownerOf } from './projects.ts';
 import { escapeHtml } from '../../../shared/html/escape.ts';
 import { play, standing, type Forecast, type Standing } from './forecast.ts';
-import { unsettled } from './sizer.ts';
 import { seats, type Meeting } from './meetings.ts';
 
 // The chair's part of its seat's briefing (the post's headline and shape at the close)
@@ -75,8 +74,7 @@ export function progress(m: Meeting, now = Date.now()) {
 
 // The play once every seat has handed in: each open thread of the meeting's projects (those its seats own, and those it
 // changed) and every thread with a window, its planned finish against its window, and how it stood as the meeting went
-// live (before). Until the sizes of the open work in those projects settle (sizer.ts unsettled), it waits for them:
-// those still coming, and those whose every try failed, which wait for an estimate set by hand.
+// live (before). Tasks already carry their saved queue-time estimates.
 export type Outlook = { finish: number | null; standing: Standing | null };
 export type Tally =
   | { waiting: { job: number; failed: boolean }[] }
@@ -113,20 +111,6 @@ export function outlooks(id: number, f: Forecast | undefined) {
 }
 
 export function tally(m: Meeting, now: number): Tally {
-  const scope = scopeOf(m.id);
-  const inScope = new Set(
-    openThreads()
-      .filter(t => scope.has(t.project))
-      .map(t => t.id),
-  );
-  const open = db
-    .prepare("select id, thread from jobs where status in ('queued', 'running') and thread is not null")
-    .all() as { id: number; thread: string }[];
-  const waiting = unsettled(
-    open.filter(j => inScope.has(j.thread)).map(j => j.id),
-    now,
-  );
-  if (waiting.length) return { waiting };
   const was = m.before ? (JSON.parse(m.before) as Record<string, Outlook>) : {};
   const named = new Map(openThreads().map(t => [t.id, t]));
   return {

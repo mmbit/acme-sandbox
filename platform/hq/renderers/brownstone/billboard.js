@@ -1,12 +1,4 @@
-// The street-end screen: a little promo loop for the company, drawn flat and front-on at 1 px per pixel.
-// drawBillboard(g, t, brand, env) paints frame t (seconds) at (0, 0). Whoever mounts it shears it onto the wall
-// and adds the bezel. brand.billboard's short scenes (by default LOOP: the logo, the mascot, who runs it), joined by
-// blinds or a wipe.
-// A film slide plays the company's own animation: { slide: film, src: <a .png in HQ's files>, fps, seconds }, its frames
-// BILLBOARD.w x BILLBOARD.h side by side, held on the last one if seconds runs past them.
-// Everything static (backdrops, sprites, words) is cached in small canvases, so a frame is a few dozen
-// drawImage/fillRect calls.
-// House rules: it shows what the company is and how it means to work, never products, prices or offers.
+// The street-end screen: the company's promo loop, at 1 px per pixel
 import { INK, text, textW, disc } from './iso.js';
 import { canvas, mix, clamp, rng, picture } from '../../util.js';
 
@@ -248,7 +240,8 @@ function aiRun(g, t, d, env, loop, { lines: [a, b, c] }) {
   }
 }
 
-// the company's own film, a frame of its strip at fps. The logo stands in until the strip has loaded, or if it can't.
+// the company's own film ({ slide: 'film', src: a .png in HQ's files, fps, seconds }): its frames W × H side by side,
+// held on the last if seconds runs past them. The logo stands in until the strip has loaded, or if it can't.
 function film(g, t, d, env, loop, s, lg) {
   const { strip, fps } = s;
   if (!strip.complete || strip.naturalWidth < W) return logo(g, t, d, env, loop, s, lg);
@@ -278,7 +271,8 @@ const TR = 0.22; // each half of a transition
 // brand.yaml's billboard as drawBillboard reads it: the slides of kinds it has, with their words (at least the logo).
 // A slide's mascot is the one it names, else the company's first (mascots: the world's). Without one, a line that
 // names it goes, and so does the mascot slide, as it does for a kind it has no art for. A film without a plain file
-// name or a frame rate goes too, and one that has them starts loading its strip.
+// name or a frame rate goes too, and one that has them starts loading its strip. House rules: it shows what the company
+// is and how it means to work, never products, prices or offers.
 export function slides(list = LOOP, mascots = []) {
   const known = list.filter(s => SCENES[s.slide]).flatMap(s => {
     const m = s.mascot ? mascots.find(x => x.id === s.mascot) : mascots[0], d = { ...SLIDES.find(x => x.slide === s.slide), ...s };
@@ -290,7 +284,7 @@ export function slides(list = LOOP, mascots = []) {
   return known.length ? known : SLIDES.slice(0, 1);
 }
 
-// brand: as scene.js dresses it
+// Frame t (seconds) at (0, 0): whoever mounts it shears it onto the wall. brand: as scene.js dresses it
 export function drawBillboard(g, t, brand, env) {
   const list = brand.billboard, LOOP = list.reduce((s, { seconds }) => s + seconds, 0);
   g.save();

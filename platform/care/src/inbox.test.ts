@@ -84,6 +84,15 @@ test('an email to hello@ gets a draft that names no order, in the customer\'s la
   assert.equal((await email('Livrez-vous en Belgique ?', { reply: false })).lang, 'fr', 'with no draft wanted too');
 });
 
+test("a language tag with a region is its language: 'pt-BR' is pt, with or without a draft wanted", async () => {
+  answer = () => ({ summary: 'Asks whether mugs ship to Brazil.', translated: 'Do you ship to Brazil?', lang: 'pt-BR',
+    draft: 'Olá,\n\nSim, enviamos para o Brasil.\n\nAtenciosamente,', translation: 'Hello,\n\nYes, we ship to Brazil.\n\nKind regards,' });
+  const c = await email('Vocês enviam para o Brasil?');
+  assert.equal(c.lang, 'pt'); assert.match(c.draft, /Brasil/); assert.equal(c.summary, 'Asks whether mugs ship to Brazil.');
+  answer = () => ({ summary: 's', translated: 'Do you ship to Brazil?', lang: ' PT_br ' });
+  assert.equal((await email('Vocês enviam para o Brasil?', { reply: false })).lang, 'pt');
+});
+
 test('a model answer that names no language is no answer: nothing goes to HQ', async () => {
   answer = () => ({ summary: 's', translated: '', lang: '?', draft: 'Bonjour,\n\nCordialement,', translation: '' });
   const item = { id: id('draft'), case: 'E-79', kind: 'email', lang: 'en', words: 'Livrez-vous ?', subject: 'Question', reply: true };

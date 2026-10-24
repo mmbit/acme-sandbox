@@ -9,7 +9,7 @@ import type { recordedReviews } from './reviewfixture.ts';
 export type PastJobFields = {
   created?: number;
   finished?: number;
-  run?: { started: number; ended: number };
+  run?: { started: number; ended: number; outcome?: string; seat?: string | null };
   merged?: number;
   files?: string[];
   sized?: number;
@@ -46,10 +46,12 @@ export function recordedPastJobs(
     const { lastInsertRowid } = statement.run(...values);
     const id = Number(lastInsertRowid);
     if (run)
-      db.prepare("insert into runs (job, seat, started, ended, ended_as) values (?, 'claude-a', ?, ?, 'done')").run(
+      db.prepare('insert into runs (job, seat, started, ended, ended_as) values (?, ?, ?, ?, ?)').run(
         id,
+        run.seat === undefined ? 'claude-a' : run.seat,
         at(run.started),
         at(run.ended),
+        run.outcome ?? 'done',
       );
     if (merged !== undefined) {
       const number = Number(columns.pr ?? ++prs);
