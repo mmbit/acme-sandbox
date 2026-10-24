@@ -23,6 +23,9 @@ needs:
 partner_env: test               # test | live, for the partners' environments
 memory: 256m                    # optional: 256m (the default) up to 512m
 care: true                      # optional: the support chat on its hosts (below)
+engine: care                    # optional: a care deployment, the platform's engine with this folder as plug-in (below)
+chat: true                      # optional, with engine: care: the deployment that serves the shops' chat
+callsAtOnce: 2                  # optional, with engine: care: the voice line's cap on its calls at once (2 by default)
 platform: true                  # optional: a piece of the platform, listed apart in HQ's Apps, never a site of its own
 script_floor: report-only       # optional: only reports the script rule
 watch:                          # optional: HQ's watch on the live app (the coordinator's watch.ts)
@@ -393,16 +396,30 @@ hosting part:
 - Payments takes a shelf as a return address on the product's own path only (`knowledge/notes/platform/payments.md`);
   an order email's `{site}` is then the shelf's top, `https://<shop host>/<slug>` (`ordermail.ts`).
 
-## The support chat (`care`)
+## The support chat (`care`) and the care deployments
 
-- **The service** is the product `care`, deployed when `products/care/product.yaml` exists: built from the repo's root
-  by `platform/care/Dockerfile` with the company's plug-in folder (`products/care/`), not from an `app/` folder. It gets
-  `CARE_APPS`, `CARE_TOKENS` and `CARE_NAMES` (every opted-in app's address, token and name), `CARE_SHOPS` (each
-  shop's apps, below), its line to HQ
-  (`CARE_HQ_URL`, `CARE_HQ_TOKEN`), its cookie's name (`CARE_COOKIE`: the last of `company/infra.env`'s
-  `CARE_COOKIES`, always `__Host-`, or no deploy) and its own keys from the desk phone (`CARE_ANTHROPIC_API_KEY`,
-  `CARE_EMAIL_API_KEY`), which reach its container alone. The server's sync redeploys it when one of those keys
-  changes.
+- **A care deployment** is a product whose manifest says `engine: care` (`infra/care_engines.py` reads them; run, it
+  prints their slugs, and the server's sync makes their phone tokens from that list). It isn't built from an `app/`
+  folder: it's the platform's engine, `platform/care/Dockerfile` from the repo's root, with its own folder as the plug-in
+  (the `PLUGIN` build argument, `products/<slug>/`), deployed when the platform has the engine. Each has its own
+  container, data volume and network, the model's and the email service's keys from the desk phone
+  (`CARE_ANTHROPIC_API_KEY`, `CARE_EMAIL_API_KEY`, which reach the deployments alone), the credit (`CARE_CREDIT_*`)
+  and a phone token of its own. The server's sync redeploys them when one of those keys changes. One that isn't the
+  chat's takes its calls' shop from its own slug (`CARE_PHONE_SHOP`): it has no shops' apps to take one from.
+- **The service** is the deployment with `chat: true` (at most one: with more, no deploy; without one, no product gets
+  the chat). It gets the line to HQ (`CARE_HQ_URL`, `CARE_HQ_TOKEN`), which no other deployment does: HQ's Care app
+  has one queue of cases, drafts and redrafts, numbered by the deployment that files them, so one deployment owns it.
+  It also gets `CARE_APPS`, `CARE_TOKENS` and `CARE_NAMES` (every opted-in app's address, token and name), `CARE_SHOPS` (each
+  shop's apps, below) and its cookie's name (`CARE_COOKIE`: the last of `company/infra.env`'s
+  `CARE_COOKIES`, always `__Host-`, or no deploy). Another deployment answers phone lines only.
+- **The phone**: Caddy's inside port, `http://:8081` (Docker's network only, never published), passes each
+  deployment's `/<slug>/phone/*` to its port 8081 as `/phone/*` and answers anything else 404. The voice line gets
+  `CARE_ENGINES` (JSON: each slug's `url`, `http://caddy:8081/<slug>`, `calls`, its `callsAtOnce`, a whole number
+  from 1, 2 when it names none, else no deploy, and `token`, the name of the variable its token is in, which
+  `care_engines.py` makes) and each deployment's token in that variable, which that deployment gets as
+  `CARE_PHONE_TOKEN`. Compose fills them in from the sync's environment (one file per deployment,
+  `/etc/<server>/care-phone-<slug>-token`), so no other container and no file in the repo holds one. Without a
+  deployment there's neither.
 - **An app with `care: true`** gets `CARE_TOKEN` (an HMAC for its slug and mode: live once it's public, preview
   otherwise, its preview container's included) and `/__care/*` on its hosts, proxied to the service, with Caddy setting `X-Care-App` (`<slug>`, or
   `<slug>@preview` on the preview host; every site strips a client's copy). On the preview host the chat is behind the

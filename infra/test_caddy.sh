@@ -49,8 +49,9 @@ py=${PYTHON:-python3}
 if $py -c 'import yaml' 2>/dev/null; then
   r=$tmp/repo; mkdir -p "$r/infra" "$r/company" "$r/platform/care" "$tmp/hq/secrets" "$tmp/hq/approvals" "$tmp/env"
   touch "$r/platform/care/Dockerfile"   # the chat's service is built from the platform's engine
-  cp "$here/products.py" "$here/company.py" "$here/run_helpers.py" "$r/infra/"; printf 'SERVER_NAME=testco\nCARE_COOKIES=natter,__Host-natter\nSERVED_FROM_REPO=/theme/web/*.css\n' > "$r/company/infra.env"
-  for m in 'care:status: preview' 'shop:{status: live, partner_env: live, domain: shop.example, care: true, needs: {secrets: [stripe]}}' \
+  cp "$here/products.py" "$here/company.py" "$here/run_helpers.py" "$here/care_engines.py" "$r/infra/"; printf 'SERVER_NAME=testco\nCARE_COOKIES=natter,__Host-natter\nSERVED_FROM_REPO=/theme/web/*.css\n' > "$r/company/infra.env"
+  # (two care deployments: the chat's, and one that answers phone lines only)
+  for m in 'care:{status: preview, engine: care, chat: true}' 'desk:{status: preview, engine: care}' 'shop:{status: live, partner_env: live, domain: shop.example, care: true, needs: {secrets: [stripe]}}' \
            'stall:{status: live, partner_env: live, care: true, needs: {secrets: [stripe]}}' \
            'sprig:{status: preview, care: true}' 'plain:status: preview' 'front:{status: live, script_floor: report-only, care: true}'; do
     mkdir -p "$r/products/${m%%:*}/app"; touch "$r/products/${m%%:*}/app/Dockerfile"; echo "${m#*:}" > "$r/products/${m%%:*}/product.yaml"
@@ -68,7 +69,7 @@ if $py -c 'import yaml' 2>/dev/null; then
   printf 'secret' > "$r/company/secret.css"
   PUBLIC_HOST=hq.example.test HQ_DATA=$tmp/hq PRODUCT_ENV_DIR=$tmp/env $py "$r/infra/products.py" > /dev/null 2>&1
   # (the phone's inside port, on a port of its own here)
-  sed -E -e "s#^http://:8081 \{#http://:$((port + 7)) {#" -e "s#product-care:8081#127.0.0.1:$((port + 4))#g" \
+  sed -E -e "s#^http://:8081 \{#http://:$((port + 7)) {#" -e "s#product-care:8081#127.0.0.1:$((port + 4))#g" -e "s#product-desk:8081#127.0.0.1:$((port + 3))#g" \
     -e "s#^([a-z][^\t{]*) \{#\1 {#" -e "/^http:/!{/^[a-z]/s#([a-z0-9.-]+)(,| \{)#http://\1:$port\2#g}" \
     -e "s#coordinator:8080#127.0.0.1:$((port + 1))#g" -e "s#product-care:8080#127.0.0.1:$((port + 4))#g" -e "s#product-front:8080#127.0.0.1:$((port + 5))#g" \
     -e "s#product-[a-z]+:8080#127.0.0.1:$((port + 3))#g" -e "s#preview-[a-z]+:8080#127.0.0.1:$((port + 6))#g" \
@@ -361,9 +362,13 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
   check 'a PDF in a frame: a public site as it was' "$(saves shop.example /a.pdf -H "$framed")" 'none'
   # the phone's routes: on Caddy's inside port only, which the voice line asks
   inside() { curl -s --path-as-is -w ' %{http_code}' "${@:2}" "http://127.0.0.1:$((port + 7))$1"; }
-  check "the inside port: /phone/turn reaches the chat's service's phone port" \
-    "$(inside /phone/turn -X POST -H 'Authorization: Bearer t' -H 'Content-Type: application/json' -d '{}')" "care 127.0.0.1:$((port + 7))/phone/turn 200"
-  check 'the inside port: nothing else' "$(inside /__care/api/health) | $(inside /api/care/match -X POST) | $(inside /) | $(inside /phonex)" ' 404 |  404 |  404 |  404'
+  check "the inside port: /care/phone/turn reaches the chat's service's phone port as /phone/turn" \
+    "$(inside /care/phone/turn -X POST -H 'Authorization: Bearer t' -H 'Content-Type: application/json' -d '{}')" "care 127.0.0.1:$((port + 7))/phone/turn 200"
+  check "the inside port: /desk/phone/start reaches the other deployment's phone port as /phone/start" \
+    "$(inside /desk/phone/start -X POST -H 'Authorization: Bearer t' -d '{}')" "product 127.0.0.1:$((port + 7))/phone/start 200"
+  check 'the inside port: nothing else' \
+    "$(inside /__care/api/health) | $(inside /api/care/match -X POST) | $(inside /) | $(inside /phonex) | $(inside /phone/turn -X POST) | $(inside /care/x) | $(inside /care/phonex) | $(inside /desk/__care/api/health) | $(inside /carex/phone/turn -X POST) | $(inside /shop/phone/turn -X POST)" \
+    ' 404 |  404 |  404 |  404 |  404 |  404 |  404 |  404 |  404 |  404'
   check "the public hosts: /phone/* never reaches the chat's service" \
     "$(get /phone/turn -X POST) | $(at shop.example /phone/turn -X POST) | $(at www.example.test /phone/start -X POST)" \
     'coordinator /phone/turn 200 | product shop.example/phone/turn 200 | front www.example.test/phone/start 200'

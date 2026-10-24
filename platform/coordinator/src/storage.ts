@@ -4,8 +4,9 @@ import { statfsSync } from 'node:fs';
 import { DATA_DIR } from './config.ts';
 
 // The disk keeps FLOOR.bytes free, and the same share of its inodes, so the database can always grow. A filesystem that
-// counts no inodes (btrfs) has no such bound.
-export const FLOOR = { bytes: 10 * 1024 ** 3 };
+// counts no inodes (btrfs) has no such bound. 5 GB: the deploy keeps 10 GB free for its builds (infra/sync.sh), so a
+// floor of 10 refused a note's screenshot whenever a build was under way.
+export const FLOOR = { bytes: 5 * 1024 ** 3 };
 // files: each file's bytes; folders: the new folders they go in; bytes: what goes into the database
 export type Writes = { files: number[]; folders?: number; bytes?: number };
 // Writes admitted but not on the disk yet (reserve): every check counts them as taken, so two requests that write across

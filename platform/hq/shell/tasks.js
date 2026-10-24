@@ -2,6 +2,7 @@
 // own state's look, with its reviews, fixes and checks under it.
 import { esc, cap } from '../util.js';
 import { who } from './desk.js';
+import { names } from './brand.js';
 import { icon } from './icons.js';
 import { face, pulse, code, waitOf } from './projectkeys.js';
 import { nameText } from './jobs.js';
@@ -99,7 +100,8 @@ const sizeBar = j =>
     : '';
 // The board's part in a thread, first in its tasks and lit: a decision it holds the thread for, and each card on the
 // desk phone its jobs wait on (a job blocked on its own card is that card's row); then each card they wait on that
-// isn't on the desk phone yet and comes in after no task listed (held, heldRow)
+// isn't on the desk phone yet and comes in after no task listed (held, heldRow). Each names the phone by the company's
+// own word for it (brand.js names.phone).
 function boardRows(t, p, held) {
   const { decision, cards } = boardPart(t, p);
   const forJob = c => `For ${esc(who(c.job.agent))}: ${taskHtml(c.job, t)}`;
@@ -110,9 +112,9 @@ function boardRows(t, p, held) {
           decision.card,
           'Your decision',
           decision.name,
-          decision.card ? 'On your desk phone' : 'Everything here waits for it',
+          decision.card ? `On your ${names.phone}` : 'Everything here waits for it',
         ),
-      ...cards.map(c => row(c.id, 'On your desk phone', c.title, forJob(c))),
+      ...cards.map(c => row(c.id, `On your ${names.phone}`, c.title, forJob(c))),
     ]
       .filter(Boolean)
       .join('') + held.map(c => heldRow(c, t)).join('')
@@ -131,7 +133,7 @@ function heldRow(c, t) {
   const live = [...new Set(c.holds.map(h => h.code ?? who(h.agent)))];
   return row(
     null,
-    'Not on your desk phone yet',
+    `Not on your ${names.phone} yet`,
     c.title,
     [
       live.length ? esc(`Once ${live.join(' and ')} ${live.length === 1 ? 'is' : 'are'} live`) : '',

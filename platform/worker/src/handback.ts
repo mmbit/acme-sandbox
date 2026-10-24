@@ -3,6 +3,7 @@
 // report them itself, because a deploy recreates the coordinator at the same moment. A worker that dies without a
 // SIGTERM writes nothing, so its runs still count as abandoned (jobs.ts claim, GIVE_UP).
 import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { ResponseError } from './reports.ts';
 
 // lost: what the run had running besides its CLI when it was cut, and when that was looked at (detached.ts processesOf);
 // its next run is told (jobs.ts cutNote).
@@ -14,16 +15,6 @@ export type RunHandBack = {
   lost?: string[];
   lostAt?: string;
 };
-
-// The coordinator answered, with an error status: the worker's api() throws it (a fetch that can't reach it throws a
-// TypeError instead).
-export class ResponseError extends Error {
-  readonly status: number;
-  constructor(path: string, status: number) {
-    super(`${path}: ${status}`);
-    this.status = status;
-  }
-}
 
 // No file is nothing owed. One that can't be read or isn't a list throws: its runs are lost, not handed back.
 const owed = (file: string): RunHandBack[] => {

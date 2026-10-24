@@ -1,12 +1,14 @@
-# The support chat's service (infra/products.py CARE): the engine in platform/care with the company's plug-in folder,
-# built from the repo's root and laid out as in the repo
+# A care deployment (infra/products.py, `engine: care`): the engine in platform/care with the deployment's plug-in
+# folder, built from the repo's root and laid out as in the repo
 FROM node:24.22.1-alpine
+# the plug-in folder, its path in the repo: products.py always names the deployment's own, and a build without it fails
+ARG PLUGIN
 # The claim photos' decoder (src/photos.ts): ImageMagick with the JPEG coder only (Alpine ships the other coders apart),
 # and our policy where ImageMagick 7 reads it, so every other coder and delegate is refused and one decode is bounded
 RUN apk add --no-cache imagemagick imagemagick-jpeg
 COPY platform/care/magick/policy.xml /etc/ImageMagick-7/policy.xml
 WORKDIR /app
-# The engine, where the plug-in imports it from (../../../platform/care/src/ from products/care/src/)
+# The engine, where the plug-in imports it from (../../../platform/care/src/ from products/<slug>/src/)
 COPY platform/care/package.json ./platform/care/
 COPY platform/care/src ./platform/care/src
 COPY platform/care/public ./platform/care/public
@@ -25,11 +27,11 @@ COPY shared/holidays/holidays.js ./shared/holidays/holidays.js
 # The order numbers' check digit, which the plug-in reads a said order number by
 COPY shared/ordernumber/ordernumber.js ./shared/ordernumber/ordernumber.js
 COPY kits ./kits
-# The company's plug-in, which the engine finds through CARE_COMPANY_DIR: the whole folder in one copy, so a plug-in
+# The deployment's plug-in, which the engine finds through CARE_COMPANY_DIR: the whole folder in one copy, so a plug-in
 # without one of its parts (care.ts, src/, public/, kb/, apps/ are each optional: src/company.ts) still builds; what of it
 # goes in is Dockerfile.dockerignore's list, without tests, demo or eval
-COPY products/care ./products/care
-ENV CARE_COMPANY_DIR=/app/products/care
+COPY ${PLUGIN} ./${PLUGIN}
+ENV CARE_COMPANY_DIR=/app/${PLUGIN}
 RUN mkdir -p /data && chown node:node /data
 USER node
 CMD ["node", "--disable-warning=ExperimentalWarning", "platform/care/src/server.ts"]

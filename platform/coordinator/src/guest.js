@@ -54,8 +54,8 @@ document.addEventListener('click', e => {
   document.body.append(zoom);
   zoom.focus();
 });
-// A door's code copies with a tap: its button shows only with the script, and says it's copied for a moment
-//. Where the clipboard API is missing or refused, a hidden textarea's selection does the copy.
+// A door's code copies with a tap: its button shows only with the script, and says it's copied for a moment.
+// Where the clipboard API is missing or refused, a hidden textarea's selection does the copy.
 document.querySelectorAll('button[data-copy]').forEach(b => b.hidden = false);
 document.addEventListener('click', async e => {
   const b = e.target instanceof Element && e.target.closest('button[data-copy]');

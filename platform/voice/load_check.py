@@ -25,7 +25,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 os.environ.setdefault('HQ_URL', 'http://127.0.0.1:9')
 os.environ.setdefault('ORIGIN', 'https://hq.test')
 os.environ.setdefault('VOICE_TOKEN', 'load-check')
-os.environ.setdefault('CARE_PHONE_TOKEN', 'load-check')
 if os.environ.get('LOAD_CHECK_NO_POCKET_DUTCH'):  # (a machine short of memory: Poppy's voice speaks Dutch through Piper)
     import pocket_tts
     load, loaded = pocket_tts.TTSModel.load_model, {}
@@ -186,7 +185,7 @@ def care_service():
     def reply(body):
         lang = SPOKEN_IN[body['conversation']]
         return [{'lang': lang}] + [{'text': w + ' '} for w in REPLIES[lang].split(' ')] + [{'end': True}]
-    return CareService(started, reply, token=server.CARE_TOKEN)
+    return CareService(started, reply, token='load-check')
 
 
 OPENINGS = {lang: {'ai': f"Hi, this is Poppy, Testco's AI assistant. ({lang})", 'transcript':
@@ -250,8 +249,9 @@ async def main():
     langs = (sys.argv[1] if len(sys.argv) > 1 else 'nl,de').split(',')
     seconds = int(sys.argv[2]) if len(sys.argv) > 2 else 150
     print(f'models loaded: memory {status("VmRSS")} MB', flush=True)
-    server.CARE_URL = care_service().url
-    server.CARE_CALLS_AT_ONCE = max(len(langs), server.CARE_CALLS_AT_ONCE)
+    # (care, the deployment the tickets name by default, taking every care caller at once)
+    care = care_service()
+    server.CARE_ENGINES['care'] = {'url': care.url, 'token': 'load-check', 'calls': max(len(langs), 2)}
     server.hq = lambda method, path, body=None: (
         {'agent': 'poppy', 'lang': 'nl', 'kind': 'care', 'langs': ['nl', 'en'], 'voice': 'bill_boerst',
          'voices': {'nl': 'alex', 'de': 'thorsten'}} if path == 'call-ticket' else {})
@@ -263,7 +263,7 @@ async def main():
     await phase('a board call alone', [], min(60, seconds), voices)
     await phase(f'care calls in {", ".join(langs)} and a board call at once', langs, seconds, voices)
     await asyncio.sleep(3)  # (the last sentences' synthesis stops)
-    http.shutdown()
+    care.stop()
 
 
 if __name__ == '__main__':

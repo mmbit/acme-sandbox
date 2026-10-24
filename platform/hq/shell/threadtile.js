@@ -2,6 +2,7 @@
 // its own page that says the same.
 import { esc } from '../util.js';
 import { icon } from './icons.js';
+import { names } from './brand.js';
 import { nameHtml, nameText } from './jobs.js';
 import { covered, withJobLinks } from './prose.js';
 import { faces, mark, lines, pulse, waitOf } from './projectkeys.js';
@@ -66,8 +67,8 @@ function threadWaits(t, p, threadOf) {
     needs = (t.needs ?? []).map(threadOf).filter(Boolean);
   const items = [
     decision && wait('phone', `Your decision: ${decision.name}`, true),
-    ...cards.map(c => wait('phone', `On your desk phone: ${c.title}`, true)),
-    ...held.map(c => wait('phone', `Not on your desk phone yet: ${c.title}`)),
+    ...cards.map(c => wait('phone', `On your ${names.phone}: ${c.title}`, true)),
+    ...held.map(c => wait('phone', `Not on your ${names.phone} yet: ${c.title}`)),
     pause && !pause.decision && wait('pause', 'Paused'),
     ...needs.map(n => {
       const line = threadLine(n, null);

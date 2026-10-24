@@ -29,6 +29,87 @@ const held = (job: number) =>
     .get(job) as { id: number; title: string; brief: string; project: string | null } | undefined;
 const claimable = async (job: number) => (await h.claim(h.job(job).engine))?.id === job;
 
+for (const owner of ['juno', 'wren']) {
+  test(`a message-made job holding a deadline thread gives ${owner} a planning job with that deadline`, async () => {
+    const { set } = await import('./windows.ts');
+    const { orderingSnapshot } = await import('./backlog.ts');
+    const deadline = Date.now() + 3_600_000;
+    const thread = owner === 'juno' ? h.dueThread({ deadline }) : 'game/world';
+    if (owner === 'wren') set(projects.findThread(thread)!, { deadline, aim: deadline }, 'juno');
+    const bolt = await h.start({ agent: 'bolt', thread });
+    const made = await say(bolt, owner, 'Draw the seat answer before the deadline.');
+    assert.equal(made.status, 200);
+    assert.equal(made.body.state, 'job');
+    const item = held(made.body.job)!;
+    proposals.sweep();
+    const planning = h.jobs
+      .listJobs()
+      .filter(j => j.agent === owner && j.status === 'queued' && j.id !== made.body.job);
+    assert.equal(planning.length, 1, 'the owner need not wait for an hourly summary');
+    assert.equal(h.job(planning[0].id).title, 'Sort new proposals into the plan');
+    assert.equal(orderingSnapshot(Date.now()).jobs.find(j => j.id === planning[0].id)!.due, deadline);
+    proposals.sweep();
+    assert.equal(h.jobs.listJobs().filter(j => j.agent === owner && j.status === 'queued').length, 2);
+    const code = owner === 'juno' ? 'SEATCEO' : 'SEATOWN';
+    assert.deepEqual(proposals.accept(item.id, owner, { title: 'Draw the seat answer', code }), {
+      job: made.body.job,
+      code,
+      thread,
+      sorted: true,
+    });
+    assert.equal(orderingSnapshot(Date.now()).jobs.find(j => j.id === planning[0].id)!.due, null);
+  });
+
+  test(`a deadline proposal reaches ${owner}'s running session ahead of its queued planning job`, async () => {
+    const { planningJob } = await import('./planning.ts');
+    const deadline = Date.now() + 3_600_000;
+    const thread = h.dueThread({ deadline });
+    if (owner === 'wren') {
+      const plan = await import('./plan.ts');
+      plan.setOwner('due', owner, { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
+    }
+    const session = await h.start({ agent: owner, engine: 'claude' });
+    const planning = planningJob(owner);
+    const bolt = await h.start({ agent: 'bolt', thread });
+    const made = await say(bolt, 'kit', 'Draw the seat answer before the deadline.');
+    const item = held(made.body.job)!;
+    proposals.sweep();
+    const inbox = (await h.agent('inbox', session.token, {})).body;
+    assert.equal(inbox.length, 1);
+    assert.match(inbox[0].text, new RegExp(`hq inbox ${item.id}`));
+    await h.finish(session);
+    proposals.sweep();
+    const { orderingSnapshot } = await import('./backlog.ts');
+    assert.equal(orderingSnapshot(Date.now()).jobs.find(j => j.id === planning)!.due, deadline);
+    assert.equal(h.jobs.listJobs().filter(j => j.agent === owner && j.status === 'queued').length, 1);
+    if (owner === 'wren') {
+      const plan = await import('./plan.ts');
+      plan.setOwner('due', 'juno', { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
+    }
+  });
+}
+
+test('an urgent HQ notice redacts unsaved credentials before storage and delivery to the CEO', async () => {
+  const sorting = await import('./sorting.ts');
+  const session = await h.start({ agent: 'juno', engine: 'claude' });
+  const thread = h.dueThread({ deadline: Date.now() + 3_600_000 });
+  const title = `Check ${'sk-' + 'noticefixture123'} and NOTICE_TOKEN=unsavedfixture456`;
+  const job = h.queue({ agent: 'kit', thread, title });
+  sorting.hold(job, { from: 'bolt', project: 'due', why: 'This task needs a place in the plan.' });
+  const item = held(job)!;
+  assert.equal(item.title, title);
+  proposals.sweep();
+  const stored = db.prepare('select id, text from messages where job = ? and held = ?').get(session.id, item.id) as {
+    id: number;
+    text: string;
+  };
+  const redactedTitle = 'Check [redacted] and NOTICE_TOKEN=[redacted]';
+  assert.ok(stored.text.includes(redactedTitle));
+  const inbox = (await h.agent('inbox', session.token, {})).body;
+  assert.equal(inbox.find((message: { message: number }) => message.message === stored.id)?.text, stored.text);
+  await h.finish(session);
+});
+
 test("a message no session took waits for its sort by its thread's project owner, who names it and lets it start", async () => {
   const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
   const r = await say(bolt, 'kit', 'The second level needs a door.\nAnd the first one a key.');

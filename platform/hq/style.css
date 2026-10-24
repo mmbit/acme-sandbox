@@ -102,14 +102,16 @@ svg.icon .accent { fill: var(--gold); }
 #status > span { padding: 2px 8px; font-size: 14px; pointer-events: auto; }
 #status [data-jobs] { cursor: pointer; }
 /* HQ's throughput (hud.js): what was done in the last day as bars by the hour, at work and waiting each over a bar, tasks
-   in ink and reviews lighter. */
+   in ink and reviews lighter, a swatch of each by its count. */
 #status > .flow { display: flex; align-items: center; gap: 9px; padding: 6px 11px; line-height: 1.15; }
 .flow-words { display: grid; white-space: nowrap; }
 .flow-words b { font-variant-numeric: tabular-nums; }
 .flow-words small { color: var(--muted); font-size: 12px; }
 .flow-bars { width: 95px; height: 22px; flex: none; fill: currentColor; }
-.flow-bars .review, .flow-split { --flow-review: color-mix(in srgb, currentColor 35%, transparent); }
+.flow-bars .review, .flow-split, .flow-key { --flow-review: color-mix(in srgb, currentColor 35%, transparent); }
 .flow-bars .review { fill: var(--flow-review); }
+.flow-key { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; background: currentColor; }
+.flow-key.review { margin-left: 4px; background: var(--flow-review); }
 .flow-split { width: 40px; height: 6px; flex: none; border-radius: 3px;
   background: linear-gradient(to right, currentColor calc((1 - var(--review)) * 100%), var(--flow-review) 0); }
 #zoom { position: fixed; right: max(12px, var(--sar)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; flex-direction: column; gap: 8px; }
@@ -230,7 +232,8 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   .tools { gap: 6px; } .tools .lbl { display: none; }
   .tools button, .tools a.desk { min-width: 40px; height: 40px; padding: 0 8px; }
   #status { max-width: calc(100vw - 80px); } #status > span { font-size: 12px; }
-  #status > .flow { gap: 7px; padding: 5px 9px; } .flow-bars { width: 47px; } .flow-split { display: none; } /* (room for the three across a phone) */
+  #status > .flow { gap: 5px; padding: 5px 9px; } .flow-bars { width: 40px; } .flow-split { display: none; } /* (room for the three across a phone) */
+  .flow-key { width: 5px; height: 5px; margin-right: 2px; } .flow-key.review { margin-left: 0; } /* (with the key's) */
   #hint { font-size: 12px; }
 }
 @media (prefers-reduced-motion: reduce) { #panel, .toast { transition: none; animation: none; } }

@@ -237,7 +237,7 @@ export const pin = {
   async run([action, id, what]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '')) stop(PIN_USAGE);
     const body = pinChange(action, Number(id), what);
-    const answer = await api.orNoAnswer(api.call('pin', { body, timeoutMs: 30_000 }));
+    const answer = await api.orNoAnswer(api.call('pin', { body }));
     if (api.isSuccess(answer.status)) return print(pinDone(action, id, api.parseOrNull(answer.body) ?? {}));
     if (api.isRefusal(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'refused')}`);
     stop(`Not confirmed: the pin may or may not have changed (HTTP ${api.httpCode(answer.status)}).`, 3);

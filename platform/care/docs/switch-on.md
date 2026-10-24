@@ -50,10 +50,11 @@ Try it locally, with nothing exposed: `node platform/care/demo/shop.mjs` runs th
 
 ## 3. The service on the server (the company)
 
-- `products/care/product.yaml` (a name, `status: preview`, `platform: true` so HQ lists it under Platform, and
-  `memory: 384m` if claims with photos are on: a photo's decode needs room). With it on main, `infra/products.py`
-  builds `platform/care/Dockerfile` with the plug-in and runs it in its own container, with its own SQLite volume and
-  a network only Caddy joins (`infra/products.md`, "The support chat").
+- `products/care/product.yaml` (a name, `engine: care` and `chat: true`, `status: preview`, `platform: true` so HQ
+  lists it under Platform, and `memory: 384m` if claims with photos are on: a photo's decode needs room). With it on
+  main, `infra/products.py` builds `platform/care/Dockerfile` with the plug-in and runs it in its own container, with
+  its own SQLite volume and a network only Caddy joins (`infra/products.md`, "The support chat"). `engine: care` makes
+  the folder a deployment of the engine; `chat: true` makes it the one the apps' chats (`care: true`) go to.
 - `company/infra.env`: `EMAIL_SERVICE=lettermint`. Without it HQ's own sender stays off, and the board's replies from
   HQ's Care app fail (live mode refuses to send). `CARE_COOKIES` only if the company wants its own cookie name (the
   last one must start with `__Host-`; without it the cookie is `__Host-care`).
@@ -141,3 +142,23 @@ provider is the company's processor for the chats; on a seat it isn't (`dpia-tem
 - **The server**: one more small container on the existing server.
 - **The board's time**, the real cost: every email to a person is read, edited and sent by the board in HQ's Care
   app.
+
+## Another deployment: a second line on the phone (the company)
+
+The engine deploys once per plug-in folder. A second phone helper, or a line
+that isn't for customers, is another product folder with `engine: care` in its `product.yaml` and a plug-in of its own
+(`care.ts`, `public/plugin.js`, `kb/`), without `chat: true`; nothing in `platform/` or `infra/` changes:
+
+- `products/<slug>/product.yaml`: `engine: care`, and `callsAtOnce` if its share of the voice line isn't 2 calls at
+  once. infra builds it from `platform/care` with its folder, its own container, data volume and phone token
+  (sync.sh makes it), and the voice line reaches it at `http://caddy:8081/<slug>/phone/*`.
+- Its `care.ts`: `phoneMonth`, its own `phoneInstructions` and `phoneTools`, and `phoneCore: []` when the line isn't
+  for customers (the engine's order tools are then not offered: `../README.md`).
+- `company/brand.yaml`'s `phoneLines`: an entry with the number it answers, who may call (`callers: { numbers, pin }`,
+  two keys the board saves on the desk phone, for a line only some numbers may use), its `agent` (a voice in org.yaml)
+  and `engine: <slug>`. A second entry for the same number with only a `greeting` gives everyone else that number's
+  own message. The number itself is bought in Twilio and pointed at HQ's voice URL like the first.
+- It shares the chat's deployment's model key and credit; its ledger and caps are its own (its own data). It has no
+  line to HQ (the chat's deployment owns HQ's Care queue), so what its line needs to tell HQ goes through its own
+  `phoneTools`, a kit's routes in HQ.
+

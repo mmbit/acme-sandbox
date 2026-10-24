@@ -2029,8 +2029,8 @@ let call = null;
 export function callAgent(id, name, request, pins) { const from = pins?.length ? 'notes' : open; openIntercom(); startCall(null, id, name, request, pins); if (call) call.from = from ?? 'hq'; }
 async function startCall(e, agent = world.company.ceo, name = ceoName(), request = 0, pins = []) {
   if (call) return;
-  const c = call = { agent, name, request, pins, voiced: [] };
-  c.audio = new CallAudio({ worklet: 'shell/mic-worklet.js', lead: 0.05, send: frame => { if (c.ws?.readyState === 1 && c.live) c.ws.send(frame); },
+  const c = call = { agent, name, request, pins, voiced: [], kept: [], keptFrom: 0 };
+  c.audio = new CallAudio({ worklet: 'shell/mic-worklet.js', lead: 0.05, send: frame => sendFrame(c, frame),
     lost: err => endCall(`The microphone stopped. ${microphoneFix(err)}`), warn: why => showSoundNote(soundNote(why)), tick: () => { onAir(c); lagging(c); } });
   root().querySelector('.intercom header b').textContent = `Call · ${name}`;
   hush(true, 'call'); root().querySelector('.intercom').classList.add('in-call'); $('#call-screen').hidden = false;
@@ -2062,9 +2062,9 @@ function connect(c, hello) {
     if (call !== c || c.ws !== ws) return;
     if (m.data instanceof ArrayBuffer) return (c.heardAt = performance.now()), play(c, m.data);
     const ev = JSON.parse(m.data), name = c.name;
-    if (ev.type === 'pong') { c.late = Number(ev.late) || 0; c.heardAt = performance.now(); }
-    else if (ev.type === 'call') { c.t0 ??= performance.now(); c.id = ev.id || c.id; c.call = Number(ev.call) || c.call; c.key = String(ev.key ?? '') || c.key; c.live = true; c.tries = 0; picturesLive(c); }
-    else if (ev.type === 'state') { c.live = true; callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: name }[ev.state] ?? ''); }
+    if (ev.type === 'pong') { c.late = Number(ev.late) || 0; c.heardAt = performance.now(); forgetHeard(c, ev.heard); }
+    else if (ev.type === 'call') { c.t0 ??= performance.now(); c.id = ev.id || c.id; c.call = Number(ev.call) || c.call; c.key = String(ev.key ?? '') || c.key; c.live = true; c.tries = 0; resend(c, ev.heard); picturesLive(c); }
+    else if (ev.type === 'state') { callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: name }[ev.state] ?? ''); }
     else if (ev.type === 'heard') { c.said = ''; callSay(null, `“${ev.text}”`); }
     else if (ev.type === 'said') { c.said = `${c.said ?? ''} ${ev.text}`.trim(); callSay(null, c.said); c.audio.startSentence('voice'); c.ticking = false; }
     else if (ev.type === 'tick') { c.audio.startSentence('tick'); c.ticking = true; } // (the line's tick while a tool step runs: not a sentence, but its own start too)
@@ -2086,6 +2086,31 @@ function connect(c, hello) {
     endCall('The line dropped. Call again?');
   };
 }
+// The board's words outlast a dropped connection. From pickup on, each microphone frame (FRAME samples) is kept until
+// the line says it has it (`heard`: its samples so far, all call, with each pong): what was still queued in a socket
+// that dropped, and what the microphone made while reconnecting. None is dropped unheard: the pongs clear it twice a
+// second while connected, it grows only as the socket's own queue does on a weak uplink, and a reconnect ends within
+// the line's 30 s hold. The line's `call` on the new connection says what it has; the rest goes first, with a ping
+// from when it was made every PING_MS, so the line reads it as late and waits for all of it before it answers
+// (platform/voice, LATE). (An older line says nothing: none is kept.).
+const FRAME = 320;
+function sendFrame(c, frame) {
+  if (!c.id) return;   // (not picked up yet: nobody hears it)
+  c.kept.push({ frame, at: performance.now() });
+  if (c.ws?.readyState === 1 && c.live) c.ws.send(frame);
+}
+function forgetHeard(c, heard) {
+  const n = Number.isFinite(heard) ? Math.min(c.kept.length, Math.floor((heard - c.keptFrom) / FRAME)) : c.kept.length;
+  if (n > 0) { c.kept.splice(0, n); c.keptFrom += n * FRAME; }
+}
+function resend(c, heard) {
+  forgetHeard(c, heard);
+  let pinged = -Infinity;
+  for (const { frame, at } of c.kept) {
+    if (at - pinged >= PING_MS) { pinged = at; c.ws.send(JSON.stringify({ type: 'ping', t: Math.round(at) })); }
+    c.ws.send(frame);
+  }
+}
 // the agent's voice as it plays, the line's tick apart, for the ON AIR sign
 function play(c, buf) {
   const at = c.audio.play(new Int16Array(buf)), last = c.voiced.at(-1);
@@ -2106,10 +2131,10 @@ function onAir(c) {
   const on = !!c.live && moving && (performance.now() - (c.loudAt ?? -1e9) < 400 || c.voiced[0]?.[0] <= t);
   root().querySelector('.intercom header')?.classList.toggle('on-air', on);
 }
-// The line running behind. On a weak connection the
-// microphone's frames back up and reach the line late, in a burst (nothing is lost on the way), and the line waits for
-// them before it answers (platform/voice, LATE). Twice a second a ping goes beside the frames, and the line answers how
-// late it came, on HQ's monotonic clock against its own. The screen says so while the line hears the board over 1.5 s
+// The line running behind. On a weak connection the microphone's frames back up and reach the line late, in a burst
+// (nothing is lost on the way, nor with a dropped connection: sendFrame), and the line waits for them before it answers
+// (platform/voice, LATE). Twice a second a ping goes beside the frames, and the line answers how late it came, on HQ's
+// monotonic clock against its own. The screen says so while the line hears the board over 1.5 s
 // late, nothing has come back from it for 4 s since this connection's first ping, or the frames wait here unsent
 // (bufferedAmount, at the 64 kB a second they come to at most), and until 3 s after it caught up; each spell goes in
 // the timeline. (How late the line hears, not how long a pong takes: the pongs come back behind the reply's audio,

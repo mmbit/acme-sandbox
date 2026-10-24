@@ -1,7 +1,9 @@
 // HQ's agent API (/api/agent/<route>) as hq calls it, with the job's token in a header. The token never goes on a
 // command line, where any uid could read it (/proc/<pid>/cmdline).
 // Agents and scripts read a failed call's exit code: 22 for an answer of 400 or more where only success will do, 6 or 7
-// when HQ can't be reached, 28 for a time-out.
+// when HQ can't be reached, 28 for a time-out (only a command that asks for one has one).
+import http from 'node:http';
+import https from 'node:https';
 import { shown, stop } from './output.ts';
 
 export type Answer = { status: number; body: string };
@@ -36,31 +38,50 @@ export const withSpeaker = <T extends object>(body: T) => (teamMember ? { ...bod
 
 // A POST when there's a body, else a GET. Any answer comes back; only no answer at all throws.
 export async function call(route: string, options: CallOptions = {}): Promise<Answer> {
-  return request(route, options, async response => ({ status: response.status, body: await response.text() }));
+  const { status, bytes } = await request(route, options);
+  return { status, body: bytes.toString() };
 }
 
 // A GET whose answer is bytes (a mail as received). Any answer comes back. Only no answer at all throws.
 export async function getBytes(route: string): Promise<{ status: number; bytes: Buffer }> {
-  return request(route, {}, async response => ({
-    status: response.status,
-    bytes: Buffer.from(await response.arrayBuffer()),
-  }));
+  return request(route, {});
 }
 
-async function request<T>(route: string, options: CallOptions, read: (response: Response) => Promise<T>) {
+// HQ's answer, however long it takes (board, call 127: a slow coordinator is still there, so a hand-off waits for it):
+// only a command's own timeoutMs, or the connection failing (refused, reset, a host gone: TCP keep-alive), ends the
+// wait. Not fetch: it gives up on its own after 300 s without an answer (undici's headersTimeout).
+async function request(route: string, options: CallOptions): Promise<{ status: number; bytes: Buffer }> {
   const { body, bytes, timeoutMs } = options;
-  const url = `${required('HQ_URL')}/api/agent/${route}`;
+  const url = new URL(`${required('HQ_URL')}/api/agent/${route}`);
   const headers: Record<string, string> = { ...options.headers, authorization: `Bearer ${required('HQ_TOKEN')}` };
-  const init: RequestInit = { headers, signal: timeoutMs ? AbortSignal.timeout(timeoutMs) : undefined };
-  if (bytes !== undefined) {
-    Object.assign(init, { method: 'POST', body: bytes });
-  } else if (body !== undefined) {
+  let payload = bytes;
+  if (payload === undefined && body !== undefined) {
     headers['content-type'] = 'application/json';
-    Object.assign(init, { method: 'POST', body: JSON.stringify(body) });
+    payload = Buffer.from(JSON.stringify(body));
   }
+  if (payload !== undefined) headers['content-length'] = String(payload.length);
   const started = Date.now();
   try {
-    return await read(await fetch(url, init));
+    return await new Promise((resolve, reject) => {
+      const method = payload === undefined ? 'GET' : 'POST';
+      const sent = (url.protocol === 'https:' ? https : http).request(
+        url,
+        { method, headers, agent: false },
+        answer => {
+          const chunks: Buffer[] = [];
+          answer.on('data', (chunk: Buffer) => chunks.push(chunk));
+          answer.on('end', () => resolve({ status: answer.statusCode ?? 0, bytes: Buffer.concat(chunks) }));
+          answer.on('error', reject);
+        },
+      );
+      sent.on('socket', socket => socket.setKeepAlive(true, 10_000));
+      sent.on('error', reject);
+      const timer =
+        timeoutMs &&
+        setTimeout(() => sent.destroy(Object.assign(new Error('timed out'), { name: 'TimeoutError' })), timeoutMs);
+      if (timer) sent.on('close', () => clearTimeout(timer));
+      sent.end(payload);
+    });
   } catch (error) {
     throw unreachable(error, url, Date.now() - started, timeoutMs);
   }
@@ -94,7 +115,7 @@ export async function createOnce(
   let answer: Answer = { status: 0, body: '' };
   let failure: ApiError | undefined;
   try {
-    answer = await call(route, { body, timeoutMs: 20_000 });
+    answer = await call(route, { body });
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
     failure = error;
@@ -181,26 +202,24 @@ function required(name: string) {
 }
 
 // The exit code and words for a call that got no answer. Only 6 and 7 prove nothing reached HQ.
-function unreachable(error: unknown, url: string, elapsedMs: number, timeoutMs?: number) {
-  const { hostname, port } = new URL(url);
-  const noConnection = `Failed to connect to ${hostname} port ${port} after ${elapsedMs} ms: Couldn't connect to server`;
-  const cause = (error as { cause?: { code?: string } }).cause;
-  if ((error as Error).name === 'TimeoutError') {
+function unreachable(error: unknown, url: URL, elapsedMs: number, timeoutMs?: number) {
+  const { hostname, port } = url;
+  const { name, code, syscall } = error as { name?: string; code?: string; syscall?: string };
+  if (name === 'TimeoutError') {
     return new ApiError(`Operation timed out after ${timeoutMs} milliseconds with 0 bytes received`, 28);
   }
-  // fetch refuses a few ports outright (the Fetch standard's bad ports, 9 among them): nothing was sent.
-  if ((cause as Error | undefined)?.message === 'bad port') {
-    return new ApiError(noConnection, 7);
-  }
-  switch (cause?.code) {
+  switch (code) {
     case 'ECONNREFUSED':
-      return new ApiError(noConnection, 7);
+      return new ApiError(
+        `Failed to connect to ${hostname} port ${port} after ${elapsedMs} ms: Couldn't connect to server`,
+        7,
+      );
     case 'ENOTFOUND':
     case 'EAI_AGAIN':
       return new ApiError(`Could not resolve host: ${hostname}`, 6);
+    // (a closed connection with no answer is Node's "socket hang up", ECONNRESET too, with no syscall)
     case 'ECONNRESET':
-      return new ApiError('Recv failure: Connection reset by peer', 56);
-    default:
-      return new ApiError('Empty reply from server', 52);
+      if (syscall) return new ApiError('Recv failure: Connection reset by peer', 56);
   }
+  return new ApiError('Empty reply from server', 52);
 }

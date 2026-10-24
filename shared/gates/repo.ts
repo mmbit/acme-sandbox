@@ -1,7 +1,7 @@
 // What the gates and the tests both read of the repo: git, its files as git stores them, its tree as it is now, its
 // areas, and the tools' node_modules linked in from the worker image's copy.
 import { execFileSync } from 'node:child_process';
-import { cpSync, existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -18,17 +18,26 @@ export function gitFiles(cwd: string, command: string, ...gitArgs: string[]) {
     .filter(Boolean);
 }
 
-// The tree of the repo's files as they are now, committed or not (except those git ignores), written from a copy of its
-// index, so the repo's own index is left as it was.
+// The tree of the repo's files as they are now, committed or not (except those git ignores), without changing its index.
 export function workingTree(root: string) {
   const dir = mkdtempSync(join(tmpdir(), 'tests-index-'));
   try {
     const index = join(dir, 'index');
-    // Keep git's racy-clean check for same-size edits made in the index's own second.
-    cpSync(git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index').trim(), index, {
-      preserveTimestamps: true,
-    });
+    const original = git(root, 'rev-parse', '--path-format=absolute', '--git-path', 'index').trim();
+    writeFileSync(index, readFileSync(original));
     const env = { ...process.env, GIT_INDEX_FILE: index };
+    // Git must find same-second edits against the original index's timestamp before the newer copy stages them.
+    const changed = new Set(gitFiles(root, 'diff-files', '--name-only'));
+    if (changed.size) {
+      const entries = gitFiles(root, 'ls-files', '--stage').filter(entry =>
+        changed.has(entry.slice(entry.indexOf('\t') + 1)),
+      );
+      execFileSync('git', ['update-index', '-z', '--index-info'], {
+        cwd: root,
+        env,
+        input: `${entries.join('\0')}\0`,
+      });
+    }
     execFileSync('git', ['add', '-A'], { cwd: root, env });
     return execFileSync('git', ['write-tree'], { cwd: root, env, encoding: 'utf8' }).trim();
   } finally {

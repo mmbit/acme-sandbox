@@ -93,12 +93,15 @@ test("the CEO's ask from the intercom takes its window as it's queued, or is ref
   assert.deepEqual(toCeo(), [], "the CEO's own ask is asked in its own run");
 });
 
-test("on a live call its agent asks the board; another agent's follow-up handing out its item asks the CEO", async () => {
+test("on a live call its agent judges the time, never asking the board; another agent's follow-up handing out its item asks the CEO", async () => {
   const plain = opened();
   const call = await liveCall('kit');
   const queued = await h.agent('job', call, { agent: 'bolt', title: 'The phone logs', prompt: 'x', thread: plain });
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
-  assert.match(queued.body.untimed, new RegExp(`Ask the board by when.*\\(${queued.body.id}\\): its thread`));
+  assert.match(
+    queued.body.untimed,
+    new RegExp(`Don't ask the board by when.*\\(${queued.body.id}\\): its thread.*untimed`),
+  );
   const loose = await h.agent('job', call, { agent: 'bolt', title: 'The phone bill', prompt: 'x' });
   assert.equal(loose.status, 200, JSON.stringify(loose.body));
   assert.match(loose.body.untimed, /in no thread.*\(\d+\), with the open thread it serves/);

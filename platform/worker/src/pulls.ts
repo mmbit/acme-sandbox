@@ -13,14 +13,17 @@ export async function openPullRequest(
   branch: string,
   pull: { title: string; body: string },
   log: (...a: unknown[]) => void,
+  signal?: AbortSignal,
 ): Promise<Opened> {
   const headers = { authorization: `Bearer ${gh.token}`, accept: 'application/vnd.github+json' };
   // (a request that fails, or a body cut off while it's read, is GitHub not reached: its answers, errors too, are responses)
   const reach = async (url: string, init: RequestInit) => {
     try {
-      const res = await fetch(url, init);
+      signal?.throwIfAborted();
+      const res = await fetch(url, { ...init, signal });
       return { ok: res.ok, status: res.status, text: await res.text() };
     } catch (err) {
+      signal?.throwIfAborted();
       log(`Could not reach GitHub to open a PR for ${branch}:`, err);
       return undefined;
     }

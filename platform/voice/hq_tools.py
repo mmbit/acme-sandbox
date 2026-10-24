@@ -1,5 +1,6 @@
 """The call agent's tools, as a tiny MCP server over stdio in place of a shell (guard.TOOLS, guard.PARTNER)."""
 import json, os, re, subprocess, sys
+from concurrent.futures import ThreadPoolExecutor, wait
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_*
 HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL') if k in os.environ}
@@ -8,6 +9,16 @@ TITLE, BRIEF, WHAT, ADD = 140, 8000, 200, 8000
 PIN_WORDS = 4000  # a pin's words, as long as the note box takes (feedback.ts)
 UNSURE = "{} Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."
 UNNOTED = "{} Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."
+# A tool waits for the coordinator's real answer however long it takes: a slow coordinator is still there, and a fixed
+# cutoff turned its slow moments into hand-offs the agent couldn't confirm (board, call 127). Only hq's own failures end
+# it (a refused connection, a reset). The agent hears back within STILL s all the same, so the call is never silent for
+# long: a tool still waiting then says so and carries on in the background (WORK: what's under way at hang-up still
+# lands), and the waiting tool hears it.
+STILL = 20
+WORK, PENDING = ThreadPoolExecutor(), []  # (PENDING: each tool still waiting, as (what it is, its future))
+STILL_WAITING = ("Still waiting for the coordinator's answer to {}: it's slow, not down, and this is still going "
+                 "through, not lost. Never use the tool again for it. Tell the board in a few words that it's still on "
+                 "its way, then use waiting to hear how it went.")
 # The board's call tools answer in numbers (jobs, items, pins, calls) the agent needs for its next tool, and the agent
 # speaks right after reading them: every answer but hang_up's carries this as a part of its own (answer()), the moment
 # the agent turns it into words. Text keeps its numbers.
@@ -220,6 +231,13 @@ TOOLS += [
 # hangs up once the goodbye has played, unless the board speaks first.
 HANG_UP_ANSWER = ("The line hangs up once your goodbye has finished playing. If the board speaks before then, the call "
                   "stays open and its words come to you as a new message: answer them as usual.")
+TOOLS += [
+    {'name': 'waiting', 'description': "Hear how the tools that answered 'Still waiting' went: the coordinator was "
+     "slow, and each kept going. It waits a little for them and gives each one's answer as the tool itself would have. What "
+     "still hasn't answered keeps going: tell the board it's still on its way, and use waiting again later, never the "
+     'tool itself again.',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+]
 # A goodbye in the agent's own words.
 TOOLS += [
     {'name': 'hang_up', 'description': 'End the call, only once the board has clearly wrapped it up: it said goodbye, '
@@ -322,20 +340,17 @@ def when(a):
 
 def looked(name, argv):
     """Run a lookup and return (ok, text)."""
-    r = subprocess.run(argv, env=HQ_ENV, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+    r = subprocess.run(argv, env=HQ_ENV, stdin=subprocess.DEVNULL, capture_output=True, text=True)
     if r.returncode:
         return False, f'hq {name} failed: {(r.stderr or r.stdout).strip()[:300] or "the coordinator refused it"}'
     # Successful lookups return every line so long transcripts remain complete.
     return True, r.stdout.strip()
 
 
-def run(args, words, timeout=30):
-    """hq, from an argument list in the allowlisted environment, with the words on stdin: (exit code, stdout, stderr),
-    or None if it hung. Never the words in argv: any uid can read /proc/<pid>/cmdline."""
-    try:
-        r = subprocess.run(['hq', *args], env=HQ_ENV, input=words, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        return None
+def run(args, words):
+    """hq, from an argument list in the allowlisted environment, with the words on stdin: (exit code, stdout, stderr).
+    Never the words in argv: any uid can read /proc/<pid>/cmdline."""
+    r = subprocess.run(['hq', *args], env=HQ_ENV, input=words, capture_output=True, text=True)
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
@@ -472,8 +487,6 @@ def answered(reply, refusal, unconfirmed, again=UNSURE, by='hq'):
     """(ok, text) from run's reply: done only when hq confirms it, and refused only when hq's refusal says nothing
     happened. Anything else may have come after the coordinator saved it (hq: exit 3, "Not confirmed"): a retry could
     do it twice, so `again` tells the agent not to."""
-    if reply is None:
-        return False, again.format(f'Not confirmed: {unconfirmed} ({by} took too long).')
     code, out, err = reply
     if code == 0 and out:
         return True, out
@@ -507,9 +520,6 @@ def pin(name, a):
             return False, 'pin_sent needs either the job number you queued for it, or answered: true'
         args, stdin = ['pin', 'sent', str(n), f'job:{job_id}' if job_id else 'answered'], ''
     r = run(args, stdin)
-    if r is None:
-        return False, ('Not confirmed: the pin may or may not have changed (hq took too long). Tell the board you will '
-                       'check it after the call.')
     code, out, err = r
     if code != 0 or not out:
         return False, err or out or f'hq pin failed (exit {code})'
@@ -533,6 +543,35 @@ def partner(name, a):
     return False, f'no tool {name} on a call with a partner'
 
 
+def awaited(name, a):
+    """(ok, text) of the board's tool, as soon as the coordinator answers, or within STILL s that it's still waiting."""
+    future = WORK.submit(lambda: when(a) if name == 'when' else (look if name in LOOK_UPS else hq)(name, a))
+    if wait([future], STILL).done:
+        return future.result()
+    what = next((f'{name} ({a[k]})' for k in ('title', 'what', 'query', 'words') if isinstance(a.get(k), str)), name)
+    PENDING.append((what, future))
+    return True, STILL_WAITING.format(what)
+
+
+def waiting():
+    """(ok, text): the answers that came for the tools still waiting, within STILL s, and what's still waiting."""
+    if not PENDING:
+        return True, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'
+    done = wait([future for _, future in PENDING], STILL).done  # (one look: one landing between two would be lost)
+    came = [(what, outcome(future)) for what, future in PENDING if future in done]
+    PENDING[:] = [(what, future) for what, future in PENDING if future not in done]
+    lines = [f'{what}: {text}' for what, (_, text) in came] + [STILL_WAITING.format(what) for what, _ in PENDING]
+    return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
+
+
+def outcome(future):
+    """A finished tool's (ok, text), or how it failed (as answer() words a tool that raised)."""
+    try:
+        return future.result()
+    except Exception as e:
+        return False, f'failed: {str(e)[:200]}'
+
+
 def answer(msg, offered=TOOLS):
     """The reply to one JSON-RPC message, or None for a notification. offered: the call's tool set."""
     method, mid = msg.get('method'), msg.get('id')
@@ -548,9 +587,12 @@ def answer(msg, offered=TOOLS):
         name, arguments = p.get('name'), p.get('arguments') or {}
         if offered is PARTNER_TOOLS:
             ok, text = partner(name, arguments)
+        elif name == 'waiting':
+            ok, text = waiting()
+        elif name == 'hang_up':
+            ok, text = hq(name, arguments)
         else:
-            ok, text = (when(arguments) if name == 'when'
-                        else (look if name in LOOK_UPS else hq)(name, arguments))
+            ok, text = awaited(name, arguments)
         aloud = [] if offered is PARTNER_TOOLS or name == 'hang_up' else [{'type': 'text', 'text': ALOUD}]
         result = {'content': [{'type': 'text', 'text': text}, *aloud], 'isError': not ok}
     elif method == 'ping':

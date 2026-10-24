@@ -54,9 +54,12 @@ once(
   from review_inbox r join proposals q on q.id = r.proposal where r.decision = 'close'`,
 );
 
-// Review items on a thread with a window (windows.ts): their findings hold that window up, so they reach whoever acts at
-// once (proposals.ts tell), and a planning job holding any orders by the earliest of their windows (backlog.ts).
-const WINDOWED = `from review_inbox r join proposals p on p.id = r.proposal join threads t on t.id = r.thread
+// Review findings and jobs waiting for sorting hold their thread's window (windows.ts). Their owner hears them at
+// once (proposals.ts tell), and a planning job holding any orders by the earliest window (backlog.ts).
+const WINDOWED = `from (
+    select proposal, thread from review_inbox
+    union select s.proposal, j.thread from sorts s join jobs j on j.id = s.job
+  ) r join proposals p on p.id = r.proposal join threads t on t.id = r.thread
   where p.status = 'open' and t.status = 'open' and t.deadline is not null`;
 export const windowed = (proposal: number) => !!db.prepare(`select 1 ${WINDOWED} and r.proposal = ?`).get(proposal);
 export const heldWindows = () =>

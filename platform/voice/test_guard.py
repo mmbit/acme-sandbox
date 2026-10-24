@@ -4,7 +4,7 @@ CallAgent runs the real Claude CLI (skipped where it isn't installed; the worker
 stand-in coordinator on 127.0.0.1: the call agent starts, answers and hands work on, as on a call. CallsList runs the
 tools against the real coordinator (platform/coordinator, after its npm ci) with a throwaway database.
 """
-import json, os, re, shutil, sqlite3, subprocess, sys, tempfile, textwrap, threading, unittest
+import json, os, re, shutil, socket, sqlite3, subprocess, sys, tempfile, textwrap, threading, time, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -29,6 +29,7 @@ class Coordinator(BaseHTTPRequestHandler):
     """The coordinator's /api/agent/* (what hq calls) and the model API (/v1/messages, scripted: on the first turn the
     model says a hold line and makes the tool call in `script`, once it has a tool result it says it's done)."""
     script, seen, refuse, lose, signed_in = None, [], None, None, set()  # (refuse: the coordinator's reason for a 400, as server.ts gives it)
+    slow = 0  # s the coordinator takes over each answer (a slow moment: it's still there)
     # the first turn makes its tool call with no hold line before it
     tool_first = False
     # lose: the job is taken (seen), then the answer goes astray: 'drop' closes the connection without one, a number is
@@ -41,6 +42,7 @@ class Coordinator(BaseHTTPRequestHandler):
         body = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or 'null')
         if self.path.startswith('/api/agent/'):
             self.seen.append(('hq', self.path, self.headers.get('authorization'), body))
+            time.sleep(self.slow)
             if self.lose == 'drop':
                 self.close_connection = True
                 return
@@ -238,7 +240,7 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'hang_up'])
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'waiting', 'hang_up'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -379,14 +381,68 @@ class HqTools(unittest.TestCase):
                     f"Not confirmed: the job for bolt may or may not be queued ({why}). Don't send it again: it may be there already. "
                     "Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."))
 
-    def test_a_stuck_hq_is_unconfirmed(self):
+    def tool(self, hq_tools, name, arguments):
+        """hq_tools' answer to one tools/call, in this process: (isError, its text)."""
+        reply = hq_tools.answer({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}})
+        return reply['result']['isError'], reply['result']['content'][0]['text']
+
+    def test_a_slow_coordinator_lands_the_job_and_confirms_it(self):
+        """The coordinator answers after 32 s, past every cutoff there was (hq's 20 s, hq_tools' 30 s): the job tool
+        says within STILL that it's still on its way, and waiting hears it queued. One job, never two."""
         import hq_tools
         from unittest import mock
-        with mock.patch.object(hq_tools.subprocess, 'run', side_effect=subprocess.TimeoutExpired('hq', 30)):
-            ok, text = hq_tools.hq('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
-        self.assertFalse(ok)
-        self.assertTrue(text.startswith('Not confirmed: the job may or may not be queued (hq job took too long).'), text)
-        self.assertIn("Don't hand it on again", text)
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            Coordinator.slow = 32
+            self.addCleanup(setattr, Coordinator, 'slow', 0)
+            with mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), mock.patch.object(hq_tools, 'STILL', 4), \
+                    mock.patch.object(hq_tools, 'PENDING', []):
+                started = time.monotonic()
+                first = self.tool(hq_tools, 'job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                self.assertLess(time.monotonic() - started, 6)
+                answers = [self.tool(hq_tools, 'waiting', {})]
+                while 'Still waiting' in answers[-1][1]:
+                    answers.append(self.tool(hq_tools, 'waiting', {}))
+                last = self.tool(hq_tools, 'waiting', {})
+        self.assertEqual(first, (False, hq_tools.STILL_WAITING.format('job (Logs)')))
+        self.assertGreater(len(answers), 2, 'waiting keeps the call answered while the coordinator is slow')
+        self.assertFalse(answers[-1][0])
+        self.assertTrue(answers[-1][1].startswith('job (Logs): Queued job #1234 HQ-LOGS for bolt: Logs'), answers[-1][1])
+        self.assertEqual(last, (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'))
+        self.assertEqual(len(Coordinator.seen), 1)
+
+    def test_waiting_delivers_every_answer_once(self):
+        """An answer that lands while waiting reads the others stays waiting and comes on the next waiting, once."""
+        import hq_tools
+        from concurrent.futures import Future
+        from unittest import mock
+        late, came = Future(), Future()
+        came.set_result((True, 'Queued job #1 HQ-LOGS for bolt: Logs'))
+        read = hq_tools.outcome
+        def outcome(future):
+            late.done() or late.set_result((False, 'No job was queued: refused'))
+            return read(future)
+        with mock.patch.object(hq_tools, 'STILL', 0.1), mock.patch.object(hq_tools, 'outcome', outcome), \
+                mock.patch.object(hq_tools, 'PENDING', [('job (Late)', late), ('job (Logs)', came)]):
+            answers = [self.tool(hq_tools, 'waiting', {}) for _ in range(3)]
+        self.assertEqual(answers, [
+            (False, 'job (Logs): Queued job #1 HQ-LOGS for bolt: Logs\n\n' + hq_tools.STILL_WAITING.format('job (Late)')),
+            (True, 'job (Late): No job was queued: refused'),
+            (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.')])
+
+    def test_a_dead_coordinator_fails_clearly(self):
+        """Nobody listening: the agent hears at once, for certain, that no job was queued, nothing waits on it."""
+        import hq_tools
+        from unittest import mock
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            url = f'http://127.0.0.1:{s.getsockname()[1]}'  # (bound, never listening: refused)
+            with tempfile.TemporaryDirectory() as d, mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), \
+                    mock.patch.object(hq_tools, 'PENDING', []):
+                failed = self.tool(hq_tools, 'job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                self.assertEqual(hq_tools.PENDING, [])
+        self.assertTrue(failed[0])
+        self.assertTrue(failed[1].startswith('No job was queued: Failed to connect to 127.0.0.1'), failed[1])
 
     def test_hq_job_exit_statuses(self):
         """hq itself: 0 with the job number, 1 only when there's surely no job (refused, or the coordinator never

@@ -142,11 +142,18 @@ function passOn(c: Conv, l: string, input: any) {
   feedback(c, f, l);
   return { ok: true, passed_on: 'as a note to the team, which nobody replies to' };
 }
+// The engine's own tools for the caller, as the plug-in's phoneCore names them:
+// all of them unless it names some, so a line that isn't for customers offers only its own phoneTools. The language's
+// switch and the closing ones are the line's own and always there.
+const ENGINE_TOOLS = [...TOOLS, FEEDBACK_TOOL];
+const core = () => {
+  const named = settings.phoneCore;
+  return ENGINE_TOOLS.filter(x => !Array.isArray(named) || named.includes(x.name));
+};
 // the company's own phone tools go after the way to a person, feedback (and the language's switch, with several),
 // before the closing ones
 export const tools = (): model.ToolDef[] => [
-  ...TOOLS,
-  FEEDBACK_TOOL,
+  ...core(),
   ...(tagged() ? [SWITCH_TOOL] : []),
   ...settings.phoneTools.map(x => x.def),
   ...CLOSING,
@@ -163,6 +170,8 @@ export async function run(
 ): Promise<{ content: string; say?: string; done?: boolean }> {
   const own = settings.phoneTools.find(x => x.def.name === name);
   if (own) return own.run(call(c, l), input);
+  if (ENGINE_TOOLS.some(x => x.name === name) && !core().some(x => x.name === name))
+    return { content: data({ error: `no tool called ${name}` }) }; // (one of the engine's this line doesn't offer)
   switch (name) {
     case 'check_postcode':
       return { content: data(await postcodeTool(c, l, input)) };

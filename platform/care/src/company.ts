@@ -99,6 +99,10 @@ export const settings = {
   phoneMonth: 0,
   phoneInstructions: '',
   phoneTools: [] as PhoneTool[],
+  // the engine's own tools for the caller its line offers, by name (phonetools.ts: check_postcode, send_code,
+  // order_status, email_answer, report_fault, ask_for_person, pass_on_feedback); null: all of them. [] for a line that
+  // isn't for customers, with only its own phoneTools
+  phoneCore: null as null | string[],
   // lines for the facts of a call, after the engine's own (none: '')
   phoneFacts: (_p: PhoneCall): string => '',
   // whether a run of digits a caller says is one of the company's order references (phonecode.ts readCode keeps it as

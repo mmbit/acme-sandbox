@@ -8,7 +8,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { harness, WORKER_TOKEN } from './harness.ts';
 import { commitFile } from './fixture.ts';
-import { handBack, noteHandBacks, ResponseError } from '../../worker/src/handback.ts';
+import { handBack, noteHandBacks } from '../../worker/src/handback.ts';
+import { ResponseError } from '../../worker/src/reports.ts';
 
 const h = await harness('deploys');
 

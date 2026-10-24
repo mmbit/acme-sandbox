@@ -44,7 +44,8 @@ MX and TXT records there are Cloudflare Email Routing's (hello@) and stay as the
 Each product has a Docker network of its own that only Caddy joins (no coordinator, worker or other product), and
 its keys reach it single-quoted in an env file, so Compose takes them literally.
 
-The support chat's service, when the company has one (the product CARE): a product whose manifest says `care: true` gets
+The support chat's service, when the company has one (the care deployment with `chat: true`, below): a product whose
+manifest says `care: true` gets
 /__care/* on its hosts, live and preview, proxied to the service with X-Care-App set by Caddy to its slug (<slug>@preview
 on the preview host); every site strips a client's copy, so the service believes the header alone. Caddy sets
 X-Care-Shop beside it, the shop whose one chat session the host shares: `front`
@@ -55,25 +56,32 @@ the company's helper does in the shop's own basket. On the preview host
 the chat is behind the board's login like the product, so a preview's chat isn't open to whoever finds its address.
 /api/care/* goes to the product outside the login: the service asks for orders there with the product's CARE_TOKEN,
 which the product checks itself. The service's own keys (CARE_KEYS, from the desk phone) and its line to
-HQ reach its container alone, never a product's. The service's cookie (CARE_COOKIES, its names in company/infra.env)
-and the board's never reach a product.
+HQ reach the care deployments' containers alone, never a product's. The service's cookie (CARE_COOKIES, its names in
+company/infra.env) and the board's never reach a product.
 
-The service is the platform's engine (platform/care), built from the repo's root by platform/care/Dockerfile with the
-company's plug-in folder for it (products/care), so it's deployed when products/care has a manifest and the platform has
-the engine; every other product builds from its own products/<slug>/app. It gets its session cookie's current name as
-CARE_COOKIE: the last of CARE_COOKIES, or __Host-care without any, and always __Host-.
+The care deployments: every product whose manifest says `engine: care`
+(care_engines.py, which sync.sh reads too) is the platform's engine (platform/care), built from the repo's root by
+platform/care/Dockerfile with that product's folder as its plug-in (the PLUGIN build argument, products/<slug>), so it's
+deployed when the product has a manifest and the platform has the engine; every other product builds from its own
+products/<slug>/app. Each has its own container, data volume and network, the model's keys and its credit. The one
+with `chat: true` serves the shops' chat and owns the line to HQ (more than one saying so: no deploy); the rest answer
+phone lines only, their calls' shop their own slug. The chat's gets its session cookie's current name as CARE_COOKIE:
+the last of CARE_COOKIES, or __Host-care without any, and always __Host-.
 
-The service's phone routes (platform/care, "The phone"): it listens for them on a second port, 8081. The voice line
-reaches them through Caddy, which is on both their networks, at http://caddy:8081: a port inside Docker only (compose.yaml
-publishes 80 and 443 alone), plain http, that passes /phone/* to the service and nothing else. The voice line never
-joins the service's network, so nothing running there can open the voice line's WebSocket. The two share
-CARE_PHONE_TOKEN, which sync.sh makes like VOICE_TOKEN and Compose fills in from its environment: no other container gets
-it, no file here holds it, and a product that reaches caddy:8081 without it gets the service's 401.
+The deployments' phone routes (platform/care, "The phone"): each listens for them on a second port, 8081. The voice line
+reaches them through Caddy, which is on both their networks, at http://caddy:8081/<slug>: a port inside Docker only
+(compose.yaml publishes 80 and 443 alone), plain http, that passes each deployment's /<slug>/phone/* to it as /phone/*
+and nothing else. The voice line never joins a deployment's network, so nothing running there can open the voice line's
+WebSocket. The voice line gets the deployments in CARE_ENGINES (each one's address, its `callsAtOnce`, 2 when the
+manifest names none, and the name of its token's variable, care_engines.py's), and each one's token in that variable,
+which the deployment gets as CARE_PHONE_TOKEN: sync.sh makes them like VOICE_TOKEN and Compose fills them in from its environment, so no other
+container gets one, no file here holds one, and a product that reaches caddy:8081 without it gets the service's 401.
 """
 import os, re, sys, glob, fnmatch, json, hmac, base64, hashlib, subprocess, shutil, tempfile, secrets as rand, yaml
 from datetime import datetime
 from company import INFRA, SKIPPED   # the server's names (company/infra.env), and keys whose line wasn't plain
 import run_helpers
+import care_engines   #
 
 root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 public_host = os.environ['PUBLIC_HOST']
@@ -99,7 +107,6 @@ KEY_KINDS = {'p256', 'random-32'}
 # our front door, once public: at its own domain or else www.<zone>. The zone's other hosts for it redirect there
 FRONT = 'front'
 RESERVED = {'hq', 'www', 'mail', 'preview', 'cycles', public_host.split('.', 1)[0]}  # HQ's own labels, never a product slug
-CARE = 'care'                                      # the support chat's service, if there is one (above)
 # its session cookie's names (company/infra.env CARE_COOKIES, comma-separated): plain cookie names, or no deploy, since
 # they go into the patterns that keep them from a product
 CARE_COOKIES = tuple(c for c in INFRA.get('CARE_COOKIES', '').split(',') if c)
@@ -112,8 +119,9 @@ if not all(re.fullmatch(r'[A-Za-z0-9_-]+', c) for c in CARE_COOKIES):
 CARE_COOKIE = CARE_COOKIES[-1] if CARE_COOKIES else '__Host-care'
 if not CARE_COOKIE.startswith('__Host-'):
     sys.exit(f"company/infra.env: CARE_COOKIES' last name {CARE_COOKIE!r} doesn't start with __Host-; not deploying")
-# the service's image: the platform's engine from the repo's root, which copies the company's plug-in folder for it
-# (products/care, as above); every other product's is its own app/ (product_build, below)
+# a care deployment's image: the platform's engine from the repo's root, which copies the deployment's own plug-in
+# folder (products/<slug>, its PLUGIN build argument, as above); every other product's is its own app/ (product_build,
+# below)
 CARE_BUILD = {'context': '..', 'dockerfile': 'platform/care/Dockerfile'}
 # The kit folders a product's image may take in, as named build contexts: the company's own kits (KITS_DIR, as the
 # coordinator reads it) and the foundation's shared/. The app's Dockerfile copies each kit it imports to its path in the
@@ -149,14 +157,14 @@ def build_shared():
         shutil.move(tree, KIT_CONTEXTS['shared'])
 
 def product_build(slug):
-    if slug == CARE:
-        return CARE_BUILD
+    if slug in engines:   #
+        return {**CARE_BUILD, 'args': {'PLUGIN': f'products/{slug}'}}
     # and `product`, the product's own folder (the app's parent), for code it keeps beside its app, copied the same way
     return {'context': f'../products/{slug}/app', 'args': {'APP': f'products/{slug}/app'},
             'additional_contexts': {**KIT_CONTEXTS, 'product': os.path.join(root, 'products', slug)}}
 def dockerfile(slug):
-    return os.path.join(root, *(CARE_BUILD['dockerfile'].split('/') if slug == CARE else ('products', slug, 'app', 'Dockerfile')))
-CARE_KEYS = ('CARE_ANTHROPIC_API_KEY', 'CARE_EMAIL_API_KEY')   # server keys (secrets.ts OWN): the service's alone
+    return os.path.join(root, *(CARE_BUILD['dockerfile'].split('/') if slug in engines else ('products', slug, 'app', 'Dockerfile')))
+CARE_KEYS = ('CARE_ANTHROPIC_API_KEY', 'CARE_EMAIL_API_KEY')   # server keys (secrets.ts OWN): the deployments' alone
 # the model's prepaid credit (company/infra.env, platform/care/src/config.ts CREDIT): dollars, the time they were there
 # (YYYY-MM-DD, or with a UTC time), other keys' monthly limits on it. A wrong one stops the deploy rather than the service.
 # A plan's monthly credit on it: dollars and its first billing cycle's start, both or neither
@@ -402,19 +410,14 @@ def memory(slug, p):
     print(f'{slug}: memory {m!r} isn\'t 256m to {MEMORY_MAX}m: it gets 256m', file=sys.stderr)
     return '256m'
 
-def manifest(path):
-    try:
-        p = yaml.safe_load(open(path)) or {}
-    except yaml.YAMLError as e:
-        print(f'skipping {os.path.basename(os.path.dirname(path))}: {e}', file=sys.stderr)
-        return None
-    return p if isinstance(p, dict) else None
-
 # A product's own domain: a plain host name outside our zone (every <slug>.<zone> is already some product's standard
 # address, or HQ's) that no other product's manifest names too, whatever its status. Two site blocks for one host make
 # Caddy refuse the whole config, and would let one product's checkout return to another's site. Keep this in step with
 # servedDomain() in platform/coordinator/src/manifests.ts.
-manifests = {path: manifest(path) for path in sorted(glob.glob(os.path.join(root, 'products', '*', 'product.yaml')))}
+manifests = {path: care_engines.manifest(path)
+             for path in sorted(glob.glob(os.path.join(root, 'products', '*', 'product.yaml')))}
+# the care deployments, read as sync.sh reads them for their tokens
+engines = set(care_engines.engines({care_engines.slug_of(path): p for path, p in manifests.items()}))
 claims = {}
 for p in manifests.values():
     if p and isinstance(p.get('domain'), str):
@@ -426,10 +429,11 @@ deploy = []   # (slug, manifest) of every product that gets a container: the loo
               # the chat's service is known before any product's env is written
 floor_reports_only = set()   # script_floor: report-only (the floor, below)
 for path, p in manifests.items():
-    slug = os.path.basename(os.path.dirname(path))
-    if slug.startswith('_') or not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,40}', slug) or p is None:
+    slug = care_engines.slug_of(path)
+    if slug is None or p is None:
         continue
-    if not os.path.exists(dockerfile(slug)):   # the service's is the platform's
+    if not os.path.exists(dockerfile(slug)):   # a care deployment's is the platform's
+        print(f'skipping {slug}: no app/Dockerfile (a care plug-in folder needs engine: care)', file=sys.stderr)
         continue
     if slug in RESERVED:
         print(f'skipping {slug}: a reserved name', file=sys.stderr)
@@ -472,8 +476,15 @@ offers = shop_offers()
 COOKIE_DROP = lambda c: f'^(?:\\s*{c}=[^;]*(?:;|$))+\\s*|;\\s*{c}=[^;]*'
 drop_cookie = lambda c: f'header_up Cookie `{COOKIE_DROP(c)}` ""'
 TO_PRODUCT = ''.join(f'{drop_cookie(c)}\n' for c in dict.fromkeys(('pv', 'ps', 'pp', *CARE_COOKIES, CARE_COOKIE)))   # (the default too, when there are no names)
-has_care = any(slug == CARE for slug, _ in deploy)
+# The care deployments built here, and the one that serves the shops' chat: `chat: true`, at most one, or no deploy.
+# None without one
+deployments = sorted(slug for slug, _ in deploy if slug in engines)
+chatty = [slug for slug, p in sorted(deploy, key=lambda d: d[0]) if slug in engines and p.get('chat') is True]
+if len(chatty) > 1:
+    sys.exit(f"products: {', '.join(chatty)} each say chat: true, and one deployment serves the shops' chat; not deploying")
+chat_engine = chatty[0] if chatty else None
 care_apps, care_tokens, care_names = {}, {}, {}   # for the service's env (after the loop), keyed like X-Care-App
+care_later = {}   # each care deployment's own env's arguments, for after the loop
 # ...and each shop's apps, keyed like X-Care-Shop: the public shelves with the chat, and the front's preview shelves
 care_shops = {FRONT: [], f'{FRONT}@preview': []}
 
@@ -566,7 +577,7 @@ def kit_route(login=''):
 def care_route(app, login='', shop=None):
     """The chat's route on a host of a product with `care: true` (app: the X-Care-App this host gets; login: the
     preview's; shop: its X-Care-Shop, the app itself unless the host is one of a shop's shelves). Its stream is Server-Sent Events: flushed as it comes."""
-    return 'handle /__care/* {\n' + indent(f'''{login}reverse_proxy product-{CARE}:8080 {{
+    return 'handle /__care/* {\n' + indent(f'''{login}reverse_proxy product-{chat_engine}:8080 {{
 \theader_up X-Care-App {app}
 \theader_up X-Care-Shop {shop or app}
 \theader_up -X-Preview-Door
@@ -722,7 +733,7 @@ def add_container(slug, name, environment, mem_limit):
         'security_opt': ['no-new-privileges:true'], 'cap_drop': ['ALL'], 'read_only': True,
         'tmpfs': ['/tmp:size=64m,mode=1777'],
     }
-    if offers is not None and slug not in (FRONT, CARE):
+    if offers is not None and slug != FRONT and slug not in engines:
         services[name]['environment']['SHOP_OFFERS'] = offers
     networks[name], volumes[f'{name}-data'] = {}, {}
 
@@ -764,21 +775,24 @@ for slug, p in sorted(deploy, key=lambda d: d[0] != FRONT):
     name = f'product-{slug}'
     add_container(slug, name, {'STATUS': status, 'PARTNER_ENV': partner_env, 'SHOP': 'closed' if closed else 'open'}, memory(slug, p))
     # The container behind its preview door: a public product's test-mode one (above), under a name no product's takes
-    door_name = f'preview-{slug}' if status == 'live' and slug != CARE else name
+    door_name = f'preview-{slug}' if status == 'live' and slug not in engines else name
     if door_name != name:
         add_container(slug, door_name, {'STATUS': 'preview', 'PARTNER_ENV': 'test', 'SHOP': 'open'}, services[name]['mem_limit'])
     # The chat, for a product that opts in: a token for its own slug and mode (live
     # for a public site), which the product checks when the service asks for orders; the service gets them all (below).
     # Without HQ's data the service knows no app, so no host gets the route. The front has no orders, but the service
     # reaches the shop's basket there, so it gets a token and its endpoint too.
-    chat = has_care and p.get('care') is True and slug != CARE and os.path.isabs(hq_data)
+    chat = chat_engine is not None and p.get('care') is True and slug not in engines and os.path.isabs(hq_data)
     mode = 'live' if status == 'live' else 'preview'
     extra = {'CARE_TOKEN': signed(f'care:{slug}:{mode}')} if chat else {}
     # ...and the one its preview door's container holds (the same container for a preview)
     door_extra = {'CARE_TOKEN': signed(f'care:{slug}:preview')} if chat else {}
-    if slug == CARE:   # the service's env is written once every product's token is known
-        services[name]['environment']['CARE_COOKIE'] = CARE_COOKIE   # its cookie's current name
-        care_later = ([] if closed else needs, partner_env, mode)
+    if slug in engines:   # a care deployment's env is written once every product's token is known
+        if slug == chat_engine:
+            services[name]['environment']['CARE_COOKIE'] = CARE_COOKIE   # its cookie's current name
+        else:   # no CARE_SHOPS or CARE_APPS to take the phone's shop from: its calls are conversations of its own slug
+            services[name]['environment']['CARE_PHONE_SHOP'] = slug
+        care_later[slug] = ([] if closed else needs, partner_env, mode)
     else:   # its own keys whether or not it takes orders: what they signed and sealed outlives a closed shop
         specs = keySpecs(slug, p)
         keys = productKeys(slug, specs, mode)
@@ -831,7 +845,7 @@ for slug, p in sorted(deploy, key=lambda d: d[0] != FRONT):
         front['door'], front['chat'] = (door_name, chat, bool(extra)), chat
         front['name'] = p['name'] if isinstance(p.get('name'), str) else slug
     else:
-        if slug != CARE and p.get('platform') is not True:
+        if slug not in engines and p.get('platform') is not True:
             doorShelves.append(shelf(slug, door_name, chat, 'next', door=True))
             doorSlugs.append(slug)
             if chat:
@@ -896,34 +910,50 @@ if zone:   # (they wait for a domain too)
 }}
 ''')
 
-# The chat's service: every opted-in product's token and address (JSON keyed like
-# X-Care-App), each shop's apps (keyed like X-Care-Shop), its names, its own keys from the desk phone, and its line to
-# HQ. Nothing here goes to any other container.
-if has_care:
+# The care deployments. Each gets its own keys from the desk phone and the
+# credit; the chat's (chat_engine) every opted-in product's token and address too (JSON keyed like X-Care-App), each
+# shop's apps (keyed like X-Care-Shop), its names and the line to HQ. The line is the chat's alone: HQ's Care app has one
+# queue of cases, drafts and redrafts, numbered by the deployment that files them, so one deployment owns it. Nothing
+# here goes to any other container.
+quoted = lambda v: json.dumps(v, sort_keys=True).replace("'", '\\u0027')   # the env file can't hold a '
+for engine in deployments:
     care_env = {}
     if os.path.isabs(hq_data):
-        quoted = lambda v: json.dumps(v, sort_keys=True).replace("'", '\\u0027')   # the env file can't hold a '
-        # a shop with no app is left out, and so is the front's door when there's no front to serve it. The shop's name
-        # (and the front's own chat's) is the front's
-        shops = {shop: sorted(apps) for shop, apps in care_shops.items() if apps and (shop == FRONT or 'door' in front)}
-        if shops or front.get('chat'):
-            care_names[FRONT] = front.get('name', FRONT)
-        care_env = {'CARE_APPS': quoted(care_apps), 'CARE_SHOPS': quoted(shops), 'CARE_TOKENS': quoted(care_tokens),
-                    'CARE_NAMES': quoted(care_names), 'CARE_HQ_URL': f'https://{public_host}', 'CARE_HQ_TOKEN': signed('care:hq')}
+        if engine == chat_engine:
+            # a shop with no app is left out, and so is the front's door when there's no front to serve it. The shop's
+            # name (and the front's own chat's) is the front's
+            shops = {shop: sorted(apps) for shop, apps in care_shops.items() if apps and (shop == FRONT or 'door' in front)}
+            if shops or front.get('chat'):
+                care_names[FRONT] = front.get('name', FRONT)
+            care_env = {'CARE_APPS': quoted(care_apps), 'CARE_SHOPS': quoted(shops), 'CARE_TOKENS': quoted(care_tokens),
+                        'CARE_NAMES': quoted(care_names), 'CARE_HQ_URL': f'https://{public_host}', 'CARE_HQ_TOKEN': signed('care:hq')}
     care_env.update(CARE_CREDIT)
     for k in CARE_KEYS:
         if secrets_dir and os.path.lexists(os.path.join(secrets_dir, k)):
             care_env[k] = read_key(os.path.join(secrets_dir, k))
-    attach_env(f'product-{CARE}', product_env(CARE, *care_later, care_env))
-    # the phone (above): the token by name, for Compose to fill in, and Caddy's inside port to the phone routes. The
-    # replies stream (NDJSON), and a voice line that hangs up mid-reply closes the request
-    services[f'product-{CARE}']['environment']['CARE_PHONE_TOKEN'] = '${CARE_PHONE_TOKEN:-}'
-    phone_line = {'voice': {'environment': {'CARE_URL': 'http://caddy:8081', 'CARE_PHONE_TOKEN': '${CARE_PHONE_TOKEN:-}'}}}
-    sites.append(f'''http://:8081 {{
-\trequest_header -X-Care-App
-\trequest_header -X-Care-Shop
+    attach_env(f'product-{engine}', product_env(engine, *care_later[engine], care_env))
+
+# The phone (above): each deployment's token by name, for Compose to fill in (the same in its container and the voice
+# line's), its address on Caddy's inside port, its calls at once and its token's name in CARE_ENGINES, and the inside
+# port's routes. The replies stream (NDJSON), and a voice line that hangs up mid-reply closes the request
+phone_token = care_engines.token_name
+def calls_at_once(slug, p):
+    n = p.get('callsAtOnce', 2)
+    if type(n) is not int or n < 1:
+        sys.exit(f"products: {slug}'s callsAtOnce {n!r} isn't a whole number from 1; not deploying")
+    return n
+phone_line = {}
+if deployments:
+    for engine in deployments:
+        services[f'product-{engine}']['environment']['CARE_PHONE_TOKEN'] = f'${{{phone_token(engine)}:-}}'
+    engines_env = {slug: {'url': f'http://caddy:8081/{slug}', 'calls': calls_at_once(slug, dict(deploy)[slug]),
+                          'token': phone_token(slug)} for slug in deployments}
+    phone_line = {'voice': {'environment': {'CARE_ENGINES': json.dumps(engines_env, separators=(',', ':')),
+                                            **{phone_token(slug): f'${{{phone_token(slug)}:-}}' for slug in deployments}}}}
+    # each deployment's /phone/* under its own /<slug>/, which handle_path takes off; anything else: 404
+    routes = ''.join(f'''handle_path /{engine}/* {{
 \thandle /phone/* {{
-\t\treverse_proxy product-{CARE}:8081 {{
+\t\treverse_proxy product-{engine}:8081 {{
 \t\t\tflush_interval -1
 \t\t}}
 \t}}
@@ -931,12 +961,12 @@ if has_care:
 \t\trespond 404
 \t}}
 }}
-''')
-else:
-    phone_line = {}
+''' for engine in deployments)
+    sites.append('http://:8081 {\n\trequest_header -X-Care-App\n\trequest_header -X-Care-Shop\n'
+                 + indent(routes + 'handle {\n\trespond 404\n}\n') + '}\n')
 
 # Rendering the manifests alone needs no builder. Deploys export the shared context before Compose builds products.
-if '--build-shared' in sys.argv and any(name != f'product-{CARE}' for name in services):
+if '--build-shared' in sys.argv and any(name not in {f'product-{slug}' for slug in deployments} for name in services):
     build_shared()
 
 with open(os.path.join(out, 'products.yaml'), 'w') as f:

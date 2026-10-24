@@ -366,6 +366,66 @@ test('a view-only share opens the same pages without review mode, and takes no n
   assert.match(shut.text, /<h1>This invite has ended\.<\/h1>/);
 });
 
+// Each door's words per language: the notes door, its sent and ended lines, the view-only door and the tester's
+const DOORS = [
+  {
+    lang: 'nl',
+    name: 'Sanne',
+    notes: /voor jouw notities/,
+    sent: /Verstuurd, dank je wel[\s\S]*Meer notities toevoegen/,
+    sentEnded: /Deze notities zijn verstuurd en deze uitnodiging is afgelopen\./,
+    view: /deelt Hello \(platform test\) met je/,
+    ended: /<h1>Deze uitnodiging is afgelopen\.<\/h1>/,
+    tester: /om uit te proberen[\s\S]*Tik op de rode speld/,
+  },
+  {
+    lang: 'de',
+    name: 'Matthias',
+    notes: /für deine Notizen/,
+    sent: /Gesendet, danke[\s\S]*Mehr Notizen hinzufügen/,
+    sentEnded: /Diese Notizen wurden gesendet und diese Einladung ist beendet\./,
+    view: /teilt Hello \(platform test\) mit dir/,
+    ended: /<h1>Diese Einladung ist beendet\.<\/h1>/,
+    tester: /zum Ausprobieren[\s\S]*auf die rote Nadel/,
+  },
+] as const;
+for (const d of DOORS)
+  test(`a share's doors speak the guest's own language, ${d.lang}: notes, sent, view-only, ended and tester`, async () => {
+    const page = `https://${HELLO}/`,
+      email = `${d.name.toLowerCase()}@example.org`;
+    const speaks = () => db.prepare('update guests set lang = ? where name = ?').run(d.lang, d.name);
+    const english = /for your notes|Sent, thank you|This invite has ended|to try out/;
+    const notes = await invite({ page, name: d.name, email, days: 1 });
+    speaks();
+    const them = await signIn(notes.link, d.notes);
+    const door = async () => (await call(them.path, { cookie: them.g })).text;
+    assert.doesNotMatch(await door(), english);
+    assert.equal((await pinNote(them.ps, HELLO, page)).status, 200);
+    assert.equal((await submit(them.ps, HELLO)).status, 200);
+    assert.match(await door(), d.sent);
+    assert.equal((await board('/api/review/shares/end', { id: notes.id })).status, 200);
+    const sentEnded = await call(them.path, { cookie: them.g });
+    assert.equal(sentEnded.status, 404);
+    assert.match(sentEnded.text, d.sentEnded);
+    const view = await invite({ page, name: d.name, email, days: 1, view: true });
+    const looking = await signIn(view.link, d.view);
+    assert.doesNotMatch((await call(looking.path, { cookie: looking.g })).text, english);
+    assert.equal((await board('/api/review/shares/end', { id: view.id })).status, 200);
+    const ended = await call(looking.path, { cookie: looking.g });
+    assert.equal(ended.status, 404);
+    assert.match(ended.text, d.ended);
+    const tester = await invite({
+      page: 'https://front.preview.company.test/',
+      name: d.name,
+      email,
+      days: 1,
+      tester: true,
+    });
+    const trying = await signIn(tester.link, d.tester);
+    assert.doesNotMatch((await call(trying.path, { cookie: trying.g })).text, english);
+    feedback.endShare({ id: tester.id });
+  });
+
 // My notes' sidebar (review.js): each note's screenshot from HQ's host, never the product's own origin, for the guest desk
 // session of the outsider whose note it is, while they're still on the link: the link alone opens nothing
 test("an outsider's screenshots in My notes: from HQ's host, for their own session, while the note is still theirs to read", async () => {

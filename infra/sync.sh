@@ -17,11 +17,18 @@ stack_env() { # what compose.yaml needs besides /etc/$SERVER_NAME/env; $1 = the 
   ip=$(curl -sf http://169.254.169.254/hetzner/v1/metadata/public-ipv4)
   export PUBLIC_HOST=$(cat infra/host 2>/dev/null || echo "${ip//./-}.sslip.io") GIT_COMMIT=$1
   # Shared secrets between the coordinator and the worker, the voice line and this server's run helper (each only its
-  # own), generated once on the server. care-phone: the voice line's and the support chat's service's (its phone
-  # routes, products.py).
-  for t in worker voice runs care-phone; do [ -f /etc/$SERVER_NAME/$t-token ] || (umask 077; openssl rand -hex 32 > /etc/$SERVER_NAME/$t-token); done
+  # own), generated once on the server.
+  for t in worker voice runs; do [ -f /etc/$SERVER_NAME/$t-token ] || (umask 077; openssl rand -hex 32 > /etc/$SERVER_NAME/$t-token); done
   export WORKER_TOKEN=$(cat /etc/$SERVER_NAME/worker-token) VOICE_TOKEN=$(cat /etc/$SERVER_NAME/voice-token) \
-    RUNS_TOKEN=$(cat /etc/$SERVER_NAME/runs-token) CARE_PHONE_TOKEN=$(cat /etc/$SERVER_NAME/care-phone-token)
+    RUNS_TOKEN=$(cat /etc/$SERVER_NAME/runs-token)
+  # Each care deployment's phone token, the voice line's and that deployment's alone (its phone routes, products.py), as
+  # the variable care_engines.py names: the deployments as products.py reads them
+  local slug name token
+  while read -r slug name; do
+    token=/etc/$SERVER_NAME/care-phone-$slug-token
+    [ -f "$token" ] || (umask 077; openssl rand -hex 32 > "$token")
+    export "$name=$(cat "$token")"
+  done < <(python3 infra/care_engines.py)
 }
 
 # Between deploys, the status report every 10 minutes so seats and requests stay visible. $1: the commit HQ runs.
@@ -297,32 +304,43 @@ elif [ "$deployed" = 0 ] && [ "$up" = 0 ]; then
 fi
 echo "exit $deployed at $(date -Is)" >> "$log"
 # The images a rebuild replaced go after every deploy, whether it worked or not.
-# The build cache goes only whole, never in part. A partial prune (by age, size
-# or least recent use) drops steps today's images still stand on. After that every deploy rebuilds every image and
-# recreates every container, the worker and the voice line included, until a full prune.
-# So the whole cache goes, with every unused image, in two cases. Under 15 GB free the next build may not fit, and a full
-# disk fails every deploy. Over a quarter of the disk the cache has outgrown its share.
-# Docker's own cache GC is off (harden.sh). The status report's "== disk" says what holds the rest.
+# The build cache keeps the steps this deploy used, and loses the rest only past a budget, least recently used first.
+# Every deploy builds every image ($compose build, above), so the steps today's
+# images stand on are the ones used since this run started ($SECONDS), and keeping them costs the next deploy nothing:
+# it builds only what changed. Pruning them too flipped every deploy (24 Oct, 13:25-13:59 UTC): the whole cache went
+# under 15 GB free, the rebuild filled it straight back (15 GB), free space fell under the line again, and each deploy
+# rebuilt every image and recreated every container, the worker included.
+# The budget is a quarter of the disk, the cache's share, less whatever would leave under 10 GB free; under 10 GB the
+# unused images go too. Only under 5 GB free, where HQ refuses outside files (storage.ts FLOOR) and a build may not
+# fit, does the prune reach the steps this deploy used, oldest first, all of them if it must.
+# Docker's own cache GC is off (harden.sh): it trims to about 10% of the disk, under what today's images stand on.
+# The status report's "== disk" says what holds the rest.
 # (buildx's builder prune says "Total:", the classic one "Total reclaimed space:")
 cacheSize=$(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | sed -n 's/^Build Cache //p')
 cacheSizeUpper=$(echo "$cacheSize" | tr a-z A-Z)
 cacheBytes=$(numfmt --from=si "${cacheSizeUpper%B}" 2>/dev/null || echo 0)
-freeKb=$(df --output=avail -k / | tail -1)
-diskKb=$(df --output=size -k / | tail -1)
-diskQuarterBytes=$((diskKb * 1024 / 4))
-pruneReason=
-# (15 GB: HQ refuses outside files, a note's screenshot say, under 10 GB free (storage.ts FLOOR), and a deploy's builds
-# take a few GB of it for a while.)
-if [ "$freeKb" -lt $((15 << 20)) ]; then
-  pruneReason="under 15 GB free"
-elif [ "$cacheBytes" -gt "$diskQuarterBytes" ]; then
-  pruneReason="the build cache ($cacheSize) over a quarter of the disk"
+freeBytes=$(($(df --output=avail -k / | tail -1) * 1024))
+floorBytes=$((10 << 30))
+cacheBudget=$(($(df --output=size -k / | tail -1) * 1024 / 4))
+budgetReason="a quarter of the disk"
+if [ $((cacheBytes + freeBytes - floorBytes)) -lt "$cacheBudget" ]; then
+  cacheBudget=$((cacheBytes + freeBytes - floorBytes))
+  budgetReason="$((floorBytes >> 30)) GB free"
 fi
-if [ -n "$pruneReason" ]; then
-  echo "pruned after the deploy, all of it ($pruneReason): old images $(docker image prune -af 2>&1 | sed -n 's/^Total reclaimed space: //p'), build cache $(
-    docker builder prune -af 2>&1 | sed -n 's/^Total\( reclaimed space\)\{0,1\}:[[:space:]]*//p')" >> "$log"
+# (--keep-storage 0 is no budget at all)
+[ "$cacheBudget" -ge $((1 << 20)) ] || cacheBudget=$((1 << 20))
+oldImages=-f
+[ "$freeBytes" -ge "$floorBytes" ] || oldImages=-af
+keepUsed="--filter until=${SECONDS}s" keptNote="the steps this deploy used kept"
+[ "$freeBytes" -ge $((5 << 30)) ] || keepUsed= keptNote="under 5 GB free: the steps this deploy used too"
+oldImagesFreed=$(docker image prune $oldImages 2>&1 | sed -n 's/^Total reclaimed space: //p')
+if [ "$cacheBytes" -le "$cacheBudget" ]; then
+  echo "pruned after the deploy: old images $oldImagesFreed, build cache 0B (kept whole: ${cacheSize:-?})" >> "$log"
 else
-  echo "pruned after the deploy: old images $(docker image prune -f 2>&1 | sed -n 's/^Total reclaimed space: //p'), build cache 0B (kept whole: ${cacheSize:-?})" >> "$log"
+  cacheFreed=$(docker builder prune -af $keepUsed --keep-storage "$((cacheBudget >> 20))mb" 2>&1 |
+    sed -n 's/^Total\( reclaimed space\)\{0,1\}:[[:space:]]*//p')
+  echo "pruned after the deploy: old images $oldImagesFreed, build cache $cacheFreed (oldest first, of ${cacheSize:-?}," \
+    "toward $((cacheBudget >> 20)) MB, $budgetReason; $keptNote)" >> "$log"
 fi
 ./infra/report.sh "$log"
 # HQ's record of the deploy, for the jobs that wait for one (hq job --when): after the report, so a job it starts finds

@@ -51,6 +51,7 @@ import * as call from './call.ts';
 import * as ledger from './ledger.ts';
 import * as hiring from './hiring.ts';
 import * as phone from './phone.ts';
+import { checkLine } from './phonecheck.ts';
 import * as phonecode from './phonecode.ts';
 import * as feedback from './feedback.ts';
 import * as owed from './owed.ts';
@@ -629,9 +630,9 @@ function jobNotes(b: any, me: Me) {
   return typeof taken === 'string' ? new Refused(409, taken) : taken;
 }
 const shownThread = (job: number) => { const thread = jobs.threadOf(job); return thread ? { thread } : {}; };
-// The board's ask queued with no window (askwindow.ts): on a live call its agent asks the board, who's on the line; a
-// run's (a follow-up of another agent's call handing out its item) asks the CEO, unless the call is a customer's, whose
-// details stay with its agent. (The CEO's own run was refused: jobPlacement.)
+// The board's ask queued with no window (askwindow.ts): on a live call its agent judges the time itself or leaves it
+// untimed, never asking the board; a run's (a follow-up of another agent's call handing out its item) asks the CEO,
+// unless the call is a customer's, whose details stay with its agent. (The CEO's own run was refused: jobPlacement.)
 function askedForTime(me: Me, job: { id: number; agent: string; title: string }, source: askwindow.AskSource, from?: { call: number }) {
   const inThread = !!jobs.threadOf(job.id), told = { untimed: askwindow.untimedLine(job.id, !!me.call, inThread) };
   if (me.call || me.agent === ceo() || (from && memory.customerCall(from.call))) return told;
@@ -1113,7 +1114,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // (parks: hq request's, which a job doing a call's work can't: later.ts parkProblem)
   'POST /api/agent/card-check': (b, me) => { const problem = cardProblem(String(b.body ?? ''), bringsBack(b)) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? (b.parks ? later.parkProblem(me.id) : null) ?? unseenProblem(b, me); return problem ? new Refused(400, problem) : { ok: true }; },
   'GET /api/agent/phone': () => ({ number: secret('TWILIO_PHONE_NUMBER') || null }), // hq phone: public anyway, it goes on the Imprint pages
-  'GET /api/agent/phone/check': async () => ({ lines: await phone.checkLine() }), // hq phone --check
+  'GET /api/agent/phone/check': async () => ({ lines: await checkLine() }), // hq phone --check
   // hq jobs [agent]: what's in flight (open work jobs), everyone's or one agent's, but not the caller's own job.
   'GET /api/agent/jobs': (b, me) => jobs.openJobs({ agent: str(b.agent), except: me.id }),
   'GET /api/agent/room': () => room.getRoom(),   // (hq jobs: the same, naming the job by its number)

@@ -8,7 +8,8 @@ import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
 import { keepSpotSizes, recordFor, sizesFor } from './predictions.ts';
 import { expand } from './rounds.ts';
-import { backward, compare, ready, spareOnly, type Timing } from './planner.ts';
+import { backward, compare, precedence, ready, spareOnly, type Timing } from './planner.ts';
+import type { QueuedJob } from './eta.ts';
 import type { ProspectiveRun } from './reviewplan.ts';
 import { placeholders } from './threadorder.ts';
 
@@ -19,6 +20,8 @@ const KEEP_MS = 10_000;
 let kept: { at: number; plan: ReturnType<typeof played> } | undefined;
 let dropped: { reason: claimobservation.Reason; by: string } = { reason: 'start', by: 'HQ' };
 let watching = false;
+// (the live server keeps its plans: start(); tests and scripts play every read)
+export const live = () => watching;
 let newestPlayed: number | undefined;
 export function start() {
   if (watching) return;
@@ -31,8 +34,10 @@ export function start() {
     }
   });
 }
+// A kept plan keeps its timings; its waits are read afresh on every read (eligibility).
+const read = (plan: ReturnType<typeof played>) => ({ timings: plan.timings, eligible: plan.eligibility() });
 export function current(now = Date.now()) {
-  if (!watching) return played(now);
+  if (!watching) return read(played(now));
   const observed = claimobservation.begin();
   let reason: claimobservation.Reason = 'start';
   let plan: ReturnType<typeof played>;
@@ -66,7 +71,7 @@ export function current(now = Date.now()) {
     }[reason];
     latency.held(`the claim's plan: played ${Math.round(playedMs)} ms (after ${why})`, playedMs);
   }
-  return plan;
+  return read(plan);
 }
 
 // The queue the claim orders: open work, and each open thread with no task yet as one piece of its owner's work
@@ -83,28 +88,44 @@ function played(now: number) {
   const queue = queueAt(now);
   const { timings, jobs: planned } = latestStarts(queue, now);
   const rows = new Map(planned.map(j => [j.id, j]));
-  const resolved = db.prepare(
-    redraws.query(
-      `select j.status, coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished, ${jobs.merged('j')} merged from jobs j where j.id = ?`,
-    ),
-  );
-  const eligible = (id: number) => {
+  return { timings, eligibility: () => eligibility(rows, now, queue.deployLagMs) };
+}
+// Whether a queued job can start, for one read of the plan (a claim): the ends of the jobs the queue waits on are read
+// the first time it asks, all in one statement, so the redraws' relations are played once a claim, not once an edge.
+function eligibility(rows: ReadonlyMap<number, QueuedJob>, now: number, deployLagMs: number) {
+  type End = { id: number; status: string; finished: string | null; merged: number };
+  let ends: Map<number, End> | undefined;
+  const endOf = (job: number) => {
+    if (!ends) {
+      const waitedOn = new Set([...rows.values()].flatMap(row => precedence(row, deployLagMs).jobs.map(e => e.job)));
+      const found = db
+        .prepare(
+          redraws.query(
+            `select j.id, j.status, coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished, ${jobs.merged('j')} merged
+            from jobs j where j.id in (select value from json_each(?))`,
+          ),
+        )
+        .all(JSON.stringify([...waitedOn])) as End[];
+      ends = new Map(found.map(r => [r.id, r]));
+    }
+    return ends.get(job);
+  };
+  return (id: number) => {
     const row = rows.get(id);
     if (!row) return true;
     return ready(
       row,
       now,
       edge => {
-        const prior = resolved.get(edge.job) as { status: string; finished: string | null; merged: number } | undefined;
+        const prior = endOf(edge.job);
         // (none: work not queued yet, a thread's placeholder.)
         if (!prior) return null;
         return (edge.until === 'done' ? prior.status === 'done' : prior.merged) ? Date.parse(prior.finished!) : null;
       },
-      queue.deployLagMs,
+      deployLagMs,
       'live',
     );
   };
-  return { timings, eligible };
 }
 // How long before its thread's deadline the pass has queued job `id` start: the deploy lag, its review rounds' runs and
 // its own, each with the heartbeat's pause (planner.ts backward), played with its thread's jobs due now: their latest

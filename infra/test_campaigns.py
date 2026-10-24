@@ -82,7 +82,7 @@ class Campaigns(unittest.TestCase):
 
     # prefetch
     def test_pages(self):
-        """page loads per page and source: the last 7 days summed, a column per source, sorted by page"""
+        """page loads per page and source: the last 7 days summed, a column per source, sorted by page, then per day"""
         today = datetime.date(2026, 10, 18)
         ago = lambda n: (today - datetime.timedelta(days=n)).isoformat()
         row = lambda d, page, source, n: {'day': ago(d), 'page': page, 'source': source, 'loads': n}
@@ -91,14 +91,24 @@ class Campaigns(unittest.TestCase):
                            row(1, '/nl/cadeaus/nieuw-huis/', 'agent-gptbot', 3), row(2, '/nl/', 'ai-chatgpt', 1),
                            row(3, '/nl/', 'agent-oai-searchbot', 4), row(7, '/nl/', 'person', 100), row(1, '/nl/', 'prefetch', 2),
                            row(0, '/nl/?q=Anna', 'person', 1), row(0, '/nl/', 'Anna', 1), row(0, '/NL/', 'person', 1),
-                           row(0, '/nl/', 'person', '1'), row(0, '/nl/', 'search-google', 1), 'Anna, Elm Street 4']}
+                           row(0, '/nl/', 'person', '1'), row(0, '/nl/', 'search google', 1), row(0, '/nl/', 'stall', 2),
+                           row(0, '/nl/cadeaus/nieuw-huis/', 'meta', 3), row(1, '/nl/', 'none', 1), row(1, '/nl/', 'shop', 1),
+                           'Anna, Elm Street 4']}
         out = run(json.dumps(loads), 'example-shop').splitlines()
         self.assertEqual(out[out.index('') + 1:], [
-            '== example-shop: page loads per page and source (live, last 7 days; person, ai-<assistant> it came from, prefetch, '
+            '== example-shop: page loads per page and source (live, last 7 days; where a person came from, prefetch, '
             'agent-<crawler>)',
             f"{ago(6)} to {ago(0)} (the product's days)",
-            '| page | person | ai-chatgpt | prefetch | agent-gptbot | agent-oai-searchbot |', '|---|---|---|---|---|---|',
-            '| /nl/ | 0 | 1 | 2 | 0 | 4 |', '| /nl/cadeaus/nieuw-huis/ | 7 | 0 | 0 | 3 | 0 |',
+            '| page | ai-chatgpt | meta | none | person | shop | stall | prefetch | agent-gptbot | agent-oai-searchbot |',
+            '|---|---|---|---|---|---|---|---|---|---|',
+            '| /nl/ | 1 | 0 | 1 | 0 | 1 | 2 | 2 | 0 | 4 |', '| /nl/cadeaus/nieuw-huis/ | 0 | 3 | 0 | 7 | 0 | 0 | 0 | 3 | 0 |',
+            'Per day', '| day | ai-chatgpt | meta | none | person | shop | stall | prefetch | agent-gptbot | agent-oai-searchbot |',
+            '|---|---|---|---|---|---|---|---|---|---|',
+            f'| {ago(0)} | 0 | 3 | 0 | 5 | 0 | 2 | 0 | 0 | 0 |', f'| {ago(1)} | 0 | 0 | 1 | 0 | 1 | 0 | 2 | 3 | 0 |',
+            f'| {ago(2)} | 1 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 |', f'| {ago(3)} | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 4 |',
+            f'| {ago(6)} | 0 | 0 | 0 | 2 | 0 | 0 | 0 | 0 | 0 |',
+            "none: no referrer; stall: the app's own pages; shop: the host's other pages; a social network "
+            'by name (meta: Facebook or Instagram); other: any other site. person: counted before it kept where people came from.',
             "(6 rows not in the table's form, left out)"])
         self.assertNotIn('Anna', '\n'.join(out))
         self.assertEqual(run(json.dumps({**loads, 'pages': [row(8, '/nl/', 'person', 1)]})).splitlines()[-1], 'No page loads in these days.')

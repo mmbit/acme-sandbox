@@ -61,6 +61,27 @@ test('a work Stop hook returns the formatter failure and accepts the corrected f
   }
 });
 
+test('a failed local fallback retains the helper failure and a passing fallback is accepted', async () => {
+  const checkout = mkdtempSync(`${tmpdir()}/completion-fallback-`);
+  try {
+    writeFileSync(`${checkout}/package.json`, JSON.stringify({ scripts: { gates: 'node gates.cjs' } }));
+    writeFileSync(
+      `${checkout}/gates.cjs`,
+      [
+        "if (process.argv.includes('--helper')) { console.log('helper transport unavailable'); process.exit(2); }",
+        "console.log('local gates unavailable'); process.exit(1);",
+      ].join('\n'),
+    );
+    const failed = await workHook(checkout);
+    assert.equal(failed.decision, 'block');
+    assert.match(failed.reason, /helper transport unavailable[\s\S]*local gates unavailable/);
+    writeFileSync(`${checkout}/gates.cjs`, "if (process.argv.includes('--helper')) process.exit(2);\n");
+    assert.deepEqual(await workHook(checkout), {});
+  } finally {
+    rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
 test("a work Stop hook's gates can't read, write or reopen the CLI home outside the checkout, nor see its environment", async () => {
   const home = mkdtempSync(`${tmpdir()}/completion-home-`);
   const checkout = mkdtempSync(`${tmpdir()}/completion-checkout-`);

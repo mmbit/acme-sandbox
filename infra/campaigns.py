@@ -13,10 +13,13 @@ Page loads per page and source: the JSON may also carry
 `"today": "2026-10-18", "pages": [{"day": "2026-10-18", "page": "/nl/cadeaus/nieuw-huis/", "source": "person",
 "loads": 12}, ...]`, one row per product day, page and source. today: the product's day as it prints them (the day its
 rows are dated by: shared/metrics day()), so the week is cut on the product's own clock. page: the path (lowercase letters, digits, `-` and `/`, starting with `/`, no query).
-source: `person` (anyone else), `ai-<assistant>` (a visit an assistant sent: shared/metrics aiReferral), `prefetch` (a
-load ahead of a tap that may never come) or `agent-<name>` (a crawler or fetcher: shared/metrics fetchedBy). They print
-in a section of their own: the last 7 days to the product's today summed per page, one row per page and a column per
-source seen, sorted by page; days before are skipped. At most 100 pages. Without `pages`, no section.
+source: where a person came from (shared/metrics loadSource: `none`, `stall` for the app's own pages, `shop`,
+`ai-<assistant>`, `search-<engine>`, a social network by name such as `meta`, `other`; or `person`, one counted before
+the app kept where they came from), `prefetch` (a load ahead of a tap that may never come) or `agent-<name>` (a crawler
+or fetcher: shared/metrics fetchedBy): lowercase letters, digits and `-`. They print in a section of their own: the last
+7 days to the product's today summed per page, one row per page and a column per source seen, sorted by page, then the
+same days one row per day (newest first) and a column per source; days before are skipped. At most 100 pages. Without
+`pages`, no section.
 (prefetch)
 """
 import collections, datetime, json, math, re, sys
@@ -68,7 +71,7 @@ def table(lines, by_day, room, counted):
     return rows, bad + (0 if isinstance(lines, list) else 1), more
 
 PAGE = re.compile(r'/[a-z0-9/-]{0,200}')
-SOURCE = re.compile(r'person|prefetch|(?:ai|agent)-[a-z0-9-]{1,40}')
+SOURCE = re.compile(r'[a-z0-9-]{1,40}')
 WEEK = 7
 
 def page_cells(line):
@@ -84,8 +87,8 @@ def page_cells(line):
 def pages(lines, name, today):
     """The section of page loads per page and source over the WEEK days to today (the product's day, as the JSON gives
     it), from the JSON's `pages`."""
-    out = [f'== {name}: page loads per page and source (live, last {WEEK} days; person, ai-<assistant> it came from, '
-           'prefetch, agent-<crawler>)'] if name and NAME.fullmatch(name) else []
+    out = [f'== {name}: page loads per page and source (live, last {WEEK} days; where a person came from, prefetch, '
+           'agent-<crawler>)'] if name and NAME.fullmatch(name) else []
     try:
         today = datetime.date.fromisoformat(today) if isinstance(today, str) and DAY.fullmatch(today) else None
     except ValueError:
@@ -94,23 +97,32 @@ def pages(lines, name, today):
         return out + ["No numbers: its JSON gave no `today` (the product's day), so the week can't be cut."]
     first = (today - datetime.timedelta(days=WEEK - 1)).isoformat()
     out.append(f"{first} to {today.isoformat()} (the product's days)")
-    loads, bad = collections.defaultdict(collections.Counter), 0 if isinstance(lines, list) else 1
+    loads, days = collections.defaultdict(collections.Counter), collections.defaultdict(collections.Counter)
+    bad = 0 if isinstance(lines, list) else 1
     for line in lines if isinstance(lines, list) else []:
         cells = page_cells(line)
         if cells is None:
             bad += 1
         elif first <= cells[0] <= today.isoformat():
             loads[cells[1]][cells[2]] += cells[3]
+            days[cells[0]][cells[2]] += cells[3]
     seen = {s for by in loads.values() for s in by}
-    # person first, then the assistants that sent people, the prefetches, then the crawlers
-    sources = sorted(seen, key=lambda s: (s != 'person', not s.startswith('ai-'), s != 'prefetch', s))
+    # where people came from first, then the prefetches, then the crawlers
+    sources = sorted(seen, key=lambda s: (s.startswith('agent-'), s == 'prefetch', s))
+    row = lambda first, by: f"| {first} | {' | '.join(str(by.get(s, 0)) for s in sources)} |"
     if not loads:
         out.append('No page loads in these days.')
     else:
         out += [f"| page | {' | '.join(sources)} |", f"|{'---|' * (len(sources) + 1)}"]
-        out += [f"| {p} | {' | '.join(str(loads[p].get(s, 0)) for s in sources)} |" for p in sorted(loads)[:ROWS]]
+        out += [row(p, loads[p]) for p in sorted(loads)[:ROWS]]
     if len(loads) > ROWS:
         out.append(f'({len(loads) - ROWS} more pages, past the {ROWS} the report shows)')
+    if loads:
+        out += ['Per day', f"| day | {' | '.join(sources)} |", f"|{'---|' * (len(sources) + 1)}"]
+        out += [row(d, days[d]) for d in sorted(days, reverse=True)]
+        out.append('none: no referrer; stall: the app\'s own pages; shop: the host\'s other pages; a '
+                   'social network by name (meta: Facebook or Instagram); other: any other site.'
+                   + (' person: counted before it kept where people came from.' if 'person' in seen else ''))
     if bad:
         out.append(f"({bad} rows not in the table's form, left out)")
     return out

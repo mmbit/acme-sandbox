@@ -22,11 +22,16 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
   comes over `LATE` (1 s) late, or none has come for `SILENT` (1.5 s), the line is behind and doesn't answer what it has
   heard: it waits until it has caught up, or at most until the audio of every moment up to then has come (an uplink
   that never catches up, `Call.owed`), and answers everything the board said, never a late first part as if just said.
-  A new connection sets a new baseline. HQ's call screen says "Weak connection" while the line hears the board over
-  1.5 s late, nothing has come back from it for 4 s (its reply's audio counts: the pongs come behind it) or HQ's own
-  frames wait unsent, and its timeline has each spell (`lagging`, `caught up`). At hang-up the line logs how
-  late the board's audio came at most and how many answers waited (`call: ada line: ...`). A phone, a room or an older
-  HQ sends no pings: nothing waits.
+  A dropped connection loses none of it either: from pickup on, HQ keeps each microphone frame until the line says it
+  has it (`heard`, its samples so far, with each pong), and so keeps what was still queued in the socket that dropped
+  and what the microphone made while reconnecting, none of it dropped. The resumed connection's `call` event says what
+  the line has, and HQ sends the rest first, with a ping from when each half second of it was made: the baseline stays
+  across connections (the same two clocks), so it reads as late and the line answers everything the board said once it
+  is in, as after a burst. Each reconnect is logged (`call: ada reconnected`). HQ's call screen says "Weak connection"
+  while the line hears the board over 1.5 s late, nothing has come back from it for 4 s (its reply's audio counts: the
+  pongs come behind it) or HQ's own frames wait unsent, and its timeline has each spell (`lagging`, `caught up`). At
+  hang-up the line logs how late the board's audio came at most and how many answers waited (`call: ada line: ...`). A
+  phone, a room or an older HQ sends no pings: nothing waits.
 - **The phone line**: `/voice/twilio`, Twilio's media stream (8 kHz mu-law). The coordinator (`phone.ts`) admits a
   call only if Twilio signed it, it comes from the board's number and the board typed its PIN; it then hands
   Twilio a one-time ticket, which this service trades back for who the call is with. A call we placed to a partner
@@ -162,6 +167,13 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
 - `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
   finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
 - `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish.
+- `waiting()`: every tool above waits for the coordinator's real answer however long it takes, never a fixed cutoff
+  (board, call 127: a slow coordinator is still there, and a cutoff left hand-offs unconfirmed that had gone through);
+  `hq` itself waits too (`api.ts` request: no time-out unless a command gives one). Only a failure ends the wait: a
+  refused connection says for certain nothing was handed on, a reset or a server error that it may have been. So the
+  call isn't silent for long, a tool that hasn't heard back in `STILL` (20 s) answers that it's still on its way and
+  carries on in the background (what's under way at hang-up still lands); `waiting` waits up to `STILL` again and
+  gives each one's own answer, or says it's still waiting.
 - `hang_up()`: ends the call, only once the board has clearly wrapped up (a goodbye, asking to end it, or a thank-you that
   closes the business, not one mid-business), with a short goodbye of the agent's own that fits the call ("Thank you, talk
   soon." is one example, not a set line): no recap unless the board asks for one, no slip line (its description
@@ -214,13 +226,14 @@ loudest of those left. The room ends 2 minutes after the last person leaves, or 
 ## A care call on the phone line
 
 A stranger who rings the shop's number can be put through to the voice line by
-the coordinator (`phone.ts`). Its ticket then says `kind: 'care'` and brings the agent who answers, the opening's
-languages in order (`langs`: brand.yaml's `phoneLine.languages` for the caller's country code, else its default), the
+the coordinator (`phone.ts`). Its ticket then says `kind: 'care'` and brings the care deployment that answers (`engine`,
+the line's in brand.yaml's `phoneLines`; `care` when it names none), the agent who answers, the opening's
+languages in order (`langs`: the line's `languages` for the caller's country code, else its default), the
 agent's voice, and its voice per language where the company names one (`voices`): one of the line's Piper voices (alex
 for Dutch, thorsten and kerstin for German, native speakers, CC0; kerstin) or one of Pocket TTS's preloaded voices in that language's
 model. Pocket says the same words differently each time, so the fixed words kept in `SAID` (the opening) are made from
 one seed: the take every caller hears after a restart is a known one. The ticket names the seed per language where the
-company does (`seeds`: brand.yaml's `phoneLine.seeds`, a take it heard read back right in its voice), else the line's `SEED`.
+company does (`seeds`: the line's `seeds` in brand.yaml, a take it heard read back right in its voice), else the line's `SEED`.
 
 - **The brain**: `Care`, the second brain behind `Agent`'s surface. Its turns go to the care service, not the CLI:
   `POST /phone/start` (the call's CallSid, and the opening's first language, in which care reads its prompt into the
@@ -230,13 +243,18 @@ company does (`seeds`: brand.yaml's `phoneLine.seeds`, a take it heard read back
   `/phone/end` with how the call ended (`hung_up`, `caller`, `limit`, `error`). Each turn and the end also say which
   languages the caller has been informed in by then, their AI and transcript lines heard played whole, the AI line alone
   once they objected (`informed`, `Call.informed`): care keeps what they say only
-  once their reply's language is one of them. The address is `CARE_URL` and the key is `CARE_PHONE_TOKEN`, both given by
-  infra. Talking over a reply closes that turn's request, and care keeps what it had written. There is no seat, no
+  once their reply's language is one of them. Each care deployment (a product built from platform/care, its slug the
+  deployment's name) has its own address and key, both given by infra: `CARE_ENGINES`, JSON from each slug to its
+  `url`, `calls` (its cap, below) and `token`, the name of the variable that holds its key (infra's
+  `care_engines.py` names it), taken out of the environment at the start so nothing the line runs inherits it. An entry
+  that isn't `{url, calls, token}` is left out,
+  with a line in the log. The ticket's `engine` picks the deployment, and every request of the call goes to its address
+  with its key. Talking over a reply closes that turn's request, and care keeps what it had written. There is no seat, no
   pictures and no call-context. Care keeps the words: the line writes no transcript and hands nothing to `call-end`, and
   as always no audio is kept. Only the empty marker in `/data/live` is written, so a deploy waits for the call to end.
 - **The opening**: in the ticket's first language care's AI line, its transcript line and its ask; in each language
   after it only the AI line and care's `fine` ("English is fine too."). The company's numbers give one language each
-  (`phoneLine.languages` in its brand.yaml), so its opening is that language's three lines alone. One flow, with no pause for the caller to wonder whether to speak. Its audio is kept (`SAID`), so
+  (its line's `languages` in brand.yaml), so its opening is that language's three lines alone. One flow, with no pause for the caller to wonder whether to speak. Its audio is kept (`SAID`), so
   the next call's opening plays at once. Words said over it stay in the line (`care_first`), never sent to care, until
   what of its notice lines they missed has been said again and has played whole; after that, the caller's words go to
   care as they come.
@@ -261,12 +279,12 @@ company does (`seeds`: brand.yaml's `phoneLine.seeds`, a take it heard read back
 - **The hold sound on the phone** is the thinking sound a fifth higher and 12 dB up (`thinking(phone=True)`, about
   -30 dBFS against speech's -20): HQ's, at -42 dBFS under 500 Hz, was lost in a phone's earpiece and a mobile
   network's codec.
-- **The limits and the fallback**: at most `CARE_CALLS_AT_ONCE` (2) care calls at once, each at most
-  `CARE_CALL_SECONDS` (10 minutes). In each of these cases the line closes Twilio's stream at once and sends no
+- **The limits and the fallback**: at most a deployment's `calls` (2 when `CARE_ENGINES` gives none) of its care calls
+  at once, counted per deployment (`CARE_LIVE`), each at most `CARE_CALL_SECONDS` (10 minutes). In each of these cases the line closes Twilio's stream at once and sends no
   phone-done, so HQ plays today's recorded message, which gives the email address and the website:
-  - a third call;
+  - a call past its deployment's `calls` (a third, by default), while another deployment can still take one;
   - care refusing the start (503: off, at its cap, down) or not answering;
-  - a missing `CARE_URL` or token;
+  - a deployment the line doesn't know, or one without its address or key (the log names the deployment);
   - the time limit;
   - a turn that comes back `unanswered` or fails.
 

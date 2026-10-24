@@ -346,3 +346,23 @@ test("a '<' in the agents' words reaches the model encoded, and the '<' in its a
   assert.equal(shown.jobs[0].title, plain);
   assert.equal(titleOf(job), words, "the agents' words stay on the task");
 });
+
+test('a thread whose "done when" alone changed is asked for that name only', async () => {
+  const thread = projects.createThread({
+    project: 'game',
+    name: 'Gift wrap',
+    goal: 'A gift is wrapped',
+    slug: 'wrap',
+  }) as {
+    id: string;
+  };
+  await nameAll();
+  const renamed = plan.rename(thread.id, { name: 'Gift wrap', goal: 'Every gift is wrapped' }, 'wren');
+  assert.equal(typeof renamed, 'object', String(renamed));
+  const c = await claim();
+  assert.deepEqual(refs(c), [`goal:${thread.id}`]);
+  await answer(c, { [`goal:${thread.id}`]: 'Every gift goes out wrapped' });
+  const shown = (await h.board(`/api/projects/thread?id=${thread.id}`)).body;
+  assert.deepEqual([shown.name, shown.goal], ['Gift wrap (plain)', 'Every gift goes out wrapped']);
+  assert.deepEqual(await claim(), {}, 'nothing more is due');
+});

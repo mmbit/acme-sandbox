@@ -294,7 +294,7 @@ const lastAnswer = () =>
   (h.db.prepare('select step, answer from phone_asks order by rowid desc limit 1').get() as { answer: string }).answer;
 const ticketOf = (twiml: string) => twiml.match(/<Parameter name="ticket" value="([\w-]+)"\/>/)?.[1] ?? '';
 const CARE_CONNECT =
-  /<Response><Connect action="\/api\/twilio\/after"><Stream url="wss:\/\/hq\.company\.test\/voice\/twilio"><Parameter name="ticket" value="[\w-]+"\/><\/Stream><\/Connect><\/Response>$/;
+  /<Response><Connect action="\/api\/twilio\/after\?line=0"><Stream url="wss:\/\/hq\.company\.test\/voice\/twilio"><Parameter name="ticket" value="[\w-]+"\/><\/Stream><\/Connect><\/Response>$/;
 const sid = (n: number) => 'CA' + n.toString(16).padStart(32, '0');
 
 test("with phoneLine.care, a caller who is not the board gets the agent: a care ticket the voice line trades once for the opening's languages, its voices and seeds", () =>
@@ -310,6 +310,7 @@ test("with phoneLine.care, a caller who is not the board gets the agent: a care 
       agent: 'wren',
       lang: 'nl',
       kind: 'care',
+      engine: 'care',
       langs: ['nl', 'en'],
       voice: 'jane',
       voices: { nl: 'alex' }, // (a language the line doesn't speak is left out)
@@ -436,7 +437,7 @@ test("the board's own number: no PIN within the timeout goes to the agent as any
   withCare(async () => {
     h.db.exec('delete from phone_misses');
     const prompt = (await twilio('/api/twilio/voice', { From: BOARD })).text;
-    assert.match(prompt, /<Gather [^>]*action="\/api\/twilio\/pin"[^>]* actionOnEmptyResult="true">/);
+    assert.match(prompt, /<Gather [^>]*action="\/api\/twilio\/pin\?line=0"[^>]* actionOnEmptyResult="true">/);
     for (const fields of [{ From: BOARD, Digits: '' }, { From: BOARD }] as Record<string, string>[]) {
       const r = await twilio('/api/twilio/pin', fields);
       assert.match(r.text, CARE_CONNECT);
@@ -453,4 +454,149 @@ test("the board's own number: no PIN within the timeout goes to the agent as any
 
 test("without phoneLine.care the board's prompt waits for digits only: no PIN is no call", async () => {
   assert.doesNotMatch((await twilio('/api/twilio/voice', { From: BOARD })).text, /actionOnEmptyResult/);
+});
+
+// ---- phoneLines, a list: a guarded line on a number of its own for Moss on the
+// deployment `partnerline` (two numbers allowed, with a PIN), that number's message for everyone else, and the default
+// line for any other number, Vera on `care`, one call a day
+const PARTNER = '+3197010000099', ALLOWED = '+31655500001';
+async function withLines<T>(work: () => Promise<T>) {
+  const file = `${h.repo}/company/brand.yaml`,
+    was = readFileSync(file, 'utf8');
+  writeFileSync(`${DIR}/PARTNER_LINE_NUMBERS`, `${ALLOWED}, +49 151 5550002\n`);
+  writeFileSync(`${DIR}/PARTNER_LINE_PIN`, '24680');
+  try {
+    writeFileSync(
+      file,
+      was.replace(/^phoneLine:\n( {2}.*\n)*/m, '') +
+        `phoneLines:
+  - number: "${PARTNER}"
+    callers: { numbers: PARTNER_LINE_NUMBERS, pin: PARTNER_LINE_PIN }
+    agent: moss
+    engine: partnerline
+    languages: { default: [nl] }
+    voices: { nl: eve }
+  - number: "${PARTNER}"
+    greeting: { en: "This line is for our partners." }
+  - agent: vera
+    callsADay: 1
+    languages: { default: [de] }
+    greeting: { de: "Hier ist Testco." }
+`,
+    );
+    return await work();
+  } finally {
+    writeFileSync(file, was);
+    rmSync(`${DIR}/PARTNER_LINE_NUMBERS`);
+    rmSync(`${DIR}/PARTNER_LINE_PIN`);
+    h.db.exec('delete from phone_callers; delete from phone_misses');
+  }
+}
+const connectTo = (line: number) =>
+  new RegExp(`<Response><Connect action="/api/twilio/after\\?line=${line}"><Stream [^>]*><Parameter name="ticket" value="[\\w-]+"/></Stream></Connect></Response>$`);
+
+test('phoneLines: a call takes the line for the number dialled that lets the caller in, else the default; the ticket names its deployment', () =>
+  withLines(async () => {
+    // any other number: the default line, its agent on care, its own languages
+    const r = await twilio('/api/twilio/voice', { From: '+31611120001', To: '+3197010000000', CallSid: sid(30) });
+    assert.match(r.text, connectTo(2));
+    assert.equal(lastAnswer(), 'Vera (care ticket)');
+    assert.deepEqual((await h.voice('call-ticket', { ticket: ticketOf(r.text) })).body, {
+      agent: 'vera', lang: 'de', kind: 'care', engine: 'care', langs: ['de'], voice: 'eve', respell: {},
+    });
+    // its own calls a day (one), and its own message after
+    const again = await twilio('/api/twilio/voice', { From: '+31611120001', To: '+3197010000000' });
+    assert.match(again.text, /<Say language="de-DE" [^>]*>Hier ist Testco\.<\/Say><Hangup\/>/);
+    assert.equal(lastAnswer(), "the company's message (1 calls today)");
+    // the partner line's number from a number it doesn't allow: that number's own message, never the PIN prompt
+    const stranger = await twilio('/api/twilio/voice', { From: '+31611120002', To: PARTNER });
+    assert.match(stranger.text, /<Say language="en-GB" [^>]*>This line is for our partners\.<\/Say><Hangup\/><\/Response>$/);
+    assert.doesNotMatch(stranger.text, /Gather|Stream/);
+    // after a stream on the number's message line: that line's message
+    const after = await twilio('/api/twilio/after?line=1', { From: '+31611120002', To: PARTNER, CallSid: sid(31) });
+    assert.match(after.text, /This line is for our partners\./);
+  }));
+
+test("phoneLines: a guarded line asks its callers for the line's PIN, then its agent on its own deployment; five wrong PINs shut it for the hour", () =>
+  withLines(async () => {
+    const prompt = await twilio('/api/twilio/voice', { From: '0049 151 5550002', To: PARTNER });
+    assert.match(prompt.text, /<Gather input="dtmf" numDigits="5" action="\/api\/twilio\/pin\?line=0" timeout="10"><Say language="nl-NL" [^>]*>Testco\. Je pincode, graag\.<\/Say><\/Gather>/);
+    assert.doesNotMatch(prompt.text, /actionOnEmptyResult/);
+    assert.equal(lastAnswer(), "Moss's line: PIN prompt");
+    const right = await twilio('/api/twilio/pin?line=0', { From: ALLOWED, To: PARTNER, Digits: '24680' });
+    assert.match(right.text, connectTo(0));
+    assert.deepEqual((await h.voice('call-ticket', { ticket: ticketOf(right.text) })).body, {
+      agent: 'moss', lang: 'nl', kind: 'care', engine: 'partnerline', langs: ['nl'], voice: 'paul', voices: { nl: 'eve' }, respell: {},
+    });
+    // a number the line doesn't allow, typing the right PIN at its step: the default line's message
+    assert.doesNotMatch((await twilio('/api/twilio/pin?line=0', { From: '+31611120003', To: PARTNER, Digits: '24680' })).text, /Stream/);
+    // the board's PIN is not the line's, and the line's misses are its own
+    h.db.exec('delete from phone_misses');
+    for (let i = 0; i < 5; i++)
+      assert.match((await twilio('/api/twilio/pin?line=0', { From: ALLOWED, To: PARTNER, Digits: PIN })).text, /Die pincode klopt niet|not right|Diese PIN/);
+    assert.equal(lastAnswer(), "Moss's line: wrong PIN");
+    const shut = await twilio('/api/twilio/pin?line=0', { From: ALLOWED, To: PARTNER, Digits: '24680' });
+    assert.match(shut.text, /De lijn is voorlopig dicht\. Tot ziens\.<\/Say><Hangup\/>/);
+    assert.equal(lastAnswer(), "Moss's line: closed (5 wrong PINs)");
+    assert.equal((h.db.prepare("select count(*) n from phone_misses where pin_key = 'CALL_PIN'").get() as { n: number }).n, 0);
+    // the board's own line is still open to the board
+    assert.match((await twilio('/api/twilio/pin', { From: BOARD, Digits: PIN })).text, /<Connect><Stream /);
+  }));
+
+test('phoneLines: no line lets the caller in, or none at all: the platform message', () =>
+  withLines(async () => {
+    const file = `${h.repo}/company/brand.yaml`, was = readFileSync(file, 'utf8');
+    writeFileSync(file, was.replace(/\n {2}- agent: vera\n( {4}.*\n)*/, '\n'));
+    const r = await twilio('/api/twilio/voice', { From: '+31611120004', To: '+3197010000000' });
+    assert.match(r.text, /Hello, you've reached Testco[\s\S]*<Hangup\/><\/Response>$/);
+    assert.equal(lastAnswer(), "the company's message (another number)");
+  }));
+
+test("phoneLines: a line that can't be read as written stops the call with why, never read as another", async () => {
+  const file = `${h.repo}/company/brand.yaml`,
+    was = readFileSync(file, 'utf8');
+  const cases: [string, RegExp][] = [
+    ['  - just a word\n', /line 1: not a mapping/],
+    ['  - { number: 3197010000099, agent: moss }\n', /line 1: its number must be quoted/],
+    ['  - { agent: moss, callsADay: "5" }\n', /line 1: its callsADay must be a whole number from 0/],
+    ['  - { agent: moss, callsADay: 2.5 }\n', /line 1: its callsADay/],
+    ['  - { agent: moss, engine: 7 }\n', /line 1: its engine/],
+    ['  - { agent: moss, callers: partners }\n', /line 1: its callers must be anyone/],
+    ['  - { agent: moss, callers: { numbers: PARTNER_LINE_NUMBERS } }\n', /line 1: its callers/],
+  ];
+  try {
+    for (const [entry, why] of cases) {
+      writeFileSync(file, was.replace(/^phoneLine:\n( {2}.*\n)*/m, '') + 'phoneLines:\n' + entry);
+      const r = await twilio('/api/twilio/voice', { From: '+31611130001', To: '+3197010000000' });
+      assert.equal(r.status, 500, entry);
+      assert.doesNotMatch(r.text, /Stream|Gather|Say/, entry);
+      assert.throws(() => openingLanguages('+31611130001'), why, entry);
+    }
+    // an engine is taken as given, for the voice line to refuse one no deployment has
+    writeFileSync(file, was.replace(/^phoneLine:\n( {2}.*\n)*/m, '') + 'phoneLines:\n  - { agent: moss, engine: Partner_Line }\n');
+    const r = await twilio('/api/twilio/voice', { From: '+31611130002', To: '+3197010000000' });
+    assert.equal((await h.voice('call-ticket', { ticket: ticketOf(r.text) })).body.engine, 'Partner_Line');
+  } finally {
+    writeFileSync(file, was);
+    h.db.exec('delete from phone_callers');
+  }
+});
+
+test("phoneLines: a line that can't be read leaves the board's own call its PIN and the voice line", async () => {
+  const file = `${h.repo}/company/brand.yaml`,
+    was = readFileSync(file, 'utf8');
+  try {
+    writeFileSync(file, was.replace(/^phoneLine:\n( {2}.*\n)*/m, '') + 'phoneLines:\n  - { number: 3197010000099, agent: moss }\n');
+    h.db.exec('delete from phone_misses');
+    const prompt = await twilio('/api/twilio/voice', { From: BOARD, To: '+3197010000000' });
+    assert.equal(prompt.status, 200);
+    assert.match(prompt.text, /<Gather input="dtmf" numDigits="4" action="\/api\/twilio\/pin" timeout="10">/);
+    assert.doesNotMatch(prompt.text, /actionOnEmptyResult/);
+    const call = await twilio('/api/twilio/pin', { From: BOARD, To: '+3197010000000', Digits: PIN });
+    assert.match(call.text, /<Connect><Stream /);
+    // a stranger on the same list still hears why: no call
+    assert.equal((await twilio('/api/twilio/voice', { From: '+31611140001', To: '+3197010000000' })).status, 500);
+  } finally {
+    writeFileSync(file, was);
+  }
 });

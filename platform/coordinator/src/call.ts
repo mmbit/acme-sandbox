@@ -314,8 +314,8 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // has no screen.)
   // a time told on the call goes on the promise, which its job carries, or the work under way it names (askwindow.ts).
   // The board's ask gets a time as it's queued, else it waits behind every window: the board's own, or the window of
-  // the deliverable it serves (its thread's, or one that needs it); with neither, the agent asks the board once and notes
-  // it with promise. Only an ask the board gives no time that serves nothing timed stays without one.
+  // the deliverable it serves (its thread's, or one that needs it); with neither, the agent judges a time itself (noted
+  // with promise) or leaves it untimed, and never asks the board by when.
   // A time from the when tool: the work played into the plan (when.ts).
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
@@ -359,8 +359,9 @@ being worked out goes to the follow-up. Anything you promise goes in with promis
 it's done; the team follows it up after the call and the board sees whether it happened. Work the board asks for gets
 its time as it's queued, or it waits behind every window: the time the board names, or the window of the deliverable it
 serves (queue it on that deliverable's thread, or a thread it needs: the job tool's answer says what it serves). When it
-has neither, the job tool's answer says so: ask the board once by when, and note its answer with promise. Only work the
-board gives no time that serves nothing timed stays without one.
+has neither, the job tool's answer says so: never ask the board by when. When it wants the work soon or by a time, it
+says so or the call makes it clear; otherwise the time is your judgment: set a sensible one (the when tool's) and note it
+with promise, or leave the work untimed.
 Before you give a time, check it, never a feeling: for work already planned, eta; for new work, the when tool, which
 plays it into the plan, every seat and window counted (an AI hour is one agent working for an hour, waits for a seat left out). When the board names a time,
 give it by: only when the work doesn't make it, say what would. Give one plain time. When you tell the board a time,

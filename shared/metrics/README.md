@@ -57,6 +57,11 @@ on a shelf's host), `ai-<assistant>`, `search-<engine>`, `meta` (Facebook's and 
 page load's source like any other in HQ (dropped after `SOURCE_DAYS` and through an objected order's day). It doesn't
 need `searchReferrers`, which puts the engine on the page load itself, where it travels on to the order.
 
+`loadSource`'s optional `ownPage(path)` says which paths on the host are the app's own (`stall`), for an app whose host
+has other apps' shelves under it (the shop's front at the root): by default those under its `X-Forwarded-Prefix`, or
+every path without one. Without it, an app at a host's root beside other shelves counts every same-host referrer as
+`stall`.
+
 ## On the server
 
 The platform gives the container `METRICS_URL`, `METRICS_PRODUCT`, `METRICS_MODE` (`live` for a public site, `preview`

@@ -31,10 +31,10 @@ assert.deepEqual(errors, []);
 
 ## Heavy renders
 
-HQ's `harness.mjs` dispatches its caller automatically. Room previews and pixel comparisons use the run kind org.yaml's
-`runs.browser` names (`render` when it names none) while a lent helper of it is
-present. Give it a kind of its own when the films' image lacks git: the snapshot arrives as a git bundle, and the
-harnesses read the comparison ref with git. Busy helpers keep the work queued. The snapshot includes
+HQ's `harness.mjs` sends room previews and pixel comparisons to a lent helper whenever one is present. The helper's run
+kind is the one `runs.browser` names in org.yaml, or `render` when it names none. Give the browser a kind of its own
+when the films' image has no git: the snapshot arrives as a git bundle, and the harnesses read the comparison ref with
+git. Busy helpers keep the work queued. The snapshot includes
 uncommitted files, the selected comparison ref and an optional brand file. Pictures return to `--out` (a new temporary
 folder by default), and `--record` keeps the original branch, commit and command. Remote failures and timeouts are
 final, with the render's exit code.

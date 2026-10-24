@@ -391,7 +391,7 @@ export const runRecurring = (dev, id) => dev ? Promise.resolve({ job: 0, job_cod
 export const loadOnAir = dev => dev ? mockList('onair') : get('/api/onair');
 export const renewOnAirLink = (dev, show) => dev ? Promise.resolve({}) : post('/api/onair/link', { show });
 // Settings › Overseer
-const MOCK_OVERSIGHT = { company: 'The company', address: 'http://localhost/api/overseer/', key: 'overseer_example', read: null };
+const MOCK_OVERSIGHT = { address: 'http://localhost/api/overseer/', key: 'overseer_example', read: null };
 export const loadOversight = dev => dev ? Promise.resolve(MOCK_OVERSIGHT) : get('/api/oversight');
 export const renewOversightKey = dev => dev ? Promise.resolve(MOCK_OVERSIGHT) : post('/api/oversight/renew', {});
 // The projects view (projects.js): projects, their threads and jobs, and the open work in none

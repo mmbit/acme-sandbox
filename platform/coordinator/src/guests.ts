@@ -462,7 +462,7 @@ export function card(c: any) {
   return { ...rest, guest: { ...cardGuest(r, lead, list), ...(legend.length ? { legend } : {}), ...(colleagues ? { colleagues } : {}),
     people: all.map(p => cardPerson(r, p, legend)), items: list.map(i => cardItem(r, i, langOf(lead), legend)) } };
 }
-// (the card's language pick: a page's languages by their own names)
+// The card's language pick: a page's languages by their own names
 const pageLanguages = () => (Object.keys(COPY) as Lang[]).map(code => ({ code, own: LANGUAGES[code].own }));
 // Share releases the request (release()); the masked address tells this guest from another of the same name. What Send
 // link shares: the link alone, so a share sheet offers Copy link and an app like Teams takes it
@@ -665,7 +665,6 @@ export function revoke(id: number, what: unknown, person?: unknown) {
 // ---------------------------------------------------------------- the guest's page: its words
 // Every word the page and the code email say, per language (the guest's: guests.lang), one for each of the platform's
 // (language.ts). Plain, short and warm, with no semicolons or dashes between clauses (the board's copy rules).
-// (German)
 export const COPY = {
   nl: {
     locale: 'nl-NL', you: 'Jij',

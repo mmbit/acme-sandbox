@@ -82,8 +82,8 @@ function nameHud() {
 }
 // HQ's throughput, bottom left (the coordinator's work.ts piles), counted in tasks: those done in the last 24 hours, hour
 // by hour as bars of work and, lighter, reviews, then those at work and those waiting, each over a bar split the same
-// way. A tap on one opens the projects view. Read at most every few seconds (agents' status events come in bursts), and
-// redrawn only when it changed (aria-live).
+// way, and a swatch of each shade by its count says which is which. A tap on one opens the projects view. Read at most
+// every few seconds (agents' status events come in bursts), and redrawn only when it changed (aria-live).
 let counting = false, counted = 0;
 export async function updateStatus() {
   if (counting || Date.now() - counted < 5000) return;
@@ -105,7 +105,7 @@ function throughput({ work, review, hours }) {
   const words = `${many(work, 'task')} and ${many(review, 'review')} done in the last 24 hours, hour by hour`;
   return `<span role="button" tabindex="0" data-jobs="done" class="flow" title="${words}" aria-label="${words}">
     <svg class="flow-bars" viewBox="0 0 ${hours.length * (W + GAP) - GAP} ${H}" preserveAspectRatio="none" aria-hidden="true">${hours.map(bar).join('')}</svg>
-    <span class="flow-words"><span><b>${work.toLocaleString('en')}</b> ${work === 1 ? 'task' : 'tasks'} · <b>${review.toLocaleString('en')}</b> ${review === 1 ? 'review' : 'reviews'}</span><small>done in 24 h</small></span></span>`;
+    <span class="flow-words"><span><i class="flow-key"></i><b>${work.toLocaleString('en')}</b> ${work === 1 ? 'task' : 'tasks'} <i class="flow-key review"></i><b>${review.toLocaleString('en')}</b> ${review === 1 ? 'review' : 'reviews'}</span><small>done in 24 h</small></span></span>`;
 }
 function pile(key, label, { work, review }) {
   const n = work + review, words = `${n.toLocaleString('en')} ${label}: ${many(work, 'task')}, ${many(review, 'review')}`;

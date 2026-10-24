@@ -110,6 +110,52 @@ test('a second review whose window is slipping takes lower work’s place on the
   await h.finish(resumed);
 });
 
+for (const placement of ['own thread', 'dependent thread'])
+  test(`a run serving its ${placement}'s window yields once for the work the claim starts`, async () => {
+    await h.capacity({ codex: 2 });
+    const thread = h.dueThread({ deadline: Date.now() + 30 * 24 * 3600_000 });
+    const active = await h.start(
+      { agent: 'kit', engine: 'codex', ...(placement === 'own thread' ? { thread } : {}) },
+      { seat },
+    );
+    const dependent =
+      placement === 'dependent thread'
+        ? h.queue({ agent: 'bolt', engine: 'codex', forSeat: seat, after: active.id, thread })
+        : null;
+    if (dependent) assert.equal(h.job(active.id).thread, null, 'the running task has no thread of its own');
+    const review = h.queue({ agent: 'quill', engine: 'codex', kind: 'review', forSeat: seat });
+    const room = { capped: [seat] };
+    assert.equal(
+      (await h.heartbeat(active, room)).body.yield,
+      undefined,
+      'the claim would resume the windowed work ahead of the undated review',
+    );
+    const urgent = h.queue({
+      agent: 'rook',
+      engine: 'codex',
+      forSeat: seat,
+      thread: h.dueThread({ deadline: Date.now() + 60_000 }),
+    });
+    assert.equal((await h.heartbeat(active, room)).body.yield, 'waiting');
+    await h.finish(active, { status: 'yielded', session: 'yield-once' });
+    const next = (await claim())!;
+    assert.equal(next.id, urgent, 'the waiter takes the freed place');
+    assert.equal((await h.heartbeat(next, room)).body.yield, undefined, 'the waiter keeps its run');
+    await h.finish(next);
+    const resumed = (await claim())!;
+    assert.equal(resumed.id, active.id);
+    assert.equal(resumed.session, 'yield-once');
+    await h.finish(resumed);
+    if (dependent) {
+      const following = (await claim())!;
+      assert.equal(following.id, dependent);
+      await h.finish(following);
+    }
+    const startedReview = (await claim())!;
+    assert.equal(startedReview.id, review);
+    await h.finish(startedReview);
+  });
+
 test('a blocked review takes no room and the board call still claims before a ready review', async () => {
   const a = await h.start({ agent: 'kit', engine: 'codex' }, { seat });
   const b = await h.start({ agent: 'bolt', engine: 'codex' }, { seat });

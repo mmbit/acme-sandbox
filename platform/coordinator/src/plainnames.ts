@@ -59,19 +59,13 @@ export const SCHEMA = {
 // A name the board reads, with its words as they stand: group, the call it goes in (its thread's, its project's, or
 // the tasks' in no thread).
 type Named = { kind: Kind; id: string; words: string; group: string };
-type Row = { kind: Kind; id: string; words: string; plain: string | null; claimed: number | null };
 export type Claimed = { names: Pick<Named, 'kind' | 'id' | 'words'>[]; model: string; prompt: string; schema: string };
 
 // POST /api/worker/names/claim: the next names to write, a thread's or a project's together, open work first and the
 // newest first (what just came online is what the board is about to read), with the model's prompt and the answer's
 // schema. None while nothing is due.
 export function claim(now = Date.now()): Claimed | null {
-  const rows = new Map((db.prepare('select * from board_names').all() as Row[]).map(r => [key(r), r]));
-  const due = shown().filter(n => {
-    const row = rows.get(key(n));
-    if (!row || row.words !== n.words) return true;
-    return row.plain === null && (row.claimed === null || now - row.claimed >= RETRY_MS);
-  });
+  const due = dueNames(now - RETRY_MS);
   if (!due.length) return null;
   const names = due.filter(n => n.group === due[0].group).slice(0, GROUP_MOST);
   const claimed = db.prepare(
@@ -88,37 +82,28 @@ export function claim(now = Date.now()): Claimed | null {
   };
 }
 
-// Every name the board's views show, as it stands: those of open work first, then those of work done, each newest first.
-// Tasks are work (not a review's seats, whose names HQ writes, and never one holding customer details: house rule 7),
-// running, waiting, done or awaiting review alike; threads with their "done when", open and done; projects open, with
-// their sentences, and done.
-function shown(): Named[] {
-  const tasks = db
-    .prepare(
-      `select j.id, j.title, j.thread, j.status in ${OPEN_JOBS} open from jobs j where ${namedTask('j')}
-      order by j.id desc`,
-    )
-    .all() as { id: number; title: string; thread: string | null; open: number }[];
-  const threads = db.prepare('select id, name, goal, status from threads order by created desc').all() as {
-    id: string;
-    name: string;
-    goal: string;
-    status: string;
-  }[];
+// Whether a name is due, in SQL, from its board_names row (`n`, joined on its kind and id) and its words as they stand:
+// no row, other words, or none written yet and its last call out before :before (RETRY_MS ago)
+const dueSql = (words: string, n = 'n') =>
+  `(${n}.kind is null or ${n}.words <> ${words} or ${n}.plain is null and (${n}.claimed is null or ${n}.claimed <= :before))`;
+
+// Every name due of those the board's views show, as it stands: those of open work first, then those of work done, each
+// newest first. Tasks are work (not a review's seats, whose names HQ writes, and never one holding customer details: house
+// rule 7), running, waiting, done or awaiting review alike; threads with their "done when", open and done; projects open,
+// with their sentences, and done. SQL leaves out the names written already: a claim comes every 15 s, nearly always with
+// none due, and the tasks' titles, nearly every name, come from their own index (db.ts jobs_named), never a job's
+// prompt and output.
+function dueNames(before: number): Named[] {
+  const tasks = taskNames(before);
   const done = db.prepare("select id, name from projects where status = 'done' order by done desc").all() as {
     id: string;
     name: string;
   }[];
-  const task = (t: (typeof tasks)[number]): Named => ({
-    kind: 'task',
-    id: String(t.id),
-    words: t.title,
-    group: t.thread ? `thread:${t.thread}` : 'tasks',
-  });
-  const thread = (t: (typeof threads)[number]): Named[] => [
-    { kind: 'thread', id: t.id, words: t.name, group: `thread:${t.id}` },
-    { kind: 'goal', id: t.id, words: t.goal, group: `thread:${t.id}` },
-  ];
+  // (projects, a few dozen names, each on its own)
+  const unnamed = db.prepare(
+    `select ${dueSql(':words')} due from (select :kind kind, :id id) w left join board_names n on n.kind = w.kind and n.id = w.id`,
+  );
+  const isDue = (n: Named) => (unnamed.get({ before, kind: n.kind, id: n.id, words: n.words }) as { due: number }).due;
   const project = (p: { id: string; name: string }): Named => ({
     kind: 'project',
     id: p.id,
@@ -126,31 +111,75 @@ function shown(): Named[] {
     group: `project:${p.id}`,
   });
   return [
-    ...tasks.filter(t => t.open).map(task),
-    ...meetingNames(false),
-    ...threads.filter(t => t.status === 'open').flatMap(thread),
-    ...[...projects().list].reverse().flatMap(p => {
-      const sentence = sentenceOf(p.id)?.text;
-      return [
-        project(p),
-        ...(sentence ? [{ kind: 'sentence' as const, id: p.id, words: sentence, group: `project:${p.id}` }] : []),
-      ];
-    }),
-    ...tasks.filter(t => !t.open).map(task),
-    ...meetingNames(true),
-    ...threads.filter(t => t.status !== 'open').flatMap(thread),
-    ...done.map(project),
+    ...tasks.filter(t => t.open).map(t => t.named),
+    ...meetingNames(false, before),
+    ...threadNames(true, before),
+    ...[...projects().list]
+      .reverse()
+      .flatMap(p => {
+        const sentence = sentenceOf(p.id)?.text;
+        return [
+          project(p),
+          ...(sentence ? [{ kind: 'sentence' as const, id: p.id, words: sentence, group: `project:${p.id}` }] : []),
+        ];
+      })
+      .filter(isDue),
+    ...tasks.filter(t => !t.open).map(t => t.named),
+    ...meetingNames(true, before),
+    ...threadNames(false, before),
+    ...done.map(project).filter(isDue),
   ];
 }
-// The meetings' topics, the open ones or those ended, newest first; none holds customer details (a seat holding them
+// The tasks' titles due, newest first, each with whether its task is open
+function taskNames(before: number) {
+  const tasks = db
+    .prepare(
+      `select j.id, j.title, j.thread, j.status in ${OPEN_JOBS} open from jobs j indexed by jobs_named
+      left join board_names n on n.kind = 'task' and n.id = cast(j.id as text)
+      where ${namedTask('j')} and ${dueSql('j.title')} order by j.id desc`,
+    )
+    .all({ before }) as { id: number; title: string; thread: string | null; open: number }[];
+  return tasks.map(t => {
+    const named: Named = {
+      kind: 'task',
+      id: String(t.id),
+      words: t.title,
+      group: t.thread ? `thread:${t.thread}` : 'tasks',
+    };
+    return { open: t.open, named };
+  });
+}
+// The meetings' topics due, the open ones or those ended, newest first; none holds customer details (a seat holding them
 // can't sit).
-const meetingNames = (ended: boolean): Named[] =>
-  (
-    db.prepare(`select id, topic from meetings where (status = 'done') = ? order by id desc`).all(Number(ended)) as {
-      id: number;
-      topic: string;
-    }[]
-  ).map(m => ({ kind: 'meeting', id: String(m.id), words: m.topic, group: 'meetings' }));
+function meetingNames(ended: boolean, before: number): Named[] {
+  const meetings = db
+    .prepare(
+      `select m.id, m.topic from meetings m left join board_names n on n.kind = 'meeting' and n.id = cast(m.id as text)
+      where (m.status = 'done') = :ended and ${dueSql('m.topic')} order by m.id desc`,
+    )
+    .all({ ended: Number(ended), before }) as { id: number; topic: string }[];
+  return meetings.map(m => ({ kind: 'meeting', id: String(m.id), words: m.topic, group: 'meetings' }));
+}
+// The threads' names and "done when"s due, the open threads' or the others', newest first
+function threadNames(open: boolean, before: number): Named[] {
+  const threads = db
+    .prepare(
+      `select t.id, t.name, t.goal, ${dueSql('t.name')} name_due, ${dueSql('t.goal', 'g')} goal_due from threads t
+      left join board_names n on n.kind = 'thread' and n.id = t.id left join board_names g on g.kind = 'goal' and g.id = t.id
+      where (t.status = 'open') = :open and (name_due or goal_due) order by t.created desc`,
+    )
+    .all({ open: Number(open), before }) as {
+    id: string;
+    name: string;
+    goal: string;
+    name_due: number;
+    goal_due: number;
+  }[];
+  return threads.flatMap(t => [
+    ...(t.name_due ? [{ kind: 'thread' as const, id: t.id, words: t.name, group: `thread:${t.id}` }] : []),
+    ...(t.goal_due ? [{ kind: 'goal' as const, id: t.id, words: t.goal, group: `thread:${t.id}` }] : []),
+  ]);
+}
 const key = (n: { kind: string; id: string }) => `${n.kind}:${n.id}`;
 
 // The prompt: the task, the guide with its examples and terms, then the names with what's around them (outside input to the model:

@@ -1,5 +1,5 @@
-// A push that came while its round's panel was out (review.ts startReview): kept, the latest only, until that round is
-// ruled or stuck, then taken as if it had come just then. The panel's reports are ruled on, never left behind for it.
+// The latest push while a round's panel is out or its board card awaits an answer (review.ts startReview). It waits
+// for the ruling and board answer before review continues on the newer head.
 import { db } from './db.ts';
 import type { Check } from './review.ts';
 import type { ChangedLines } from './findings.ts';

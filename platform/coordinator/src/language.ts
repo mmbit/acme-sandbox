@@ -2,8 +2,9 @@
 // (calls' speech and hearing, the company phone's voice line, and what agents write for it: cards, reports, decks, the
 // newsletter, the intercom's answers, the plan's names). Code and the agents' own documents stay English, and
 // customers' languages are their own (Care's), though a guest's page and the share doors have their words in each of
-// these (guests.ts COPY, shares.ts). The intake's first question sets it (POST /api/language),
-// Settings › Language changes it, and HQ's own text will read it from GET /api/language when it's translated.
+// these (guests.ts COPY, shares.ts). The intake's first question sets it (POST /api/language) and Settings › Language
+// changes it. HQ's shell reads it from GET /api/language for the calls and the voice preview, but its own text is
+// English for now.
 import { setting, remember } from './db.ts';
 
 // The languages that work end to end: the model speaks and writes them, the voice line says them (platform/voice

@@ -35,6 +35,7 @@ Thread context: ${JSON.stringify(context)}.
 Eligible staff (sole author excluded, co-authors eligible): ${JSON.stringify(candidates)}.
 A sole author cannot review or rule on their own work. Co-authors may review and rule on work they wrote together.
 General reviewers: ${JSON.stringify(panel.reviewers(pr))}. Eligible consolidators: ${JSON.stringify(panel.consolidators(pr))}.
+HQ assigns the ruling's consolidator. You may suggest an eligible candidate. HQ resolves an unavailable suggestion by seats.
 ${base ? `Eligible original finders: ${JSON.stringify(finders(pr, files).map(reader => reader.agent))}.` : ''}
 Engine availability: ${JSON.stringify(seats)}. Mandatory engine constraints: ${JSON.stringify(engineOnly.rules())}. Availability never excuses a required independent security read.
 
@@ -47,7 +48,7 @@ ${LENSES}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below${finderList(pr, files)}.
 You may explicitly replace that list, but name a reason in "exceptions" for each finder omitted, except a finder
-serving as the consolidator or retained by the mandatory engine constraints. Every added reader
+you suggest as an eligible consolidator or retained by the mandatory engine constraints. Every added reader
 needs a concrete reason in their "reason". A full panel returns only for new security-relevant changes you identify.
 Do not reopen the whole diff to find unrelated blockers. Existing findings keep their IDs. New blockers must be
 regressions the fixes caused, evidenced by "caused_by", except secrets. A secret always blocks with "secret": true,
@@ -59,8 +60,8 @@ ${TRUST_RULE}
 
 Write .hq/review.json with your file-writing tool, never with a command or script (a file written that way can't be
 read), then end with exactly the same JSON and stop:
-{"decision":"review" | "escalate", "reason":"why this scope, panel and consolidator, or the owner decision needed",
-"consolidator":"eligible consolidator id", "reviewers":[{"agent":"eligible staff id", "reason":"why needed",
+{"decision":"review" | "escalate", "reason":"why this scope and panel, or the owner decision needed",
+"consolidator":"suggested eligible consolidator id, optional", "reviewers":[{"agent":"eligible staff id", "reason":"why needed",
 "files":["assigned paths, folders ending in / or globs"], "domain":"discipline", "security":false}],
 "looker":"the one reader who renders and opens the previews" | null,
 "exceptions":[{"agent":"omitted finder id", "reason":"why this finder cannot or need not recheck"}]}.
@@ -146,12 +147,13 @@ export function read(job: number, output?: string): Selection | string {
   if (!report || !['review', 'escalate'].includes(report.decision) || !words(report.reason))
     return 'missing decision or reason';
   const eligible = eligibleFor(row.pr);
-  if (!panel.consolidators(row.pr).includes(report.consolidator)) return 'ineligible consolidator';
+  const suggested = panel.consolidators(row.pr).includes(report.consolidator) ? report.consolidator : undefined;
+  const consolidator = suggested ?? panel.consolidator(row.pr, 'ruling');
   if (report.decision === 'escalate')
     return {
       decision: report.decision,
       reason: report.reason,
-      consolidator: report.consolidator,
+      consolidator,
       reviewers: [],
       looker: null,
     };
@@ -163,21 +165,21 @@ export function read(job: number, output?: string): Selection | string {
   if (assigned.length && files.some(file => !covered.has(file))) return 'reviewers must cover every assigned file';
   const keeper = keeperSeat(row.pr, files, eligible);
   if (keeper && !assigned.some(reader => reader.agent === keeper.agent)) assigned.push(keeper);
-  const omission = omissionProblem(row.pr, report, assigned, files);
+  const omission = omissionProblem(row.pr, report, assigned, files, suggested);
   if (omission) return omission;
-  const looker = lookerOf(report.looker ?? null, reviewers, assigned, report.consolidator);
+  const looker = lookerOf(report.looker ?? null, reviewers, assigned, suggested);
   if (looker === undefined) return 'the looker must be a reader of files that show';
   return {
     decision: report.decision,
     reason: report.reason,
-    consolidator: report.consolidator,
+    consolidator,
     reviewers: assigned,
     looker,
     exceptions: report.exceptions ?? [],
   };
 }
 
-function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], consolidator: string) {
+function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], consolidator: string | undefined) {
   if (chosen === null) return null;
   const original = readers.find(reader => reader.agent === chosen);
   const retained = assigned.find(reader => reader.agent === chosen);
@@ -244,8 +246,8 @@ function readersOf(pr: number, report: any, eligible: (agent: unknown) => boolea
   return scoped;
 }
 
-function omissionProblem(pr: number, report: any, assigned: Read[], files: string[]) {
-  const chosen = new Set([...assigned.map(reader => reader.agent), report.consolidator]);
+function omissionProblem(pr: number, report: any, assigned: Read[], files: string[], consolidator?: string) {
+  const chosen = new Set([...assigned.map(reader => reader.agent), consolidator]);
   const omitted = finders(pr, files).filter(reader => !chosen.has(reader.agent));
   if (
     omitted.some(

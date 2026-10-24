@@ -4,7 +4,8 @@ import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { handBack, noteHandBacks, ResponseError } from './handback.ts';
+import { ResponseError } from './reports.ts';
+import { handBack, noteHandBacks } from './handback.ts';
 
 const dir = mkdtempSync(`${tmpdir()}/handback-test-`);
 after(() => rmSync(dir, { recursive: true, force: true }));

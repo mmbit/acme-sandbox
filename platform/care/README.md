@@ -135,6 +135,7 @@ there's no cycle. The template's `care.ts` is the example.
 | `phoneMonth` | the phone's own month in euros (`CARE_CAP_PHONE_MONTH` goes over it): past it, a call doesn't start and a turn isn't answered ("The phone", below) | `0`: the phone is off |
 | `phoneInstructions` | the phone's part of the instructions, after `instructions`: what's different on a call (spoken answers, the phone's tools, what the code unlocks) | the engine's own (`src/phonetools.ts` `PHONE_PART`) |
 | `phoneTools` | `[{ def, run(call, input) }]`: the company's own tools on the phone, information only (below) | none |
+| `phoneCore` | the engine's own caller tools its line offers, by name (`check_postcode`, `send_code`, `order_status`, `email_answer`, `report_fault`, `ask_for_person`, `pass_on_feedback`): `[]` for a line that isn't for customers, which offers only its `phoneTools` (and its own `phoneInstructions`). `switch_language`, `no_transcript` and `hang_up` are the line's own and always there | `null`: all of them |
 | `phoneFacts(call)` | lines of its own for the facts of a call (`{ conversation, shop, lang, granted }`), after the engine's, on every turn | none |
 | `orderRef` | `(digits) => boolean`: whether a run of digits a caller says is one of the company's order references, kept as said while a code is asked for ("The code, in code", below) | none: every run of five digits or more is a code or a number |
 
@@ -233,7 +234,8 @@ shop is what Caddy sends as `X-Care-Shop`, its stalls are `CARE_SHOPS[shop]`, an
 The phone line has two modes (the board, 2026-10-15), and the second is built:
 
 **The recorded message** is the coordinator's (`platform/coordinator/src/phone.ts`): the board's own number reaches the
-team with its PIN, and when the helper isn't answering (the company hasn't named one in brand.yaml's `phoneLine.care`,
+team with its PIN, and when the helper isn't answering (the company hasn't named one for the caller's line in brand.yaml's
+`phoneLines`,
 a number's fourth call of the day, the phone's month spent, care down) a caller hears a short message in each of the
 company's languages that points them to the website and the email address, and then the call ends.
 
@@ -242,7 +244,8 @@ service the conversation, as for the chat: its tables, knowledge, model, ledger 
 audio is kept anywhere; care keeps the words, as a chat's. The pieces' table above names its four files.
 
 **The routes** listen on a port of their own, `CARE_PHONE_PORT` (8081), opened only when `CARE_PHONE_TOKEN` is set.
-Caddy never proxies it; only the voice container reaches it (`http://care:8081`, on care's network). Each is a `POST` of
+Only the voice line reaches it, through Caddy's inside port (`http://caddy:8081/<deployment>/phone/*`, infra/products.py),
+with the token of that deployment. Each is a `POST` of
 JSON with `Authorization: Bearer <CARE_PHONE_TOKEN>`, compared in constant time; anything else is a 401 with no body.
 
 | Route | Body | Answer |

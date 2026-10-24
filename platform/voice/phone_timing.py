@@ -37,7 +37,10 @@ CALLERS = {  # (the caller's number's country code, what they say, the reply)
     'de': ('49', 'Hallo, ich möchte gern wissen, wo meine Bestellung ist.', 'Das schaue ich gern nach. Wie ist deine Bestellnummer?'),
     'en': ('44', "Hi, I'd like to know where my order is.", "I'll look that up for you. What's your order number?"),
 }
-LINE = yaml.safe_load((REPO / 'company/brand.yaml').read_text())['phoneLine']
+BRAND = yaml.safe_load((REPO / 'company/brand.yaml').read_text())
+# (the first of the company's lines, or its one line, and the care deployment it names)
+LINE = (BRAND.get('phoneLines') or [BRAND['phoneLine']])[0]
+ENGINE = LINE.get('engine', 'care')
 LANGS = {code: LINE['languages'].get(int(code), LINE['languages']['default']) for code, _, _ in CALLERS.values()}
 VOICES = LINE.get('voices') or {}  # (by language)
 
@@ -46,7 +49,8 @@ with socket.socket() as s:
     PORT = s.getsockname()[1]
 sys.path.insert(0, str(HERE))
 os.environ.update({'HQ_URL': 'http://127.0.0.1:9', 'ORIGIN': 'https://hq.test', 'VOICE_TOKEN': 'timing',
-                   'CARE_URL': f'http://127.0.0.1:{PORT}', 'CARE_PHONE_TOKEN': 'timing'})
+                   'CARE_ENGINES': json.dumps({ENGINE: {'url': f'http://127.0.0.1:{PORT}', 'token': 'CARE_TIMING_TOKEN'}}),
+                   'CARE_TIMING_TOKEN': 'timing'})
 texts = json.loads(subprocess.run(['node', '-e', "import('./products/care/src/texts.ts').then(m => console.log("
                                    "JSON.stringify(m.texts)))"], cwd=REPO, capture_output=True, text=True, check=True).stdout)
 WORDS = {lang: {k: texts[lang][f'phone_{k}'] for k in ('ai', 'reply_ai', 'transcript', 'ask', 'objected', 'fine')
@@ -145,8 +149,8 @@ async def frames(ws, audio):
 async def call(lang):
     code, said, _ = CALLERS[lang]
     reply_lang[0] = lang
-    ticket = {'agent': 'poppy', 'lang': LANGS[code][0], 'kind': 'care', 'langs': LANGS[code], 'voice': 'bill_boerst',
-              'voices': VOICES, 'respell': {},
+    ticket = {'agent': 'poppy', 'lang': LANGS[code][0], 'kind': 'care', 'engine': ENGINE, 'langs': LANGS[code],
+              'voice': 'bill_boerst', 'voices': VOICES, 'respell': {},
               'hello': {'nl': 'Hallo', 'de': 'Guten Tag', 'en': 'Hello'}}  # (hello: a line from before #16033 says it)
     server.hq = lambda method, path, body=None: ticket if path == 'call-ticket' else {}
     engines = []

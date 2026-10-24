@@ -102,6 +102,10 @@ Set "cross_project": true only for a follow-up belonging outside this pull reque
 Other follow-ups go to this project's owner. Judge ownership from the thread and department responsibilities.`;
 export const PRE_EXISTING_FIELD = `, "pre_existing": [{"file": "...", "line": 0, "issue": "...", "fix": "...", "by": ["reviewer id"], "from": [{"by": "reviewer id", "finding": 0}]}]`;
 
+// A merge check's blocking findings: findings like any ruling's, so they reach the author by number and the next round
+// judges them
+export const MERGE_BLOCKING = `[{"file": "...", "line": 0, "issue": "...", "fix": "..."}]`;
+
 // The author, with a "changes" ruling
 export const AUTHOR_CLASSES = `Each finding is one mistake: fix it in every place it lists under "also", and wherever else your change makes it.
 In your final report, say for each finding what you did: fixed, disputed (and why it's wrong), or kept as it is on
@@ -305,6 +309,23 @@ export function misjudged(ruling: Pick<Ruling, 'id' | 'pr'>, outcomes: unknown) 
   }
   const left = openForReview(ruling.pr).filter(f => f.ruling < ruling.id && !judged.has(f.id));
   return left.length ? `findings ${left.map(f => `#${f.id}`).join(', ')} have no outcome` : undefined;
+}
+
+// What's wrong with a ruling's finding lists, model output read before it is acted on (review.ts misjudged): an entry
+// that isn't an object records no finding, so neither its author nor the next round would hear of it, and one without
+// its issue records an empty one. A merge check's "changes" has nothing but its findings to send (`needed`).
+export function unfound(v: { blocking?: unknown; nonblocking?: unknown }, needed: boolean) {
+  for (const kind of ['blocking', 'nonblocking'] as const) {
+    const list = v[kind];
+    if (list === undefined) continue;
+    if (!Array.isArray(list)) return `"${kind}" is no list`;
+    const at = list.findIndex(
+      e => !e || typeof e !== 'object' || Array.isArray(e) || !String((e as Entry).issue ?? '').trim(),
+    );
+    if (at >= 0)
+      return `${kind} entry ${at} is no finding: write each as an object with its file, line and issue (${JSON.stringify(list[at]).slice(0, 80)})`;
+  }
+  if (needed && !(Array.isArray(v.blocking) && v.blocking.length)) return '"changes" lists no blocking finding';
 }
 
 // Model output: an entry that isn't an object is no finding

@@ -113,6 +113,12 @@ export const runningSession = (agent: string) =>
     order by id desc limit 1`).get(agent) as { id: number } | undefined;
 export const inSession = (job: number) => !!db.prepare("select 1 from jobs where id = ? and status = 'running' and engine = 'claude'").get(job);
 
+// HQ's own urgent inbox notice has no sending job. It lapses with the session, like any held proposal notice.
+export function notice(to: string, text: string, job: number, held: number) {
+  db.prepare(`insert into messages (created, sender, recipient, text, job, held) values (?, 'hq', ?, ?, ?, ?)`)
+    .run(new Date().toISOString(), to, redact(text)!, job, held);
+}
+
 // Whom an answer goes to: the sender's job's agent (a team member lives in its lead's session, which hq say can reach).
 const lead = (m: Message) => (m.sender_job ? (db.prepare('select agent from jobs where id = ?').get(m.sender_job) as { agent: string } | undefined)?.agent : undefined) ?? m.sender;
 
