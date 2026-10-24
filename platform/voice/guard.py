@@ -5,7 +5,7 @@ from pathlib import Path
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 CALL_TOOLS = ['add', 'call', 'estimate', 'eta', 'expedite', 'hang_up', 'history', 'intercom', 'job', 'pin_sent', 'pin_words', 'promise',
-              'reach', 'replace', 'search', 'when']
+              'reach', 'replace', 'search', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')

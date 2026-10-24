@@ -83,8 +83,8 @@ VOICE = 'alba'  # the Pocket TTS voice for an agent without one of its own (org.
 # plays whenever the line has been quiet for QUIET s, until the agent's words come. What the agent wrote before the
 # step is said as it starts. The wait for a reply's first words is held by a softer sound of its own, thinking(), the
 # same way. Neither plays until the board has been quiet for HUSH s since its
-# last words, and never while it talks: the line asks the model sooner, and a pause mid-sentence is no wait to mask
-#. These are the line's only hold sounds: a spoken hold line
+# last words, and never while it talks: the line asks the model sooner, and a pause mid-sentence is no wait to mask.
+# These are the line's only hold sounds: a spoken hold line
 # of the line's own ("One moment, I'll queue that.") replaced the tick for a while, and a tick was preferred.
 QUIET, HUSH = 2.0, 1.5
 # Pictures the board shares on HQ's call screen go to the agent with the board's next words, at most PICTURES at once.
@@ -244,8 +244,7 @@ pocket = TTSModel.load_model()
 # Pocket TTS speaks every language in the agent's own voice (org.yaml's: each language's model has the same voice
 # names). One voice garbles Dutch (it dropped a sentence's end and made seconds of noise of another, 3 runs in 3, where
 # alba, jane, paul and eve read back through the phone as clearly as Piper): Piper speaks Dutch for it. Dutch runs at
-# temperature 0.7, not the default 0.3: a little cleaner through the phone, read back as well and as fast (the note
-# "The team's voices").
+# temperature 0.7, not the default 0.3: a little cleaner through the phone, read back as well and as fast.
 pockets = {'en': pocket, 'nl': TTSModel.load_model(language='dutch', temp=0.7),
            'de': TTSModel.load_model(language='german')}
 NOT_IN_DUTCH = {'bill_boerst'}
@@ -253,14 +252,14 @@ voice_states = {}  # by language and voice
 # Pocket TTS says the same words differently each time (its noise from torch's one generator): fixed words kept in SAID
 # are made from a seed, so the take every caller hears after a restart is the same one, a known take rather than a
 # chance bad one. Another call's speech at that moment draws from the generator too, and only then is the take another.
-# A care call's ticket can name the seed per language (`seeds`: one the company heard read back right in its voice);
+# A care call's ticket can name the seed per language (`seeds`: one heard read back right in its voice);
 # this one where it names none.
 SEED = 8
 # The audio of fixed words said before (a care call's opening), by language, voice, text and seed: played at once the
 # next time, as synthesis can't start the first words sooner than its first piece
 SAID = {}
 # Piper's voices, by speaker, each a native speaker of its language (all CC0): alex speaks Dutch for a voice Pocket TTS
-# garbles it in, and any speaks its language on a care call whose ticket names it (the company's voice there:
+# garbles it in, and any speaks its language on a care call whose ticket names it (the voice there:
 # `voices`, which may name one of Pocket TTS's voices instead). kerstin: a woman's German.
 PIPERS = {name: PiperVoice.load(str(MODELS / f'{model}.onnx'))
           for name, model in (('alex', 'nl_NL-alex-medium'), ('thorsten', 'de_DE-thorsten-medium'),
@@ -573,24 +572,46 @@ def forget(session='*'):
 
 
 # ---- A care call: a stranger's call, answered by the care service ----
-# The care service's phone routes (CARE_URL, an internal address infra gives), behind a token only the line and care
-# hold (out of the environment children inherit, as VOICE_TOKEN). Either missing: a care call is refused, and HQ plays
-# its recorded message.
-CARE_URL = os.environ.get('CARE_URL', '').rstrip('/')
-CARE_TOKEN = os.environ.pop('CARE_PHONE_TOKEN', '')
-# The server's share for strangers: at most this many care calls at once (measured with two and a board call: the
-# README), each at most CARE_CALL_SECONDS. Past either, the line closes the stream and HQ plays the recorded message.
-CARE_CALLS_AT_ONCE, CARE_CALL_SECONDS = 2, 600
-CARE_LIVE = set()  # the CallSids of the care calls on now
+# The care deployments' phone routes: CARE_ENGINES, infra's map of each deployment's name (its product's slug) to its
+# internal address (url) and the most of its calls on at once (calls, 2 when it says none: measured with two and a board
+# call, the README), each behind its own token only the line and that deployment hold (in the variable its `token`
+# names, as infra made it), taken out of the environment children inherit, as VOICE_TOKEN. The ticket's engine picks the
+# deployment (care when it names none). An unknown one, one without its address or token, or one at its calls: a care
+# call is refused, and HQ plays its recorded message. Each call at most CARE_CALL_SECONDS, past which the line closes
+# the stream and HQ plays the message too.
+def care_engines(listed, env):
+    """CARE_ENGINES read: each deployment's name to its url, token and calls, its token taken out of env (the variable
+    its entry names). A malformed entry is left out, with a line (never its token)."""
+    try:
+        listed = json.loads(listed or '{}')
+    except ValueError:
+        listed = None
+    if not isinstance(listed, dict):
+        print('care: CARE_ENGINES is not a JSON object: no care calls', flush=True)
+        return {}
+    engines = {}
+    for slug, e in listed.items():
+        calls = e.get('calls', 2) if isinstance(e, dict) else None
+        if (not isinstance(e, dict) or not isinstance(e.get('url', ''), str) or type(calls) is not int or calls < 1
+                or not re.fullmatch(r'[A-Z_][A-Z0-9_]*', str(e.get('token', '')))):
+            print(f'care: CARE_ENGINES: {slug!r} left out (not {{"url": ..., "calls": n, "token": NAME}})', flush=True)
+            continue
+        engines[slug] = {'url': e.get('url', '').rstrip('/'), 'calls': calls, 'token': env.pop(e['token'], '')}
+    return engines
+
+
+CARE_ENGINES = care_engines(os.environ.get('CARE_ENGINES'), os.environ)
+CARE_CALL_SECONDS = 600
+CARE_LIVE = {}  # the CallSids of the care calls on now, to the deployment each is on
 # care's names for the two steps the line acts on, as the CLI's
 CARE_STEPS = {'hang_up': HANG_UP_TOOL, 'no_transcript': NO_TRANSCRIPT_TOOL}
 CARE_READ_SECONDS = 90  # a turn's stream silent this long is care gone (the CLI's 90 s, Agent.ask)
 
 
-def care_post(path, body):
-    """One of care's JSON routes (start, end). Raises on anything but a 200 (a 503's HTTPError too)."""
-    req = Request(f'{CARE_URL}{path}', method='POST', data=json.dumps(body).encode(),
-                  headers={'authorization': f'Bearer {CARE_TOKEN}', 'content-type': 'application/json'})
+def care_post(deployment, path, body):
+    """One of a care deployment's JSON routes (start, end). Raises on anything but a 200 (a 503's HTTPError too)."""
+    req = Request(f"{deployment['url']}{path}", method='POST', data=json.dumps(body).encode(),
+                  headers={'authorization': f"Bearer {deployment['token']}", 'content-type': 'application/json'})
     with urlopen(req, timeout=15) as r:
         return json.loads(r.read() or 'null')
 
@@ -618,8 +639,10 @@ class Care:
     no seat, no pictures: care keeps the words, so the line keeps no transcript (kind 'care')."""
     kind = 'care'
 
-    def __init__(self, agent, sid, lang, langs=(), voice=None, voices=None, respell=None, seeds=None):
+    def __init__(self, agent, sid, lang, langs=(), voice=None, voices=None, respell=None, seeds=None, deployment=None):
         self.agent, self.sid, self.lang = agent, sid, lang
+        # the care deployment the call is on (CARE_ENGINES's: its url and token)
+        self.deployment = deployment or {'url': '', 'token': ''}
         # the opening's languages, in order (HQ's, by the caller's number), and the voice in a language where the company
         # names one of the line's own
         self.opened = [x for x in dict.fromkeys(langs or ()) if x in ('nl', 'de', 'en')]
@@ -647,7 +670,7 @@ class Care:
             raise RuntimeError('a care call has one conversation')
         # (the opening's first language: care reads its prompt into the model's cache in it while the opening plays;
         first = (self.opened or [self.lang])[0]
-        got = await asyncio.to_thread(care_post, '/phone/start', {'call': self.sid, 'lang': first})
+        got = await asyncio.to_thread(care_post, self.deployment, '/phone/start', {'call': self.sid, 'lang': first})
         words = got.get('words') if isinstance(got, dict) else None
         if not isinstance(got.get('conversation'), (str, int)) or not isinstance(words, dict):
             raise ValueError('care answered /phone/start without a conversation and its words')
@@ -674,7 +697,7 @@ class Care:
         """The turn's request, in a thread of its own (http.client reads the chunks). Returns the queue the thread puts
         to (DELIVERED once the request is sent, the status, each line of the body as it comes, then None at its end, or
         the error that cut it) and stop(), which cuts the request."""
-        url = urlsplit(CARE_URL)
+        url = urlsplit(self.deployment['url'])  #.
         body = json.dumps({'conversation': self.conversation, 'text': text, 'lang': self.lang,
                            'informed': self.informed()}).encode()
         got, sock, cut = asyncio.Queue(), [], threading.Event()
@@ -702,7 +725,8 @@ class Care:
                     return put(None)
                 conn.sock.settimeout(CARE_READ_SECONDS)
                 conn.request('POST', f'{url.path.rstrip("/")}/phone/turn', body, {
-                    'Authorization': f'Bearer {CARE_TOKEN}', 'Content-Type': 'application/json', 'Connection': 'close'})
+                    'Authorization': f"Bearer {self.deployment['token']}", 'Content-Type': 'application/json',
+                    'Connection': 'close'})
                 put(DELIVERED)
                 resp = conn.getresponse()
                 put(resp.status)
@@ -791,8 +815,8 @@ class Care:
         self.interrupt()
         if self.conversation is not None:
             try:
-                care_post('/phone/end', {'conversation': self.conversation, 'ended': self.ended,
-                                           'informed': self.informed()})
+                care_post(self.deployment, '/phone/end', {'conversation': self.conversation, 'ended': self.ended,
+                                                          'informed': self.informed()})
             except Exception as err:
                 print(f'call: {self.agent}: care did not take the end of the call: {err!r}', flush=True)
 
@@ -902,6 +926,9 @@ class Call:
         self.speaker = None  # in a room: who said the draft's last piece
         self.pending = np.zeros(0, np.float32)
         self.recent, self.n = np.zeros(0, np.float32), 0  # the last 8 s heard, and how many samples in all
+        # How many of the board's samples have come, all call: HQ keeps what it sent until the line says it has it, and
+        # sends the rest again on a new connection (app_call: pong and call).
+        self.got = 0
         self.draft = []       # what the board has said since the last answer, piece by piece
         self.sounded_finished = True  # whether the board sounded finished after the draft's last piece (endpoint.py)
         self.pauses = [0, 0]  # the board's pauses after words, all call: how many sounded finished, how many in all
@@ -1171,6 +1198,7 @@ class Call:
     async def hear(self, samples, voice=None):
         """Audio from the board, 16 kHz float32, and the agent's voice as it played over the same samples on HQ's side
         (none: nothing played)."""
+        self.got += len(samples)
         if self.echo:
             samples = self.echo.cancel(samples, voice)
         self.pending = np.concatenate([self.pending, samples])
@@ -1320,10 +1348,10 @@ class Call:
         return not self.turn.done() or time.monotonic() < self.until
 
     def reconnected(self):
-        """HQ came back on a new connection: it dropped the audio it had queued, so none of it is still to play, and
-        nothing is queued on the new one, so its pings set a new baseline."""
+        """HQ came back on a new connection: it dropped the audio it had queued, so none of it is still to play. The
+        ping baseline stays (the same two clocks): HQ first sends again the board's audio the line hasn't had, with
+        pings from when it was said, so it reads as late and the answer waits for all of it (behind, owed)."""
         self.until = 0
-        self.ping, self.late = None, 0.0
 
     # ---- pictures the board shares on HQ's call screen
     async def show(self, picture_id):
@@ -1982,14 +2010,17 @@ async def app_call(ws):
         await call.start()
         print(f'call: {agent} picked up in {time.monotonic() - t0:.1f} s', flush=True)
     call.live_at = call.live_at or time.time()
-    # id: the line's, to reconnect; call: HQ's calls row; key: HQ's picture uploads for that call carry it
-    await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key}))
+    # id: the line's, to reconnect; call: HQ's calls row; key: HQ's picture uploads for that call carry it; heard: the
+    # board's samples the line has (HQ sends the rest again)
+    await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}))
     await call.retell()  # (what happened to its pictures while HQ was away)
     if not first.get('resume'):
         await call.greet()
     bye = False
     try:
         async for m in ws:
+            if line.ws is not ws:  # (the call moved to a new connection, which counts from what the line has: heard)
+                break
             if isinstance(m, bytes):
                 # (with the agent's voice playing, the frame carries it after the microphone's samples)
                 pcm16 = np.frombuffer(m, '<i2').astype(np.float32) / 32768
@@ -2002,7 +2033,7 @@ async def app_call(ws):
                 await call.interrupt()
             elif kind == 'ping' and type(e.get('t')) in (int, float):  # (answered as read: after the frames before it)
                 call.pinged(e['t'])
-                await line.send(json.dumps({'type': 'pong', 'late': round(call.late, 1)}))
+                await line.send(json.dumps({'type': 'pong', 'late': round(call.late, 1), 'heard': call.got}))
             elif kind == 'picture' and isinstance(e.get('id'), int):  # (beside the audio)
                 asyncio.create_task(call.show(e['id']))  # (tasks start in the order they're made: so do their places)
             elif kind == 'bye':
@@ -2040,15 +2071,19 @@ async def phone_call(ws):
                     return await ws.close(1008, 'ticket')
                 send = lambda x: ws.send(json.dumps({'event': 'media', 'streamSid': sid,
                                                      'media': {'payload': base64.b64encode(ulaw_encode(resample(x, RATE, 8000))).decode()}}))
-                if ok.get('kind') == 'care':  # a stranger, for the care service
-                    if len(CARE_LIVE) >= CARE_CALLS_AT_ONCE or not CARE_TOKEN or not CARE_URL:
-                        why = f'{len(CARE_LIVE)} on' if CARE_TOKEN and CARE_URL else 'no CARE_URL or CARE_PHONE_TOKEN'
-                        print(f'call: a care call refused ({why}): HQ plays its message', flush=True)
+                if ok.get('kind') == 'care':  # a stranger, for the care deployment the ticket names (else care)
+                    engine = ok.get('engine', 'care')
+                    care = CARE_ENGINES.get(engine) if isinstance(engine, str) else None
+                    on = list(CARE_LIVE.values()).count(engine)
+                    if not care or not care['url'] or not care['token'] or on >= care['calls']:
+                        why = ('no such deployment' if not care else 'no url or token' if not care['url'] or
+                               not care['token'] else f'{on} on')
+                        print(f'call: a care call on {engine!r} refused ({why}): HQ plays its message', flush=True)
                         return await ws.close()
                     care_sid = str(e['start'].get('callSid') or sid)
-                    CARE_LIVE.add(care_sid)
+                    CARE_LIVE[care_sid] = engine
                     clear = lambda: ws.send(json.dumps({'event': 'clear', 'streamSid': sid}))
-                    call, limit = await care_call(ws, send, clear, ok, care_sid)
+                    call, limit = await care_call(ws, send, clear, ok, care_sid, care)
                     if not call:
                         return
                     continue
@@ -2069,10 +2104,10 @@ async def phone_call(ws):
             limit.cancel()
         if call:
             await asyncio.to_thread(call.end)
-        CARE_LIVE.discard(care_sid)
+        CARE_LIVE.pop(care_sid, None)
 
 
-async def care_call(ws, send, clear, ticket, call_sid):
+async def care_call(ws, send, clear, ticket, call_sid, deployment):
     """A care call on the phone line: the care brain, the opening, and the call's
     ends. The care agent's hang_up tells HQ (phone-done) before the stream closes, so HQ hangs up; every other end closes the stream
     alone, and HQ plays its recorded message (care refused the start, a turn care can't answer, the time limit). Returns
@@ -2080,7 +2115,7 @@ async def care_call(ws, send, clear, ticket, call_sid):
     langs, voices, seeds = ticket.get('langs'), ticket.get('voices'), ticket.get('seeds')
     brain = Care(ticket['agent'], call_sid, language(ticket.get('lang')), langs if isinstance(langs, list) else (),
                  ticket.get('voice'), voices if isinstance(voices, dict) else {}, ticket.get('respell'),
-                 seeds if isinstance(seeds, dict) else {})
+                 seeds if isinstance(seeds, dict) else {}, deployment)
 
     async def hang_up():
         brain.ended = 'hung_up'

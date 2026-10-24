@@ -53,10 +53,10 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // Done work with its runs: agent time, start to finish (waits included), its seat spend (the API-equivalent price
 // where the engine reports one, tokens where it doesn't; none where no usage was reported) and its latest pull request.
 // (made at its first use: jobs.ts, whose workBranch it reads, imports the deadline clock that reads this)
-// The runs summed by job first, then each one's job by its id through db.ts jobs_past.
-// Stale statistics
-// (pragma optimize reads a table again only once it grew tenfold) otherwise let the planner scan every job row and sum
-// the runs again for each.
+// The runs summed by job first, then each one's job by its id through db.ts jobs_past: `cross join` keeps that order
+// whatever the planner's statistics say. Without it, with stale statistics (pragma optimize reads a table again only
+// once it grew tenfold), the planner scans every done job and sums the runs again for each, for minutes, and a
+// just-queued job is sized on the spot (predictions.ts recordQueued).
 // Credential-call follow-ups include transcripts, even when no tool marked them as holding keys.
 const past =
   () => `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
@@ -65,19 +65,19 @@ const past =
     p.number pr, p.status pr_status, p.merged_at, coalesce(p.files, '[]') files, p.added, p.removed, j.thread, ${RUN_COLUMNS}, r.outcomes, r.invalid_runs, r.unknown_seats, j.customers,
     (j.about_keys or exists(select 1 from calls c where c.job = j.id and ${keysCondition()})) about_keys,
     exists(select 1 from job_replacement_links l where l.job = j.id) replaced
-  from jobs j indexed by jobs_past
-  join (select job, count(*) runs, sum(ended_as = 'rebuilt' or seat is null) rebuilt, min(started) first, max(ended) last,
+  from (select job, count(*) runs, sum(ended_as = 'rebuilt' or seat is null) rebuilt, min(started) first, max(ended) last,
     sum((julianday(ended) - julianday(started)) * 86400000) agent_ms,
     group_concat(distinct coalesce(ended_as, 'unknown')) outcomes, sum(seat is null) unknown_seats,
     sum(julianday(ended) is null or julianday(started) is null or julianday(ended) <= julianday(started)) invalid_runs
-    from runs group by job) r on r.job = j.id
+    from runs group by job) r
+  cross join jobs j indexed by jobs_past on j.id = r.job
   left join (select job, sum(cost) cost, sum(input + cache_write + cache_read + output) tokens from usage group by job) u
     on u.job = j.id
   left join (select branch, max(number) number from prs group by branch) b on b.branch = ${workBranch('j')}
   left join prs p on p.number = b.number
   ${RUN_JOIN}
   where j.kind = 'work' and j.status = 'done' and not exists (select 1 from runs o where o.job = j.id and o.ended is null)
-  order by j.id`;
+  order by r.job`;
 
 export const pastJobs = (): PastJob[] => {
   const rows = db.prepare(past()).all() as unknown as (PastJob & TimingEvidence)[];

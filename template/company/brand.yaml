@@ -100,16 +100,22 @@ mail: { domain: example.com, boardOnly: [board], groups: [board, hello] }
 # own, such as where to send a word about the parcel. Left out: none.
 # testerFeedback:
 #   en: "Tell us how unpacking it went at hello@example.com."
-# The phone line's message for callers who aren't the board, per language (en, nl, de, …): hello's one word per
-# language (optional), then every language's message, in the greeting's order, and the call ends. The line takes no
-# messages. Write the email address as it's said, so the voice reads it right.
-# care: the org.yaml agent who answers those callers instead, when the company runs the care service with its phone
-# (platform/care/README.md, "The phone"): three calls a day per number, the message after that and whenever the agent
-# can't take the call. Left out: the message only.
-#   care: <an agent id from org.yaml>
-phoneLine:
-  greeting:
-    en: "This is New Company. We're run by AI and can't help you by phone. Email hello at example dot com, or use the help on our website."
+# The phone lines for callers who aren't the board, a list (platform/coordinator/src/phonelines.ts). Each line's
+# message, per language (en, nl, de, …): hello's one word per language (optional), then every language's message, in
+# the greeting's order, and the call ends. The line takes no messages.
+# Write the email address as it's said, so the voice reads it right. Optional, each:
+#   number: the number it answers (Twilio's To, international form); left out: any number
+#   callers: anyone (left out), or { numbers: <KEY>, pin: <KEY> }: two keys the board saves, the numbers allowed and
+#     the PIN they type
+#   agent: the org.yaml agent who answers instead, when the company runs the care service with its phone
+#     (platform/care/README.md, "The phone"); engine: which care deployment (a product with engine: care), care if
+#     left out; callsADay: per number, 3 if left out, the message after that and whenever the agent can't take the
+#     call. No agent: the message only.
+#   languages: { <country code>: [langs], default: [langs] }, voices and seeds per language: the agent's opening.
+# A call takes the first line for the number dialled that lets the caller in, else the first without a number.
+phoneLines:
+  - greeting:
+      en: "This is New Company. We're run by AI and can't help you by phone. Email hello at example dot com, or use the help on our website."
 # Words the speech engines say wrong (a product's name), respelt as each language's voices should say them, on calls and
 # On Air (platform/voice/aloud.py respelt); HQ shows the word as written. Left out: none.
 #   speech:
@@ -166,8 +172,9 @@ phoneLine:
 #     (1K, 2K, 4K); default gemini-nano-banana-2.1 at 2K
 #   monthly_usd: the month's cap on edits, in USD as the model's provider bills them (default 20): past it, HQ refuses
 #     edits until the 1st (UTC)
-#   notes: repo paths the keeper reads first: the company's rules for such photos, where the prints come from and who
-#     sends the board's photo cards
+#   notes: repo paths the keeper's briefs name under "Read first", and the only place the studio's prompts look for what
+#     is the company's own: where the prints and their cards come from, who sends the board's photo cards, and what a
+#     page needs on and around a photo (its words, its alt text, a page on how the photos are made)
 #   products: { id, name, about }: what the board photographs; about tells the model what the product is (its size,
 #     material, print), the more exactly the better it keeps it
 #   styles: { id, name, prompt, ratio }: the shots on offer; prompt describes the setting and light; ratio is one of

@@ -11,7 +11,8 @@ out the same way, order_status, a barge-in, report_fault, ask_for_person, no_tra
 after it. Checked at each boundary: what the brain yields (DELIVERED, the words, Step and Used under the line's names,
 a space between one model call's words and the next's), what care asked the stalls, what it kept (the code read out
 never in the transcript or its log, "(read out the code)" in its place, the call linked to the order), every model
-call in the ledger as 'phone' (the cut-short one as an estimate), the fault note kept in care and never sent to HQ,
+call in the ledger as 'phone' (start's cache warm-up and the cut-short one as estimates), the fault note kept in care
+and never sent to HQ,
 and the objection carried out at the end (the words deleted, the fault note and the code check's result kept).
 
 The speech models are never loaded: test_server's stand-ins go in before server is imported. Run it on its own: the
@@ -163,10 +164,11 @@ async def main(tmp):
 
 
 async def run(fake, data, log, phone_port, token):
-    server.CARE_URL, server.CARE_TOKEN = f'http://127.0.0.1:{phone_port}', token
+    # (care, the one deployment)  #.
+    deployment = server.CARE_ENGINES['care'] = {'url': f'http://127.0.0.1:{phone_port}', 'token': token, 'calls': 2}
     for _ in range(100):  # care up: its phone port answers (401 without the token)
         try:
-            urlopen(Request(f'{server.CARE_URL}/phone/start', method='POST', data=b'{}'), timeout=1)
+            urlopen(Request(f"{deployment['url']}/phone/start", method='POST', data=b'{}'), timeout=1)
         except HTTPError:
             break
         except OSError:
@@ -177,7 +179,7 @@ async def run(fake, data, log, phone_port, token):
     q = lambda sql, *a: db.execute(sql, a).fetchall()
 
     print('start')
-    brain = server.Care('poppy', 'CAcheck0001', 'nl', ['nl', 'en'], 'bill_boerst')
+    brain = server.Care('poppy', 'CAcheck0001', 'nl', ['nl', 'en'], 'bill_boerst', deployment=deployment)
     # (the Dutch opening played whole, so care keeps the words)
     brain.informed = lambda: ['nl']
     await brain.start()
@@ -189,6 +191,12 @@ async def run(fake, data, log, phone_port, token):
     brain.speak('nl')
     check(brain.objected == brain.words['nl']['objected'], 'speak(nl): the objection words in Dutch')
     check(q("select kind, shop from conversations where id = ?", conv) == [('phone', 'front')], "a conversation of kind 'phone' for the shop")
+    for _ in range(50):  # (the warm-up runs on after /phone/start has answered)
+        if q('select count(*) from ledger where conversation = ?', conv)[0][0]:
+            break
+        await asyncio.sleep(0.1)
+    check(q('select purpose, estimate from ledger where conversation = ?', conv) == [('phone', 1)],
+          'start warmed the cache: one model call in the ledger, as an estimate (it stops at its first event)')
 
     print('a first turn')
     model(fake, [{'text': '[nl] Hoi, met Poppy. Waarmee kan ik je helpen?'}])
@@ -301,8 +309,9 @@ async def run(fake, data, log, phone_port, token):
 
     print('the ledger, HQ and the log')
     rows = q('select purpose, estimate, app from ledger where conversation = ? order by id', conv)
-    check(len(rows) == 13 and {p for p, _, _ in rows} == {'phone'}, f'every model call of the call is in the ledger as phone ({len(rows)})')
-    check([e for _, e, _ in rows].count(1) == 1, 'the cut-short reply as one estimate')
+    check(len(rows) == 14 and {p for p, _, _ in rows} == {'phone'},
+          f'every model call of the call is in the ledger as phone: the warm-up and the turns\' 13 ({len(rows)})')
+    check([e for _, e, _ in rows].count(1) == 2, 'the cut-short reply as an estimate, beside the warm-up\'s')
     check(q("select count(*) from ledger where purpose != 'phone'")[0][0] == 0, 'nothing on another purpose')
     await asyncio.sleep(1)
     check('/api/care/cards' not in hq_paths, f'no card went to HQ: the fault note stays in care ({sorted(set(hq_paths))})')

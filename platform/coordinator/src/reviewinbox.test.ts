@@ -243,13 +243,12 @@ for (const [windowed, stops] of [
     const { orderingSnapshot } = await import('./backlog.ts');
     const windows = await import('./windows.ts');
     const deadline = Date.now() + 3_600_000;
-    if (windowed) windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
-    // the owner at work, and its queued planning job behind older work nobody waits for (a ruling without a job tells
-    // no session)
+    // The owner at work, with an undated ruling waiting in a queued planning job behind older work.
     const session = await h.start({ agent: 'wren', title: 'Plan the shop', engine: 'claude' });
     const unhurried = h.queue({ agent: 'kit', title: 'Tidy the docs', engine: 'claude' });
     const { author, branch } = await deliver();
     const planning = heardBy();
+    if (windowed) windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
     assert.equal(orderingSnapshot(Date.now()).jobs.find(job => job.id === planning)!.due, windowed ? deadline : null);
     // the next round's touch-ups: with a window, the owner's session hears them at once and holds them
     h.storedPr(71, author.id, 'open', ['game.ts'], { round: 2 });
@@ -287,6 +286,20 @@ for (const [windowed, stops] of [
     assert.equal(fixTasks().length, 0);
     assert.equal((await h.claim('claude'))?.id, windowed ? planning : unhurried);
   });
+
+test('deadline review findings give the idle CEO a planning job instead of waiting for the summary', async () => {
+  const windows = await import('./windows.ts');
+  const { orderingSnapshot } = await import('./backlog.ts');
+  plan.setOwner('game', 'juno', { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('game/world')!, { deadline, aim: deadline }, 'juno');
+  await deliver();
+  const planning = h.job(heardBy());
+  assert.equal(planning.agent, 'juno');
+  assert.equal(planning.status, 'queued');
+  assert.equal(planning.title, 'Sort new proposals into the plan');
+  assert.equal(orderingSnapshot(Date.now()).jobs.find(job => job.id === planning.id)!.due, deadline);
+});
 
 test('an automatically drawn fix rejects missing task titles before accepting its ruling', async t => {
   const org = `${h.repo}/company/org.yaml`,

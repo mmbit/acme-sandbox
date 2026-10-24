@@ -24,6 +24,7 @@ await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready' });
 const { db } = h;
 const review = await import('./review.ts');
 const panel = await import('./panel.ts');
+const reviewtriage = await import('./reviewtriage.ts');
 const files = ['platform/hq/room.js'];
 const sha = () => randomBytes(20).toString('hex');
 const pending = (pr: number) => h.jobs.listJobs().filter(job => job.pr === pr && job.status === 'queued');
@@ -47,7 +48,12 @@ const selection = (reviewers?: ReturnType<typeof reader>[]) => ({
 const cancelLeftovers = leftoverJobs(db);
 afterEach(cancelLeftovers);
 
-async function push(pr: number, next = sha(), more = {}, work: { engine?: string; thread?: string } = {}) {
+async function push(
+  pr: number,
+  next = sha(),
+  more = {},
+  work: { agent?: string; engine?: string; thread?: string } = {},
+) {
   const author = await h.start({ agent: 'bolt', branch: `review/${pr}`, ...work });
   assert.equal((await h.finish(author, { pr, branch: `review/${pr}`, files, sha: next, ...more })).status, 200);
   await until(() => pending(pr).some(job => job.stage === 'triage'), 'round triage');
@@ -64,8 +70,8 @@ async function finish(pr: number, stage: string, output: object) {
   return run!;
 }
 
-async function blocked(pr: number, note = false, finder = 'rook') {
-  const head = await push(pr);
+async function blocked(pr: number, note = false, finder = 'rook', agent = 'bolt') {
+  const head = await push(pr, sha(), {}, { agent });
   await finish(pr, 'triage', selection([reader(finder)]));
   await until(() => readers(pr).length === 1, 'selected reviewer');
   await finish(pr, 'review', { findings: [{ file: files[0], line: 5, issue: 'The label is hidden' }] });
@@ -90,8 +96,8 @@ test('a running triage corrects unreadable answers against the live roster befor
   const check = (output: string) => h.agent('review-output', run!.token, { output });
   assert.equal((await check('The panel should read this.')).body.error, 'not a JSON object');
   assert.equal(
-    (await check(JSON.stringify({ ...selection([]), consolidator: 'bolt' }))).body.error,
-    'ineligible consolidator',
+    (await check(JSON.stringify(selection([reader('bolt')])))).body.error,
+    'ineligible or duplicate reviewer',
   );
   const output = JSON.stringify(selection([reader('rook')]));
   assert.equal((await check(output)).body.error, null);
@@ -555,10 +561,12 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
     assert.equal(first.agent, 'quill');
     // one queued before its brief was kept
     if (legacy) db.prepare('delete from triage_briefs where job = ?').run(first.id);
-    // the change lands while it runs, so the consolidator its brief offered is refused
+    // it was queued by someone and handles a customer's details, which its replacement keeps
+    db.prepare("update jobs set queued_by = 'juno', customers = 1 where id = ?").run(first.id);
+    // The consolidator roster changes while an invalid reader makes the running triage retry.
     writeFileSync(file, before.replace('consolidator: [quill, tally, nib]', 'consolidator: [tally, nib]'));
     try {
-      await finish(pr, 'triage', selection([reader('rook')]));
+      await finish(pr, 'triage', selection([reader('unknown')]));
       const retry = pending(pr).find(job => job.stage === 'triage')!;
       assert.ok(retry, 'it runs again');
       assert.equal(retry.agent, 'tally', 'on a runner chosen now');
@@ -568,8 +576,13 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
       const row = (job: number) =>
         ({
           ...db.prepare('select instead_of, queued_by, customers, round, sha, judges from jobs where id = ?').get(job),
-        }) as { instead_of: number | null };
+        }) as { instead_of: number | null; queued_by: string | null; customers: number };
       assert.deepEqual(row(retry.id), { ...row(first.id), instead_of: first.id }, 'in place of the run it repeats');
+      assert.deepEqual(
+        [row(retry.id).queued_by, row(retry.id).customers],
+        ['juno', 1],
+        'who queued it, and its customer data',
+      );
       retryNow(db, retry.id);
       await finish(pr, 'triage', { ...selection([reader('rook')]), consolidator: 'tally' });
       await until(() => readers(pr).length === 1, 'retried triage dispatch');
@@ -581,14 +594,60 @@ test('a triage briefed before a change to who may rule runs again briefed and ru
   }
 });
 
-test('triage rejects a sole author as its solo consolidator', async () => {
-  const pr = 108;
-  await push(pr);
-  await finish(pr, 'triage', { ...selection([]), consolidator: 'bolt' });
-  assert.deepEqual(readers(pr), []);
-  assert.ok(pending(pr).some(job => job.stage === 'triage'));
-  assert.ok(!pending(pr).some(job => job.stage === 'ruling'));
-  assert.equal(h.github.pr(pr).merged, false);
+test('HQ assigns an eligible solo consolidator when triage names the sole author', async () => {
+  await push(108);
+  await finish(108, 'triage', { ...selection([]), consolidator: 'bolt' });
+  const ruling = pending(108).find(job => job.stage === 'ruling');
+  assert.ok(ruling && panel.consolidators(108).includes(ruling.agent));
+  assert.notEqual(ruling?.agent, 'bolt');
+  assert.ok(!pending(108).some(job => job.stage === 'triage'));
+  assert.equal(h.github.pr(108).merged, false);
+});
+
+test('a co-authored fix round stays readable when triage names an unavailable consolidator', async () => {
+  const pr = 1807;
+  for (const agent of ['quill', 'tally', 'nib', 'juno']) h.ended({ agent, branch: `review/${pr}` });
+  await blocked(pr, false, 'nib', 'quill');
+  await push(pr, sha(), {}, { agent: 'quill' });
+  assert.deepEqual([...panel.authorsOf(pr)].sort(), ['juno', 'nib', 'quill', 'tally']);
+  assert.deepEqual(panel.consolidators(pr), ['quill', 'tally', 'nib']);
+  const output = {
+    ...selection([reader('quill')]),
+    consolidator: 'unknown',
+    exceptions: [{ agent: 'nib', reason: 'Quill can recheck the shared fix' }],
+  };
+  const triage = pending(pr).find(job => job.stage === 'triage')!;
+  const run = await h.claim(triage.engine, { seat: `${triage.engine}-1` });
+  assert.equal(run?.id, triage.id);
+  const refused = [
+    {
+      output: JSON.stringify({ ...output, consolidator: undefined, exceptions: [] }),
+      error: 'omitted finder needs a reason',
+    },
+    {
+      output: JSON.stringify({ ...output, consolidator: undefined, reviewers: [], looker: 'nib' }),
+      error: 'the looker must be a reader of files that show',
+    },
+  ];
+  for (const candidate of refused)
+    assert.equal(
+      (await h.agent('review-output', run!.token, { output: candidate.output })).body.error,
+      candidate.error,
+    );
+  for (const consolidator of ['unknown', 'juno', undefined])
+    for (const decision of ['review', 'escalate']) {
+      const candidate = JSON.stringify({ ...output, consolidator, decision });
+      assert.equal((await h.agent('review-output', run!.token, { output: candidate })).body.error, null);
+    }
+  await h.finish(run!, { output: JSON.stringify(output) });
+  await until(() => readers(pr).includes('quill'), 'the named reviewer receives the fix read');
+  for (const candidate of refused) assert.equal(reviewtriage.read(triage.id, candidate.output), candidate.error);
+  assert.ok(!pending(pr).some(job => job.stage === 'triage'));
+  const rows = (await h.board('/api/jobs')).body.filter((job: any) => job.pr === pr && job.kind === 'review');
+  const assigned = rows[0].triage.selection.consolidator;
+  assert.ok(panel.consolidators(pr).includes(assigned));
+  await finish(pr, 'review', { findings: [] });
+  assert.equal(pending(pr).find(job => job.stage === 'ruling')?.agent, assigned);
 });
 
 test('a newly triaged ruling cannot replace its panel with another triage read', async () => {

@@ -72,8 +72,8 @@
 //   A basket its vouchers pay in full is paid at /checkout itself: its url is the success_url. So is a basket holding the
 //   shop's test code (isTestCode, below): a test order, paid nowhere and made nowhere, whose order view says test: true;
 //   and a test basket holding a tester's voucher (testerVoucher, below): a tester order, paid nowhere and made for real,
-//   whose views say tester: true
-//. A refusal a customer
+//   whose views say tester: true.
+// A refusal a customer
 //   can reach carries `why`, for the shop to say in the customer's language: address_incomplete, postcode_invalid,
 //   country_not_delivered, email_invalid, line_paid, line_cancelled, line_elsewhere, basket_full, basket_empty,
 //   basket_gone, already_paid, payment_processing, not_approved, card_total_low, card_total_high, basket_changed,

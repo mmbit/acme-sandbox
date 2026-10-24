@@ -251,6 +251,10 @@ db.exec(`
     sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
     about_keys integer not null default 0);
 `);
+// A done job's routine and its calls, looked up by job for each done job (matching.ts pastJobs): on stale planner
+// statistics each lookup would otherwise read the whole table.
+db.exec(`create index if not exists schedule_runs_job on schedule_runs (job) where job is not null;
+  create index if not exists calls_job on calls (job) where job is not null`);
 
 // A value a module keeps between runs (the settings table), and remember(key, null) forgets it.
 export const setting = (key: string) => (db.prepare('select value from settings where key = ?').get(key) as { value: string } | undefined)?.value;
@@ -435,6 +439,12 @@ db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
 // prompt and output overflow pages.
 db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
   round, queued_by, pr) where kind = 'work' and status = 'done'`);
+// The tasks whose titles the board reads (boardnames.ts namedTask), newest first: the names' claim (plainnames.ts, every
+// 15 s, named by `indexed by`) reads each title without its row's prompt and output.
+db.exec(`create index if not exists jobs_named on jobs (id, title, thread, status) where kind = 'work' and customers = 0`);
+// The work a pause made room for (jobs.ts makesRoom): every claim that starts a job clears it on the jobs that held it
+// for that one, by the index and not by reading every job's row, prompt and output.
+db.exec('create index if not exists jobs_room_for on jobs (room_for) where room_for is not null');
 // Token use per job run, for Finance's seat economics (usage.ts): numbers and model names only. `totals` is the engine's
 // running total for the session at that point, so the next run of the session can be stored as what it added.
 db.exec(`create table if not exists usage (id integer primary key, job integer not null, ts text not null, engine text not null,

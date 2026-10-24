@@ -680,4 +680,9 @@ test("a person's load comes from the app's own pages, the shop's, an assistant, 
     assert.equal(loadSource(headers, url), source, JSON.stringify(headers));
   // ChatGPT's app often sends no referrer, but its link says where it's from
   assert.equal(loadSource(onShelf, 'https://shop.test/plant/?utm_source=chatgpt.com'), 'ai-chatgpt');
+  // an app at the host's root beside the shelves says which paths are its own: another shelf's page is the shop
+  const front = { host: 'shop.test' },
+    frontPage = (path: string) => !path.startsWith('/plant/');
+  assert.equal(loadSource({ ...front, referer: 'https://shop.test/nl/' }, url, frontPage), 'stall');
+  assert.equal(loadSource({ ...front, referer: 'https://shop.test/plant/' }, url, frontPage), 'shop');
 });

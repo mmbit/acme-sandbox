@@ -201,7 +201,7 @@ function jobsOnBoard() {
 const onBoard = id => jobsOnBoard().find(x => x.id === id && x.projectThread);
 // A work link's job, once its place is known: the view moves there, the job's card still in front. read: the board's
 // work is read, so a job of a done thread has it loaded (as a tap on its tile does), and one in none opens where the view
-// is. One whose thread doesn't load opens there too, saying so; a move made while it loads ends the landing (supersede).
+// is. One whose thread doesn't load opens there too, saying so. A move made while it loads ends the landing (supersede).
 async function land(read = false) {
   const id = landing;
   if (id === null || id !== view.jobId) return;

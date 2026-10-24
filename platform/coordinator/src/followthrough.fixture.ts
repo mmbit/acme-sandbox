@@ -3,8 +3,8 @@
 import assert from 'node:assert/strict';
 import type { harness } from './harness.ts';
 
-// What a case starts without. Threads too: no two open threads share a name, so a case drawing one again starts clean
-//. And what the summary's threats read, which summary.test.ts makes through its
+// What a case starts without. Threads too: no two open threads share a name, so a case drawing one again starts clean.
+// And what the summary's threats read, which summary.test.ts makes through its
 // modules' routes.
 const RESET = `delete from jobs; delete from runs; delete from calls; delete from call_items; delete from followthrough_checks;
   delete from requests; delete from prs; delete from seats; delete from threads; delete from thread_needs;

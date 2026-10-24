@@ -2,12 +2,13 @@
 // Jobs that hit a usage limit wait for the reset and resume in the same session; jobs that need
 // the board park on a request and resume with the answer.
 import * as ordering from './ordering.ts';
+import { windowUsed } from '../../worker/src/pace.ts';
 import * as sizes from './sizes.ts';
 import * as predictions from './predictions.ts';
 import * as reviewroom from './reviewroom.ts';
 import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
-import { compare, deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
+import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
 import { measuredMb, plannerCapacity } from './room.ts';
 import { db, inOneStep, mergePending, once, planChange, prepared, scrub } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
@@ -646,8 +647,10 @@ export const BOARD_CALL = (job: string) =>
   `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id))`;
 // The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
 export const FOLLOW_THROUGH = (job: string) => `exists (select 1 from followthrough_checks f where f.job = ${job}.id)`;
+// The ids a job still waits for, in id order. Ids only: a jobs row around each would read its brief and report, and on
+// stale planner statistics every job's row.
 export const outstandingWaits = (job: number) =>
-  prepared(redraws.query(`select * from jobs where id in (${outstanding('$job')}) order by id`, '$job')).all({ job });
+  prepared(redraws.query(outstanding('$job'), '$job')).all({ job }) as { id: number }[];
 // A planner snapshot reads the wait edges once against the same resolved redraw relation.
 export function outstandingWaitsByJob(jobIds: number[]) {
   const rows = prepared(
@@ -1042,7 +1045,8 @@ export const findJob = (id: number, t = now()) =>
 // Jobs as listJobs words them, those `where` picks (an SQL condition on j, which may name $now and the named values
 // `values` gives), newest first. The projects view's (projects.ts) carry their thread and whether they're a check.
 // (values)
-// Each names its code, as its after and each of its waits do.
+// Each names its code, as its after and each of its waits do. Its waits come by their ids first, then each job by its id:
+// on stale planner statistics a `where w.id in (…)` scans every job's row for each job listed.
 // Each card it waits on, and its own (request_shown), says whether it's on the desk phone now (shown).
 // and, held, the work it waits to go live (holds; its own: request_holds).
 type Listed = {
@@ -1079,8 +1083,8 @@ export function jobRows(where: string, t = now(), values: Record<string, string 
     ${loop('j.')} review, j.status = 'queued' and j.session is not null paused,
     case when j.status = 'queued' and j.not_before > $now then j.not_before end until, ${READY} and ${HOLD_LETS} ready,
     a.agent after_agent, a.title after_title, a.code after_code, ${whereIs('a')} after_state,
-    (select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent, 'title', w.title, 'state', ${WAIT_STATE})) from jobs w
-      where w.id in (${outstanding('j.id')})) waits,
+    (select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent, 'title', w.title, 'state', ${WAIT_STATE}))
+      from (${outstanding('j.id')}) o cross join jobs w on w.id = o.id) waits,
     ${CARD_COLUMNS}
   from jobs j left join requests q on q.id = j.request left join jobs a on a.id = j.after
   -- listJobs: the latest finished from the newest down (+status: not through the state's index, which holds every done job)
@@ -1301,6 +1305,7 @@ function claimable(
   probe: boolean,
   kind?: string,
   room?: number,
+  yielding: number[] = [],
 ) {
   const ready = db
     .prepare(`select id, engine || ':' || coalesce(cli, engine) runner from seats where ${SEAT_READY}`)
@@ -1308,8 +1313,10 @@ function claimable(
   // The jobs it could take, then the first of them in the shared order (ordering.claimOrder).
   const candidates = db
     .prepare(
-      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${BOARD_CALL('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare
-    from jobs j where j.status = 'queued' and j.not_before <= $now
+      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${BOARD_CALL('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
+      j.status = 'running' yielding
+    from jobs j where (j.status = 'queued' or j.status = 'running' and j.id in (select value from json_each($yielding)))
+    and j.not_before <= $now
     and ($kind is null and (kind != 'chat' or j.engine != 'claude') or kind = $kind)
     and (${seatTakes('$seat', '$cli')}
       or ${FALLS_BACK} and j.agent in (select value from json_each($fallbacks))
@@ -1320,6 +1327,7 @@ function claimable(
     .all({
       engine,
       seat,
+      yielding: JSON.stringify(yielding),
       now: now(),
       kind: kind ?? null,
       util,
@@ -1331,7 +1339,7 @@ function claimable(
       fallbacks: JSON.stringify(models.fallingBackTo(engine, cli)),
       readyRunners: JSON.stringify(ready.map(r => r.runner)),
       readySeats: JSON.stringify(ready.map(r => r.id)),
-    }) as (Claimable & { spare: number })[];
+    }) as (Claimable & { spare: number; yielding: number })[];
   // (below the room line, a job not measured yet doesn't fit; an expedited one starts anyway, and runs make room for it)
   return room === undefined ? candidates : candidates.filter(j => j.expedite || (measuredMb(j.id) ?? Infinity) <= room);
 }
@@ -1348,41 +1356,58 @@ function inClaimOrder(
   // call 118).
   const expedited = fits.filter(j => j.expedite).sort((a, b) => a.id - b.id);
   if (expedited.length) return expedited;
-  const plan = ordering.current(),
-    key = (j: Claimable) => ordering.key(j.id, j.board, plan.timings);
-  const running = db.prepare("select kind from jobs where status = 'running' and seat = ?").all(seat) as Pick<
+  const plan = ordering.current();
+  return claimOrderOn(seat, engine, pacedUntil, plan, kind === 'chat' ? [] : freedRoom(plan))(fits);
+}
+
+// Room a pause freed goes to its waiter while it can start, on whichever engine, before anything after it in the base
+// order (spare work too). The intercom has its own slot.
+function freedRoom(plan: ReturnType<typeof ordering.current>) {
+  return (
+    db
+      .prepare(
+        redraws.query(`select j.id, j.kind, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}
+        and j.id in (select room_for from jobs where status = 'queued' and room_for is not null)`),
+      )
+      .all({ now: now(), ...letsParams() }) as Claimable[]
+  ).filter(w => plan.eligible(w.id) && seatReadyFor(w.id, now(), null, () => plan));
+}
+
+// The claim's order on one seat, its reads made once: makesRoom orders the seat's work again for every run that might
+// yield (yielding: that run leaves the seat's running set).
+function claimOrderOn(
+  seat: string,
+  engine: string,
+  pacedUntil: number | undefined,
+  plan: ReturnType<typeof ordering.current>,
+  freedFor: Claimable[],
+) {
+  const key = (j: Claimable) => ordering.key(j.id, j.board, plan.timings);
+  const running = db.prepare("select id, kind from jobs where status = 'running' and seat = ?").all(seat) as (Pick<
     Claimable,
     'kind'
-  >[];
+  > & { id: number })[];
+  const limit = plannerCapacity()?.seatRuns[engine] ?? Infinity;
   const base = ordering.claimOrder(plan.timings);
-  const order = reviewroom.claimOrder<Claimable>(
-    running,
-    plannerCapacity()?.seatRuns[engine] ?? Infinity,
-    base,
-    j => key(j).latestStart !== null,
-  );
-  // Room a pause freed goes to its waiter while it can start, on whichever engine, before anything after it in the
-  // base order (spare work too). The intercom has its own slot.
-  const freedFor =
-    kind === 'chat'
-      ? []
-      : (
-          db
-            .prepare(
-              redraws.query(`select j.id, j.kind, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}
-              and j.id in (select room_for from jobs where status = 'queued' and room_for is not null)`),
-            )
-            .all({ now: now(), ...letsParams() }) as Claimable[]
-        ).filter(w => plan.eligible(w.id) && seatReadyFor(w.id, now(), null, () => plan));
-  const eligible = fits.filter(
-    j =>
-      plan.eligible(j.id) &&
-      (j.spare || !spareOnly(j, key(j))) &&
-      pacedTakes(key(j), pacedUntil) &&
-      !freedFor.some(w => w.id !== j.id && base(w, j) < 0),
-  );
-  const needsRoom = eligible.some(j => !spareOnly(j, key(j)));
-  return eligible.filter(j => !needsRoom || !spareOnly(j, key(j))).sort(order);
+  return (fits: (Claimable & { spare: number })[], yielding: number | null = null) => {
+    const expedited = fits.filter(j => j.expedite).sort((a, b) => a.id - b.id);
+    if (expedited.length) return expedited;
+    const order = reviewroom.claimOrder<Claimable>(
+      running.filter(r => r.id !== yielding),
+      limit,
+      base,
+      j => key(j).latestStart !== null,
+    );
+    const eligible = fits.filter(
+      j =>
+        plan.eligible(j.id) &&
+        (j.spare || !spareOnly(j, key(j))) &&
+        pacedTakes(key(j), pacedUntil) &&
+        !freedFor.some(w => w.id !== j.id && base(w, j) < 0),
+    );
+    const needsRoom = eligible.some(j => !spareOnly(j, key(j)));
+    return eligible.filter(j => !needsRoom || !spareOnly(j, key(j))).sort(order);
+  };
 }
 
 function startRun(job: Job, seat: string) {
@@ -1628,29 +1653,62 @@ function readModels(): Record<string, { model?: string; effort?: string; autocom
 type InTheWay = { short: boolean; capped: string[] };
 type RoomRun = Claimable & Order & { engine: string; seat: string; followThrough: number };
 type RoomWaiter = Claimable & Order & { engine: string; seats: string[]; created: number };
+// Worked out once for every run's heartbeat while the worker's report, the queue and the seats stay as they are (on the
+// live server, as ordering.ts keeps its plan): each run sends one a minute, and each played every seat's claim again,
+// several seconds that held HQ (24 October).
+const ROOM_KEEP_MS = 20_000;
+let roomKept: { at: number; key: string; victims: Map<number, number> } | undefined;
 function makesRoom(id: number, room: InTheWay) {
   const t = now();
-  const expedited = expeditedRoom(room, t);
-  if (expedited) return expedited.get(id);
-  // (one plan for every waiter's seats and the order, made only when something waits on a paced seat or for room)
-  let made: ReturnType<typeof ordering.current> | undefined;
-  const planned = () => (made ??= ordering.current(t));
-  const seats = (db.prepare('select id from seats').all() as { id: string }[]).map(s => s.id);
-  const waiting = (
+  if (!ordering.live()) return roomFor(room, t).get(id); // (tests and scripts: every heartbeat reads afresh)
+  const key = JSON.stringify([
+    room,
     db
       .prepare(
-        redraws.query(
-          `select j.id, j.kind, j.engine, j.created, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}`,
-        ),
+        `select count(*) n, total(id) ids, total(julianday(created)) made, total(not_before) held, total(coalesce(room_for, 0)) freed,
+      total(expedite) expedited from jobs where status in ('queued', 'running')`,
       )
-      .all({ now: t, ...letsParams() }) as (Claimable & { engine: string; created: string })[]
-  )
-    .map(w => ({ ...w, seats: seats.filter(s => seatReadyFor(w.id, t, s, planned)) }))
+      .get(),
+    db.prepare("select group_concat(id || state || coalesce(pace, '') || coalesce(until, '')) seats from seats").get(),
+  ]);
+  if (!roomKept || roomKept.key !== key || Math.abs(t - roomKept.at) > ROOM_KEEP_MS)
+    roomKept = { at: t, key, victims: roomFor(room, t) };
+  return roomKept.victims.get(id);
+}
+function roomFor(room: InTheWay, t: number): Map<number, number> {
+  const expedited = expeditedRoom(room, t);
+  if (expedited) return expedited;
+  if (!room.short && !room.capped.length) return new Map();
+  const queued = db
+    .prepare(
+      redraws.query(
+        `select j.id, j.kind, j.engine, j.created, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}`,
+      ),
+    )
+    .all({ now: t, ...letsParams() }) as (Claimable & { engine: string; created: string })[];
+  if (!queued.length) return new Map();
+  const plan = ordering.current(t);
+  const running = roomRuns(plan);
+  const claims = roomClaims(
+    t,
+    plan,
+    running.map(v => v.id),
+  );
+  const waiting = queued
+    .map(w => ({ ...w, seats: claims.seats.filter(s => claims.order(s).some(j => j.id === w.id)) }))
     .filter(w => w.seats.length && (room.short || w.seats.every(s => room.capped.includes(s))));
-  if (!waiting.length) return undefined;
-  const plan = planned(),
-    key = (j: { id: number; board: number | boolean }) => ordering.key(j.id, j.board, plan.timings);
-  const running = (
+  if (!waiting.length) return new Map();
+  const key = (j: { id: number; board: number | boolean }) => ordering.key(j.id, j.board, plan.timings);
+  const ahead = waiting
+    .map(w => ({ ...w, ...key(w), created: Date.parse(w.created) }))
+    .sort(ordering.claimOrder(plan.timings));
+  return roomVictims(ahead, running, room, t, (w, v) =>
+    w.seats.some(s => (s === v.seat || !room.capped.includes(s)) && claims.order(s, v.id)[0]?.id === w.id),
+  );
+}
+
+function roomRuns(plan: ReturnType<typeof ordering.current>) {
+  return (
     db
       .prepare(
         `select j.id, j.kind, j.downtime, j.engine, j.seat, ${BOARD_CALL('j')} board, ${FOLLOW_THROUGH('j')} followThrough
@@ -1665,12 +1723,76 @@ function makesRoom(id: number, room: InTheWay) {
       board: number;
       followThrough: number;
     }[]
-  ).map(v => ({ ...v, ...key(v) }));
-  const ahead = waiting
-    .filter(w => plan.eligible(w.id))
-    .map(w => ({ ...w, ...key(w), created: Date.parse(w.created) }))
-    .sort(compare);
-  return roomVictims(ahead, running, room, t).get(id);
+  ).map(v => ({ ...v, ...ordering.key(v.id, v.board, plan.timings) }));
+}
+
+// Read the same candidates and order as a normal claim after freeing capacity. A proposed victim joins the queue
+// and leaves its seat's running set, so a review preference cannot give the place straight back to it. Each ready
+// seat's candidates (with every run that might yield) and its order's reads are read once; a seat's order with one run
+// yielding (none: as it stands) is played when asked, once.
+function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielders: number[]) {
+  const freed = freedRoom(plan);
+  const onSeat = new Map(
+    readySeats(t).map(s => {
+      const fits = claimable(s.id, s.engine, s.cli, s.util, false, undefined, undefined, yielders).filter(
+        j => j.kind !== 'chat',
+      );
+      return [
+        s.id,
+        {
+          fits,
+          order: claimOrderOn(s.id, s.engine, s.pacedUntil ?? undefined, plan, freed),
+          played: new Map<number | null, Claimable[]>(),
+        },
+      ] as const;
+    }),
+  );
+  const order = (seat: string, yielding: number | null = null): Claimable[] => {
+    const s = onSeat.get(seat);
+    if (!s) return [];
+    if (!s.played.has(yielding))
+      s.played.set(
+        yielding,
+        s.order(
+          s.fits.filter(j => !j.yielding || j.id === yielding),
+          yielding,
+        ),
+      );
+    return s.played.get(yielding)!;
+  };
+  return { seats: [...onSeat.keys()], order };
+}
+
+// The ready seats as a claim reads them: how much of its window each has used, and until when it's paced.
+function readySeats(t: number) {
+  const seats = db
+    .prepare(
+      `select id, engine, coalesce(cli, engine) cli, util, resets, week, week_resets,
+      iif(pace is null or week_resets <= $now, null, week_resets) pacedUntil from seats where ${SEAT_READY}`,
+    )
+    .all({ now: t }) as {
+    id: string;
+    engine: string;
+    cli: string;
+    util: number | null;
+    resets: number | null;
+    week: number | null;
+    week_resets: number | null;
+    pacedUntil: number | null;
+  }[];
+  return seats.map(s => ({
+    ...s,
+    util:
+      windowUsed(
+        {
+          util: s.util ?? undefined,
+          resets: s.resets ?? 0,
+          week: s.week ?? undefined,
+          weekResets: s.week_resets ?? 0,
+        },
+        t,
+      ) ?? 1,
+  }));
 }
 
 // An expedited job waiting for room takes it from the latest-started work in its way, one run at a time; that run yields
@@ -1696,13 +1818,21 @@ function expeditedRoom(room: InTheWay, t: number) {
   return run && new Map([[run.id, waiter.id]]);
 }
 
-function roomVictims(waiting: RoomWaiter[], running: RoomRun[], room: InTheWay, t: number) {
+function roomVictims(
+  waiting: RoomWaiter[],
+  running: RoomRun[],
+  room: InTheWay,
+  t: number,
+  startsAfterYield: (waiter: RoomWaiter, victim: RoomRun) => boolean,
+) {
   const victims = new Map<number, number>();
   const reviewSeats = new Set<string>();
   for (const w of waiting) {
     // (with a seat of its own free, any run's pause frees the slot or memory it waits for; else only one on its seat)
     const open = w.seats.some(s => !room.capped.includes(s));
-    const candidates = running.filter(r => !victims.has(r.id) && (open || w.seats.includes(r.seat)));
+    const candidates = running.filter(
+      r => !victims.has(r.id) && (open || w.seats.includes(r.seat)) && startsAfterYield(w, r),
+    );
     const limit = plannerCapacity(t)?.seatRuns[w.engine] ?? Infinity;
     const reviewSeat = w.seats.find(
       s =>

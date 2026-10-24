@@ -80,7 +80,8 @@ services:
     # Not on default, where the worker is: a job could open ws://voice:8080 itself, without the board's session (which
     # only Caddy checks), and speak as the board. Its own network has Caddy and the coordinator (and the internet).
     # It is also the only way from Caddy to the coordinator (login challenges, platform/coordinator/src/auth.ts).
-    # The support chat's phone routes it reaches through Caddy, at caddy:8081 (infra/products.py).
+    # The care deployments' phone routes it reaches through Caddy, at caddy:8081/<slug> (infra/products.py: CARE_ENGINES
+    # and each one's CARE_PHONE_TOKEN_<SLUG>).
     networks: [voice]
   worker:
     build:

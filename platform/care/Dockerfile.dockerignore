@@ -1,6 +1,7 @@
-# The support chat's image (platform/care/Dockerfile) is built from the repo's root: this file is BuildKit's ignore for
+# A care deployment's image (platform/care/Dockerfile) is built from the repo's root: this file is BuildKit's ignore for
 # that Dockerfile alone (the root .dockerignore stays the coordinator's). It takes only what the Dockerfile copies, the
-# engine and the company's plug-in, without their tests, demo or eval
+# engine and a plug-in folder, without their tests, demo or eval. It can't name the deployment's own folder (the
+# PLUGIN build argument), so it lets in every product's plug-in parts and nothing else of a product: never an app/
 *
 !platform/care/package.json
 !platform/care/src
@@ -13,17 +14,17 @@
 !shared/holidays/holidays.js
 !shared/ordernumber/ordernumber.js
 !kits
-!products/care/care.ts
-!products/care/package.json
-!products/care/src
-!products/care/public
-!products/care/kb
+!products/*/care.ts
+!products/*/package.json
+!products/*/src
+!products/*/public
+!products/*/kb
 # each app's own words
-!products/care/apps
+!products/*/apps
 **/node_modules
 **/*.test.ts
 **/*.test.js
 **/*.test.mjs
 platform/care/demo
-products/care/demo
-products/care/eval
+products/*/demo
+products/*/eval

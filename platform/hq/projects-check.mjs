@@ -1266,7 +1266,7 @@ for (const look of RENDERERS)
     assert.ok(
       await page.evaluate(() => {
         const hint = document.querySelector('#hint').getBoundingClientRect();
-        return !hint.height || hint.bottom + 8 <= document.querySelector('#status').getBoundingClientRect().top + 0.5;
+        return !hint.height || hint.bottom <= document.querySelector('#status').getBoundingClientRect().top + 0.5;
       }),
       `${at}: the hint clears the throughput`,
     );

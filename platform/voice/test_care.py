@@ -30,7 +30,7 @@ STARTED = (200, {'conversation': 41, 'helper': 'poppy', 'langs': ['nl', 'de', 'e
 # the opening in the number's first language, and English after it in its AI line and "English is fine too." only
 OPENING = {lang: [WORDS[lang][k] for k in ('ai', 'transcript', 'ask')] for lang in WORDS}
 AFTER = [WORDS['en']['ai'], WORDS['en']['fine']]
-# HQ's languages for the opening, by the caller's number (brand.yaml phoneLine.languages)
+# HQ's languages for the opening, by the caller's number (a brand.yaml phoneLines entry's languages)
 LANGS = {'nl': ['nl', 'en'], 'de': ['de', 'en'], 'en': ['en']}
 POPPY = [('english', 'bill_boerst')]  # (Pocket TTS in Poppy's own voice; Dutch and German go through Piper's native ones)
 # (Poppy is she/her in the messages below)
@@ -43,8 +43,8 @@ class CareCall(Juno):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.care = CareService(STARTED)
-        self.saved = {k: getattr(server, k) for k in ('CARE_URL', 'CARE_TOKEN', 'CARE_CALL_SECONDS', 'hq', 'Call')}
-        server.CARE_URL, server.CARE_TOKEN = self.care.url, 'care-test-token'
+        self.saved = {k: getattr(server, k) for k in ('CARE_ENGINES', 'CARE_CALL_SECONDS', 'hq', 'Call')}
+        server.CARE_ENGINES = {'care': {'url': self.care.url, 'token': 'care-test-token', 'calls': 2}}
         self.hq, self.calls, self.ws = [], [], None
         server.hq = self.coordinator
         made = server.Call
@@ -425,13 +425,74 @@ class CareCall(Juno):
         self.assertEqual(SPOKEN[-2:], ['Je pakket is onderweg.', 'Morgen is het er.'])
 
     async def test_a_third_care_call_at_once_is_closed_at_once(self):
-        server.CARE_LIVE.update({'CA1', 'CA2'})
+        server.CARE_LIVE.update({'CA1': 'care', 'CA2': 'care'})
         await self.dial()
         await self.hung_up()
         self.assertTrue(self.ws.closed)
         self.assertEqual(self.care.asked, [], 'care is never asked')
         self.assertEqual([p for p, _, _ in self.hq], ['call-ticket'])
-        self.assertEqual(server.CARE_LIVE, {'CA1', 'CA2'})
+        self.assertEqual(server.CARE_LIVE, {'CA1': 'care', 'CA2': 'care'})
+
+    def other(self, calls=2):
+        """A second care deployment, shop-two, with its own stand-in care that answers its own token alone."""
+        other = CareService(STARTED, token='shop-two-token')
+        self.addCleanup(other.stop)
+        server.CARE_ENGINES['shop-two'] = {'url': other.url, 'token': 'shop-two-token', 'calls': calls}
+        return other
+
+    async def test_the_tickets_deployment_takes_the_call_at_its_own_address_with_its_own_token(self):
+        other = self.other()
+        self.ticket['engine'] = 'shop-two'
+        await self.dial()
+        self.assertEqual(server.CARE_LIVE, {SID: 'shop-two'})
+        await self.say_first('Waar is mijn pakket?')
+        await self.ws.close()
+        await self.hung_up()
+        # (each stand-in answers its own token alone: care's would have been refused there)
+        self.assertEqual(other.paths(), ['/phone/start', '/phone/turn', '/phone/end'])
+        self.assertEqual(self.care.asked, [], 'care is never asked')
+        self.assertEqual(server.CARE_LIVE, {})
+
+    async def test_a_ticket_without_a_deployment_is_cares(self):
+        other = self.other()
+        await self.dial()
+        self.assertEqual(server.CARE_LIVE, {SID: 'care'})
+        await self.ws.close()
+        await self.hung_up()
+        self.assertEqual(self.care.paths(), ['/phone/start', '/phone/end'])
+        self.assertEqual(other.asked, [])
+
+    async def test_calls_at_once_are_counted_per_deployment(self):
+        other = self.other(calls=1)
+        server.CARE_LIVE.update({'CA1': 'care', 'CA2': 'care'})
+        self.ticket['engine'] = 'shop-two'
+        await self.dial()
+        self.assertFalse(self.ws.closed, 'care at its two: shop-two still takes its first')
+        await self.ws.close()
+        await self.hung_up()
+        server.CARE_LIVE['CA3'] = 'shop-two'
+        self.calls.clear()
+        await self.dial()
+        await self.hung_up()
+        self.assertTrue(self.ws.closed, 'shop-two at its one')
+        self.assertEqual(other.paths(), ['/phone/start', '/phone/end'], 'the second is never asked')
+        self.assertEqual(self.care.asked, [])
+
+    async def test_an_unknown_deployment_or_one_without_its_address_or_token_is_refused(self):
+        server.CARE_ENGINES.update({'no-token': {'url': self.care.url, 'token': '', 'calls': 2},
+                                    'no-url': {'url': '', 'token': 'care-test-token', 'calls': 2}})
+        for engine, why in (('elsewhere', 'no such deployment'), ('no-token', 'no url or token'),
+                            ('no-url', 'no url or token'), (7, 'no such deployment')):
+            with self.subTest(engine):
+                self.ticket['engine'] = engine
+                with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as log:
+                    await self.dial()
+                    await self.hung_up()
+                self.assertTrue(self.ws.closed)
+                self.assertEqual(self.care.asked, [], 'care is never asked')
+                self.assertIn(f'call: a care call on {engine!r} refused ({why}): HQ plays its message', log.getvalue())
+                self.assertNotIn('care-test-token', log.getvalue(), 'never a token')
+                self.assertEqual(server.CARE_LIVE, {})
 
     async def test_care_refusing_the_start_closes_the_stream_without_phone_done(self):
         for refusal in ((503, {'why': 'cap'}), (500, {})):
@@ -444,7 +505,7 @@ class CareCall(Juno):
                 self.assertEqual(self.care.paths(), ['/phone/start'])
                 self.assertEqual(SPOKEN, [], 'nothing said: HQ plays its recorded message')
                 self.assertNotIn('phone-done', [p for p, _, _ in self.hq])
-                self.assertEqual(server.CARE_LIVE, set())
+                self.assertEqual(server.CARE_LIVE, {})
 
     async def test_a_care_call_ends_at_its_time_limit_without_phone_done(self):
         server.CARE_CALL_SECONDS = 0.5
@@ -475,6 +536,37 @@ class CareCall(Juno):
         await self.hung_up()
         self.assertEqual(list(Path(self.tmp.name).iterdir()), [], 'nothing on /data/calls or /data/live after it')
         self.assertNotIn('call-end', [p for p, _, _ in self.hq])
+
+
+class Deployments(unittest.TestCase):
+    """CARE_ENGINES and the deployments' tokens, as the line reads them at its start."""
+    def test_each_deployment_has_its_url_calls_and_token_and_a_malformed_one_is_left_out(self):
+        listed = json.dumps({'care': {'url': 'http://caddy:8081/care/', 'calls': 3, 'token': 'CARE_PHONE_TOKEN_CARE'},
+                             'shop-two': {'url': 'http://caddy:8081/shop-two', 'token': 'SHOP_TWO_TOKEN'},
+                             'no-token': {'url': 'http://caddy:8081/x', 'token': 'UNSET_TOKEN'},
+                             'odd-url': {'url': 5, 'token': 'T'}, 'no-calls': {'url': 'http://caddy:8081/y', 'calls': 0, 'token': 'T'},
+                             'odd-calls': {'url': 'http://caddy:8081/z', 'calls': '2', 'token': 'T'},
+                             'unnamed': {'url': 'http://caddy:8081/u'}, 'odd-name': {'url': 'http://caddy:8081/v', 'token': 'a b'},
+                             'odd': 'http://caddy:8081/odd'})
+        env = {'CARE_PHONE_TOKEN_CARE': 'care-secret', 'SHOP_TWO_TOKEN': 'shop-two-secret', 'OTHER': 'kept'}
+        with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as log:
+            got = server.care_engines(listed, env)
+        self.assertEqual(got, {'care': {'url': 'http://caddy:8081/care', 'calls': 3, 'token': 'care-secret'},
+                               'shop-two': {'url': 'http://caddy:8081/shop-two', 'calls': 2, 'token': 'shop-two-secret'},
+                               'no-token': {'url': 'http://caddy:8081/x', 'calls': 2, 'token': ''}})
+        self.assertEqual(env, {'OTHER': 'kept'}, 'the tokens are taken out of the environment children inherit')
+        self.assertEqual(log.getvalue().splitlines(),
+                         [f'care: CARE_ENGINES: {n!r} left out (not {{"url": ..., "calls": n, "token": NAME}})'
+                          for n in ('odd-url', 'no-calls', 'odd-calls', 'unnamed', 'odd-name', 'odd')])
+        self.assertNotIn('secret', log.getvalue())
+
+    def test_no_map_is_no_deployments(self):
+        with unittest.mock.patch('sys.stdout', new_callable=io.StringIO) as log:
+            self.assertEqual(server.care_engines(None, {}), {})
+            self.assertEqual(log.getvalue(), '', 'unset: quietly none, as a line with no care')
+            for listed in ('not json', '["care"]'):
+                self.assertEqual(server.care_engines(listed, {}), {})
+        self.assertEqual(log.getvalue().count('CARE_ENGINES is not a JSON object'), 2)
 
 
 if __name__ == '__main__':

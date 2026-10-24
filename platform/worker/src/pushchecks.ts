@@ -25,6 +25,7 @@ export type CheckSpec<Name extends string = string> = {
 // (worker.ts checking); said: its outcome in the worker's log.
 export type CheckOptions<Name extends string = string> = {
   runs: string;
+  signal?: AbortSignal;
   keep: (checks: Checks) => void;
   watch: (pid: number, stopped: string[]) => void;
   unwatch: (pid: number) => void;
@@ -43,19 +44,24 @@ export async function runChecks<Name extends string>(
   specs: CheckSpec<Name>[],
   o: CheckOptions<Name>,
 ) {
-  const keep = () => o.keep(checks);
+  const keep = () => {
+    if (!o.signal?.aborted) o.keep(checks);
+  };
   inChecks.set(job, keep);
   keep();
   try {
     const outcomes = await Promise.all(
       specs.map(spec => {
-        const one = () => runCheck((checks.runs[spec.name] ??= { stopped: [] }), spec, keep, o);
+        const one = () => {
+          o.signal?.throwIfAborted();
+          return runCheck((checks.runs[spec.name] ??= { stopped: [] }), spec, keep, o);
+        };
         return spec.turn ? spec.turn(one) : one();
       }),
     );
     return { ...checks.body, ...Object.fromEntries(specs.map((spec, i) => [spec.name, outcomes[i]])) };
   } finally {
-    inChecks.delete(job);
+    if (inChecks.get(job) === keep) inChecks.delete(job);
   }
 }
 
@@ -79,6 +85,7 @@ async function runCheck<Name extends string>(
   }
   // (a lent launch's limit and that it's the lent one go in the record, so a reload keeps them whatever the spec says now)
   const start = (launch: () => Launched, lent?: { ms: number }) => {
+    o.signal?.throwIfAborted();
     Object.assign(check, { launched: launch(), began: Date.now(), ms: lent?.ms, lent: !!lent, stopped: [] });
     keep();
   };
@@ -87,6 +94,7 @@ async function runCheck<Name extends string>(
     else start(spec.launch);
   }
   for (;;) {
+    o.signal?.throwIfAborted();
     const ended = await watchLaunch(spec.name, check, o, wait, tracked);
     if (!check.lent || ended.passed !== null) return ended;
     o.said(spec.name, 'had no verdict from the lent machine, so it runs here');
@@ -120,6 +128,7 @@ async function watchLaunch<Name extends string>(
         );
   try {
     for (;;) {
+      o.signal?.throwIfAborted();
       const how = howEnded(o.runs, l);
       if (how) return outcomeOf(name, check, how, o);
       if (!(await tracked(l))) {

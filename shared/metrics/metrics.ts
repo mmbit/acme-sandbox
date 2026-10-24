@@ -504,14 +504,17 @@ const speculative = (headers: Headers) => PURPOSE_HEADERS.some(name => SPECULATI
 // pages (a reload or a step inside it), shop for the shop's other pages on the same host, ai-<assistant> (aiReferral:
 // its referrer or the page's utm_source), search-<engine>, a social network by name (SOCIAL_HOSTS), other for any
 // other site, or none without a referrer. A shelf is the app at <shop host><X-Forwarded-Prefix> (infra/products.py).
-export function loadSource(headers: Headers, url: URL | string): string {
+// ownPage: which paths on the host are the app's own, for one whose host has other apps' shelves under it (the shop's
+// front at the root); by default those under its prefix, or every path without one.
+export function loadSource(headers: Headers, url: URL | string, ownPage?: (path: string) => boolean): string {
   const referrer = headers.referer,
     host = referrerHost(referrer),
     own = typeof headers.host === 'string' ? referrerHost(`http://${headers.host}`) : null;
   if (host && host === own) {
     const prefix = String(headers['x-forwarded-prefix'] ?? ''),
-      path = URL.parse(String(referrer))!.pathname;
-    return !prefix || path === prefix || path.startsWith(`${prefix}/`) ? 'stall' : 'shop';
+      path = URL.parse(String(referrer))!.pathname,
+      ours = ownPage ?? ((p: string) => !prefix || p === prefix || p.startsWith(`${prefix}/`));
+    return ours(path) ? 'stall' : 'shop';
   }
   const assistant = aiReferral(referrer, url);
   if (assistant) return assistant;

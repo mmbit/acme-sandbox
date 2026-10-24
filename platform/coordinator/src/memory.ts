@@ -62,8 +62,9 @@ redacted('memory', 'title', 'body');
 // row with its text and vector.
 db.exec('create index if not exists memory_source on memory (source)');
 // And ranks its words' hits by whose they are (ranked()): from this one, as `shared` is the row's last column, after the
-// text and the vector.
-db.exec('create index if not exists memory_whose on memory (id, source, agent, shared)');
+// text and the vector. With each one's document: a candidate is judged on the index, and only a hit's row is read.
+once('2026-10-24-memory-whose-doc', 'drop index if exists memory_whose');
+db.exec('create index if not exists memory_whose on memory (id, source, agent, shared, doc)');
 
 // The shared files, and why. Out, on purpose: mail (customer data, and outside text); products/ and code
 // (grep finds them better, and a product folder can hold order data); people/ profiles (each agent is given its own; the
@@ -499,14 +500,16 @@ async function ranked(q: string, reader: Reader, n: number, scope: Scope = 'all'
   // Meaning: the agent's own chunks and the shared ones (files, the board's calls) only, like the words, nearest first.
   if ('v' in m) apart(vs.filter(mine).map(c => ({ id: c.id, source: c.source, d: dot(c.v, m.v) })).filter(c => c.d >= NEAR).sort((a, b) => b.d - a.d));
   // Best first, but the archive after every live hit, however well it matches: an agent sees the current answer first,
-  // and the archived one (history) only below it.
-  const get = db.prepare('select id, doc, agent, source, title, pointer, body, note, shared from memory where id = ?'), seen = new Set<string>(), hits: (Row & { score: number })[] = [];
-  const old = (r: Row) => +(r.source === ARCHIVE);
-  const rows = [...score].map(([id, s]) => ({ ...get.get(id) as Row, score: s })).filter(r => r.id).sort((a, b) => old(a) - old(b) || b.score - a.score);
+  // and the archived one (history) only below it. A candidate is judged on the index, and only a hit's row is read.
+  const light = db.prepare('select id, doc, agent, source, shared from memory indexed by memory_whose where id = ?');
+  const whole = db.prepare('select id, doc, agent, source, title, pointer, body, note, shared from memory where id = ?');
+  const seen = new Set<string>(), hits: (Row & { score: number })[] = [], old = (r: { source: string }) => +(r.source === ARCHIVE);
+  const rows = [...score].map(([id, s]) => ({ ...light.get(id) as Pick<Row, 'id' | 'doc' | 'agent' | 'source' | 'shared'>, score: s }))
+    .filter(r => r.id).sort((a, b) => old(a) - old(b) || b.score - a.score);
   for (const r of rows) {
     const key = scope === 'intercom' ? String(r.id) : r.doc;
     if (seen.has(key) || !mine(r) || !live(r, reader)) continue;
-    seen.add(key); hits.push(r);
+    seen.add(key); hits.push({ ...whole.get(r.id) as Row, score: r.score });
     if (hits.length >= n) break;
   }
   // What hq search says when meaning didn't rank everything: no model, or the first index still being built.

@@ -22,9 +22,12 @@ export const complete = {
         error = JSON.parse(answer.body).error ?? undefined;
       } else {
         const [checkout, ...readable] = args.slice(1);
-        let checked = await gates(checkout, readable, true);
-        if (checked.code === 2) checked = await gates(checkout, readable, false);
-        error = checked.code === 0 ? undefined : checked.output || `npm run gates exited ${checked.code}`;
+        const helper = await gates(checkout, readable, true);
+        const checked = helper.code === 2 ? await gates(checkout, readable, false) : helper;
+        if (checked.code !== 0) {
+          const output = checked.output || `npm run gates exited ${checked.code}`;
+          error = checked === helper ? output : `Helper attempt:\n${helper.output}\nLocal attempt:\n${output}`;
+        }
       }
     } catch (failure) {
       error = (failure as Error).message || String(failure);

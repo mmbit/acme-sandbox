@@ -1,7 +1,7 @@
 // node --test src/owed.test.ts   (the harness's test company; products hello (Bolt's) and yarn (Wren's))
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('owed', { before: repo => {
@@ -50,9 +50,9 @@ const ownersOpen = (agent: string) => (h.jobs.listJobs() as any[]).filter(j => j
 // The board's review notes on a product's preview (saved by the review overlay), sent from HQ and routed by the CEO's
 // check to the product's owner (or to `to`): the job they went to
 let note = 0;
-const notes = async (slug: string, to?: string) => {
+const notes = async (slug: string, to?: string, thread?: string) => {
   const id = (feedback.saveNote(slug, `${slug}.preview.x`, { note: `note ${++note}` }) as { id: number }).id;
-  return routed((await h.board('/api/review/send', { slug, ids: [id] })).body.job, to).job;
+  return routed((await h.board('/api/review/send', { slug, ids: [id] })).body.job, to, thread).job;
 };
 
 test("the owner's task of notes holds the return, and a card answer before it starts joins it", async () => {
@@ -441,4 +441,34 @@ test("a card that brings work back, answered with notes in review mode, closes a
   const again = await ask(await work('wren'), { back: ['yarn'] });
   await answer(again, 'Good now');
   assert.ok((await open('yarn')).job, "Good now reaches the owner's return");
+});
+
+test("a return holder before a colleague's notes task in its thread runs first and leaves the return open", async () => {
+  const file = `${repo}/company/projects.yaml`, previous = readFileSync(file, 'utf8');
+  const threadends = await import('./threadends.ts');
+  try {
+    writeFileSync(file, 'planning: threads\nprojects:\n  - { id: due, name: Due, owner: juno }\n');
+    threadends.watch();
+    const thread = h.dueThread();
+    const first = await notes('yarn', 'wren', thread);
+    const task = await notes('yarn', 'bolt', thread);
+    assert.deepEqual(h.jobs.outstandingWaits(first), [], 'no merge wait back to the later task');
+    assert.equal(job(task).ready, 0, 'the colleague waits for the holder in thread order');
+    const holder = await run(first);
+    await ask(holder, { back: ['yarn'] });
+    assert.equal((await open('yarn')).job, first, 'the later task still owes its feedback');
+    await h.finish(holder);
+    owed.sweep();
+    assert.equal((await open('yarn')).job, first, 'no return while the colleague is still on it');
+    await end(task);
+    h.storedPr(8647, task, 'open');
+    owed.sweep();
+    const back = (await open('yarn')).job;
+    assert.notEqual(back, first);
+    assert.deepEqual(h.jobs.outstandingWaits(back).map(w => w.id), [task], 'the later return waits for the colleague to merge');
+    assert.match(brief(back), /note \d+/);
+  } finally {
+    writeFileSync(file, previous);
+    threadends.watch();
+  }
 });

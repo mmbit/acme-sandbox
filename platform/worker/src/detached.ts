@@ -6,6 +6,7 @@
 // supervise.py, which writes its exit code into the run's marker, pid-<pid>-<start>.
 // What can still cut a run is a stop of the whole container (a change to its image or settings) or a crash of the
 // server: the run is then handed back, and its next run is told which of its processes were stopped (processesOf).
+import { assertOwned } from './ownership.ts';
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import {
   closeSync,
@@ -52,6 +53,7 @@ const marker = (runs: string, l: Launched) => `${runs}/pid-${l.pid}-${l.start}`;
 // stdin (the prompt) and the sign-in's fd 3 stay pipes: the CLI reads both to their end as it starts. One that can't
 // start (no pid) comes back with an empty start; its child's error event ends it.
 export function launch(runs: string, name: string, cmd: string, args: string[], o: SpawnOptions & { fd3?: boolean }) {
+  assertOwned();
   const out = `${runs}/${name}.out`,
     err = `${runs}/${name}.err`;
   const fds = [openSync(out, 'w', 0o600), openSync(err, 'w', 0o600)];
@@ -177,6 +179,7 @@ export type Checks = { body: Record<string, unknown>; spent: unknown; runs: Reco
 export type CheckRun = { launched?: Launched; began?: number; ms?: number; lent?: boolean; stopped: string[] };
 export const recordOf = (runs: string, job: number) => `${runs}/${job}.json`;
 export function keepRecord(runs: string, r: RunRecord) {
+  assertOwned();
   writeFileSync(`${recordOf(runs, r.job.id)}.new`, JSON.stringify(r), { mode: 0o600 });
   renameSync(`${recordOf(runs, r.job.id)}.new`, recordOf(runs, r.job.id));
 }

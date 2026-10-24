@@ -507,7 +507,7 @@ export function orderedFrom(p: Person) {
 
 // ---------------------------------------------------------------- the door on the guest desk
 // (view: a view-only share's, which asks for nothing; the pin's menu)
-// (German in each door's words, here to TESTER)
+// Each door's words (WORDS to TESTER) come in every language of the platform (language.ts)
 const WORDS = {
   en: (what: string, company: string, until: string) => ({
     title: `${what}, for your notes`,

@@ -4,7 +4,6 @@ import * as api from './api.ts';
 import { MAX_FILE_BYTES, fileToSend, isReadable, readText } from './files.ts';
 import { minute, plural, present, print, stop, text } from './output.ts';
 
-// (German among a page's languages)
 export const guest = {
   help: `
    hq guest <name> "title" <file.json>               ask a named outside colleague for things (never a customer; never email

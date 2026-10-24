@@ -10,7 +10,7 @@ export async function routingFixture() {
   const routing = await import('./routing.ts');
   // The check claimed (first in the claim's order on its agent's engine), every note it routes made a task for `to` (by
   // default the notes' owner: one owner's notes), and the check finished. The task, whose it is, and how.
-  const routed = (check: number, to?: string) => {
+  const routed = (check: number, to?: string, thread?: string) => {
     const claimed = jobs.claim(`routing-${check}`, jobs.findAgent(jobs.jobAgent(check)!)!.engine);
     assert.equal(claimed?.id, check, `check #${check} is claimed first`);
     const owner =
@@ -29,6 +29,7 @@ export async function routingFixture() {
       title: 'The notes’ work',
       prompt: task.text,
       queuedBy: me.agent,
+      thread,
     });
     task.take(job);
     jobs.finish(check, { status: 'done' });

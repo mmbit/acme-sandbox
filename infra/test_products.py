@@ -31,6 +31,7 @@ os.makedirs(os.path.join(root, 'infra'))
 shutil.copy(os.path.join(here, 'products.py'), os.path.join(root, 'infra'))
 shutil.copy(os.path.join(here, 'company.py'), os.path.join(root, 'infra'))
 shutil.copy(os.path.join(here, 'run_helpers.py'), os.path.join(root, 'infra'))
+shutil.copy(os.path.join(here, 'care_engines.py'), os.path.join(root, 'infra'))
 os.makedirs(os.path.join(root, 'company'))
 open(os.path.join(root, 'company', 'infra.env'), 'w').write('SERVER_NAME=testco\nSERVER=testco-1\nBACKUP_BUCKET=testco-backups\nCARE_COOKIES=natter,__Host-natter\n')   # a test company's
 os.makedirs(os.path.join(data, 'secrets'))
@@ -442,7 +443,7 @@ check('a changed key changes the env-hash label, so Compose recreates the contai
       before and compose['services']['product-shy']['labels'] != before)
 # 5. the support chat: the service, a live product and a preview with the chat, and
 # products that can't have it (front, the service itself, one that didn't opt in, one that wrote something other than true)
-product('care', status='preview', partner_env='test', needs={'secrets': ['printapi']})
+product('care', status='preview', partner_env='test', needs={'secrets': ['printapi']}, engine='care', chat=True)
 product('pebblet', status='live', domain='pebblet.shop', partner_env='live', needs={'secrets': ['printapi', 'stripe']}, care=True, name='Pebblet')
 product('sprig', status='preview', care=True, name="Sprig's")
 product('front', status='live', partner_env='test', needs={'secrets': []}, care=True, name='Testco')   # the shop's own pages
@@ -453,8 +454,9 @@ open(os.path.join(secret, 'CARE_ANTHROPIC_API_KEY'), 'w').write('sk-ant-api03-MO
 open(os.path.join(secret, 'CARE_EMAIL_API_KEY'), 'w').write('LETTERMINT-KEY-0123456789')
 compose, caddy, log = run()
 # the service is the platform's engine, every other product its own app/
-check("the service's image: the platform's engine, from the repo's root", compose['services']['product-care']['build']
-      == {'context': '..', 'dockerfile': 'platform/care/Dockerfile'})
+check("the service's image: the platform's engine, from the repo's root, with its own folder as the plug-in",
+      compose['services']['product-care']['build']
+      == {'context': '..', 'dockerfile': 'platform/care/Dockerfile', 'args': {'PLUGIN': 'products/care'}})
 kit_contexts = {'kits': os.path.join(root, 'kits'), 'shared': os.path.join(root, 'infra', 'generated', 'shared')}
 # the build contexts: the kits' folders and the product's own
 def build_contexts(slug):
@@ -550,15 +552,19 @@ check("the service's listener: on a network of its own, which only Caddy joins (
       svc['product-care']['networks'] == ['product-care'] and sorted(on_care) == ['caddy', 'product-care'])
 # the phone
 check("the voice line reaches the service's phone routes through Caddy's inside port, on no network of the service's",
-      svc['voice'] == {'environment': {'CARE_URL': 'http://caddy:8081', 'CARE_PHONE_TOKEN': '${CARE_PHONE_TOKEN:-}'}}
-      and svc['product-care']['environment']['CARE_PHONE_TOKEN'] == '${CARE_PHONE_TOKEN:-}')
+      svc['voice'] == {'environment': {'CARE_ENGINES': '{"care":{"url":"http://caddy:8081/care","calls":2,"token":"CARE_PHONE_TOKEN_CARE"}}',
+                                       'CARE_PHONE_TOKEN_CARE': '${CARE_PHONE_TOKEN_CARE:-}'}}
+      and svc['product-care']['environment']['CARE_PHONE_TOKEN'] == '${CARE_PHONE_TOKEN_CARE:-}')
 check("the phone token reaches no product and no other service, and no env file names it",
       sorted(n for n, v in svc.items() if 'CARE_PHONE_TOKEN' in json.dumps(v)) == ['product-care', 'voice']
       and not any('CARE_PHONE' in open(os.path.join(envs, f)).read() for f in os.listdir(envs)))
 phone_site = site(caddy, 'http://:8081')
-check("Caddy's inside port: plain http, /phone/* to the service's phone port, streamed, 404 for the rest, and no other site reaches 8081",
-      phone_site.startswith('http://:8081 {') and 'handle /phone/* {\n\t\treverse_proxy product-care:8081 {\n\t\t\tflush_interval -1' in phone_site
-      and 'handle {\n\t\trespond 404' in phone_site and caddy.count(':8081') == 2)
+check("Caddy's inside port: plain http, /care/phone/* to the service's phone port as /phone/*, streamed, 404 for the rest, "
+      "and no other site reaches 8081",
+      phone_site.startswith('http://:8081 {')
+      and '\thandle_path /care/* {\n\t\thandle /phone/* {\n\t\t\treverse_proxy product-care:8081 {\n\t\t\t\tflush_interval -1' in phone_site
+      and phone_site.count('respond 404') == 2 and phone_site.endswith('\thandle {\n\t\trespond 404\n\t}')
+      and caddy.count(':8081') == 2)
 pv, pub, sp = site(caddy, 'pebblet.preview.company.test'), site(caddy, 'pebblet.company.test'), site(caddy, 'sprig.preview.company.test')
 own, www, door = site(caddy, 'pebblet.shop'), shelf(caddy, 'www.company.test', 'fern'), shelf(caddy, 'front.preview.company.test', 'sprig')
 route = lambda block: block[block.index('handle /__care/*'):].split('\n\t}')[0] if 'handle /__care/*' in block else ''
@@ -637,7 +643,7 @@ check("every site strips a client's X-Care-App, and every way to a product drops
       all('request_header -X-Care-App' in site(caddy, h) for h in ['pebblet.company.test', 'pebblet.preview.company.test', 'care.preview.company.test', 'plum.company.test'])
       # (the phone's inside port carries no browser's cookies)
       and len(re.findall('reverse_proxy (product|preview)-', caddy)) - len(re.findall('reverse_proxy product-care:8080 {\n\t+header_up X-Care-App', caddy))
-          - caddy.count('reverse_proxy product-care:8081') ==
+          - caddy.count(':8081 {\n\t\t\t\tflush_interval -1') ==
           caddy.count('header_up Cookie `^(?:\\s*natter=[^;]*(?:;|$))+\\s*|;\\s*natter=[^;]*` ""')
           == caddy.count('header_up Cookie `^(?:\\s*__Host-natter=[^;]*(?:;|$))+\\s*|;\\s*__Host-natter=[^;]*` ""'))
 # the patterns as Caddy gets them (Go's RE2 and Python's re agree on these), on a product's way in: every copy goes, side
@@ -658,6 +664,72 @@ check("the cookie patterns drop every copy of pv, ps, pp and the chat's cookie, 
         ('pv=a;pv=b;pv=c', ''), ('natter=1; pv=2; __Host-natter=3; t=4', 't=4'), ('t=1; __Host-natter=a;__Host-natter=b', 't=1'),
         ('xpv=1; pv=2; anatter=3; b__Host-natter=4', 'xpv=1; anatter=3; b__Host-natter=4'), ('t=1; pvx=2', 't=1; pvx=2'),
         ('ps=a; pv=b; t=1; ps=c', 't=1'), ('pp=a; t=1; pp=b', 't=1')]))
+# a second care deployment, phone lines only: its own container, image, volume, network, token and path on 8081
+product('phone-desk', status='preview', engine='care', callsAtOnce=3, care=True, name='Desk')
+compose2, caddy2, log2 = run()
+svc2, desk = compose2['services'], compose2['services'].get('product-phone-desk', {})
+desk_env, care_env2 = envfile('phone-desk'), envfile('care')
+check('a second deployment: its own container from the engine, with its own folder as the plug-in',
+      desk.get('build') == {'context': '..', 'dockerfile': 'platform/care/Dockerfile', 'args': {'PLUGIN': 'products/phone-desk'}}
+      and svc2['product-care']['build']['args'] == {'PLUGIN': 'products/care'})
+check('...its own data volume and a network only Caddy joins',
+      desk.get('volumes') == ['product-phone-desk-data:/data'] and 'product-phone-desk-data' in compose2['volumes']
+      and desk.get('networks') == ['product-phone-desk']
+      and sorted(n for n, v in svc2.items() if 'product-phone-desk' in v.get('networks', [])) == ['caddy', 'product-phone-desk'])
+check("...its own phone token, by name, in its container and the voice line's alone",
+      desk['environment'].get('CARE_PHONE_TOKEN') == '${CARE_PHONE_TOKEN_PHONE_DESK:-}'
+      and svc2['product-care']['environment'].get('CARE_PHONE_TOKEN') == '${CARE_PHONE_TOKEN_CARE:-}'
+      and sorted(n for n, v in svc2.items() if 'CARE_PHONE_TOKEN_PHONE_DESK' in json.dumps(v)) == ['product-phone-desk', 'voice']
+      and sorted(n for n, v in svc2.items() if 'CARE_PHONE_TOKEN_CARE' in json.dumps(v)) == ['product-care', 'voice'])
+check('...in CARE_ENGINES with its address and its callsAtOnce, beside the chat\'s with the default 2',
+      json.loads(svc2['voice']['environment']['CARE_ENGINES'])
+      == {'care': {'url': 'http://caddy:8081/care', 'calls': 2, 'token': 'CARE_PHONE_TOKEN_CARE'},
+          'phone-desk': {'url': 'http://caddy:8081/phone-desk', 'calls': 3, 'token': 'CARE_PHONE_TOKEN_PHONE_DESK'}}
+      and svc2['voice']['environment'].get('CARE_PHONE_TOKEN_PHONE_DESK') == '${CARE_PHONE_TOKEN_PHONE_DESK:-}'
+      and sorted(svc2['voice']['environment']) == ['CARE_ENGINES', 'CARE_PHONE_TOKEN_CARE', 'CARE_PHONE_TOKEN_PHONE_DESK'])
+phone2 = site(caddy2, 'http://:8081')
+check('...its path on the inside port: /phone-desk/phone/* to its phone port, one block for both',
+      '\thandle_path /phone-desk/* {\n\t\thandle /phone/* {\n\t\t\treverse_proxy product-phone-desk:8081 {\n\t\t\t\tflush_interval -1' in phone2
+      and '\thandle_path /care/* {' in phone2 and caddy2.count('http://:8081') == 1 and phone2.count('respond 404') == 3
+      and caddy2.count(':8081') == 3)
+check("...the model's keys, but nothing of the chat, and not the line to HQ: one deployment owns HQ's cases and drafts",
+      desk_env.get('CARE_ANTHROPIC_API_KEY') == 'sk-ant-api03-MODELKEY'
+      and care_env2.get('CARE_HQ_TOKEN') == mac('care:hq') and care_env2.get('CARE_HQ_URL') == 'https://hq.company.test'
+      and not any(k in desk_env for k in ('CARE_APPS', 'CARE_SHOPS', 'CARE_TOKENS', 'CARE_NAMES', 'CARE_TOKEN', 'CARE_HQ_URL',
+                                          'CARE_HQ_TOKEN'))
+      and 'CARE_COOKIE' not in desk['environment'] and 'phone-desk' not in json.dumps(care_env2))
+check("...no chat route to it, no shelf on the front's door, and its own care: true does nothing",
+      'reverse_proxy product-phone-desk:8080 {\n\t\t\theader_up X-Care-App' not in caddy2
+      and caddy2.count('reverse_proxy product-care:8080 {\n\t\t\theader_up X-Care-App') > 0
+      and not shelf(caddy2, 'front.preview.company.test', 'phone-desk')
+      and '/__care' not in site(caddy2, 'phone-desk.preview.company.test'))
+check("...its calls are conversations of its own shop, its slug: it has no shops' apps to take one from",
+      desk['environment'].get('CARE_PHONE_SHOP') == 'phone-desk' and 'CARE_PHONE_SHOP' not in svc2['product-care']['environment'])
+def refused():   # products.py stopping: no deploy, the reason on stderr
+    env = {**os.environ, 'PUBLIC_HOST': 'hq.company.test', 'HQ_DATA': data, 'PRODUCT_ENV_DIR': envs}
+    env.pop('SECRETS_DIR', None)
+    r = subprocess.run([sys.executable, os.path.join(root, 'infra', 'products.py')], env=env, capture_output=True, text=True)
+    return r.returncode != 0 and 'not deploying' in r.stderr and r.stderr
+for odd in ('3', True, 0, -1, 2.5):
+    product('phone-desk', status='preview', engine='care', callsAtOnce=odd)
+    check(f'callsAtOnce {odd!r}: no deploy, and the log says why', "phone-desk's callsAtOnce" in (refused() or ''))
+product('phone-desk', status='preview', engine='care')
+# chat: true on two deployments: no deploy, and the log names both
+product('atrium', status='preview', engine='care', chat=True)
+check('chat: true on two deployments: no deploy, and the log names both', 'atrium, care each say chat: true' in (refused() or ''))
+# no deployment with chat: true: phone lines only, no chat anywhere
+shutil.rmtree(os.path.join(root, 'products', 'atrium'))
+product('care', status='preview', partner_env='test', needs={'secrets': ['printapi']}, engine='care')
+compose3, caddy3, _ = run()
+check('deployments without chat: true: no chat route, no tokens, but the voice line has them all',
+      'handle /__care' not in caddy3 and 'CARE_TOKEN' not in envfile('pebblet') and 'CARE_APPS' not in envfile('care')
+      and sorted(json.loads(compose3['services']['voice']['environment']['CARE_ENGINES'])) == ['care', 'phone-desk']
+      and site(caddy3, 'http://:8081'))
+product('care', status='preview', partner_env='test', needs={'secrets': ['printapi']}, engine='care', chat=True)
+for gone in ('atrium', 'phone-desk'):
+    shutil.rmtree(os.path.join(root, 'products', gone), ignore_errors=True)
+    if os.path.exists(os.path.join(envs, f'{gone}.env')):
+        os.remove(os.path.join(envs, f'{gone}.env'))
 os.remove(care_dockerfile)   # a manifest (and an old products/care/app) isn't enough
 compose, caddy, _ = run()
 check("a products/care manifest without the platform's engine: no service, no route, no tokens", 'product-care' not in compose['services']
@@ -669,6 +741,13 @@ compose, caddy, _ = run()
 check('without the service: no route, no tokens', 'handle /__care' not in caddy and 'CARE_TOKEN' not in envfile('pebblet'))
 check("without the service the voice line stays on its own network, without the phone's token",
       'voice' not in compose['services'] and 'CARE_PHONE' not in json.dumps(compose) and ':8081' not in caddy)
+# a care plug-in folder in the shape from before engine: care (no app/ of its own): skipped, and the deploy log says so
+os.makedirs(os.path.join(root, 'products', 'oldcare'))
+yaml.safe_dump({'name': 'Care', 'status': 'preview'}, open(os.path.join(root, 'products', 'oldcare', 'product.yaml'), 'w'))
+compose, _, log = run()
+check('a care folder without engine: care: skipped, and the log says what it needs',
+      'product-oldcare' not in compose['services'] and 'skipping oldcare: no app/Dockerfile (a care plug-in folder needs engine: care)' in log)
+shutil.rmtree(os.path.join(root, 'products', 'oldcare'))
 def with_cookies(line):   # products.py with another company/infra.env (INFRA_ENV): its exit code and its Caddyfile
     f = os.path.join(tmp, 'other-infra.env')
     open(f, 'w').write('SERVER_NAME=testco\n' + line)
@@ -686,7 +765,7 @@ check("CARE_COOKIES that aren't plain cookie names: no deploy",
 check("CARE_COOKIES whose last name isn't __Host-: no deploy (an old plain name before it is only stripped)",
       with_cookies('CARE_COOKIES=chat\n')[0] == 1 and with_cookies('CARE_COOKIES=__Host-chat,chat\n')[0] == 1
       and with_cookies('CARE_COOKIES=chat,__Host-chat\n')[0] == 0)
-product('care', status='preview', partner_env='test')
+product('care', status='preview', partner_env='test', engine='care', chat=True)
 with_cookies('')   # no names, the engine's default (the one Caddy strips)
 bare = yaml.safe_load(open(os.path.join(root, 'infra', 'generated', 'products.yaml')))['services']['product-care']
 check("a company without CARE_COOKIES: the service gets the default it's stripped under", bare['environment'].get('CARE_COOKIE') == '__Host-care')
@@ -933,7 +1012,7 @@ if os.environ.get('DOCKER_COMPOSE'):
     open(os.path.join(tmp, 'server.env'), 'w').write('REPO=x/y\n')
     r = subprocess.run([os.environ['DOCKER_COMPOSE'], '-f', os.path.join(ci, 'compose.yaml'), '-f', os.path.join(ci, 'generated', 'products.yaml'),
                         'config', '--format', 'json'], capture_output=True, text=True, cwd=ci,
-                       env={**os.environ, 'WORKER_TOKEN': 'W0RKER', 'VOICE_TOKEN': 'V01CE', 'CARE_PHONE_TOKEN': 'PH0NE', 'PUBLIC_HOST': 'hq.company.test'})
+                       env={**os.environ, 'WORKER_TOKEN': 'W0RKER', 'VOICE_TOKEN': 'V01CE', 'CARE_PHONE_TOKEN_CARE': 'PH0NE', 'PUBLIC_HOST': 'hq.company.test'})
     check('docker-compose config renders the stack', r.returncode == 0)
     if r.returncode == 0:
         c = json.loads(r.stdout)
@@ -945,7 +1024,8 @@ if os.environ.get('DOCKER_COMPOSE'):
               sorted(n for n, v in svc.items() if 'product-care' in v.get('networks', {})) == ['caddy', 'product-care'])
         check("compose: the phone token goes to the voice line and the chat's service only, and the voice line asks Caddy",
               sorted(n for n, v in svc.items() if 'PH0NE' in json.dumps(v)) == ['product-care', 'voice']
-              and svc['voice']['environment'].get('CARE_URL') == 'http://caddy:8081' and list(svc['voice']['networks']) == ['voice'])
+              and json.loads(svc['voice']['environment'].get('CARE_ENGINES', '{}')).get('care', {}).get('url') == 'http://caddy:8081/care'
+              and list(svc['voice']['networks']) == ['voice'])
         check("compose: no container publishes a port but Caddy's 80 and 443 (Caddy's 8081 stays inside)",
               sorted((n, int(p['published'])) for n, v in svc.items() for p in v.get('ports', [])) == [('caddy', 443), ('caddy', 80)]
               or sorted((n, int(p['published'])) for n, v in svc.items() for p in v.get('ports', [])) == [('caddy', 80), ('caddy', 443)])

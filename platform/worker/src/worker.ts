@@ -10,6 +10,9 @@
 // gid (slots.ts): a job, and everything that touches its files (git in its clone, reading its .hq), runs as the
 // uid of the slot running it, with an allowlisted environment, so it can't read our tokens or another job's files,
 // processes or HQ_TOKEN. Sign-ins and token checks run as uid 1500, the keeper of /seats, which runs no job.
+import { seatPlaces } from './places.ts';
+import { assertOwned, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOwned } from './ownership.ts';
+import { readAs, returnSignIn } from './signin.ts';
 import { measurement } from '../tooling/metrics.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
@@ -30,16 +33,17 @@ import { limitReset, observe, outcome, parkedRequest, preview, tail, verdict, wh
 import { detailOf, stepOf, shown, guard, memberReturned, memberOf, writtenTokens, type Shown } from './steps.ts';
 import { completionHooks } from './completion.ts';
 import { claudeEnv, cliOf, codexArgs, credentialFile, modelFor, type SeatProvider } from './providers.ts';
-import { CLIS, CLI_CONFIG, refreshOnly, resumeOn, sessionTag, type Cli } from './clis.ts';
+import { CLIS, CLI_CONFIG, resumeOn, sessionTag, type Cli } from './clis.ts';
 import { carrySession, project, type Resumes } from './carry.ts';
 import { applyList, carryOut, off, type Listed, type SeatAction } from './seatlist.ts';
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
-import { blockRun } from './blocks.ts';
+import { Reload } from './reload.ts';
 import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
 import { fewAtOnce } from './turns.ts';
-import { handBack, noteHandBacks, ResponseError } from './handback.ts';
+import { handBack, noteHandBacks } from './handback.ts';
+import { hqReports, ResponseError } from './reports.ts';
 import { openPullRequest as openOn } from './pulls.ts';
 import { alive, dropRun, endOf, endSeen, exitOf, follow, keepRecord, launch as launchDetached, launchesOf, processesOf, procStat, recordOf, records, sweepRuns, type Checks, type Launched, type RunRecord } from './detached.ts';
 import { inChecks, runChecks, testsOnce, type CheckOutcome, type CheckSpec, type TestsOutcome } from './pushchecks.ts';
@@ -47,6 +51,20 @@ import { answering, askAgainPrompt, cantAsk, lacksVerdict, see, seeSessionLogs, 
 
 const HQ = process.env.HQ_URL ?? 'http://coordinator:8080';
 const { WORKER_TOKEN, REPO, GITHUB_TOKEN } = process.env;
+const transport = hqReports(HQ, WORKER_TOKEN);
+const hq = {
+  api: async (path: string, body: unknown = {}, signal?: AbortSignal) => {
+    const reply = await transport.api(path, body, requestSignal(signal));
+    assertOwned();
+    return reply;
+  },
+  report: async (path: string, body: Record<string, unknown>, ms?: number, signal?: AbortSignal) => {
+    const reply = await transport.report(path, body, ms, requestSignal(signal));
+    assertOwned();
+    return reply;
+  },
+  blocked: (body: Record<string, unknown>, signal?: AbortSignal) => transport.blocked(body, requestSignal(signal)),
+};
 const BASE = process.env.BASE_BRANCH ?? process.env.BRANCH ?? 'main';
 export type SeatState = 'login' | 'ready' | 'draining' | 'sleeping' | 'closed';   // (HQ also hears 'paused': reportSeat)
 // util: the share of the 5-hour window used, unknown until the seat reports it (its first run or recheck after a
@@ -97,8 +115,7 @@ function lastList() {
 // copy: fewer copies at once, fewer refreshes racing (keepCodexAuth). Claude seats have no cap of their own. A seat's
 // runs are counted from the pick (slotLoop), so two slots can't both take its last place.
 const SEAT_RUNS: Record<string, number> = { codex: Math.max(1, Math.floor(Number(process.env.CODEX_SEAT_RUNS ?? 2)) || 2) };
-const onSeat = new Map<string, number>();
-const roomOn = (s: Seat) => (onSeat.get(s.id) ?? 0) < (SEAT_RUNS[s.engine] ?? Infinity);
+const places = seatPlaces(SEAT_RUNS), { roomOn } = places;
 const lastClaimAt = new Map<string, number>();   // when each Codex seat last claimed (inTurn)
 // How many jobs run at once is the room's to decide: the worker has a hard memory cap (infra/compose.yaml), and a free
 // slot (WORK_SLOTS, any engine's) only starts an ordinary job if its JOB_MB allowance fits above FREE_MB in both the
@@ -116,7 +133,7 @@ function shortClaim(engine: string) {
   shortAskedAt.set(engine, Date.now());
   return free;
 }
-// The claims' starts and the slots holding a meeting's seat (reserve.ts): a hold also keeps its seat's place (onSeat).
+// The claims' starts and the slots holding a meeting's seat (reserve.ts): a hold also keeps its seat's place (places).
 const reserve = admission<Seat>(), holding = reserve.holding;
 // The seat a slot holds on, while it can still take work as pickSeat takes it (ready, not off, still listed): one that hit
 // its limit, drains, signed out or was held off gives the hold's room and place back, and the slot claims as any other
@@ -127,7 +144,7 @@ function heldOn(slot: string) {
   wakeSeats();
   if (seat.state === 'ready' && !off(seat) && SEATS.includes(seat)) return seat;
   holding.delete(slot);
-  onSeat.set(seat.id, onSeat.get(seat.id)! - 1);
+  places.release(seat);
   return undefined;
 }
 const { freeMb, room } = reserve;
@@ -146,6 +163,7 @@ const { samples: CAPACITY_SAMPLES, job: CAPACITY_JOB } = JSON.parse(readFileSync
 const inSlot = new Map<string, { job: Job; me: Me; seat: string }>();   // (each slot's job, from its claim to its end: runJob)
 const SESSION = procStat(process.pid)!.sid;   // (this process's session, which the CLIs it launches share)
 const checking = new Map<number, string[]>();   // a push's checks running (afterPush), by pid: what the shares stopped of each
+const reload = new Reload();
 // A job in a slot, its slot's ids looked up once, and its CLI's launch while one runs (none during its push's checks)
 type SlotJob = { job: Job; me: Me; uid: number; gid: number; launch?: Launched };
 // The room as the watch last saw it: since when it's been short, and the work HQ counts as waiting only for memory
@@ -173,8 +191,8 @@ async function watchShares() {
       const { block, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
       pending = still;
       const owner = block && jobs.find(j => j.uid === block.uid);
-      if (block && owner) await blockRun({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
-        ask: body => insist('blocked', body, BLOCK_ASK_MS), checking,
+      if (block && owner) await reload.block({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
+        ask: hq.blocked, checking,
         stopped: text => { log(text); capacityTrial.note(text); },
       });
       if (block?.measure === 'cores') hotSince.delete(block.uid);
@@ -198,7 +216,7 @@ function sampleCapacity(sampled: SlotJob[], uses: Map<number, JobUse>, intervalM
   const stableUses = new Map(stableEntries);
   const starting = reserve.starting(at);
   const seats = SEATS.map(seat => ({ id: seat.id, engine: seat.engine,
-    occupiedOrHeld: onSeat.get(seat.id) ?? 0, limit: SEAT_RUNS[seat.engine] ?? null,
+    occupiedOrHeld: places.count(seat), limit: SEAT_RUNS[seat.engine] ?? null,
     state: seat.state, windowUsed: windowUsed(seat) ?? null, eligible: seat.state === 'ready' && !off(seat) && roomOn(seat) }));
   const vmstat = readFileSync('/proc/vmstat', 'utf8');
   const host = { availableBytes: hostAvailableBytes(),
@@ -218,7 +236,7 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
     return use ? [{ job: j.job.id, mb: Math.round(use.memoryMb), cores: use.cores }] : [];
   });
   try {
-    const answer = await api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity() }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity() }, AbortSignal.timeout(ROOM_REQUEST_MS));
     watch.waiting = Number(answer?.waiting) || 0;
     watch.answeredAt = t;
   } catch (err) { log('room:', err); }
@@ -236,8 +254,6 @@ const memoryClaims = () => allSlotsTaken([...inSlot.keys()]) ? [] : ENGINES.flat
   return seat ? [claimOn(seat, engine)] : [];
 });
 
-// Each blocked-report attempt has its own network deadline while the run is frozen.
-const BLOCK_ASK_MS = 5_000;
 // Which engine a free slot claims for: each in turn (roomturns.ts).
 const turns = roomTurns();
 const pct = (s: Seat) => s.util === undefined ? 'not measured yet' : `${Math.round(s.util * 100)}%`;
@@ -257,7 +273,7 @@ const running = new Map<string, Running>();
 // The Codex items that end a step (a tool's result is in): where a yielding Codex run may stop.
 const CODEX_STEPS = new Set(['command_execution', 'file_change', 'mcp_tool_call', 'collab_tool_call', 'web_search']);
 
-const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+const sleep = sleepOwned;
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 
 // Agents never share a uid with the token holder, or with each other, except in an explicit local test setup.
@@ -277,38 +293,15 @@ const as = (cmd: string, args: string[], input?: string) => runAs(keeper, cmd, a
 const saveAs = (file: string, text: string) => as('sh', ['-c', 'umask 077 && cat > "$1.new" && mv -f "$1.new" "$1"', 'sh', file], text);
 const flow = gitFlow({ mirror: `${WORK}/mirror.git`, remote: `https://github.com/${REPO}.git`, base: BASE, log,
   clones: () => readdirSync(`${WORK}/jobs`).map(n => `${WORK}/jobs/${n}`) });
-// Files in agent-writable places are read as their owner, so a planted symlink can't point root at its secrets.
-// A file read as its owner: a job's files are the agent's, and one may be a FIFO that never ends, so it's killed after
-// 10 seconds (blocking this process that long at worst), and past 1 MB (execFileSync's maxBuffer).
-const readAs = (who: typeof keeper, path: string) => {
-  try {
-    return execFileSync('cat', ['--', path], { encoding: 'utf8', env: who.env, uid: who.uid, gid: who.gid, stdio: ['ignore', 'pipe', 'ignore'],
-      timeout: 10_000, killSignal: 'SIGKILL' });
-  } catch { return undefined; }
-};
-
-async function api(path: string, body: unknown = {}, signal?: AbortSignal) {
-  const res = await fetch(`${HQ}/api/worker/${path}`, { method: 'POST', body: JSON.stringify(body),
-    headers: { authorization: `Bearer ${WORKER_TOKEN}`, 'content-type': 'application/json' }, signal });
-  if (!res.ok) throw new ResponseError(path, res.status);
-  return res.json();
-}
 // A run's report must arrive: a deploy restarts the coordinator for a few seconds, and a report lost then counts a
 // finished run as failed (an intercom reply lost, its turn tried again). So one that can't reach it (fetch throws) is
 // sent again for two minutes; a second report of a finished run changes nothing (jobs.ts finish). Whether a job holds a
 // customer's details at its run's end is asked the same way (holdsCustomerData), and so is the mask (masked).
-// (ms: each try's own limit, for an ask something waits on: blocks.ts blockRun)
-async function insist(path: string, body: Record<string, unknown>, ms?: number) {
-  for (let wait = 1000; ; wait *= 2) {
-    try { return await api(path, body, ms ? AbortSignal.timeout(ms) : undefined); }
-    catch (err) { if (!(err instanceof TypeError) || wait > 64_000) throw err; await sleep(wait); }
-  }
-}
-const finish = (body: Record<string, unknown>) => insist('finish', body);
+const finish = (body: Record<string, unknown>) => hq.report('finish', body);
 
 // The job's own token for what it shows in HQ; team members speak `as` themselves (the coordinator checks the team).
-const agentApi = (token: string, path: string, body: unknown) => fetch(`${HQ}/api/agent/${path}`, { method: 'POST',
-  body: JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } }).catch(() => {});
+const agentApi = (token: string, path: string, body: unknown) => ownershipSignal()?.aborted ? Promise.resolve() : fetch(`${HQ}/api/agent/${path}`, { method: 'POST',
+  body: JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, signal: ownershipSignal() }).catch(() => {});
 
 // /work and its jobs/, homes/, asks/ and tests/ (a push's tests, testsCheckout) are root's, so agents can't swap the
 // mirror or another job's folder; each job's folders are its slot's (slots.ts). /seats is the keeper's alone.
@@ -358,7 +351,7 @@ async function sweepEnded() {
     const busy = new Set([...running.values()].map(r => String(r.job)));
     const ids = [...new Set(['jobs', 'homes', 'tests'].flatMap(d => readdirSync(`${WORK}/${d}`)))].filter(n => /^\d+$/.test(n) && !busy.has(n));   // (tests)
     if (!ids.length) return;
-    const ended = await api('ended', { ids: ids.map(Number) }) as { id: number; kind: string }[];
+    const ended = await hq.api('ended', { ids: ids.map(Number) }) as { id: number; kind: string }[];
     for (const { id, kind } of ended) {
       if ([...running.values()].some(r => r.job === id)) continue;   // (started since it was asked)
       remove(`${WORK}/jobs/${id}`);
@@ -393,7 +386,7 @@ function refreshLoop() {
 async function mainMergeLoop() {
   while (!shuttingDown) {
     const askedAt = Date.now();
-    const asked = await safe(() => api('main-merges')) as { pr: number; branch: string; head: string; msLeft?: unknown; author: { name: string; email: string } }[] | undefined;
+    const asked = await safe(() => hq.api('main-merges')) as { pr: number; branch: string; head: string; msLeft?: unknown; author: { name: string; email: string } }[] | undefined;
     for (const { pr, branch, head, msLeft, author } of asked ?? []) {
       const merged = await answerMainMerge(askedAt, msLeft, async by => {
         await refreshing;
@@ -403,7 +396,7 @@ async function mainMergeLoop() {
       });
       log(`PR #${pr}: ${merged.sha ? `merged ${BASE} into ${branch} as ${merged.sha.slice(0, 7)}`
         : merged.conflicts ? `${BASE} conflicts with ${branch} in ${merged.conflicts.length} files` : `${BASE} not merged into ${branch}: ${merged.why}`}`);
-      await insist('main-merged', { pr, head, ...merged }).catch(err => log(`PR #${pr}: main merge report:`, err));
+      await hq.report('main-merged', { pr, head, ...merged }).catch(err => log(`PR #${pr}: main merge report:`, err));
     }
     await sleep(15_000);
   }
@@ -552,7 +545,7 @@ async function smallCall(kind: 'gists' | 'names', keys: string[]) {
   const seat = healthiest(SEATS.filter(s => cliOf(s) === 'claude' && s.signIn === 'login' && !off(s)), 'claude');
   const token = seat && readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
   if (!seat || !token) return false;
-  const next = await api(`${kind}/claim`);
+  const next = await hq.api(`${kind}/claim`);
   if (!next?.prompt) return false;   // (nothing due: an empty claim)
   // (thinking off: the CLI gives Haiku a 31,999-token thinking budget by default, which can outrun oneLine's 90 s
   // kill.)
@@ -566,7 +559,7 @@ async function smallCall(kind: 'gists' | 'names', keys: string[]) {
   const result = events.find(e => e.type === 'result');
   const error = result ? undefined : redact(unkey(plain(r.err), token)).trim().slice(-300) || `exit ${r.code}`;
   const claimed = Object.fromEntries(keys.map(k => [k, next[k]]));
-  await api(`${kind}/answer`, { ...claimed, ...(result ? { result } : { error }) });
+  await hq.api(`${kind}/answer`, { ...claimed, ...(result ? { result } : { error }) });
   return true;
 }
 
@@ -602,7 +595,7 @@ function reportSeat(s: Seat) {
     : s.state === 'closed' ? `closed by its provider (${s.closed ?? 'no reason given'}): its share of the work waits, and no other account takes it over until the board decides`
     : s.state === 'sleeping' && s.refused ? [`its runs are refused: ${s.refused}`, held].filter(Boolean).join('; ') : rest.filter(Boolean).join('; ');
   const windows = { util: s.util, resets: s.util === undefined ? undefined : s.resets || undefined, week: s.week, weekResets: s.week === undefined ? undefined : s.weekResets || undefined, pace, credits: s.credits || undefined };
-  api('seat', { seat: s.id, engine: s.engine, state: off(s) ? 'paused' : s.state, until: until || undefined, note, ...windows }).catch(() => {});
+  hq.api('seat', { seat: s.id, engine: s.engine, state: off(s) ? 'paused' : s.state, until: until || undefined, note, ...windows }).catch(() => {});
   // a Claude seat that changed state may change the voice line's: at once, not at the next minute (voiceLoop). (Only on a
   // change: a reading comes with every model request of every job.)
   if (cliOf(s) === 'claude' && reported.get(s.id) !== s.state) {
@@ -731,7 +724,7 @@ async function signIn(seat: Seat, action?: number) {
   signing.get(seat.id)?.();
   const cli = cliOf(seat), other = CLIS[cli];
   const asks = other ? other.signIn?.asks ?? 'nothing' : cli === 'claude' ? 'code' : 'nothing';
-  const report = (b: Record<string, unknown>) => safe(() => api('signin', { seat: seat.id, asks, ...b }));
+  const report = (b: Record<string, unknown>) => safe(() => hq.api('signin', { seat: seat.id, asks, ...b }));
   // the old sign-in goes (a plan changed, a token stopped working), and a closed account is tried again
   as('rm', ['-f', ...signInFiles(seat), `${seatDir(seat.id)}/closed`]);
   Object.assign(seat, { state: 'login', closed: undefined, until: 0, limits: 0 });
@@ -817,7 +810,7 @@ async function keepToken(seat: Seat, candidates: string[]) {
 // A key the board gave on the seat's row, tried with a one-line call before it's kept: a key that doesn't work changes
 // nothing, and the row says why.
 async function takeKey(seat: Seat) {
-  const { key } = (await safe(() => api('seat-key', { seat: seat.id }))) ?? {};
+  const { key } = (await safe(() => hq.api('seat-key', { seat: seat.id }))) ?? {};
   if (typeof key !== 'string' || !key) return { ok: false, words: 'The key didn\'t reach the worker (HQ restarted in between). Paste it again.' };
   const cli = cliOf(seat);
   const r = CLIS[cli] ? await otherKey(seat, key) : cli === 'codex' ? await codexKey(seat, key) : await tokenWorks(seat, key);
@@ -938,9 +931,9 @@ const signInFiles = (seat: Seat) => [credentialFile(seat), ...(CLIS[cliOf(seat)]
 
 // The board's changes the worker hasn't taken up: each is carried out once (seatlist.ts carryOut), and HQ hears how it went.
 const taken = new Set<number>();
-// A change's last word is sent again until HQ answers (insist), or the board's row would wait forever.
+// A change's last word is sent again until HQ answers (hq.report), or the board's row would wait forever.
 const settleChange = (id: number, status: 'working' | 'done' | 'failed', words?: string) =>
-  safe(() => status === 'working' ? api('seat-action', { id, status, words }) : insist('seat-action', { id, status, words }));
+  safe(() => status === 'working' ? hq.api('seat-action', { id, status, words }) : hq.report('seat-action', { id, status, words }));
 const doers = { runsOn: (id: string) => [...running.values()].filter(r => r.seat === id).length, signIn, takeKey, drop: dropSeat,
   forget: forgetSignIn, settle: settleChange, pacing: () => pacing };
 
@@ -1220,58 +1213,70 @@ async function runJob(seat: Seat, job: Job, slot: string, probe = false, adopted
   capacityTrial.note(`Job #${job.id}: ${adopted ? 'taken over' : 'claimed'}, slot ${slot}, seat ${seat.id}, engine ${job.engine}, kind ${job.kind}`);
   // A downtime job may be asked to yield (to other work, or a filling window): runJobIn stops it at its next step. A
   // probe stays one until a heartbeat with its first reading is answered.
-  const beat = keepHeartbeat(seat, job, slot, probe);
-  let body: Record<string, unknown> | undefined, thrown: unknown;
-  const spent = spentOn(cliOf(seat)), launches: Launched[] = [];
-  const measured = ['claude', 'codex'].includes(cliOf(seat));
-  const tooling = measurement(Date.now(), !adopted && measured);
-  try { body = await runJobIn(seat, job, slot, me, spent, launches, adopted, tooling); }
-  catch (err) { thrown = err; dropRun(RUNS, job.id, ...launches); throw err; }   // (the slot reports it, snagOf: nothing for a next process to take over)
-  finally {
-    clearInterval(beat);
-    api('team', { job: job.id, done: true }).catch(() => {});
-    killAll(me); sweep(me);
-    if (!shuttingDown) await settle(seat, job, me, body ? body.status as string | undefined : snagOf(thrown));   // (as slotLoop reports it)
-    active.delete(job.id); yielding.delete(job.id); drained.delete(job.id); stopAsked.delete(job.id); inSlot.delete(slot);
-  }
-  if (shuttingDown) return;
-  reporting++;
-  try { await finish({ job: job.id, seat: seat.id, ...body, ...report(spent),
-    tooling: tooling.snapshot(), toolingEngine: measured ? cliOf(seat) : 'other' }); }
-  catch (err) {
-    // (a refused report stays refused: its record would be taken over as a run that never ends. A coordinator that can't
-    // be reached or fails (5xx, as handback.ts retries it) is tried by a next process.)
-    if (err instanceof ResponseError && err.status < 500) dropRun(RUNS, job.id, ...launches);
-    throw err;
-  }
-  finally { reporting--; }
-  capacityTrial.note(`Job #${job.id}: reported ${body!.status}`);
-  dropRun(RUNS, job.id, ...launches);   // (reported: nothing left for a next worker process to take over)
+  await ownRun({ job: job.id, runs: RUNS,
+    heartbeat: async () => {
+      const util = windowUsed(seat), first = probe && util !== undefined;
+      return { reply: await hq.api('heartbeat', { job: job.id, seat: seat.id, util, probe: first || undefined, ...inTheWay() }), first };
+    },
+    answered: ({ reply, first }) => { if (first) probe = false; heartbeatAnswered(job, slot, reply, first); },
+    stop: () => { killAll(me); running.get(slot)?.stop(); running.delete(slot); inChecks.delete(job.id); }, log,
+  }, async () => {
+    let body: Record<string, unknown> | undefined, thrown: unknown;
+    const spent = spentOn(cliOf(seat)), launches: Launched[] = [];
+    const measured = ['claude', 'codex'].includes(cliOf(seat));
+    const tooling = measurement(Date.now(), !adopted && measured);
+    try { body = await runJobIn(seat, job, slot, me, spent, launches, adopted, tooling); assertOwned(); }
+    catch (err) { thrown = err; if (!ownershipSignal()?.aborted) dropRun(RUNS, job.id, ...launches); throw err; }   // (the slot reports it, snagOf: nothing for a next process to take over)
+    finally {
+      if (!ownershipSignal()?.aborted) hq.api('team', { job: job.id, done: true }).catch(() => {});
+      killAll(me); sweep(me);
+      try {
+        if (!shuttingDown && !ownershipSignal()?.aborted) await settle(seat, job, me, body ? body.status as string | undefined : snagOf(thrown));
+      } finally {
+        if (ownershipSignal()?.aborted) { parkRun(seat, job, me); dropRun(RUNS, job.id, ...launches); }
+        active.delete(job.id); yielding.delete(job.id); drained.delete(job.id); stopAsked.delete(job.id); inSlot.delete(slot);
+      }
+    }
+    if (shuttingDown) return;
+    assertOwned();
+    reporting++;
+    try { await finish({ job: job.id, seat: seat.id, ...body, ...report(spent),
+      tooling: tooling.snapshot(), toolingEngine: measured ? cliOf(seat) : 'other' }); }
+    catch (err) {
+      // (a refused report stays refused: its record would be taken over as a run that never ends. A coordinator that can't
+      // be reached or fails (5xx, as handback.ts retries it) is tried by a next process.)
+      if (err instanceof ResponseError && err.status < 500) dropRun(RUNS, job.id, ...launches);
+      throw err;
+    }
+    finally { reporting--; }
+    capacityTrial.note(`Job #${job.id}: reported ${body!.status}`);
+    dropRun(RUNS, job.id, ...launches);   // (reported: nothing left for a next worker process to take over)
+  });
 }
 
 // A deadline yield stops the CLI as soon as the coordinator answers, without a tool-boundary wait.
-function keepHeartbeat(seat: Seat, job: Job, slot: string, probe: boolean) {
-  return setInterval(() => {
-    const util = windowUsed(seat), first = probe && util !== undefined;
-    api('heartbeat', { job: job.id, seat: seat.id, util, probe: first || undefined, ...inTheWay() }).then(r => {
-      if (first) probe = false;
-      if (!active.has(job.id)) return;
-      if (r?.stop && !stopAsked.has(job.id)) {
-        stopAsked.set(job.id, String(r.stop));
-        log(`job #${job.id}: hq stop heard`);
-      }
-      const change = heard(yielding, job.id, r, { first });
-      if (r?.immediate) running.get(slot)?.stop();
-      if (change) log(`job #${job.id}: ${change} (downtime${change === 'yielding' ? `, ${r.yield}` : ''})`);
-    }).catch(err => {
-      // HQ no longer has this run on this seat (it went back to the queue while this process was away): it ends here, so
-      // it stops holding its slot and its seat's place.
-      if (!(err instanceof ResponseError && err.status === 409) || !active.has(job.id) || stopAsked.has(job.id)) return;
-      stopAsked.set(job.id, 'HQ no longer has this run');
-      log(`job #${job.id}: HQ no longer has this run, so it ends here`);
-      running.get(slot)?.stop();
-    });
-  }, 60_000);
+function heartbeatAnswered(job: Job, slot: string, reply: any, first: boolean) {
+  if (!active.has(job.id)) return;
+  if (reply?.stop && !stopAsked.has(job.id)) {
+    stopAsked.set(job.id, String(reply.stop));
+    log(`job #${job.id}: hq stop heard`);
+  }
+  const change = heard(yielding, job.id, reply, { first });
+  if (reply?.immediate) running.get(slot)?.stop();
+  if (change) log(`job #${job.id}: ${change} (downtime${change === 'yielding' ? `, ${reply.yield}` : ''})`);
+}
+
+// HQ may have requeued this job. Keep its clone and session until the normal ended-job sweep can settle them.
+function parkRun(seat: Seat, job: Job, me: Me) {
+  try { keepSignIn(me, seat, jobDirs(WORK, job.id).home, job.id); }
+  catch (err) { log(`job #${job.id}: ${cliOf(seat)} sign-in:`, err); }
+  remove(`${TESTED}/${job.id}`);
+  handed.delete(job.id);
+  handedFiles.delete(job.id);
+  for (const folder of Object.values(jobDirs(WORK, job.id))) if (existsSync(folder)) {
+    own([folder], { uid: 0, gid: 0 });
+    const now = new Date(); utimesSync(folder, now, now);
+  }
 }
 
 // Claude's auto memory, shared by work jobs.
@@ -1289,11 +1294,13 @@ async function settle(seat: Seat, job: Job, me: Me, status?: string) {
   const reviewing = job.kind === 'review' || job.kind === 'consolidate';
   if (cliOf(seat) === 'claude' && !reviewing) {
     const customers = await holdsCustomerData(job);
+    assertOwned();
     try {
       const f = memoryFolders(me, job, dir, home), out = customers ? f : await masked(f, mask);
       if (out) giveBack(out, customers);
-    } catch (err) { log(`job #${job.id}: memory:`, err); }
+    } catch (err) { assertOwned(); log(`job #${job.id}: memory:`, err); }
   }
+  assertOwned();
   try { keepSignIn(me, seat, home, job.id); } catch (err) { log(`job #${job.id}: ${cliOf(seat)} sign-in:`, err); }
   handed.delete(job.id);
   handedFiles.delete(job.id);
@@ -1316,14 +1323,14 @@ async function settle(seat: Seat, job: Job, me: Me, status?: string) {
 // runs (hq mail, a customer card), so the coordinator is asked now. One it can't tell counts as holding them, so nothing
 // goes back.
 async function holdsCustomerData(job: Job) {
-  try { return !!(await insist('customers', { job: job.id })).customers; }
+  try { return !!(await hq.report('customers', { job: job.id })).customers; }
   catch (err) { log(`job #${job.id}: memory: customer data unknown, so nothing goes back:`, err); return true; }
 }
 
 // Text the worker sends out on its own goes through the coordinator's mask first (secrets.redact: a key's value
 // becomes its name), the memory a job is handed and gives back included (copyback.ts masked).
 const mask = async (text: string) => {
-  const maskedText = (await insist('redact', { text })).text;
+  const maskedText = (await hq.report('redact', { text })).text;
   if (typeof maskedText !== 'string') throw new Error('The coordinator gave no masked text');
   return maskedText;
 };
@@ -1419,20 +1426,6 @@ function memoryFolders(me: Me, job: Job, dir: string, home: string): Folders {
 // refreshes with a refresh token another already used is refused by OpenAI, "refresh token was already used", which is
 // why a seat carries few runs at once: SEAT_RUNS.)
 const handed = new Map<number, string>();
-function keepCodexAuth(me: Me, seat: Seat, home: string, from: string | undefined) {
-  if (seat.gone) return;   // (the board removed it: its sign-in stays deleted)
-  const file = `${seatDir(seat.id)}/auth.json`, mine = readAs(me, `${home}/.codex/auth.json`), cur = readAs(keeper, file);
-  if (!mine || !cur || mine === cur || cur !== from || mine.length > 64_000) return;
-  try {
-    const a = JSON.parse(mine), b = JSON.parse(cur), keys = (o: object) => Object.keys(o).sort().join();
-    const plain = (o: any) => o && typeof o === 'object' && !Array.isArray(o);
-    if (!plain(a) || !plain(b) || keys(a) !== keys(b)) return;
-    for (const k of Object.keys(b)) if (k !== 'tokens' && k !== 'last_refresh' && JSON.stringify(a[k]) !== JSON.stringify(b[k])) return;
-    if (plain(b.tokens) && (!plain(a.tokens) || keys(a.tokens) !== keys(b.tokens) || a.tokens.account_id !== b.tokens.account_id)) return;
-  } catch { return; }
-  saveAs(file, mine);
-}
-
 // Another CLI's sign-in (clis.ts credentials) goes into the job's home as Codex's does, and a refresh of it comes back the
 // same way: only from a run whose copy is still the seat's own, the first to settle.
 const handedFiles = new Map<number, Record<string, string>>();
@@ -1447,21 +1440,18 @@ function handOutSignIn(me: Me, seat: Seat, home: string, job: number) {
   handedFiles.set(job, files);
 }
 function keepSignIn(me: Me, seat: Seat, home: string, job: number) {
-  if (cliOf(seat) === 'codex') return keepCodexAuth(me, seat, home, handed.get(job));
-  const refreshed = CLIS[cliOf(seat)]?.refreshed;
-  if (seat.signIn === 'key' || !refreshed) return;   // (a key never refreshes: what a job leaves in its home is never the seat's key)
-  const from = handedFiles.get(job) ?? {};
-  for (const [f, before] of Object.entries(from)) {
-    const file = `${seatDir(seat.id)}/${f}`, mine = readAs(me, `${home}/${f}`), cur = readAs(keeper, file);
-    if (seat.gone || !mine || cur !== before || !refreshOnly(before, mine, refreshed)) continue;
-    saveAs(file, mine);
-    from[f] = mine;
-  }
+  returnSignIn({ me, keeper, seat, home, directory: seatDir(seat.id), cli: cliOf(seat),
+    from: handed.get(job), files: handedFiles.get(job) });
 }
 
 // A paused run's clone, if it's still on the job's branch.
 function resumable(me: Me, dir: string, branch: string) {
   try { return existsSync(dir) && runAs(me, 'git', ['-C', dir, 'rev-parse', '--abbrev-ref', 'HEAD']).trim() === branch; } catch { return false; }
+}
+
+// A paused review's kept clone is still on the commit it reviews: its session may have checked out another (a baseline).
+function atCommit(me: Me, dir: string, sha: string | null | undefined) {
+  try { return runAs(me, 'git', ['-C', dir, 'rev-parse', 'HEAD']).trim() === sha; } catch { return false; }
 }
 
 // The team-member agent the briefing tells a lead to start: the company's own (.claude/agents/team-member.md), else the
@@ -1499,7 +1489,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     log(`job #${job.id}: taken over from the last worker process in its push's checks`);
     launches.push(...launchesOf(adopted));
     Object.assign(spent, adopted.checks.spent);
-    return await afterPush(job, me, dir, adopted.checks, checks => keepRecord(RUNS, { ...adopted, checks }), launches);
+    return await afterPush(job, me, dir, adopted.checks, checks => { if (!ownershipSignal()?.aborted) keepRecord(RUNS, { ...adopted, checks }); }, launches);
   }
   const { effort, autocompact } = job.agentInfo ?? {};   // company/models.yaml, overridable per agent in org.yaml
   const cli = cliOf(seat), other: Cli | undefined = CLIS[cli];   // (another CLI than Claude Code or Codex: clis.ts)
@@ -1510,7 +1500,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // and Claude's sign-in, which goes on a pipe, never in the env the job's commands could read (SIGN_IN).
   // In a home h: the job's, or the one a reviewer is asked again in (askVerdictAgain, below).
   const launchEnv = async (h = home) => {
-    const keys = reviewing ? {} : await safe(() => api('secrets')) ?? {};
+    const keys = reviewing ? {} : await safe(() => hq.api('secrets')) ?? {};
     const signIn = cli !== 'claude' ? undefined : readAs(keeper, `${seatDir(seat.id)}/${credentialFile(seat)}`)?.trim() ?? '';
     const seatVars = other ? { ...other.home(h), ...other.env?.({ model, effort: effort ?? undefined }) } : cli === 'codex' ? { CODEX_HOME: `${h}/.codex` } : { CLAUDE_CONFIG_DIR: `${h}/.claude`, ...claudeEnv(seat),
       // A lead's session waits for its background team members instead of exiting after its own turn.
@@ -1523,6 +1513,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // verdict once more (askVerdictAgain, below). Its output goes to files the worker follows, so a reload of the worker's
   // own process never stops it (detached.ts).
   const launch = (name: string, args: string[], input: string, cwd: string, e: Awaited<ReturnType<typeof launchEnv>>) => {
+    assertOwned();
     const { child, launched } = launchDetached(RUNS, name, other?.bin ?? cli, args,
       { cwd, env: e.env, uid: me.uid, gid: me.gid, fd3: e.signIn !== undefined });
     capacityTrial.note(`Job #${job.id}: CLI launched, pid ${launched.pid}, run ${name}`);
@@ -1544,13 +1535,14 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     resumed = adopted.resumed;
     log(`job #${job.id}: taken over from the last worker process, its CLI ${alive(l.pid, l.start) ? 'still running' : 'ended meanwhile'}`);
   } else {
-    await refreshing;
+    await waitOwned(Promise.resolve(refreshing));
+    assertOwned();
     syncMirror();
     // A fresh run starts clean. A paused review keeps its verdict file with its session.
     if (!job.session) remove(home);
     if (!job.session) remove(dir);
     for (const p of [dir, home]) if (existsSync(p)) own([p], me);
-    if (existsSync(dir) && !reviewing && !resumable(me, dir, branch)) remove(dir);
+    if (existsSync(dir) && !(reviewing ? atCommit(me, dir, job.sha) : resumable(me, dir, branch))) remove(dir);
     const newHome = !existsSync(home), fresh = !existsSync(dir);
     if (newHome) makeDir(home, me);
     if (fresh) { makeDir(dir, me); g.clone(dir, branch, reviewing ? { sha: job.sha } : undefined, cloneIdentity(job)); }
@@ -1642,7 +1634,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // customer's details, its line itself for the board's own HQ session alone (steps.ts shown); guarded: the line is as
   // such a job shows it.
   const event = (e: { type: string; to?: string; add?: number; del?: number; grew?: number; total?: number; board?: string }, text: string, agent: string, max: number) =>
-    quiet ? undefined : guarded.follow(agentApi(job.token, 'event', { ...e, text: preview(redact(text), max), ...(e.board ? { board: preview(redact(e.board), max) } : {}),
+    quiet || ownershipSignal()?.aborted ? undefined : guarded.follow(agentApi(job.token, 'event', { ...e, text: preview(redact(text), max), ...(e.board ? { board: preview(redact(e.board), max) } : {}),
       ...(guarded.on ? { guarded: true } : {}), ...(agent !== job.agent ? { as: agent } : {}) }));
   const say = (text: string, agent = job.agent, board?: string) => {
     if (Date.now() - (lastSaid.get(agent) ?? 0) < 3000) return;
@@ -1654,7 +1646,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // reading). A day's lines come from main's history (the coordinator's commitlines.ts). A reviewer or a meeting's seat changes nothing to count.
   let lines: { add: number; del: number } | undefined, start: { add: number; del: number } | undefined, reading = false, unread = false;
   const countLines = async () => {
-    if (reviewing || meeting || reading) return;
+    if (ownershipSignal()?.aborted || reviewing || meeting || reading) return;
     reading = true;
     try {
       const n = await branchLines(me, dir, BASE), was = lines;
@@ -1675,7 +1667,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // log's count, measure below), sent when they grew: HQ draws the work's pace with them.
   let tokensOut = 0, tokensTold = 0;
   const tellTokens = () => {
-    if (tokensOut <= tokensTold) return;
+    if (ownershipSignal()?.aborted || tokensOut <= tokensTold) return;
     const grew = tokensOut - tokensTold;
     tokensTold = tokensOut;
     event({ type: 'tokens', total: tokensOut, grew }, '', job.agent, 0);
@@ -1699,12 +1691,13 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   const memberDone = (call: string) => {
     const m = members.get(call)!;
     working.delete(call);
-    if (!quiet) api('team', { job: job.id, lead: job.agent, id: m.id, name: m.name, state: 'idle', task: 'Done' }).catch(() => { /* HQ's team list is best effort */ });
+    if (!quiet) hq.api('team', { job: job.id, lead: job.agent, id: m.id, name: m.name, state: 'idle', task: 'Done' }).catch(() => { /* HQ's team list is best effort */ });
   };
   // The output, a line (one event) at a time, split as bytes so a character cut between two reads stays whole. read: how
   // far it's been taken in, which a new worker process starts from (keep).
   let pending = Buffer.alloc(0);
   function onOut(piece: Buffer, end: number) {
+    if (ownershipSignal()?.aborted) return;
     const all = Buffer.concat([pending, piece]), chunkStart = end - all.length;
     let from = 0;
     for (let nl; (nl = all.indexOf(10, from)) >= 0; from = nl + 1) {
@@ -1737,7 +1730,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
         if (c.type === 'tool_use' && (c.name === 'Agent' || c.name === 'Task')) {
           const { name, task } = memberOf(c.input);
           members.set(c.id, { id: slug(name), name }); working.add(c.id);
-          if (!quiet) api('team', { job: job.id, lead: job.agent, id: slug(name), name, parent: from, state: 'working',
+          if (!quiet) hq.api('team', { job: job.id, lead: job.agent, id: slug(name), name, parent: from, state: 'working',
             task: redact(task).slice(0, 120) }).catch(() => {});
         } else if (c.type === 'tool_use' && c.name === 'SendMessage') {
           event({ type: 'chat', to: slug(c.input?.to ?? '') }, String(c.input?.summary ?? c.input?.message ?? ''), from, 160);
@@ -1782,6 +1775,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   const recordNow = (): RunRecord => ({ job, seat: seat.id, slot, resumed, launched: first.launched,
     read: { out: at.out - pending.length, err: at.err }, session: run.session, usage: spent.usage, handed: handed.get(job.id), ...lastLook });
   run.keep = (look = false) => {
+    if (ownershipSignal()?.aborted) return;
     if (look && me.uid !== undefined) lastLook = { lost: processesOf(me.uid, first.launched.pid), lostAt: new Date().toISOString() };
     keepRecord(RUNS, recordNow());
   };
@@ -1803,10 +1797,15 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   }, 5_000);
   // a Codex seat's window is read from the run's session log while it runs, and once more at the end
   const started = Date.now(), measure = async () => {
+    if (ownershipSignal()?.aborted) return;
     const output = await codexWindow(seat, me, home, resumeOn(cli, job.engine, run.session).session ?? undefined, started);
     if (output !== undefined) tokensOut = Math.max(tokensOut, output);
   };
   const measuring = cli === 'codex' ? setInterval(measure, 60_000) : undefined;
+  const stopTimers = () => {
+    clearInterval(looking); clearInterval(yieldCheck); clearInterval(measuring); clearInterval(lineCheck); clearInterval(tokenCheck);
+  };
+  ownershipSignal()?.addEventListener('abort', stopTimers, { once: true });
   // Another CLI's own account of how its run ended (clis.ts export), read once it has exited, as its stream's last line
   function cliEnded(h: string, exitCode: number) {
     if (!other?.export) return;
@@ -1817,6 +1816,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   }
   // the stderr handler, for the second launch too
   function onErr(d: Buffer) {
+    if (ownershipSignal()?.aborted) return;
     errors += d;
     if (errors.length > 20_000) errors = errors.slice(-10_000);
   }
@@ -1883,11 +1883,13 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     return logs.every(l => l !== undefined) ? logs : undefined;
   }
   // one it can't ask says why in the log (cantAsk, verdict.ts).
-  const askable = !!other && reviewing && code === 0 && !stopped && !shuttingDown;
+  const askable = !ownershipSignal()?.aborted && !!other && reviewing && code === 0 && !stopped && !shuttingDown;
   const ask = askable ? askAgainPrompt(verdictFile, last) : undefined;
   if (ask !== undefined) await askVerdictAgain(ask);
   else if (askable && lacksVerdict(verdictFile, last)) log(`job #${job.id}: ended without its verdict as JSON, not asked again: ${cantAsk(verdictFile)}`);
   clearInterval(yieldCheck); clearInterval(measuring); clearInterval(lineCheck); clearInterval(tokenCheck);
+  ownershipSignal()?.removeEventListener('abort', stopTimers);
+  assertOwned();
   await countLines();   // (its last edits, before the commit at the end)
   if (cli === 'codex') await measure();
   running.delete(slot);
@@ -1979,7 +1981,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
       + (how.events <= 1 ? `: ${preview(redact(plain(errors)).trim().split('\n')[0] ?? '', 200)}` : ''));
     return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `${how.cli} ${errors}`) };
   }
-  return await land({ g, dir, branch, job, me, session, summary: last, result, spent, launches, failure, keep: checks => keepRecord(RUNS, { ...recordNow(), checks }) });
+  return await land({ g, dir, branch, job, me, session, summary: last, result, spent, launches, failure, keep: checks => { if (!ownershipSignal()?.aborted) keepRecord(RUNS, { ...recordNow(), checks }); } });
 }
 
 // What went wrong, in the CLI's words, for a failed job's report (after the model's own last message).
@@ -2022,7 +2024,7 @@ async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: str
   if (!pushed && !withdrawn && o.again) return { status: 'failed', session, branch, profile, result: o.failure(result, 'its work was in neither its clone nor its branch any more, so there was nothing to land') };
   // A thread's task opens the thread's pull request, under the thread's name.
   let thread: { pull?: Pull } | undefined;
-  try { if (pushed && job.inThread) thread = await insist('thread-push', { job: job.id }); }
+  try { if (pushed && job.inThread) thread = await hq.report('thread-push', { job: job.id }); }
   catch (err) { return { status: 'failed', session, branch, profile, result: o.failure(result, `the thread's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
   const pr = pushed ? await openPullRequest(branch, await jobPullRequest(job, summary, thread?.pull)) : undefined;
   if (pr === 'unreached') return snagged("GitHub couldn't be reached to open its pull request");
@@ -2119,7 +2121,7 @@ async function jobPullRequest(job: Job, summary: string, thread?: Pull) {
 }
 
 // The pull request for a branch, opened or found (pulls.ts)
-const openPullRequest = (branch: string, pull: { title: string; body: string }) => openOn({ repo: REPO!, token: GITHUB_TOKEN!, base: BASE }, branch, pull, log);
+const openPullRequest = (branch: string, pull: { title: string; body: string }) => openOn({ repo: REPO!, token: GITHUB_TOKEN!, base: BASE }, branch, pull, log, ownershipSignal());
 
 // The gates (shared/gates/gates.ts: Prettier, ESLint, the type check) and the tests of the areas it touches
 // (shared/gates/tests.ts) on what the pushed branch changes against main, each run as the job's own user in its clone,
@@ -2145,7 +2147,7 @@ const TESTS_KIND = 'tests';
 // HQ's takeMinutes while a lent machine has a helper of the kind, else undefined
 async function testsHelper(job: Job) {
   try {
-    const res = await fetch(`${HQ}/api/agent/runs/helper`, { headers: { authorization: `Bearer ${job.token}` }, signal: AbortSignal.timeout(10_000) });
+    const res = await fetch(`${HQ}/api/agent/runs/helper`, { headers: { authorization: `Bearer ${job.token}` }, signal: requestSignal(AbortSignal.timeout(10_000)) });
     const { kinds, takeMinutes } = await res.json() as { kinds?: { name: string; present: boolean }[]; takeMinutes: number };
     return kinds?.some(kind => kind.name === TESTS_KIND && kind.present) ? takeMinutes : undefined;
   } catch { return undefined; }
@@ -2168,7 +2170,7 @@ async function testsTurnOf(job: Job, me: Me, at: TestsCheckout, run: () => Promi
     }
   }
   const heardWait = (ms: number) => log(`job #${job.id}: ${TESTS} waited ${Math.round(ms / 1000)} s for its turn`);
-  return testsTurn(run, heardWait);
+  return waitOwned(testsTurn(() => { assertOwned(); return run(); }, heardWait));
 }
 
 // A push's tests run once on the same code (pushchecks.ts testsOnce), claimed in HQ by the git trees of the pushed commit
@@ -2182,14 +2184,14 @@ function testsOnceOf(job: Job, tested: TestedCode, run: (ticket: string) => Prom
   return testsOnce(async () => {
     let ticket: string;
     try {
-      ticket = JSON.stringify(await insist('tests/comparison', { ...code, commit: tested.base }));
+      ticket = JSON.stringify(await hq.report('tests/comparison', { ...code, commit: tested.base }));
     } catch (err) {
       return { passed: null, tests: 0, report: `The base comparison ticket couldn't be issued: ${(err as Error).message}` };
     }
     return run(ticket);
   }, {
-    claim: async () => insist('tests/claim', code),
-    done: async ({ passed, report, tests }) => insist('tests/done', { ...code, passed, report, tests }),
+    claim: async () => hq.report('tests/claim', code),
+    done: async ({ passed, report, tests }) => hq.report('tests/done', { ...code, passed, report, tests }),
     wait: () => sleep(CLAIM_POLL_MS),
     later: () => sleep(CLAIM_AGAIN_MS),
     said: words => log(`job #${job.id}: ${TESTS} ${words}`),
@@ -2246,6 +2248,7 @@ function testsCheckout(job: Job, me: Me, tested: TestedCode) {
 // keep: writes the run's record with its checks in it.
 async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (checks: Checks) => void, launches: Launched[]) {
   const takeMinutes = await testsHelper(job);
+  assertOwned();
   const helper = takeMinutes !== undefined;
   if (helper) log(`job #${job.id}: ${TESTS} and ${GATES}: helper dispatch enabled`);
   const lent: Record<string, string> = helper ? { HQ_URL: HQ, HQ_TOKEN: job.token } : {};
@@ -2262,9 +2265,9 @@ async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (c
   const gates = checkSpec(job, me, dir, 'gates', launches, undefined,
     { args: [], env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
   const specs = [gates, tests];
-  const body = await runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
+  const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
     watch: (pid, stopped) => checking.set(pid, stopped), unwatch: pid => checking.delete(pid),
-    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`) });
+    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal() }));
   remove(`${TESTED}/${job.id}`);
   await keepRendersOf(job, me, dir, checks.body.files as string[]);
   return body;
@@ -2283,6 +2286,7 @@ function checkSpec(job: Job, me: Me, dir: string, name: CheckName, launches: Lau
   const script = CHECKS[name];
   if (!existsSync(`${dir}/${script}`)) return undefined;
   const launchWith = (args: string[], env: Record<string, string>) => () => {
+    assertOwned();
     const where = extra.where?.() ?? { cwd: dir, env: { ...me.env, ...pinnedGitEnv } };
     const { child, launched } = launchDetached(RUNS, `${job.id}.${name}`, 'nice', ['-n', '10', 'node', script, '--base', extra.base ?? `origin/${BASE}`, ...args],
       { cwd: where.cwd, uid: me.uid, gid: me.gid, env: { ...where.env, ...env } });
@@ -2312,12 +2316,12 @@ async function keepSeats() {
   let list: { seats: Listed[]; actions: SeatAction[]; pacing?: boolean } | undefined;
   for (let wait = 5000; !shuttingDown && !list; wait = Math.min(wait * 2, 300_000)) {
     // (each seat's own stop level)
-    try { list = await api('seats', { seats: SEATS.map(s => ({ id: s.id, engine: s.engine, ...(s.drainAt === undefined ? {} : { stop: Math.round(s.drainAt * 100) }) })) }); }
+    try { list = await hq.api('seats', { seats: SEATS.map(s => ({ id: s.id, engine: s.engine, ...(s.drainAt === undefined ? {} : { stop: Math.round(s.drainAt * 100) }) })) }); }
     catch (err) { log('seat list:', err); await sleep(wait); }
   }
   while (!shuttingDown) {
     try {
-      list ??= await api('seat-list');
+      list ??= await hq.api('seat-list');
       if (Array.isArray(list?.seats)) syncSeats(list.seats);
       if (typeof list?.pacing === 'boolean' && list.pacing !== pacing) {
         pacing = list.pacing;
@@ -2366,8 +2370,9 @@ const claimOn = (seat: Seat, engine: string, kind?: string) => ({ seat: seat.id,
 // adopted: the run the last worker process left running in this slot (takeOver), which goes on here first.
 async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
   if (adopted) await takeBack(slot, adopted);
-  while (!shuttingDown && !handingOver) {
-    let job: Job | null = null, seat: Seat | undefined;
+  while (!shuttingDown && !reload.handingOver) {
+    let seat: Seat | undefined;
+    const attempt: { job: Job | null } = { job: null };
     try {
       // (a slot holding a meeting's seat claims again on its seat and with its room, both kept for it: holding)
       const held = heldOn(slot), next: NextClaim | undefined = held ? { engine: held.engine, seat: held } : nextClaim(kind);
@@ -2382,30 +2387,31 @@ async function slotLoop(slot: string, kind?: string, adopted?: RunRecord) {
       const probe = !kind && !held && !check && claimed.util === undefined && cliOf(seat) === 'codex' && seat.signIn === 'login' && !seat.probing;   // (a key seat has no window)
       if (probe) seat.probing = true;
       const picked = seat;   // (seat is reassigned, so the finally below keeps this one)
-      if (!held) onSeat.set(picked.id, (onSeat.get(picked.id) ?? 0) + 1);   // the seat's place (roomOn) and turn (inTurn), taken at the pick
       lastClaimAt.set(picked.id, Date.now());
-      try {
-        reporting++;
-        // (slot: a meeting holds slots by name until every seat can start)
-        let answer;
-        try { answer = await api('claim', { ...claimed, slot, probe: probe || undefined, room }); }
-        finally { reporting--; }
-        if (reserve.keepsHold(slot, picked, t, answer)) { await sleep(5_000); continue; }
-        job = answer;
-        if (!kind && room === undefined) turns.found(engine, !!job);
-        if (!kind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
-        if (!job) { if (check) seat.checked = 0; reserve.giveBack(t); await sleep(15_000); continue; }
-        reserve.started();
-        log(`${slot} on ${seat.id}: job #${job.id} ${job.title}${check ? ` (held ${seat.state}: its check)` : ''}`);
-        if (check) reportSeat(seat);   // (its next check)
-        await runJob(seat, job, slot, probe);
-        // a check that ran without hitting the limit wakes a sleeping seat; its reading (or the last one) decides the rest
-        if (check && seat.state === 'sleeping' && seat.checked === checked) { seat.state = 'ready'; seat.until = 0; drain(seat); }
-      } finally { if (!holding.has(slot)) onSeat.set(picked.id, onSeat.get(picked.id)! - 1); if (probe && (!job || windowUsed(seat) !== undefined)) seat.probing = false; }
+      await places.hold(picked, !!held, () => holding.has(slot), async () => {
+        try {
+          reporting++;
+          // (slot: a meeting holds slots by name until every seat can start)
+          let answer;
+          try { answer = await hq.api('claim', { ...claimed, slot, probe: probe || undefined, room }); }
+          finally { reporting--; }
+          if (reserve.keepsHold(slot, picked, t, answer)) { await sleep(5_000); return; }
+          const job = attempt.job = answer as Job | null;
+          if (!kind && room === undefined) turns.found(engine, !!job);
+          if (!kind && !held && !check && engine === 'claude') claimAnswered(pacedEmpty, picked, claimed.pacedUntil !== undefined, !!job);
+          if (!job) { if (check) picked.checked = 0; reserve.giveBack(t); await sleep(15_000); return; }
+          reserve.started();
+          log(`${slot} on ${picked.id}: job #${job.id} ${job.title}${check ? ` (held ${picked.state}: its check)` : ''}`);
+          if (check) reportSeat(picked);   // (its next check)
+          await runJob(picked, job, slot, probe);
+          // a check that ran without hitting the limit wakes a sleeping seat; its reading (or the last one) decides the rest
+          if (check && picked.state === 'sleeping' && picked.checked === checked) { picked.state = 'ready'; picked.until = 0; drain(picked); }
+        } finally { if (probe && (!attempt.job || windowUsed(picked) !== undefined)) picked.probing = false; }
+      });
     } catch (err) {
       log(`${slot}:`, err);
       // A crash must never leave a job "running": report it (snagOf).
-      if (job) await finish({ job: job.id, seat: seat?.id, status: snagOf(err), result: `Worker error: ${redact(String(err)).slice(0, 250)}` }).catch(() => {});
+      if (attempt.job) await finish({ job: attempt.job.id, seat: seat?.id, status: snagOf(err), result: `Worker error: ${redact(String(err)).slice(0, 250)}` }).catch(() => {});
       await sleep(30_000);
     }
   }
@@ -2453,26 +2459,23 @@ process.on('SIGTERM', () => {
 // or its end, and then their records are written as they stand and this process ends, its runs' CLIs and checks still
 // running. The next process takes them over (takeOver). A run not steady after HANDOVER_MS is left: one with a record
 // (its CLI launched) is taken over all the same, one without goes back to the queue once it's stale.
-let handingOver = false;
 const HANDOVER_MS = 10 * 60_000;
-process.on('SIGUSR2', () => {
-  if (handingOver || shuttingDown) return;
-  handingOver = true;
-  handOver().catch(err => { log('hand-over failed, the runs go on and the next process takes them over:', err); capacityTrial.end('hand-over failed'); process.exit(0); });
-});
-async function handOver() {
-  const steady = (id: number) => [...running.values()].some(r => r.job === id && r.steady) || inChecks.has(id);
-  log(`reloading for new code: no new runs; ${active.size ? `jobs ${[...active].map(id => `#${id}`).join(', ')} go on, taken over by the next worker process` : 'nothing running'}`);
-  for (const until = Date.now() + HANDOVER_MS; ([...active].some(id => !steady(id)) || reporting > 0) && Date.now() < until;) await sleep(500);
-  if (shuttingDown) return;
+reload.listen({
+  stopping: () => shuttingDown,
+  start: () => log(`reloading for new code: no new runs; ${active.size ? `jobs ${[...active].map(id => `#${id}`).join(', ')} go on, taken over by the next worker process` : 'nothing running'}`),
+  ready: () => ![...active].some(id => !steady(id)) && reporting === 0,
+  keep: keepRuns,
+  finish: () => capacityTrial.end('worker reloading'),
+  failed: err => { log('hand-over failed, the runs go on and the next process takes them over:', err); capacityTrial.end('hand-over failed'); },
+}, HANDOVER_MS);
+const steady = (id: number) => [...running.values()].some(r => r.job === id && r.steady) || inChecks.has(id);
+function keepRuns() {
   for (const r of running.values()) if (r.steady) r.keep();
   for (const keep of inChecks.values()) keep();
   const left = [...active].filter(id => !steady(id)), listed = (ids: number[]) => ids.map(id => `#${id}`).join(', ');
   const [recorded, unrecorded] = [left.filter(id => existsSync(recordOf(RUNS, id))), left.filter(id => !existsSync(recordOf(RUNS, id)))];
   if (recorded.length) log(`reloading with jobs ${listed(recorded)} not steady after ${HANDOVER_MS / 60_000} minutes: the next process takes them over from their records`);
   if (unrecorded.length) log(`reloading with jobs ${listed(unrecorded)} not steady after ${HANDOVER_MS / 60_000} minutes and never launched: they go back to the queue once stale`);
-  capacityTrial.end('worker reloading');
-  process.exit(0);
 }
 
 // The runs the last worker process left (detached.ts), sorted before anything touches the jobs' folders or slots: one
@@ -2511,12 +2514,12 @@ const snagOf = (err: unknown) => (err instanceof FetchUnreachedError ? 'snagged'
 // A run taken over goes on in its slot, on its seat, like one this slot claimed.
 async function takeBack(slot: string, r: RunRecord) {
   const seat = SEATS.find(s => s.id === r.seat)!;
-  onSeat.set(seat.id, (onSeat.get(seat.id) ?? 0) + 1);
+  places.take(seat);
   try { await runJob(seat, r.job as unknown as Job, slot, false, r); }
   catch (err) {
     log(`${slot}: job #${r.job.id}, taken over:`, err);
     await finish({ job: r.job.id, seat: seat.id, status: snagOf(err), result: `Worker error: ${redact(String(err)).slice(0, 250)}` }).catch(() => {});
-  } finally { onSeat.set(seat.id, onSeat.get(seat.id)! - 1); }
+  } finally { places.release(seat); }
 }
 
 // The slot isolation tests (slots.test.ts) run for real here, as root, before any job: if one slot could reach
@@ -2575,7 +2578,7 @@ function startWork() {
   // The runs the last worker's stop cut off go back first, or a claim would count them abandoned. A file that can't be
   // read or kept still lets the slots start (a worker that runs nothing is worse than runs counted as abandoned), and
 
-  handBack(HANDBACK, b => api('finish', b), log).catch(err => {
+  handBack(HANDBACK, b => hq.api('finish', b), log).catch(err => {
     log('hand-back failed, so its runs count as abandoned:', err);
     try { renameSync(HANDBACK, `${HANDBACK}.failed-${Date.now()}`); } catch { /* no file left to set aside */ }
   }).then(() => {

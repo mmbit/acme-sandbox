@@ -326,6 +326,34 @@ test('hang_up is a step the line acts on, and it ends the turn', async () => {
   assert.equal(tally.rounds, 1);
 });
 
+test("the plug-in's phoneCore names the engine's own tools its line offers: only those and its own, the line's closing ones always", async () => {
+  const company = await import('./company.ts');
+  const own = {
+    def: { name: 'partner_note', description: 'a note', input_schema: { type: 'object', properties: {} } },
+    run: async () => ({ content: '{"noted":true}' }),
+  };
+  company.use({ phoneCore: ['ask_for_person'], phoneTools: [own] });
+  try {
+    const s = await start();
+    model(
+      [
+        { tool: 'order_status', input: {} },
+        { tool: 'partner_note', input: {} },
+      ],
+      [{ text: 'Noted.' }],
+    );
+    await say(s.conversation, 'Where is order R-4829?');
+    assert.deepEqual(
+      seen.at(-1).tools.map((x: any) => x.name),
+      ['ask_for_person', 'partner_note', 'no_transcript', 'hang_up'],
+    );
+    // a tool of the engine's the line doesn't offer, called anyway: no such tool, nothing looked up
+    assert.deepEqual(results(), [{ error: 'no tool called order_status' }, { noted: true }]);
+  } finally {
+    company.use({ phoneCore: null, phoneTools: [] });
+  }
+});
+
 test("the phone's own month stops a call at its start and mid-call; so do the month's total and the breaker", async () => {
   clearLedger();
   const s = await start();

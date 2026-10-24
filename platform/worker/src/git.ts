@@ -3,6 +3,8 @@
 // nothing git writes is shared between jobs. Agents hand their commits over as a bundle; root pushes them to
 // GitHub as job/<n>, and a thread task's own profile lines as profile/<n>, and
 // nothing else.
+import { pushProcess } from './pushprocess.ts';
+import { assertOwned, ownershipSignal } from './ownership.ts';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import { closeSync, lstatSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -144,8 +146,9 @@ export const pinnedGitEnv = Object.fromEntries([
 ]);
 
 // Runs a command as an agent's uid with its env (its hooks may run; they get nothing that uid doesn't have).
-export const runAs = (agent: Agent, cmd: string, args: string[], input?: string) =>
-  execFileSync(cmd, args, {
+export const runAs = (agent: Agent, cmd: string, args: string[], input?: string) => {
+  assertOwned();
+  return execFileSync(cmd, args, {
     encoding: 'utf8',
     env: agent.env,
     uid: agent.uid,
@@ -153,6 +156,7 @@ export const runAs = (agent: Agent, cmd: string, args: string[], input?: string)
     input,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
+};
 
 // Whether a failed push (or the mirror's fetch) was lost on the way to GitHub
 // rather than refused by it.
@@ -477,12 +481,15 @@ export function gitFlow(o: {
   async function pushToGitHub(branch: string, refspec: string, options: string[] = [], by = Infinity) {
     const pauses = o.pushPausesMs ?? PUSH_PAUSES_MS;
     for (const [i, pause] of [...pauses, undefined].entries()) {
+      assertOwned();
       // (a timeout of 0 would be none)
       const timeout = Math.max(1, Math.min(PUSH_MS, by - Date.now()));
       try {
-        await execFileAsync('git', inMirror(['push', '-q', ...options, 'origin', refspec]), { env, timeout });
+        await pushProcess(inMirror(['push', '-q', ...options, 'origin', refspec]), env, timeout, ownershipSignal());
+        assertOwned();
         return;
       } catch (e: any) {
+        assertOwned();
         const why = redact(String(e.stderr || e.message))
           .trim()
           .slice(-300);
@@ -494,7 +501,7 @@ export function gitFlow(o: {
         o.log?.(
           `push to ${branch} didn't reach GitHub, trying again in ${Math.round(pause / 1000)} s: ${why.replace(/\s*\n\s*/g, ' / ')}`,
         );
-        await sleep(pause);
+        await sleep(pause, undefined, { signal: ownershipSignal() });
       }
     }
   }

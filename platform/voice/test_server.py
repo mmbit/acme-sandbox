@@ -1376,19 +1376,54 @@ class Late(Juno):
             await self.settle()
         self.assertEqual(self.brain.asked, ['Can you check the orders?'])
 
-    async def test_a_new_connection_sets_a_new_baseline(self):
-        """HQ reconnected: nothing is queued on the new connection, so its first ping is on time, whatever came
-        before."""
+    async def test_audio_sent_again_after_a_reconnect_waits_like_a_late_burst(self):
+        """HQ reconnected and sends first what the line never had, with pings from when it was said: the baseline stays
+        across connections, so it reads as late, and the line answers all of it at once, never its first part as if just
+        said."""
         self.ping()
         await self.quiet(10)
-        self.ping(20000)
+        CLOCK[0] += 3  # (the connection drops; HQ is back 3 s later)
         self.call.reconnected()
-        self.ping(5000)  # (the new connection's own delay)
+        self.ping(20000)  # (sent again: said 20 s ago)
         await self.talk('Can you check the orders?', 30)
-        self.ping(5000)
+        await self.quiet(20)
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.brain.asked, [])
+        await self.talk('And the invoices.', 30)
+        self.ping(300)  # (the live audio after it: caught up)
         await self.quiet(20)
         await self.settle()
-        self.assertEqual(self.brain.asked, ['Can you check the orders?'])
+        self.assertEqual(self.brain.asked, ['Can you check the orders? And the invoices.'])
+
+    async def test_a_resumed_connection_hears_how_much_of_the_board_the_line_has(self):
+        """The call and each pong say how many of the board's samples the line has (HQ sends the rest again), and a
+        frame the old connection reads after the call moved isn't heard twice."""
+        frame, ping = np.zeros(server.FRAME, '<i2').tobytes(), json.dumps({'type': 'ping', 't': CLOCK[0] * 1000})
+        self.call.live_at = 1.0  # (live before the drop: app_call set it then)
+        server.CALLS['c1'] = {'call': self.call, 'line': server.Line(Socket([])), 'timer': None}
+        go, read = asyncio.Event(), asyncio.Event()
+
+        class Dropping(Socket):  # (the old connection: its last frame read only once the new one has the call)
+            async def __anext__(self):
+                if len(self.received) == 1:
+                    read.set()
+                    await go.wait()
+                return await super().__anext__()
+
+        old, new = Dropping([json.dumps({'resume': 'c1'}), frame, frame, frame]), Socket([json.dumps({'resume': 'c1'}), ping])
+        try:
+            dropping = asyncio.create_task(server.app_call(old))
+            await read.wait()
+            await server.app_call(new)
+            go.set()
+            await dropping
+        finally:
+            if timer := server.CALLS.pop('c1')['timer']:
+                timer.cancel()
+        self.assertEqual([json.loads(m)['heard'] for m in old.sent if json.loads(m)['type'] == 'call'], [0])
+        self.assertEqual([(e['type'], e['heard']) for e in map(json.loads, new.sent) if e['type'] in ('call', 'pong')],
+                         [('call', 2 * server.FRAME), ('pong', 2 * server.FRAME)])
+        self.assertEqual(self.call.got, 2 * server.FRAME, 'the old connection\'s last frame comes again on the new one')
 
 
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')

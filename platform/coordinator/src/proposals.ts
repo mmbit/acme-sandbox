@@ -131,7 +131,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
 }
 
 // The project's review follow-ups (followups.ts): a new open proposal from the consolidator, or the open one (`into`)
-// with the brief that now covers more. Its owner hears of it as of any other (no session is told: a planning job), and
+// with the brief that now covers more. Its owner hears of it as of any other proposal, and
 // again when it grows: one a planning job left open was that job's to leave only as it stood (sweep). Its accepter names
 // the task (sorting.ts template).
 export function bundle(p: { agent: string; title: string; brief: string; project: string | null }, into?: number) {
@@ -177,8 +177,8 @@ export function ownerChanged(project: string, by: { agent: string; job: number }
 }
 
 // Every minute (server.ts): open proposals left for a planning job that has ended, which reached it after it started
-// (heard_at: a new one, or one handed on with its project; or whose job never started), go to their owner again, by a
-// planning job (no session is told). One it had at its start it decided to leave open. Findings a session holds (tell)
+// (heard_at: a new one, or one handed on with its project; or whose job never started), go to their owner again.
+// One it had at its start it decided to leave open. Proposals a session holds (tell)
 // go on as soon as it stops running (ended, yielded back to the queue, parked on a card), their notice withdrawn.
 // Review changes a later round or the merge has left behind close first: nobody has anything left to decide on them
 export function sweep() {
@@ -356,10 +356,10 @@ const notTheirs = (p: Proposal, by: string) =>
   [ownerOf(p), ceo()].includes(by) ? undefined : `proposal #${p.id} is ${ownerOf(p)}'s to decide (or the CEO's)`;
 
 // The owner hears of a proposal: through its planning job (the one open, queued, running or blocked, which reads the
-// inbox at its start and again before it ends), else in its running Claude session at its next step (`by` sends that
-// line; none: no session is told), else through a new planning job. A review's close on a thread with a window (inbox.ts)
-// waits in no planning job that isn't running: the session hears it first and holds it while it runs (then the sweep).
-// The CEO reads every proposal in its summary (summary.ts) instead. A refused line throws OwnerNotificationError.
+// inbox at its start and again before it ends), else in its running Claude session at its next step, else through a
+// new planning job. A proposal holding a thread's window (inbox.ts) reaches the running session first and stays with
+// it while it runs (then the sweep). Only non-urgent CEO proposals wait for the summary (summary.ts).
+// A refused line throws OwnerNotificationError.
 export function tell(
   owner: string,
   p: { id: number; agent: string; title: string; project: string | null },
@@ -369,16 +369,18 @@ export function tell(
     db
       .prepare('update proposals set heard_by = ?, heard_at = ? where id = ?')
       .run(job, job === null ? null : new Date().toISOString(), p.id);
-  if (owner === ceo()) return heardBy(null);
+  const urgent = windowed(p.id);
+  if (owner === ceo() && !urgent) return heardBy(null);
   const planning = openPlanning(owner);
-  const running = by && messages.runningSession(owner);
-  const urgent = running && windowed(p.id);
-  if (planning && !(urgent && planning.status !== 'running')) return heardBy(planning.id);
+  const running = (by || urgent) && messages.runningSession(owner);
+  if (planning && !(urgent && running)) return heardBy(planning.id);
   if (running) {
     const label = reviewinbox.externalId(p.id);
     const line = `${typeof label === 'number' ? 'Proposal #' : 'Review '}${label} from ${p.agent}${p.project ? ` for ${p.project}` : ''}: "${p.title}". Accept it into your plan or drop it (hq inbox ${label}).`;
-    const sent = messages.send(by, owner, line, running.id, urgent ? p.id : undefined);
-    if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
+    if (by) {
+      const sent = messages.send(by, owner, line, running.id, urgent ? p.id : undefined);
+      if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
+    } else messages.notice(owner, line, running.id, p.id);
     return heardBy(urgent ? running.id : null);
   }
   heardBy(planningJob(owner));

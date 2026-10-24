@@ -1280,14 +1280,11 @@ test("a lent machine's pull of a kind's private image signs in with HQ's registr
 });
 
 test("a lent machine's runs fit its own memory cap together: a run of another kind waits while they'd pass it, and goes once one ends", async t => {
-  const file = `${h.repo}/company/org.yaml`;
-  const before = readFileSync(file, 'utf8');
-  writeFileSync(
-    file,
-    `${before}\nruns:\n  helper: the lent machine\n  machineMemoryGb: 12\n  kinds:\n` +
-      '    simulation:\n      memoryGb: 8\n    render:\n      memoryGb: 6\n      helpers: 2\n',
+  declareKinds(
+    t,
+    '    simulation:\n      memoryGb: 8\n    render:\n      memoryGb: 6\n      helpers: 2\n',
+    '  helper: the lent machine\n  machineMemoryGb: 12\n',
   );
-  t.after(() => writeFileSync(file, before));
   await lendOne();
   const job = await h.start({ agent: 'bolt' });
   const sim = await sendRun(job.token, { command: 'true', kind: 'simulation' });

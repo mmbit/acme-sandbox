@@ -160,6 +160,7 @@ async function pictures() {
     const url = new URL(r.request().url());
     if (url.pathname === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
     if (url.pathname === '/api/gazette') return r.fulfill({ json: [] });
+    if (url.pathname === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     if (url.pathname === '/api/pictures' && r.request().method() === 'POST') {
       const body = r.request().postDataBuffer(), id = 41 + uploads.length;
       uploads.push({ call: url.searchParams.get('call'), key: url.searchParams.get('key'), type: r.request().headers()['content-type'], jpeg: body?.[0] === 0xff && body?.[1] === 0xd8 });
@@ -232,6 +233,7 @@ async function picturesInOrder() {
     const url = new URL(r.request().url());
     if (url.pathname === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
     if (url.pathname === '/api/gazette') return r.fulfill({ json: [] });
+    if (url.pathname === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     if (url.pathname === '/api/pictures' && r.request().method() === 'POST') return void uploads.push({ id: ids[jpegWidth(r.request().postDataBuffer())], r });
     return r.fulfill({ status: 404, body: '' });
   });
@@ -505,6 +507,7 @@ async function callPage() {
     const path = new URL(r.request().url()).pathname;
     if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
     if (path === '/api/gazette') return r.fulfill({ json: [] });
+    if (path === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
     return r.fulfill({ status: 404, body: '' });
   });
   return opened;
@@ -581,6 +584,63 @@ async function lagging() {
   console.log('ok: a line that hears the board late shows as a weak connection, until 3 s after it caught up:', JSON.stringify(seen));
 }
 await lagging();
+
+// The connection drops mid-sentence: the frames still on their way are lost with it (the stand-in line stops hearing
+// the old one 1.5 s before it closes), and the microphone goes on while HQ reconnects. The line's call on the new
+// connection says how much it has, and HQ sends the rest first, then carries on live: the line hears every frame the
+// microphone made from pickup on, once each, in order. The ones sent again come after a ping from when they were made,
+// so the line reads them as late. Each frame carries its number in its first sample here.
+async function reconnect() {
+  const { context, page, errors } = await callPage();
+  await context.addInitScript(() => {
+    const Node = window.AudioWorkletNode, set = Object.getOwnPropertyDescriptor(MessagePort.prototype, 'onmessage').set;
+    let made = 0;
+    window.AudioWorkletNode = class extends Node {
+      constructor(...a) {
+        super(...a);
+        const port = this.port;
+        Object.defineProperty(port, 'onmessage', { set: h => { set.call(port, h && (m => { new Int16Array(m.data)[0] = made++; h(m); })); } });
+      }
+    };
+  });
+  const heard = [], connections = [];
+  let bye = null;
+  await context.routeWebSocket(/\/voice\/ws$/, ws => {
+    const line = { pings: [], deaf: false };
+    connections.push(line);
+    ws.onMessage(m => {
+      if (line.deaf) return; // (lost on the way)
+      if (typeof m !== 'string') return void heard.push(Buffer.from(m).readInt16LE(0));
+      const e = JSON.parse(m);
+      if (e.type === 'bye') bye = e;
+      if (e.type === 'ping') { line.pings.push([heard.length, e.t]); ws.send(JSON.stringify({ type: 'pong', late: 0, heard: heard.length * 320 })); }
+      if (!e.agent && !e.resume) return;
+      line.ws = ws; line.from = heard.length;
+      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9, heard: heard.length * 320 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+    });
+  });
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!connections[0]?.ws) await page.waitForTimeout(50);
+  await page.waitForTimeout(2000);
+  connections[0].deaf = true;
+  await page.waitForTimeout(1500);
+  connections[0].ws.close();
+  while (!connections[1]?.ws) await page.waitForTimeout(50);
+  const back = await page.evaluate(() => performance.now());
+  await page.waitForTimeout(2000);
+  await page.click('#call-end');
+  while (!bye) await page.waitForTimeout(50);
+  await context.close();
+  assert.deepEqual(errors, []);
+  const [first, second] = connections, again = second.pings[0];
+  assert.ok(first.from === 0 && heard.length > 200, `${heard.length} frames heard`);
+  const out = heard.findIndex((n, i) => n !== heard[0] + i);
+  assert.equal(out, -1, `frame ${heard[out]} came after ${heard[out - 1]}: lost or heard twice`);
+  assert.ok(again?.[0] === second.from && again[1] < back - 1500, `the frames sent again came without a ping from when they were made: ${JSON.stringify([back, second.pings.slice(0, 3)])}`);
+  console.log(`ok: a dropped connection loses none of the board's words: ${heard.length - second.from} frames sent again or after, all ${heard.length} heard once, in order`);
+}
+await reconnect();
 
 // Dialling from an iOS home-screen app back from the background: its microphone can come muted, or live but giving
 // only exact silence, and the call's audio may not run, all with no prompt and no error. The call replaces a muted

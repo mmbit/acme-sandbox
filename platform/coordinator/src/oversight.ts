@@ -7,7 +7,6 @@ import { tmpdir } from 'node:os';
 import { promisify } from 'node:util';
 import { gunzipSync } from 'node:zlib';
 import { DATA_DIR, ORIGIN } from './config.ts';
-import { names } from './company.ts';
 import { db, remember, setting } from './db.ts';
 import * as ledger from './ledger.ts';
 import * as memory from './memory.ts';
@@ -68,7 +67,6 @@ export const forBoard = () => ({
   address: `${ORIGIN}/api/overseer/`,
   key: secret(KEY_NAME) || renewKey(),
   read: setting('oversight.read') ?? null,
-  company: names().name,
 });
 
 // A new key, which ends the old one: the Overseer reads nothing until it has the new one

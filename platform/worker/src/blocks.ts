@@ -1,11 +1,11 @@
 // Stops a run past its share and attributes it to its push check before asking HQ for the report.
 import { randomUUID } from 'node:crypto';
 import { procStat } from './detached.ts';
-import { ResponseError } from './handback.ts';
+import { ResponseError } from './reports.ts';
 import { commandOf, stopRun, type Block, type ProcessSnapshot } from './shares.ts';
 
 type BlockOptions = {
-  ask: (body: Record<string, unknown>) => Promise<{ text: string }>;
+  ask: (body: Record<string, unknown>, signal?: AbortSignal) => Promise<{ text: string }>;
   checking: Map<number, string[]>;
   stopped: (text: string) => void;
 };

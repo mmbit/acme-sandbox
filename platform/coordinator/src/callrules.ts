@@ -2,7 +2,7 @@
 // dials it.
 import { brand, timeZone } from './company.ts';
 import { companyMoment } from './later.ts';
-import { international } from './phone.ts';
+import { international } from './phonelines.ts';
 import { secret } from './secrets.ts';
 
 const AHEAD_MS = 60 * 86_400_000;
