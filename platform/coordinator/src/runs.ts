@@ -87,6 +87,9 @@ type Kind = {
   // its runs keep their sockets (a test's local servers): only on a machine set up with its install command, where the
   // helpers' network reaches HQ and the package registries alone (manager.mjs), so it's for the lent machines only
   sockets: boolean;
+  // each of its helpers has that network to itself, with no other helper on it, so its runs (a model's own commands)
+  // reach no other run: only a helper that says so takes them
+  alone: boolean;
 };
 
 const DIR = `${DATA_DIR}/runs`;
@@ -173,13 +176,14 @@ function kindProblem(name: string, entry: unknown) {
   if (!KIND_NAME.test(name)) return 'its name: a to z, 0 to 9 and -, starting with a letter, at most 24 characters';
   if (entry === null || entry === undefined) return '';
   if (!isMap(entry))
-    return 'its settings: a map (about, image, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets)';
+    return 'its settings: a map (about, image, cpus, memoryGb, diskGb, gpus, lentOnly, serverAfterLent, holdUntilLent, helpers, sockets, alone)';
   if (entry.about !== undefined && typeof entry.about !== 'string') return 'about: a line of text';
   if (entry.image !== undefined && !(typeof entry.image === 'string' && IMAGE_NAME.test(entry.image)))
     return 'image: a plain Docker reference (a to z, 0 to 9 and . _ / : @ -)';
   if (entry.gpus !== undefined && typeof entry.gpus !== 'boolean') return 'gpus: true or false';
   if (entry.lentOnly !== undefined && typeof entry.lentOnly !== 'boolean') return 'lentOnly: true or false';
   if (entry.sockets !== undefined && typeof entry.sockets !== 'boolean') return 'sockets: true or false';
+  if (entry.alone !== undefined && typeof entry.alone !== 'boolean') return 'alone: true or false';
   if (entry.serverAfterLent !== undefined && typeof entry.serverAfterLent !== 'boolean')
     return 'serverAfterLent: true or false';
   if (entry.holdUntilLent !== undefined && !isDepartmentList(entry.holdUntilLent))
@@ -198,11 +202,12 @@ const kindOf = (name: string, entry: Record<string, unknown> | null): Kind => ({
   memoryGb: whole(entry?.memoryGb, 8),
   diskGb: whole(entry?.diskGb, 16),
   gpus: entry?.gpus === true,
-  lentOnly: entry?.lentOnly === true || entry?.sockets === true,
+  lentOnly: entry?.lentOnly === true || entry?.sockets === true || entry?.alone === true,
   serverAfterLent: entry?.serverAfterLent === true,
   holdUntilLent: (entry?.holdUntilLent as string[] | undefined) ?? [],
   helpers: whole(entry?.helpers, 1),
   sockets: entry?.sockets === true,
+  alone: entry?.alone === true,
 });
 
 const isDepartmentList = (given: unknown) => {
@@ -691,7 +696,7 @@ function managerBootstrap() {
 // them that have a run now, which it changes only once that run has ended
 function managerSetup(helper: Helper) {
   if (helper.name !== 'lent') return new Refusal(403, 'a lent machine sets itself up, never this server');
-  const kinds = runSettings().kinds.map(({ name, image, cpus, memoryGb, diskGb, gpus, helpers, sockets }) => ({
+  const kinds = runSettings().kinds.map(({ name, image, cpus, memoryGb, diskGb, gpus, helpers, sockets, alone }) => ({
     name,
     image,
     cpus,
@@ -700,6 +705,7 @@ function managerSetup(helper: Helper) {
     gpus,
     helpers,
     sockets,
+    alone,
   }));
   const busy = openRuns('running')
     .filter(row => row.machine === helper.machine)
@@ -821,7 +827,9 @@ const helperName = (helper: HelperName | null, machine: number | null = null) =>
 // run's: the code is pinned by its hash on the lent machines, and a change to it stops their helpers until new start
 // commands are pasted.
 // A machine set up with its install command runs `helpers` of a kind, each saying which it is (slot) and that its
-// network is the manager's closed one (locked): a kind whose runs keep their sockets goes to none other.
+// network is the manager's closed one (locked): a kind whose runs keep their sockets goes to none other. A kind that
+// keeps its helpers alone goes only to one that says its network is its own (alone), which a manager older than that
+// doesn't make: its machine is installed again.
 function takeRun(helper: Helper, asked: unknown) {
   const named = kindNamed(isMap(asked) ? asked.kind : undefined);
   if (named instanceof Refusal) return named;
@@ -830,6 +838,11 @@ function takeRun(helper: Helper, asked: unknown) {
     return new Refusal(
       400,
       `${kind}'s runs keep their sockets: only a machine set up with its install command takes them`,
+    );
+  if (named.alone && !(isMap(asked) && asked.alone === true))
+    return new Refusal(
+      400,
+      `${kind}'s helpers each keep a network of their own: only a machine installed again since then takes its runs`,
     );
   const given = isMap(asked) ? asked.slot : undefined;
   const slot =

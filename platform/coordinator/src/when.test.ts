@@ -258,6 +258,27 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
     await hqWhen('--by', utc(T0 + 20 * MIN)),
     /Not by .* even with the windows ahead of it giving way: done about .*\.\nNot by .* with one more claude seat and every window held: done about .*\./,
   );
+  assert.doesNotMatch(await hqWhen('--by', utc(T0 + 20 * MIN)), /RED FLAG/);
+  // on a call, a finish past the board's time comes with what to check and do before the board hears it
+  const onCall = await h.hq(
+    { ...(await reader()), call: true },
+    'when',
+    'paint the harbour map',
+    '--agent',
+    'kit',
+    '--size',
+    '40m',
+    '--by',
+    utc(T0 + 20 * MIN),
+  );
+  assert.match(
+    onCall.out,
+    /RED FLAG, not news for the board: this work lands \d.* past the time asked for \(.*\)\. Before you say a time/,
+  );
+  assert.match(
+    onCall.out,
+    /- the size: [^]*- the plan: [^]*- other work [^]*- the window: [^]*If one moves it forward/,
+  );
   // a seat whose fill rates aren't measured (codex's) isn't copied, nor said to be no help, and the plays say they
   // counted it as never filling
   const unseated = (await ask({ q: 'paint the harbour map', agent: 'nib', by: utc(T0 + 20 * MIN) })).body.by;

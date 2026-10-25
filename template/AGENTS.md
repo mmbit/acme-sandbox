@@ -94,3 +94,11 @@ asks for a button, it gets the button and nothing else: the rest of the app does
 Don't patch LLM behaviour with substring matching or regexes over model output. The model phrases things differently
 every time, so that kind of duct tape fails and hides the real problem. Fix it structurally: a tool, a table, a
 route, a clearer prompt, a check on real state.
+
+## Don't over-engineer
+
+Build the simplest thing that answers the question. Use an existing tool as it's designed, with its own parts, rather
+than stripping it or building around it. Security goes in only where the risk calls for it (an untrusted model, real
+data), and stays simple: too complex to build quickly (minutes of agent time) is too complex to trust. The example: a
+trial of local models spent a day building its own plumbing around a stock coding agent, and that plumbing kept the
+models from doing the very work being tested (board, 25 Oct).

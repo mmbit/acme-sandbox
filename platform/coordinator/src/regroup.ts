@@ -1,8 +1,8 @@
 // Work regrouped (hq thread move, hq job move): a thread into another project, or a job with its review loop into another
 // thread, by the CEO, the process team or the work's owner. A moved thread's old id keeps resolving (projects.ts
-// findThread).
+// findThread). Also a task out of its thread, as the CEO expedites it (hq expedite).
 // (the work's owner: its thread's project's, projects.ts ownerOf)
-import { db, inOneStep } from './db.ts';
+import { db, inOneStep, planChange } from './db.ts';
 import { ceo } from './company.ts';
 import { deskLets, inProcess, loopBranch, WORK_LEAD } from './jobs.ts';
 import { dropped, finished } from './windows.ts';
@@ -96,6 +96,44 @@ export function moveJob(
   publish({ type: 'log', agent, text: `Job #${row.lead} moved to ${thread.name}` });
   return { thread: thread.id, ...moved };
 }
+
+// hq expedite on a thread's task (review.ts expedite): one that never started leaves its thread as its own expedited job,
+// its brief, item and agent kept, and the thread's later tasks stop waiting for it. It runs on its own branch from main,
+// without the thread's earlier work. One that ran shares the thread's branch with the others' work, so it stays, and the
+// refusal says what to do instead.
+export function takeOut(
+  job: number,
+  agent: string,
+): { taken: true; thread: string } | { taken: false; refusal: string } {
+  const row = db.prepare('select status, thread, branch, pr, started from jobs where id = ?').get(job) as {
+    status: string;
+    thread: string;
+    branch: string | null;
+    pr: number | null;
+    started: string | null;
+  };
+  const thread = findThread(row.thread)!;
+  if (row.status === 'running')
+    return {
+      taken: false,
+      refusal: `job #${job} is running now on the branch it shares with the rest of ${thread.id}, so it can't leave that thread: ${QUEUE_THE_FIX}`,
+    };
+  if (row.status !== 'queued' || row.started || row.branch || row.pr)
+    return {
+      taken: false,
+      refusal: `job #${job} has already run on the branch it shares with the rest of ${thread.id}, so it merges with that thread: ${QUEUE_THE_FIX}`,
+    };
+  redraws.writePlan(() => {
+    redraws.rememberHolds();
+    db.prepare('update jobs set thread = null, seq = null, expedite = 1 where id = ?').run(job);
+    planChange({ project: thread.project, thread: thread.id, what: `task #${job} taken out, expedited`, by: agent });
+  });
+  publish({ type: 'log', agent, text: `Job #${job} left ${thread.name}, expedited` });
+  return { taken: true, thread: thread.id };
+}
+// What an expedite refusal tells its caller to do instead
+export const QUEUE_THE_FIX =
+  'to put the fix first, queue it as its own job with hq job --expedite (on a call: the job tool with expedite)';
 
 function moveGroup(
   loop: { job: number; lead: number; branch: string },

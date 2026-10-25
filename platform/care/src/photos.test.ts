@@ -58,8 +58,9 @@ await import('./server.ts');
 await new Promise(r => setTimeout(r, 100));
 
 // ---- pictures, made by the local ImageMagick without our policy (the test's own tool, not the decoder under test)
+// Both keep ImageMagick's temporary files in the test's TMPDIR
 const BIN = ['magick', 'convert'].find(n => String(process.env.PATH).split(delimiter).some(d => existsSync(join(d, n))))!;
-const make = (args: string[]) => execFileSync(BIN, args, { maxBuffer: 64 << 20, env: { PATH: process.env.PATH } });
+const make = (args: string[]) => execFileSync(BIN, args, { maxBuffer: 64 << 20, env: { PATH: process.env.PATH, MAGICK_TEMPORARY_PATH: tmpdir() } });
 const JPEG = make(['-size', '64x48', 'gradient:red-blue', '-quality', '80', 'jpeg:-']);
 const PNG = make(['-size', '64x48', 'gradient:red-blue', 'png:-']);
 // An EXIF APP1 segment, big-endian: Orientation 6 (turn 90° to view) and a GPS IFD with latitude N 52° 22′ 43.21″
@@ -126,7 +127,7 @@ test('anything but a JPEG is refused before a decoder runs: a PNG renamed .jpg, 
 // named: the policy itself refuses it (the test above can't tell, since `jpeg:-` makes any other format fail anyway)
 const POLICY = new URL('../magick', import.meta.url).pathname;
 const DECODER = process.env.CARE_MAGICK || BIN;
-const decodes = (input: string, bytes: Buffer) => { try { execFileSync(DECODER, [input, 'jpeg:-'], { input: bytes, stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, MAGICK_CONFIGURE_PATH: POLICY } }); return true; } catch { return false; } };
+const decodes = (input: string, bytes: Buffer) => { try { execFileSync(DECODER, [input, 'jpeg:-'], { input: bytes, stdio: ['pipe', 'pipe', 'pipe'], env: { PATH: process.env.PATH, MAGICK_CONFIGURE_PATH: POLICY, MAGICK_TEMPORARY_PATH: tmpdir() } }); return true; } catch { return false; } };
 
 test('our policy refuses every coder but JPEG, whatever the input names, and indirect reads', () => {
   assert.ok(decodes('jpeg:-', JPEG));

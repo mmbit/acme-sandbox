@@ -64,7 +64,9 @@ note('knowledge/qa/trace.json', trace)   # raw output kept in the store (renders
 with open(os.path.join(store, hashlib.sha256(trace).hexdigest()), 'wb') as f:
     f.write(trace)
 note('knowledge/qa/observations.json', observations, blob=secret)   # raw output adopted: it stays in git's history
-os.symlink('/tmp', os.path.join(repo, 'products/out'))
+outside = os.path.join(tmp, 'outside')   # a folder beside the checkout, as /tmp is to the real one
+os.makedirs(outside)
+os.symlink(outside, os.path.join(repo, 'products/out'))
 note('products/out/escape.mp4', new, command=['node', 'shared/demo/ad.mjs'])
 git('add', '-A')
 git('commit', '-qm', 'renders kept out')
@@ -75,7 +77,7 @@ check('a render from the store comes back', read('products/x/ads/new.mp4') == ne
 check('one from before comes back from its blob', read('products/x/ads/old.mp4') == old)
 check('history gives back only video or audio', read('products/x/ads/secret.mp4') is None)
 check('a file still in git keeps its own', read('products/x/ads/kept.mp4') == b'\0\0\0\x18ftypmp42 still in git')
-check('a path led out through a symlink is left alone', not os.path.exists('/tmp/escape.mp4'))
+check('a path led out through a symlink is left alone', not os.path.exists(os.path.join(outside, 'escape.mp4')))
 check('raw output kept in the store comes back', read('knowledge/qa/trace.json') == trace)
 check('raw output adopted from git stays there, not missing', read('knowledge/qa/observations.json') is None
       and 'observations' not in said)

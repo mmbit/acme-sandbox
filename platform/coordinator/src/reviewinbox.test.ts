@@ -598,7 +598,7 @@ test("the desk's pause keeps threadless findings' work in no thread until it lif
   });
   await h.finish(author);
   const ceo = await h.start({ agent: 'juno', title: 'Bind the findings' });
-  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start' }, 'juno'), 'object');
+  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start', byHand: true }, 'juno'), 'object');
   const accept = () =>
     h.agent('proposals/accept', ceo.token, { id: 'findings:72', for: 'kit', findings: '12', thread: 'game/world' });
   const refused = await accept();
@@ -627,7 +627,7 @@ test("the desk's pause refuses a new thread for threadless findings whole, and t
   });
   await h.finish(author);
   const ceo = await h.start({ agent: 'juno', title: 'Bind the findings' });
-  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start' }, 'juno'), 'object');
+  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start', byHand: true }, 'juno'), 'object');
   const name = 'The desk work lands';
   const drawn = () => ({
     threads: projects.listThreads().filter(t => t.name === name).length,
@@ -911,6 +911,7 @@ test('a redraw failed before its PR follows non-cancelled lands takeovers throug
   redrawThread('replacement');
   redrawThread('paused');
   const pauses = await import('./pauses.ts');
+  const pausewake = await import('./pausewake.ts');
   const explicit = h.queue({ agent: 'kit', queuedBy: 'wren' });
   h.jobs.holdForMerge(explicit, author.id, 'wren');
   const made = await h.agent('proposals/accept', owner.token, {
@@ -1000,10 +1001,10 @@ test('a redraw failed before its PR follows non-cancelled lands takeovers throug
   assert.equal(closure.status(branch), 'merged');
   assert.equal(h.job(source).ready, 1);
   assert.equal(h.job(explicit).ready, 1, 'redirected explicit waits settle through the saved-work lineage');
-  pauses.sweep();
-  assert.equal(
-    pauses.open().some(pause => pause.target === 'game/paused'),
-    false,
+  pausewake.sweep();
+  assert.ok(
+    pauses.open().find(pause => pause.target === 'game/paused')!.woken,
+    'the redirected work merged: the owner judges the pause, still on',
   );
   assert.equal(h.job(destination).ready, 1);
   assert.equal(projects.findThread('game/world')?.branch, null);

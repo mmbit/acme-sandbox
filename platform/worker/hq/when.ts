@@ -84,8 +84,30 @@ export const when = {
       '',
       `(Played ${found.played.plays} ways on the queue as it is, in ${(found.played.ms / 1000).toFixed(1)} s.)`,
     );
+    if (found.by && (found.by.finish === null || found.by.finish > found.by.at))
+      print(...lateLines(`this work lands ${past(found.by)} the time asked for (${at(found.by.at)})`));
   },
 };
+
+const past = ({ finish, at: by }: NonNullable<Answer['by']>) =>
+  finish === null ? 'with no finish in sight before' : `${duration((finish - by) / 60_000)} past`;
+
+// On a call (the voice line sets HQ_CALL), a finish past the board's time or a window's deadline comes with what to do
+// about it, at the moment it matters: the board's agents read the late time out as news, call after call (board, call
+// 139). An instruction for the agent's judgment, never a refusal: the board may name two times or a soft preference.
+export function lateLines(late: string) {
+  if (!process.env.HQ_CALL) return [];
+  return [
+    '',
+    `RED FLAG, not news for the board: ${late}. Before you say a time, judge whether this one makes sense, and check the likely causes:`,
+    '- the size: compare clean past jobs (estimate); work sized wrong plays wrong;',
+    '- the plan: what it waits on, and whether that should hold it at all (a fault in the scheduler is worth naming);',
+    '- other work ahead of it, slowing it, that could be paused or wait;',
+    "- the window: none set, or one later than the board's time (manage's window), then play it again.",
+    'If one moves it forward, do that now, on the call, and check again. If none does, tell the board plainly what you ' +
+      "looked at and that the time can't be made, and ask whether that's acceptable or whether to look further after the call.",
+  ];
+}
 
 function sizeLine({ work, size }: Answer) {
   const on = size.given

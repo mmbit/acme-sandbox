@@ -67,7 +67,8 @@ export const sum = (body: string) => `export const sum = (a: number, b: number) 
 // GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it ('body': after its answer's headers;
 //.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
 // first poll).
-// playedHq returns its HQ_URL and HQ_TOKEN, for the check's environment, with `env`.
+// playedHq returns its HQ_URL and HQ_TOKEN, for the check's environment, with `env`. It listens on loopback alone, as
+// it runs any command a run names.
 // (#5575 and #5602's network failures)
 const PLAYED_HQ = `
 import { execFileSync } from 'node:child_process';
@@ -129,7 +130,7 @@ const answer = async (req, res) => {
   const timedOut = !!process.env.PLAYED_TIMED_OUT;
   res.end(JSON.stringify({ state, exitCode: run.exitCode, timedOut, machine, why, helper: { takeMinutes: Number(process.env.HELPER_TAKE_MINUTES ?? 1), present: true } }));
 };
-if (!process.env.RESTARTING) createServer(answer).listen(0, function () { console.log(this.address().port); });
+if (!process.env.RESTARTING) createServer(answer).listen(0, '127.0.0.1', function () { console.log(this.address().port); });
 // as a deploy does: down (connections refused) as the push sends its run, and again from the run's first poll, which
 // it drops unanswered
 let dropped = false;
@@ -142,9 +143,9 @@ const down = ms => {
   const { port } = restarting.address();
   restarting.close();
   restarting.closeAllConnections();
-  setTimeout(() => restarting.listen(port), ms);
+  setTimeout(() => restarting.listen(port, '127.0.0.1'), ms);
 };
-if (process.env.RESTARTING) restarting.listen(0, () => { console.log(restarting.address().port); down(2000); });
+if (process.env.RESTARTING) restarting.listen(0, '127.0.0.1', () => { console.log(restarting.address().port); down(2000); });
 `;
 export async function playedHq(states: [string, string][] = [['done', 'attic']], env: NodeJS.ProcessEnv = {}) {
   const script = join(mkdtempSync(join(tmpdir(), 'tests-hq-')), 'hq.mjs');
@@ -155,7 +156,7 @@ export async function playedHq(states: [string, string][] = [['done', 'attic']],
   });
   afterAll(() => hq.kill());
   const [port] = (await once(hq.stdout, 'data')) as Buffer[];
-  return { HQ_URL: `http://localhost:${String(port).trim()}`, HQ_TOKEN: 'job-token', ...env };
+  return { HQ_URL: `http://127.0.0.1:${String(port).trim()}`, HQ_TOKEN: 'job-token', ...env };
 }
 
 // The helper's script (tests-on-helper.sh) without its installs: the check's script with the arguments after it

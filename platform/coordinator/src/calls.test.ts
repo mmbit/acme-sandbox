@@ -254,7 +254,9 @@ test("the call agent's briefing: no number for work is said aloud, on screen, by
 test("the call agent's briefing: shifts reach the board only when an agreed deadline moves or it asks", async () => {
   const { prompt } = await context('juno');
   assert.match(prompt, /say nothing about shifts unless an agreed deadline moves or the\s+board asks/);
-  assert.match(prompt, /When its finish lands past the deadline, the deadline moves: say so\s+plainly/);
+  // a missed deadline is first the agent's to move back (board, call 139), then said plainly
+  assert.match(prompt, /When its finish lands past the deadline, look for what moves it back\s+first; when nothing does, the deadline moves: say so plainly/);
+  assert.match(prompt, /A time far past the board's is a problem to solve on the\s+call, never news to report/);
   // a tight or shrinking margin is for planning: the board hears of it only when it asks
   assert.match(prompt, /slack that keeps shrinking as work piles on, is yours to plan with: don't\s+mention it unless the board asks/);
   assert.doesNotMatch(prompt, /at stake|say so before the deadline moves|Tight, still made|a little tight|your judgment says the board wants/);

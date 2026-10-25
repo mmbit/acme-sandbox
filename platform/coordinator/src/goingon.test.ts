@@ -92,7 +92,7 @@ test("a call hears who's at work as HQ counts them, why each runs through the ho
     );
     assert.match(
       text,
-      /- Paused: game\/levels, until #\d+ "Lift the hold" \(wren's, queued\) merges\. Why: The trial goes first/,
+      /- Paused: game\/levels, until it's resumed; once #\d+ "Lift the hold" \(wren's, queued\) merges or ends, its owner judges whether to lift it\. Why: The trial goes first/,
     );
     assert.match(
       text,

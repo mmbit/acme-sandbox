@@ -268,17 +268,21 @@ test("History finds the agent's own work by a word that's in hundreds of the fil
   assert.deepEqual(out.found, [out.id]);
 });
 
-test('An index pass takes turns with the server: a thousand new notes never hold it in one go', async () => {
-  const notes = Object.fromEntries(Array.from({ length: 1000 }, (_, i) => [`knowledge/notes/n${i}.md`, `# Note ${i}\n\nThe quokkaturn, part ${i}.\n`]));
-  // the longest the server waited for its next turn, against the whole pass (a busy machine slows both)
-  const out = await indexed(notes, `const memory = await import('./memory.ts');
+test('An index pass takes turns with the server: three thousand new notes never hold it in one go', async () => {
+  // the notes arrive at a running server, whose first pass has paid what a process pays once (the company's clock, say).
+  // Then the longest the server waited for its next turn, against the whole pass (a busy machine slows both)
+  const notes = Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`arriving/n${i}.md`, `# Note ${i}\n\nThe quokkaturn, part ${i}.\n`]));
+  const out = await indexed(notes, `const memory = await import('./memory.ts'), { mkdirSync, renameSync } = await import('node:fs');
+    await memory.refresh();
+    mkdirSync(process.env.REPO_DIR + '/knowledge');
+    renameSync(process.env.REPO_DIR + '/arriving', process.env.REPO_DIR + '/knowledge/notes');
     let last = performance.now(), held = 0, on = true;
     const turn = () => { const now = performance.now(); held = Math.max(held, now - last); last = now; if (on) setImmediate(turn); };
     setImmediate(turn);
     const start = performance.now(), changed = await memory.refresh(), pass = performance.now() - start;
     on = false;
     console.log(JSON.stringify({ changed, held, pass, found: (await memory.search('quokkaturn', { id: 0, agent: 'penny' }, 30)).hits.length }));`);
-  assert.ok(out.changed >= 1000, String(out.changed));
+  assert.ok(out.changed >= 3000, String(out.changed));
   assert.ok(out.held < out.pass / 3, `the pass held the server ${Math.round(out.held)} of its ${Math.round(out.pass)} ms in one go`);
   assert.equal(out.found, 30);
 });

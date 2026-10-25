@@ -90,6 +90,18 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   assert.match(prompt(), /The scheduler acted and capacity is short[^]*That is no scheduler\s+fault/);
   assert.doesNotMatch(prompt(), /one of two causes/);
   assert.doesNotMatch(prompt(), /cut what's in the way/);
+  // It judges whether the board gets what it asked for, delivered only once the board said yes, and a pause whose
+  // condition is met or whose work ended is off track that hour (board, 25 Oct).
+  assert.match(prompt(), /is the board getting what it asked for, and if not, why\s+not and what do you do now\?/);
+  assert.match(
+    prompt(),
+    /the board has seen it and said yes, this is what I want\. Not a job ending, merging or\s+deploying/,
+  );
+  assert.match(
+    prompt(),
+    /Flagged and acted on this hour, never\s+on track:\n\s+- A pause still on with what it waited for met, or a job it waits for ended/,
+  );
+  assert.match(prompt(), /A result the board asked for first [^]* promised and not in its hands/);
   try {
     writeFileSync(orgFile, `${orgChart}\nfollowThrough:\n  prompt: |\n    Only ever this board's words.\n`);
     assert.deepEqual(recordVerdict(checks().at(-1)!.job, 'ok', ''), { ok: true });

@@ -127,8 +127,9 @@ export async function harness(
   };
 
   // The real hq script, as the job's agent runs it.
-  // (dir: the job's folder, where hq request --park leaves its card for the worker; tmp: the job's own TMPDIR)
-  const hq = (job: { token: string; agent: string; dir?: string; tmp?: string }, ...args: string[]) =>
+  // (dir: the job's folder, where hq request --park leaves its card for the worker; tmp: the job's own TMPDIR; call: run
+  // as the voice line does on a call, HQ_CALL set)
+  const hq = (job: { token: string; agent: string; dir?: string; tmp?: string; call?: boolean }, ...args: string[]) =>
     new Promise<{ code: number; out: string }>(r =>
       execFile(
         'bash',
@@ -141,6 +142,7 @@ export async function harness(
             HQ_AGENT: job.agent,
             ...(job.dir ? { HQ_JOB_DIR: job.dir } : {}),
             ...(job.tmp ? { TMPDIR: job.tmp } : {}),
+            ...(job.call ? { HQ_CALL: '1' } : {}),
           },
         },
         (e, out, err) => r({ code: e ? Number(e.code) : 0, out: out + err }),

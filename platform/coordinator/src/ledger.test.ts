@@ -1658,7 +1658,7 @@ test("a call manages work as off it; a customer's call reads, and changes nothin
   const other = (await agent('job', plain.token, { agent: 'kit', title: 'Mug box', prompt: 'x' })).body.id;
   const before = JSON.stringify(await h.feed());
   for (const [route, body] of [['cancel', { id: queued, why: 'Jan Jansen refunded' }], ['plan/drop', { id: queued, why: 'Jan Jansen' }],
-    ['pauses', { project: 'office', why: 'Jan Jansen' }], ['decisions', { name: 'Refund Jan Jansen?', blocks: ['office'] }],
+    ['pauses', { project: 'office', why: 'Jan Jansen', byHand: true }], ['decisions', { name: 'Refund Jan Jansen?', blocks: ['office'] }],
     ['proposals/drop', { id: 1, why: 'Jan Jansen' }], ['meetings/set', { asks: [1], topic: 'Jan Jansen' }],
     ['owed-close', { slug: 'x', why: 'Jan Jansen' }]] as const) {
     assert.equal((await agent(route, about.token, body)).status, 409, route);

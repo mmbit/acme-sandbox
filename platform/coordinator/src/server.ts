@@ -118,6 +118,7 @@ import * as projects from './projects.ts';
 import * as reviewrows from './reviewrows.ts';
 import * as projectorder from './projectorder.ts';   // the board's order of the projects' tiles
 import * as pauses from './pauses.ts';
+import * as pausewake from './pausewake.ts';
 import { jobThread } from './newthread.ts';
 import * as regroup from './regroup.ts';
 import * as backup from './backup.ts';
@@ -531,6 +532,8 @@ const speaker = (as: unknown, me: Me) => jobs.boardId(me.agent) ? undefined : as
 // A card that brings a product back (its --back slugs, or the open card's own, for hq rewrite: b.id) recommends nothing
 // (cardcheck.js cardProblem)
 const bringsBack = (b: any) => Array.isArray(b.back) && b.back.length > 0 || owed.productsOf(Number(b.id) || 0).some(p => p.back);
+// The card as the phone shows it: its Share part (text the board forwards, jobs.ts sharePart) is no part of it
+const cardIssue = (b: any) => cardProblem(jobs.sharePart(String(b.body ?? '')).body, bringsBack(b));
 // A card's --visible-from it can't read (later.ts), as hq ask and hq request say it.
 const laterProblem = (b: any) => { const at = later.hiddenUntil(b.visibleFrom); return at.ok ? null : `--visible-from ${at.why}`; };
 // A card's before-and-after pictures show from main (/cycles/), so one not there yet would show broken, unless the card
@@ -820,7 +823,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // replaced queues nothing more, not even another item on its call (unless it's a call's follow-up: that one's its work).
   // --expedite: the CEO's structural HQ fix, first in line and merged on its checks (review.ts mergeExpedited).
   'POST /api/agent/job': (b, me) => writePlan(() => {
-    if (b.expedite === true && me.agent !== ceo()) return new Refused(403, 'only the CEO expedites a job');
+    if (b.expedite === true && me.agent !== ceo()) return new Refused(403, `only the CEO expedites a job: ask ${ceo()}`);
     const size = sizes.readQueuedSize(b);
     if (typeof size === 'string') return new Refused(400, size);
     const origin = jobOrigin(b, me);
@@ -907,7 +910,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/projects/business': (b, me) => { const agent = speaker(b.as, me); return agent ? refusal(plan.setBusiness(String(b.id ?? ''), b.business, agent)) : 403; },
   // hq projects and hq thread <id>: every open thread's outlook, or one's with its jobs (outlooks.ts).
   'GET /api/agent/projects': () => outlooks.lines(forecast.current()),
-  'GET /api/agent/thread': b => outlooks.detail(String(b.id ?? ''), forecast.current()) ?? 404,
+  // (with the pause holding it and what lifts it: pauses.ts)
+  'GET /api/agent/thread': b => {
+    const detail = outlooks.detail(String(b.id ?? ''), forecast.current());
+    return detail ? { ...detail, pause: pauses.pauseOf(detail.id) } : 404;
+  },
   // the call's eta tool and hq projects <words>: threads found by name or words, waits by name.
   'GET /api/agent/outlooks': b => refusal(outlooks.findOutlooks(String(b.q ?? ''), forecast.current())),
   // hq now, the call's eta tool with no query: who's at work and what each open card holds up (goingon.ts).
@@ -926,7 +933,9 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/pauses': (b, me) => {
     const agent = speaker(b.as, me);
     const until = Array.isArray(b.until) ? b.until : [];
-    return agent ? refusal(pauses.pause({ thread: str(b.thread), project: str(b.project), why: b.why, until }, agent)) : 403;
+    // (what wakes its owner, or by hand)
+    const ask = { thread: str(b.thread), project: str(b.project), why: b.why, until, untilTime: str(b.untilTime), byHand: b.byHand === true };
+    return agent ? refusal(pauses.pause(ask, agent)) : 403;
   },
   'POST /api/agent/pauses/resume': (b, me) => {
     const agent = speaker(b.as, me);
@@ -995,12 +1004,12 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     return { ...made, tried, ...said };
   },
   // hq stop <job> "why": a running job of the caller's own, or any as the CEO, ends now (jobs.ts stopJob).
-  // hq expedite <job>: the CEO's. A queued or running job starts first and merges on its checks; one that has pushed,
-  // its pull request still in review, merges now if its last push passed them, and is reviewed after. Not a thread's
-  // task: it runs on the thread's branch with the others' work.
+  // hq expedite <job>: the CEO's, from a job or a call. A queued or running job starts first and merges on its checks;
+  // one that has pushed, its pull request still in review, merges now if its last push passed them, and is reviewed
+  // after. A thread's task that never started leaves its thread for it (review.ts expedite).
   'POST /api/agent/expedite': async (b, me) => {
-    if (me.agent !== ceo()) return new Refused(403, 'only the CEO expedites a job');
-    const done = await review.expedite(Number(b.id));
+    if (me.agent !== ceo()) return new Refused(403, `only the CEO expedites a job: ask ${ceo()}`);
+    const done = await review.expedite(Number(b.id), me.agent);
     return typeof done === 'string' ? new Refused(409, done) : { ok: true, ...done };
   },
   'POST /api/agent/stop': (b, me) => {
@@ -1115,7 +1124,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (!agent) return 403;
     if (plainCredential(b)) return new Refused(400, 'a credential request names the keys it asks for (their names after the brief file, comma-separated): the board types them into key fields, never an answer box');
     if (!agentRequest(b, me.agent)) return 400;
-    const problem = cardProblem(String(b.body ?? ''), bringsBack(b)) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? unseenProblem(b, me);
+    const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? unseenProblem(b, me);
     if (problem) return new Refused(400, problem);
     const files = cardFiles.read(b.files); // files to download
     if (typeof files === 'string') return new Refused(400, files);
@@ -1133,14 +1142,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (!jobs.agentCard(id)) return 404;
     return jobs.closeRequest(id, agent, job); },
   'POST /api/agent/request-rewrite': (b, me) => { const agent = speaker(b.as, me);
-    const problem = cardProblem(String(b.body ?? ''), bringsBack(b)) ?? unshelvedProblem(String(b.body ?? '')) ?? unseenProblem(b, me);
+    const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? unseenProblem(b, me);
     return !agent ? 403 : problem ? new Refused(400, problem) : jobs.rewriteRequest(Number(b.id), agent, String(b.body ?? ''), me.id, agent !== me.agent); },
   // hq topic <id> "topic": the card's group in the desk phone's list
   'POST /api/agent/request-topic': (b, me) => { const agent = speaker(b.as, me);
     return !agent ? 403 : jobs.setTopic(Number(b.id), agent, b.topic, me.id, agent !== me.agent); },
   // hq request checks its card here before it parks: the worker files it once the job has ended, too late to fix it.
   // (parks: hq request's, which a job doing a call's work can't: later.ts parkProblem)
-  'POST /api/agent/card-check': (b, me) => { const problem = cardProblem(String(b.body ?? ''), bringsBack(b)) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? (b.parks ? later.parkProblem(me.id) : null) ?? unseenProblem(b, me); return problem ? new Refused(400, problem) : { ok: true }; },
+  'POST /api/agent/card-check': (b, me) => { const problem = cardIssue(b) ?? unshelvedProblem(String(b.body ?? '')) ?? laterProblem(b) ?? jobs.questionsProblem(b.questions) ?? (b.parks ? later.parkProblem(me.id) : null) ?? unseenProblem(b, me); return problem ? new Refused(400, problem) : { ok: true }; },
   'GET /api/agent/phone': () => ({ number: secret('TWILIO_PHONE_NUMBER') || null }), // hq phone: public anyway, it goes on the Imprint pages
   'GET /api/agent/phone/check': async () => ({ lines: await checkLine() }), // hq phone --check
   // hq jobs [agent]: what's in flight (open work jobs), everyone's or one agent's, but not the caller's own job.
@@ -1419,6 +1428,7 @@ const carriesWords = (b: Record<string, unknown>) => WORDS.some(k => typeof b[k]
 const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET /api/agent/search', 'GET /api/agent/history', 'GET /api/agent/call', 'GET /api/agent/intercom',
   'GET /api/agent/seat-warnings', 'POST /api/agent/seat-warnings',
   'GET /api/agent/numbers', 'POST /api/agent/pin', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/now', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message',
+  'POST /api/agent/expedite',
   ...MANAGE_ROUTES]);   // (pin)
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
@@ -1521,7 +1531,9 @@ const forVoice: Wrap<(b: any) => unknown> = (key, handle) => request =>
 const forAgent: Wrap<(b: any, me: Me) => unknown> = (key, handle) => request => {
   const me = agentOf(bearer(request.req.headers.authorization));
   if (!me) return send(request.res, 401, { error: 'agent token' });
-  if ((me.call && !CALL_ROUTES.has(key)) || (me.callout && !PARTNER_ROUTES.has(key))) return send(request.res, 403, { error: ERRORS[403] });
+  // (a call's agent repeats the refusal to the board, so it says why.)
+  if (me.call && !CALL_ROUTES.has(key)) return send(request.res, 403, { error: "a call can't do this, as none of the call's tools reaches it: the call's follow-up does it" });
+  if (me.callout && !PARTNER_ROUTES.has(key)) return send(request.res, 403, { error: ERRORS[403] });
   const shut = (b: Record<string, unknown>) => me.call && CUSTOMER_CALL_SHUT.has(key) && carriesWords(b) && memory.customerCall(me.callId!);
   // (a card's files come in its JSON: cardfiles.ts JSON_MAX)
   return answered(request, b => shut(b) ? new Refused(409, "this call is about a customer's details, and this change's words would reach HQ's feed and colleagues who don't hold them: make it without them where the command takes none (a cancel's why), or the call's follow-up makes it")
@@ -1815,13 +1827,13 @@ const hireSweep = () => { try { hiring.sweep(); } catch (err) { console.error('C
 const stallCheck = () => { try { stallSweep(); } catch (err) { console.error('Could not check the engines for a stall:', err); } };
 const crashSweep = () => { try { crashCheck(); } catch (err) { console.error('Could not check the services for crashes:', err); } };
 const followThroughCheck = () => {
-  try { pauses.sweep(); } catch (err) { console.error('Could not resume the pauses whose jobs merged:', err); }
+  try { pausewake.sweep(); } catch (err) { console.error('Could not sweep the pauses (decided, or their owner to wake):', err); }
   try { followthrough.followThroughSweep(); } catch (err) { console.error("Could not run the CEO's follow-through check:", err); }
 };
 const overseerSweep = () => { try { overseer.sweep(); } catch (err) { console.error("Could not sweep the Overseer's notes:", err); } };
 const reviveSweep = () => review.reviveRounds().catch(err => console.error('Could not look for lost reviews:', err));
 const stuckSweep = () => review.settleStuck().catch(err => console.error('Could not look at stuck pull requests:', err));
-const server = createServer(app);
+const server = createServer({ shouldUpgradeCallback: feedback.dictates }, app);
 // The only upgrade: review mode's live dictation (feedback.ts dictate).
 server.on('upgrade', (req, socket, head) => {
   socket.on('error', () => socket.destroy());   // (a reviewer gone mid-way)

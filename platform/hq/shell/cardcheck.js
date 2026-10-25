@@ -2,7 +2,7 @@
 // The coordinator runs this on agents' text in its one event loop: every pattern here stays linear, whatever the input.
 import { FENCE, ITEM } from './prose.js';
 import { CLIP, deckOf, pairsOf } from './media.js';
-import { parseCard, partsOf, shownText, unfenced, overflowOf, instructionIn, WEB } from './card.js';
+import { parseCard, partsOf, shownText, unfenced, overflowOf, instructionIn, listIn, WEB } from './card.js';
 
 // The board taps one choice: more than this many is a list that ran on, or a decision to split.
 const MAX_CHOICES = 6;
@@ -133,7 +133,7 @@ function lengthProblem(c, main) {
       `the card runs to ${words} words before its ---: a card holds at most ${MAX_CARD_WORDS}, ` +
       `so its first screen is the ask, the choices and the steps. Cut what repeats, move background under ---. ${paste}`
     );
-  const details = wordsIn(c.details);
+  const details = wordsIn(`${c.details}\n${c.later}`);
   if (details > MAX_DETAILS_WORDS)
     return (
       `the details under --- run to ${details} words: they hold at most ${MAX_DETAILS_WORDS}, ` +
@@ -143,10 +143,11 @@ function lengthProblem(c, main) {
 }
 
 // Why a card would hide what the board does under More, or null: a numbered list or a web address (instructionIn) in
-// text past its first screen, or in the details. A card with steps keeps a headed section under its --- (how to stop or
-// undo it later): there it's detail. A card that brings work back has no steps: it keeps them above its ---.
+// text past its first screen, or any list or link in the details. Only a card with steps has a Later: part (how to stop
+// or undo it later), and there it's detail. A card that brings work back has no steps: it keeps them above its ---.
 function hiddenProblem(c, back) {
-  const what = l => `${WEB.test(l) ? 'a link' : 'a numbered list'} (${opening(l.trim())})`,
+  const what = l =>
+      `${WEB.test(l) ? 'a link' : /^\s*\d/.test(l) ? 'a numbered list' : 'a list'} (${opening(l.trim())})`,
     step = back
       ? 'A card that brings work back keeps it above the ---, on a line of its own.'
       : 'What the board does is a step, under Steps:, with its link in it.';
@@ -156,30 +157,19 @@ function hiddenProblem(c, back) {
       `the card's text runs past its first screen, and the part the desk phone would fold under More holds ${what(folding)}. ` +
       `${step} Keep the text above it short, and move background under ---`
     );
-  const detail = instructionIn(c.steps.length ? unheaded(c.details) : c.details);
+  if (c.later && !c.steps.length)
+    return (
+      'the card has a Later: part but no steps: Later: says how to stop or undo what the steps set up. ' +
+      `${step} Background goes under --- without it`
+    );
+  const detail = instructionIn(c.details) ?? listIn(c.details);
   if (detail)
     return (
       `the details under --- hold ${what(detail)}: the desk phone folds them under More, where the board won't look. ${step} ` +
-      'Under --- go background and, on a card with steps, how to stop or undo it later under a heading line of its own'
+      'Under --- goes background in a sentence or two (figures in a table), and on a card with steps, how to stop or undo ' +
+      'it later, after a line "Later:" of its own at the end'
     );
   return null;
-}
-
-// The details without their headed sections: a line of its own ending in a colon (or a # heading), and what follows it
-// up to an empty line before a paragraph
-function unheaded(details) {
-  let headed = false,
-    gap = false;
-  return unfenced(details)
-    .split('\n')
-    .filter(l => {
-      const words = l.trim().replace(/(?<!\*)\*+$/, ''); // (the run from its first asterisk: linear)
-      if (gap && words && !ITEM.test(l) && !/^\s/.test(l)) headed = false;
-      gap = !words;
-      if (words && !ITEM.test(l) && (words.endsWith(':') || words.startsWith('#'))) headed = true;
-      return !headed;
-    })
-    .join('\n');
 }
 
 // Words as the board reads them: outside fenced blocks, a `value` (one tap to copy) as one

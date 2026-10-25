@@ -127,7 +127,13 @@ async function customer(start = '', { renews = true, lang = 'en' } = {}) {
   return { hello, events, replies, until, say, post, close: () => ctl.abort(), cookie: () => cookie };
 }
 const seen: any[] = []; // what the fake model saw on each call
-test.beforeEach(() => ledger.breaker.ok()); // an outage test leaves the breaker down for the next one
+// An outage test leaves the breaker down and its conversations retrying. Once the next test brings the breaker back,
+// those retries would call its fake model and write into its database. So each test starts as after a restart, with no
+// conversation live
+test.beforeEach(() => {
+  ledger.breaker.ok();
+  for (const { id } of db.prepare('select id from conversations').all() as { id: number }[]) engine.forget(id);
+});
 const raw = (m: any) => (typeof m.content === 'string' ? m.content : m.content.map((b: any) => b.text ?? '').join(''));
 const words = (m: any) => raw(m).replace(/\[#\d+\] /g, ''); // what the customer wrote, without the numbers history() gives each message
 

@@ -49,7 +49,12 @@ function within(limits: [key: string, max: number, windowMs: number][]) {
   return true;
 }
 
-const wait = (ms: number) => new Promise(r => setTimeout(r, Math.max(0, ms)));
+// until ms have passed since start: a timer keeps the event loop's whole-millisecond clock, so it can end a little
+// early, and the rest is waited again
+async function waitPast(start: number, ms: number) {
+  const left = () => ms - (performance.now() - start);
+  while (left() > 0) await new Promise(r => setTimeout(r, left()));
+}
 const normEmail = (s: string) => String(s ?? '').trim().toLowerCase();
 
 // ---- level 1: order number and email
@@ -75,7 +80,7 @@ export async function matchOrder(s: Session, ip: string, order: string, email: s
   const t = now();
   const fails = count(orderKey, HOUR_MS, t);
   const floor = fails < 5 ? FLOOR_MS : Math.min(FLOOR_MS * 2 ** (fails - 4), SLOW_MAX_MS);
-  if (count(ipKey, HOUR_MS, t) >= 10) { await wait(floor - (performance.now() - start)); return { ok: false, why: 'limited' }; }
+  if (count(ipKey, HOUR_MS, t) >= 10) { await waitPast(start, floor); return { ok: false, why: 'limited' }; }
   // counted as failed before asking (so parallel tries can't all slip through), and uncounted once it grants
   const rows = [hit(ipKey, t), hit(orderKey, t)];
   const found = o && e.includes('@') ? (await Promise.all(withOrders(s.shop).map(async app => ({ app, m: await apps.match(app, o, e) }))))
@@ -90,7 +95,7 @@ export async function matchOrder(s: Session, ip: string, order: string, email: s
       out = { ok: true, views: found.map(f => ({ ...viewFor(lvl, f.view)!, app: f.app })), session: granted };
     } else if (session.heldElsewhere(session.current(s), page)) out = { ok: false, why: 'held' }; // held while the apps answered
   }
-  await wait(floor - (performance.now() - start));
+  await waitPast(start, floor);
   return out;
 }
 

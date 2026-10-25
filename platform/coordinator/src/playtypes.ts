@@ -56,7 +56,7 @@ export type QueuedJob = {
   notBefore: number;
   seat: string | null;
   pr: number | null;
-  // The board's call follow-up or sent-note routing check (jobs.ts BOARD_CALL), which goes first.
+  // The board's call follow-up or sent-note routing check, or work carrying a call's item (jobs.ts BOARD_CALL), which goes first.
   board: number;
   // the CEO's hourly follow-through check (jobs.ts FOLLOW_THROUGH), which no pause stops (planner.ts pausable)
   followThrough?: boolean;

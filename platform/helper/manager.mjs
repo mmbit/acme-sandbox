@@ -3,7 +3,9 @@
 // helper code needs nobody at the machine. Its own code is pinned by its hash in the install command, as it alone holds
 // the Docker socket. The helpers' code follows HQ, since they reach nothing but HQ: they sit on a network of their own
 // with no way out but a proxy that connects only to HQ's host and the package registries (FIXED, never HQ's to change),
-// and never to a private address. Everything it makes is named for its HQ, so a machine can lend itself to several.
+// and never to a private address. A kind's helpers share that network, unless the kind keeps them `alone`: then each
+// has one with the proxy alone beside it, so its runs reach no other helper.
+// Everything it makes is named for its HQ, so a machine can lend itself to several.
 // MANAGER=install (re)creates the manager's own container and exits; MANAGER=remove takes all of it away again.
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
@@ -104,8 +106,9 @@ function proxySpec() {
   };
 }
 
-// A kind's helper, with the caps the start commands always had, on the closed network. A kind whose runs keep their
-// sockets gets a cache for their packages, which outlives each run (npm and pip check what they read from it).
+// A kind's helper, with the caps the start commands always had, on the closed network (one of its own when its kind
+// keeps it alone, as it then tells HQ). A kind whose runs keep their sockets gets a cache for their packages, which
+// outlives each run (npm and pip check what they read from it).
 function helperSpec(kind, slot) {
   const proxy = `http://${PROXY}:${PORT}`;
   return {
@@ -118,6 +121,7 @@ function helperSpec(kind, slot) {
       RUN_KIND: kind.name,
       HELPER_SLOT: slot,
       HELPER_LOCKED: 1,
+      ...(kind.alone ? { HELPER_ALONE: 1 } : {}),
       NODE_USE_ENV_PROXY: 1,
       HTTPS_PROXY: proxy,
       HTTP_PROXY: proxy,
@@ -125,7 +129,7 @@ function helperSpec(kind, slot) {
     HostConfig: {
       Init: true,
       RestartPolicy: { Name: 'unless-stopped' },
-      NetworkMode: NETWORK,
+      NetworkMode: networkOf(kind, slot),
       CapDrop: ['ALL'],
       CapAdd: ['SETUID', 'SETGID'],
       SecurityOpt: ['no-new-privileges'],
@@ -186,15 +190,33 @@ async function ensure(name, spec, keep = false) {
   await pull(spec.Image);
   if (have) await docker('DELETE', `/containers/${name}?force=true`);
   await docker('POST', `/containers/create?name=${name}`, { ...spec, Labels: { 'hq.spec': want, 'hq.manager': NAME } });
-  if (name === PROXY)
-    await docker('POST', `/networks/${NETWORK}/connect`, { Container: name, EndpointConfig: { Aliases: [PROXY] } });
   await docker('POST', `/containers/${name}/start`);
   log(`${name}: ${have ? 'updated' : 'started'}`);
 }
 
-async function ensureNetwork() {
-  if (!(await docker('GET', `/networks/${NETWORK}`)))
-    await docker('POST', '/networks/create', { Name: NETWORK, Internal: true, Labels: { 'hq.manager': NAME } });
+// The closed network a helper sits on: its kind's shared one, or its own when its kind keeps it alone
+const networkOf = (kind, slot) => (kind.alone ? `${helperName(kind.name, slot)}-net` : NETWORK);
+
+// A closed network (internal: no route out), with the proxy on it, which a new proxy container isn't yet
+async function ensureNetwork(network) {
+  const have = await docker('GET', `/networks/${network}`);
+  if (!have)
+    await docker('POST', '/networks/create', { Name: network, Internal: true, Labels: { 'hq.manager': NAME } });
+  if (!Object.values(have?.Containers ?? {}).some(member => member.Name === PROXY))
+    await docker('POST', `/networks/${network}/connect`, { Container: PROXY, EndpointConfig: { Aliases: [PROXY] } });
+}
+
+// The networks the manager made for this HQ, each with the names of the containers on it
+async function networks() {
+  const filters = encodeURIComponent(JSON.stringify({ label: [`hq.manager=${NAME}`] }));
+  const listed = (await docker('GET', `/networks?filters=${filters}`)) ?? [];
+  return Promise.all(
+    listed.map(async ({ Id, Name }) => ({
+      id: Id,
+      name: Name,
+      members: Object.values((await docker('GET', `/networks/${Id}`))?.Containers ?? {}).map(member => member.Name),
+    })),
+  );
 }
 
 const key = () => (existsSync(KEY_FILE) ? readFileSync(KEY_FILE, 'utf8').trim() : '');
@@ -229,9 +251,9 @@ async function ours() {
 async function tick() {
   if (!key()) return log(`waiting for the key in ${KEY_FILE}`);
   const { kinds, busy = [] } = await setup();
-  await ensureNetwork();
   await ensure(PROXY, proxySpec());
   const wanted = new Set([MANAGER, PROXY]);
+  const wantedNetworks = new Set();
   for (const kind of kinds) {
     if (!SAFE.test(kind.name) || typeof kind.image !== 'string') {
       log(`left out a kind HQ named oddly: ${kind.name}`);
@@ -240,8 +262,11 @@ async function tick() {
     for (let slot = 1; slot <= Math.max(1, Number(kind.helpers) || 1); slot++) {
       const name = helperName(kind.name, slot);
       wanted.add(name);
+      wantedNetworks.add(networkOf(kind, slot));
       const running = busy.some(one => one.kind === kind.name && one.slot === slot);
-      await ensure(name, helperSpec(kind, slot), running).catch(error => log(`${name}: ${error.message}`));
+      await ensureNetwork(networkOf(kind, slot))
+        .then(() => ensure(name, helperSpec(kind, slot), running))
+        .catch(error => log(`${name}: ${error.message}`));
     }
   }
   // helpers of kinds HQ no longer has, and ones an old start command made by hand, go
@@ -249,6 +274,13 @@ async function tick() {
   for (const name of [...made.filter(name => !wanted.has(name)), ...byHand]) {
     await docker('DELETE', `/containers/${name}?force=true`);
     log(`${name}: removed (no such helper at HQ now)`);
+  }
+  // networks no helper sits on now go, once a helper still finishing its run on one has left it
+  for (const network of await networks()) {
+    if (wantedNetworks.has(network.name) || network.members.some(member => member !== PROXY)) continue;
+    if (network.members.length)
+      await docker('POST', `/networks/${network.id}/disconnect`, { Container: PROXY, Force: true });
+    await docker('DELETE', `/networks/${network.id}`);
   }
 }
 
@@ -286,7 +318,7 @@ async function install() {
 async function remove() {
   const { made, byHand } = await ours();
   for (const name of [...made, ...byHand]) await docker('DELETE', `/containers/${name}?force=true`);
-  await docker('DELETE', `/networks/${NETWORK}`);
+  for (const network of await networks()) await docker('DELETE', `/networks/${network.id}`);
   await docker('DELETE', `/volumes/${VOLUME}`);
   console.log(`Removed this machine's helpers for ${HQ_URL}, and its key.`);
 }

@@ -98,13 +98,16 @@ function holdLines(h: Holds) {
   return lines.join('\n');
 }
 
+// (what wakes its owner never lifts it: only a resume or the board's decision does)
 function releaseOf(p: pauses.Pause) {
-  const until = p.until.map(u => `#${u.id} "${u.title}" (${u.agent}'s, ${u.state}) merges`);
+  const wakes = [
+    ...(p.untilTime ? [`${at(p.untilTime)} comes`] : []),
+    ...p.until.map(u => `#${u.id} "${u.title}" (${u.agent}'s, ${u.state}) merges or ends`),
+  ];
+  const woken = wakes.length ? `; once ${wakes.join(' and ')}, its owner judges whether to lift it` : '';
   if (p.decision)
-    until.push(
-      `the board decides "${p.decision.name}"${p.decision.card ? `, on its card "${cardTitle(p.decision.card)}"` : ''}`,
-    );
-  return until.length ? `until ${until.join(' and ')}` : 'until resumed by hand';
+    return `until the board decides "${p.decision.name}"${p.decision.card ? `, on its card "${cardTitle(p.decision.card)}"` : ''}`;
+  return `until it's resumed${woken}`;
 }
 
 // One run: its number, whose, what, its seat and start, its thread and window

@@ -213,7 +213,7 @@ test("a review and the board's call's follow-up are never paused, and memory sho
   assert.equal(turn?.kind, 'chat', 'the intercom starts while work waits for the room reserved for it');
   await h.finish(turn);
 
-  assert.equal((await h.agent('pauses', lane.token, { thread, why: 'Wait for a decision' })).status, 200);
+  assert.equal((await h.agent('pauses', lane.token, { thread, why: 'Wait for a decision', byHand: true })).status, 200);
   const unblocked = (await short('codex', elsewhere.seat))!;
   assert.equal(unblocked?.id, elsewhere.id, 'a paused waiter holds no room');
   assert.equal((await h.agent('pauses/resume', lane.token, { thread })).status, 200);

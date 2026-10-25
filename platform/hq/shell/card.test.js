@@ -205,14 +205,24 @@ test("a card's long text folds under More ahead of its details, never inside a b
 const LONG = Array.from({ length: 16 }, (_, i) => `Sentence ${i} says a little more about why.`).join(' ');
 const TABLE = '| Page | NL | DE |\n|---|---:|---:|\n| Home | 1,200 | 90 |\n| Shop | 40 | 12 |';
 
-test('the phone never folds a link, a numbered list or a table out of its first screen', () => {
-  for (const kept of ['Open https://shop.example/admin to see it.', '1. Open the shop.\n2. Tap Save.', TABLE]) {
+test('the phone never folds a link, a list or a table out of its first screen', () => {
+  for (const kept of ['Open https://shop.example/admin to see it.', '1. Open the shop.\n2. Tap Save.', '- Open the shop.\n- Tap Save.', TABLE]) {
     const c = cardOf(`${LONG}\n\n${kept}\n\nRecommend: Yes\nOptions: Yes | No`);
     assert.ok(c.summary[0].endsWith(kept), kept);
     assert.equal(c.details, '');
   }
   // prose with nothing to do or read in a table still folds
   assert.match(cardOf(`${LONG}\n\n${LONG}\n\nOptions: Yes | No`).details, /why\.$/);
+});
+
+test("a card's Later: part, under its ---, is how to stop or undo it later: apart from the details, to the card's end", () => {
+  const c = parseCard('Do it.\n\nSteps:\n1. Tap Save.\n\n---\nIt stays on.\n\nLater:\n1. Open https://shop.example/admin.\n2. Tap Stop.');
+  assert.equal(c.details, 'It stays on.');
+  assert.equal(c.later, '1. Open https://shop.example/admin.\n2. Tap Stop.');
+  assert.equal(parseCard('We changed the shop.\n\n---\nLater:\n- Tap Stop.').card, true);
+  // in a fenced block or above the --- it's text
+  assert.equal(parseCard('Do it.\n\n---\n```\nLater:\n```').later, '');
+  assert.equal(parseCard('Later:\nDo it.').later, '');
 });
 
 test("a table is the card's content: its characters don't count toward the fold, and a step keeps its rows apart", () => {
@@ -239,30 +249,43 @@ test('a table written without its outer pipes reads as one: kept apart in a step
   assert.equal(parseCard('Do it.\n\nSteps:\n1. Pick\n   a | b\n2. Tap Save.').steps[0], 'Pick a | b');
 });
 
-test('filing refuses a link or a numbered list the phone would fold under More, and says to make it a step', () => {
+test('filing refuses a link or a list the phone would fold under More, and says to make it a step', () => {
   const refused = [
     [`${LONG}\n\nThen open https://shop.example/admin.\n\nOptions: Done`, /past its first screen.*a link \("Then open/],
     [`${LONG.slice(0, 300)}\n\n1. Open the shop.\n2. Tap Save.`, /past its first screen.*a numbered list \("1\. Open/],
     ['We changed the shop.\n\n---\nSee https://shop.example/admin.', /details under --- hold a link/],
     ['Which one?\n\nOptions: A | B\n\n---\n1. Open the shop.\n2. Pick one.', /details under --- hold a numbered list/],
+    ['Which one?\n\nOptions: A | B\n\n---\n- Open the shop.\n- Pick one.', /details under --- hold a list \("- Open/],
+    ['Which one?\n\nOptions: A | B\n\n---\nWhat each costs:\n- A: 5 a month\n- B: 7 a month', /a list.*figures in a table/],
     ['Do it.\n\nSteps:\n1. Tap Save.\n\n---\nOpen https://shop.example/admin first.', /details under --- hold a link/],
-    [
-      'Do it.\n\nSteps:\n1. Tap Save.\n\n---\nHow to undo it later:\n1. Tap Undo.\n\nOr open https://shop.example/admin.',
-      /details under --- hold a link \("Or open/,
-    ],
+    // a heading of the card's own words is no Later: part
+    ['Do it.\n\nSteps:\n1. Tap Save.\n\n---\nTo set it up:\n1. Open https://shop.example/admin.', /hold a link/],
+    ['Do it.\n\nSteps:\n1. Tap Save.\n\n---\n**To stop it:**\n- tap Stop', /hold a list/],
+    // what follows Later: is detail, what's above it isn't
+    ['Do it.\n\nSteps:\n1. Tap Save.\n\n---\nOr open https://shop.example/admin.\n\nLater:\n1. Tap Undo.', /hold a link \("Or open/],
+    // only steps set up what Later: undoes
+    ['Which one?\n\nOptions: A | B\n\n---\nLater:\n- Open https://shop.example/demo', /Later: part but no steps/],
   ];
   for (const [card, why] of refused) assert.match(cardProblem(card) ?? 'null', why, card);
 });
 
-test('filing lets a card keep detail under ---: how to undo it later, a plain list, a table, and links on its first screen', () => {
+test('filing lets a card keep detail under ---: how to stop or undo it later, prose, a table, and links on its first screen', () => {
   const allowed = [
-    'Do it.\n\nSteps:\n1. Open https://shop.example/admin and tap Save.\n\n---\nHow to undo it later:\n1. Open https://shop.example/admin.\n2. Tap Undo.',
-    'Do it.\n\nSteps:\n1. Tap Save.\n\n---\n**To stop it:**\n- open https://shop.example/admin\n- tap Stop',
-    'Which one?\n\nOptions: A | B\n\n---\nWhat each costs:\n- A: 5 a month\n- B: 7 a month',
+    'Do it.\n\nSteps:\n1. Open https://shop.example/admin and tap Save.\n\n---\nLater:\n1. Open https://shop.example/admin.\n2. Tap Undo.',
+    'Do it.\n\nSteps:\n1. Tap Save.\n\n---\nIt runs every night.\n\nLater:\n- open https://shop.example/admin\n- tap Stop',
+    'Which one?\n\nOptions: A | B\n\n---\nA costs 5 a month, B costs 7.',
     `Searches a month.\n\n${TABLE}\n\n---\n${TABLE}`,
     `The figures are in. See https://shop.example/stats.\n\n${LONG}\n\nOptions: Got it`,
+    // a new company's access card (the intake playbook): every instruction a step, one click or field at a time
+    'The shop needs its own domain, about five minutes.\n\nSteps:\n1. Open https://domains.example/new and search `shop.example`.\n' +
+      '2. Pay with the company card.\n3. Paste this as its name servers:\n   ```\n   ns1.example.net\n   ns2.example.net\n   ```\n\n' +
+      '---\nWithout it the site stays on its test address.\n\nLater:\n1. Turn off auto-renew at https://domains.example/account.',
   ];
   for (const card of allowed) assert.equal(cardProblem(card), null, card);
+  assert.match(
+    cardProblem(`Do it.\n\nSteps:\n1. Tap.\n\n---\nWhy.\n\nLater:\n${Array(9).fill('Tap undo now please.').join(' ')} ${'x '.repeat(50)}`),
+    /details under --- run to \d+ words/,
+  );
 });
 
 test('filing refuses a card that is too long to take in on a tablet, and says how to fix it', () => {

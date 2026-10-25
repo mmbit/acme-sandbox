@@ -120,6 +120,13 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   const one = await h.hq(lead, 'thread', misses);
   assert.equal(one.code, 0, one.out);
   assert.match(one.out, /MISSES its deadline/);
+  // off a call, the facts alone; on one, what to check and do about the miss before the board hears a time
+  assert.doesNotMatch(listed.out + one.out, /RED FLAG/);
+  const onCall = await h.hq({ ...lead, call: true }, 'thread', misses);
+  assert.match(onCall.out, new RegExp(`RED FLAG, not news for the board: ${misses} misses its deadline\\.`));
+  assert.match(onCall.out, /other work ahead of it.*paused[^]*whether to look further after the call\./);
+  const all = await h.hq({ ...lead, call: true }, 'projects');
+  assert.match(all.out, new RegExp(`RED FLAG, not news for the board: ${misses} misses its deadline\\.`));
 });
 
 test('the view and hq read its jobs: the chain that sets its ETA, each job sized, and the one next', async () => {

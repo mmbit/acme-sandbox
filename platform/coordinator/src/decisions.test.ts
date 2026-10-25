@@ -7,6 +7,7 @@ import { projectsHarness } from './projects.fixture.ts';
 const { h, thread, engineOf } = await projectsHarness('decisions');
 const { db } = h;
 const pauses = await import('./pauses.ts');
+const pausewake = await import('./pausewake.ts');
 
 const startsNow = async (id: number) => (await h.claim(engineOf(id)))?.id === id;
 
@@ -55,7 +56,7 @@ test("a decision with no card yet holds a project; the card tied later, the boar
   assert.equal((await h.answer(card, 'The paper cut-outs')).status, 200);
   assert.equal(await startsNow(work), true, "the board's answer lets its work go");
   assert.equal(await startsNow(review), true);
-  pauses.sweep();
+  pausewake.sweep();
   assert.ok(db.prepare('select resumed from pauses where decision = ?').get(id)!.resumed, 'recorded as resumed');
   assert.doesNotMatch((await h.agent('summary', juno.token)).body.text, /Held for the board's decision/);
 });

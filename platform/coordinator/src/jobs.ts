@@ -667,8 +667,28 @@ export const DOWNTIME_UNDER = 0.6,
 // The claim and the play share [board word, latest start, id], with reviewroom.ts sharing multi-run seats.
 type Claimable = { id: number; kind: string; downtime: number; board: number | boolean; expedite?: number };
 // The job a board's call left to follow it up (ledger.ts: calls.job), or a check routing the notes it sent (routing.ts)
+// The board's word: also work carrying an open item from a board call (ledger.ts: the job the item is linked to, or
+// the job's own item), and a meeting's seat when work carrying one waits for any of that meeting's seats (--after or hq
+// waits: seats take no items). The carriers are one list, read once a statement from the open items and the jobs' item
+// index (never the jobs' wide rows).
+// An item is handled once its job ends done with a pull request open (ledger.ts finished()), so the jobs on that pull
+// request's branch carry it on until it merges or closes: its reviews, rulings, fixes and up-to-date merges. That's a
+// branch with an open pull request (open, stuck, with the board) whose work (the job it's named for, or a fix on it)
+// carries an item not dropped or replaced, or was handed one (ledger.ts tied). Read from the open pull requests, a few
+// jobs each, through db.ts prs_open, jobs_work_branch and jobs_branch.
+const LIVE_ITEMS = "('open', 'handled')";
+const CARRIERS = `select i.job from call_items i where i.status = 'open' and i.job is not null
+  union select w.id from jobs w indexed by jobs_item where w.item is not null
+    and w.item in (select i.id from call_items i where i.status = 'open')
+  union select b.id from prs p indexed by prs_open join jobs b indexed by jobs_branch on b.branch = p.branch where p.status in ${OPEN_PRS}
+    and exists (select 1 from jobs w indexed by jobs_work_branch where coalesce(w.branch, 'job/' || w.id) = +p.branch
+      and w.kind = 'work' and (w.item in (select i.id from call_items i where i.status in ${LIVE_ITEMS})
+        or exists (select 1 from call_items i where i.status in ${LIVE_ITEMS} and i.job in (${lineageTo('w.id')}))))`;
 export const BOARD_CALL = (job: string) =>
-  `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id))`;
+  `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id)
+    or ${job}.id in (${CARRIERS}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
+      join meeting_seats o on o.meeting = s.meeting join jobs w on w.id in (${CARRIERS}) where s.job = ${job}.id
+      and (w.after = o.job or exists (select 1 from waits x where x.job = w.id and x.on_job = o.job))))`;
 // The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
 export const FOLLOW_THROUGH = (job: string) => `exists (select 1 from followthrough_checks f where f.job = ${job}.id)`;
 // The ids a job still waits for, in id order. Ids only: a jobs row around each would read its brief and report, and on
@@ -968,9 +988,19 @@ export function pauseAllowed() {
 // jobs there too.
 export const DESK = 'unsorted';
 // Work in no thread a pause of it lets go: the intercom, a meeting's seats (set for their time), a board call's
-// follow-up (the board heard, which is how a hold is put in and lifted) and expedited work.
+// follow-up (the board heard, which is how a hold is put in and lifted), expedited work, and an owner's sort (sortLets).
 export const deskLets = (j: string) =>
-  `(${j}.kind in ('chat', 'meeting') or ${j}.expedite = 1 or exists (select 1 from calls c where c.job = ${j}.id))`;
+  `(${j}.kind in ('chat', 'meeting') or ${j}.expedite = 1 or exists (select 1 from calls c where c.job = ${j}.id)
+    or ${sortLets(j)})`;
+// An owner's sort (a planning job, planning.ts) holding something open on a thread no pause holds: a job HQ made that
+// waits for it (sorting.ts), review findings or a proposal for that thread. A hold doesn't keep the owner from judging
+// work it lets run, or that work would wait on a sort the hold never lets start (board, 25 Oct).
+function sortLets(j: string) {
+  return `exists (select 1 from planning_jobs pj join proposals p on p.heard_by = pj.job
+    join threads t on t.id = coalesce((select s.thread from sorts x join jobs s on s.id = x.job where x.proposal = p.id),
+      (select r.thread from review_inbox r where r.proposal = p.id), p.thread)
+    where pj.job = ${j}.id and p.status = 'open' and t.status = 'open' and ${pausedWith('t.id')} is null)`;
+}
 // Work (fix rounds too) of an agent a kind of run holds until the lent machine has finished one (runs.ts holds), and
 // everything on a paused thread or project, or in no thread with the desk paused, but the intercom: work, a pull
 // request's reviews, rulings and fixes (pauses.ts)
@@ -979,12 +1009,12 @@ const HOLD_LETS = `(j.expedite = 1 or (j.kind != 'work' or j.agent not in (selec
   and ${heldWith('j')} is null)`;
 const ROOM_WAITER = `${READY} and ${PAUSE_LETS} and ${HOLD_LETS} and j.kind != 'chat'`;
 
-// A pause (`p`, its row's alias) that holds: not resumed, and waiting for nothing (resumed by hand), or with --until jobs,
-// one of them not done and merged yet, or for a decision of the board's it hasn't answered or released (pauses.ts).
+// A pause (`p`, its row's alias) that holds: not resumed, and not waiting for a decision of the board's it has answered
+// or released (pauses.ts). What else it waits for (its time, its --until jobs) only wakes its owner to judge: only a
+// resume lifts it (board, 25 Oct).
 // Wrap statements using this predicate in redraws.query().
 export function pauseHolds(p: string) {
-  return `${p}.resumed is null and (not exists (select 1 from pause_until u where u.pause = ${p}.id) and ${p}.decision is null
-    or exists (select 1 from pause_until u join jobs prior on prior.id = u.job where u.pause = ${p}.id and not ${merged('prior')})
+  return `${p}.resumed is null and (${p}.decision is null
     or exists (select 1 from decisions d where d.id = ${p}.decision and d.answered is null and d.released is null))`;
 }
 // The open pause holding work on a thread (`thread`, an SQL expression; null: the desk), as what it pauses: the
@@ -995,9 +1025,15 @@ export function pausedWith(thread: string) {
     and p.project = coalesce(substr(${thread}, 1, instr(${thread}, '/') - 1), '${DESK}')
     and (p.thread is null or p.thread = ${thread}) order by p.thread is null, p.id limit 1)`;
 }
-// The open pause holding job `j` (its row's alias), as pausedWith: never the intercom, nor what the desk's pause lets go
+// The open pause holding job `j` (its row's alias), as pausedWith: never what no pause holds (pauseLets)
 export function heldWith(j: string) {
-  return `(case when ${j}.kind = 'chat' or ${j}.thread is null and ${deskLets(j)} then null else ${pausedWith(`${j}.thread`)} end)`;
+  return `(case when ${pauseLets(j)} then null else ${pausedWith(`${j}.thread`)} end)`;
+}
+// Work no pause holds: the intercom, what the desk's pause lets go, and the job a pause woke its owner with to judge
+// it (pauses.ts wake).
+export function pauseLets(j: string) {
+  return `(${j}.kind = 'chat' or ${j}.thread is null and ${deskLets(j)}
+    or exists (select 1 from pauses woke where woke.woken = ${j}.id))`;
 }
 export const pausedOn = (job: number) =>
   (
@@ -2189,7 +2225,7 @@ function parkOnCard(job: Job, request: NonNullable<RunEnd['request']>) {
   // (and its questions)
   const cardBody = String(request.body ?? '');
   const problem =
-    cardProblem(cardBody, Array.isArray(request.back) && request.back.length > 0) ??
+    cardProblem(sharePart(cardBody).body, Array.isArray(request.back) && request.back.length > 0) ??
     unshelvedProblem(cardBody) ??
     questionsProblem(request.questions) ??
     later.parkProblem(job.id);

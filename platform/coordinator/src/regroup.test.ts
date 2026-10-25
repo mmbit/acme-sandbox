@@ -45,7 +45,10 @@ test('a moved thread takes its jobs and pause along, and its old id keeps findin
   reset();
   const levels = started('levels');
   const held = h.queue({ agent: 'kit', thread: levels });
-  assert.equal(typeof pauses.pause({ thread: levels, why: 'Not before the map is in' }, 'wren'), 'object');
+  assert.equal(
+    typeof pauses.pause({ thread: levels, why: 'Not before the map is in', byHand: true }, 'wren'),
+    'object',
+  );
   forecast.refresh();
   const logged = () => db.prepare('select distinct thread from prediction_log where thread is not null').all();
   assert.deepEqual(
@@ -148,13 +151,16 @@ test('work moves out from under no open pause: a pause holds it until it lifts',
   reset();
   const [levels, sound, till] = [started('levels'), started('sound'), started('till', 'shop')];
   const queued = h.queue({ agent: 'wren', thread: levels });
-  assert.equal(typeof pauses.pause({ thread: levels, why: 'The board decides the map first' }, 'juno'), 'object');
+  assert.equal(
+    typeof pauses.pause({ thread: levels, why: 'The board decides the map first', byHand: true }, 'juno'),
+    'object',
+  );
   assert.equal(typeof regroup.moveJob(queued, sound, 'wren'), 'string', "its thread's pause stays on it");
   assert.equal(threadOf(queued), levels);
   assert.equal(typeof regroup.moveThread(levels, 'shop', 'juno'), 'object', 'a thread takes its own pause along');
   assert.deepEqual(h.job(queued).wakes, ['paused with shop/levels']);
 
-  assert.equal(typeof pauses.pause({ project: 'game', why: 'No game work tonight' }, 'juno'), 'object');
+  assert.equal(typeof pauses.pause({ project: 'game', why: 'No game work tonight', byHand: true }, 'juno'), 'object');
   const onSound = h.queue({ agent: 'wren', thread: sound });
   assert.equal(typeof regroup.moveThread(sound, 'tools', 'juno'), 'string', "never its project's pause");
   assert.equal(typeof regroup.moveJob(onSound, till, 'juno'), 'string');
@@ -328,4 +334,51 @@ test('a refused owner message leaves the work in its old thread', async () => {
   assert.equal(threadOf(work), old);
   assert.deepEqual(projects.needsOf(needing), [old]);
   assert.equal((await h.agent('inbox', owner.token, {})).body.length, messages.PER_HOUR);
+});
+
+test("the CEO's expedite, from a call too, takes a thread's task that never started out of its thread, and the thread's next task stops waiting for it", async () => {
+  reset();
+  const { remember } = await import('./db.ts');
+  const { MODE } = await import('./threadorder.ts');
+  remember(MODE, 'threads'); // (a thread's tasks in turn)
+  const levels = started('levels');
+  const fix = h.queue({ agent: 'kit', thread: levels, title: 'Fix the claim', prompt: 'The whole brief' });
+  const next = h.queue({ agent: 'kit', thread: levels });
+  assert.equal(h.job(next).ready, 0, 'it waits for the task before it');
+  const callOf = async (agent: string) => (await h.voice(`call-context?agent=${agent}`)).body.token as string;
+  const [ceo, wren] = [await callOf('juno'), await callOf('wren')];
+  const refused = await h.agent('expedite', wren, { id: fix });
+  assert.deepEqual([refused.status, refused.body.error], [403, 'only the CEO expedites a job: ask juno']);
+  const r = await h.agent('expedite', ceo, { id: fix });
+  assert.deepEqual([r.status, r.body], [200, { ok: true, id: fix, starts: 'next', from: levels }]);
+  const row = () => db.prepare('select agent, title, prompt, thread, expedite from jobs where id = ?').get(fix);
+  assert.deepEqual(
+    { ...row() },
+    { agent: 'kit', title: 'Fix the claim', prompt: 'The whole brief', thread: null, expedite: 1 },
+  );
+  assert.equal(h.job(next).ready, 1, 'the next task waits for it no longer');
+  for (const token of [ceo, wren])
+    await h.voice('call-end', { agent: token === ceo ? 'juno' : 'wren', lines: [], request: 0, token });
+  remember(MODE, null);
+});
+
+test("a thread's task that ran stays in its thread, and expedite's refusal says what to do instead", async () => {
+  reset();
+  const levels = started('levels');
+  const running = await h.start({ agent: 'kit', thread: levels });
+  const ceo = (await h.start({ agent: 'juno' })).token;
+  const fix =
+    'to put the fix first, queue it as its own job with hq job --expedite (on a call: the job tool with expedite)';
+  const expedite = async (id: number) => (await h.agent('expedite', ceo, { id })).body.error;
+  assert.equal(
+    await expedite(running.id),
+    `job #${running.id} is running now on the branch it shares with the rest of ${levels}, so it can't leave that thread: ${fix}`,
+  );
+  await h.finish(running, { status: 'done', branch: `job/${running.id}`, sha: 'abc' });
+  assert.equal(
+    await expedite(running.id),
+    `job #${running.id} has already run on the branch it shares with the rest of ${levels}, so it merges with that thread: ${fix}`,
+  );
+  assert.equal(threadOf(running.id), levels);
+  assert.equal(await expedite(999_999), "there's no job #999999: check the number");
 });

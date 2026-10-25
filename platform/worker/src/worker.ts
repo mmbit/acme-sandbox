@@ -1183,7 +1183,8 @@ const THREAD_PUSH = `pushes them to the thread's branch, which opens the thread'
 // The saved size stays fixed until the CEO changes it after reported slippage.
 const resizeLine = (job: Job) => !job.resize ? '' : `
   ${job.resize.size ? `This job is sized at ${job.resize.size}. ` : ''}When the work turns out bigger than its brief, tell
-  the CEO what scope changed and your new estimate through \`hq say\` or a follow-up job. Only the CEO changes the
+  the CEO what scope changed and your new estimate through \`hq say\` or a follow-up job, and go on with it on your
+  best judgment rather than stop to wait for an answer. Only the CEO changes the
   saved estimate. Hourly checks and plan updates replay the saved sizes without re-estimating.`;
 
 // The gates' line in the briefing, once the branch has them.

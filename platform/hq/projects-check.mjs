@@ -867,11 +867,15 @@ for (const look of RENDERERS)
     await page.keyboard.press('Escape');
     await level('The shopfront');
 
-    // a paused project says only that, never the brief's why, and can't be held again; a finished job whose review waits
-    // for the board leads its thread as its card
+    // a paused project says only that and when it's judged, never the brief's why, and can't be held again; a finished job
+    // whose review waits for the board leads its thread as its card
     await tap(page, '[data-project=news]');
     await level('The newsletter');
-    assert.deepEqual(await texts(page, '.pj-head .pj-marks .pj-note'), ['Paused'], at);
+    assert.deepEqual(
+      await texts(page, '.pj-head .pj-marks .pj-note'),
+      ['Paused, to be judged once “Pick a domain for the sticker shop” ends'],
+      at,
+    );
     assert.ok(
       !(await page.$eval('#projects', e => e.textContent.includes('Hold the newsletter'))),
       `${at}: no pause's reason on its tiles or head`,

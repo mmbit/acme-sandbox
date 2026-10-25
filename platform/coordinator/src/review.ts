@@ -9,6 +9,7 @@ import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustom
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
+import * as pausewake from './pausewake.ts';
 import { unreadable, missing, ceo, roles, names, infra, reviewSettings } from './company.ts';   // (names, infra)
 import * as reviewtriage from './reviewtriage.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
@@ -1131,20 +1132,29 @@ async function mergeExpedited(n: number, review: () => void) {
   publish({ type: 'log', agent: pr.author, text: `PR #${pr.number} merged expedited, on its gates and tests: its review follows` });
   review();
 }
-// hq expedite <job> (the CEO's): a queued or running job starts first and merges on its checks; one that has pushed, its
-// pull request still in review, merges now if its last push passed them. A thread's task shares the thread's branch.
-export async function expedite(id: number): Promise<string | { id: number; starts?: string; merged?: number }> {
+// hq expedite <job> (the CEO's, from a job or a call): a queued or running job starts first and merges on its checks; one
+// that has pushed, its pull request still in review, merges now if its last push passed them. A thread's task that never
+// started leaves its thread first (regroup.ts takeOut). Each refusal says why and what to do instead, as the call's agent
+// repeats it to the board.
+export async function expedite(id: number, agent: string): Promise<string | { id: number; starts?: string; merged?: number; from?: string }> {
   const job = db.prepare('select id, kind, status, thread, branch from jobs where id = ?').get(id) as
     { id: number; kind: string; status: string; thread: string | null; branch: string | null } | undefined;
-  if (!job || job.kind !== 'work') return `job #${id} isn't a work job`;
-  if (job.thread) return `job #${id} is a task in ${job.thread}, on the thread's branch with its other work: queue the fix with hq job --expedite`;
+  if (!job) return `there's no job #${id}: check the number`;
+  const regroup = await import('./regroup.ts');   // (it imports jobs.ts, which imports this file)
+  if (job.kind !== 'work') return `job #${id} is HQ's own ${job.kind}, not work: expedite the work it's for`;
+  if (job.thread) {
+    const from = regroup.takeOut(id, agent);
+    return from.taken ? { id, starts: 'next', from: from.thread } : from.refusal;
+  }
   if (['queued', 'running', 'blocked'].includes(job.status)) {
     db.prepare('update jobs set expedite = 1 where id = ?').run(id);
     return { id, starts: job.status === 'running' ? 'running now' : 'next' };
   }
   const pr = db.prepare("select number from prs where branch = ? and status in ('open', 'stuck')").get(job.branch ?? `job/${id}`) as
     { number: number } | undefined;
-  if (!pr) return `job #${id} has no pull request in review to merge`;
+  if (!pr) return job.status === 'done'
+    ? `job #${id} is done and nothing of it is in review: it merged already, or pushed nothing to merge`
+    : `job #${id} ${job.status} with nothing in review: ${regroup.QUEUE_THE_FIX}`;
   db.prepare('update jobs set expedite = 1 where id = ?').run(id);
   const refused = await expeditePr(pr.number);
   return refused ?? { id, merged: pr.number };
@@ -1153,7 +1163,7 @@ export async function expedite(id: number): Promise<string | { id: number; start
 // merged.
 async function expeditePr(n: number) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as (Pr & { gate_fails: number }) | undefined;
-  if (!pr || !['open', 'stuck'].includes(pr.status) || !pr.sha) return `PR #${n} isn't open with a push to merge`;
+  if (!pr || !['open', 'stuck'].includes(pr.status) || !pr.sha) return `PR #${n} has no push to merge yet: its next push merges on its checks`;
   if (pr.gate_fails || pr.tests_incomplete) return `PR #${n}'s last push didn't pass its gates and tests: its author's next push merges on them`;
   await mergeExpedited(n, () => {
     db.prepare('update prs set since = (select coalesce(max(id), 0) from jobs) where number = ?').run(n);
@@ -1609,7 +1619,7 @@ async function close(pr: number, why: string) {
   if (done) {
     // Its work is on main, which meets the further waits on it (jobs.ts outstanding).
     db.prepare(`delete from waits where on_job in (select id from jobs where branch = ? and kind = 'work')`).run(row.branch);
-    pauses.landed(row.branch);   // (and a pause's --until on it)
+    pausewake.landed(row.branch);   // (and a pause's --until on it)
     return publish({ type: 'log', agent: panel.attribution(pr), text: `PR #${pr}: every commit on ${row.branch} is on main already` });
   }
   const judged = ruling(pr, row.round, row.sha);

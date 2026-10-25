@@ -169,6 +169,40 @@ test("a hold is on its runner's pace too: one paced while the seat can wait for 
   assert.equal((await claimIn('claude#3', 'claude-2'))?.kind, 'meeting');
 });
 
+test("a meeting whose follow-up carries the board's call item is the board's word: paced seats gather it", async () => {
+  const { meeting, seats } = await setMeeting();
+  const week = Date.now() + 2 * 24 * 3_600_000;
+  for (const seat of ['claude-1', 'claude-2'])
+    await h.worker('seat', {
+      seat,
+      engine: 'claude',
+      state: 'ready',
+      until: 0,
+      week: 0.6,
+      weekResets: week,
+      pace: true,
+    });
+  const chairSeat = seats.find(s => s.agent === 'juno')!.job;
+  const followUp = h.queue({ agent: 'juno', title: 'The plan from the meeting', after: chairSeat });
+  assert.equal(
+    await claimIn('claude#1', 'claude-1', week),
+    null,
+    'a follow-up carrying nothing: the seats wait for the reset',
+  );
+
+  const item = db
+    .prepare(
+      `insert into call_items (call, kind, owner, what, quote, ts)
+    values (1, 'task', 'juno', 'Plan the build', 'Board: plan it, then build it.', 'x') returning id`,
+    )
+    .get() as { id: number };
+  db.prepare('update jobs set item = ? where id = ?').run(item.id, followUp);
+  assert.ok(await claimIn('claude#1', 'claude-1', week), 'carrying the open item, a paced slot holds a seat');
+  assert.ok(await claimIn('claude#2', 'claude-2', week));
+  assert.equal((await claimIn('claude#3', 'claude-2', week))?.kind, 'meeting', 'and the last one starts it');
+  assert.equal(meetingStatus(meeting), 'live');
+});
+
 test("a claim without a slot's name (an older worker) never starts a seat", async () => {
   await setMeeting();
   assert.equal((await h.worker('claim', { seat: 'seat-x', engine: 'claude' })).body, null);

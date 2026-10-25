@@ -33,7 +33,7 @@ import {
   threadEta,
   projectLit,
 } from './threads.js';
-import { fromNow } from '../world/clock.js';
+import { clockWhen, fromNow } from '../world/clock.js';
 
 // The keys after the businesses: Recurring, the routines' projects (projects.ts gives each its schedule), and the work
 // outside the projects, each its name and a line icon (or the cover projects.yaml's groups name for it). A company's own
@@ -190,10 +190,20 @@ function eta(t) {
   // (a booked start, with the start's mark)
   return `<details class="pj-eta" data-eta="${esc(t.id)}"><summary class="pj-key">${icon(e.booked ? 'tour' : 'finish')}<span>${esc(e.time)}</span></summary><p>${esc(e.sums)}</p></details>`;
 }
-// A pause, as a mark: only that it's paused (why is the CEO's brief, never the board's to read; a decision of the
-// board's is lit instead)
+// A pause, as a mark: that it's paused and when it's judged (why is the CEO's brief, never the board's to read; a decision
+// of the board's is lit instead)
 const pausedMark = pause =>
-  pause && !pause.decision ? `<span class="pj-note">${icon('pause')}<span>Paused</span></span>` : '';
+  pause && !pause.decision
+    ? `<span class="pj-note">${icon('pause')}<span>${esc(pausedWords(pause))}</span></span>`
+    : '';
+// A pause in words, with what wakes its owner to judge it: its time, the work it waits for ending (by title: no numbers
+// for the board). Nothing lifts it by itself.
+export function pausedWords(pause) {
+  const until = pause.until ?? [];
+  const work = until.length === 1 ? `“${until[0].title}” ends` : until.length ? `${until.length} tasks end` : '';
+  const when = [pause.untilTime && `it's ${clockWhen(Date.parse(pause.untilTime))}`, work].filter(Boolean);
+  return when.length ? `Paused, to be judged once ${when.join(' and ')}` : 'Paused';
+}
 // A head's key for the board's decision a project or thread waits on (the CEO names it): its card, which alone ends it.
 export const decisionKey = pause =>
   pause?.decision?.card

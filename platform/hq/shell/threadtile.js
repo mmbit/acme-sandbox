@@ -5,7 +5,7 @@ import { icon } from './icons.js';
 import { names } from './brand.js';
 import { nameHtml, nameText } from './jobs.js';
 import { covered, withJobLinks } from './prose.js';
-import { faces, mark, lines, pulse, waitOf } from './projectkeys.js';
+import { faces, mark, lines, pausedWords, pulse, waitOf } from './projectkeys.js';
 import {
   atWork,
   boardPart,
@@ -69,7 +69,7 @@ function threadWaits(t, p, threadOf) {
     decision && wait('phone', `Your decision: ${decision.name}`, true),
     ...cards.map(c => wait('phone', `On your ${names.phone}: ${c.title}`, true)),
     ...held.map(c => wait('phone', `Not on your ${names.phone} yet: ${c.title}`)),
-    pause && !pause.decision && wait('pause', 'Paused'),
+    pause && !pause.decision && wait('pause', pausedWords(pause)),
     ...needs.map(n => {
       const line = threadLine(n, null);
       return wait('hourglass', `After ${nameText(n, 'name')}${line.finish ? `, done ${fromNow(line.finish)}` : ''}`);

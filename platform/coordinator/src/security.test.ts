@@ -368,6 +368,10 @@ test('Share: the desk phone sends only a card\'s Share part, never on a card abo
   // a second Share part leaves the card too; the first is the one sent (platform/hq/share-check.mjs drives the desk in Chromium)
   const two = await shown(await ask(care, { body: `Please forward.\n---\nShare: one\n---\nShare: two\n---\nWhy: x.` }));
   assert.equal(two.share, 'one'); assert.equal(two.body, 'Please forward.\n\n---\n\nWhy: x.');
+  // what the board forwards is no part of the card: the card check leaves its lists and links alone
+  const listed = 'Please forward.\n---\nShare: Hello, could you send us:\n- the KvK extract\n- the form at https://kvk.example/form';
+  assert.equal((await agent('card-check', care.token, { body: listed })).status, 200);
+  assert.equal((await agent('card-check', care.token, { body: listed.replace('Share: ', '') })).status, 400);
 });
 
 const callToken = async (who = 'wren') => (await h.voice(`call-context?agent=${who}`)).body.token as string;
@@ -399,6 +403,7 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
   for (const [route, body] of [['request', { kind: 'decision', title: 't', body: 'b' }], ['request-answer', { id: 1 }],
     ['mail', undefined], ['note?id=1', undefined], ['phone', undefined]] as const)
     assert.equal((await agent(route, t, body)).status, 403, route);
+  assert.match((await agent('mail', t)).body.error, /^a call can't do this, as none of the call's tools reaches it/, 'it says why');
   // (closing a card that is not the call agent's is HQ's own refusal)
   assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
   // a promise on its own call's list, nothing else: not another call's item or job

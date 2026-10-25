@@ -331,7 +331,9 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // The board's ask gets a time as it's queued, else it waits behind every window: the board's own, or the window of
   // the deliverable it serves (its thread's, or one that needs it); with neither, the agent judges a time itself (noted
   // with promise) or leaves it untimed, and never asks the board by when.
-  // A time from the when tool: the work played into the plan (when.ts).
+  // A time from the when tool: the work played into the plan (when.ts). A time far past the board's is the agent's to
+  // solve on the call: it sets windows as it queues or releases, and the when and eta answers say what to check when a
+  // finish misses (worker/hq when.ts lateLines; board, call 139). Judgment, never a refusal.
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
   // What's going on now: the eta tool with no query (hq now, goingon.ts).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
@@ -342,7 +344,8 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // MANAGE_ROUTES), never a promise for the follow-up to do it
   // No numbers aloud: the briefing and the tools number the work for the agent's tools, never for the board's ears.
   // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
-  // WebSearch is enabled by guard.TOOLS.
+  // WebSearch is enabled by guard.TOOLS. Its reply ends in a Sources list a call would read aloud (voice server.py
+  // spoken() drops only the links), so the prompt says never.
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
   // only when an agreed deadline moves or it asks; whether one is safe or tight and where new work goes is the agent's
   // judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
@@ -364,7 +367,8 @@ eta reads where planned work stands now (a project's or thread's ETA, its window
 cards by name) and, with no query, what's going on right now: who's at work on what, why each runs while a hold is on, and
 what each open card holds up, fresh each time (the briefing's list is from the call's start), and
 the company's files (main) are your working directory for Grep, Glob and Read, and WebSearch searches the web for what's
-outside the company (a fact, a price, the news).
+outside the company (a fact, a price, the news). Your answer is spoken, so never say or list its sources or links: say
+what you found, and if the board asks where from, name the source in a few words.
 When these can answer the board's question, look it up now and answer on the call, never "I'll check after the call": only
 live state they can't see (logs, the servers, ad platforms) or work too long for a call waits for the follow-up.
 You manage the company's work on the call as you do off it, with the manage tool (hq's cancel, stop, pauses, the plan,
@@ -388,14 +392,17 @@ says so or the call makes it clear; otherwise the time is your judgment: set a s
 with promise, or leave the work untimed.
 Before you give a time, check it, never a feeling: for work already planned, eta; for new work, the when tool, which
 plays it into the plan, every seat and window counted (an AI hour is one agent working for an hour, waits for a seat left out). When the board names a time,
-give it by: only when the work doesn't make it, say what would. Give one plain time. When you tell the board a time,
+give it by: only when the work doesn't make it, say what would. When the board wants something by a time, that time is
+yours to make: set its window as you queue it or release it (a resume or a lifted hold too, with manage's window), and
+check it with when or eta before you tell the board anything. A time far past the board's is a problem to solve on the
+call, never news to report: the tool's answer then says what to check. Give one plain time. When you tell the board a time,
 note it with promise, and give the job that does it its item, or, for work already under way (a review, a running
 job), name that job in the promise: it becomes the window of the work's thread at once, while you're still on the line,
 so HQ orders its work by it and the CEO sees it if it slips. A job with a time names its thread. Never tell the board that HQ will tell it if a time slips: it knows that rule.
 New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
 board asks. The job and when tools give each agreed deadline (a thread's window, a time the board was given) its
-finish, its slack, and its slack some hours ago. When its finish lands past the deadline, the deadline moves: say so
-plainly. A margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't
+finish, its slack, and its slack some hours ago. When its finish lands past the deadline, look for what moves it back
+first; when nothing does, the deadline moves: say so plainly. A margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't
 mention it unless the board asks. Before you queue work that eats into a deadline, weigh how much it matters, how
 much the board wants it now and how big the risk is, then queue it after that deadline's work (after) to
 protect it, or now anyway: a real judgment each time, never a set line. Say a warning once: the earlier calls and the
