@@ -15,7 +15,17 @@ import { promisify } from 'node:util';
 import { git } from './repo.ts';
 
 const POLL_MS = 5000;
-const NEVER_CONNECTED = ['ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND'];
+// HQ restarts with each deploy, about a minute and a half while its coordinator is recreated. A call to it is tried
+// again for as long as a deploy waits for HQ to answer before it goes back to the last good one (infra/hq-up.sh's
+// HQ_UP_S), the helper's run going on meanwhile; past that, or for a call that mustn't be sent twice and may have
+// reached HQ, the check ends unreached (HqUnreachable). HQ_RETRY_MS shortens the window for tests.
+const HQ_RETRY_MS = Number(process.env.HQ_RETRY_MS ?? 10 * 60_000);
+const NEVER_CONNECTED = ['ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_CONNECT_TIMEOUT'];
+// A check's exit code when it ended because HQ couldn't be reached: nothing in the change failed, so the worker runs it
+// again on the same commit once HQ answers (platform/worker's pushchecks.ts UNREACHED_EXIT), and it never goes back to
+// its author.
+export const UNREACHED_EXIT = 3;
+export class HqUnreachable extends Error {}
 const BUNDLE = 'tests.bundle';
 const FILES = 'files.tar.gz';
 const execute = promisify(execFile);
@@ -166,9 +176,11 @@ async function sendRun(root: string, call: Call, check: LentCheck): Promise<numb
       headers: { 'x-run': Buffer.from(JSON.stringify(spec)).toString('base64url') },
       body: await bundleOf(root, check, dir),
     };
-    const sent = await reaching(() => call('/api/agent/runs', run), true);
-    if (!sent.ok) return await sent.text();
-    return ((await sent.json()) as { id: number }).id;
+    // (the answer read inside: a connection lost after its headers is HQ unreached too)
+    return await reaching(async () => {
+      const sent = await call('/api/agent/runs', run);
+      return sent.ok ? ((await sent.json()) as { id: number }).id : await sent.text();
+    }, true);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -224,18 +236,27 @@ async function broughtBack(call: Call, id: number, names: string[]) {
   }
 }
 
-// A call to HQ and the answer read, tried once more after POLL_MS when the network fails it (fetch's TypeError: HQ
-// restarting, its name gone from DNS meanwhile), where an HTTP status is HQ's own answer. A second failure ends the
-// check as not run. `once`: a call that mustn't reach HQ twice, so only one that never connected is tried again.
-async function reaching<T>(ask: () => Promise<T>, once = false): Promise<T> {
-  try {
-    return await ask();
-  } catch (err) {
-    const code = ((err as Error).cause as { code?: string } | undefined)?.code ?? '';
-    if (!(err instanceof TypeError && (!once || NEVER_CONNECTED.includes(code)))) throw err;
+// A call to HQ and the answer read, tried again while the network fails it (fetch's TypeError: HQ restarting, its name
+// gone from DNS meanwhile, or the connection lost mid-answer), where an HTTP status is HQ's own answer, for up to
+// HQ_RETRY_MS. `once`: a call that mustn't reach HQ twice, so only one that never connected is tried again. Either
+// way, what's left unreached throws HqUnreachable.
+export async function reaching<T>(ask: () => Promise<T>, once = false): Promise<T> {
+  const since = Date.now();
+  for (let wait = 1000; ; wait = Math.min(wait * 2, 30_000)) {
+    try {
+      return await ask();
+    } catch (err) {
+      if (!(err instanceof TypeError)) throw err;
+      const code = (err.cause as { code?: string } | undefined)?.code ?? '';
+      if (once && !NEVER_CONNECTED.includes(code))
+        throw new HqUnreachable(`HQ may have had the call when its connection was lost (${err.message})`);
+      if (Date.now() - since >= HQ_RETRY_MS)
+        throw new HqUnreachable(
+          `HQ couldn't be reached for ${Math.round(HQ_RETRY_MS / 1000)} s (${err.message}${code ? `, ${code}` : ''})`,
+        );
+    }
+    await new Promise(resolve => setTimeout(resolve, wait));
   }
-  await new Promise(resolve => setTimeout(resolve, POLL_MS));
-  return ask();
 }
 
 const quoted = (word: string) => `'${word.replaceAll("'", "'\\''")}'`;

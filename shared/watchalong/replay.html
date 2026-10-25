@@ -1,0 +1,12 @@
+<!doctype html>
+<!-- The watch-along's replay: rrweb's replayer in a page of its own (replay.js), framed by the player (player.js). The
+     server gives it a policy of its own, under which the recorded page's stylesheets draw but nothing of it runs. -->
+<meta charset="utf-8">
+<title>Replay</title>
+<link rel="stylesheet" href="vendor/rrweb-replay.css">
+<style>
+  html, body { margin: 0; overflow: hidden; background: transparent; }
+  .replayer-wrapper { position: absolute; left: 0; top: 0; transform: none !important; }
+  .replayer-wrapper > iframe { display: block; border: 0; background: #fff; }
+</style>
+<script type="module" src="replay.js"></script>

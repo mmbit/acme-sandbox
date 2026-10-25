@@ -72,6 +72,27 @@ def jwks():
         return {k['kid']: k for k in json.load(res)['keys']}
 
 
+# GitHub's keys, kept an hour; a token naming one not kept fetches them again at most once a minute, one fetch at a time,
+# so requests anyone can send don't each fetch them. 'at' is the last try, 'got'
+# the last fetch that worked: keys older than an hour are never used, and a failed fetch is an error, not an unknown key.
+KEYS_KEPT_S, KEYS_RETRY_S = 3600, 60
+keys_kept = {'keys': {}, 'at': None, 'got': None}
+keys_lock = threading.Lock()
+
+
+def key_of(kid):
+    with keys_lock:
+        now, at, got = time.monotonic(), keys_kept['at'], keys_kept['got']
+        old = got is None or now - got >= KEYS_KEPT_S
+        if (old or kid not in keys_kept['keys']) and (at is None or now - at >= KEYS_RETRY_S):
+            keys_kept['at'] = now
+            keys_kept['keys'] = jwks()
+            keys_kept['got'] = now
+        elif old:
+            raise RuntimeError('their last fetch failed under a minute ago')
+        return keys_kept['keys'].get(kid)
+
+
 def verified(token, repo, audience, now=None, keys=None):
     """The token's claims when it's a fresh GitHub token for this repo's overseer workflow on main, else why not."""
     now = time.time() if now is None else now
@@ -82,7 +103,11 @@ def verified(token, repo, audience, now=None, keys=None):
         return None, 'not a token'
     if header.get('alg') != 'RS256':
         return None, 'not RS256'
-    key = (keys if keys is not None else jwks()).get(header.get('kid'))
+    try:
+        key = keys.get(header.get('kid')) if keys is not None else key_of(header.get('kid'))
+    except Exception as e:
+        print(f"GitHub's keys didn't load: {e}", flush=True)
+        return None, "GitHub's keys didn't load"
     if not key:
         return None, 'an unknown key'
     with tempfile.TemporaryDirectory() as tmp:

@@ -9,11 +9,10 @@
 // never the board, nothing recorded: we couldn't check who a caller is or call them back (the board, 2026-10-15).
 // Twilio's record of each call, with the caller's number, is deleted within the hour (calls.ts).
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { DATA_DIR, ORIGIN } from './config.ts';
+import { ORIGIN } from './config.ts';
 import { columnsOf, db, lacks, once } from './db.ts';
-import { secret } from './secrets.ts';
+import { secret, serverKey } from './secrets.ts';
 import { rememberAccount } from './calls.ts';
 import { ceo, brand, names, respellings, yamlFile, voiceOf } from './company.ts';
 import { publish } from './events.ts';
@@ -134,17 +133,7 @@ const HOUR_MS = 3_600_000,
   DAY_MS = 24 * HOUR_MS;
 const CALLERS_KEPT_MS = 2 * DAY_MS;
 db.exec('create table if not exists phone_callers (hash text not null, ts integer not null)');
-const KEY_FILE = `${DATA_DIR}/phone.key`;
-function phoneKey() {
-  if (!existsSync(KEY_FILE))
-    try {
-      writeFileSync(KEY_FILE, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' });
-    } catch {
-      /* made meanwhile */
-    }
-  return readFileSync(KEY_FILE, 'utf8').trim();
-}
-const KEY = phoneKey();
+const KEY = serverKey('phone');
 // (the line in the hash)
 const callerHash = (from: string, line: Line) =>
   createHmac('sha256', KEY)

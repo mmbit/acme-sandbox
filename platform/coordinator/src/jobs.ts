@@ -14,7 +14,20 @@ import { db, inOneStep, mergePending, once, planChange, prepared, scrub } from '
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
 import { publish, redact, redactJob, status, type RunningJob } from './events.ts';
 import { createHash, randomBytes } from 'node:crypto';
-import { org, brand, ceo, companyTime, names, infra, roles, reads, yamlFile, titleOf, voiceOf } from './company.ts';
+import {
+  org,
+  brand,
+  ceo,
+  companyTime,
+  names,
+  infra,
+  roles,
+  reads,
+  yamlFile,
+  titleOf,
+  voiceOf,
+  projects,
+} from './company.ts';
 import { unshelvedProblem } from './library.ts';
 import { languageName } from './language.ts';
 import { REPO_DIR } from './config.ts';
@@ -93,8 +106,9 @@ type Job = {
 };
 
 const now = () => Date.now();
-const STALE_MS = 10 * 60_000,
-  GIVE_UP = 5;
+// A run whose heartbeat hasn't come for this long is lost (requeueAbandoned)
+export const STALE_MS = 10 * 60_000;
+const GIVE_UP = 5;
 // A run the worker's own plumbing snagged (finish) goes again after a wait that doubles from SNAG_WAIT_MS, until it has
 // had SNAG_RUNS in a row: about 35 minutes of waits, long enough for GitHub or the network to come back.
 const SNAG_WAIT_MS = 5 * 60_000,
@@ -423,19 +437,23 @@ function threadFrom(j: { from?: number; branch?: string; pr?: number }) {
 export function codeFrom(j: { insteadOf?: number | number[]; branch?: string; pr?: number }) {
   const replaced = Array.isArray(j.insteadOf) ? j.insteadOf[0] : j.insteadOf;
   if (replaced) return codeOf(replaced);
-  if (!j.branch && !j.pr) return null;
   return fromLoop('code', j);
 }
 
+// The loop's jobs by their branch's index and the branch's own job by its id, then each row: left to the planner, on old
+// statistics it read every job's row, brief and output, for the newest with one (seconds off the disk, a job queued
+// waiting). No branch and no pull request: no loop to inherit from.
 function fromLoop(column: 'thread' | 'code', j: { branch?: string; pr?: number }) {
+  if (!j.branch && !j.pr) return null;
   // the new job as a row (`n`), so its loop branch reads as any job's does
   return (
     (
       db
         .prepare(
-          `with n (branch, pr) as (values ($branch, $pr)), b (branch) as (select ${loopBranch('n')} from n)
-    select w.${column} from jobs w, b where w.${column} is not null and (w.branch = b.branch or w.id = ${jobOfBranch('b.branch')})
-    order by w.id desc limit 1`,
+          `with n (branch, pr) as (values ($branch, $pr)), b (branch) as materialized (select ${loopBranch('n')} from n),
+      w (id) as (select id from jobs indexed by jobs_branch, b where jobs.branch = b.branch
+        union select ${jobOfBranch('b.branch')} from b)
+    select j.${column} from w cross join jobs j on j.id = w.id where +j.${column} is not null order by j.id desc limit 1`,
         )
         .get({ branch: j.branch ?? null, pr: j.pr ?? null }) as Record<typeof column, string> | undefined
     )?.[column] ?? null
@@ -461,6 +479,12 @@ export const holdsCustomerData = (job?: number | null) =>
 export const handedCustomerData = (job?: number | null) => {
   if (job) db.prepare('update jobs set customers = 1 where id = ?').run(job);
 };
+// A reader handed them: its job, or a live call's token (no job) its call, which is about a customer from then on
+// (memory.ts customerCall), so what it changes with words is refused (server.ts).
+export const readerHanded = (reader: Reader) => {
+  if (reader.id) handedCustomerData(reader.id);
+  else if (reader.callId) db.prepare('update calls set customers = 1 where id = ?').run(reader.callId);
+};
 // A job holds keys once it heard a call about a card for keys: the call itself, its summary or its follow-up's report
 // (hq call, search, history), or its line on the intercom (chat.ts). The board may read a key out on such a call in a form
 // the mask can't match, so the intercom keeps that session's replies to itself.
@@ -474,7 +498,7 @@ export const customerCard = (id: number) =>
 // Who reads them: the job working on them, and org.yaml's roles.customerData. Any other job, the same agent's included,
 // is refused or finds them left out, so a bad package in a job reads only what the job was handed (company/DECISIONS.md,
 // 2026-10-08, jobs #7744 and #7844). A live call reads as a reader with no job (id 0).
-export type Reader = { id: number; agent: string };
+export type Reader = { id: number; agent: string; callId?: number }; // (callId: a live call's token, with no job)
 export const readsCustomerData = (agent: string) => reads(agent, 'customerData');
 // A report that holds them: its own job's.
 export const readsReport = (job: { id: number; customers: number | boolean }, reader: Reader) =>
@@ -520,7 +544,7 @@ export function openJobs(o: { agent?: string; except?: number; awaitingMerge?: b
   const runsHold = held();
   const rows = db
     .prepare(
-      redraws.query(`select id, code, agent, title, step, round, kind, status, after, queued_by, downtime, pr, ${pausedWith('jobs.thread')} paused_with,
+      redraws.query(`select id, code, agent, title, step, round, kind, status, after, queued_by, downtime, pr, ${heldWith('jobs')} paused_with,
     (select json_group_array(id) from (${outstanding('jobs.id')})) waits,
     (select json_group_array(request) from (${openCards('jobs.id')})) cards
     from jobs where kind = 'work' and ${o.awaitingMerge ? mergePending('jobs') : `status in ${OPEN_JOBS}`} and id != ? and (?2 is null or agent = ?2) order by id`),
@@ -703,13 +727,14 @@ export function prerequisites(from: number[], { includeFrom = true, ordered = fa
       select 'job/' || value from json_each($from) where $includeFrom
       union select e.needs from edges e join json_each($from) f on e.job = 'job/' || f.value where not $includeFrom
       union select e.needs from needs n join edges e on e.job = n.id)
-    select j.id, j.thread from needs n join jobs j on n.id = 'job/' || j.id where ${unfinished} order by j.id`,
+    select j.id, j.thread, j.kind, j.expedite from needs n join jobs j on n.id = 'job/' || j.id where ${unfinished}
+    order by j.id`,
     )
     .all({
       from: JSON.stringify(from),
       includeFrom: Number(includeFrom),
       ordered: Number(ordered && threadorder.ordered()),
-    }) as { id: number; thread: string | null }[];
+    }) as { id: number; thread: string | null; kind: string; expedite: number }[];
 }
 // The edges prerequisites walks, all at once: each node's needs ('job/<id>' or 'thread/<id>'), ordered as above.
 export function needsGraph() {
@@ -728,8 +753,8 @@ function dependencyEdges(unfinished: string) {
       select 'job/' || j.id, 'job/' || j.after from jobs j where j.after is not null and ${unfinished}
       union select 'job/' || j.id, 'job/' || w.on_job from jobs j join waits w on w.job = j.id where ${unfinished}
       union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')}
-        and p.project = substr(j.thread, 1, instr(j.thread, '/') - 1) and (p.thread is null or p.thread = j.thread)
-        join pause_until u on u.pause = p.id where ${unfinished}
+        and p.project = coalesce(substr(j.thread, 1, instr(j.thread, '/') - 1), '${DESK}') and (p.thread is null or p.thread = j.thread)
+        join pause_until u on u.pause = p.id where ${unfinished} and (j.thread is not null or not ${deskLets('j')})
       union select 'job/' || j.id, 'job/' || prior.id from tasks j join tasks prior on prior.thread = j.thread
         and (coalesce(prior.seq, prior.id), prior.id) < (coalesce(j.seq, j.id), j.id)
         where $ordered and j.status in ('queued', 'running', 'blocked') and prior.status in ('queued', 'running', 'blocked', 'failed')
@@ -938,12 +963,20 @@ export function pauseAllowed() {
   return new Set(allowed.map(job => job.id));
 }
 
+// What a pause names for the work in no thread, the CEO's desk (hq project pause unsorted, or projects.yaml
+// groups.unsorted's code: pauses.ts), so a hold the CEO puts in reaches the call's work, HQ's fix rounds and its fault
+// jobs there too.
+export const DESK = 'unsorted';
+// Work in no thread a pause of it lets go: the intercom, a meeting's seats (set for their time), a board call's
+// follow-up (the board heard, which is how a hold is put in and lifted) and expedited work.
+export const deskLets = (j: string) =>
+  `(${j}.kind in ('chat', 'meeting') or ${j}.expedite = 1 or exists (select 1 from calls c where c.job = ${j}.id))`;
 // Work (fix rounds too) of an agent a kind of run holds until the lent machine has finished one (runs.ts holds), and
-// everything on a paused thread or project but the intercom: work, a pull request's
-// reviews, rulings and fixes (pauses.ts)
+// everything on a paused thread or project, or in no thread with the desk paused, but the intercom: work, a pull
+// request's reviews, rulings and fixes (pauses.ts)
 // Wrap statements using this predicate in redraws.query().
 const HOLD_LETS = `(j.expedite = 1 or (j.kind != 'work' or j.agent not in (select value from json_each($held)))
-  and (j.kind = 'chat' or ${pausedWith('j.thread')} is null))`;
+  and ${heldWith('j')} is null)`;
 const ROOM_WAITER = `${READY} and ${PAUSE_LETS} and ${HOLD_LETS} and j.kind != 'chat'`;
 
 // A pause (`p`, its row's alias) that holds: not resumed, and waiting for nothing (resumed by hand), or with --until jobs,
@@ -954,21 +987,29 @@ export function pauseHolds(p: string) {
     or exists (select 1 from pause_until u join jobs prior on prior.id = u.job where u.pause = ${p}.id and not ${merged('prior')})
     or exists (select 1 from decisions d where d.id = ${p}.decision and d.answered is null and d.released is null))`;
 }
-// The open pause holding work on a thread (`thread`, an SQL expression), as what it pauses: the thread's own id first,
-// else its project's. Null for none.
+// The open pause holding work on a thread (`thread`, an SQL expression; null: the desk), as what it pauses: the
+// thread's own id first, else its project's. Null for none.
 // Wrap statements using this expression in redraws.query().
 export function pausedWith(thread: string) {
   return `(select coalesce(p.thread, p.project) from pauses p where ${pauseHolds('p')}
-    and p.project = substr(${thread}, 1, instr(${thread}, '/') - 1) and (p.thread is null or p.thread = ${thread})
-    order by p.thread is null, p.id limit 1)`;
+    and p.project = coalesce(substr(${thread}, 1, instr(${thread}, '/') - 1), '${DESK}')
+    and (p.thread is null or p.thread = ${thread}) order by p.thread is null, p.id limit 1)`;
 }
-export const pausedOn = (thread: string | null) =>
-  thread
-    ? (db.prepare(redraws.query(`select ${pausedWith('$thread')} target`)).get({ thread }) as { target: string | null })
-        .target
-    : null;
+// The open pause holding job `j` (its row's alias), as pausedWith: never the intercom, nor what the desk's pause lets go
+export function heldWith(j: string) {
+  return `(case when ${j}.kind = 'chat' or ${j}.thread is null and ${deskLets(j)} then null else ${pausedWith(`${j}.thread`)} end)`;
+}
+export const pausedOn = (job: number) =>
+  (
+    db.prepare(redraws.query(`select ${heldWith('j')} target from jobs j where j.id = ?`)).get(job) as {
+      target: string | null;
+    }
+  ).target;
+// What a pause holds, by name: the desk's (projects.yaml groups.unsorted's name) or a thread's or project's id
+export const pauseName = (target: string) =>
+  target === DESK ? (projects().groups.unsorted?.name ?? 'work in no thread') : target;
 const pausedWakes = (row: { kind: string; paused_with: string | null }) =>
-  row.kind !== 'chat' && row.paused_with ? [`paused with ${row.paused_with}`] : [];
+  row.kind !== 'chat' && row.paused_with ? [`paused with ${pauseName(row.paused_with)}`] : [];
 
 // The work that starts as soon as a seat and room free up (READY), by id: the follow-through check's read
 // (followthrough.ts).
@@ -1072,12 +1113,23 @@ type Listed = {
 };
 export function jobRows(where: string, t = now(), values: Record<string, string | number> = {}) {
   const runsHold = held();
-  const rows = db
-    .prepare(
-      redraws.query(`select j.id, j.code, j.created, j.finished, j.agent, j.title, j.engine, j.status, j.seat,
+  const rows = db.prepare(listedQuery(where)).all({
+    ...values,
+    now: t,
+    iso: new Date(t).toISOString(),
+    held: JSON.stringify(runsHold?.agents ?? []),
+  }) as Listed[];
+  return listedRows(rows, t, runsHold);
+}
+// jobRows' statement. Its jobs come from db.ts jobs_listed, which holds every column read of `j` here, never a row's
+// prompt and output: each a walk through its overflow pages on a cold file, for every row listed. A `where` picks them
+// by id (a thread's: through its index, as getThread), which the index seeks; a column of j read here belongs in that
+// index too (projects.test.ts checks the plan).
+export const listedQuery = (where: string) =>
+  redraws.query(`select j.id, j.code, j.created, j.finished, j.agent, j.title, j.engine, j.status, j.seat,
     j.attempts, j.request, q.title request_title, j.result, j.kind, j.pr, j.round, j.stage, j.step, j.downtime, j.after,
     j.thread, coalesce(j.seq, j.id) seq, j.is_check "check", j.call, j.item, j.branch, -- (branch: the projects view folds a review under its job; seq: its place in its thread, plan.ts)
-    ${pausedWith('j.thread')} paused_with,
+    ${heldWith('j')} paused_with,
     (select json_object('job', t.job, 'base', t.base, 'selection', json(t.selection)) from review_triage t
       where t.pr = j.pr and t.round = j.round and t.job <= j.id order by t.job desc limit 1) triage,
     ${loop('j.')} review, j.status = 'queued' and j.session is not null paused,
@@ -1086,17 +1138,11 @@ export function jobRows(where: string, t = now(), values: Record<string, string 
     (select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent, 'title', w.title, 'state', ${WAIT_STATE}))
       from (${outstanding('j.id')}) o cross join jobs w on w.id = o.id) waits,
     ${CARD_COLUMNS}
-  from jobs j left join requests q on q.id = j.request left join jobs a on a.id = j.after
+  from jobs j indexed by jobs_listed left join requests q on q.id = j.request left join jobs a on a.id = j.after
   -- listJobs: the latest finished from the newest down (+status: not through the state's index, which holds every done job)
   where ${where}
-  order by j.id desc`),
-    )
-    .all({
-      ...values,
-      now: t,
-      iso: new Date(t).toISOString(),
-      held: JSON.stringify(runsHold?.agents ?? []),
-    }) as Listed[];
+  order by j.id desc`);
+function listedRows(rows: Listed[], t: number, runsHold: ReturnType<typeof held>) {
   // wakes: the events it still waits for, in words (hq job --when), a kind of run's hold on its agent's work, the
   // pause on its thread or project, and its thread's order (threadorder.ts.)
   const inOrder = threadorder.words();
@@ -1184,11 +1230,12 @@ const shownJson = (card: string) => `json(case when ${shownCard(card, '$iso')} t
 // The work a card (`card`, a requests row's alias) is held for until it's live (later.ts holdsFor), as a JSON array: each
 // job by id, code and agent, a pull request by the latest task on its branch (not a review loop's round: those carry
 // jobs.pr); empty for a card that isn't held.
+// (the branch's work through db.ts jobs_work_branch: with the planner's statistics each held card read every job row.
 const holdsJson = (
   card: string,
 ) => `json((select json_group_array(json_object('id', w.id, 'code', w.code, 'agent', w.agent))
   from request_holds h join jobs w on w.id = case when h.work like 'pr:%'
-    then (select max(p.id) from jobs p join prs r on r.branch = coalesce(p.branch, 'job/' || p.id)
+    then (select max(p.id) from jobs p indexed by jobs_work_branch join prs r on coalesce(p.branch, 'job/' || p.id) = +r.branch
       where r.number = cast(substr(h.work, 4) as integer) and p.kind = 'work' and p.stage is null)
     else cast(h.work as integer) end
   where h.request = ${card}.id))`;
@@ -1863,7 +1910,14 @@ function roomVictims(
 // A job someone stopped (hq stop) hears it here: `stop`, who and why, ends the run now.
 // Work yields back to the queue in its session (the board, 18 October): while the company is paused, unless the pause
 // lets it through, and to make room (makesRoom).
-export function heartbeat(id: number, o: { util?: number; probe?: boolean } & Partial<InTheWay> = {}) {
+// reined: its job is past its share of HQ's time (reins.ts). The beat still keeps the run's lease and tells a stop, a
+// suspension, a pause and a room yield (makesRoom's replay of the claims is kept for every run's beat, not this job's
+// own); its downtime-window check, which places the job in the played plan, waits for a beat within the share:
+// `reined`, and the worker keeps the window yield it heard last
+export function heartbeat(
+  id: number,
+  o: { util?: number; probe?: boolean; reined?: boolean } & Partial<InTheWay> = {},
+) {
   db.prepare("update jobs set heartbeat = ? where id = ? and status = 'running'").run(now(), id);
   const job = db
     .prepare(
@@ -1883,7 +1937,7 @@ export function heartbeat(id: number, o: { util?: number; probe?: boolean } & Pa
   if (job?.stopping) return { ok: true, stop: job.stopping };
   // (a review or ruling paused with its thread stops at its next step while the pause holds: suspendReview; one HQ takes
   // off the worker for its room yields with or without a pause: offWorker)
-  if (job?.suspending && (job.off_worker || pausedOn(job.thread)))
+  if (job?.suspending && (job.off_worker || pausedOn(id)))
     return { ok: true, yield: job.off_worker ? 'waiting' : 'paused' };
   const roomFor = makesRoom(id, { short: !!o.short, capped: o.capped ?? [] });
   if (roomFor !== undefined) {
@@ -1898,6 +1952,7 @@ export function heartbeat(id: number, o: { util?: number; probe?: boolean } & Pa
     !db.prepare(`select 1 from jobs j where j.id = $id and ${PAUSE_LETS}`).get({ id, paused: isPaused, allow, prs })
   )
     return { ok: true, yield: 'paused' };
+  if (o.reined) return { ok: true, reined: true };
   const spare =
     o.util !== undefined &&
     o.util >= (o.probe ? DOWNTIME_UNDER : DOWNTIME_YIELD) &&
@@ -1954,7 +2009,7 @@ function suspendReview(
   by: string,
   why: string,
 ) {
-  const target = pausedOn(job.thread);
+  const target = pausedOn(job.id);
   if (!target)
     return `#${job.id} is the coordinator's own (${job.kind}), not work: it pauses only with its thread (hq thread pause)`;
   if (job.status !== 'running')
@@ -3241,7 +3296,7 @@ export const openRequests = (me: Reader, id?: number) =>
       const asked = r.questions ? { questions: r.questions } : {};
       if (!r.customers) return { ...shown, body: r.body, ...asked };
       if (!readsCard(r.id, me)) return { ...shown, body: null, left_out: CARD_REFUSED };
-      handedCustomerData(me.id);
+      readerHanded(me);
       return { ...shown, body: r.body, ...asked };
     });
 

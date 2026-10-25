@@ -27,13 +27,15 @@
     <div class="brand"><img src="wordmark.svg" alt="Company" width="160" height="30"><span><b>HQ</b><small id="clock"></small></span><span id="dev" hidden title="Using mock data: the coordinator API is not reachable">DEV</span></div>
     <!-- Icons drawn by the look's style (shell/icons.js). -->
     <nav class="tools">
-      <!-- a plain href, so a middle-click opens a new HQ with the phone open -->
-      <a id="btn-desk" href="/?open=phone" title="Desk phone: requests waiting for you" class="desk board-tool"><svg class="icon i-phone" data-icon="phone" aria-hidden="true"></svg><span class="lbl">Phone</span><b id="desk-count" class="count" hidden>0</b></a>
+      <!-- a plain href, so a middle-click opens a new HQ with the phone open; its icon alone, as the others' -->
+      <a id="btn-desk" href="/?open=phone" title="Desk phone: requests waiting for you" class="desk board-tool"><svg class="icon i-phone" data-icon="phone" aria-hidden="true"></svg><span class="sr">Phone</span><b id="desk-count" class="count" hidden>0</b></a>
       <button id="btn-news" class="board-tool" title="The newsletter"><svg class="icon i-news" data-icon="news" aria-hidden="true"></svg><span class="sr">News</span><b id="news-count" class="count" hidden>0</b></button>
       <!-- the intercom's count: the CEO's replies not seen yet -->
       <button id="btn-intercom" class="board-tool" title="Intercom: a directive for the CEO"><svg class="icon i-intercom" data-icon="intercom" aria-hidden="true"></svg><span class="sr">Intercom</span><b id="intercom-count" class="count" hidden>0</b></button>
       <!-- the computer's count: review notes waiting -->
       <button id="btn-computer" class="board-tool" title="Computer: AI seats and jobs"><svg class="icon i-computer" data-icon="computer" aria-hidden="true"></svg><span class="sr">Computer</span><b id="computer-count" class="count" hidden>0</b></button>
+      <!-- the projects view, out of the computer's apps into the row (a second press closes it). -->
+      <button id="btn-projects" class="board-tool" aria-pressed="false" title="Projects: who's doing what"><svg class="icon i-app-projects" data-icon="app-projects" aria-hidden="true"></svg><span class="sr">Projects</span></button>
       <!-- HQ's search, where there's no / key to press (finder.js). -->
       <button id="btn-find" class="board-tool" title="Go to anything (/)"><svg class="icon i-find" data-icon="find" aria-hidden="true"></svg><span class="sr">Go to anything</span></button>
       <button id="btn-walls" aria-pressed="false" title="Outside walls"><svg class="icon i-walls" data-icon="walls" aria-hidden="true"></svg><span class="sr">Outside walls</span></button>

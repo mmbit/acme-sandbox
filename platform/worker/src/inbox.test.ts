@@ -17,10 +17,12 @@ const TOKEN = `job-token-${randomBytes(8).toString('hex')}`;
 
 type Req = { thread: 'main' | 'sub'; text: string };   // each model request: whose, and everything it carries
 type Reply = { text?: string; tool?: { name: string; input: unknown } };
-// script(request, its turn in that thread, send) answers the model's request; send(text) is a colleague's hq say to this job.
+// script(request, its turn in that thread, send, sayHq) answers the model's request; send(text) is a colleague's hq say to
+// this job, sayHq(text) HQ's word on the server's memory (the coordinator's lowmemory.ts: never to a stopping session).
 // lostAcks: how many of the hook's acks the stand-in loses (as if HQ never got them).
-async function run(script: (r: Req, turn: number, send: (text: string) => void) => Reply, lostAcks = 0) {
-  const requests: Req[] = [], inboxCalls: string[] = [], acks: number[][] = [];
+type Script = (r: Req, turn: number, send: (text: string) => void, sayHq: (text: string) => void) => Reply;
+async function run(script: Script, lostAcks = 0) {
+  const requests: Req[] = [], inboxCalls: string[] = [], acks: number[][] = [], stops: boolean[] = [], hqLines: string[] = [];
   const inbox = new Map<number, unknown>();   // waiting until acknowledged
   let nextId = 1;
   const send = (text: string) => { const id = nextId++; inbox.set(id, { message: id, from: 'vervain', from_job: 934, sent: new Date().toISOString(), reply_to: 'bolt', text }); };
@@ -46,8 +48,11 @@ async function run(script: (r: Req, turn: number, send: (text: string) => void) 
       // again at once; HQ waits a minute, so parallel hooks don't both get them)
       if (req.url === '/api/agent/inbox') {
         inboxCalls.push(req.headers.authorization ?? '');
+        const stopping = JSON.parse(b || '{}').stopping === true;
+        stops.push(stopping);
+        const memory = stopping ? [] : hqLines.splice(0).map(text => ({ memory: 1, text }));
         res.setHeader('content-type', 'application/json');
-        return res.end(JSON.stringify(req.headers.authorization === `Bearer ${TOKEN}` ? [...inbox.values()] : []));
+        return res.end(JSON.stringify(req.headers.authorization === `Bearer ${TOKEN}` ? [...inbox.values(), ...memory] : []));
       }
       if (req.url === '/api/agent/inbox-ack' && req.headers.authorization === `Bearer ${TOKEN}`) {
         const ids: number[] = JSON.parse(b).ids;
@@ -62,7 +67,7 @@ async function run(script: (r: Req, turn: number, send: (text: string) => void) 
       const r: Req = { thread: JSON.stringify(body.messages[0]).includes('SUBTASK') ? 'sub' : 'main', text };
       requests.push(r);
       const turn = requests.filter(x => x.thread === r.thread).length - 1;
-      sse(res, body.model, script(r, turn, send));
+      sse(res, body.model, script(r, turn, send, text => hqLines.push(text)));
     });
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
@@ -84,7 +89,7 @@ async function run(script: (r: Req, turn: number, send: (text: string) => void) 
   const code = await new Promise<number>(r => child.on('close', c => r(c ?? 1)));
   server.close(); rmSync(home, { recursive: true, force: true });
   const result = out.split('\n').filter(Boolean).map(l => JSON.parse(l)).find(e => e.type === 'result');
-  return { code, err, result: result?.result, requests, inboxCalls, acks };
+  return { code, err, result: result?.result, requests, inboxCalls, acks, stops };
 }
 const bash = (command: string) => ({ name: 'Bash', input: { command, description: 'a step' } });
 
@@ -140,4 +145,19 @@ test('a team member\'s tool call doesn\'t take the lead\'s message; the lead\'s 
   assert.equal(sub.length, 2);
   assert.ok(sub.every(q => !q.text.includes(text)), 'the helper never got it');
   assert.ok(main[1].text.includes(text), 'the lead got it at its next step');
+});
+
+test("HQ's word that memory is low is in the next request as HQ's own, and a stopping session is never kept going for it", { skip: !cli && 'no claude CLI here' }, async () => {
+  const line = `HQ: the server is short of memory right now ${randomBytes(4).toString('hex')}`;
+  const r = await run((req, turn, send, sayHq) => {
+    if (turn === 0) { sayHq(line); return { tool: bash('echo one') }; }
+    sayHq(`${line} again`);   // waiting as the session stops: it ends all the same
+    return { text: 'Done.' };
+  });
+  assert.equal(r.code, 0, r.err.slice(-500));
+  const main = r.requests.filter(q => q.thread === 'main');
+  assert.equal(main.length, 2, 'the stop ends the session');
+  assert.ok(main[1].text.includes(`PostToolUse:Bash hook additional context: ${line}`), main[1].text.slice(-800));
+  assert.deepEqual(r.stops, [false, true]);
+  assert.deepEqual(r.acks, [], 'nothing to acknowledge');
 });

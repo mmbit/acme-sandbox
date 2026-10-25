@@ -29,12 +29,9 @@ async function run(id: number): Promise<Running> {
   while ((j = await h.claim(h.job(id).engine)) && j.id !== id) await h.finish(j, { result: 'Done.' });
   return j ?? assert.fail(`job #${id} is the one the worker claims`);
 }
-// A call with the board, as the voice line has it, and its follow-up, done with this report (none: still at work). The
-// agent's earlier calls not followed up yet ended a day ago: it doesn't carry on from them (call.ts carriedOn; no route
-// moves the clock).
+// A call with the board, as the voice line has it, and its follow-up, done with this report (none: still at work).
 async function call(agent: string, lines: string[], report: string, request?: number) {
-  h.db.prepare("update calls set ts = ? where agent = ? and status = 'ended' and processed_at is null").run(new Date(Date.now() - 25 * 3600_000).toISOString(), agent);
-  const ctx = (await voice(`call-context?agent=${agent}${request ? `&request=${request}` : ''}`)).body;
+  const ctx = await h.liveCall(agent, request);
   assert.equal((await voice('call-end', { agent, lines, token: ctx.token, ...(request ? { request } : {}) })).status, 200);
   const follow = await run((await h.board('/api/calls')).body.find((c: any) => c.id === ctx.call).job);
   if (report) await h.finish(follow, { result: report });

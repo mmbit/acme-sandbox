@@ -582,6 +582,78 @@ test('threadless findings bind the reviewed work to a permitted canonical thread
   assert.equal(check?.branch, branch);
 });
 
+test("the desk's pause keeps threadless findings' work in no thread until it lifts", async () => {
+  const pauses = await import('./pauses.ts');
+  const author = await h.start({ agent: 'juno', title: 'A front desk task' });
+  const branch = `job/${author.id}`;
+  h.storedPr(72, author.id, 'open', ['game.ts'], { round: 1 });
+  proposals.deliverFindings({
+    pr: 72,
+    round: 1,
+    branch,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Fix it',
+    findings,
+  });
+  await h.finish(author);
+  const ceo = await h.start({ agent: 'juno', title: 'Bind the findings' });
+  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start' }, 'juno'), 'object');
+  const accept = () =>
+    h.agent('proposals/accept', ceo.token, { id: 'findings:72', for: 'kit', findings: '12', thread: 'game/world' });
+  const refused = await accept();
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /holds this work where it is/);
+  assert.equal(h.job(author.id).thread, null);
+  assert.deepEqual(pauses.resume({ project: 'unsorted' }, 'juno'), { ok: true, target: 'unsorted' });
+  const reply = await accept();
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(h.job(author.id).thread, 'game/world');
+});
+
+test("the desk's pause refuses a new thread for threadless findings whole, and the same name is drawn once it lifts", async () => {
+  const pauses = await import('./pauses.ts');
+  const author = await h.start({ agent: 'juno', title: 'A front desk task' });
+  const branch = `job/${author.id}`;
+  h.storedPr(72, author.id, 'open', ['game.ts'], { round: 1 });
+  proposals.deliverFindings({
+    pr: 72,
+    round: 1,
+    branch,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Fix it',
+    findings,
+  });
+  await h.finish(author);
+  const ceo = await h.start({ agent: 'juno', title: 'Bind the findings' });
+  assert.equal(typeof pauses.pause({ project: 'unsorted', why: 'No new start' }, 'juno'), 'object');
+  const name = 'The desk work lands';
+  const drawn = () => ({
+    threads: projects.listThreads().filter(t => t.name === name).length,
+    changes: db.prepare('select count(*) n from plan_changes where what = ?').get(`thread drawn: ${name}`),
+    events: db.prepare('select count(*) n from events where text like ?').get(`New thread in %: ${name}`),
+  });
+  const accept = () =>
+    h.agent('proposals/accept', ceo.token, {
+      id: 'findings:72',
+      for: 'kit',
+      findings: '12',
+      newThread: { project: 'game', name, goal: 'The desk work can land' },
+    });
+  const none = drawn();
+  const refused = await accept();
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /holds this work where it is/);
+  assert.deepEqual(drawn(), none);
+  assert.equal(h.job(author.id).thread, null);
+  assert.deepEqual(pauses.resume({ project: 'unsorted' }, 'juno'), { ok: true, target: 'unsorted' });
+  const reply = await accept();
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(drawn().threads, 1);
+  assert.equal(h.job(author.id).thread, reply.body.thread);
+});
+
 test('slug renames and project moves keep findings on the canonical thread with the new owner', async () => {
   await deliver();
   const owner = await h.start({ agent: 'wren', title: 'Rename its slice' });

@@ -10,7 +10,7 @@ import { openAgent } from './panel.js';
 import { openGazette } from './news.js';
 import { openPhone, openIntercom, openComputer, ceoName } from './desk.js';
 import { loadPiles } from './data.js';
-import { openProjects } from './projects.js';
+import { openProjects, closeProjects, toggleProjects } from './projects.js'; // (closeProjects, toggleProjects)
 import { names } from './brand.js';
 
 const $ = s => document.querySelector(s);
@@ -21,11 +21,13 @@ export function bindHud() {
   addEventListener('pointerdown', () => { audio.unlock(); setTimeout(syncHud); }, { capture: true });
   sound.onclick = () => { if (!audio.justUnlocked() || !audio.prefs.sound) audio.setSound(!audio.prefs.sound); syncHud(); audio.sfx.blip(); };
   music.onclick = () => { if (!audio.prefs.sound) audio.setSound(true); audio.setMusic(!audio.prefs.music); syncHud(); };
-  tourBtn.onclick = () => { touring() ? stopTour() : startTour(); syncHud(); };
+  // (the tour shows the building: the projects view makes way.)
+  tourBtn.onclick = () => { if (touring()) stopTour(); else { closeProjects(); startTour(); } syncHud(); };
   $('#btn-desk').onclick = e => { e.preventDefault(); openPhone(); };
   $('#btn-intercom').onclick = () => openIntercom();
   $('#btn-computer').onclick = () => openComputer();
   $('#btn-news').onclick = () => openGazette();
+  $('#btn-projects').onclick = e => toggleProjects(e.currentTarget);
   // (the projects view, from what was tapped)
   const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from }); };
   $('#status').onclick = jobsAt;
@@ -75,7 +77,7 @@ export function visitMascot(id) {
 function nameHud() {
   cv.setAttribute('aria-label', `Pixel-art view of the ${names.hq} building. The ${names.computer}'s People tab lists everyone in text.`);
   $('#hud .brand b').textContent = names.hq;
-  $('#btn-desk').title = `${cap(names.phone)}: requests waiting for you`; $('#btn-desk .lbl').textContent = names.phoneShort;
+  $('#btn-desk').title = `${cap(names.phone)}: requests waiting for you`; $('#btn-desk .sr').textContent = names.phoneShort; // (.sr)
   $('#btn-news').title = cap(names.newsletter); $('#btn-news .sr').textContent = names.newsletterShort;
   $('#btn-intercom').title = `${cap(names.intercom)}: a directive for ${ceoName()}`; $('#btn-intercom .sr').textContent = cap(names.intercom);
   $('#btn-computer').title = `${cap(names.computer)}: AI seats and jobs`; $('#btn-computer .sr').textContent = cap(names.computer);

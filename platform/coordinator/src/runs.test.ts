@@ -18,7 +18,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { createServer, type ServerResponse } from 'node:http';
+import { createServer, request, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 
@@ -287,6 +287,34 @@ test("the helper its setup command starts, on the key its key command saved, tak
   await h.finish(job);
 });
 
+test('a helper whose output and files reach HQ while it restarts sends them again, and the run is done where it ran', async t => {
+  await lendNone();
+  const job = await h.start({ agent: 'bolt' });
+  // HQ restarting: the connection of each upload's first try dropped, as the coordinator is recreated
+  const dropped: string[] = [];
+  const proxy = createServer((req, res) => {
+    const upload = req.method === 'POST' && /\/(output|finish)$/.exec(req.url!)?.[1];
+    if (upload && !dropped.includes(upload)) {
+      dropped.push(upload);
+      return req.socket.destroy();
+    }
+    const onward = request(`${h.base}${req.url}`, { method: req.method, headers: req.headers }, answer => {
+      res.writeHead(answer.statusCode!, answer.headers);
+      answer.pipe(res);
+    });
+    req.pipe(onward);
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  t.after(() => proxy.close());
+  await startHelper(t, { server: true }, `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`);
+  const ran = await hqIn(`${jobTree()}/sim`, job, 'run', '--', 'sh', '-c', 'echo ran once');
+  assert.equal(ran.code, 0, ran.out);
+  assert.match(ran.out, /ran once/);
+  assert.deepEqual(dropped, ['output', 'finish']);
+  assert.equal(stateOf(lastRun()), 'done');
+  await h.finish(job);
+});
+
 // A run as hq sends it: the spec in a header, a bundle as the body
 const sendRun = (token: string, spec: Record<string, unknown>) => {
   const bundle = execFileSync('tar', ['-czf', '-', '-C', jobTree(), 'sim']);
@@ -478,6 +506,126 @@ test("a machine's readings and its run's new output reach the board's HQ live: i
   assert.equal((await finishAs(lent.key, take)).status, 200);
   const done = await shownMachine(lent.id);
   assert.deepEqual([done.state, done.run, done.live.lines], ['taking', undefined, []]);
+  await h.finish(job);
+});
+
+test("a saved key the live output's cuts cross leaves none of itself on the machine's card", async () => {
+  secrets.registerKeys({ LINES_TEST_KEY: /^.+$/ });
+  const key = `lines-fixture-${'q'.repeat(30)}`;
+  secrets.saveSecrets(['LINES_TEST_KEY'], { LINES_TEST_KEY: key });
+  await lendNone();
+  const lent = await lend('the cut rig');
+  const job = await h.start({ agent: 'bolt', title: 'Cut' });
+  const sent = await sendRun(job.token, { command: 'true' });
+  const take = (await asKey(lent.key, '/api/helper/take', { live: { cpu: 30, mem: 41 } })).json.id;
+  assert.equal(take, takeOf(sent.json.id));
+  // as sent, its last 8,000 characters start 18 from the first key's end, and a line's first 300 end 10 into the second
+  const lines = `${key}\n${'y'.repeat(7_645)}\n${'z'.repeat(290)}${key}\n`;
+  assert.equal((await asKey(lent.key, `/api/helper/runs/${take}/beat`, { lines })).json.go, true);
+
+  const shown = await shownMachine(lent.id);
+  assert.doesNotMatch(JSON.stringify(shown), /q{4}|lines-fix/);
+  assert.deepEqual(shown.live.lines, ['[LINES_TEST_KEY]', 'y'.repeat(300), `${'z'.repeat(290)}[LINES_TES`]);
+  assert.equal((await finishAs(lent.key, take)).status, 200);
+  await h.finish(job);
+});
+
+test("a running run's new output reaches its own job as it comes, each line once by its number, repeats too, and still once its job stopped it; another job reads none of it", async t => {
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const other = await h.start({ agent: 'chime' });
+  const sent = await sendRun(job.token, { command: 'true' });
+  const id = sent.json.id;
+  const take = (await asHelper('/api/helper/take', {})).json.id;
+  const linesAfter = async (after: number, token = job.token) => h.agent(`runs/${id}/lines?after=${after}`, token);
+  const { since } = (await linesAfter(0)).body;
+  assert.deepEqual((await linesAfter(0)).body, { state: 'running', since, next: 0, missed: 0, lines: [] });
+
+  await asHelper(`/api/helper/runs/${take}/beat`, { lines: 'stage loaded\nstage ready\n' });
+  const first = (await linesAfter(0)).body;
+  assert.deepEqual(first, { state: 'running', since, next: 2, missed: 0, lines: ['stage loaded', 'stage ready'] });
+  assert.equal((await linesAfter(0, other.token)).status, 404, "another job's run");
+  assert.doesNotMatch(JSON.stringify((await h.agent(`runs/${id}`, other.token)).body), /stage/);
+
+  await asHelper(`/api/helper/runs/${take}/beat`, { lines: 'stage ready\nstage ready\n' });
+  const overlapping = await Promise.all([linesAfter(first.next), linesAfter(first.next)]);
+  for (const poll of overlapping)
+    assert.deepEqual(poll.body, { state: 'running', since, next: 4, missed: 0, lines: ['stage ready', 'stage ready'] });
+  assert.deepEqual((await linesAfter(4)).body.lines, [], 'nothing new');
+  assert.deepEqual((await linesAfter(1)).body.lines, ['stage ready', 'stage ready', 'stage ready'], 'from any line');
+
+  const many = Array.from({ length: 120 }, (_, n) => `line ${n + 1}`).join('\n');
+  await asHelper(`/api/helper/runs/${take}/beat`, { lines: `${many}\nstage allocated\n` });
+  const behind = (await linesAfter(4)).body;
+  assert.deepEqual([behind.next, behind.missed, behind.lines.length], [125, 21, 100], 'the last 100 kept');
+  assert.equal(behind.lines.at(-1), 'stage allocated');
+
+  assert.equal((await h.agent(`runs/${id}/stop`, job.token, {})).body.state, 'stopped');
+  assert.equal((await asHelper(`/api/helper/runs/${take}/beat`, { lines: 'late\n' })).json.go, false);
+  const stopped = (await linesAfter(124)).body;
+  const kept = ['stage allocated'];
+  assert.deepEqual(stopped, { state: 'stopped', since, next: 125, missed: 0, lines: kept }, 'kept past stop');
+  assert.equal((await h.agent(`runs/${id}/output`, job.token)).status, 404, 'a stopped run sends no output');
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() + 11 * 60_000 });
+  const later = (await linesAfter(0)).body;
+  t.mock.timers.reset();
+  assert.deepEqual(later, { state: 'stopped', since, next: 0, missed: 0, lines: [] }, 'gone ten minutes on');
+  await h.finish(job);
+  await h.finish(other);
+});
+
+test("hq run lines follows a running run's output into its own file as it comes, each line once, until its job stops it", async () => {
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const tree = jobTree();
+  const sent = await sendRun(job.token, { command: 'true' });
+  const id = sent.json.id;
+  const take = (await asHelper('/api/helper/take', {})).json.id;
+  await asHelper(`/api/helper/runs/${take}/beat`, { lines: 'ready\n' });
+  const following = hqIn(tree, job, 'run', 'lines', String(id));
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  await asHelper(`/api/helper/runs/${take}/beat`, { lines: 'ready\nallocated\n' });
+  const stop = await hqIn(tree, job, 'run', 'stop', String(id));
+  assert.equal(stop.code, 0, stop.out);
+  const followed = await following;
+  assert.equal(followed.code, 0, followed.out);
+  assert.deepEqual(followed.out.trim().split('\n'), ['ready', 'ready', 'allocated', `hq run #${id}: stopped`]);
+  await h.finish(job);
+});
+
+test('hq run lines reads a run again from its first line when HQ restarted, even once the new count passed the old', async t => {
+  const job = await h.start({ agent: 'bolt' });
+  const before = { state: 'running', since: '2026-10-25T01:00:00.000Z', missed: 0 };
+  const after = { ...before, since: '2026-10-25T01:05:00.000Z' };
+  const restarted = ['runtime-started', 'ready', 'gpu-sample'];
+  const answers = [
+    { ...before, next: 2, lines: ['started', 'runtime-started'] },
+    { ...after, next: 3, lines: restarted.slice(2) },
+    { ...after, state: 'stopped', next: 3, lines: restarted },
+  ];
+  const asked: string[] = [];
+  const fake = createServer((request, response) => {
+    asked.push(new URL(request.url!, 'http://hq').searchParams.get('after')!);
+    response.writeHead(200).end(JSON.stringify(answers[asked.length - 1]));
+  });
+  await new Promise<void>(resolve => fake.listen(0, '127.0.0.1', resolve));
+  t.after(() => fake.close());
+  const base = `http://127.0.0.1:${(fake.address() as AddressInfo).port}`;
+  const followed = await new Promise<{ code: number; out: string; err: string }>(done =>
+    execFile(
+      'bash',
+      [HQ, 'run', 'lines', '7'],
+      { env: { PATH: process.env.PATH, TMPDIR: tmpdir(), HQ_URL: base, HQ_TOKEN: job.token, HQ_AGENT: job.agent } },
+      (error, out, err) => done({ code: error ? Number(error.code) : 0, out, err }),
+    ),
+  );
+  assert.equal(followed.code, 0, followed.err);
+  assert.deepEqual(asked, ['0', '2', '0'], 'from the first line again once HQ restarted');
+  assert.deepEqual(followed.out.trim().split('\n'), ['started', 'runtime-started', ...restarted]);
+  assert.deepEqual(followed.err.trim().split('\n'), [
+    "hq run #7: HQ restarted, and kept none of the run's lines from before",
+    'hq run #7: stopped',
+  ]);
   await h.finish(job);
 });
 
@@ -1299,5 +1447,52 @@ test("a lent machine's runs fit its own memory cap together: a run of another ki
   assert.equal(stateOf(render.json.id), 'waiting');
   await asHelper(`/api/helper/runs/${simTake}/finish`, Buffer.alloc(0), { 'x-run-exit': '0' });
   assert.equal((await asHelper('/api/helper/take', { kind: 'render', slot: 1 })).json.id, takeOf(render.json.id));
+  await h.finish(job);
+});
+
+test("a lent machine's GPU runs take its cards one at a time: one of another GPU kind waits while one runs, with memory to spare, and goes once it ends; a kind without GPUs isn't held", async t => {
+  declareKinds(
+    t,
+    '    voice:\n      memoryGb: 4\n      gpus: true\n    inference:\n      memoryGb: 4\n      gpus: true\n    render:\n      memoryGb: 4\n',
+  );
+  await lendOne();
+  const job = await h.start({ agent: 'bolt' });
+  const voice = await sendRun(job.token, { command: 'true', kind: 'voice' });
+  const inference = await sendRun(job.token, { command: 'true', kind: 'inference' });
+  const render = await sendRun(job.token, { command: 'true', kind: 'render' });
+  const voiceTake = (await asHelper('/api/helper/take', { kind: 'voice' })).json.id;
+  assert.equal(voiceTake, takeOf(voice.json.id));
+  assert.equal(
+    (await asHelper('/api/helper/take', { kind: 'inference' })).status,
+    204,
+    'the voice run holds the cards, and no machine memory cap is set',
+  );
+  assert.equal(stateOf(inference.json.id), 'waiting');
+  assert.equal((await asHelper('/api/helper/take', { kind: 'render' })).json.id, takeOf(render.json.id));
+  await asHelper(`/api/helper/runs/${voiceTake}/finish`, Buffer.alloc(0), { 'x-run-exit': '0' });
+  assert.equal((await asHelper('/api/helper/take', { kind: 'inference' })).json.id, takeOf(inference.json.id));
+  await h.finish(job);
+});
+
+test('a faster machine whose cards another GPU run holds leaves a GPU run to a slower one whose cards are free', async t => {
+  declareKinds(
+    t,
+    '    voice:\n      memoryGb: 4\n      gpus: true\n    inference:\n      memoryGb: 4\n      gpus: true\n',
+  );
+  await lendNone();
+  const fast = await lend('the rig');
+  const slow = await lend('an old laptop');
+  const job = await h.start({ agent: 'bolt' });
+  const asFast = (kind: string) => asKey(fast.key, '/api/helper/take', { kind, cpus: 16, memoryGb: 64, bench: 120 });
+  const asSlow = (kind: string) => asKey(slow.key, '/api/helper/take', { kind, cpus: 4, memoryGb: 8, bench: 60 });
+  const voice = await sendRun(job.token, { command: 'true', kind: 'voice' });
+  const voiceTake = (await asFast('voice')).json.id;
+  assert.equal(voiceTake, takeOf(voice.json.id));
+  const inference = await sendRun(job.token, { command: 'true', kind: 'inference' });
+  assert.equal((await asFast('inference')).status, 204, "the voice run holds the rig's cards");
+  const inferenceTake = (await asSlow('inference')).json.id;
+  assert.equal(inferenceTake, takeOf(inference.json.id), 'the rig asked just now, but has no room for it');
+  assert.equal((await finishAs(fast.key, voiceTake)).status, 200);
+  assert.equal((await finishAs(slow.key, inferenceTake)).status, 200);
   await h.finish(job);
 });

@@ -1,6 +1,7 @@
 // Keys the board sorts by dragging: a press held still on one ([data-sort], in a .pj-sortable grid) lifts it, it
 // follows the finger or the mouse while the others make way, and letting go sets it down there and hands the grid's new
-// order on. A press that moves first is a scroll or a swipe, a short one a tap.
+// order on. A press that moves first is a scroll or a swipe, a short one a tap; but a mouse's press that moves lifts its
+// key at once, as a mouse drags, and never swipes the level.
 
 const HOLD_MS = 380; // how long a press stays still before its key lifts: past a tap, short of a long wait
 const STILL = 8; // how far (CSS px) a press may wander and still lift
@@ -9,7 +10,7 @@ let pressed = null,
   lifted = null,
   // the click that ends a drag isn't a tap
   dropped = false;
-export const sorting = () => !!lifted;
+export const sorting = () => !!(lifted || pressed?.mouse);
 export const sortGesture = () => !!(pressed || lifted);
 
 // root: where the sortable grids are drawn; onSorted(ids): the grid's keys' ids in their new order, after a drop that
@@ -18,12 +19,16 @@ export function sortable(root, { onSorted }) {
   root.addEventListener('pointerdown', e => {
     const key = e.button === 0 && e.target.closest('.pj-sortable > [data-sort]');
     if (!key) return;
-    pressed = { key, x: e.clientX, y: e.clientY, id: e.pointerId };
+    pressed = { key, x: e.clientX, y: e.clientY, id: e.pointerId, mouse: e.pointerType === 'mouse' };
     pressed.timer = setTimeout(() => lift(e.pointerId), HOLD_MS);
   });
   root.addEventListener('pointermove', e => {
     if (lifted?.id === e.pointerId) return follow(e);
-    if (pressed?.id === e.pointerId && Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) > STILL) letGo();
+    if (pressed?.id !== e.pointerId || Math.hypot(e.clientX - pressed.x, e.clientY - pressed.y) <= STILL) return;
+    if (!pressed.mouse) return letGo();
+    clearTimeout(pressed.timer);
+    lift(e.pointerId);
+    follow(e);
   });
   root.addEventListener('pointerup', e => drop(e, onSorted));
   root.addEventListener('pointercancel', e => drop(e, onSorted));

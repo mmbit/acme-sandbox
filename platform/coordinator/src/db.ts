@@ -160,6 +160,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // calls: a call with the board (call.ts), with a row from its start (status live).
 // - processed_at: a follow-up ended done with the items recorded after its transcript came in (lines_at).
 // - reply: what the board reads after the call, set by its follow-up (hq reply, ledger.ts reply).
+// - line_times: when each of its lines was said (JSON, ms since the epoch on the server's clock, one per line; null for
+//   a call from before they were kept), so a walk-through's recording lines up with them (watchalong.ts timeline).
 //
 // chat: the intercom (chat.ts).
 // - shown: the line shown for a call (the CEO hears the whole transcript, text).
@@ -169,7 +171,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // 23 October) gets them first, where the table is there already, before anything below indexes or reads them. A new
 // database has no such tables yet: the creates give them their columns.
 const FOLDED: Record<string, string[]> = {
-  calls: ['reply text'],
+  calls: ['reply text', 'line_times text'],
   findings: ['cross_project integer not null default 0'],
   jobs: [
     'peak_mb integer',
@@ -246,7 +248,8 @@ db.exec(`
     device text, created text not null);
   create table if not exists calls (id integer primary key, ts text not null, agent text not null, request integer,
     lines text not null, job integer, status text not null default 'ended', processed_at text,
-    attempts integer not null default 0, lines_at text, resumes text, reply text);
+    attempts integer not null default 0, lines_at text, resumes text, reply text,
+    customers integer not null default 0, line_times text);
   create table if not exists chat (id integer primary key, ts text not null, who text not null, text text not null,
     sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
     about_keys integer not null default 0);
@@ -263,19 +266,32 @@ export const remember = (key: string, value: string | null) => value === null ? 
 
 // The lookups without which each would read the whole jobs table, its outputs too: a pull request's jobs (review.ts,
 // windows.ts), a branch's (ledger.ts, the status report), the done jobs' measured memory by agent and kind (room.ts),
-// the jobs by state (every claim and HQ's lists), by an agent call's token, and a branch's pull requests. And the feed's
-// old lines, which payments.ts's sweep looks for every two minutes.
+// the jobs by state (every claim and HQ's lists), by an agent call's token, and a branch's pull requests with their
+// numbers and states (redraws.ts review_branches, every play's: a pull request's verdict sits before the rest of its
+// row). And the feed's old lines, which payments.ts's sweep looks for every two
+// minutes.
 db.exec(`create index if not exists jobs_pr on jobs (pr) where pr is not null;
   create index if not exists jobs_branch on jobs (branch) where branch is not null;
   create index if not exists jobs_work_branch on jobs (coalesce(branch, 'job/' || id)) where kind = 'work';
   create index if not exists jobs_peak on jobs (agent, kind, id) where peak_mb is not null and status = 'done';
   create index if not exists jobs_status on jobs (status, finished);
   create index if not exists jobs_token on jobs (token) where token is not null;
-  create index if not exists prs_branch on prs (branch);
+  create index if not exists prs_branch_state on prs (branch, number, status);
+  drop index if exists prs_branch;
   create index if not exists events_ts on events (ts)`);
-// Covers the jobs columns read by reviewtime.ts and reviewplan.ts, so they skip wide job rows and their briefs.
-// Those queries name this index with `indexed by`. Any jobs columns they add belong here too.
-db.exec('create index if not exists jobs_run_sizes on jobs (id, status, kind, stage, engine, round)');
+// Covers the jobs columns read by reviewtime.ts and reviewplan.ts (the measured runs, and each pull request's review
+// runs), so they skip wide job rows and their briefs. Those queries name this index with `indexed by`. Any jobs columns
+// they add belong here too.
+db.exec(`create index if not exists jobs_review_runs on jobs (id, status, kind, stage, engine, round, agent, pr, seq);
+  drop index if exists jobs_run_sizes`);
+// Covers queueRows in backlog.ts, ordered by status then id, so queue reads avoid brief and output overflow pages.
+// That query names it with `indexed by`.
+db.exec(`create index if not exists jobs_queue on jobs (status, id, kind, agent, title, step, round, engine, for_seat,
+  downtime, after, request, not_before, held_by, created, branch, pr, seat, thread, finished, stage, queued_by)`);
+// Covers reviewplan.ts records and selections and backlog.ts work in review without reading verdict overflow pages.
+// Files and links are fetched separately for PRs in review. Those queries name it with `indexed by`
+db.exec(`create index if not exists prs_plan on prs (number, branch, author, panel, review_class, round, status, sha,
+  since)`);
 // Thread task reads exclude PR jobs before fetching their rows.
 db.exec(`create index if not exists jobs_tasks on jobs (thread, coalesce(seq, id), id)
   where kind = 'work' and pr is null and status != 'cancelled'`);
@@ -301,9 +317,15 @@ db.exec(`create index if not exists jobs_pr_loop on jobs (pr, kind, round, sha, 
 db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where kind = 'work'`);
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
-// names it with `indexed by`.
-db.exec(`create index if not exists jobs_done_work on jobs (id, agent, title, engine, created, finished, stage, round,
-  queued_by, pr, branch, thread) where kind = 'work' and status = 'done'`);
+// names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
+db.exec(`create index if not exists jobs_history on jobs (id, agent, title, engine, created, finished, stage, round,
+  queued_by, pr, branch, thread, customers, about_keys, kind, status) where kind = 'work' and status = 'done';
+  drop index if exists jobs_done_work; drop index if exists jobs_past`);
+// Every jobs column the status report (infra/report.sh) reads beside usage and the step log, and for the reviews' run
+// times: from the rows, its reads went through every job's brief and report, seconds off a cold disk, and HQ's writes
+// waited for them (a 2.9 s stall). Those queries name it with `indexed by`: any jobs columns they add belong here too.
+db.exec(`create index if not exists jobs_report on jobs (id, kind, status, agent, pr, round, branch, engine, stage,
+  queued_by, downtime, started, finished, title)`);
 
 // The board's saved addresses' labels (addresses.ts; each address itself is in the key store).
 db.exec('create table if not exists addresses (id integer primary key autoincrement, label text not null, created text not null)');
@@ -435,10 +457,6 @@ db.exec(`create index if not exists jobs_work_titles on jobs (coalesce(branch, '
 // a row's prompt and output (each a walk through its overflow pages on a cold file).
 db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
   where kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')`);
-// The covering index keeps claim-time history reads (matching.ts pastJobs, named by `indexed by`) off the jobs table's
-// prompt and output overflow pages.
-db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
-  round, queued_by, pr) where kind = 'work' and status = 'done'`);
 // The tasks whose titles the board reads (boardnames.ts namedTask), newest first: the names' claim (plainnames.ts, every
 // 15 s, named by `indexed by`) reads each title without its row's prompt and output.
 db.exec(`create index if not exists jobs_named on jobs (id, title, thread, status) where kind = 'work' and customers = 0`);
@@ -644,6 +662,12 @@ once('2026-10-21-task-codes', () => {
 });
 db.exec(`create index if not exists jobs_by_code on jobs (code);
   create unique index if not exists projects_code on projects (code)`);
+// Every job as HQ lists it, without its prompt and output: the rows of jobs.ts jobRows (listedQuery) and what the projects
+// view reads of the same jobs (reviewrows.ts shownOf, boardnames.ts boardJobs), named by `indexed by`. A column they read
+// belongs here. (Here, once the columns added since are in: code, expedite.).
+db.exec(`create index if not exists jobs_listed on jobs (id, code, created, finished, agent, title, engine, status, seat,
+  attempts, request, kind, pr, round, stage, step, downtime, after, thread, seq, is_check, call, item, branch, session,
+  not_before, expedite, customers, sha, voided, result)`);
 // A call followed up before replies were set kept its notes as its work follow-up's last message: that becomes its reply.
 // A work follow-up still open was briefed that way: it's owed the ask for hq reply (reply_asks), which ledger.ts
 // askReplies() puts where its next run reads it (finished() needs the reply).
@@ -653,4 +677,8 @@ once('2026-10-21-calls-reply', () => {
     where processed_at is not null and reply is null`);
   db.exec(`insert or ignore into reply_asks (job) select id from jobs where kind = 'work' and status in ('queued', 'running', 'blocked')
     and id in (select job from calls where status = 'ended' and processed_at is null)`);
+});
+// A live call handed a customer's details by a look-up (jobs.ts readerHanded).
+once('2026-10-24-calls-customers', () => {
+  if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
 });

@@ -67,7 +67,9 @@ If it loses a run the same way, the run is lost and `hq run` says so (with `--fa
 neither a machine's helper of the kind nor this server's has asked for work for `takeMinutes`, `hq run` gives the run up
 and says so. HQ routes a run to helpers asking for its kind, on the machines or here. Unless `--fallback here` was given,
 nothing of a run ever runs in the job itself. If `hq run` itself is stopped, `hq run <id>` waits for the run again and
-`hq run stop <id>` ends it.
+`hq run stop <id>` ends it. `hq run lines <id>` prints the run's output as its beats bring it, each line once, until
+the run ends. HQ keeps a run's last 100 lines in memory, for its own job alone, and an ended run's for 10 minutes: a
+stopped run sends back nothing else.
 
 **Here, when no machine takes it**. `hq run --fallback here` runs the command in
 the job itself, from the folder it would start in on the helper, its files written in the tree as they are: when HQ

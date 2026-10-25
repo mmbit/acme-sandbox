@@ -11,24 +11,18 @@ import { tmpdir } from 'node:os';
 import { join, normalize } from 'node:path';
 import * as api from './api.ts';
 import { type Here, noTakerNow, runHere } from './here.ts';
+import { type Presence, SERVER, showHelper } from './machines.ts';
 import { minute, oneLine, print, stop, warn } from './output.ts';
 import { unpackInto } from './unpack.ts';
 
 const USAGE =
-  'usage: hq run [--kind <name>] [--paths <folders>] [--with <files>] [--bring <paths>] [--minutes n] [--commit <sha>] [--fallback here] -- <command> [args...] | hq run <id> | hq run stop <id> | hq run helper';
+  'usage: hq run [--kind <name>] [--paths <folders>] [--with <files>] [--bring <paths>] [--minutes n] [--commit <sha>] [--fallback here] -- <command> [args...] | hq run <id> | hq run lines <id> | hq run stop <id> | hq run helper';
 const DEFAULT_MINUTES = 60;
 const POLL_MS = 5000;
 const SAID_AGAIN_MS = 30 * 60_000;
 const BUNDLE_SEND_MS = 10 * 60_000;
 
 export type Spec = { command: string; kind: string; cwd: string; bring: string[]; minutes: number };
-type Presence = {
-  present: boolean;
-  seen: string | null;
-  cpus: number | null;
-  memoryGb: number | null;
-  running: number | null;
-};
 // A run's kind on the lent machines (the fastest one's size), and this server's helper of it
 type Helper = Presence & {
   name: string;
@@ -41,39 +35,6 @@ type Helper = Presence & {
   server: Presence;
   // false while this server's helper waits for the lent machine to finish a run of this kind first
   serverTakes: boolean;
-};
-// The lent machines, each kind's helpers on them, and this server's of each kind
-export type Machine = {
-  name: string;
-  lent: number;
-  takeMinutes: number;
-  maxMinutes: number;
-  machineMemoryGb?: number; // (0: no cap but each kind's)
-  machines: {
-    name: string;
-    state: 'taking' | 'running' | 'away' | 'paused';
-    speed: number | null;
-    cpus: number | null;
-    memoryGb: number | null;
-    gpu: string | null;
-    // the kinds whose helpers on it are asking for work or beating
-    kinds: string[];
-  }[];
-  kinds: (Presence & {
-    name: string;
-    about: string;
-    image: string;
-    gpus: boolean;
-    lentOnly: boolean;
-    server: Presence;
-    serverTakes: boolean;
-    // the work this kind holds in the queue until a lent machine has finished a run of it, in a line ('' for none)
-    holds: string;
-  })[];
-  leftOut: { name: string; why: string }[];
-  // the install command (without a machine's key) and the one that takes it all away again
-  install: string;
-  remove: string;
 };
 type Run = {
   id: number;
@@ -93,7 +54,8 @@ type Run = {
   helper: Helper;
 };
 
-const SERVER = "this server's helper";
+// A run's output after the lines read so far, and the number to read after next, numbered since HQ started
+type RunLines = { state: Run['state']; since: string; next: number; missed: number; lines: string[] };
 
 export const run = {
   help: `
@@ -117,6 +79,9 @@ export const run = {
                                                      it: the kind isn't declared, none asks for work, or a machine
                                                      lost it. Exits with the command's code, 124 past --minutes (60)
    hq run <id>                                       waits for that run again and brings back its files
+   hq run lines <id>                                 prints that run's output as it comes, each line once, until it
+                                                     ends: a stopped run's too, which brings back nothing else. Start
+                                                     it in the background into a file to keep a run's stages
    hq run stop <id>                                  stops it, on the helper or still waiting
    hq run helper                                     the machines, the kinds of run, whether each kind's helpers and
                                                      this server's are there, their size, and the install command
@@ -125,6 +90,7 @@ export const run = {
   async run(args: string[]) {
     if (args[0] === 'helper' && args.length === 1) return showHelper();
     if (args[0] === 'stop' && /^\d+$/.test(args[1] ?? '') && args.length === 2) return stopRun(Number(args[1]));
+    if (args[0] === 'lines' && /^\d+$/.test(args[1] ?? '') && args.length === 2) return followLines(Number(args[1]));
     if (/^\d+$/.test(args[0] ?? '') && args.length === 1) return collect(Number(args[0]));
     return send(args);
   },
@@ -273,14 +239,16 @@ function stateLine({ state, helper, taken, why, on, machine, passed }: Run) {
   return `${state}: ${why ?? 'no reason given'}`;
 }
 
-async function readRun(id: number, action?: 'withdraw' | 'stop'): Promise<Run> {
-  const route = action ? `runs/${id}/${action}` : `runs/${id}`;
+const readRun = (id: number, action?: 'withdraw' | 'stop'): Promise<Run> =>
+  askOfRun(id, action ? `runs/${id}/${action}` : `runs/${id}`, action ? {} : undefined);
+
+// HQ's answer on the run, asked again while HQ restarts (a deploy): a run on the helper goes on meanwhile
+async function askOfRun<Answer extends { state: string }>(id: number, route: string, body?: object): Promise<Answer> {
   for (let tries = 1; ; tries++) {
-    const answer = await api.orNoAnswer(api.call(route, { body: action ? {} : undefined, timeoutMs: 30_000 }));
+    const answer = await api.orNoAnswer(api.call(route, { body, timeoutMs: 30_000 }));
     if (api.isRefusal(answer.status)) stop(`hq run #${id}: ${api.errorIn(answer.body, 'refused')}`);
     const current = api.isSuccess(answer.status) ? api.parseOrNull(answer.body) : null;
     if (current?.state) return current;
-    // HQ restarting (a deploy): a run on the helper goes on meanwhile
     if (tries >= 20) stop(`hq run #${id}: HQ didn't answer (HTTP ${api.httpCode(answer.status)})`);
     await sleep(POLL_MS);
   }
@@ -318,54 +286,27 @@ function bringIn(label: string, root: string, files: Buffer, bring: string[]) {
 
 // ---- the others
 
-async function showHelper() {
-  const machine: Machine = await api.getJson('runs/helper');
-  const asking = (present: boolean) => (present ? 'asking for work' : "isn't asking");
-  const lent = machine.lent === 1 ? 'one machine' : `${machine.lent} machines`;
-  print(
-    machine.lent
-      ? `${machine.name}: ${lent} (the board's, in HQ's Settings › Machines), one helper per kind of run on each`
-      : `${machine.name}: no machine yet (the board adds them in HQ's Settings › Machines)`,
-    ...machine.machines.map(one => `  ${one.name}: ${one.state}${machineLine(one)}`),
-    ...machine.kinds.map(kind => `  ${kind.name}: ${asking(kind.present)}${presenceLine(kind)}`),
-    ...machine.leftOut.map(kind => `  ${kind.name}: left out of org.yaml's runs.kinds: ${kind.why}`),
-    `${SERVER}, one per kind of run in the kind's image:`,
-    ...machine.kinds.map(kind => {
-      const hold = kind.lentOnly
-        ? `, none: this kind runs on ${machine.name} alone`
-        : kind.serverTakes
-          ? ''
-          : `, takes none until ${machine.name} has finished a run of it`;
-      return `  ${kind.name}: ${asking(kind.server.present)}${presenceLine(kind.server)}${hold}`;
-    }),
-    ...machine.kinds.filter(kind => kind.holds).map(kind => kind.holds),
-    `The fastest free machine takes a run. A slower one takes it after ${machine.takeMinutes} min while a faster one is busy.`,
-    `${SERVER} takes a run only when its kind allows it, after ${machine.takeMinutes} min or while no machine is asking for work.`,
-    `A run takes ${machine.maxMinutes} min at most.`,
-    ...(machine.machineMemoryGb
-      ? [`A machine's runs hold ${machine.machineMemoryGb} GB at most together: one that would pass it waits.`]
-      : []),
-  );
-  for (const kind of machine.kinds)
-    print('', `${kind.name}${kind.about ? `: ${kind.about}` : ''} (${kind.image}${kind.gpus ? ', GPUs' : ''})`);
-  if (!machine.kinds.length) return;
-  print(
-    '',
-    `install: ${machine.install}`,
-    "         pasted once on a machine, with its key (HQ's Settings › Machines shows it when the board adds the machine,",
-    "         or makes a new one): it keeps the machine's helpers in step with HQ from then on",
-    `remove:  ${machine.remove}`,
-  );
-}
-
-function machineLine({ speed, cpus, memoryGb, gpu, kinds }: Machine['machines'][number]) {
-  const size = cpus ? `, ${cpus} cores and ${memoryGb} GB${gpu ? `, ${gpu}` : ''}` : '';
-  return `${speed ? `, speed ${speed}` : ''}${size}${kinds.length ? `, helpers of ${kinds.join(', ')}` : ''}`;
-}
-
-function presenceLine({ seen, cpus, memoryGb, running }: Presence) {
-  const size = cpus ? `, ${cpus} cores and ${memoryGb} GB` : '';
-  return `, ${seen ? `last asked ${minute(seen)} UTC` : 'never seen'}${size}${running ? `, running #${running}` : ''}`;
+// The run's output as its helper's beats bring it, by line number, so a line said again prints again and none twice.
+// It ends with the run, once the last lines it heard are read. HQ keeps them in memory: a restart numbers them anew,
+// from its new start (since), so lines read since the restart aren't mistaken for those read before it.
+async function followLines(id: number) {
+  let after = 0;
+  let since = '';
+  for (;;) {
+    const heard = await askOfRun<RunLines>(id, `runs/${id}/lines?after=${after}`);
+    if (since && heard.since !== since) {
+      warn(`hq run #${id}: HQ restarted, and kept none of the run's lines from before`);
+      since = heard.since;
+      after = 0;
+      continue;
+    }
+    since = heard.since;
+    if (heard.missed) warn(`hq run #${id}: ${heard.missed} lines passed unread (HQ keeps a run's last 100)`);
+    if (heard.lines.length) process.stdout.write(`${heard.lines.join('\n')}\n`);
+    after = heard.next;
+    if (heard.state !== 'waiting' && heard.state !== 'running') return void warn(`hq run #${id}: ${heard.state}`);
+    await sleep(POLL_MS);
+  }
 }
 
 async function stopRun(id: number) {

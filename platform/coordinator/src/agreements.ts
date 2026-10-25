@@ -104,7 +104,7 @@ function callsShown(reader: jobs.Reader) {
     let ok = shown.get(call);
     if (ok === undefined) {
       ok = memory.callAccess(call, reader) === true;
-      if (ok && memory.customerCall(call)) jobs.handedCustomerData(reader.id);
+      if (ok && memory.customerCall(call)) jobs.readerHanded(reader);
       shown.set(call, ok);
     }
     return ok;

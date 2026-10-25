@@ -47,6 +47,8 @@ const LINES_KEPT = 100;
 const LINE_MAX_CHARS = 300;
 // The helper sends at most 4 KB of a run's output a beat (platform/helper)
 const LINES_MAX_CHARS = 8_000;
+// An ended run's lines stay this long for its job to read the last of them (hq run lines polls every 5 s)
+const ENDED_LINES_MS = 10 * 60_000;
 
 db.exec(`create table if not exists machines (id integer primary key autoincrement, name text not null,
   key_hash text not null unique, gpu text, paused integer not null default 0, added text not null, seen text, body text,
@@ -199,7 +201,11 @@ const readings = new Map<
   number,
   { history: Reading[]; gpu: { at: number; value: number } | null; free?: { freeMb: number; cores: number } }
 >();
-const runLines = new Map<number, string[]>();
+// A run's output as its beats brought it: its last lines, how many it has heard in all, and when it ended
+type RunLines = { lines: string[]; heard: number; ended: number | null };
+const runLines = new Map<number, RunLines>();
+// When this HQ started keeping them: a restart keeps none, and numbers them anew
+const LINES_SINCE = new Date().toISOString();
 
 function read(machine: number, live: Record<string, unknown>) {
   const cpu = percent(live.cpu);
@@ -231,20 +237,46 @@ export function liveOf(machine: number) {
   return { cpu, mem, ...gpu, ...kept?.free, history: points };
 }
 
-// A beat's new output of a run: its last lines kept as plain text, each cut short, with any key in them redacted
+// A beat's new output of a run: its last lines kept as plain text, each cut short, with any key in them redacted.
+// Redacted whole before either cut, so a key the cut crosses leaves no piece too short to know
 export function heardLines(run: number, given: unknown) {
   if (typeof given !== 'string' || !given) return;
-  const lines = given
+  const lines = (redact(given.replace(/[\p{Cc}--[\t\n\r]]/gv, '')) ?? '')
     .slice(-LINES_MAX_CHARS)
     .split(/\r\n|\r|\n/)
-    .map(line => redact(line.replace(/[\p{Cc}--\t]/gv, '').slice(0, LINE_MAX_CHARS)) ?? '');
+    .map(line => line.slice(0, LINE_MAX_CHARS));
   if (lines.at(-1) === '') lines.pop();
-  runLines.set(run, [...(runLines.get(run) ?? []), ...lines].slice(-LINES_KEPT));
+  const kept = keptLines(run);
+  const all = [...kept.lines, ...lines].slice(-LINES_KEPT);
+  runLines.set(run, { lines: all, heard: kept.heard + lines.length, ended: null });
 }
 
-export const linesOf = (run: number) => runLines.get(run) ?? [];
+export const linesOf = (run: number) => keptLines(run).lines;
 
-export const dropLines = (run: number) => runLines.delete(run);
+// A run's lines after the first `after` it heard (by number, so a line said again is new each time), the number to
+// read after next, and how many of them are no longer kept, numbered since this HQ started
+export function linesAfter(run: number, after: number) {
+  const { lines, heard } = keptLines(run);
+  const first = heard - lines.length;
+  const missed = Math.max(0, first - after);
+  return { since: LINES_SINCE, next: heard, missed, lines: lines.slice(Math.max(0, after - first)) };
+}
+
+// A take its helper lost: its lines go, and the next take's are numbered on from them
+export const clearLines = (run: number) => runLines.set(run, { ...keptLines(run), lines: [] });
+
+// An ended run's lines, kept a while for its job (and those of runs that ended longer ago gone)
+export function endLines(run: number) {
+  const kept = runLines.get(run);
+  if (kept) runLines.set(run, { ...kept, ended: kept.ended ?? Date.now() });
+  for (const [id, { ended }] of runLines) if (ended && ended < Date.now() - ENDED_LINES_MS) runLines.delete(id);
+}
+
+function keptLines(run: number): RunLines {
+  const kept = runLines.get(run);
+  const gone = kept?.ended && kept.ended < Date.now() - ENDED_LINES_MS;
+  return kept && !gone ? kept : { lines: [], heard: 0, ended: null };
+}
 
 // ---- helpers
 

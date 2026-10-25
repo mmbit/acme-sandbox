@@ -178,7 +178,7 @@ export const job = {
     // the rest of its waits, now that it waits for its first: it can't start in between
     const id = Number(creation.answer.id);
     for (const w of more) {
-      const answer = await api.call('waits', {
+      const answer = await api.change('waits', {
         body: { id, ...('request' in w ? { request: w.request } : { to: w.job }) },
       });
       const named = 'request' in w ? `card #${w.request}` : `#${w.job}`;
@@ -312,7 +312,7 @@ const openJobLine = (open: OpenJob) => text(open.line);
 // hq job move: the work and its review loop onto another thread (the coordinator's regroup.ts)
 async function moveJob([id, thread, ...rest]: string[]) {
   if (!/^[0-9]+$/.test(id ?? '') || !thread || rest.length) stop('usage: hq job move <job id> <project>/<slug>');
-  const answer = await api.call('jobs/move', { body: api.withSpeaker({ id: Number(id), thread }) });
+  const answer = await api.change('jobs/move', { body: api.withSpeaker({ id: Number(id), thread }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing moved: ${api.errorIn(answer.body, 'no answer')}`);
   const moved = JSON.parse(answer.body) as { thread: string; jobs: number[]; notices?: string[] };
   print(`${moved.jobs.map(n => `#${n}`).join(', ')} on ${text(moved.thread)} now.`, ...(moved.notices ?? []).map(text));
@@ -352,7 +352,7 @@ export const stopJob = {
 
   async run([id, why = '', ...rest]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '') || !why.trim() || rest.length) stop('usage: hq stop <job id> "why"');
-    const answer = await api.call('stop', { body: { id: Number(id), why } });
+    const answer = await api.change('stop', { body: { id: Number(id), why } });
     const stopping = api.parseOrNull(answer.body);
     if (shown(stopping?.ok) !== 'true') stop(`Couldn't stop #${id}: ${api.errorIn(answer.body, 'no answer')}`);
     // (paused: a review or ruling held with its thread, jobs.ts suspendReview)
@@ -375,7 +375,7 @@ export const cancel = {
 
   async run([id, why = '']: string[]) {
     if (!/^[0-9]+$/.test(id ?? '')) stop('usage: hq cancel <job id> ["why"]');
-    const answer = await api.call('cancel', { body: { id: Number(id), ...(why !== '' && { why }) } });
+    const answer = await api.change('cancel', { body: { id: Number(id), ...(why !== '' && { why }) } });
     const cancelled = api.parseOrNull(answer.body);
     if (shown(cancelled?.ok) !== 'true') stop(`Couldn't cancel #${id}: ${api.errorIn(answer.body, 'no answer')}`);
     print(`Cancelled job #${id}.`);
@@ -413,7 +413,7 @@ export const waits = {
     const change = how as 'add' | 'move' | 'drop';
     const from = change === 'add' ? null : Number(waitedFor);
     const to = { add: Number(waitedFor), move: Number(replacement), drop: null }[change];
-    const answer = await api.call('waits', { body: { id: Number(id), from, to } });
+    const answer = await api.change('waits', { body: { id: Number(id), from, to } });
     if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
       stop(`Couldn't change #${id}'s wait: ${api.errorIn(answer.body, 'no answer')}`);
     }
@@ -432,7 +432,7 @@ async function changeCardWait(id: string, how: string, card: number, extra: stri
       "usage: hq waits <job id> add request:<id>, or hq waits <job id> drop request:<id> (a card's wait isn't moved)",
     );
   }
-  const answer = await api.call('waits', {
+  const answer = await api.change('waits', {
     body: { id: Number(id), request: card, ...(how === 'drop' && { drop: true }) },
   });
   if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
@@ -455,7 +455,7 @@ export const review = {
   // back with the panel, or a failed fix job back with its author
   async run([pr]: string[]) {
     if (!/^[0-9]+$/.test(pr ?? '')) stop('usage: hq review <pr>');
-    const answer = await api.call('review', { body: { pr: Number(pr) } });
+    const answer = await api.change('review', { body: { pr: Number(pr) } });
     const sentBack = api.parseOrNull(answer.body);
     if (shown(sentBack?.ok) !== 'true') stop(`Couldn't send PR #${pr} back: ${api.errorIn(answer.body, 'no answer')}`);
     if (sentBack.ruling) return print(`PR #${pr}: the ruling from job #${shown(sentBack.ruling)} was acted on.`);
@@ -491,7 +491,7 @@ export const window = {
     const to = target(named);
     if (!to || !deadline || rest.length) stop(WINDOW_USAGE);
     const body = { ...to, deadline, ...(values.aim !== undefined && { aim: values.aim }), ...(tried && { try: true }) };
-    const answer = await api.call('window', { body: api.withSpeaker(body) });
+    const answer = await api.change('window', { body: api.withSpeaker(body) });
     const set = api.parseOrNull(answer.body);
     if (!present(set?.thread))
       stop(`No window was ${tried ? 'tried' : 'set'}: ${api.errorIn(answer.body, 'no answer')}`);

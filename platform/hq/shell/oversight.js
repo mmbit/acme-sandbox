@@ -54,6 +54,8 @@ const copyKey = (el, msg, key) => async e => {
     let box = el.querySelector('textarea');
     if (!box) {
       box = Object.assign(document.createElement('textarea'), { readOnly: true, rows: 2 });
+      // never in a call's recording (shared/watchalong).
+      box.setAttribute('data-watchalong-hide', '');
       e.target.closest('.acts').after(box);
     }
     box.value = key;

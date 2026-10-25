@@ -2,8 +2,12 @@
 // Product code is written by agents and must never see the board's HQ session, so the tool isn't served by
 // the product: Caddy sends <slug>.preview.<zone>/__review/* here (infra/products.py), outside forward_auth.
 //   - With the board's preview key (the `pv` cookie, preview.ts) /__review/review.js is the real tool; for
-//     anyone else, and on every other host, it's an empty script. Customers never run it.
-//   - The product host can only write notes (and have a clip transcribed), and nothing there reads them back.
+//     anyone else on a preview host it's only the watch-along's answer to HQ's frame (after the tool too, for the
+//     board). A live host never reaches here: Caddy answers an empty script
+//     itself (REVIEW_OFF). Customers never run the tool.
+//   - The product host can only write notes (and have a clip transcribed), and nothing there reads them back. The same
+//     goes for a picture sent to the Sketchbook (/__review/sketch): the page's code can post one too, so it only waits
+//     on its sketch until the board opens it and sees it there.
 //     But the product's own page code can post a note too (same origin, the board's cookie rides along), so a
 //     note proves nothing about who wrote it. Notes therefore wait in HQ (/api/review/*, behind the HQ session)
 //     until the board sends the ones it recognises to the CEO's routing check (routing.ts). Nothing reaches an agent
@@ -22,13 +26,15 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { Duplex } from 'node:stream';
 import { columnsOf, db, once } from './db.ts';
 import { DATA_DIR, ORIGIN, REPO_DIR } from './config.ts';
 import { boardOn, cookie, PREVIEW } from './preview.ts';
 import { transcribe } from './voice.ts';
+import * as dictation from './dictation.ts';
 import { boardLanguage } from './language.ts';
 import { publish } from './events.ts';
-import { createJob, findAgent } from './jobs.ts';
+import { createJob, findAgent, jobAgent, readsCustomerData, handedCustomerData, type Reader } from './jobs.ts';
 import { codeOf } from './jobcodes.ts';   // a job by its code, as HQ names it
 import { cap, ceo, names, roles } from './company.ts';
 import * as routing from './routing.ts';
@@ -43,6 +49,9 @@ import * as storage from './storage.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
+import * as watchalong from './watchalong.ts';   // (the recorder).
+import * as sketches from './sketches.ts';   // review mode's pictures for the Sketchbook.
+import * as sketchPeople from './sketchpeople.ts';   // invited people's own Sketchbooks.
 
 const SHOTS = `${DATA_DIR}/review`;
 const MAX_SHOT = 1536 * 1024; // a viewport JPEG is ~100-600 KB; review.js steps down to fit
@@ -59,7 +68,8 @@ const PER_HOUR = 60;
 // The note box's length (shared/review/review.js): an outside reviewer's notes are each cut at it (and PER_HOUR an hour,
 // each person), and a call's new words for a pin are refused past it, as the call's tool does
 const SHARE_NOTE = 4_000;
-// Dictation shares the speech-to-text container with HQ's intercom: one clip at a time per product, and a few an hour.
+// Dictation shares the speech-to-text container with HQ's intercom: one clip at a time per product, and a few an hour. A
+// live dictation on the voice line counts as a clip.
 const VOICE_PER_HOUR = 40, voicing = new Map<string, { busy: boolean; times: number[] }>();
 // A sent note's screenshot stays for its owner's job (hq note), then goes.
 const SHOT_DAYS = 30;
@@ -132,6 +142,11 @@ const json = (res: ServerResponse, code: number, body: unknown) => reply(res, co
 export const withReviewMode = (html: string) => html.includes('/__review/review.js') ? html
   : `${html}\n<script src="/__review/review.js" defer></script>\n`;
 
+// The watch-along's answer in a page HQ frames (shared/watchalong/framed.js), HQ's origin filled in: served after
+// review.js, the tool or not.
+const framedAnswer = async () =>
+  (await readFile(`${REPO_DIR}/shared/watchalong/framed.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN);
+
 // /__review/* on a product host (no HQ session here).
 export async function product(req: IncomingMessage, res: ServerResponse) {
   // a shelf's base taken off
@@ -149,19 +164,32 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
     const tool = who && (await readFile(`${REPO_DIR}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', ORIGIN)
       .replace('{{LOOK}}', () => inJsString(guests.palette(':host')));
     const js = !tool ? '/* review mode: off */\n' : who.share ? tool.replace('{{OUTSIDE}}', companyInJs).replace('{{SENT}}', sent ? '1' : '') : tool;
+    // the watch-along's answer to HQ's frame, on or off: a guest who sent their notes is still seen on a walk-through call
+    const framed = await framedAnswer();
     // an outsider's thank-you for a fix of theirs gone live, sent or not
-    return reply(res, 200, js + (on?.share ? await thanksFor(on.share) : ''), 'text/javascript; charset=utf-8', { vary: 'cookie' });
+    return reply(res, 200, js + framed + (on?.share ? await thanksFor(on.share) : ''), 'text/javascript; charset=utf-8', { vary: 'cookie' });
   }
   // the framing rule its polaroid shares with HQ's note thumbnails (on HQ's host too): pure geometry, for anyone
   if (path === '/__review/frame.js' && req.method === 'GET')
     return reply(res, 200, await readFile(`${REPO_DIR}/shared/review/frame.js`), 'text/javascript; charset=utf-8');
+  // the pen review mode draws with (and HQ's Sketchbook): pure drawing, for anyone.
+  if (path === '/__review/ink.js' && req.method === 'GET')
+    return reply(res, 200, await readFile(`${REPO_DIR}/shared/review/ink.js`), 'text/javascript; charset=utf-8');
+  // the watch-along's recorder, for a page HQ shows in its viewer while a call watches along: library code, for anyone
+  if (path === '/__review/watchalong.js' && req.method === 'GET')
+    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/watchalong.js`), 'text/javascript; charset=utf-8');
+  // (its pen strokes' kind, which it imports)
+  if (path === '/__review/strokes.js' && req.method === 'GET')
+    return reply(res, 200, await readFile(`${REPO_DIR}/shared/watchalong/strokes.js`), 'text/javascript; charset=utf-8');
+  if (path === '/__review/vendor/rrweb-record.js' && req.method === 'GET')
+    return reply(res, 200, await readFile(watchalong.RECORDER), 'text/javascript; charset=utf-8');
   // the reviewer's own notes still to go, to count, read and change (?shots: with a link to each one's screenshot, for
   // the sidebar)
   if (path === '/__review/mine' && req.method === 'GET') {
     const on = reviewerOn(req), wantsShots = new URL(req.url ?? '/', 'http://x').searchParams.has('shots');
     return on ? json(res, 200, mine(on, wantsShots)) : json(res, 404, { error: 'not found' });
   }
-  if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/submit', '/__review/thanked', '/__review/edit', '/__review/delete', '/__review/more', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
+  if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/submit', '/__review/thanked', '/__review/edit', '/__review/delete', '/__review/more', '/__review/coach', '/__review/sketch'].includes(path)) return json(res, 404, { error: 'not found' });   // (sketch)
   const p = reviewerOn(req);
   if (!p) return json(res, 403, { error: 'review mode is for the board' });
   // SameSite=Lax keeps the cookie off cross-site posts, but other products share the site: the page must be this one.
@@ -170,6 +198,8 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (path === '/__review/submit') return p.share ? json(res, 200, submit(p.share)) : json(res, 404, { error: 'not found' });
   // Add more notes in the tool itself, as on their door
   if (path === '/__review/more') return p.share && shares.takeUp(p.share.id, p.share.guest) ? json(res, 200, { ok: true }) : json(res, 409, { error: 'nothing to take up again' });
+  // A picture of the page for the board's Sketchbook (sketches.ts fromReview): the board's alone.
+  if (path === '/__review/sketch' && p.share) return json(res, 403, { error: "the Sketchbook is the board's" });
   if (!/^application\/json\b/.test(String(req.headers['content-type'] ?? ''))) return json(res, 415, { error: 'json only' });
   const raw = await readBody(req, path === '/__review/thanked' ? 64 * 1024 : MAX_BODY);
   if (!raw) return json(res, 413, { error: 'too large' });
@@ -179,6 +209,14 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (p.share && !shares.fromSession(cookie(req, 'ps'), p.host)) return json(res, 403, { error: 'the link has ended' });
   if (path === '/__review/thanked') return p.share ? json(res, 200, thanked(p.share, body?.ids)) : json(res, 404, { error: 'not found' });
   if (path === '/__review/coach') return json(res, 200, coach(p, body));
+  // { picture: a PNG or JPEG data URL, to: 'new' or 'last' }: on a new page, or the sketch the board last opened.
+  if (path === '/__review/sketch') {
+    const shot = image(body?.picture);
+    if (!shot) return json(res, 400, { error: 'a picture' });
+    if (body.to !== 'new' && body.to !== 'last') return json(res, 400, { error: "to is 'new' or 'last'" });
+    const r = sketches.fromReview(shot.buf, body.to);
+    return Array.isArray(r) ? json(res, r[0], { error: r[1] }) : json(res, 200, r);
+  }
   if (path === '/__review/delete') {
     const r = drop(p, body);
     return typeof r === 'number' ? json(res, r, { error: r === 404 ? 'not a note of yours still to go' : 'bad note' }) : json(res, 200, r);
@@ -194,12 +232,31 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
 
 // guest: an outside reviewer's (a share's), heard in their own language: the board's language is the board's alone
 async function voice(slug: string, req: IncomingMessage, guest: boolean) {
+  const v = startVoice(slug);
+  if (!v) { req.resume(); return 429; }
+  try { return await transcribe(req, guest ? undefined : boardLanguage()); } finally { v.busy = false; }
+}
+
+// The upgrade to a live dictation (<base>/__review/dictate, server.ts), let in as a clip is (product above), and carried
+// to the voice line. A refusal is a plain status.
+export function dictate(req: IncomingMessage, socket: Duplex, head: Buffer) {
+  const pathname = new URL(req.url ?? '/', 'http://x').pathname;
+  if (pathname.slice(productOf(req)?.base.length ?? 0) !== '/__review/dictate') return dictation.refuse(socket, 404);
+  const p = reviewerOn(req);
+  if (!p || req.headers.origin !== (p.slug === HQ ? ORIGIN : `https://${p.host}`)) return dictation.refuse(socket, 403);
+  const v = startVoice(p.slug);
+  if (!v) return dictation.refuse(socket, 429);
+  dictation.carry(req, socket, head, p.share ? '' : boardLanguage(), () => { v.busy = false; });
+}
+
+// A clip or dictation starting for a product, or null while one is under way or the hour has had its VOICE_PER_HOUR
+function startVoice(slug: string) {
   const v = voicing.get(slug) ?? { busy: false, times: [] };
   voicing.set(slug, v);
   v.times = v.times.filter(t => t > Date.now() - 36e5);
-  if (v.busy || v.times.length >= VOICE_PER_HOUR) { req.resume(); return 429; }
+  if (v.busy || v.times.length >= VOICE_PER_HOUR) return null;
   v.busy = true; v.times.push(Date.now());
-  try { return await transcribe(req, guest ? undefined : boardLanguage()); } finally { v.busy = false; }
+  return v;
 }
 
 // ---------------------------------------------------------------- notes
@@ -303,14 +360,36 @@ const pathOf = (v: unknown) => {
     .map(([x, y]: number[]) => [Math.round(x), Math.round(y)]);
   return points.length >= 3 ? points : null;
 };
+// The lines drawn on a note (shared/review/ink.js's strokes: { color, size, alpha, points: [[x, y, pressure, t]] }), so
+// changing the note can draw them again and anything can replay them: plain numbers and a #rrggbb colour. More than the
+// caps is refused, never cut, so a change draws every line the screenshot shows (review.js stops at 64 lines and thins
+// them to the points).
+const MAX_STROKES = 64, MAX_POINTS = 1000, ALL_POINTS = 12_000;
+const pointsIn = (s: any): number => (Array.isArray(s?.points) ? s.points.length : 0);
+const overInk = (b: any): Refusal | null => {
+  const ink = b?.element?.ink;
+  return Array.isArray(ink) && (ink.length > MAX_STROKES || ink.some((s) => pointsIn(s) > MAX_POINTS) || ink.reduce((n, s) => n + pointsIn(s), 0) > ALL_POINTS)
+    ? { status: 400, error: `A note keeps ${MAX_STROKES} lines of ${MAX_POINTS} points at most, ${ALL_POINTS} in all.` } : null;
+};
+function inkOf(v: unknown) {
+  const strokes = (Array.isArray(v) ? v : []).flatMap((s: any) => {
+    if (!s || typeof s !== 'object' || typeof s.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.color) || !Array.isArray(s.points)) return [];
+    const points = s.points.filter((p: any) => Array.isArray(p) && p.length === 4 && p.every(Number.isFinite))
+      .map(([x, y, pressure, t]: number[]) => [num(x, 2), num(y, 2), Math.min(1, Math.max(0, num(pressure, 3))), Math.max(0, Math.round(t))]);
+    if (!points.length) return [];
+    const alpha = num(s.alpha, 2);
+    return [{ color: s.color.toLowerCase(), size: Math.min(40, Math.max(1, num(s.size, 1))), ...(alpha > 0 && alpha < 1 ? { alpha } : {}), points }];
+  });
+  return strokes.length ? strokes : null;
+}
 // What a note marks, as a new note or a redrawn one brings it (edit).
 // A general note is pinned to nothing: no element, no spot and no screenshot, only the page it was written on
 function markOf(b: any) {
   const e = b.element ?? {}, general = e.kind === 'general', tag = general ? '' : line(e.tag, 40), kind = general ? 'general' : e.kind === 'circle' ? 'circle' : 'pin';
-  const path = kind === 'circle' ? pathOf(e.path) : null;
+  const path = kind === 'circle' ? pathOf(e.path) : null, ink = general ? null : inkOf(e.ink);
   // the selector and text belong to a tag, so without one the element keeps none of them
   const element = { selector: tag ? line(e.selector, 300) : '', tag, text: tag ? line(e.text, 200) : '', html: tag ? str(e.html, 2000) : '',
-    rect: general ? null : rect(e.rect), area: general ? null : rect(e.area), kind, ...(path ? { path } : {}) };
+    rect: general ? null : rect(e.rect), area: general ? null : rect(e.area), kind, ...(path ? { path } : {}), ...(ink ? { ink } : {}) };
   const v = b.viewport ?? {};
   const viewport = { w: num(v.w), h: num(v.h), dpr: num(v.dpr, 2), x: num(v.x), y: num(v.y), ua: line(v.ua, 200),
     sw: num(v.sw), sh: num(v.sh), touch: num(v.touch) };
@@ -323,6 +402,8 @@ export function saveNote(slug: string, host: string, b: any, base = '', share: s
   if (share && shares.submitted(share.id, share.guest)) return { status: 409, error: 'your notes are sent' };
   const over = overNoteLimit(slug, share);
   if (over) return { status: 429, error: over };
+  const tooMuch = overInk(b);
+  if (tooMuch) return tooMuch;
   const { element, viewport, shot } = markOf(b);
   const full = noRoomFor(shot);
   if (full) return full;
@@ -376,8 +457,9 @@ function mine(on: Reviewer, shots = false) {
     if (!shots) return entry;
     // with what frames it on its mark (frame.js), as review mode's polaroid does
     const v = JSON.parse(n.viewport ?? '{}');
+    // (ink)
     const mark = e.kind === 'general' ? null : { kind: e.kind ?? 'pin', tag: visible(e.tag ?? ''), selector: visible(e.selector ?? ''), rect: e.rect ?? null, area: e.area ?? null,
-      path: e.path ?? null, view: { x: v.x, y: v.y, w: v.w, h: v.h } };
+      path: e.path ?? null, ink: e.ink ?? null, view: { x: v.x, y: v.y, w: v.w, h: v.h } };
     return { ...entry, here: n.slug === on.slug, mark,
       shot: n.shot ? { url: shotOf(on, n.id, n.shot), element: { kind: e.kind ?? 'pin', rect: e.rect ?? null, area: e.area ?? null }, viewport: { w: v.w, h: v.h } } : null,
       // the pictures added, each with its link and the name a change keeps it by
@@ -431,6 +513,8 @@ function edit(on: Reviewer, b: any): Refusal | { ok: true; id: number } {
   if (redrawn) {
     if (n.slug !== on.slug || JSON.parse(n.element).kind === 'general' || b.element.kind === 'general') return { status: 400, error: 'bad note' };
     if (on.share && !noteOpens(on.share, on.host, b.page)) return { status: 400, error: 'bad note' };
+    const tooMuch = overInk(b);
+    if (tooMuch) return tooMuch;
     const { element, viewport, shot } = markOf(b), page = localPath(b.page, on.host, on.base), file = shot && `${n.id}-${Date.now().toString(36)}.${shot.ext}`;
     const full = noRoomFor(shot);
     if (full) return full;
@@ -500,7 +584,8 @@ function noteText(n: any, { pinned = false } = {}) {
     `Note (typed on the ${hq ? 'page' : 'preview page'}): ${visible(n.note)}`,
     e.kind === 'general' ? 'General note: pinned to nothing, about more than the page it was written on' : '',
     `Seen on: ${seenOn(v)}`,
-    e.tag ? `${e.kind === 'circle' ? 'Circled around' : 'Pinned to'}: tag ${q(e.tag)}, selector ${q(e.selector)}${e.text ? `, text ${q(e.text)}` : ''}` : '',
+    // (Drawn on)
+    e.tag ? `${e.kind === 'circle' ? (e.ink ? 'Drawn on' : 'Circled around') : 'Pinned to'}: tag ${q(e.tag)}, selector ${q(e.selector)}${e.text ? `, text ${q(e.text)}` : ''}` : '',
     r ? `Where: ${Number(r.w)}×${Number(r.h)} at ${Number(r.x)},${Number(r.y)} in a ${Number(v.w)}×${Number(v.h)} viewport scrolled to ${Number(v.x)},${Number(v.y)}` : '',
     added ? `Pictures: the reviewer added ${pictures} to the note${pinned ? ', which come after its screenshot, if it has one' : ''}` : '',
     !pinned ? `More (${n.shot ? 'screenshot, ' : 'no screenshot, '}${added ? `the ${pictures}, ` : ''}element HTML, the clicks before the note): hq note ${n.id}` : '',
@@ -532,7 +617,8 @@ function seenOn(view: any) {
 // ---------------------------------------------------------------- HQ (behind the board session)
 const row = (n: any) => {
   const viewport = JSON.parse(n.viewport ?? '{}'), element = JSON.parse(n.element);
-  delete element.path;
+  // the screenshot shows them
+  delete element.path; delete element.ink;
   // shotFile: the screenshot's name, new with a mark drawn again, in its link so no browser shows the old one
   return { ...n, element, viewport, seen: seenOn(viewport),
     trail: JSON.parse(n.trail ?? '[]'), shot: !!n.shot, shotFile: n.shot ?? null, pictures: picturesOf(n) };   // (pictures)
@@ -835,7 +921,13 @@ export const listShares = () => shares.list().map(shareRow);
 // gave them, to invite again with their name alone (inviteToShare). And its title, {name, title}: a line of up to
 // TITLE letters, empty to clear it.
 const TITLE = 40;
-export const listPeople = () => shares.recent().map(name => ({ name, title: guests.titleOf(name) }));
+// (sketchbook: whether they have a Sketchbook of their own, sketches.ts grant.)
+export const listPeople = () => shares.recent().map(name => ({ name, title: guests.titleOf(name), sketchbook: sketchPeople.hasBook(name) }));
+// The board's switch for a person's own Sketchbook, {name, on}, for someone it shared with.
+export function setPersonSketchbook(b: any) {
+  if (!shares.sharedWith(String(b?.name ?? ''))) return 404;
+  return sketchPeople.grant(b);
+}
 export function setPersonTitle(b: any) {
   const name = String(b?.name ?? ''), title = line(b?.title, TITLE) || null;
   const stored = shares.sharedWith(name) ? guests.setTitle(name, title) : null;
@@ -851,7 +943,8 @@ function shareRow(s: shares.Share) {
   // Remove or End)
   // (title: the board's for them, listPeople)
   const reopens = !!s.ended && shares.reopens(s);
-  const people = shares.people(s.id).filter(shares.onIt).map(p => ({ name: p.guest, title: guests.titleOf(p.guest), address: guests.addressOf(p.guest), opened: p.opened,
+  // (sketchbook)
+  const people = shares.people(s.id).filter(shares.onIt).map(p => ({ name: p.guest, title: guests.titleOf(p.guest), sketchbook: sketchPeople.hasBook(p.guest), address: guests.addressOf(p.guest), opened: p.opened,
     sent: p.submitted, notes: notesBy(s.id, p.guest), link: s.ended && !reopens ? null : shares.linkOf(p), ordered: shares.orderOf(p) ? shares.orderedFrom(p) : null }));
   return { id: s.id, what: owner.name, host: s.host, prefix: s.prefix, ends: s.ends, ended: s.ended, reopens, notes: notesBy(s.id), people, job: s.job, job_code: codeOf(s.job), view: !!s.view,
     tester: !!s.tester, cap: s.tester ? shares.capOf(s) / 100 : null, pays: s.about === FRONT ? 'order' : 'plan', owner: findAgent(owner.agent)?.name ?? owner.agent };
@@ -875,7 +968,8 @@ function gatherShare(s: shares.Share) {
   const authors = [...new Set(notes.map(n => n.author ?? 'an outside reviewer'))];
   db.exec('begin');
   try {
-    const { id: job } = createJob({ agent, title: `Outside notes on ${name}: ${notes.length} from ${guests.listed(authors)}`.slice(0, 200), prompt: outsideText(s, notes, name) });
+    // (its brief holds the reviewers' own details, so it stays with this job: readsOutside.)
+    const { id: job } = createJob({ agent, title: `Outside notes on ${name}: ${notes.length} from ${guests.listed(authors)}`.slice(0, 200), prompt: outsideText(s, notes, name), customers: true });
     db.prepare("update review_notes set status = 'sent', job = ? where share = ? and status = 'outside'").run(job, s.id);
     sortOutside(job, s.about, `HQ made this job from the outside notes on ${name}.`);
     shares.markGathered(s.id, job);
@@ -949,7 +1043,7 @@ function lookAt(s: shares.Share) {
   const authors = [...new Set(notes.map(n => n.author ?? 'an outside reviewer'))];
   db.exec('begin');
   try {
-    const { id: job } = createJob({ agent, title: `Outside notes on ${name} so far: fix what's plainly broken (${notes.length} from ${guests.listed(authors)})`.slice(0, 200), prompt: earlyText(s, notes, name) });
+    const { id: job } = createJob({ agent, title: `Outside notes on ${name} so far: fix what's plainly broken (${notes.length} from ${guests.listed(authors)})`.slice(0, 200), prompt: earlyText(s, notes, name), customers: true });   // (as gatherShare's.)
     db.prepare(`update review_notes set early = ? where id in (${notes.map(() => '?').join(',')})`).run(job, ...notes.map(n => n.id));
     sortOutside(job, s.about, `HQ made this job from the outside notes on ${name} so far.`);
     db.exec('commit');
@@ -999,12 +1093,12 @@ function personLine(s: shares.Share, p: shares.Person, left: string) {
   const order = !s.tester ? '' : !shares.orderOf(p) ? '; placed no order' : s.about === FRONT ? `; ordered from ${guests.listed(shares.orderedFrom(p)) || 'the shop'}` : `; took ${shares.orderedFrom(p).join(' with ')}`;
   return `- ${signedBy(p.guest, guests.emailOf(p.guest) ?? 'no address')}: ${p.removed ? `removed by the board, left ${left}` : p.submitted ? `sent ${left}` : `didn't send theirs before it ended (${left} left)`}${order}`;
 }
-// hq reviewers <share> [--from <n>]: everyone on a share and the jobs its notes went to, a page at a time, for an agent
-// one of whose jobs had its notes.
-export function reviewersOf(shareId: number, agent: string, from = 1) {
+// hq reviewers <share> [--from <n>]: everyone on a share and the jobs its notes went to, a page at a time, for a job
+// that had its notes (readsOutside).
+export function reviewersOf(shareId: number, me: Reader, from = 1) {
   const s = shares.byId(shareId);
-  const mine = s && db.prepare(`select 1 from review_notes n join jobs j on j.id in (n.job, n.early) where n.share = ? and j.agent = ?`).get(shareId, agent);
-  if (!s || !mine) return 404;
+  if (!s || !readsOutside(shareId, me)) return 404;
+  handedCustomerData(me.id);
   const people = shares.people(s.id), counts = new Map<string, number>();
   for (const r of db.prepare('select author, count(*) n from review_notes where share = ? and author is not null group by author').all(s.id) as { author: string; n: number }[])
     counts.set(r.author.toLowerCase(), (counts.get(r.author.toLowerCase()) ?? 0) + r.n);
@@ -1071,7 +1165,7 @@ function thanked(share: shares.Session, v: unknown) {
 
 const SHARE_ROUTES: Record<string, (b: any) => unknown> = { 'POST /api/review/shares': inviteToShare, 'POST /api/review/shares/remove': removeFromShare,
   'POST /api/review/shares/end': endShare, 'POST /api/review/shares/cap': setShareCap,
-  'POST /api/review/people/title': setPersonTitle };
+  'POST /api/review/people/title': setPersonTitle, 'POST /api/review/people/sketchbook': setPersonSketchbook }; // (sketchbook)
 export async function hq(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x'), route = `${req.method} ${url.pathname}`;
   if (route === 'GET /api/review/products') return json(res, 200, products());
@@ -1106,10 +1200,24 @@ export async function hq(req: IncomingMessage, res: ServerResponse) {
   return json(res, 404, { error: 'not found' });
 }
 
-// For the owner's job: `hq note <id>` (the job's token, for the agent the note was sent to) gets a note the board sent, and its screenshot
+// For the owner's job: `hq note <id>` (the job's token: noteFor) gets a note the board sent, and its screenshot
 // and the pictures added to it.
 // An outside note an early look has, before it's sent, is that look's.
 // An outside reviewer's comes with the title the board gave them.
+// An outside note carries its reviewer's own details (their address; on a tester's checkout and confirmation page, what
+// they typed in), so like a customer's (jobs.ts holdsCustomerData) it's read only by the jobs its share's notes went to
+// (the gather's and the early looks, each holding the mark) and roles.customerData, never by the owner's other jobs. A
+// board's note stays its agent's: a later job of theirs may fix it.
+export const readsOutside = (share: number, me: Reader) => readsCustomerData(me.agent)
+  || (!!me.id && !!db.prepare('select 1 from review_notes where share = ? and ? in (job, early)').get(share, me.id));
+export function noteFor(id: number, me: Reader) {
+  const n = forWorker(id);
+  if (typeof n === 'number') return n;
+  if (n.share == null) return jobAgent(n.job) === me.agent ? n : 404;
+  if (!readsOutside(n.share, me)) return 404;
+  handedCustomerData(me.id);
+  return n;
+}
 export function forWorker(id: number) {
   const n = db.prepare("select * from review_notes where id = ? and (status = 'sent' or early is not null)").get(id) as any;
   if (!n) return 404;
@@ -1117,16 +1225,37 @@ export function forWorker(id: number) {
     pictures: picturesOf(n).map(f => `data:${typeOf(f)};base64,${readFileSync(`${SHOTS}/${f}`).toString('base64')}`) };
 }
 
-// hq notes [<slug>] [--before <id>]: the notes `hq note` would give this agent, newest first, a page of 200 at a time, each in one short row with
+// hq notes [<slug>] [--before <id>]: the notes `hq note` would give this job (noteFor), newest first, a page of 200 at a time, each in one short row with
 // its words on one line and no screenshot, so a later job can find the ids a sent note's brief carried. With a slug, one
 // product's or cycle folder's (owed.about).
 const NOTES_LISTED = 200;
 // before: only the notes before that id, for the next page
+// (outside: readsOutside's.)
 const SENT_TO = `select n.* from review_notes n join jobs j on j.id = case when n.status = 'sent' then n.job else n.early end
-  where j.agent = ?1 and (?2 is null or coalesce(n.about, n.slug) = ?2) and (?3 is null or n.id < ?3) order by n.id desc limit ${NOTES_LISTED}`;
-export const sentTo = (agent: string, slug?: string, before?: number) => (db.prepare(SENT_TO).all(agent, slug ?? null, before ?? null) as any[]).map(n => {
-  const e = JSON.parse(n.element), early = n.status !== 'sent';
-  return { id: n.id, created: n.created, job: early ? n.early : n.job, early, about: n.about ?? n.slug,
-    page: line(n.page, 300), kind: e.kind === 'circle' || e.kind === 'general' ? e.kind : 'pin', tag: line(e.tag, 40), text: line(e.text, 80),
-    note: line(n.note, 4000), author: n.author ? line(n.author, 80) : null, author_title: n.author ? guests.titleOf(n.author) : null };
-});
+  where j.agent = ?1 and (?2 is null or coalesce(n.about, n.slug) = ?2) and (?3 is null or n.id < ?3)
+  and (n.share is null or ?5 or exists (select 1 from review_notes o where o.share = n.share and ?4 in (o.job, o.early)))
+  order by n.id desc limit ${NOTES_LISTED}`;
+export function sentTo(me: Reader, slug?: string, before?: number) {
+  const rows = db.prepare(SENT_TO).all(me.agent, slug ?? null, before ?? null, me.id || null, readsCustomerData(me.agent) ? 1 : 0) as any[];
+  if (rows.some(n => n.share != null)) handedCustomerData(me.id);
+  return rows.map(n => {
+    const e = JSON.parse(n.element), early = n.status !== 'sent';
+    return { id: n.id, created: n.created, job: early ? n.early : n.job, early, about: n.about ?? n.slug,
+      page: line(n.page, 300), kind: e.kind === 'circle' || e.kind === 'general' ? e.kind : 'pin', tag: line(e.tag, 40), text: line(e.text, 80),
+      note: line(n.note, 4000), author: n.author ? line(n.author, 80) : null, author_title: n.author ? guests.titleOf(n.author) : null };
+  });
+}
+
+// Jobs made from outside notes before they held the mark (gatherShare, lookAt), and the proposals that copied their briefs
+// as they waited for their sort (sorting.ts hold). At the server's start (server.ts), once the proposals' tables are
+// there.
+export function markOutsideJobs() {
+  once('2026-10-25-outside-notes-private', () => {
+    db.exec(`create temp table outside_jobs as select job id from review_notes where share is not null and job is not null
+      union select early from review_notes where share is not null and early is not null`);
+    db.exec('update jobs set customers = 1 where id in (select id from temp.outside_jobs)');
+    db.prepare(`update proposals set brief = substr(brief, 1, instr(brief, char(10, 10)) + 1) || ? where instr(brief, char(10, 10)) > 0
+      and id in (select proposal from sorts where job in (select id from temp.outside_jobs))`).run(sorting.PRIVATE_BRIEF);
+    db.exec('drop table temp.outside_jobs');
+  });
+}

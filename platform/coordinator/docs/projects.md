@@ -327,6 +327,14 @@ job queued onto a paused thread is accepted and told it's held, `hq jobs` and HQ
 the live estimate plays it after the jobs the pause waits for, and the projects view shows the pause with why and
 until what.
 
+The work in no thread has a pause of its own: `hq project pause unsorted "why"` (or the code of `projects.yaml`'s
+`groups.unsorted`), the CEO's alone. It holds what lands there however it got there: work a call queued, HQ's fix
+rounds and reviews on a pull request whose work had no thread, HQ's template and fault jobs before they're sorted. A
+hold that pauses projects pauses this one too, or what it misses there starts anyway. It lets go of what no hold should
+keep: the intercom, a meeting's seats, a board call's follow-up (the board heard, which is how a hold goes in and
+lifts) and expedited work. Work it holds stays in no thread until it lifts: `hq job move` refuses to sort it out, as it
+refuses to move work off any pause.
+
 With `--until`, the pause resumes by itself once all those jobs are done and merged, the test a wait (`hq waits`) meets.
 Work closed with every commit on main already meets it. Work closed unmerged, like a job it waits for that fails or is
 cancelled, leaves it standing: the check reads "the pause won't resume by itself". Without

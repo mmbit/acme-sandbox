@@ -28,9 +28,8 @@
 // too). The email itself is never kept here.
 // A paid basket's records end once the law no longer keeps them: records.ts.
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { DATA_DIR } from './config.ts';
+import { createHmac, randomInt, timingSafeEqual } from 'node:crypto';
+import { serverKey } from './secrets.ts';
 import { db } from './db.ts';
 import { FRONT } from './approvals.ts';
 import { companyDay, yamlFile } from './company.ts';
@@ -63,18 +62,8 @@ const LINE = /^ln_[a-f0-9]{24}$/,
   PAYER = /^[a-f0-9]{64}$/;
 const PAID = "product = ? and basket is not null and status in ('paid', 'refunded')";
 
-// ---- HQ's own key, made once, as payments.key is
-const KEY_FILE = `${DATA_DIR}/history.key`;
-function historyKey() {
-  if (!existsSync(KEY_FILE))
-    try {
-      writeFileSync(KEY_FILE, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' });
-    } catch {
-      /* made meanwhile */
-    }
-  return readFileSync(KEY_FILE, 'utf8').trim();
-}
-const KEY = historyKey();
+// ---- HQ's own key, made once (secrets.ts serverKey)
+const KEY = serverKey('history');
 const mac = (text: string) => createHmac('sha256', KEY).update(text).digest();
 const payerHash = (email: string) => mac(`payer:${email.trim().toLowerCase()}`).toString('hex');
 // The key to a paid basket's order page, which its confirmation email's link carries: 16 characters, base64url

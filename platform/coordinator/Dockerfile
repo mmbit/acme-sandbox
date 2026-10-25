@@ -2,8 +2,8 @@
 FROM node:24.22.1-slim
 # git, to read who committed the files a workflow writes for the server (src/committed.ts): the slim image has none.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-# Chromium, for print files a company's kit draws from a page of its own. The kit
-# runs it headless over its DevTools pipe, one at a time, and closes it after each file: kits/printapi/render.ts.
+# Chromium, for print files a company's kit draws from a page of its own and for the watch-along's mirror, started
+# headless over its DevTools pipe by shared/chromium/chromium.ts.
 RUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*
 # the browser itself, not Debian's launcher script, which adds its own flags and extensions
 ENV CHROMIUM_PATH=/usr/lib/chromium/chromium

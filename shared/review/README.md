@@ -1,14 +1,17 @@
 # Review mode
 
 The board's feedback tool on every product page, and on every venture cycles' page at `cycles.preview.<zone>` (brand
-directions, sketched sites, demos, a demo a deck opens; decks not yet). <!-- --> On a preview page the board taps the red pin, then taps
-anything (or draws a circle around it, or a rectangle with Shift held as the drag starts) and says or types what should
-change. A rectangle is a circle whose line is its four corners: the note, its picture and whoever reads it treat it as one. Each note carries:
+directions, sketched sites, demos, a demo a deck opens; decks not yet). On a preview page the board taps the red pin (or just draws on
+the page with a pen), then taps anything or draws on it (circles it, crosses it out, underlines it: as many lines as it
+likes until the note goes; a rectangle with Shift held as a mouse starts a line) and says or types what should change.
+Lines are a circle's mark to the note, its picture and whoever reads it (The pen, below). Each note carries:
 
-- the note itself (typed, or spoken and transcribed by the coordinator);
-- the element: its selector, tag, text, HTML (form values stripped) and position, plus the circled area and the line
-  drawn around it (inside an open shadow root too, like a chat's panel: its selector starts with the host's path, then a
-  space). Only review mode reads the line back, to draw it again; HQ and the owner get the area;
+- the note itself (typed, or spoken: its words appear as the reviewer speaks, from the voice line's recogniser through
+  the coordinator's WebSocket at `<base>/__review/dictate`, platform/voice/README.md's "Dictation");
+- the element: its selector, tag, text, HTML (form values stripped) and position, plus the area around all the lines and
+  the lines themselves (`ink`: inside an open shadow root too, like a chat's panel: its selector starts with the host's
+  path, then a space). Only review mode reads the lines back, to draw them again; HQ and the owner get the area and the
+  screenshot with the lines on it. An older note's closed circle (`path`) is drawn again as one line;
 - a screenshot of the screen as it was, with the pin or circle drawn on it;
 - pictures of the reviewer's own, pasted (Ctrl or Cmd+V) or dropped on the open note: thumbnails under its words, each
   with a × to take it off, drawn again on the device at most 2,000 px a side (a PNG stays one while it fits, the rest
@@ -67,6 +70,36 @@ styles can't touch it, and it never logs or photographs itself. Beside it, `fram
 mark (the circle, or the pinned element and the pin's head): the coordinator serves it at `/__review/frame.js` on every
 host, for review mode's polaroid and HQ's note thumbnails alike (`node --test shared/review/frame.test.js`).
 
+## The pen
+
+`ink.js` (served at `/__review/ink.js` on every host, like `frame.js`) is the pen: one drawing engine for review mode
+and HQ's Sketchbook. A stroke is plain data, `{ color, size, alpha, points: [[x, y, pressure, t], ...] }` in CSS px, so
+anything can draw it again or replay it as it was drawn (`draw(g, strokes, { until })`, `svg()`), and the document hears
+an `ink:stroke` event as a line starts, grows and ends (a walk-through call's recording follows the ink that way).
+
+- **Pressure-sensitive and live:** a pen's own pressure (an Apple Pencil's, through Safari's Pointer Events), a mouse's or
+  a finger's from its speed; each new bit drawn on its own canvas as it comes, so a long line costs no more than a short
+  one. Review mode's ink has a white edge, so it shows on any page.
+- **A pen starts it:** drawn across a page while review mode rests, a pen opens it right there, the line from where it
+  touched, and the page doesn't scroll under it. A pen's tap stays the page's own. Once a pen has drawn on a note, only
+  the pen draws (a palm resting on the screen doesn't); a finger still taps and scrolls.
+- **Lines until the note goes:** the first mark opens the note (a tap as the first mark still pins what's under it); more
+  lines can follow while it's open, open as drawn. The screenshot is the page at the first mark; every line is drawn on
+  it, in the polaroid as it comes and in what goes with the note.
+- **The strip**, over the page while it's marked: five inks (red, black, blue, green and a see-through highlighter,
+  remembered on the device) and undo (Cmd or Ctrl+Z too). Undoing the first mark goes back to tapping or drawing, the
+  words kept.
+- **Listen as I draw**, a switch in the pin's menu, off until the reviewer turns it on (on that device): then the first
+  mark starts the mic, on a computer and a tablet alike. A web page can't hear a Pencil's double-tap or squeeze (only
+  apps can), so the mark itself is the trigger: the hand that draws needs no second gesture.
+- **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
+  back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
+  transcribed whole by `POST /__review/voice`. Five minutes at most.
+
+`pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
+lines and the screenshot with them on the note, the pin dragged by its menu's handle, Listen as I draw with live words
+from a stand-in line and the clip when it's down, a mouse's lines; `--shots dir` adds HQ in each look.
+
 ## On a phone, and inside HQ
 
 - **HQ's preview viewer** (where the desk phone, the Library and decks open previews) is a frame. There the tool
@@ -78,7 +111,8 @@ host, for review mode's polaroid and HQ's note thumbnails alike (`node --test sh
   doesn't always arrive).
 - **The pin keeps out of the way:** bottom right, above the home bar. When one of the product's buttons or links
   sits under it (not a huge one, like a whole card), it moves up above it (up to 40% of the screen height), and back down when the page moves on. Dragged
-  somewhere, it stays there on that product. On a shorter screen (the phone turned sideways, HQ's viewer) it stops at
+  somewhere (by the pin, or by its menu's button beside it, which looks like a handle: a tap there still opens the menu),
+  it stays there on that product. On a shorter screen (the phone turned sideways, HQ's viewer) it stops at
   the top edge and goes back to its spot on a taller one.
 - **Over a page's popup** (a modal dialog or a popover, like a "More things" sheet): the browser puts it in its top
   layer, over any z-index, and a modal one leaves everything outside it dead. While one is open, review mode's host
@@ -144,8 +178,10 @@ and the Notes tab tells the board to send only what it recognises as its own.
   too, which files the note under that product with the page's path on it.
 - `GET /__review/review.js` is the real script only on `<slug>.preview.<zone>` for an existing product (or on
   `cycles.preview.<zone>` while `products/_cycles` exists) and with
-  the board's preview key (the `pv` cookie). Everyone else, and every live host, gets an empty script
-  (`vary: cookie`, `no-store`). Customers never run it. The `pv` cookie never reaches the product.
+  the board's preview key (the `pv` cookie). On a preview host everyone else gets only the watch-along's answer to
+  HQ's frame (`shared/watchalong/framed.js`, which follows the tool too: a page HQ frames on a walk-through call records
+  itself only when HQ asks) (`vary: cookie`, `no-store`). Every live host gets an
+  empty script from Caddy itself (`REVIEW_OFF`, `infra/products.py`), never reaching the coordinator. Customers never run it. The `pv` cookie never reaches the product.
 - `POST /__review/notes` and `/__review/voice` need the same key and `Origin: https://<slug>.preview.<zone>`
   (other products share the site, so SameSite alone isn't enough).
 - A rate limit per product: 60 notes an hour, refused (429) with why, which review mode shows. A note with a screenshot
@@ -169,7 +205,7 @@ The script posts its notes next to where it was loaded from, so the address is r
 (`/<slug>/`) it is the shelf's own. A page deeper down climbs with `../` or builds it from `X-Forwarded-Prefix`
 (`infra/products.md`).
 
-For everyone but the board it's an empty script, so it costs nothing. Don't serve your own `/__review/` path:
+For everyone but the board it's an empty script on a live host and only a few lines that wait for HQ to frame the page on a preview host, so it costs nothing. Don't serve your own `/__review/` path:
 Caddy never routes it to you anyway.
 
 A page in `products/_cycles/` needs nothing: the coordinator adds the tag as it serves the page, so a demo agents
@@ -314,8 +350,8 @@ Shoot the before and the after with the same arguments, so the two frames match.
   approval there, so a live app's tile and its "live ↗" link to the public site, titled as having no notes, are
   covered) and the cycle deck's buttons, to a
   product or a cycles demo (and back),
-  and every cycle page but a deck from HQ's viewer <!-- --> and "Open in browser" (`--only cycles` for just those), and checks the real script, the pin
+  and every cycle page but a deck from HQ's viewer and "Open in browser" (`--only cycles` for just those), and checks the real script, the pin
   on screen and clear of HQ's bar and the product's buttons, a tap on it and on the bar's Note button, no pin in a
   foreign frame, and a drag that sticks. A cycles page's PDF link, tapped in HQ's viewer, must save with the page staying
   put (with its `download` and without; in the whole Chromium, `channel: 'chromium'`: Chrome shows no PDF in the viewer's
-  sandboxed frame, and only it shows that). About 3 minutes. <!-- --> Chromium only: WebKit's quirks still need a real iPhone.
+  sandboxed frame, and only it shows that). About 3 minutes. Chromium only: WebKit's quirks still need a real iPhone.

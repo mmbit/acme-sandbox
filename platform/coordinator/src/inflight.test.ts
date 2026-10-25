@@ -121,12 +121,15 @@ test('hq extend: adds to a job an agent queued that has not started, signed last
   assert.equal((await h.agent('extend', me.token, { id, text: 'x', as: 'juno' })).status, 403);   // nobody signs as a colleague
 });
 
-test("a call's token can't list jobs (its context carries what's in flight), nor extend one the call didn't queue", async () => {
+// (it lists them as hq jobs does: the call manages work as off it, board call 122.)
+test("a call's token lists jobs, but extends none the call didn't queue", async () => {
   reset();
   const ctx = await h.voice('call-context?agent=wren');
   assert.equal(ctx.status, 200);
   const id = queue('pylon', 'x');
-  assert.equal((await h.agent('jobs', ctx.body.token)).status, 403);
+  const listed = await h.agent('jobs', ctx.body.token);
+  assert.equal(listed.status, 200);
+  assert.ok(listed.body.some((j: { id: number }) => j.id === id), 'the job is listed');
   assert.equal((await h.agent('extend', ctx.body.token, { id, text: 'more' })).status, 409);
   const j = await h.agent('job', ctx.body.token, { agent: 'rivet', title: 'From the call', prompt: 'The whole hand-off.' });   // a call's job needs a brief
   assert.equal((await open((await h.start({ agent: 'bolt' })).token, j.body.id)).queued_by, 'wren');

@@ -338,6 +338,43 @@ test("a thread's first task waits for the threads it needs to merge; their merge
   assert.equal((await claim())?.id, drawn);
 });
 
+for (const status of ['merged', 'no change', 'cancelled']) {
+  test(`a need on an owner's open thread is met when its only task is ${status}`, async () => {
+    const engine = thread('engine'),
+      art = thread('art');
+    assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+    const built = h.ended({ agent: 'bolt', thread: engine }, status === 'cancelled' ? 'cancelled' : 'done');
+    if (status === 'merged') h.storedPr(9202, built, status);
+    const drawn = task(art, 'moss');
+    assert.equal(projects.findThread(engine)!.status, 'open');
+    const placed = backlog.orderingSnapshot(Date.now()).jobs.find(j => j.id === drawn)!;
+    assert.deepEqual(
+      placed.reasons.filter(r => r.on === 'stalled'),
+      [],
+    );
+    assert.deepEqual(h.job(drawn).wakes, []);
+    assert.equal(h.job(drawn).ready, 1);
+    assert.equal((await claim())?.id, drawn);
+    assert.equal(projects.findThread(engine)!.status, 'open');
+  });
+}
+
+for (const status of ['queued', 'failed', 'open', 'closed']) {
+  test(`settled work does not meet a thread need while another task is ${status}`, async () => {
+    const engine = thread('engine'),
+      art = thread('art');
+    assert.deepEqual(plan.need(art, engine, 'wren'), { ok: true });
+    const built = h.ended({ agent: 'bolt', thread: engine });
+    h.storedPr(9202, built, 'merged');
+    const unfinished = h.ended({ agent: 'bolt', thread: engine }, status === 'failed' ? 'failed' : 'done');
+    if (status === 'queued') task(engine);
+    if (['open', 'closed'].includes(status)) h.storedPr(9203, unfinished, status);
+    const drawn = task(art, 'moss');
+    assert.equal(h.job(drawn).ready, 0);
+    assert.notEqual((await claim())?.id, drawn);
+  });
+}
+
 test('a thread whose work needed no change has no branch, and its owner closes it', async () => {
   const t = thread('check');
   task(t);

@@ -30,25 +30,44 @@ export async function mergePullRequest(pr: number, title: string, sha: string) {
   };
 }
 
+// A file as GitHub lists a pull request's (its files API: at most PAGE a page, and MOST_FILES in all)
+export type PullRequestFile = {
+  filename?: string;
+  previous_filename?: string;
+  status?: string;
+  additions?: number;
+  deletions?: number;
+  patch?: string;
+};
+const PAGE = 100,
+  MOST_FILES = 3000;
 // The lines a pull request adds, from GitHub's own diff of it (the review loop's look for keys in what merges unreviewed:
-// review.ts mergeOffice); undefined when GitHub can't tell. A file it lists with added lines but no patch (it leaves out a
-// big file's) throws: those lines can't be read, so nothing may merge on them.
-export async function addedLines(pr: number): Promise<string | undefined> {
+// review.ts mergeOffice), and the files whose earlier lines it removes or changes (altered: GitHub's deletions, a changed
+// line counted as one); undefined when GitHub can't tell. A file it lists with added lines but no patch (it leaves out a
+// big file's) throws: those lines can't be read, so nothing may merge on them. Every page of the list is read, and one
+// as long as GitHub's longest list (it shows no more) throws too: the files after it can't be read. (altered; every page)
+export async function pullRequestDiff(pr: number): Promise<{ added: string; altered: string[] } | undefined> {
   if (!GITHUB_TOKEN || !REPO) return undefined;
-  const res = await fetch(`https://api.github.com/repos/${REPO}/pulls/${pr}/files?per_page=100`, {
-    headers: { authorization: `Bearer ${GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
-    signal: timeout(), // (signal)
-  });
-  if (!res.ok) return undefined;
-  const files = (await res.json().catch(() => null)) as
-    { filename?: string; additions?: number; patch?: string }[] | null;
-  if (!Array.isArray(files)) return undefined;
+  const files: PullRequestFile[] = [];
+  for (let page = 1; ; page++) {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/pulls/${pr}/files?per_page=${PAGE}&page=${page}`, {
+      headers: { authorization: `Bearer ${GITHUB_TOKEN}`, accept: 'application/vnd.github+json' },
+      signal: timeout(), // (signal)
+    });
+    if (!res.ok) return undefined;
+    const some = (await res.json().catch(() => null)) as PullRequestFile[] | null;
+    if (!Array.isArray(some)) return undefined;
+    files.push(...some);
+    if (some.length < PAGE) break;
+    if (files.length >= MOST_FILES)
+      throw new Error(`GitHub lists only a pull request's first ${MOST_FILES} files, so the rest can't be read`);
+  }
   const unread = files.find(f => !f.patch && (f.additions ?? 0) > 0);
   if (unread)
     throw new Error(
       `GitHub lists ${unread.additions} added lines in ${unread.filename} but doesn't show them, so they can't be read`,
     );
-  return files
+  const added = files
     .flatMap(f =>
       (f.patch ?? '')
         .split('\n')
@@ -56,6 +75,15 @@ export async function addedLines(pr: number): Promise<string | undefined> {
         .map(l => l.slice(1)),
     )
     .join('\n');
+  // a rename counts under both names, and a file GitHub shows no patch for (a binary one) counts as changed
+  const changed = (f: PullRequestFile) =>
+    (f.deletions ?? 0) > 0 || f.status === 'renamed' || (!!f.status && f.status !== 'added' && !f.patch);
+  return {
+    added,
+    altered: files
+      .filter(changed)
+      .flatMap(f => [String(f.filename), ...(f.previous_filename ? [f.previous_filename] : [])]),
+  };
 }
 
 // Whether GitHub has it merged or closed (a merge that went through unheard, or a close by hand: review.ts merge());

@@ -110,17 +110,23 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
       console.table(db.prepare(\"select o.id, o.slug, o.agent, o.opened, o.job, j.status job_status, o.follow_ups, o.stalled, o.closed, substr(o.outcome,1,100) outcome from owed o left join jobs j on j.id = o.job where o.closed is null or o.closed > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-1 day') order by o.id\").all());
     } catch { /* no owed table until the coordinator has started with owed.ts */ }
     // the latest 30 and every queued or running one, however old, with a queued
-    // job's hold (a usage limit, a restart, a downtime yield: jobs.ts not_before) so a job that isn't starting says until when
+    // job's hold (a usage limit, a restart, a downtime yield: jobs.ts not_before) so a job that isn't starting says until when.
+    // Their ids first, then each row by its id: a filter on the table itself reads every job's brief and output, and HQ's
+    // writes wait for this connection's read.
     console.log('== work (not reviews, the latest 30 and all queued or running jobs, held_until in UTC)');
-    console.table(db.prepare(\"select id, created, agent, status, after, case when status = 'queued' and not_before > strftime('%s', 'now') * 1000 then datetime(not_before / 1000, 'unixepoch') end held_until, \"
-      + \"substr(title,1,90) title, \" + said('result', 160) + \" result from jobs where kind in ('work','chat') \"
-      + \"and (status in ('queued', 'running') or id in (select id from jobs where kind in ('work','chat') order by id desc limit 30)) order by id desc\").all());
+    console.table(db.prepare(\"with ids as materialized (select id from jobs where kind in ('work','chat') and status in ('queued', 'running') \"
+      + \"union select * from (select id from jobs where kind in ('work','chat') order by id desc limit 30)) \"
+      + \"select j.id, j.created, j.agent, j.status, j.after, case when j.status = 'queued' and j.not_before > strftime('%s', 'now') * 1000 then datetime(j.not_before / 1000, 'unixepoch') end held_until, \"
+      + \"substr(j.title,1,90) title, \" + said('j.result', 160) + \" result from ids cross join jobs j on j.id = ids.id order by j.id desc\").all());
     // every job of the last day, reviews included: who queued it, what it cost, how it ended (the Overseer, 2026-10-17,
     // while it looks into how a day's work was planned)
     console.log('== every job of the last 24 hours (created or ended: queued_by null is HQ itself; cost_usd: Claude only)');
-    console.table(db.prepare(\"select j.id, substr(j.created, 6, 11) created, j.agent, j.kind, j.status, j.queued_by by, j.after, j.pr, j.thread, \"
-      + \"round(coalesce((select sum(u.cost) from usage u where u.job = j.id), 0), 2) cost_usd, substr(j.title, 1, 80) title from jobs j \"
-      + \"where j.kind != 'chat' and (j.created > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day') or j.finished > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day')) order by j.id\").all());
+    // (the day's ids from the indexes first, as above)
+    console.table(db.prepare(\"with ids (n) as (select id from jobs where kind != 'chat' and (created > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day') \"
+      + \"or finished > strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 day'))) \"
+      + \"select j.id, substr(j.created, 6, 11) created, j.agent, j.kind, j.status, j.queued_by by, j.after, j.pr, j.thread, \"
+      + \"round(coalesce((select sum(u.cost) from usage u where u.job = j.id), 0), 2) cost_usd, substr(j.title, 1, 80) title \"
+      + \"from ids cross join jobs j on j.id = ids.n order by j.id\").all());
     // the events queued jobs wait for (hq job --when: the coordinator's wakes.ts) and the last deploys it heard of
     try {
       console.log('== waiting for events (hq job --when, still waited for: an at is in ms), then the last 5 deploys HQ has heard of');
@@ -165,7 +171,10 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log('== copies to the forward address (all records, sent 0 carries its reason)');
     console.table(db.prepare(\"select mail, substr(tried, 1, 19) tried, sent, status, failure why from mail_copies order by mail desc\").all());
     console.log('== forward-copy sends (one row per email, with its mail ids)');
-    console.table(db.prepare(\"select id, ts, text from events where type = 'log' and text like 'Mail: a copy of % went to the forward address' order by id\").all());
+    // (from the first copy tried on, by the events' time index: none is older, and a scan of the whole log reads HQ's
+    // biggest table while HQ's writes wait.)
+    console.table(db.prepare(\"select id, ts, text from events indexed by events_ts where ts >= (select min(tried) from mail_copies) and type = 'log' \"
+      + \"and text like 'Mail: a copy of % went to the forward address' order by id\").all());
     // Each paid basket's confirmation email (basketmail.ts), the last 7 days: whether it went (rendered: test mode without
     // the service, so it never left), and HQ's log lines on basket emails. Ids and statuses only; a tester's order is
 
@@ -182,8 +191,10 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.table(db.prepare(\"select id, ts, who, iif(\" + aboutCustomer + \" and shown is null, '(holds a customer''s details)', substr(coalesce(shown, text),1,160)) opening from chat order by id desc limit 12\").all());
     console.log('== usage, last 7 days (per UTC day and seat; input is the uncached part; cost_usd is the API-equivalent price Claude Code reports, none for Codex)');
     console.table(db.prepare(\"select substr(ts,1,10) day, seat, engine, count(distinct job) jobs, sum(input) input, sum(cache_write) cache_write, sum(cache_read) cache_read, sum(output) output, round(sum(cost),2) cost_usd from usage where ts >= date('now','-6 days') group by day, seat, engine order by day desc, seat\").all());
+    // From here on a job's columns come from jobs_report (db.ts), named with indexed by: read from its rows, every job's
+    // brief and report came off the disk, seconds while HQ's writes waited
     console.log('== usage per job (latest 25; a run is one start of the job, resumed after a limit or restart)');
-    console.table(db.prepare('select u.job, j.agent, j.kind, count(*) runs, group_concat(distinct u.seat) seats, group_concat(distinct u.models) models, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, max(u.ts) finished from usage u join jobs j on j.id = u.job group by u.job order by max(u.id) desc limit 25').all());
+    console.table(db.prepare('select u.job, j.agent, j.kind, count(*) runs, group_concat(distinct u.seat) seats, group_concat(distinct u.models) models, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, max(u.ts) finished from usage u join jobs j indexed by jobs_report on j.id = u.job group by u.job order by max(u.id) desc limit 25').all());
     // How much of a
     // seat goes to the review loop: the jobs review.ts makes for an author ('pr fix': a fix, bringing a branch up to
     // date, a re-land) carry the pull request's number; the board's notes on one are its own kind. Downtime is
@@ -195,18 +206,18 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     const kindOf = \"case \" + (hasOwn ? \"when \" + own + \" is not null then \" + own + \" \" : '') + \"when j.kind <> 'work' then j.kind when j.stage = 'feedback' then 'board notes' when j.pr is not null and j.queued_by is null then 'pr fix' when j.downtime then 'downtime' when j.queued_by is null and exists (select 1 from schedule_runs s where j.title like '% (' || s.slot || ')') then 'scheduled' else 'work' end\";
     const spend = \"iif(u.engine = 'codex', u.input + u.cache_read, u.cost)\";
     console.log('== usage per kind of job, last 7 days (per UTC day; share: of the day\\'s cost_usd for Claude, of its input + cache_read for Codex)');
-    console.table(db.prepare(\"select substr(u.ts,1,10) day, u.engine, \" + kindOf + \" kind, count(distinct u.job) jobs, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, round(100.0 * sum(\" + spend + \") / sum(sum(\" + spend + \")) over (partition by substr(u.ts,1,10), u.engine), 1) share from usage u join jobs j on j.id = u.job where u.ts >= date('now','-6 days') group by 1, 2, 3 order by day desc, u.engine, share desc\").all());
+    console.table(db.prepare(\"select substr(u.ts,1,10) day, u.engine, \" + kindOf + \" kind, count(distinct u.job) jobs, sum(u.input) input, sum(u.cache_write) cache_write, sum(u.cache_read) cache_read, sum(u.output) output, round(sum(u.cost),2) cost_usd, round(100.0 * sum(\" + spend + \") / sum(sum(\" + spend + \")) over (partition by substr(u.ts,1,10), u.engine), 1) share from usage u join jobs j indexed by jobs_report on j.id = u.job where u.ts >= date('now','-6 days') group by 1, 2, 3 order by day desc, u.engine, share desc\").all());
     console.log('== review loop per pull request, last 7 days (the top ten by its reviews\\' and checks\\' cost_usd; codex_tokens: their Codex input + cache_read; fixes: the author\\'s pr fix jobs)');
     // The fixes' cost is summed once and looked up per pull request: usage has no index on job, so a subquery per pull
     // request would read all of usage each time
-    console.table(db.prepare(\"with fixes as materialized (select fj.pr, round(sum(f.cost),2) cost from usage f join jobs fj on fj.id = f.job where fj.kind = 'work' and fj.pr is not null and fj.queued_by is null and coalesce(fj.stage, '') <> 'feedback' and f.ts >= date('now','-6 days') group by fj.pr) select j.pr, p.author, p.status, count(distinct u.job) reviews, count(distinct j.round) rounds, max(j.round) last_round, round(sum(u.cost),2) cost_usd, sum(iif(u.engine = 'codex', u.input + u.cache_read, 0)) codex_tokens, (select x.cost from fixes x where x.pr = j.pr) fixes_cost_usd from usage u join jobs j on j.id = u.job left join prs p on p.number = j.pr where j.kind in ('review','consolidate') and j.pr is not null and u.ts >= date('now','-6 days') group by j.pr order by sum(u.cost) desc limit 10\").all());
+    console.table(db.prepare(\"with fixes as materialized (select fj.pr, round(sum(f.cost),2) cost from usage f join jobs fj indexed by jobs_report on fj.id = f.job where fj.kind = 'work' and fj.pr is not null and fj.queued_by is null and coalesce(fj.stage, '') <> 'feedback' and f.ts >= date('now','-6 days') group by fj.pr) select j.pr, p.author, p.status, count(distinct u.job) reviews, count(distinct j.round) rounds, max(j.round) last_round, round(sum(u.cost),2) cost_usd, sum(iif(u.engine = 'codex', u.input + u.cache_read, 0)) codex_tokens, (select x.cost from fixes x where x.pr = j.pr) fixes_cost_usd from usage u join jobs j indexed by jobs_report on j.id = u.job left join prs p on p.number = j.pr where j.kind in ('review','consolidate') and j.pr is not null and u.ts >= date('now','-6 days') group by j.pr order by sum(u.cost) desc limit 10\").all());
     console.log('== push tests, last 14 days (one row per tested tree/base, reused results counted once; wall time includes helper waits, setup and failure comparison; old rows have no wall time)');
     console.table(db.prepare(\"select substr(at, 1, 10) day, count(*) runs, sum(report like 'Tests: none%') no_suites, sum(passed = 1) passed, sum(passed = 0) failed, count(began) timed, round(avg((julianday(at) - julianday(began)) * 86400), 1) mean_wall_s, round(max((julianday(at) - julianday(began)) * 86400), 1) max_wall_s from test_results where passed is not null and at >= date('now', '-13 days') group by day order by day desc\").all());
     console.log('== latest push suites (the stored runner reports, with suite times, setup/comparison and slowest files when available; no-suite pushes omitted)');
     const pushes = db.prepare(\"select job, at, passed, round((julianday(at) - julianday(began)) * 86400, 1) wall_s, report from test_results where passed is not null and report not like 'Tests: none%' order by at desc limit 10\").all();
     for (const push of pushes) console.log(JSON.stringify({ job: push.job, at: push.at, passed: push.passed, wall_s: push.wall_s }), '\n' + push.report);
     console.log('== review/check run wall time, last 14 days (started to finished; includes pauses, excludes jobs without a start)');
-    console.table(db.prepare(\"select substr(finished, 1, 10) day, kind, engine, count(*) runs, round(avg((julianday(finished) - julianday(started)) * 1440), 1) mean_min, round(max((julianday(finished) - julianday(started)) * 1440), 1) max_min from jobs where kind in ('review', 'consolidate') and status = 'done' and started is not null and finished >= date('now', '-13 days') group by day, kind, engine order by day desc, kind, engine\").all());
+    console.table(db.prepare(\"select substr(finished, 1, 10) day, kind, engine, count(*) runs, round(avg((julianday(finished) - julianday(started)) * 1440), 1) mean_min, round(max((julianday(finished) - julianday(started)) * 1440), 1) max_min from jobs indexed by jobs_report where kind in ('review', 'consolidate') and status = 'done' and started is not null and finished >= date('now', '-13 days') group by day, kind, engine order by day desc, kind, engine\").all());
     // The reviewers' time on what the pipeline runs once for them (the worker's gates and tests): each step of a review
     // or a check, from its own log (log.ts, 14 days), lasts until the job's next step. Steps stand in for tokens. A step
     // counts as running them when its command names a runner with what it runs, so a sed or cat of a test file mostly
@@ -218,7 +229,7 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log('== reviews\\' time on installs, gates and tests, last 14 days (per UTC day and engine; a review or check\\'s logged steps, each until its next one; pages: *check.mjs walks, which stay the reviewers\\')');
     db.exec('pragma temp_store = memory; create temp table steps (job, engine, day, k, m)');
     const stepsIn = db.prepare(\"with l as materialized (select l.id, l.job, l.ts, j.engine, replace(replace(l.text, '/bin/bash -lc ', ''), 'bash -lc ', '') text \"
-      + \"from job_log l join jobs j on j.id = l.job where l.ts >= ? and l.ts < ? and j.kind in ('review', 'consolidate')) insert into temp.steps \"
+      + \"from job_log l cross join jobs j indexed by jobs_report on j.id = l.job where l.ts >= ? and l.ts < ? and j.kind in ('review', 'consolidate')) insert into temp.steps \"
       + \"select l.job, l.engine, substr(l.ts, 1, 10), \" + stepKind + \", (julianday((select n.ts from job_log n where n.job = l.job and n.id > l.id order by n.id limit 1)) - julianday(l.ts)) * 1440 from l\");
     const oldestStep = db.prepare('select min(ts) ts from job_log').get().ts, hourMs = 3600e3;
     for (let windowEnd = Date.now(); oldestStep && Date.parse(oldestStep) < windowEnd; windowEnd -= hourMs) {
@@ -228,8 +239,10 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     // Reviews that over-harden (the trust rule, the coordinator's trust.ts): a report without the rule's labels
     // counts as unlabelled
     console.log('== reviews that over-harden, last 14 days (per UTC day: the reviewers\\' findings by engine, labelled: carrying the trust rule\\'s fields, hides: on a line that carries on past a failure, never dismissed, trust and fallback: dismissed by the round; the consolidator\\'s verdicts by stage, its drops and blocking findings against hardening the change added; then the share of labelled findings that over-hardened, and each dismissal to check against its pull request)');
-    // (the dismissals) (hides)
-    const trust = (await import('./src/trust.ts')).reading(db.prepare(\"select substr(created, 1, 10) day, pr, agent, kind, engine, stage, output from jobs where kind in ('review', 'consolidate') and status = 'done' and created >= date('now', '-13 days')\").all());
+    // (the dismissals) (hides). A day per statement, by jobs_counts: the planner's pick, by status, read every done job's
+    // row, and the fortnight's outputs at once held HQ's writes back half a second off a cold disk
+    const reviewsOn = db.prepare(\"select substr(created, 1, 10) day, pr, agent, kind, engine, stage, output from jobs indexed by jobs_counts where kind in ('review', 'consolidate') and status = 'done' and created >= date('now', ?) and created < date('now', ?)\");
+    const trust = (await import('./src/trust.ts')).reading(Array.from({ length: 14 }, (_, d) => reviewsOn.all(\`\${d - 13} days\`, \`\${d - 12} days\`)).flat());
     console.table(trust.reviews);
     console.table(trust.verdicts);
     console.log(trust.total);
@@ -248,7 +261,7 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     // (the review loop's jobs) or the one its branch opened. Foundation: one that touches the foundation's own folders.
     const prOf = \"coalesce(j.pr, (select max(p.number) from prs p where p.branch = coalesce(j.branch, 'job/' || j.id)))\";
     const core = \"exists (select 1 from json_each(p.files) f where f.value like 'platform/%' or f.value like 'infra/%' or f.value like 'shared/%' or f.value like '.github/%' or f.value = 'CODE_STYLE.md')\";
-    const week = \"from (select u.job, u.engine, u.models, u.cache_write, u.cache_read, u.output, coalesce(u.cost, 0) cost, iif(u.engine = 'codex', u.input + u.cache_read, 0) codex, j.agent, \" + prOf + \" pr, iif(j.pr is null, 'work', iif(j.kind in ('review', 'consolidate') and j.round = 1, 'first', 'after')) part from usage u join jobs j on j.id = u.job where u.ts >= date('now','-6 days')) x left join prs p on p.number = x.pr\";
+    const week = \"from (select u.job, u.engine, u.models, u.cache_write, u.cache_read, u.output, coalesce(u.cost, 0) cost, iif(u.engine = 'codex', u.input + u.cache_read, 0) codex, j.agent, \" + prOf + \" pr, iif(j.pr is null, 'work', iif(j.kind in ('review', 'consolidate') and j.round = 1, 'first', 'after')) part from usage u join jobs j indexed by jobs_report on j.id = u.job where u.ts >= date('now','-6 days')) x left join prs p on p.number = x.pr\";
     const shares = \"round(100.0 * sum(x.cost) / sum(sum(x.cost)) over (), 1) claude_share, sum(x.codex) codex_tokens, round(100.0 * sum(x.codex) / sum(sum(x.codex)) over (), 1) codex_share\";
     console.log('== usage per agent, last 7 days (shares: of Claude\\'s cost_usd, of Codex\\'s input + cache_read; resumed: runs after a limit or restart)');
     console.table(db.prepare(\"select x.agent, count(distinct x.job) jobs, count(*) - count(distinct x.job) resumed, round(sum(x.cost),2) cost_usd, \" + shares + \", sum(x.cache_write) cache_write, sum(x.cache_read) cache_read, sum(x.output) output \" + week + \" group by x.agent order by sum(x.cost) desc, codex_tokens desc\").all());
@@ -261,12 +274,12 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log('== the costliest jobs, last 7 days (the top 15; runs: starts, resumed after a limit or restart; models: helpers show as a second model)');
     console.table(db.prepare(\"select x.job, x.agent, x.pr, count(*) runs, group_concat(distinct x.models) models, sum(x.cache_write) cache_write, sum(x.cache_read) cache_read, sum(x.output) output, round(sum(x.cost),2) cost_usd \" + week + \" group by x.job order by sum(x.cost) desc limit 15\").all());
     console.log('== usage per product, since usage was recorded (pull requests touching products/<slug>/, all their jobs; one touching two counts for both)');
-    console.table(db.prepare(\"select f.slug product, count(distinct f.pr) prs, count(distinct u.job) jobs, round(sum(u.cost),2) cost_usd, sum(iif(u.engine = 'codex', u.input + u.cache_read, 0)) codex_tokens from (select distinct p.number pr, substr(e.value, 10, instr(substr(e.value, 10), '/') - 1) slug from prs p, json_each(p.files) e where e.value like 'products/%/%') f join (select j.id job, \" + prOf + \" pr from jobs j) jp on jp.pr = f.pr join usage u on u.job = jp.job group by f.slug order by 4 desc\").all());
+    console.table(db.prepare(\"select f.slug product, count(distinct f.pr) prs, count(distinct u.job) jobs, round(sum(u.cost),2) cost_usd, sum(iif(u.engine = 'codex', u.input + u.cache_read, 0)) codex_tokens from (select distinct p.number pr, substr(e.value, 10, instr(substr(e.value, 10), '/') - 1) slug from prs p, json_each(p.files) e where e.value like 'products/%/%') f join (select j.id job, \" + prOf + \" pr from jobs j indexed by jobs_report) jp on jp.pr = f.pr join usage u on u.job = jp.job group by f.slug order by 4 desc\").all());
     console.log('== usage per model, last 7 days (a run with helpers on another model shows both)');
     console.table(db.prepare(\"select x.models, x.engine, count(*) runs, round(sum(x.cost),2) cost_usd, \" + shares + \" \" + week + \" group by 1, 2 order by 4 desc, codex_tokens desc\").all());
     // Where the Codex seats' tokens went: a pull request's review rounds each run Codex jobs, so the busiest ones lead.
     console.log('== Codex jobs per pull request, yesterday (UTC day, the top ten; mostly their review panels)');
-    console.table(db.prepare(\"select j.pr, count(distinct u.job) codex_jobs, count(distinct j.round) rounds, max(j.round) last_round, sum(u.input) input from usage u join jobs j on j.id = u.job where u.engine = 'codex' and j.pr is not null and substr(u.ts,1,10) = date('now','-1 day') group by j.pr order by codex_jobs desc, input desc limit 10\").all());
+    console.table(db.prepare(\"select j.pr, count(distinct u.job) codex_jobs, count(distinct j.round) rounds, max(j.round) last_round, sum(u.input) input from usage u join jobs j indexed by jobs_report on j.id = u.job where u.engine = 'codex' and j.pr is not null and substr(u.ts,1,10) = date('now','-1 day') group by j.pr order by codex_jobs desc, input desc limit 10\").all());
     console.log('== HQ\'s speed, the last hour (the coordinator\'s /api routes that took the most time in all, in ms; then the event loop\'s worst minutes: how late it ran, so how long one request could wait behind another)');
     try {
       const timesByRoute = new Map();

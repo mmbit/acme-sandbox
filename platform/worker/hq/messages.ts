@@ -246,7 +246,7 @@ export const inbox = {
     if (event === undefined) return;
     let messages: InboxMessage[];
     try {
-      const answer = await api.call('inbox', { body: {}, timeoutMs: 10_000 });
+      const answer = await api.call('inbox', { body: { stopping: event === 'Stop' }, timeoutMs: 10_000 });
       if (answer.status >= 400) return;
       messages = JSON.parse(answer.body);
     } catch {
@@ -265,9 +265,12 @@ export const inbox = {
   },
 };
 
-// A message, or a line said in the job's meeting (hq meeting say).
+// A message, a line said in the job's meeting (hq meeting say), or HQ's word on the server's memory (the coordinator's
+// lowmemory.ts).
 type InboxMessage = {
   message?: number;
+  memory?: number;
+  text?: string;
   guest?: unknown;
   call?: unknown;
   meeting?: number;
@@ -299,8 +302,10 @@ function hookOutput(event: string, messages: InboxMessage[]) {
   const guests = messages.filter(message => present(message.guest));
   const additions = messages.filter(message => present(message.call));
   const meetingLines = messages.filter(message => present(message.meeting));
+  const memory = messages.filter(message => present(message.memory));
   const colleagues = messages.filter(
-    message => !present(message.guest) && !present(message.call) && !present(message.meeting),
+    message =>
+      !present(message.guest) && !present(message.call) && !present(message.meeting) && !present(message.memory),
   );
   const block = (group: InboxMessage[], head: string, last: boolean) =>
     head +
@@ -309,7 +314,8 @@ function hookOutput(event: string, messages: InboxMessage[]) {
       : '') +
     'As JSON, one per line:\n' +
     group.map(message => JSON.stringify(message)).join('\n');
-  const blocks: string[] = [];
+  // (HQ's own words, not a colleague's: as they are. It sends none as a session stops.)
+  const blocks: string[] = memory.map(message => shown(message.text));
   if (colleagues.length > 0) {
     const count = colleagues.length === 1 ? 'a message' : `${colleagues.length} messages`;
     const head =

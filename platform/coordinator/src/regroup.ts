@@ -4,7 +4,7 @@
 // (the work's owner: its thread's project's, projects.ts ownerOf)
 import { db, inOneStep } from './db.ts';
 import { ceo } from './company.ts';
-import { inProcess, loopBranch, WORK_LEAD } from './jobs.ts';
+import { deskLets, inProcess, loopBranch, WORK_LEAD } from './jobs.ts';
 import { dropped, finished } from './windows.ts';
 import { findProject, findThread, ownerOf, type Thread } from './projects.ts';
 import { publish } from './events.ts';
@@ -80,13 +80,17 @@ export function moveJob(
   if (!mayMove(agent, owner, lead.agent))
     return `only ${[lead.agent, owner].filter(Boolean).join(', ')}, the CEO or the process team can move job #${job}`;
   const loop = { job, lead: row.lead, branch: `job/${row.lead}` };
+  // (in no thread: what the desk's pause holds, jobs.ts deskLets.)
   const on = db
-    .prepare(`select distinct thread from jobs where thread is not null and (id in ($job, $lead) or ${LOOP})`)
-    .all(loop) as { thread: string }[];
+    .prepare(
+      `select distinct thread from jobs where (id in ($job, $lead) or ${LOOP})
+      and (thread is not null or not ${deskLets('jobs')})`,
+    )
+    .all(loop) as { thread: string | null }[];
   const held = on.map(r => shedRefusal(r.thread, { project: thread.project, thread: thread.id })).find(Boolean);
   if (held) return held;
   // (its place in its old thread's order stays there: by its id in the new one, plan.ts.)
-  const from = on.map(r => r.thread).filter(id => id !== thread.id);
+  const from = on.map(r => r.thread).filter((id): id is string => id !== null && id !== thread.id);
   const moved = moveGroup(loop, thread, from, { agent, job: senderJob });
   if (typeof moved === 'string') return moved;
   publish({ type: 'log', agent, text: `Job #${row.lead} moved to ${thread.name}` });

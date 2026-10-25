@@ -23,15 +23,16 @@
 //     them on to a page a door opens without its link (onward: a demo the shared deck links to).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { db, redacted } from './db.ts';
 import { publish } from './events.ts';
-import { DATA_DIR, ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
+import { ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
 import { brand, ceo, companyFormats, names } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { createRequest, closeRequest, findAgent, holdsCustomerData } from './jobs.ts';
 import { clientOf } from './auth.ts';
 import { inside } from './files.ts';
+import { serverKey } from './secrets.ts';
 import { darkLogo, logo } from './pages.ts';
 import * as mailout from './mailout.ts';
 import * as messages from './messages.ts';
@@ -100,9 +101,7 @@ const PER_IP = { send: 10, verify: 30, invite: 10 };              // an hour, pe
 const MODE = PUBLIC_HOST === 'localhost' ? 'test' : 'live';
 
 // ---- the link and the code: signed with the guest desk's own key, next to the key store (like payments.key)
-const KEY_FILE = `${DATA_DIR}/guest.key`;
-if (!existsSync(KEY_FILE)) try { writeFileSync(KEY_FILE, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' }); } catch { /* made meanwhile */ }
-const KEY = readFileSync(KEY_FILE, 'utf8').trim();
+const KEY = serverKey('guest');
 const sign = (s: string) => createHmac('sha256', KEY).update(s).digest('base64url');
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // (a person's link: their request and their own nonce)
@@ -691,6 +690,7 @@ export const COPY = {
     copy: 'Kopieer', copied: 'Gekopieerd', number: 'Vul een getal in, zoals 3 of 3,5.',
     download: (name: string) => `${name} downloaden`,
     gone: { title: 'Deze link opent niets', text: 'Misschien is hij verkeerd overgenomen, of werkt hij niet meer. Vraag wie hem stuurde om een nieuwe.' },
+    roomShut: 'Dit opent vanaf je eigen link: open de link die je kreeg en kies het daar.',
     // a colleague invited from the page (invite: the page's part, inviteEmail: what they get)
     invite: {
       title: 'Een collega erbij halen', name: 'Naam', address: 'E-mailadres', button: 'Uitnodigen', mailbox: 'naam',
@@ -734,6 +734,7 @@ export const COPY = {
     copy: 'Copy', copied: 'Copied', number: 'Please enter a number, like 3 or 3.5.',
     download: (name: string) => `Download ${name}`,
     gone: { title: 'This link doesn’t open anything', text: 'It may be mistyped, or it no longer works. Ask the person who sent it for a new one.' },
+    roomShut: 'This opens from your own link: open the link you were sent and choose it there.',
     invite: {
       title: 'Bring in a colleague', name: 'Name', address: 'Email address', button: 'Invite', mailbox: 'name',
       text: (domain: string) => `Want to do this with a colleague, or hand it on? Invite someone with an @${domain} address. They’ll get a link of their own by email.`,
@@ -776,6 +777,7 @@ export const COPY = {
     copy: 'Kopieren', copied: 'Kopiert', number: 'Gib eine Zahl ein, etwa 3 oder 3,5.',
     download: (name: string) => `${name} herunterladen`,
     gone: { title: 'Dieser Link öffnet nichts', text: 'Vielleicht wurde er falsch übernommen, oder er funktioniert nicht mehr. Bitte die Person, die ihn geschickt hat, um einen neuen.' },
+    roomShut: 'Das öffnet sich über deinen eigenen Link: Öffne den Link, den du bekommen hast, und wähle es dort.',
     invite: {
       title: 'Jemanden aus deinem Team dazuholen', name: 'Name', address: 'E-Mail-Adresse', button: 'Einladen', mailbox: 'name',
       text: (domain: string) => `Möchtest du das gemeinsam mit jemandem aus deinem Team machen oder es abgeben? Lade jemanden mit einer E-Mail-Adresse auf @${domain} ein. Diese Person bekommt per E-Mail einen eigenen Link.`,
@@ -858,7 +860,7 @@ ul.items{list-style:none;margin:0;padding:0}.item{background:var(--card);border-
 .state{display:inline-block;margin-top:6px;font-size:.88rem;font-weight:600;color:var(--link)}.acts .state{margin:0 4px 0 0}.said{margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}
 form{margin:0}.acts{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:12px}
 button,a.button{font:inherit;font-weight:600;font-size:.92rem;border:0;border-radius:var(--btn-r);padding:9px 16px;min-height:40px;cursor:pointer;background:var(--accent);color:var(--on);transition:transform .15s,filter .15s,background .15s}
-a.button{display:inline-flex;align-items:center;text-decoration:none}button:hover,a.button:hover{filter:brightness(1.07)}button:active,a.button:active{transform:scale(.97)}button.soft{background:var(--soft);color:var(--ink)}button.link{background:none;color:var(--muted);padding:9px 4px;font-weight:500}
+a.button{display:inline-flex;align-items:center;text-decoration:none}button:hover,a.button:hover{filter:brightness(1.07)}button:active,a.button:active{transform:scale(.97)}button.soft,a.button.soft{background:var(--soft);color:var(--ink)}/* (a.button.soft) */button.link{background:none;color:var(--muted);padding:9px 4px;font-weight:500}
 button.chip{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--line)}button.chip.on{background:var(--accent);color:var(--on);box-shadow:none}
 input,textarea{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1.5px solid var(--line);border-radius:12px;padding:9px 12px;transition:border-color .15s}
 input:focus,textarea:focus{border-color:var(--accent);outline:0}button:focus-visible,summary:focus-visible{outline:3px solid color-mix(in srgb,var(--accent) 45%,transparent);outline-offset:2px}
@@ -892,17 +894,27 @@ const day = (ts: string, lang: Lang) => {
 const when = (ts: string, lang: Lang) => pageFormats().moment(Date.parse(ts), lang, { short: true });
 export const SCRIPT = readFileSync(new URL('./guest.js', import.meta.url), 'utf8');
 
+// The company's logo atop a guest's page, light and dark, its size the page's style's (logoCss) (a room's page too:
+export function logoHtml() {
+  const b = brand(),
+    n = names().name,
+    l = look();
+  const src = l.logo ? `/guest/theme/${l.logo}` : `/${esc(logo(b))}`,
+    darkSrc = l.logo ? l.logoDark && `/guest/theme/${l.logoDark}` : l.dark && `/${esc(darkLogo(b))}`;
+  return `<picture>${darkSrc ? `<source srcset="${darkSrc}" media="(prefers-color-scheme: dark)">` : ''}<img src="${src}" alt="${esc(b.logo?.alt ?? n)}"></picture>`;
+}
+export const logoCss = (at: string, l: Look = look()) =>
+  `${at} img{height:${l.logoHeight}px;width:auto${l.pixelated ? ';image-rendering:pixelated' : ''}}`;
 function html(res: ServerResponse, status: number, lang: Lang, body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
-  const b = brand(), n = names().name, l = look(), css = style(l, pct, legend);
-  const src = l.logo ? `/guest/theme/${l.logo}` : `/${esc(logo(b))}`, darkSrc = l.logo ? l.logoDark && `/guest/theme/${l.logoDark}` : l.dark && `/${esc(darkLogo(b))}`;
+  const n = names().name, l = look(), css = style(l, pct, legend);
   // same-origin, not no-referrer: the link (its token) never goes to another site, and a browser still sends the page's
   // own Origin with its forms (no-referrer makes it "null", which server.ts refuses)
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
     'content-security-policy': `default-src 'none'; script-src 'self'; style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
   res.end(`<!doctype html><html lang="${lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script>
-<header><picture>${darkSrc ? `<source srcset="${darkSrc}" media="(prefers-color-scheme: dark)">` : ''}<img src="${src}" alt="${esc(b.logo?.alt ?? n)}"></picture></header>
-<main>${body}</main>`);
+<header>${logoHtml()}</header>
+<main>${body}</main>`); // (logoHtml)
 }
 // (who the link is for isn't known here, so it says it in every language, the first the page's)
 const gone = (res: ServerResponse) => {
@@ -1089,7 +1101,9 @@ function opening(token: string) {
 // ended only to the guest's own verified session (own).
 export type Door = { guest: string; open: boolean; words: (lang: Lang) => { title: string; text: string; button: string;
   code?: { label: string; value: string }; steps?: string[]; aside?: { title: string; lines: string[] }; small?: string };
-  go: () => string | null; shut?: (lang: Lang, own: boolean) => string };
+  go: () => string | null; shut?: (lang: Lang, own: boolean) => string;
+  // a call to talk it through, as a second button beside the first: its words and where it goes
+  talk?: (lang: Lang) => { button: string; go: string } | null };
 // A door that can't open now because its module's setup is broken (its message says how): the guest's page says so plainly,
 // and the cause goes to the log.
 export class DoorError extends Error {}
@@ -1107,6 +1121,39 @@ export function signedIn(req: IncomingMessage) {
     : undefined;
   const g = session && guest(session.guest);
   return g?.email && !g.revoked ? g : null;
+}
+
+// A room of a guest's own beyond their links (sketches.ts: their Sketchbook): /guest/<path>[/…], for their own session
+// only (signedIn), while it opens for them; their door's page has a button to it (label). serve gets the rest of the
+// path after /guest/<path>. (server.ts refuses a POST to /guest/ from any other origin.).
+export type Room = {
+  path: string;
+  opens: (guest: string) => boolean;
+  label: (lang: Lang) => string;
+  serve: (req: IncomingMessage, res: ServerResponse, guest: string, rest: string) => unknown;
+};
+const rooms: Room[] = [];
+export const addRoom = (r: Room) => {
+  rooms.push(r);
+};
+const roomOf = (path: string) => rooms.find(r => path === `/guest/${r.path}` || path.startsWith(`/guest/${r.path}/`));
+const roomsFor = (g: Guest) => rooms.filter(r => r.opens(g.name));
+// Someone without a session, or one it doesn't open for: the page the room's own address shows says how to come in,
+// anything else of it opens nothing
+function inRoom(req: IncomingMessage, res: ServerResponse, room: Room, rest: string) {
+  const g = signedIn(req);
+  if (g && room.opens(g.name)) return room.serve(req, res, g.name, rest);
+  if (req.method !== 'GET' || rest.startsWith('/api/')) {
+    res.writeHead(g ? 403 : 401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    return res.end(JSON.stringify({ error: g ? 'this isn’t open for you' : 'sign in from your own link first' }));
+  }
+  const lang = g ? langOf(g) : 'en';
+  html(
+    res,
+    g ? 403 : 401,
+    lang,
+    `<div class="card"><h1>${esc(room.label(lang))}</h1><p>${esc(COPY[lang].roomShut)}</p></div>`,
+  );
 }
 
 // Onward (/guest/onward?to=<url>): a page a guest's door opens, reached without the door's link (a demo on another preview
@@ -1136,10 +1183,12 @@ function doorPage(req: IncomingMessage, res: ServerResponse, url: string, d: Doo
   const code = w.code ? `<div class="voucherbox"><p class="voucher">${esc(w.code.label)}${w.code.value ? `<b>${esc(w.code.value)}</b>` : ''}</p>${copy}</div>` : '';
   const bold = (s: string) => esc(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
   const steps = w.steps?.length ? `<ol class="steps">${w.steps.map((s, i) => `<li>${bold(s)}${i ? '' : code}</li>`).join('')}</ol>` : code;
+  const talk = d.talk?.(lang);
+  // (and a button to each room the guest has, roomsFor)
   const aside = w.aside ? `<div class="aside"><b>${esc(w.aside.title)}</b><ul>${w.aside.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
   html(res, status, lang, `<div class="card"><h1>${esc(w.title)}</h1>${error ? `<p class="alert" role="alert">${esc(error)}</p>` : ''}
 <div class="intro">${esc(w.text)}</div>${steps}${aside}${w.small ? `<p class="meta small">${esc(w.small)}</p>` : ''}
-<p class="acts"><a class="button" href="${url}/go">${esc(w.button)}</a></p></div>
+<p class="acts"><a class="button" href="${url}/go">${esc(w.button)}</a>${talk ? `<a class="button" href="${url}/talk">${esc(talk.button)}</a>` : ''}${roomsFor(g).map(r => `<a class="button soft" href="/guest/${r.path}/">${esc(r.label(lang))}</a>`).join('')}</p></div>
 <p class="note">${esc(COPY[lang].footer(names().name))}</p>`);
 }
 
@@ -1153,9 +1202,9 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
   if (!g?.email || g.revoked || !d.open || step === 'item' || step === 'ask' || step === 'invite' || (req.method === 'POST') !== posts) return gone(res);
   const url = `/guest/${token}`;
   if (!step) return doorPage(req, res, url, d, g);
-  if (step === 'go') {
+  if (step === 'go' || step === 'talk') {
     if (!verified(req, g.name)) return verifyPage(res, url, g, {}, 401);
-    const to = d.go();
+    const to = step === 'go' ? d.go() : d.talk?.(langOf(g))?.go;
     if (!to) return gone(res);
     res.writeHead(302, { location: to, 'cache-control': 'no-store' });
     return res.end();
@@ -1171,6 +1220,8 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
 export async function page(req: IncomingMessage, res: ServerResponse) {
   const path = new URL(req.url ?? '/', 'http://x').pathname;
   if (path === '/guest/onward' && req.method === 'GET') return handOnward(req, res);
+  const room = roomOf(path);
+  if (room) return inRoom(req, res, room, path.slice(`/guest/${room.path}`.length));
   if (path === '/guest/guest.js') { res.writeHead(200, { 'content-type': 'text/javascript', 'cache-control': 'no-cache' }); return res.end(SCRIPT); }
   // the look's files (an SVG opened on its own runs no script: the sandbox)
   const own = /^\/guest\/theme\/([^/]+)$/.exec(path)?.[1], found = own && look().files.has(own) ? themeFile(own) : null;
@@ -1179,7 +1230,7 @@ export async function page(req: IncomingMessage, res: ServerResponse) {
     return res.end(readFileSync(found.real));
   }
   // a request's link, or a door's
-  const m = /^\/guest\/([A-Za-z0-9_-]{43})(?:\/(send|verify|item|ask|go|invite)|\/picture\/(\d{1,15})\/(\d)|\/file\/(\d{1,9}))?$/.exec(path);
+  const m = /^\/guest\/([A-Za-z0-9_-]{43})(?:\/(send|verify|item|ask|go|talk|invite)|\/picture\/(\d{1,15})\/(\d)|\/file\/(\d{1,9}))?$/.exec(path);
   const at = m && opening(m[1]);
   // a picture of a reply on this request, for its guest's own session
   if (at && m[3] && req.method === 'GET' && verified(req, at.g.name) && sendPicture(res, Number(m[3]), Number(m[4]), at.r.id)) return;

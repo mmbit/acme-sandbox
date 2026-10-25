@@ -59,15 +59,15 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
     if (
       pr &&
       (resolution !== undefined ||
-        !['open', 'board', 'stuck'].includes(pr.status) ||
-        (!pr.round && officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links))))
+        !inReview(pr) ||
+        (!pr.round && officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number)))
     )
       return {
         panel: pr.panel ?? 'records',
         count: 0,
         stages: [],
         terminal: null,
-        unresolved: ['open', 'board', 'stuck'].includes(pr.status),
+        unresolved: inReview(pr),
         ...resolution,
       };
     const own = pr ? (record.runs.get(pr.number) ?? []) : [];
@@ -125,25 +125,39 @@ function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
   return undefined;
 }
 
-function records(now: number, prospective?: ProspectiveRun) {
+// Every pull request's state from prs_plan, never a row's verdict (db.ts), and the files and links of those in review,
+// the only ones whose files are read (sweepAction, officeOnly): the rest read as none.
+function pullRequests() {
   const prs = prepared(
-    'select number, branch, author, panel, review_class, round, status, files, links, sha, since from prs order by number',
+    `select number, branch, author, panel, review_class, round, status, sha, since from prs indexed by prs_plan
+    order by number`,
   ).all() as PullRequest[];
+  const texts = prepared('select files, links from prs where number = ?');
+  for (const pr of prs) Object.assign(pr, inReview(pr) ? texts.get(pr.number) : { files: '[]', links: '[]' });
+  return prs;
+}
+
+function records(now: number, prospective?: ProspectiveRun) {
+  const prs = pullRequests();
+  // (jobs_review_runs covers the jobs columns, prs_plan the pull requests': db.ts.)
   const runs = prepared(
     `select j.id, p.number pr, max(1, coalesce(f.round, j.round, p.round)) round,
     j.agent, j.engine, j.kind, j.stage, j.status from (
-      select j.id from prs p cross join jobs j on j.pr = p.number where p.status in ('open', 'board', 'stuck')
-      union select f.job from prs p join review_fix_tasks f on f.pr = p.number where p.status in ('open', 'board', 'stuck')
-    ) candidate cross join jobs j on j.id = candidate.id
-    left join review_fix_tasks f on f.job = j.id join prs p on p.number = coalesce(f.pr, j.pr)
+      select j.id from prs p indexed by prs_plan cross join jobs j on j.pr = p.number
+      where p.status in ('open', 'board', 'stuck')
+      union select f.job from prs p indexed by prs_plan join review_fix_tasks f on f.pr = p.number
+      where p.status in ('open', 'board', 'stuck')
+    ) candidate cross join jobs j indexed by jobs_review_runs on j.id = candidate.id
+    left join review_fix_tasks f on f.job = j.id join prs p indexed by prs_plan on p.number = coalesce(f.pr, j.pr)
     where p.status in ('open', 'board', 'stuck') order by coalesce(j.seq, j.id), j.id`,
   ).all() as Run[];
   if (prospective) runs.push(prospective);
-  // jobs_run_sizes covers the jobs columns here to skip wide job rows (db.ts).
+  // jobs_review_runs covers the jobs columns here to skip wide job rows (db.ts).
   const measured = prepared(
     `select j.engine, case when j.stage = 'triage' then 'triage' else j.kind end kind,
     sum((julianday(r.ended) - julianday(r.started)) * 86400000) ms
-    from runs r cross join jobs j indexed by jobs_run_sizes on j.id = r.job left join review_fix_tasks f on f.job = j.id
+    from runs r cross join jobs j indexed by jobs_review_runs on j.id = r.job
+    left join review_fix_tasks f on f.job = j.id
     where r.ended > ? and j.status = 'done'
     and (j.kind in ('review', 'consolidate') or j.stage = 'fix' and coalesce(f.round, j.round) is not null)
     and not exists (select 1 from runs o where o.job = j.id and o.ended is null) group by j.id`,
@@ -175,7 +189,7 @@ function records(now: number, prospective?: ProspectiveRun) {
 function recordedSelections() {
   const selections = db
     .prepare(
-      `select t.pr, t.selection from review_triage t join prs p
+      `select t.pr, t.selection from review_triage t join prs p indexed by prs_plan
     on p.number = t.pr and p.round = t.round and p.sha = t.sha where t.job > p.since
     and t.job = (select max(job) from review_triage where pr = t.pr and round = t.round and sha = t.sha)`,
     )
@@ -217,6 +231,7 @@ function panelActors(record: ReturnType<typeof records>) {
     codex: reviewers.filter(agent => engines.get(agent) === 'codex'),
   };
 }
+const inReview = (pr: { status: string }) => ['open', 'board', 'stuck'].includes(pr.status);
 const isOpen = (run: Run) => ['queued', 'running', 'blocked'].includes(run.status);
 
 type Selected = { consolidator: string; reviewers: { agent: string }[] };
@@ -274,7 +289,7 @@ function buildPlan(context: Context): ReviewPlan {
     count: context.count,
     stages,
     terminal: preceding.at(-1) ?? null,
-    unresolved: !!context.pr && ['open', 'board', 'stuck'].includes(context.pr.status),
+    unresolved: !!context.pr && inReview(context.pr),
   };
 }
 

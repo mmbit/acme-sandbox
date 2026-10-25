@@ -8,6 +8,7 @@ import { createJob, findAgent, preview, holdsCustomerData, handedCustomerData, h
 import { STANDING } from './jobcodes.ts';
 import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
+import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
 export function carriesKeys(call: number) {
@@ -34,6 +35,9 @@ once('2026-10-17-keys-chat-sessions', () => {
     and id >= (select min(id) from chat where about_keys = 1);
     update jobs set about_keys = 1 where kind = 'chat' and exists (select 1 from chat where about_keys = 1)`);
 });
+
+// The lines the CEO hears: the board's, those from outside the chat (call), and an invited person's (guest: fromGuest).
+const HEARD = "('board', 'call', 'guest')";
 
 // The CEO's lines are theirs by id (who), and shown by name
 const ceoName = () => findAgent(ceo())?.name ?? 'the CEO';
@@ -65,7 +69,8 @@ the coordinator) are the Process team's to build: hand them to ${findAgent(fixer
 the board's own Claude Code for them; that's for quick fixes the board chooses to make itself.
 Before queueing work, read \`hq estimate "..."\` for clean past-job scopes and actual times. Judge the scope yourself,
 then queue with \`--size <time> --refs <job,job> --why "scope comparison"\`. With no comparable job, omit refs and explain
-why. The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
+why. ${DEFAULT_ESTIMATE_SCALE}
+The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
 board's time: whether it makes it, and only if not, what would). Give one plain time. What the board asks for here takes
 its window as you queue it, \`hq job ... --by <when>\`, so HQ orders the thread's work by it from the first minute (its
@@ -90,14 +95,14 @@ const AGAIN = `${CHAT} (starting over)`;
 
 const current = () => db.prepare("select * from jobs where kind = 'chat' order by id desc limit 1").get() as
   { id: number; status: string; engine: string; not_before: number | null } | undefined;
-// pictureIds: the board's pictures that go with the line
-export function say(text: string, call?: string, callId?: number, pictureIds: number[] = []) {
+// pictureIds: the board's pictures that go with the line; who: whose line, the board's or a call's (or an invited person's, fromGuest)
+export function say(text: string, call?: string, callId?: number, pictureIds: number[] = [], who = call ? 'call' : 'board') {
   // A very long talk is fine (a two-hour call is about 100,000 characters); this only stops a runaway, and says so.
   text = text.trim();
   if (text.length > 400_000) text = `${text.slice(0, 400_000)}\n\n… (cut here: the message had ${text.length.toLocaleString('en')} characters)`;
   if (!text && !pictureIds.length) return 400;
   const line = db.prepare('insert into chat (ts, who, text, shown, call) values (?, ?, ?, ?, ?)').run(new Date().toISOString(),
-    call ? 'call' : 'board', text, call ?? null, callId ?? null).lastInsertRowid;
+    who, text, call ?? null, callId ?? null).lastInsertRowid; // (who)
   pictures.attach(pictureIds, Number(line));   // (before it's delivered: its turn hears them)
   const job = current();
   if (!job || ['failed', 'cancelled'].includes(job.status)) start(CHAT, job?.id);
@@ -106,6 +111,10 @@ export function say(text: string, call?: string, callId?: number, pictureIds: nu
   else if (job.status === 'blocked') deliver(job.id); // waiting on the desk phone: the CEO answers this meanwhile
   return history();
 }
+// A line from a person the board invited (sketches.ts: a sketch from their own Sketchbook), heard by the CEO as the board's
+// are: text, what the CEO hears, says whose it is and that it's outside text (charter rule 9); shown, what the intercom
+// shows the board (history).
+export const fromGuest = (text: string, shown: string, pictureIds: number[]) => say(text, shown, undefined, pictureIds, 'guest');
 // A line the board typed in HQ, with the pictures it attached (pictures.ts). A picture no longer waiting refuses the
 // line and names it, so HQ can take it out of the tray. The reason covers all that pictures.waiting counts: sent
 // already, removed, or gone after a day.
@@ -130,7 +139,7 @@ export function answered(job: { id: number; title?: string }, status: string, re
   // HQ's Calls too (ledger.ts reply).
   if (done) db.prepare("update calls set reply = ? where job = ? and processed_at is null and id in (select call from chat where who = 'call' and sent = 2)")
     .run(reply, job.id);
-  const heard = db.prepare(`update chat set sent = ${done ? 1 : 0} where who in ('board', 'call') and sent = 2`).run().changes;
+  const heard = db.prepare(`update chat set sent = ${done ? 1 : 0} where who in ${HEARD} and sent = 2`).run().changes; // (HEARD)
   const again = !done && heard > 0 && job.title !== AGAIN;
   if (done && job.title === AGAIN) db.prepare('update jobs set title = ? where id = ?').run(CHAT, job.id);
   // (only a turn's own reply counts: one that ended done.)
@@ -143,7 +152,7 @@ export function answered(job: { id: number; title?: string }, status: string, re
     Number(holdsCustomerData(job.id)), Number(holdsKeys(job.id)));
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(text, 160) });   // (a bubble; the intercom has it all)
   if (again) start(AGAIN, job.id);
-  else if (done && db.prepare("select 1 from chat where who in ('board', 'call') and sent = 0").get()) deliver(job.id);
+  else if (done && db.prepare(`select 1 from chat where who in ${HEARD} and sent = 0`).get()) deliver(job.id); // (HEARD)
 }
 
 // A new chat job (a new session) hears every line the CEO hasn't answered yet, including any a job that was cancelled
@@ -153,8 +162,8 @@ export function answered(job: { id: number; title?: string }, status: string, re
 // had, or ones older than the CEO's latest reply: a turn that ends done hands on everything that came in meanwhile, so only
 // a failed turn leaves those waiting).
 function start(title: string, replaces?: number) {
-  const had = db.prepare("update chat set sent = 0 where who in ('board', 'call') and sent = 2").run().changes > 0;
-  const again = had || !!db.prepare("select 1 from chat where who in ('board', 'call') and sent = 0 and id < (select coalesce(max(id), 0) from chat where who = ?)").get(ceo());
+  const had = db.prepare(`update chat set sent = 0 where who in ${HEARD} and sent = 2`).run().changes > 0; // (HEARD)
+  const again = had || !!db.prepare(`select 1 from chat where who in ${HEARD} and sent = 0 and id < (select coalesce(max(id), 0) from chat where who = ?)`).get(ceo());
   // (word: its task code's, jobcodes.ts.)
   const id = createJob({ agent: ceo(), kind: 'chat', word: STANDING.chat, title, prompt: brief() + recap() }).id;
   if (replaces) {
@@ -162,7 +171,7 @@ function start(title: string, replaces?: number) {
     db.prepare("update calls set job = ?, reply = null where job = ? and id in (select call from chat where who = 'call' and sent = 0)").run(id, replaces);
     db.prepare("update requests set job = ? where job = ? and status = 'open'").run(id, replaces);
   }
-  deliver(id, again ? AGAIN_SAYS : undefined);
+  deliver(id, again); // (again)
 }
 
 // A fresh session doesn't remember the conversation: its brief has the intercom's latest lines that were heard already
@@ -171,7 +180,9 @@ function recap() {
   const said = lines(30, 'sent = 1');
   return !said.length ? '' : `\n\nThis session is new. The conversation so far (its latest lines):\n\n${said.map(line).join('\n')}`;
 }
+// (a guest's)
 const line = (m: ReturnType<typeof lines>[number]) => m.who === 'call' ? `(${m.text})`
+  : m.who === 'guest' ? `(${withPictures(m.text.slice(0, 1000), m.pictures)})`
   : `${m.who === 'board' ? 'Board' : ceoName()}: ${withPictures(m.text.slice(0, 1000), m.pictures)}`;
 
 // A line as it's shown outside the session that heard it (a call's prompt, a fresh session's recap, the intercom's
@@ -191,7 +202,7 @@ export function lines(limit: number, where = '1') {
 // call's agent can't open them, a fresh session saves them with hq picture.
 export const withPictures = (text: string, ids: number[]) => !ids.length ? text
   : `${text}${text ? ' ' : ''}(with ${ids.length === 1 ? 'picture' : 'pictures'} ${ids.map(id => `#${id}`).join(', ')})`;
-const AGAIN_SAYS = "The board says (your last session broke off before it answered, so you're hearing this again; if a turn before this one already acted on something here, don't do it twice: check with hq jobs, the repo and the desk phone):";
+const AGAIN_SAYS = " (your last session broke off before it answered, so you're hearing this again; if a turn before this one already acted on something here, don't do it twice: check with hq jobs, the repo and the desk phone)"; // (its head deliver's)
 
 // A turn that parked (the CEO asked the board on the desk phone) doesn't hear what came in during it until it's resumed:
 // it's resumed now if anything did. Its request stays open.
@@ -213,21 +224,31 @@ export const heard = (call: number) => !!db.prepare("select 1 from chat where ca
 // Queue the chat job with what the board said since the CEO last heard from it (added to a turn that hasn't
 // started yet), and any call notes waiting to go along. A new turn starts its attempts from 0, so it too is tried again
 // twice (jobs.ts).
-function deliver(id: number, says = 'The board says:') {
-  const unsent = db.prepare("select id, text, about_customer, about_keys, call from chat where who in ('board', 'call') and sent in (0, 3) order by id")
-    .all() as { id: number; text: string; about_customer: number; about_keys: number; call: number | null }[];
+// (an invited person's lines too, HEARD, headed as not the board's when only theirs
+// wait, each picture of theirs as theirs)
+function deliver(id: number, again = false) {
+  const unsent = db.prepare(`select id, who, text, about_customer, about_keys, call from chat where who in ${HEARD} and sent in (0, 3) order by id`)
+    .all() as { id: number; who: string; text: string; about_customer: number; about_keys: number; call: number | null }[];
   if (!unsent.length) return;
+  const says = `${unsent.some(m => m.who !== 'guest') ? 'The board says' : GUEST_HEAD}${again ? AGAIN_SAYS : ''}:`;
   if (unsent.some(m => m.about_customer)) handedCustomerData(id);
   if (unsent.some(m => m.about_keys || (m.call && carriesKeys(m.call)))) handedKeys(id);
-  db.prepare("update chat set sent = 2 where who in ('board', 'call') and sent in (0, 3) and id <= ?").run(unsent.at(-1)!.id);
+  db.prepare(`update chat set sent = 2 where who in ${HEARD} and sent in (0, 3) and id <= ?`).run(unsent.at(-1)!.id); // (HEARD)
   const job = db.prepare('select status, note from jobs where id = ?').get(id) as { status: string; note: string | null };
   const adds = job.status === 'queued' && job.note, long = adds ? undefined : setting(LONG);
   if (long) remember(LONG, null);
+  let marked = !adds || !job.note!.includes(GUEST_HEAD);
   const before = adds ? `${job.note}\n\n`
     : `${long ? `(From HQ, not the board: your last reply ran ${long} words. Keep to about 80, the answer first.)\n\n` : ''}${says}\n\n`;
   db.prepare("update jobs set status = 'queued', seat = null, not_before = 0, note = ?, attempts = iif(status = 'queued', attempts, 0) where id = ?")
-    .run(before + unsent.map(m => [m.text, pictures.mention(pictures.ofLine(m.id))].filter(Boolean).join('\n\n')).join('\n\n'), id);
+    .run(before + unsent.map(m => {
+      const text = [m.text, pictures.mention(pictures.ofLine(m.id), m.who === 'guest')].filter(Boolean).join('\n\n');
+      if (marked || m.who === 'guest') return text;
+      marked = true;   // (the board's line joining a note headed as the intercom's says it's the board's)
+      return `The board says:\n\n${text}`;
+    }).join('\n\n'), id);
 }
+const GUEST_HEAD = 'From the intercom, not the board';
 
 // The CEO's calls have a follow-up job like everyone's (ledger.ts). The board reads its notes here, as the CEO's reply after
 // the call, and the next turn hears them (without one starting just for that), so the CEO's session knows what was done.

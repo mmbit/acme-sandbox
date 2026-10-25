@@ -3,7 +3,9 @@
 x-logging: &logging { driver: journald }
 services:
   caddy:
-    image: caddy:2-alpine
+    # A version, not 2-alpine: compose pulls only a tag it lacks, so a floating tag stayed on its first pull (2.11.4,
+    # without the forward_auth fix of GHSA-6365-7ppr-5r92). Bump with the worker's test Caddy (platform/worker/Dockerfile).
+    image: caddy:2.11.7-alpine
     logging: *logging
     restart: unless-stopped
     ports: ["80:80", "443:443"]

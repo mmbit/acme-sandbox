@@ -17,7 +17,8 @@ export type TimingEvidence = {
   outcomes: string;
   invalid_runs: number;
   unknown_seats: number;
-  replaced: number;
+  // The job replaces another (it has an instead_of), not that a later job replaced it.
+  is_replacement: number;
   runs: number;
 };
 
@@ -28,7 +29,7 @@ export function timingFlags(evidence: TimingEvidence): TimingFlag[] {
   if (evidence.unknown_seats) flags.push('unknown_seat');
   if (evidence.invalid_runs) flags.push('invalid_time');
   if (evidence.runs > 1) flags.push('resumed');
-  if (evidence.replaced) flags.push('replacement');
+  if (evidence.is_replacement) flags.push('replacement');
   for (const outcome of outcomes) {
     if (outcome === 'done') continue;
     if (OUTCOMES.has(outcome)) flags.push(outcome as TimingFlag);

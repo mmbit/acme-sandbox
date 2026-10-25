@@ -50,7 +50,7 @@ export function svg(
     if (!look) return '';
     const d = pathOf(shape, { k, ox, oy });
     const stroke = look.stroke
-      ? ` stroke="${palette.ink}" stroke-width="${n(shape.role === 'thin' ? line / 2 : line)}"`
+      ? ` stroke="${inkOf(shape, palette)}" stroke-width="${n(shape.role === 'thin' ? line / 2 : line)}"`
       : '';
     if (shape.kind === 'line') return `<path d="${d}" fill="none"${stroke}/>`;
     const under = look.pattern && look.fill ? `<path d="${d}" fill="${look.fill}"/>` : '';
@@ -63,6 +63,9 @@ export function svg(
   );
 }
 
+// The colour of a shape's line: ink, or onAccent for a line drawn on the accent
+const inkOf = (shape, palette) => (shape.onAccent ? (palette.onAccent ?? palette.ink) : palette.ink);
+
 const ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const escape = text => text.replace(/[&<>"]/g, c => ENTITIES[c]);
 
@@ -71,7 +74,6 @@ const escape = text => text.replace(/[&<>"]/g, c => ENTITIES[c]);
 // Each shape keeps its Path2D, so a scene that keeps its shapes paints them again cheaply.
 export function paint(ctx, shapes, palette, { k = 1, line = 1.5 } = {}) {
   ctx.lineJoin = ctx.lineCap = 'round';
-  ctx.strokeStyle = palette.ink;
   for (const shape of shapes) {
     const look = paintOf(shape.role, palette);
     if (!look) continue;
@@ -85,6 +87,7 @@ export function paint(ctx, shapes, palette, { k = 1, line = 1.5 } = {}) {
       ctx.fill(shape.path);
     }
     if (look.stroke) {
+      ctx.strokeStyle = inkOf(shape, palette);
       ctx.lineWidth = (shape.role === 'thin' ? line / 2 : line) / k;
       ctx.stroke(shape.path);
     }

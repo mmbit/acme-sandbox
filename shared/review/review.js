@@ -1,7 +1,8 @@
 // Review mode: the board's feedback tool on every product page (shared/review/README.md).
 // The coordinator serves this file only to the board (a valid preview key on <slug>.preview.<zone>); everyone
-// else gets an empty script, so it never runs for customers. Tap the pin, then tap anything (or draw a circle
-// around it), say or type the note, and it goes to HQ with a screenshot of the screen as it was and the last
+// else gets only the watch-along's answer to HQ's frame (shared/watchalong/framed.js, which it serves after this file
+// for the board too), so it never runs for customers. Tap the pin (or draw on the page with a pen), then tap
+// anything or draw on it, say or type the note, and it goes to HQ with a screenshot of the screen as it was and the last
 // few things the board did here (the trail). The UI lives in a closed shadow root: product styles can't touch it.
 (() => {
   // In a frame it runs only directly inside HQ's preview viewer, where the board opens most demos: the coordinator
@@ -81,6 +82,7 @@
     // ---------------------------------------------------------------- the UI
     const PIN = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.5 2.5l7 7-2.2.6-3.6 3.6.4 4.6-1.6 1.6-4.2-4.2L5 21l-.9-.9 5.3-5.3-4.2-4.2 1.6-1.6 4.6.4 3.6-3.6z" fill="currentColor"/></svg>';
     const MENU = '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+    const UNDO = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9h10.5a5.5 5.5 0 010 11H11" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round"/></svg>';
     const MIC = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2.5" width="6" height="12" rx="3" fill="currentColor"/><path d="M5.5 11a6.5 6.5 0 0013 0M12 17.5V21M8.5 21h7" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round"/></svg>';
     const CSS_TEXT = `
       :host { all: initial; }
@@ -110,7 +112,7 @@
       .dock.left .tip { right: auto; left: 0; }
       .tip.show { opacity: 1; transform: none; }
       /* the menu, a quiet round button beside the pin with the count of notes not sent yet */
-      .more { pointer-events: auto; position: absolute; right: 70px; bottom: 12px; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+      .more { pointer-events: auto; position: absolute; right: 70px; bottom: 12px; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; touch-action: none;   /* (it drags the pin too) */
         background: rgba(255,255,255,.92); color: #2b2230; border: 1px solid rgba(43,34,48,.3); box-shadow: 0 2px 8px rgba(43,34,48,.15); }
       .more svg { width: 16px; height: 16px; }
       .more[aria-expanded="true"] { background: #2b2230; color: #fff; }
@@ -135,6 +137,13 @@
       .screen .go:hover, .screen .go:focus-visible { filter: brightness(1.07); }
       .screen .go small { color: inherit; opacity: .85; }
       .screen .go.sure { background: ${ACCENT}; color: #fff; }
+      /* Listen as I draw: a switch */
+      .screen [role=menuitemcheckbox] { position: relative; padding-right: 64px; }
+      .screen [role=menuitemcheckbox]::after { content: ""; position: absolute; right: 12px; top: 50%; width: 40px; height: 24px; margin-top: -12px; border-radius: 12px; background: var(--line); transition: background .2s; }
+      .screen [role=menuitemcheckbox]::before { content: ""; position: absolute; z-index: 1; right: 30px; top: 50%; width: 20px; height: 20px; margin-top: -10px; border-radius: 50%; background: #fff;
+        box-shadow: 0 1px 2px rgb(0 0 0 / .25); transition: transform .2s cubic-bezier(.3,1.5,.5,1); }
+      .screen [aria-checked="true"]::after { background: var(--accent); }
+      .screen [aria-checked="true"]::before { transform: translateX(16px); }
       /* My notes: a sidebar sliding in from the side (the whole width on a phone), every note a card in one scrolling list.
          Sized to what's visible (fitSide, below), it stays on screen on a zoomed or wide page. */
       .side { pointer-events: auto; position: absolute; top: 0; right: 0; bottom: 0; width: min(440px, 100%); display: flex; background: var(--bg); color: var(--ink); transform-origin: 0 0;
@@ -190,15 +199,31 @@
       .veil { pointer-events: auto; position: absolute; inset: 0; touch-action: none; cursor: crosshair;
         box-shadow: inset 0 0 0 4px ${ACCENT}, inset 0 0 60px rgba(255,90,95,.25); background: rgba(255,246,216,.08); }
       .veil[hidden], .sheet[hidden] { display: none; }
-      .hint { position: absolute; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); background: #fff; border-radius: 999px; padding: 10px 18px;
+      /* over the page while the board marks it: what to do, and the inks */
+      .bar { position: absolute; left: 50%; top: max(14px, env(safe-area-inset-top)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 12px; }
+      .hint { background: #fff; border-radius: 999px; padding: 10px 18px;
         box-shadow: 0 4px 0 #2b2230, 0 10px 30px rgba(43,34,48,.25); border: 2px solid #2b2230; white-space: nowrap; font-weight: 600; font-size: 15px; display: flex; gap: 10px; align-items: center; }
+      .veil.marked .hint { display: none; }
+      /* the inks: little pots of paint on a strip of card, the one in hand lifted out of its well */
+      .strip { display: flex; align-items: center; padding: 3px 4px; border-radius: 999px; cursor: default; touch-action: manipulation;
+        background: linear-gradient(#fffdf6, #f1ead8); border: 2px solid #2b2230; box-shadow: 0 4px 0 #2b2230, 0 10px 30px rgba(43,34,48,.25), inset 0 1px 0 #fff; }
+      .strip button { position: relative; width: 40px; height: 40px; display: grid; place-items: center; }
+      .strip .pot i { width: 24px; height: 24px; border-radius: 50%; background: var(--c); transition: transform .2s cubic-bezier(.3,1.6,.5,1), box-shadow .2s;
+        box-shadow: inset 0 2px 3px rgba(0,0,0,.28), inset 0 -1px 0 rgba(255,255,255,.35), 0 1px 0 #fff; }
+      .strip .pot i::after { content: ""; position: absolute; width: 7px; height: 4px; margin: 5px 0 0 6px; border-radius: 50%; background: rgba(255,255,255,.55); opacity: 0; transition: opacity .2s; }
+      .strip .pot.wide i { width: 26px; height: 15px; border-radius: 4px; opacity: .75; transform: rotate(-20deg); }   /* (the highlighter's chisel tip) */
+      .strip .pot[aria-pressed="true"] i { transform: translateY(-3px) scale(1.12); box-shadow: 0 0 0 2px #fffdf6, 0 0 0 4px #2b2230, 0 5px 6px rgba(43,34,48,.35); }
+      .strip .pot.wide[aria-pressed="true"] i { transform: translateY(-3px) rotate(-20deg) scale(1.12); }
+      .strip .pot[aria-pressed="true"] i::after { opacity: 1; }
+      .strip .sep { width: 2px; height: 24px; margin: 0 4px; border-radius: 1px; background: rgba(43,34,48,.18); }
+      .strip .undo { color: #2b2230; } .strip .undo svg { width: 22px; height: 22px; } .strip .undo:disabled { opacity: .3; cursor: default; }
+      .strip .undo:not(:disabled):active svg { transform: rotate(-40deg); transition: transform .1s; }
       .hint i { width: 20px; height: 20px; color: ${ACCENT}; animation: peck 1.2s ease-in-out infinite; } .hint i svg { width: 100%; height: 100%; }
       .hint small { font-weight: 400; color: #6d6275; }
       @keyframes peck { 0%, 100% { transform: translateY(0) } 40% { transform: translateY(4px) rotate(8deg) } }
       .hl { position: absolute; border: 2px dashed ${ACCENT}; border-radius: 6px; background: rgba(255,90,95,.08); transition: all .08s; pointer-events: none; }
       .hl[hidden] { display: none; }
-      .ink { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-      .ink path { fill: rgba(255,90,95,.08); stroke: ${ACCENT}; stroke-width: 5; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 1px 0 #fff) drop-shadow(0 0 1px #fff); }
+      .ink, .wet { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }   /* the strokes, and the one being drawn (ink.js) */
       .drop { position: absolute; width: 34px; height: 34px; margin: -30px 0 0 -6px; color: ${ACCENT}; filter: drop-shadow(0 2px 0 #fff); animation: land .4s cubic-bezier(.3,1.6,.5,1); pointer-events: none; }
       @keyframes land { from { transform: translateY(-40px) scale(1.4); opacity: 0 } }
 
@@ -213,8 +238,8 @@
       .top { display: flex; gap: 14px; align-items: flex-start; }
       .polaroid { flex: none; width: 112px; background: #fff; padding: 6px 6px 18px; box-shadow: 0 3px 10px rgba(43,34,48,.25); transform: rotate(3deg); position: relative; }
       .polaroid .img { width: 100%; aspect-ratio: 3 / 4; background: #3a3345; display: grid; place-items: center; overflow: hidden; position: relative; } /* (relative: a framed img sits on the mark) */
-      .polaroid img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; animation: develop 1.2s ease-out; }
-      .polaroid img.framed { position: absolute; max-width: none; object-fit: fill; }
+      .polaroid img, .polaroid canvas { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; animation: develop 1.2s ease-out; }
+      .polaroid .framed { position: absolute; max-width: none; object-fit: fill; }
       .polaroid .img span { color: #cfc6da; font-size: 11px; text-align: center; padding: 6px; }
       .polaroid.busy .img { background: linear-gradient(110deg, #3a3345 30%, #5a4f6b 50%, #3a3345 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
       @keyframes shimmer { to { background-position: -150% 0 } }
@@ -226,6 +251,14 @@
       .page { display: block; margin-top: 4px; color: #6d6275; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .redraw { margin-top: 6px; padding: 4px 0; font-size: 14px; font-weight: 700; color: #c23c44; text-decoration: underline; text-underline-offset: 3px; }   /* changing a note: its mark drawn again */
       .redraw[hidden] { display: none; }
+      /* the board's: the circled bit to a sketch in HQ's Sketchbook */
+      .tosk { display: block; margin-top: 6px; font-size: 14px; color: #6d6275; }
+      .tosk[hidden], .tosk [hidden] { display: none; }
+      .tosk button { padding: 4px 0; font-size: 14px; font-weight: 700; color: #2b2230; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 3px; }
+      .tosk .tosk-go::before { content: ""; display: inline-block; width: 11px; height: 13px; margin-right: 6px; vertical-align: -2px; border: 1.5px solid currentColor; border-radius: 1px 3px 3px 1px; box-shadow: inset 2px 0 0 currentColor; }
+      .tosk.done button { color: #1d7a4a; text-decoration: none; } .tosk.done .tosk-go::before { display: none; }
+      .polaroid.hop { animation: hop .5s cubic-bezier(.3,1.6,.5,1); }
+      @keyframes hop { 40% { transform: translateY(-10px) rotate(-4deg) scale(1.05) } }
       .sheet.bare .polaroid, .sheet.bare .chip { display: none; } /* a general note: no photo */
       textarea { display: block; width: 100%; margin: 14px 0 10px; min-height: 104px; resize: vertical; border: 0; outline: 0; padding: 4px 2px; color: #2b2230; font: 18px/28px system-ui, sans-serif;
         background: repeating-linear-gradient(transparent 0 27px, rgba(91,141,239,.35) 27px 28px); background-attachment: local; }
@@ -260,11 +293,13 @@
     const root = host.attachShadow({ mode: 'closed' });
     // (the ink and the outline sit outside the veil, so a mark shows while its note is changed; Redraw in the sheet)
     root.innerHTML = `<div class="ui">
-      <div class="veil" hidden><div class="hint"><i>${PIN}</i><span>Tap anything <small>or draw a circle around it</small></span></div></div>
-      <svg class="ink"><path d=""/></svg><div class="hl" hidden></div>
+      <div class="veil" hidden><div class="bar"><div class="hint"><i>${PIN}</i><span>Tap anything <small>or draw on it</small></span></div>
+        <div class="strip" role="toolbar" aria-label="Inks"><span class="sep"></span><button class="undo" aria-label="Undo the last line" title="Undo" disabled>${UNDO}</button></div></div></div>
+      <canvas class="ink" data-watchalong-hide></canvas><canvas class="wet" data-watchalong-hide></canvas><div class="hl" hidden></div>
       <div class="sheet" hidden role="dialog" aria-label="A note for the team">
         <div class="top"><div class="polaroid busy"><div class="img"></div></div>
-          <div class="who"><h2>Note to self… er, to the team</h2><span class="chip"></span><span class="page"></span><button class="redraw" hidden>Redraw</button></div></div>
+          <div class="who"><h2>Note to self… er, to the team</h2><span class="chip"></span><span class="page"></span><button class="redraw" hidden>Redraw</button>
+           <span class="tosk" hidden><button class="tosk-go">To the Sketchbook</button><span class="tosk-to" hidden>Into <button data-to="new">a new sketch</button> or <button data-to="last">the last one</button>?</span></span></div></div>
         <textarea placeholder="What should change? Type it, or tap the mic and say it." maxlength="4000"></textarea>
         <div class="row"><button class="mic" aria-label="Dictate the note">${MIC}</button><span class="grow"></span>
           <button class="ghost" data-cancel>Never mind</button><button class="send">Pin it</button></div>
@@ -275,6 +310,7 @@
         <div class="menu" hidden role="menu" aria-label="Review mode"><div class="screen"><p class="cap"></p>
           <div class="items"><button role="menuitem" data-general>General note<small>About it all, not one spot</small></button>
             <button role="menuitem" data-list>My notes<small></small></button>
+            <button role="menuitemcheckbox" aria-checked="false" data-listen hidden>Listen as I draw<small>Off</small></button>
             <button role="menuitem" class="go" data-mine hidden>Send my notes<small></small></button>
             <button role="menuitem" class="go" data-again hidden>Add more notes<small>Pin away, then send them again</small></button>
             <button role="menuitem" data-away hidden>Put the pin away<small>Bring it back anytime</small></button></div></div></div>
@@ -286,7 +322,7 @@
         <footer><button data-close>Close</button><button class="go" data-send hidden>Send my notes<small></small></button></footer></div></div>
       <div class="zoom" hidden role="dialog" aria-label="The screenshot, bigger"><img alt="The screen as it was, with the spot marked"></div></div>`;
     const $ = s => root.querySelector(s);
-    const dock = $('.dock'), fab = $('.fab'), coach = $('.coach'), veil = $('.veil'), ink = $('.ink path'), hl = $('.hl'), sheet = $('.sheet'), text = $('textarea'), msg = $('.msg'), mic = $('.mic');
+    const dock = $('.dock'), fab = $('.fab'), coach = $('.coach'), veil = $('.veil'), hl = $('.hl'), sheet = $('.sheet'), text = $('textarea'), msg = $('.msg'), mic = $('.mic');
     const more = $('.more'), menu = $('.menu'), ASK = text.placeholder, redrawButton = $('.redraw');
     // (a stylesheet of its own rather than a <style>, so a page whose CSP admits no inline style, like HQ's, still draws it)
     try {
@@ -415,6 +451,9 @@
         if (!b.dataset.sure) label(b, 'Send my notes', sendLine);
       }
       again.hidden = !done;
+      // (Listen as I draw, where the browser records: no notes to draw once they're sent.)
+      const listen = $('[data-listen]');
+      listen.hidden = done || !listen.dataset.can;
     }
     paint(); refresh();
     addEventListener('pageshow', e => e.persisted && refresh());
@@ -425,6 +464,7 @@
     const unsure = b => { if (!b.disabled) { delete b.dataset.sure; b.classList.remove('sure'); paint(); } };
     const shut = () => { menu.hidden = true; more.setAttribute('aria-expanded', 'false'); unsure(sendButton); };
     more.onclick = () => {
+      if (dragged) { dragged = false; return; }   // (it drags the pin too: below)
       if (!menu.hidden) return shut();
       uncoach(); tip.classList.remove('show'); refresh();
       menu.hidden = false; more.setAttribute('aria-expanded', 'true');
@@ -434,6 +474,13 @@
     $('.ui').addEventListener('pointerdown', e => { if (!menu.contains(e.target) && !more.contains(e.target)) shut(); });
     $('[data-general]').onclick = () => { shut(); if (mode === 'idle') general(); };
     notesItem.onclick = () => openSide();
+    // Listen as I draw: the first mark starts the mic, on a computer and a tablet alike (off until the reviewer turns it
+    // on, on this device).
+    const LISTEN = '__hq_review_listen', listenItem = $('[data-listen]');
+    const listening = () => kept(localStorage, LISTEN) === '1';
+    const showListen = () => { listenItem.setAttribute('aria-checked', String(listening())); label(listenItem, 'Listen as I draw', listening() ? 'On: a mark starts the mic' : 'Off'); };
+    listenItem.onclick = () => { keep(localStorage, LISTEN, listening() ? '' : '1'); showListen(); };
+    showListen();
     const away = $('[data-away]');
     let putAway = false, covered = false;
     const showPin = () => { host.style.display = putAway || covered ? 'none' : 'block'; };
@@ -636,11 +683,11 @@
       try { for (const part of sel.match(/(?:\\[0-9a-fA-F]{1,6} ?|\\.|[^\\ ]| > )+/g) ?? []) if (!(el = (el ? el.shadowRoot : doc)?.querySelector(part))) return null; } catch { return null; }
       return el;
     };
-    // The shown mark, drawn where it is now: a circle's (or rectangle's) line, an older circle without one as the oval in its
-    // area, and a pin's element outlined. scroll: brings it into view above the sheet.
+    // The shown mark, drawn where it is now: its lines (an older circle's closed line, or the oval in its area when it
+    // has none), and a pin's element outlined. scroll: brings it into view above the sheet.
     function showMark(scroll = false) {
       const m = editing?.mark;
-      ink.setAttribute('d', ''); hl.hidden = true;
+      paintInk([]); hl.hidden = true;
       if (!m || (mode !== 'note' && mode !== 'sending')) return;
       const el = m.el?.isConnected ? m.el : m.selector ? found(m.selector) : null, now = el?.getBoundingClientRect(), was = m.rect;
       const at = now && was && (now.width || now.height)
@@ -653,21 +700,21 @@
         const room = sheet.hidden ? innerHeight : sheet.getBoundingClientRect().top, middle = (top + bottom) / 2;
         if (top < 8 || bottom > room - 8) { scrollBy({ left: 0, top: middle - Math.max(room, 120) / 2, behavior: 'instant' }); return showMark(); }
       }
-      if (m.kind === 'circle' && m.path?.length) ink.setAttribute('d', trace(m.path.map(at), 'Z'));
-      else if (m.kind === 'circle') {
-        const rx = (right - left) / 2, ry = (bottom - top) / 2;
-        ink.setAttribute('d', `M${left} ${top + ry}A${rx} ${ry} 0 1 0 ${right} ${top + ry}A${rx} ${ry} 0 1 0 ${left} ${top + ry}Z`);
-      } else { Object.assign(hl.style, { left: `${left - 3}px`, top: `${top - 3}px`, width: `${right - left + 6}px`, height: `${bottom - top + 6}px` }); hl.hidden = false; }
+      if (m.kind !== 'circle') { Object.assign(hl.style, { left: `${left - 3}px`, top: `${top - 3}px`, width: `${right - left + 6}px`, height: `${bottom - top + 6}px` }); hl.hidden = false; }
+      const lines = m.ink?.length ? m.ink : m.kind !== 'circle' ? [] : [{ color: ACCENT, size: 5, points: (m.path?.length ? [...m.path, m.path[0]] : oval(a)).map(([x, y]) => [x, y, 0.5, 0]) }];
+      paintInk(lines.map(l => ({ ...l, points: l.points.map(([x, y, ...rest]) => [...at([x, y]), ...rest]) })));
     }
+    // (an older circle saved with only its area)
+    const oval = a => Array.from({ length: 49 }, (_, i) => [a.x + a.w / 2 * (1 + Math.cos(i * Math.PI / 24)), a.y + a.h / 2 * (1 + Math.sin(i * Math.PI / 24))]);
     addEventListener('scroll', () => editing && showMark(), { passive: true, capture: true }); addEventListener('resize', () => editing && showMark());
     // Redraw: the sheet steps aside for the pin's tap or circle; the pin, Escape or Never mind… puts the sheet back as it was
     redrawButton.onclick = async () => {
       if (mode !== 'note') return;
       await stopMic();   // (words being said are this note's)
       if (mode !== 'note') return;
-      sheet.hidden = true; ink.setAttribute('d', ''); hl.hidden = true; dock.hidden = false; pick();
+      sheet.hidden = true; paintInk([]); hl.hidden = true; dock.hidden = false; pick();
     };
-    function unpick() { veil.hidden = true; fab.classList.remove('on'); dock.hidden = true; pts = null; mode = 'note'; showSheet(); showMark(); }
+    function unpick() { penOn?.cancel(); veil.hidden = true; fab.classList.remove('on'); dock.hidden = true; mode = 'note'; showSheet(); showMark(); }
     // Never mind, or Escape: a change goes back to My notes
     function cancel() { const was = editing; reset(); if (was) openSide(); }
 
@@ -684,6 +731,11 @@
       else if (!side.hidden) closeSide();
       else { shut(); if (mode === 'pick' && editing) unpick(); else if (mode !== 'idle' && mode !== 'sending') cancel(); }
     }, true);
+    // Cmd or Ctrl+Z takes back the last line (in the note's words, it's the words' own undo)
+    addEventListener('keydown', e => {
+      if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.key.toLowerCase() !== 'z' || mode !== 'note' || veil.hidden || covered || root.activeElement === text) return;
+      e.preventDefault(); e.stopPropagation(); undo();
+    }, true);
     // Keys typed into the note are the note's: the page's own shortcuts never hear them (a deck's space and arrows turned
     // its slides and ate the spaces). Escape still reaches the listener above, which hears it first.
     for (const type of ['keydown', 'keypress', 'keyup']) host.addEventListener(type, e => e.stopPropagation());
@@ -695,8 +747,9 @@
       veil.hidden = true; sheet.hidden = true; sheet.classList.remove('away', 'bare'); text.placeholder = ASK;
       fab.classList.remove('on'); more.hidden = false; dock.hidden = !side.hidden; settle();
       root.querySelectorAll('.drop').forEach(d => d.remove());
-      ink.setAttribute('d', ''); hl.hidden = true; redrawButton.hidden = true; $('.send').textContent = 'Pin it';
+      hl.hidden = true; redrawButton.hidden = true; $('.send').textContent = 'Pin it';
       showPictures([]);
+      penOn?.cancel(); strokes = []; penSeen = false; undoTo = null; exposure = null; veil.classList.remove('marked'); undoButton.disabled = true; paintInk([]);
     }
 
     // ---------------------------------------------------------------- where the pin sits
@@ -734,27 +787,84 @@
     addEventListener('scroll', () => soon(250), { passive: true }); addEventListener('resize', () => soon(250));
     addEventListener('click', e => { if (!e.composedPath().includes(host)) soon(450); }, true); // a sheet or step the tap opened
     addEventListener('popstate', () => soon(300)); addEventListener('load', () => soon(100)); soon(400);
-    // drag: press and move the pin, let go on either side
+    // drag: press and move the pin, or the menu's button beside it (it looks like a handle), and let go on either side.
+    // The pin follows the finger from where it was held; a plain tap on either still does what it does.
     let drag = null;
-    fab.onpointerdown = e => { if (mode === 'idle') drag = { x: e.clientX, y: e.clientY, id: e.pointerId, moved: false }; };
-    fab.onpointermove = e => {
-      if (!drag || e.pointerId !== drag.id || (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 10)) return;
-      if (!drag.moved) { drag.moved = true; fab.setPointerCapture(e.pointerId); dock.classList.add('drag'); uncoach(); shut(); tip.classList.remove('show'); }
-      dock.style.setProperty('--dx', `${Math.min(innerWidth - 60, Math.max(0, e.clientX - 30))}px`); dock.style.setProperty('--dy', `${Math.min(innerHeight - 60, Math.max(0, e.clientY - 30))}px`);
-    };
-    fab.onpointerup = fab.onpointercancel = e => {
-      const d = drag; drag = null;
-      if (!d?.moved) return;
-      dragged = e.type === 'pointerup'; setTimeout(() => { dragged = false; }, 400); // no click after a drag
-      dock.classList.remove('drag'); dock.classList.toggle('left', e.clientX < innerWidth / 2);
-      const up = Math.max(0, Math.min(dock.offsetTop - 16, dock.offsetTop + 30 - e.clientY));
-      placed = { left: e.clientX < innerWidth / 2, up }; lift(up); keep(localStorage, PLACE, JSON.stringify(placed));
-    };
-
-    // ---------------------------------------------------------------- pick: tap an element or draw around an area
-    function pick() {
-      mode = 'pick'; veil.hidden = false; fab.classList.add('on'); more.hidden = true; ink.setAttribute('d', ''); hl.hidden = true;
+    for (const b of [fab, more]) {
+      b.addEventListener('pointerdown', e => {
+        if (mode !== 'idle' || (e.pointerType === 'mouse' && e.button !== 0)) return;
+        const r = dock.getBoundingClientRect();
+        drag = { b, x: e.clientX, y: e.clientY, id: e.pointerId, moved: false, dx: e.clientX - r.left, dy: e.clientY - r.top };
+        b.setPointerCapture(e.pointerId);   // (a quick drag leaves a small button before it has moved far enough to count)
+      });
+      b.addEventListener('pointermove', e => {
+        if (!drag || drag.b !== b || e.pointerId !== drag.id || (!drag.moved && Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 10)) return;
+        if (!drag.moved) { drag.moved = true; dock.classList.add('drag'); uncoach(); shut(); tip.classList.remove('show'); }
+        dock.style.setProperty('--dx', `${Math.min(innerWidth - 60, Math.max(0, e.clientX - drag.dx))}px`); dock.style.setProperty('--dy', `${Math.min(innerHeight - 60, Math.max(0, e.clientY - drag.dy))}px`);
+      });
+      const drop = e => {
+        const d = drag;
+        if (!d || d.b !== b) return;
+        drag = null;
+        if (!d.moved) return;
+        dragged = e.type === 'pointerup'; setTimeout(() => { dragged = false; }, 400); // no click after a drag
+        const top = Math.min(innerHeight - 60, Math.max(0, e.clientY - d.dy)), left = Math.min(innerWidth - 60, Math.max(0, e.clientX - d.dx)) + 30 < innerWidth / 2;
+        dock.classList.remove('drag'); dock.classList.toggle('left', left);
+        const up = Math.max(0, Math.min(dock.offsetTop - 16, dock.offsetTop - top));
+        placed = { left, up }; lift(up); keep(localStorage, PLACE, JSON.stringify(placed));
+      };
+      b.addEventListener('pointerup', drop); b.addEventListener('pointercancel', drop);
     }
+
+    // ---------------------------------------------------------------- pick: tap an element, or draw on the page
+    // The pen (ink.js, next to this script): every line drawn stays until the note goes, open as drawn (circled, crossed
+    // out, underlined, scribbled), in the ink chosen on the strip, and the first mark opens the note. As the first mark a
+    // tap pins what's under it; Shift held as a mouse starts a line draws a rectangle. A pen drawn across the page starts
+    // all this by itself (a pen's tap stays the page's), and once a pen has drawn on a note only the pen draws: a palm
+    // resting on the screen doesn't, and a finger still scrolls and taps everything else.
+    let inkjs = null, penOn = null, strokes = [], penSeen = false, undoTo = null;
+    const MAX_LINES = 64;   // a note's, as the coordinator keeps them (feedback.ts inkOf)
+    const inkCanvas = $('.ink'), wet = $('.wet'), strip = $('.strip'), undoButton = $('.undo'), INK_KEY = '__hq_review_ink';
+    let inkNow = Number(kept(localStorage, INK_KEY)) || 0;
+    import(new URL('ink.js', ROUTE).href).then(m => {
+      inkjs = m; inkNow = Math.min(inkNow, m.INKS.length - 1);
+      strip.prepend(...m.INKS.map((k, i) => {
+        const b = button('', `pot${k.alpha < 1 ? ' wide' : ''}`);
+        b.setAttribute('aria-label', k.name); b.title = k.name; b.style.setProperty('--c', k.color); b.setAttribute('aria-pressed', String(i === inkNow));
+        b.append(doc.createElement('i')); b.onclick = () => chooseInk(i);
+        return b;
+      }));
+      penOn = m.pen(veil, wet, { halo: true, use: drawable, ink: () => m.INKS[inkNow], shape: e => e.shiftKey && e.pointerType === 'mouse' ? 'rect' : '', end: stroked });
+      if (editing) showMark();
+    }, () => { /* no pen: the pin says so when tapped */ });
+    const chooseInk = i => { inkNow = i; keep(localStorage, INK_KEY, String(i)); strip.querySelectorAll('.pot').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i))); };
+    const drawable = e => (mode === 'pick' || (mode === 'note' && !veil.hidden)) && !e.composedPath().includes(strip)
+      && (e.pointerType === 'pen' || !penSeen) && !(e.pointerType === 'mouse' && e.button !== 0);
+    const paintInk = lines => { if (inkjs) { inkjs.draw(inkjs.fit(inkCanvas), lines, { halo: true }); inkjs.shown(inkCanvas, lines, { halo: true }); } };   // (shown: a walk-through's recording follows it)
+    const redrawInk = () => editing ? showMark() : paintInk(strokes);
+    function pick() {
+      if (!penOn) return say('The pen didn’t load: reload the page?');
+      undoTo = { mark, shot, exposure, editing };
+      mode = 'pick'; strokes = []; veil.hidden = false; veil.classList.remove('marked'); undoButton.disabled = true;
+      fab.classList.add('on'); more.hidden = true; paintInk([]); hl.hidden = true;
+    }
+    // A pen on the page while review mode rests: its first move draws (the line from where it touched), and the page
+    // never scrolls under it. Its tap stays the page's own.
+    let penDown = null;
+    addEventListener('pointerdown', e => {
+      penDown = e.pointerType === 'pen' && e.isPrimary && mode === 'idle' && penOn && !putAway && !covered && !fab.hidden && fab.isConnected
+        && side.hidden && !e.composedPath().includes(host) ? e : null;
+    }, true);
+    addEventListener('pointermove', e => {
+      if (!penDown || e.pointerId !== penDown.pointerId || Math.hypot(e.clientX - penDown.clientX, e.clientY - penDown.clientY) < 4) return;
+      const down = penDown; penDown = null;
+      if (mode !== 'idle') return;
+      uncoach(); shut(); pick();
+      if (penOn.start(down)) { e.stopPropagation(); penOn.move(e); }
+    }, true);
+    addEventListener('pointerup', e => { if (penDown?.pointerId === e.pointerId) penDown = null; }, true);
+    // (Safari scrolls under a pen until its first touchmove says no)
+    addEventListener('touchmove', e => { if ((penDown || mode === 'pick' || mode === 'note') && [...e.changedTouches].some(t => t.touchType === 'stylus')) e.preventDefault(); }, { capture: true, passive: false });
     // what's under the finger, inside open shadow roots too: a tap in a chat's panel is the bubble or button there, not
     // the chat's empty host element at the page's end
     const under = (x, y) => {
@@ -767,39 +877,63 @@
       return el;
     };
     const box = r => ({ x: Math.round(r.left ?? r.x), y: Math.round(r.top ?? r.y), w: Math.round(r.width ?? r.w), h: Math.round(r.height ?? r.h) });
-    // Shift held as the drag starts draws a rectangle instead: its four corners are
-    // the circle's line, so the note is a circle's in every other way
-    let pts = null, square = false;
-    const corners = ([x0, y0], [x1, y1]) => [[x0, y0], [x1, y0], [x1, y1], [x0, y1]];
-    const trace = (p, close = '') => 'M' + p.map(q => q.join(' ')).join('L') + close;
+    // where lines are: the box around all their points
+    const boxOf = lines => {
+      const pts = lines.flatMap(l => l.points), xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+      return { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
+    };
+    // a hover outline for a mouse, until the first mark
     veil.onpointermove = e => {
-      if (pts && square) { pts[1] = [e.clientX, e.clientY]; ink.setAttribute('d', trace(corners(...pts), 'Z')); return; }
-      if (pts) { pts.push([e.clientX, e.clientY]); ink.setAttribute('d', trace(pts)); return; }
-      if (e.pointerType !== 'mouse') return; // hover outline for a mouse only
+      if (e.pointerType !== 'mouse' || mode !== 'pick' || penOn?.drawing) return;
       const r = under(e.clientX, e.clientY).getBoundingClientRect();
       Object.assign(hl.style, { left: `${r.left - 3}px`, top: `${r.top - 3}px`, width: `${r.width + 6}px`, height: `${r.height + 6}px` }); hl.hidden = false;
     };
-    veil.onpointerdown = e => { e.preventDefault(); veil.setPointerCapture(e.pointerId); square = e.shiftKey; pts = [[e.clientX, e.clientY]]; hl.hidden = true; };
-    veil.onpointerup = e => {
-      if (!pts) return;
-      const p = square ? corners(pts[0], [e.clientX, e.clientY]) : pts; pts = null;
-      const xs = p.map(q => q[0]), ys = p.map(q => q[1]);
-      const area = { x: Math.min(...xs), y: Math.min(...ys), w: Math.max(...xs) - Math.min(...xs), h: Math.max(...ys) - Math.min(...ys) };
-      if (area.w < 24 && area.h < 24) { // a tap: pin the element under the finger
-        ink.setAttribute('d', '');
-        const el = under(e.clientX, e.clientY);
-        mark = { kind: 'pin', x: e.clientX, y: e.clientY, el, area: null };
+    veil.addEventListener('pointerdown', () => { hl.hidden = true; });
+    // With lines on it, the page stays as it is under them (its screenshot was taken at the first mark)
+    veil.addEventListener('wheel', e => { if (mode !== 'pick') e.preventDefault(); }, { passive: false });
+    function stroked(stroke, e) {
+      if (e.pointerType === 'pen') penSeen = true;
+      const area = boxOf([stroke]);
+      penOn.clear();
+      if (area.w < 24 && area.h < 24) {   // a tap: as the first mark, it pins the element under it; beside the note, nothing
+        if (mode !== 'pick') return;
+        mark = { kind: 'pin', x: e.clientX, y: e.clientY, el: under(e.clientX, e.clientY), area: null };
         const d = doc.createElement('i'); d.className = 'drop'; d.innerHTML = PIN; Object.assign(d.style, { left: `${e.clientX}px`, top: `${e.clientY}px` }); $('.ui').append(d);
-      } else { // a circle: the smallest element that holds most of it
-        ink.setAttribute('d', trace(p, 'Z'));
-        let el = under(area.x + area.w / 2, area.y + area.h / 2);
-        for (let r; el.parentElement && el !== doc.body && (r = el.getBoundingClientRect()) && (r.width < area.w * 0.8 || r.height < area.h * 0.8);) el = el.parentElement;
-        mark = { kind: 'circle', pts: p, el, area };
+      } else if (strokes.length >= MAX_LINES) {   // (beyond it, a change couldn't draw them all again)
+        msg.textContent = `A note keeps ${MAX_LINES} lines at most: undo one to draw another.`;
+        return;
+      } else {
+        strokes.push(stroke);
+        if (mode === 'pick') mark = { kind: 'circle' };
+        aim();
       }
-      compose();
-    };
-    veil.onpointercancel = () => { pts = null; ink.setAttribute('d', ''); };
-
+      undoButton.disabled = false;
+      if (mode === 'pick') compose(); else { redrawInk(); develop(); }
+    }
+    // A drawn mark's area, around all its lines, and the smallest element that holds most of it
+    function aim() {
+      if (mark.kind !== 'circle') return;
+      const area = boxOf(strokes);
+      let el = under(area.x + area.w / 2, area.y + area.h / 2);
+      for (let r; el.parentElement && el !== doc.body && (r = el.getBoundingClientRect()) && (r.width < area.w * 0.8 || r.height < area.h * 0.8);) el = el.parentElement;
+      Object.assign(mark, { el, area });
+      if (!mark.element) return;   // (compose describes it)
+      mark.element = { ...mark.element, ...describe(el), area: box(area) };
+      if (editing) editing.mark = { ...editing.mark, ...mark.element, el };
+    }
+    // Undo: the last line goes; the last mark gone, it's back to tapping or drawing, the words kept
+    function undo() {
+      if (mode !== 'note' || veil.hidden) return;
+      if (strokes.length) {
+        strokes.pop();
+        if (strokes.length || mark.kind === 'pin') { aim(); redrawInk(); develop(); return; }
+      }
+      if (framePic) unpicture(framePic);
+      ({ mark, shot, exposure, editing } = undoTo); framePic = null;
+      root.querySelectorAll('.drop').forEach(d => d.remove());
+      mode = 'pick'; sheet.hidden = true; dock.hidden = false; veil.classList.remove('marked'); undoButton.disabled = true; redrawInk(); if (editing) paintInk([]);
+    }
+    undoButton.onclick = undo;
     // ---------------------------------------------------------------- the note
     // The element's HTML goes without form values, like the screenshot: hidden and password fields are dropped, other
     // fields lose their value (a button's value is its label, so it stays) and textareas their text.
@@ -817,8 +951,11 @@
     // the screen too, as a big screen with a half-width window reads as a small laptop; touch points tell an iPad from a Mac
     const viewNow = () => ({ w: innerWidth, h: innerHeight, dpr: devicePixelRatio || 1, x: Math.round(scrollX), y: Math.round(scrollY), ua: navigator.userAgent,
       sw: screen.width, sh: screen.height, touch: navigator.maxTouchPoints || 0 });
-    // (a long line is thinned to at most 200 points)
-    const thin = p => p.filter((_, i) => i % Math.ceil(p.length / 200) === 0).map(q => q.map(Math.round));
+    // A note's lines as they go with it (at most MAX_LINES of them), each thinned to at most 1,000 points (its last kept)
+    // and all of them to 12,000, the coordinator's caps (feedback.ts inkOf), so every line is drawn again on a change
+    const thin = (l, most) => l.points.length <= most ? l
+      : { ...l, points: l.points.filter((_, i, all) => i % Math.ceil(all.length / (most - 1)) === 0 || i === all.length - 1) };
+    const inkOut = () => strokes.map(l => thin(l, Math.min(1000, Math.floor(12_000 / strokes.length))));
     // A note on a video keeps its moment: the video under the pin (or the circle's middle) stops there, its time goes with
     // the note ("at 0:07"), the screenshot shows that frame, and the frame itself goes with it as a picture.
     // (a video with no frame yet has no moment to keep)
@@ -832,29 +969,28 @@
       if (framePic) unpicture(framePic);
       framePic = null;
       if (video) { video.pause(); mark.frameless = addFrame(video); }
-      mark.element = { ...describe(mark.el), kind: mark.kind, area: mark.area && box(mark.area), ...(mark.pts ? { path: thin(mark.pts) } : {}),
+      mark.element = { ...describe(mark.el), kind: mark.kind, area: mark.area && box(mark.area),
         ...(video ? { video: { time: Math.round(video.currentTime * 10) / 10, src: new URL(video.currentSrc, location.href).pathname } } : {}) };
       mark.view = viewNow(); mark.page = location.href;
       // changing a note: this mark replaces the one shown, and stays on the page with its element as the sheet comes back
-      if (editing) editing = { ...editing, redrawn: true, mark: { ...mark.element, path: mark.pts, el: mark.el, view: mark.view } };
+      if (editing) editing = { ...editing, redrawn: true, mark: { ...mark.element, ink: strokes, el: mark.el, view: mark.view } };
       const pol = $('.polaroid'), img = $('.polaroid .img');
-      pol.classList.add('busy'); img.textContent = '';
+      pol.classList.add('busy'); img.textContent = ''; exposure = null;
+      // the page as it was at the first mark; every line since is drawn on it (develop), and on what goes with the note
       const m = mark;
-      shot = Promise.all([snapshot(m), framer()]).then(([url, frameMark]) => {
+      shot = Promise.all([snapshot(m), framer()]).then(([taken, frameMark]) => {
         if (mark !== m) return null;
-        pol.classList.remove('busy');
-        if (url) {
-          const i = new Image(); i.src = url; i.alt = 'The screen, as it was';
-          const placement = frameMark(m.element, m.view, 3 / 4);
-          if (placement) { i.className = 'framed'; Object.assign(i.style, placement); }
-          img.append(i);
-        } else img.innerHTML = '<span>No photo this time: the note still goes.</span>';
-        return url;
+        pol.classList.remove('busy'); frameIt = frameMark;
+        if (taken) { exposure = taken; develop(); } else img.innerHTML = '<span>No photo this time: the note still goes.</span>';
+        return taken;
       }, () => null);
+      // (the mic, if the board asked for it to listen as it draws: the first mark starts it)
+      if (listening() && !rec && !stopping) startMic();
       setTimeout(() => { // let the pin land, then the note
         if (mark !== m) return;
-        veil.hidden = true; dock.hidden = true;
-        if (editing) { root.querySelectorAll('.drop').forEach(d => d.remove()); showMark(); } else ink.setAttribute('d', '');
+        veil.classList.add('marked'); dock.hidden = true;
+        if (editing) root.querySelectorAll('.drop').forEach(d => d.remove());
+        redrawInk();
         const t = mark.element;
         $('.chip').textContent = `<${t.tag}>${t.video ? ` at ${clock(t.video.time)}` : ''}${t.text ? ` “${t.text.slice(0, 40)}${t.text.length > 40 ? '…' : ''}”` : ''}`;   // (the moment before the words the chip may cut)
         $('.page').textContent = here();
@@ -862,6 +998,65 @@
         showSheet();
         if (mark.frameless) msg.textContent = `${msg.textContent} ${mark.frameless}`.trim();
       }, 380);
+    }
+    // The polaroid, framed on the mark: the page as it was with every line drawn so far
+    let exposure = null, frameIt = null;
+    function develop() {
+      if (!exposure) return;
+      const img = $('.polaroid .img'), c = img.querySelector('canvas') ?? img.appendChild(doc.createElement('canvas'));
+      expose(exposure, mark, c);
+      const placement = frameIt?.(mark.element, mark.view, 3 / 4);
+      c.className = placement ? 'framed' : ''; c.removeAttribute('style'); if (placement) Object.assign(c.style, placement);
+      offerSketch();
+    }
+    // To the Sketchbook (the board's only: a share's reviewer has none): the circled part of the screenshot, the note's lines
+    // on it, becomes a picture on a sketch in HQ's Sketchbook, a new one or the one opened last. It waits there until the
+    // sketch opens, and lands on its page (the coordinator's sketches.ts fromReview).
+    const tosk = $('.tosk');
+    function offerSketch() {
+      tosk.hidden = outside || !exposure || !mark || mark.kind === 'general';
+      tosk.classList.remove('done'); tosk.querySelector('.tosk-go').hidden = false; tosk.querySelector('.tosk-to').hidden = true;
+      tosk.querySelector('.tosk-go').textContent = 'To the Sketchbook'; tosk.querySelector('.tosk-go').disabled = false;
+    }
+    tosk.querySelector('.tosk-go').onclick = () => { tosk.querySelector('.tosk-go').hidden = true; tosk.querySelector('.tosk-to').hidden = false; };
+    for (const b of tosk.querySelectorAll('[data-to]')) b.onclick = () => toSketchbook(b.dataset.to);
+    async function toSketchbook(to) {
+      const picture = exposure && scrapOf(exposure, mark);
+      if (!picture) { msg.textContent = 'That bit couldn’t be cut out of the photo.'; return; }
+      tosk.querySelector('.tosk-to').hidden = true; tosk.classList.add('done');
+      tosk.querySelector('.tosk-go').hidden = false; tosk.querySelector('.tosk-go').textContent = 'Putting it in…'; tosk.querySelector('.tosk-go').disabled = true;
+      try {
+        const res = await post('sketch', { picture, to });
+        await refusal(res);
+        if (!res.ok) throw new RefusedError(res.status === 403 ? 'The Sketchbook is for the board.' : `The coordinator said no (${res.status}).`);
+        const { fresh } = await res.json();
+        tosk.querySelector('.tosk-go').textContent = fresh ? '✓ In a new sketch' : '✓ On the last sketch';
+        const pol = $('.polaroid'); pol.classList.remove('hop'); void pol.offsetWidth; pol.classList.add('hop');
+      } catch (err) { offerSketch(); msg.textContent = err instanceof RefusedError ? err.message : 'Could not reach HQ. Try again?'; }
+    }
+    // The bit the mark is about, cut from the screenshot with its lines drawn on: the box around the circle's lines (a
+    // pin's element and its head), with a margin, at least SCRAP_MIN px a side, kept on the screen
+    const SCRAP_MIN = 160, SCRAP_PAD = 24;
+    function scrapOf(taken, m) {
+      try {
+        const full = expose(taken, m), k = taken.k, W = m.view.w, H = m.view.h;
+        const parts = strokes.length ? [boxOf(strokes)] : [];
+        if (m.kind === 'pin') parts.push(m.element.rect, { x: m.x, y: m.y - 32, w: 22, h: 32 });
+        if (!parts.length) return null;
+        const x0 = Math.min(...parts.map(r => r.x)), y0 = Math.min(...parts.map(r => r.y));
+        const x1 = Math.max(...parts.map(r => r.x + r.w)), y1 = Math.max(...parts.map(r => r.y + r.h));
+        const grow = (a, b, most) => {
+          const need = Math.max(0, SCRAP_MIN - (b - a)) / 2;
+          a = Math.max(0, a - SCRAP_PAD - need); b = Math.min(most, b + SCRAP_PAD + need);
+          return [a, Math.max(b, Math.min(most, a + SCRAP_MIN))];
+        };
+        const [l, r] = grow(x0, x1, W), [t, b] = grow(y0, y1, H);
+        const c = doc.createElement('canvas'), f = Math.min(1, 2000 / (Math.max(r - l, b - t) * k));
+        c.width = Math.max(1, Math.round((r - l) * k * f)); c.height = Math.max(1, Math.round((b - t) * k * f));
+        c.getContext('2d').drawImage(full, l * k, t * k, (r - l) * k, (b - t) * k, 0, 0, c.width, c.height);
+        for (const q of [0.9, 0.8, 0.65, 0.5]) { const url = c.toDataURL('image/jpeg', q); if (url.length < 2_000_000) return url; }
+        return null;
+      } catch { return null; }
     }
     // A general note: the same sheet, pinned to nothing and without a photo,
     // saved with the page it's written on
@@ -875,7 +1070,7 @@
       showSheet();
     }
     function showSheet() {
-      msg.textContent = ''; sheet.hidden = false; sheet.classList.remove('away');
+      msg.textContent = ''; sheet.hidden = false; sheet.classList.remove('away'); offerSketch();
       // an outsider hears once what goes with a note (a general note has no picture, so its line doesn't count as that)
       // (a note being changed has no mark until it's redrawn, and a redraw's new picture is told too)
       if (outside && mark && !kept(localStorage, TOLD)) {
@@ -898,7 +1093,7 @@
       const note = text.value.trim();
       if (!note) { text.focus(); msg.textContent = 'A word or two first?'; return; }
       mode = 'sending'; $('.send').disabled = true; msg.textContent = shot ? 'Developing the photo…' : 'Sending…';
-      const waiting = pictures, url = await Promise.race([shot, new Promise(r => setTimeout(() => r(null), 9000))]);
+      const waiting = pictures, url = photo(await Promise.race([shot, new Promise(r => setTimeout(() => r(null), 9000))]), mark);
       const added = await picturesNow(waiting);
       if (!added) { mode = 'note'; $('.send').disabled = false; return; }
       msg.textContent = 'Sending…';
@@ -1009,8 +1204,9 @@
       p.li = thumbnail(p, data); picList.prepend(p.li); pictures.unshift(p); framePic = p;
       return '';
     }
-    // the element as it goes, saying whether its first picture is the video's frame
-    const marked = () => mark.element.video ? { ...mark.element, video: { ...mark.element.video, frame: !!framePic && pictures[0] === framePic } } : mark.element;
+    // the element as it goes, with its lines (ink.js's strokes), and saying whether its first picture is the video's frame
+    const marked = () => ({ ...mark.element, ...(strokes.length ? { ink: inkOut() } : {}),
+      ...(mark.element.video ? { video: { ...mark.element.video, frame: !!framePic && pictures[0] === framePic } } : {}) });
     const FRAMELESS = 'The film’s frame couldn’t be copied here (it comes from another site): the note keeps its moment, without a picture of it.';
     const NO_ROOM_FOR_FRAME = 'A note takes a dozen pictures at most, so the film’s frame stays off: the note keeps its moment, without a picture of it.';
     // A paste into the note, or with nothing on the page to take it. Text copied with a picture of itself (an office app's
@@ -1046,40 +1242,101 @@
     }
 
     // ---------------------------------------------------------------- voice: tap to talk, tap to stop
-    // Ported from HQ's platform/hq/js/voice.js, the simple way: one clip, transcribed by the coordinator's
-    // speech-to-text (POST /__review/voice), the words added to the note for the board to check.
+    // The words come as they're said, as on a call: the microphone's audio goes as it's heard, 16 kHz PCM, over a
+    // WebSocket next to the script (/__review/dictate, which the coordinator hands to the voice line's recogniser), and each
+    // phrase's words come back while the board talks, into the note. The clip is recorded too: where that line can't be
+    // reached (or drops), the whole clip is transcribed by the coordinator's speech-to-text (POST /__review/voice).
     const TYPES = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
     const canRecord = !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
     // (heard in the board's language, which the coordinator reads)
     let rec = null, stopping = null;
     if (!canRecord) { mic.disabled = true; mic.title = 'This browser can’t record here'; }
+    listenItem.dataset.can = canRecord ? '1' : ''; listenItem.hidden = !canRecord || (outside && !!state.sent);
     mic.onclick = () => rec ? stopMic() : startMic();
     async function startMic() {
-      const r = rec = { chunks: [] };
+      // (the audio context made at the tap, so Safari lets it run)
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const r = rec = { chunks: [], said: text.value.trim(), shown: [], taken: [], ctx: AC ? new AC() : null };
+      // What the reviewer types meanwhile stays: the words in the note then are theirs, and only words heard after go in
+      r.typed = () => { r.said = text.value; r.taken = r.shown; r.edited = true; };
+      text.addEventListener('input', r.typed);
       mic.classList.add('on'); msg.textContent = 'Listening… tap the mic to stop';
       try {
         r.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
-        if (rec !== r) { r.stream.getTracks().forEach(t => t.stop()); return; }
+        if (rec !== r) { r.stream.getTracks().forEach(t => t.stop()); r.ctx?.close?.(); return; }
         const type = TYPES.find(t => MediaRecorder.isTypeSupported?.(t));
         r.mr = new MediaRecorder(r.stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : undefined);
         r.mr.ondataavailable = e => { if (e.data.size) r.chunks.push(e.data); };
         r.mr.start(1000); r.t0 = performance.now();
-        r.limit = setTimeout(() => rec === r && stopMic(), 120_000);
+        r.limit = setTimeout(() => rec === r && stopMic(), 300_000);   // (the voice line's five minutes)
+        if (!r.ctx) return;
+        r.ctx.resume?.();
         // the mic button breathes with the voice
-        const ctx = r.ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(), buf = new Uint8Array(256);
-        ctx.createMediaStreamSource(r.stream).connect(an); an.fftSize = 256;
+        const source = r.ctx.createMediaStreamSource(r.stream), an = r.ctx.createAnalyser(), buf = new Uint8Array(256);
+        source.connect(an); an.fftSize = 256;
         const tick = () => { if (rec !== r) return mic.style.setProperty('--lvl', 0); an.getByteTimeDomainData(buf); let s = 0; for (const v of buf) s += (v - 128) ** 2;
           mic.style.setProperty('--lvl', Math.min(0.6, Math.sqrt(s / buf.length) / 30).toFixed(2)); requestAnimationFrame(tick); };
         tick();
+        live(r, source);
       } catch (err) {
-        if (rec === r) { rec = null; mic.classList.remove('on'); }
+        if (rec === r) { rec = null; mic.classList.remove('on'); r.ctx?.close?.(); text.removeEventListener('input', r.typed); }
         msg.textContent = err?.name === 'NotAllowedError' ? 'The microphone is blocked for this page. Type the note instead?' : 'Could not start the microphone.';
       }
     }
+    // The live line: its words replace what it said before in the note, after the words that were there already.
+    // r.live: open while it carries the words, 'failed' once it can't (the clip then does)
+    function live(r, source) {
+      const url = new URL('dictate', ROUTE); url.protocol = url.protocol === 'http:' ? 'ws:' : 'wss:';
+      let ws;
+      try { ws = new WebSocket(url); } catch { r.live = 'failed'; return; }
+      ws.binaryType = 'arraybuffer';
+      r.live = ws;
+      r.done = new Promise(resolve => { r.finished = resolve; });
+      r.closed = new Promise(resolve => ws.addEventListener('close', resolve));
+      const tap = r.ctx.createScriptProcessor(4096, 1, 1), mute = r.ctx.createGain(), rate = r.ctx.sampleRate;
+      mute.gain.value = 0; source.connect(tap).connect(mute).connect(r.ctx.destination);
+      let at = 0;   // where the next 16 kHz sample falls in the incoming audio
+      tap.onaudioprocess = e => {
+        if (ws.readyState !== WebSocket.OPEN) return;
+        const x = e.inputBuffer.getChannelData(0), step = rate / 16000, out = new Int16Array(Math.ceil((x.length - at) / step));
+        let n = 0;
+        for (; at < x.length - 1 && n < out.length; at += step, n++) {
+          const i = Math.floor(at), v = x[i] + (x[i + 1] - x[i]) * (at - i);
+          out[n] = Math.max(-1, Math.min(1, v)) * 0x7fff;
+        }
+        at -= x.length;
+        ws.send(out.subarray(0, n));
+      };
+      r.untap = () => { tap.onaudioprocess = null; try { source.disconnect(tap); } catch { /* gone */ } };
+      ws.onmessage = e => {
+        let m; try { m = JSON.parse(e.data); } catch { return; }
+        if (m.type === 'heard' && typeof m.text === 'string' && (rec === r || r.ending)) words(r, m.text);
+        // (done unasked: the line's five minutes are up, so the mic stops there)
+        if (m.type === 'done') { r.liveDone = true; r.finished(true); ws.close(); if (rec === r) stopMic(); }
+      };
+      // (closed before its words were all in: the clip has them)
+      ws.onclose = () => { r.untap(); if (r.live === ws && !r.liveDone) r.live = 'failed'; r.finished(false); };
+      ws.onerror = () => { r.live = 'failed'; };
+    }
+    // The heard words past the ones the note held when the reviewer last typed (a look's words revised since: past the
+    // ones both share, a word the recogniser only recased or repunctuated still the same one), after the reviewer's own,
+    // where their caret stays
+    const plain = w => w.toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
+    const words = (r, heard) => {
+      const said = heard.trim().split(/\s+/).filter(Boolean);
+      let i = 0;
+      while (i < r.taken.length && plain(said[i] ?? '') === plain(r.taken[i])) i++;
+      const fresh = said.slice(i).join(' ');
+      r.shown = said; r.heard = true;
+      if (r.edited && !fresh) return;
+      const { selectionStart: from, selectionEnd: to } = text, typing = root.activeElement === text;
+      text.value = [r.said.trimEnd(), fresh].filter(Boolean).join(' ');
+      if (typing) text.setSelectionRange(from, to); else text.scrollTop = text.scrollHeight;
+    };
     // One stop at a time: `stopping` is the running one, so Pin it can wait for its words.
     function stopMic(cancel) {
       if (!rec) return stopping ?? Promise.resolve();
-      const p = stopping = endMic(rec, cancel);
+      const r = rec, p = stopping = endMic(r, cancel).finally(() => text.removeEventListener('input', r.typed));
       return p.finally(() => { if (stopping === p) stopping = null; });
     }
     async function endMic(r, cancel) {
@@ -1087,19 +1344,31 @@
       rec = null; clearTimeout(r.limit); mic.classList.remove('on');
       const clip = await new Promise(res => { if (!r.mr || r.mr.state === 'inactive' || cancel) { try { r.mr?.stop(); } catch { /* stopped */ } return res(null); }
         r.mr.onstop = () => res(new Blob(r.chunks, { type: r.mr.mimeType || 'audio/webm' })); r.mr.stop(); });
-      r.stream?.getTracks().forEach(t => t.stop()); r.ctx?.close?.();
+      r.stream?.getTracks().forEach(t => t.stop());
+      // the live line's last phrase: it says done once the words are in (or a few seconds pass)
+      let liveOk = !!r.liveDone && !cancel;
+      if (!liveOk && r.live && r.live !== 'failed' && !cancel) {
+        r.ending = true;   // (its last words still come in)
+        if (r.live.readyState === WebSocket.OPEN) r.live.send(JSON.stringify({ type: 'end' }));
+        liveOk = await Promise.race([r.done, new Promise(res => setTimeout(() => res(false), 6000))]);
+      }
+      // (closed before the clip goes: the coordinator takes one at a time)
+      if (r.live && r.live !== 'failed') r.live.close();
+      if (r.closed && !liveOk && !cancel) await Promise.race([r.closed, new Promise(res => setTimeout(res, 2000))]);
+      r.ending = false; r.untap?.(); r.ctx?.close?.();
+      if (liveOk) { msg.textContent = r.heard ? 'Check the words, then pin it.' : 'No words came through. Try again, a little closer?'; return; }
       if (!clip || cancel) return;
       if (performance.now() - r.t0 < 600 || clip.size < 200) { msg.textContent = 'That was very short. Tap, talk, then tap again.'; return; }
       mic.classList.add('busy'); mic.disabled = true; $('.send').disabled = true; msg.textContent = 'Turning your words into text…';
       try {   // next to the script
         const res = await fetch(new URL('voice', ROUTE), { method: 'POST', credentials: 'same-origin', headers: { 'content-type': clip.type || 'audio/webm' }, body: clip });
         if (!res.ok) throw res.status;
-        const words = ((await res.json()).text || '').trim();
+        const said = ((await res.json()).text || '').trim();
         if (mark !== m) return;   // that note was cancelled meanwhile (finally still frees the mic)
-        if (words) { text.value = [text.value.trim(), words].filter(Boolean).join(' '); msg.textContent = 'Check the words, then pin it.'; }
+        if (said) { words(r, said); msg.textContent = 'Check the words, then pin it.'; }
         else msg.textContent = 'No words came through. Try again, a little closer?';
       } catch (code) {
-        msg.textContent = code === 413 ? 'That was too long for one go: keep it under two minutes.'
+        msg.textContent = code === 413 ? 'That was too long for one go: try it in two.'
           : code === 429 ? 'The transcriber is busy with this page. Type this one instead?' : 'The transcriber isn’t available right now. Type it instead?';
       } finally {
         mic.classList.remove('busy'); mic.disabled = false; if (mode === 'note') $('.send').disabled = false;
@@ -1109,8 +1378,9 @@
     // ---------------------------------------------------------------- the screenshot
     // The viewport as it is, drawn by the browser itself through an SVG <foreignObject>: every visible element is
     // copied with its computed style inlined, images, backgrounds and web fonts become data URLs (same-origin or
-    // CORS-enabled ones; the rest are left out), fixed and sticky elements are pinned where they are on screen. Then the
-    // pin or circle is drawn on top. Returns a JPEG data URL, or null if the browser won't play along.
+    // CORS-enabled ones; the rest are left out), fixed and sticky elements are pinned where they are on screen. Returns
+    // that picture ({ c: a canvas, k: its pixels per CSS px}), or null if the browser won't play along; the pin and the
+    // lines go on a copy (expose), each time they change, and the note takes that copy as a JPEG (photo).
     async function snapshot(m) {
       try {
         const W = innerWidth, H = innerHeight, sx = scrollX, sy = scrollY, de = doc.documentElement, waits = [];
@@ -1152,26 +1422,39 @@
         g.fillStyle = bg(); g.fillRect(0, 0, W, H);
         g.drawImage(img, 0, 0, W, H);
         await new Promise(r => setTimeout(r, 60)); g.drawImage(img, 0, 0, W, H); // Safari paints images late: a second pass
-        annotate(g, m);
-        // the coordinator keeps a screenshot up to 1.5 MB (about 2 MB as a data URL)
+        c.toDataURL('image/jpeg', 0.1);   // (a page that tainted it says so here, not at the send)
+        return { c, k };
+      } catch (err) { console.info('[review] no screenshot:', err?.message || err); return null; }
+    }
+    // the screenshot with the mark on it, into `into` (a new canvas by default)
+    function expose({ c, k }, m, into = doc.createElement('canvas')) {
+      into.width = c.width; into.height = c.height;
+      const g = into.getContext('2d'); g.drawImage(c, 0, 0); g.scale(k, k);
+      annotate(g, m);
+      return into;
+    }
+    // ...as it goes: the coordinator keeps a screenshot up to 1.5 MB (about 2 MB as a data URL)
+    function photo(taken, m) {
+      if (!taken) return null;
+      try {
+        const c = expose(taken, m);
         let url;
         for (const q of [0.85, 0.7, 0.55, 0.4]) if ((url = c.toDataURL('image/jpeg', q)).length < 2_000_000) break;
         return url.startsWith('data:image/jpeg') ? url : null;
-      } catch (err) { console.info('[review] no screenshot:', err?.message || err); return null; }
+      } catch { return null; }
     }
     const bg = () => { for (const e of [doc.body, doc.documentElement]) { const c = e && getComputedStyle(e).backgroundColor; if (c && c !== 'transparent' && !/rgba\(.*,\s*0\)$/.test(c)) return c; } return '#fff'; };
+    // the pin, and the lines drawn as they are on screen (ink.js)
     function annotate(g, m) {
       g.lineCap = g.lineJoin = 'round';
       const r = m.element.rect;
-      if (m.kind === 'circle') {
-        g.beginPath(); m.pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath();
-        g.strokeStyle = '#fff'; g.lineWidth = 9; g.stroke(); g.strokeStyle = ACCENT; g.lineWidth = 5; g.stroke();
-      } else {
+      if (m.kind === 'circle') { /* its lines, below */ } else {
         g.setLineDash([7, 5]); g.strokeStyle = ACCENT; g.lineWidth = 2.5; g.strokeRect(r.x - 3, r.y - 3, r.w + 6, r.h + 6); g.setLineDash([]);
         const { x, y } = m; // a pin: a round head on a short needle
         g.strokeStyle = '#2b2230'; g.lineWidth = 3; g.beginPath(); g.moveTo(x, y); g.lineTo(x + 8, y - 16); g.stroke();
         g.fillStyle = ACCENT; g.strokeStyle = '#fff'; g.lineWidth = 3; g.beginPath(); g.arc(x + 11, y - 21, 9, 0, 7); g.fill(); g.stroke();
       }
+      inkjs?.draw(g, strokes, { halo: true });
     }
     // (a dialog or popover in the top layer is copied over it all, after the rest: its v.popup.)
     const SKIP = /^(script|noscript|template|style|link|meta|title|base|head|iframe|object|embed|audio|source|track)$/;

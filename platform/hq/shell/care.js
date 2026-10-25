@@ -9,6 +9,8 @@
 // Every string from the coordinator is customer- or partner-controlled: it goes through esc() as text, is never turned
 // into a link (but an email's web addresses, as Mail shows them: emailtext.js), and a
 // bug report's picture and a claim's photos are only ever an <img>.
+// Everything with a customer's details (a card, the list's rows, the remedies' and held orders' words) is marked
+// data-private: a walk-through call's recording keeps it out (shared/watchalong).
 // A card is deleted at the customer's request from its More (with a confirm step): only its reference is kept, and the care
 // service deletes its copy. Find a case opens a card by its reference (the one a customer asking for that names).
 // Care › Numbers: the support chat's own numbers per app, counts only (nothing in it leads to a conversation, a customer or
@@ -116,7 +118,7 @@ export async function settings(el) {
     <div class="cr-name"><input id="care-name" maxlength="60" autocomplete="name" aria-label="Your name on replies" placeholder="Your name" value="${esc(name ?? '')}"><button data-save-name>Save</button></div>
     ${name ? '' : '<p class="dim"><b>Not set yet:</b> Care can’t send a reply until it is.</p>'}<p class="msg" role="status"></p>
     ${kept.length ? `<p class="cap"><i class="prompt">&gt; </i>NOT CUSTOMERS</p><p class="dim">You marked these senders as not customers: their email stays in Mail.</p>
-      <ul class="cr-kept">${kept.map(a => `<li><span>${esc(a)}</span><button data-tocare="${esc(a)}">Back to Care</button></li>`).join('')}</ul>` : ''}
+      <ul class="cr-kept" data-private>${kept.map(a => `<li><span>${esc(a)}</span><button data-tocare="${esc(a)}">Back to Care</button></li>`).join('')}</ul>` : ''}
     <p class="msg" data-kept-msg role="status"></p>`;
   const f = el.querySelector('#care-name'), msg = el.querySelector('.msg'), save = el.querySelector('[data-save-name]');
   const saveName = async () => {
@@ -271,7 +273,7 @@ function rowHtml(c) {
   const meta = `${c.appName ?? c.app ?? ''} · ${ago(c.since ?? c.created)} · ${String(c.lang ?? '').toUpperCase()}`;
   const name = [kindOf(c), c.case, quote, meta, dated && `${c.late ? 'Late, ' : ''}${dueBy(c)}`, checked && (CHECK[c.check] ?? CHECK.none)[1],
     ...tags.map(([t, , j]) => (j ? `${t} (job ${j[0]})` : t))].filter(Boolean).join(', ');
-  return `<li>${covered('cr-row', `data-card="${Number(c.id)}"`, name, `<span class="ic">${kindIcon(c)}</span>
+  return `<li data-private>${covered('cr-row', `data-card="${Number(c.id)}"`, name, `<span class="ic">${kindIcon(c)}</span>
     <span class="t"><b>${esc(kindOf(c))}</b><span class="cs">${esc(c.case)}</span></span>
     <span class="q">${esc(quote)}</span>
     <span class="m">${esc(meta)}</span>
@@ -289,13 +291,13 @@ function busyHtml(b) {
 }
 // (its details as prose)
 const remedyHtml = r => `<div class="cr-remedy" data-remedy="${Number(r.request)}">
-    <p class="t"><b>${esc(r.title)}</b>${r.case ? `<span class="cs">${esc(r.case)}</span>` : ''}</p>
-    <p class="grant">${esc(r.grant)}</p>
-    ${r.body ? `<details><summary>The details</summary><div class="txt prose">${prose(r.body)}</div></details>` : ''}
+    <p class="t" data-private><b>${esc(r.title)}</b>${r.case ? `<span class="cs">${esc(r.case)}</span>` : ''}</p>
+    <p class="grant" data-private>${esc(r.grant)}</p>
+    ${r.body ? `<details data-private><summary>The details</summary><div class="txt prose">${prose(r.body)}</div></details>` : ''}
     <div class="cr-two"><button class="cta" data-approve>${icon('tick', 'px')}Approve</button><button data-decline>Not now</button></div>${msgOf(`r${r.request}`)}</div>`;
 const owedHtml = o => `<div class="cr-owed" data-voucher="${Number(o.voucher)}" data-request="${o.request == null ? '' : Number(o.request)}">
-    <p class="t"><b>${esc(o.amount)}</b><span>${esc(o.appName ?? o.app)} · order ${esc(o.order)}</span>${o.mode === 'test' ? tag('test mode') : ''}</p>
-    <p class="why">${esc(o.reason)}</p><p class="sm">Owed since ${esc(ago(o.since))}</p>
+    <p class="t" data-private><b>${esc(o.amount)}</b><span>${esc(o.appName ?? o.app)} · order ${esc(o.order)}</span>${o.mode === 'test' ? tag('test mode') : ''}</p>
+    <p class="why" data-private>${esc(o.reason)}</p><p class="sm">Owed since ${esc(ago(o.since))}</p>
     <div class="cr-two">${o.request != null ? '<button data-paid>Paid another way</button>' : ''}<button data-again>Refund again</button></div>${msgOf(`o${o.voucher}`)}</div>`;
 // A held order: what its word check read (or what's printed on it), then Release
 // or Refuse, for those words (their revision goes with the tap); once tapped, the answer
@@ -305,7 +307,7 @@ const heldHtml = h => {
   const state = !h.answer ? `<div class="cr-two"><button class="cta" data-release>${icon('tick', 'px')}Release: print it</button><button data-refuse>Refuse: refund it</button></div>`
     : h.taken ? `<p class="grant">${h.answer === 'release' ? done : `Refused: ${app} is cancelling it and refunding it in full`}.</p>` : `<p class="grant">${done} at ${app}’s next check, usually within a minute.</p><div class="cr-two"><button data-undo>Undo</button></div>`;
   return `<div class="cr-held" data-line="${esc(h.line)}" data-revision="${esc(h.revision ?? '')}">
-    <p class="t"><b${h.words?.length > 120 ? ' class="long"' : ''}>${h.words ? `“${esc(h.words)}”` : 'No words given'}</b><span>${app} · ${esc(h.description)} · order ${esc(h.order)}</span>${h.mode === 'test' ? tag('test mode') : ''}</p>
+    <p class="t" data-private><b${h.words?.length > 120 ? ' class="long"' : ''}>${h.words ? `“${esc(h.words)}”` : 'No words given'}</b><span>${app} · ${esc(h.description)} · order ${esc(h.order)}</span>${h.mode === 'test' ? tag('test mode') : ''}</p>
     <p class="sm">${h.why ? `Held: ${esc(h.why)} · ` : ''}Paid ${esc(ago(h.paidAt))}${h.answer ? ` · you answered ${esc(ago(h.answeredAt))}` : ''}</p>${state}
     ${h.quiet ? `<p class="why">${app} hasn’t checked in for over 10 minutes, so ${h.answer ? 'your answer waits for it' : 'it won’t hear an answer until it’s back'}.</p>` : ''}${msgOf(`h${h.line}`)}</div>`;
 };
@@ -317,9 +319,9 @@ function foldHtml(k, title, sub) {
   return `<details class="cr-fold" data-fold="${k}"${f.open ? ' open' : ''}><summary><b>${esc(title)}</b><span>${esc(sub)}</span></summary>${body}
     ${f.list && f.more ? `<button class="cr-older" data-older="${k}"${f.busy ? ' disabled' : ''}>${f.busy ? 'Opening…' : 'Older ›'}</button>` : ''}</details>`;
 }
-const doneRowHtml = c => `<li><button class="cr-row" data-card="${Number(c.id)}"><span class="t"><b>${esc(kindOf(c))}</b><span class="cs">${esc(c.case)}</span></span>
+const doneRowHtml = c => `<li data-private><button class="cr-row" data-card="${Number(c.id)}"><span class="t"><b>${esc(kindOf(c))}</b><span class="cs">${esc(c.case)}</span></span>
     <span class="q">“${esc(c.preview)}”</span><span class="m">${esc(c.appName ?? c.app)} · ${esc(DONE[c.status] ?? c.status)}${c.sentAt ? ` ${esc(when(c.sentAt))}` : ''}</span></button></li>`;
-const remedyRowHtml = r => `<li><span class="st st-${esc(r.status)}">${esc(r.statusWords ?? r.status)}</span>
+const remedyRowHtml = r => `<li data-private><span class="st st-${esc(r.status)}">${esc(r.statusWords ?? r.status)}</span>
     <b>${esc(r.kind)} · ${esc(r.appName ?? r.app)} · order ${esc(r.order)}${r.value ? ` · ${esc(r.value)}` : ''}${r.mode === 'test' ? ' · test mode' : ''}</b>
     <span class="dim">${esc(r.reason)}${r.case ? ` · ${esc(r.case)}` : ''} · ${esc(when(r.created))}</span>
     ${(r.waits ?? []).length ? `<small>Waits for ${r.waits.map(esc).join(', ')}</small>` : ''}${r.result ? `<small>${esc(r.result)}</small>` : ''}</li>`;
@@ -416,7 +418,7 @@ function cardHtml(c, d) {
   const deadline = d => [d.safe && `safe by ${dayOf(d.safe)}`, d.likely && `likely ${dayOf(d.likely)}`, d.passed === 'safe' ? 'the safe one has passed' : d.passed === 'both' ? 'both have passed' : ''].filter(Boolean).join(' · ');
   const fact = (k, v) => k === 'deadline' && v && typeof v === 'object' ? deadline(v) : json(v);
   // (the summary as prose)
-  return `<div class="cr cr-card">
+  return `<div class="cr cr-card" data-private>
     <div class="cr-h"><div><b>${esc(kindOf(c))}</b><span>${esc(c.case)} · ${esc(c.appName ?? c.app)} · ${esc(String(c.lang ?? '').toUpperCase())} · since ${esc(when(c.since ?? c.created))} (${esc(ago(c.since ?? c.created))})</span></div><div class="rt">${open && !bug && !feedbackNote(c) ? due(c) : ''}${signal}</div></div>
     ${banner(c)}
     ${c.words && !ours(c) ? `<section class="cr-words"><h4>${feedbackNote(c) ? 'In the helper’s words' : 'In their own words'}</h4><blockquote class="txt">${esc(c.words)}</blockquote></section>` : ''}

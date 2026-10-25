@@ -466,7 +466,7 @@ export const topic = {
 
   async run([id, newTopic]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '') || !newTopic) stop('usage: hq topic <id> "topic"');
-    const answer = await api.call('request-topic', {
+    const answer = await api.change('request-topic', {
       body: api.withSpeaker({ id: Number(id), topic: newTopic }),
       timeoutMs: 30_000,
     });
@@ -488,13 +488,13 @@ export const close = {
   // (why it's refused)
   async run([id]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '')) stop('usage: hq close <id>');
-    const answer = await api.call('request-close', { body: api.withSpeaker({ id: Number(id) }), timeoutMs: 30_000 });
+    const answer = await api.change('request-close', { body: api.withSpeaker({ id: Number(id) }), timeoutMs: 30_000 });
     if (answer.status === 200) return print(`Request #${id} is off the desk phone.`);
     const why =
       answer.status === 404
         ? `request #${id} isn't an open card of yours that hq close takes`
         : api.errorIn(answer.body) || `HTTP ${answer.status}`;
-    stop(`Couldn't close it: ${why}.`, 22);
+    stop(`Couldn't close it: ${why}.`);
   },
 };
 

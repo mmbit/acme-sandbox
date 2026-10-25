@@ -12,7 +12,7 @@ import { findProject, findThread, listThreads, needsOf, SLUG, slugRefusal, type 
 import { addNeed, newThread } from './newthread.ts';
 import { checkThreadName, noProject, placeOf, projectClash, taskClash, threadClash } from './names.ts';
 import { newId } from './regroup.ts';
-import { OPEN_JOBS, nameOf, type Named } from './jobs.ts';
+import { DESK, OPEN_JOBS, nameOf, type Named } from './jobs.ts';
 // (who may change a plan: threadorder.ts, which the claim's refusals read too.)
 import { refusal, inNeedsOrder } from './threadorder.ts';
 import * as ledger from './ledger.ts';
@@ -184,6 +184,7 @@ export function newProject(
   const [id, name, owner] = [p.id, p.name, p.owner].map(v => String(v ?? '').trim());
   const business = p.business == null ? null : String(p.business);
   if (!SLUG.test(id)) return 'a project id is up to 24 lower-case letters, digits and dashes';
+  if (id === DESK) return `${id} names the work in no thread (hq project pause): pick another`;
   if (!name || name.length > NAME_MAX || /\n/.test(name))
     return `a project needs a name of one line, up to ${NAME_MAX} characters`;
   if (db.prepare('select 1 from projects where id = ?').get(id)) return `${id} is a project already (or was one)`;

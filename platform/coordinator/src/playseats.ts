@@ -123,14 +123,15 @@ export function takes(seat: Seat, row: { engine: string; for_seat: string | null
 const compareSeats = (a: Seat, b: Seat) =>
   Math.max(a.week, a.fiveHour) - Math.max(b.week, b.fiveHour) || a.id.localeCompare(b.id);
 
-// A full room holds its occupancy for the rest of the moment. Claims with the same engine, seat binding and
-// paced seats open to them therefore see the same seats.
+// A full room holds its occupancy for the rest of the moment, as the seats' occupancy holds between two claims that
+// start. Claims with the same engine, seat binding, paced seats open to them and spare standing (with others waiting)
+// therefore see the same seats (between claims, and spare standing).
 export function choices(moment: Moment, busy: Map<string, number>, limits: Record<string, number>) {
   type Pick = { seat: Seat | Wait; roomSeat: Seat | Wait };
   const cached = new Map<string, Map<string | null, Map<number, Pick>>>();
   const paced = [...new Set(moment.paced.values())].filter((until): until is number => until !== undefined);
   const empty = new Map<string, number>();
-  return (row: { engine: string; for_seat: string | null; downtime: number }, order: Order) => {
+  return (row: { engine: string; for_seat: string | null; downtime: number }, order: Order, others = false) => {
     let engine = cached.get(row.engine);
     if (!engine) cached.set(row.engine, (engine = new Map()));
     let bound = engine.get(row.for_seat);
@@ -138,11 +139,12 @@ export function choices(moment: Moment, busy: Map<string, number>, limits: Recor
     // Pacing thresholds are nested. The count identifies the same set of seats for every claim.
     let admitted = 0;
     for (const until of paced) admitted += Number(pacedTakes(order, until));
-    let picked = bound.get(admitted);
+    const key = 2 * admitted + Number(spareOnly(row, order) && others);
+    let picked = bound.get(key);
     if (!picked) {
-      const seat = choose(row, order, moment, busy, limits, false);
-      const roomSeat = 'id' in seat ? seat : choose(row, order, moment, empty, limits, false);
-      bound.set(admitted, (picked = { seat, roomSeat }));
+      const seat = choose(row, order, moment, busy, limits, others);
+      const roomSeat = 'id' in seat ? seat : choose(row, order, moment, empty, limits, others);
+      bound.set(key, (picked = { seat, roomSeat }));
     }
     return picked;
   };

@@ -641,7 +641,7 @@ function wanted(c: Card, b: any) {
   db.prepare("update care_wants set state = 'done' where id = ?").run(w!.id);
   // care's own check found a health detail HQ's didn't (its lists newer than the coordinator's): a health case all the same
   if (b.none === 'health') { healthFound(c); return { ok: true, id: c.id }; }
-  if (b.none != null) { note(c.id, NONE[String(b.none)] ?? 'No draft came: write the reply yourself.'); readFirst(c.id, null); return { ok: true, id: c.id }; }
+  if (b.none != null) { draftMissing(c.id, NONE[String(b.none)] ?? 'No draft came: write the reply yourself.'); return { ok: true, id: c.id }; }
   // (with the team investigating it too: the board's if the job ends without one)
   const text = clean(b.draft, MAX.draft).trim(), fill = !!text && (c.status === 'waiting' || (c.status === 'team' && investigated(c))) && !c.draft;
   const summary = clean(b.summary, MAX.summary).trim() || null, words = clean(b.boardWords, MAX.words).trim() || null;
@@ -652,10 +652,11 @@ function wanted(c: Card, b: any) {
   return { ok: true, id: c.id };
 }
 // A customer's email goes to the team (toInvestigate) once care has read it, so its brief names the language care found
-// (null when no model read it: care's cap, its want expired). One the board took meanwhile (sent, closed), or the team
+// (null when no model read it: care's cap, its want expired). One the board took meanwhile (reply saved, sent, closed), or the team
 // had, stays as it is.
 function readFirst(card: number, lang: string | null) {
   const c = byId(card);
+  if (c?.draft && c.draft !== c.ai_draft) return;
   if (c?.kind === 'email' && c.status === 'waiting' && !c.job) toInvestigate(c, lang);
 }
 
@@ -719,10 +720,12 @@ function toCare(b: any) {
 export function expireWants(t = Date.now()) {
   for (const w of db.prepare("select * from care_wants where state = 'open' and at < ?").all(new Date(t - WANT_MINUTES * 60_000).toISOString()) as Want[]) {
     db.prepare("update care_wants set state = 'expired' where id = ?").run(w.id);
-    readFirst(w.card, null);
-    if (!['waiting', 'unsure'].includes(byId(w.card)?.status ?? '')) continue;
-    note(w.card, 'No draft came within the hour: write the reply yourself.');
+    draftMissing(w.card, 'No draft came within the hour: write the reply yourself.');
   }
+}
+function draftMissing(card: number, text: string) {
+  readFirst(card, null);
+  if (['waiting', 'unsure'].includes(byId(card)?.status ?? '')) note(card, text);
 }
 
 // A claim's photo from care: a JPEG (its first bytes, and its frame header at most PHOTO_SIDE a side, read before anything

@@ -8,7 +8,8 @@ import { minute, oneLine, print, shown, stop, text } from './output.ts';
 // (its pictures)
 export const note = {
   help: `
-   hq note <id>                                      a review note the board sent you (review mode) in full; saves its screenshot to
+   hq note <id>                                      a review note the board sent you (review mode) in full (an outside
+                                                     reviewer's: in a job its share's notes went to); saves its screenshot to
                                                      $TMPDIR/review-note-<id>.XXXXXX.png|jpg so you can look at it, and
                                                      the pictures added to it as review-note-<id>-picture-<n>.XXXXXX.png|jpg
    hq note <id> fixed [job:<n>] "..."                a note hq notes lists for you: you fixed it (what didn't work and
@@ -38,11 +39,12 @@ function saveImage(name: string, dataUrl: string) {
 
 export const notes = {
   help: `
-   hq notes [<slug>] [--before <id>]                 the review notes sent to your jobs (or to an early look of yours), newest
-                                                     first, a page at a time (--before: the ones before that id, the next
-                                                     page); with a product's slug or a cycle folder (cycles/<folder>), only
-                                                     its: id, when, the job, page, what it's pinned to, and its words on one
-                                                     line (hq note <id> has one in full)`,
+   hq notes [<slug>] [--before <id>]                 the review notes sent to your jobs (or to an early look of yours; an
+                                                     outside reviewer's: in a job its share's notes went to), newest first,
+                                                     a page at a time (--before: the ones before that id, the next page);
+                                                     with a product's slug or a cycle folder (cycles/<folder>), only its: id,
+                                                     when, the job, page, what it's pinned to, and its words on one line
+                                                     (hq note <id> has one in full)`,
 
   async run(args: string[]) {
     const at = args.indexOf('--before'),
@@ -79,7 +81,7 @@ export const notes = {
 
 export const reviewers = {
   help: `
-   hq reviewers <share> [--from <n>]                 everyone the board invited to a share whose notes reached your jobs, how
+   hq reviewers <share> [--from <n>]                 everyone the board invited to a share whose notes reached this job, how
                                                      each left it, and the jobs its notes went to, a page at a time (--from:
                                                      the line to start at)`,
 

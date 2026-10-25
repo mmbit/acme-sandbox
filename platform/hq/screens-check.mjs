@@ -35,13 +35,15 @@ const VIEWS = {
   tablet: { viewport: { width: 1180, height: 820 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
   desktop: { viewport: { width: 1280, height: 800 } },
 };
+// (a sketch full screen goes back to the Sketchbook first)
 const close = page =>
   page.evaluate(() =>
-    document
-      .querySelector(
+    [
+      document.querySelector('dialog.sk-page[open] [data-back]'),
+      document.querySelector(
         '#tool:not([hidden]) [data-close], #viewer:not([hidden]) [data-close], #panel:not([hidden]) #panel-close, .wire .big .close, #projects:not([hidden]) [data-leave]',
-      )
-      ?.click(),
+      ),
+    ].forEach(button => button?.click()),
   );
 const app = name => async page => {
   await page.click('#btn-computer');
@@ -62,9 +64,17 @@ const SCREENS = {
   news: page => page.click('#btn-news'),
   intercom: page => page.click('#btn-intercom'),
   computer: page => page.click('#btn-computer'),
+  projects: page => page.click('#btn-projects'), // (the HUD's own key)
   ...Object.fromEntries(
-    ['numbers', 'artifacts', 'people', 'calls', 'notes', 'mail', 'projects', 'seats', 'settings'].map(a => [a, app(a)]),
+    ['numbers', 'artifacts', 'people', 'calls', 'notes', 'mail', 'seats', 'settings'].map(a => [a, app(a)]),
   ),
+  // the Sketchbook, and a sketch full screen
+  sketchbook: app('sketchbook'),
+  'sketchbook-page': async page => {
+    await app('sketchbook')(page);
+    await page.click('[data-open]');
+    await page.waitForSelector('dialog.sk-page[open]');
+  },
   // the photo studio's Approvals, and an approved photo big in its History
   studio: app('studio'),
   'studio-big': async page => {

@@ -585,10 +585,12 @@ class CareChat extends HTMLElement {
     this.langs?.observe(document.documentElement, { attributeFilter: ['lang'] }); // put back on the page again
     if (this.shadowRoot) return;
     this.dataset.noSnapshot = ''; // the bug report's picture leaves the chat out (snapshot.js)
+    // the conversation is a person's own (an order, an address): a watch-along keeps it out, inside the shadow root
+    // where its mark is seen (shared/watchalong).
     const root = this.attachShadow({ mode: 'open' }), w = words(pick(pageLang()));
     root.innerHTML = `${STYLES.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}
       <button class="launcher" type="button" aria-label="${esc(w('launcher'))}" aria-expanded="false" hidden><span class="l-face">${mark()}</span><span class="l-label">${esc(w('help'))}</span></button>
-      <section class="chat" aria-label="${esc(w('panel'))}" hidden></section>`;
+      <section class="chat" aria-label="${esc(w('panel'))}" data-private hidden></section>`;
     this.panel = root.querySelector('.chat'); this.launcher = root.querySelector('.launcher');
     const label = (w) => { this.launcher.setAttribute('aria-label', w('launcher')); this.launcher.querySelector('.l-label').textContent = w('help'); this.panel.setAttribute('aria-label', w('panel')); };
     this.panel.addEventListener('chat-lang', (e) => label(e.detail.w));

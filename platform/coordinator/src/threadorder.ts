@@ -10,6 +10,7 @@ import { db, mergePending, prepared, setting } from './db.ts';
 import { ceo, type Project } from './company.ts';
 import { findProject, findThread, needsOf, type Thread } from './projects.ts';
 import * as jobs from './jobs.ts';
+import * as reviewclosure from './reviewclosure.ts';
 import type { Planned } from './eta.ts';
 import { mergeBoundaries } from './threadboundary.ts';
 
@@ -145,7 +146,7 @@ function pushingOn(branch: string) {
   ).get(branch) as { id: number } | undefined;
   return job?.id ?? null;
 }
-// Each thread `thread` needs that isn't done, with its last task still to merge
+// Each thread whose work is still needed, with its last task still to merge
 function needsOpen(thread: string) {
   return needsOf(thread).flatMap(n => {
     const needed = findThread(n);
@@ -156,6 +157,15 @@ function needsOpen(thread: string) {
         order by coalesce(j.seq, j.id) desc, j.id desc limit 1`,
       )
       .get(needed.id) as { id: number } | undefined;
+    if (!last) {
+      const tasks = prepared(
+        "select id, status, branch from jobs where thread = ? and kind = 'work' and pr is null",
+      ).all(needed.id) as Pick<Task, 'id' | 'status' | 'branch'>[];
+      const settled = (t: (typeof tasks)[number]) =>
+        t.status === 'cancelled' ||
+        (t.status === 'done' && ['merged', 'dropped'].includes(reviewclosure.status(jobs.workBranchOf(t)) ?? 'merged'));
+      if (tasks.length && tasks.every(settled)) return [];
+    }
     return [{ thread: needed.id, task: last?.id ?? null }];
   });
 }

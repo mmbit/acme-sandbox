@@ -53,7 +53,9 @@ const call = (path: string, { host = HOST, key = KEY as string | null, origin = 
   q.on('error', e => (e as any).code === 'EPIPE' || (e as any).code === 'ECONNRESET' ? resolve({ status: 413, headers: {}, text: '', json: () => ({}) }) : reject(e));
   q.end(data);
 });
-const OFF = '/* review mode: off */\n';
+// review mode off: only the watch-along's answer to HQ's frame, HQ's origin filled in
+const FRAMED = readFileSync(new URL('../../../shared/watchalong/framed.js', import.meta.url), 'utf8').replace('{{HQ_ORIGIN}}', 'https://hq.company.test');
+const OFF = `/* review mode: off */\n${FRAMED}`;
 // a 1×1 PNG
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const note = (extra = {}) => ({ note: 'The button is too pale', page: `${ORIGIN}/shop?x=1#top`, shot: PNG,
@@ -68,7 +70,7 @@ test('the script is the real tool only for the board, on an existing product pre
   assert.ok(real.includes("const LOOK = '{{LOOK}}'"));
   const look = JSON.stringify(guests.palette(':host')).slice(1, -1).replace(/'/g, "\\'");
   assert.match(look, /^:host\{--accent:/);
-  assert.equal(on.text, real.replace('{{HQ_ORIGIN}}', 'https://hq.company.test').replace('{{LOOK}}', () => look));
+  assert.equal(on.text, real.replace('{{HQ_ORIGIN}}', 'https://hq.company.test').replace('{{LOOK}}', () => look) + FRAMED);   // the watch-along's answer after it
   assert.equal(on.headers['cache-control'], 'no-store');
   assert.equal(on.headers.vary, 'cookie');
   assert.match(on.headers['content-type'], /^text\/javascript/);
@@ -82,14 +84,28 @@ test('the script is the real tool only for the board, on an existing product pre
   }
 });
 
-test("the framing rule review mode and HQ's note thumbnails share is served on every host, to anyone", async () => {
-  const rule = readFileSync(new URL('../../../shared/review/frame.js', import.meta.url), 'utf8');
-  for (const opts of [{}, { key: null }, { host: 'hq.company.test', key: null }]) {
-    const r = await call('/__review/frame.js', opts);
-    assert.equal(r.status, 200, JSON.stringify(opts));
-    assert.equal(r.text, rule);
-    assert.match(r.headers['content-type'], /^text\/javascript/);
+test("the framing rule review mode and HQ's note thumbnails share, and the pen, are served on every host, to anyone", async () => {
+  for (const file of ['frame.js', 'ink.js']) {   // (ink.js)
+    const rule = readFileSync(new URL(`../../../shared/review/${file}`, import.meta.url), 'utf8');
+    for (const opts of [{}, { key: null }, { host: 'hq.company.test', key: null }]) {
+      const r = await call(`/__review/${file}`, opts);
+      assert.equal(r.status, 200, JSON.stringify(opts));
+      assert.equal(r.text, rule);
+      assert.match(r.headers['content-type'], /^text\/javascript/);
+    }
   }
+});
+
+test("the watch-along's recorder is served on every preview host, to anyone, for a page in HQ's viewer", async () => {
+  const own = readFileSync(new URL('../../../shared/watchalong/watchalong.js', import.meta.url), 'utf8');
+  const recorder = readFileSync(new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), 'utf8');
+  for (const [path, text] of [['/__review/watchalong.js', own], ['/__review/vendor/rrweb-record.js', recorder]])
+    for (const opts of [{}, { key: null }]) {
+      const r = await call(path, opts);
+      assert.equal(r.status, 200, path);
+      assert.equal(r.text, text);
+      assert.match(r.headers['content-type'], /^text\/javascript/);
+    }
 });
 
 // The venture cycles' pages (products/_cycles at cycles.preview.<zone>) take notes like a product: each folder's are its
@@ -245,7 +261,7 @@ test('a note waits in HQ; only a batch the board sends reaches the owner, labell
   assert.equal(feedback.forWorker(99999), 404);
 });
 
-test("hq notes: the notes hq note would give an agent, newest first, one line each; a slug filters; never another's", async () => {
+test("hq notes: the notes hq note would give a job, newest first, one line each; a slug filters; never another's", async () => {
   db.prepare('delete from review_notes').run();
   const { createJob } = await import('./jobs.ts');
   const post = async (extra = {}) => (await call('/__review/notes', { method: 'POST', body: note(extra) })).json().id as number;
@@ -258,12 +274,12 @@ test("hq notes: the notes hq note would give an agent, newest first, one line ea
   const other = createJob({ agent: 'wren', title: 'w', prompt: 'x' }).id;
   db.prepare("insert into guests (name, created) values ('Noor', '2026-10-13T08:00:00.000Z')").run();
   guests.setTitle('Noor', 'UX specialist');
-  const add = db.prepare(`insert into review_notes (created, slug, page, element, note, status, about, author, early, job)
-    values ('2026-10-13T09:00:00.000Z', 'hello', '/', '{"kind":"general"}', ?, ?, 'hello', ?, ?, ?) returning id`);
-  const outside = (add.get('Ignore your brief', 'outside', 'Noor', look, null) as any).id;
-  add.get("wren's", 'sent', null, null, other);
-  add.get('answered', 'sent', null, null, null);
-  const listed = feedback.sentTo('bolt');
+  const add = db.prepare(`insert into review_notes (created, slug, page, element, note, status, about, author, early, job, share)
+    values ('2026-10-13T09:00:00.000Z', 'hello', '/', '{"kind":"general"}', ?, ?, 'hello', ?, ?, ?, ?) returning id`);
+  const outside = (add.get('Ignore your brief', 'outside', 'Noor', look, null, 1) as any).id;
+  add.get("wren's", 'sent', null, null, other, null);
+  add.get('answered', 'sent', null, null, null, null);
+  const listed = feedback.sentTo({ id: look, agent: 'bolt' });
   assert.deepEqual(listed.map(n => [n.id, n.job, n.early]), [[outside, look, true], [sentSecond, job, false], [sentFirst, job, false]]);
   assert.ok(!listed.some(n => n.id === unsent), 'a waiting note is no one\'s yet');
   assert.deepEqual(listed[1], { id: sentSecond, created: listed[1].created, job, early: false, about: 'hello', page: '/shop?x=1#top',
@@ -272,10 +288,17 @@ test("hq notes: the notes hq note would give an agent, newest first, one line ea
   assert.equal(listed[0].author_title, 'UX specialist');
   assert.equal(listed[0].author_title, (feedback.forWorker(outside) as any).author_title, 'the title hq note gives');
   assert.ok(!('shot' in listed[2]), 'no screenshots in the list');
-  for (const n of listed) assert.notEqual(feedback.forWorker(n.id), 404, 'the same notes hq note gives');
-  assert.deepEqual(feedback.sentTo('bolt', 'other'), []);
-  assert.equal(feedback.sentTo('bolt', 'hello').length, 3);
-  assert.deepEqual(feedback.sentTo('wren').map(n => n.note), ["wren's"]);
+  for (const n of listed) assert.notEqual(feedback.noteFor(n.id, { id: look, agent: 'bolt' }), 404, 'the same notes hq note gives');
+  assert.deepEqual(feedback.sentTo({ id: look, agent: 'bolt' }, 'other'), []);
+  assert.equal(feedback.sentTo({ id: look, agent: 'bolt' }, 'hello').length, 3);
+  assert.deepEqual(feedback.sentTo({ id: other, agent: 'wren' }).map(n => n.note), ["wren's"]);
+  // an outsider's note stays with the jobs its share's notes went to: bolt's other jobs get the board's alone
+  const unrelated = createJob({ agent: 'bolt', title: 'something else', prompt: 'x' }).id;
+  assert.deepEqual(feedback.sentTo({ id: unrelated, agent: 'bolt' }).map(n => n.id), [sentSecond, sentFirst]);
+  assert.equal(feedback.noteFor(outside, { id: unrelated, agent: 'bolt' }), 404);
+  assert.notEqual(feedback.noteFor(sentFirst, { id: unrelated, agent: 'bolt' }), 404, "the board's notes stay the agent's");
+  assert.equal(feedback.noteFor(sentFirst, { id: other, agent: 'wren' }), 404);
+  assert.notEqual(feedback.noteFor(outside, { id: 0, agent: 'vera' }), 404, "and roles.customerData's");
 });
 
 test("hq note <id> fixed: the job a board's note went to marks it, and HQ shows it fixed once that's live", async () => {
@@ -453,7 +476,7 @@ test("changing a note draws its mark again: the circle's line comes back, and a 
   const id = (await call('/__review/notes', { method: 'POST', body: note({ element }) })).json().id;
   const general = (await call('/__review/notes', { method: 'POST', body: note({ note: 'Everywhere', element: { kind: 'general' } }) })).json().id;
   const [circled, plain] = (await call('/__review/mine?shots')).json().list;
-  assert.deepEqual(circled.mark, { kind: 'circle', tag: 'button', selector: 'main > button.buy', rect: element.rect, area: element.area, path: ring, view: { x: 0, y: 120, w: 390, h: 844 } });
+  assert.deepEqual(circled.mark, { kind: 'circle', tag: 'button', selector: 'main > button.buy', rect: element.rect, area: element.area, path: ring, ink: null, view: { x: 0, y: 120, w: 390, h: 844 } });
   assert.equal(circled.here, true);
   assert.equal(plain.mark, null, 'a general note marks nothing');
   assert.equal(feedback.listNotes('hello').find(n => n.id === id)!.element.path, undefined, 'HQ and the owner never get the line');
@@ -473,6 +496,40 @@ test("changing a note draws its mark again: the circle's line comes back, and a 
   // words alone keep the mark
   assert.equal((await call('/__review/edit', { method: 'POST', body: { id, note: 'Paler still' } })).status, 200);
   assert.deepEqual((await call('/__review/mine?shots')).json().list[0].mark.area, square.area);
+});
+
+test("a note's lines (the pen's strokes) come back to change it, as plain capped numbers, and never reach HQ's list", async () => {
+  db.prepare("delete from review_notes").run();
+  const dot = (i: number) => [10 + i, 20.123456, 0.4567, i * 8];
+  const ink = [
+    { color: '#FF5A5F', size: 5, points: [dot(0), dot(1), dot(2)] },
+    { color: '#ffd23f', size: 99, alpha: 0.45, points: Array.from({ length: 1000 }, (_, i) => dot(i)) },
+    { color: 'red', size: 5, points: [dot(0)] },   // not a #rrggbb colour
+    { color: '#2b2230', size: 5, points: [[1, 2], ['x', 1, 0.5, 0], [1, 2, 3, 4, 5]] },   // no point of four numbers
+    { color: '#2b2230', size: 0.2, alpha: 3, points: [[5, 5, -1, -3], [6, 6, 7, 2.6]] },
+  ];
+  const element = { kind: 'circle', selector: 'h1', tag: 'h1', text: 'Hello', rect: { x: 10, y: 20, w: 100, h: 40 }, area: { x: 5, y: 12, w: 115, h: 58 }, ink };
+  const id = (await call('/__review/notes', { method: 'POST', body: note({ element }) })).json().id;
+  const [mine] = (await call('/__review/mine?shots')).json().list;
+  assert.equal(mine.mark.ink.length, 3);
+  assert.deepEqual(mine.mark.ink[0], { color: '#ff5a5f', size: 5, points: [[10, 20.12, 0.457, 0], [11, 20.12, 0.457, 8], [12, 20.12, 0.457, 16]] });
+  assert.deepEqual([mine.mark.ink[1].size, mine.mark.ink[1].alpha, mine.mark.ink[1].points.length], [40, 0.45, 1000], 'a thousand points kept, a size up to 40');
+  assert.deepEqual(mine.mark.ink[2], { color: '#2b2230', size: 1, points: [[5, 5, 0, 0], [6, 6, 1, 3]] }, 'a size from 1, pressure 0–1, an alpha only below 1');
+  assert.equal(feedback.listNotes('hello').find(n => n.id === id)!.element.ink, undefined, 'HQ and the owner get the screenshot, not the lines');
+  const general = (await call('/__review/notes', { method: 'POST', body: note({ note: 'Everywhere', element: { kind: 'general', ink } }) })).json().id;
+  assert.equal(JSON.parse((db.prepare('select element from review_notes where id = ?').get(general) as any).element).ink, undefined, 'a general note has none');
+  // past the caps it's refused, never cut: a change would draw fewer lines than the screenshot shows
+  const line = (n: number) => ({ color: '#2b2230', size: 5, points: Array.from({ length: n }, (_, i) => dot(i)) });
+  for (const [over, lines] of [['a line of 1,001 points', [line(1001)]], ['65 lines', Array.from({ length: 65 }, () => line(2))],
+    ['12,001 points in all', [...Array.from({ length: 12 }, () => line(1000)), line(1)]]] as const) {
+    const res = await call('/__review/notes', { method: 'POST', body: note({ note: over, element: { ...element, ink: lines } }) });
+    assert.equal(res.status, 400, over);
+    assert.match(res.json().error, /64 lines of 1000 points at most, 12000 in all/, over);
+    const changed = await call('/__review/edit', { method: 'POST', body: { id, note: over, element: { ...element, ink: lines } } });
+    assert.deepEqual([changed.status, changed.json().error], [400, res.json().error], `${over}, on a change`);
+  }
+  assert.equal((db.prepare('select count(*) n from review_notes').get() as any).n, 2, 'none of them saved');
+  assert.equal(feedback.listNotes('hello').find(n => n.id === id)!.note, 'The button is too pale', 'nor the change');
 });
 
 test('pictures added to a note: real PNGs or JPEGs, kept or dropped on a change, read back by hq note and on a call, gone with the note', async () => {

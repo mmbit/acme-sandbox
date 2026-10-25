@@ -159,10 +159,13 @@ export type Asked = { at: number; why: string; held?: boolean; immediate?: boole
 
 // A heartbeat's answer for a job selected to yield by the coordinator. It stays asked only while heartbeats keep
 // saying so (the work it would make room for may start elsewhere). first: this heartbeat carried the probe's first
-// reading. Returns what changed.
-export function heard(yielding: Map<number, Asked>, id: number, r: { yield?: string; immediate?: boolean } | undefined,
+// reading. Returns what changed. A reined answer (its job past its share of HQ's time: the coordinator's jobs.ts
+// heartbeat) still carries a pause or room yield, but left the downtime window unread, so a window yield heard stands.
+export function heard(yielding: Map<number, Asked>, id: number,
+  r: { yield?: string; immediate?: boolean; reined?: boolean } | undefined,
   o: { first?: boolean }, now = Date.now()): 'yielding' | 'carrying on' | undefined {
   const asked = yielding.get(id), held = !!o.first && r?.yield === 'window';
+  if (r?.reined && asked?.why === 'window') return;
   if (!r?.yield) { if (asked && !asked.held) { yielding.delete(id); return 'carrying on'; } return; }
   if (asked) { Object.assign(asked, { why: asked.held ? asked.why : r.yield, held: asked.held || held, immediate: r.immediate }); return; }
   yielding.set(id, { at: now, why: r.yield, held, ...(r.immediate ? { immediate: true } : {}) });

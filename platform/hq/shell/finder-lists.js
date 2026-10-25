@@ -35,13 +35,22 @@ export const BUILT_IN = [
   { id: 'settings', name: 'Settings', prefix: 's', list: settings },
 ];
 
+// (and the projects view, the HUD's key beside the computer's apps.)
 async function apps() {
-  return computerApps().map(a => ({
-    key: a.id,
-    title: a.name,
-    sub: a.what,
-    open: () => openComputer(a.id),
-  }));
+  return [
+    {
+      key: 'projects',
+      title: 'Projects',
+      sub: 'Businesses, projects and who’s doing what',
+      open: () => openProjects(),
+    },
+    ...computerApps().map(a => ({
+      key: a.id,
+      title: a.name,
+      sub: a.what,
+      open: () => openComputer(a.id),
+    })),
+  ];
 }
 async function work() {
   const board = await loadProjects(world.dev);

@@ -142,7 +142,7 @@ async function call(slow, stall) {
   const scheduled = await page.evaluate(() => window.scheduled), speaker = await page.evaluate(() => window.speaker);
   await page.click('#call-end');
   for (let i = 0; i < 50 && !bye; i++) await page.waitForTimeout(100);
-  if (noted) noted.after = await page.evaluate(() => document.querySelector('#call-note').hidden);
+  if (noted) noted.after = await page.evaluate(() => (document.querySelector('#call-note')?.hidden ?? true));   // (gone with the call's layer)
   await context.close();
   assert.deepEqual(errors, []);
   return { scheduled, bye, stalled, speaker, cut, said, quiet, noted, mic };
@@ -545,7 +545,7 @@ async function lagging() {
     ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
   }));
   const seen = {};
-  const note = () => page.evaluate(() => { const n = document.querySelector('#call-net'); return n.hidden ? '' : n.textContent; });
+  const note = () => page.evaluate(() => { const n = document.querySelector('#call-net'); return !n || n.hidden ? '' : n.textContent; });   // (none once the call's layer is gone)
   await page.goto(`${base}/?intro=0&open=intercom`);
   await page.click('#call');
   while (!line) await page.waitForTimeout(50);
@@ -666,12 +666,12 @@ async function silentMicrophone(plan, audio = 'running') {
   }, untilTap);
   if (audio === 'suspended' || audio === 'until-tap') await stop(audio === 'until-tap');
   const t0 = Date.now(), seen = {};
-  await page.waitForFunction(() => document.querySelector('#call-screen').hidden || window.mics.length > 1, null, { timeout: 8000 }).catch(() => {});
+  await page.waitForFunction(() => (document.querySelector('#call-screen')?.hidden ?? true) || window.mics.length > 1, null, { timeout: 8000 }).catch(() => {});
   seen.after = (Date.now() - t0) / 1000;
   await page.waitForTimeout(3000);
   const warning = () => page.evaluate(() => { const n = document.querySelector('#call-mic'); return n.hidden ? '' : n.textContent; });
   seen.mics = await page.evaluate(() => window.mics.length);
-  seen.ended = await page.evaluate(() => document.querySelector('#call-screen').hidden);
+  seen.ended = await page.evaluate(() => document.querySelector('#call-screen')?.hidden ?? true);
   seen.warning = await warning();
   if (!seen.ended && audio === 'warned-until-tap') { await stop(true); await page.waitForTimeout(3000); seen.paused = await warning(); }
   if (!seen.ended) {

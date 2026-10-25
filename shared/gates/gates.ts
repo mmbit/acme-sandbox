@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { Diagnostic } from 'typescript';
 import { SIDE } from '../demo/renders.mjs';
-import { onLent } from './lent.ts';
+import { HqUnreachable, onLent, UNREACHED_EXIT } from './lent.ts';
 import { dataProblems, outputProblems, renderProblems, type Change, type Problem } from './output.ts';
 import { areaOf, missingPackage, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
 import { crossedLimits, SIZE_RULES, sizedChanges } from './sizes.ts';
@@ -37,9 +37,11 @@ const baseRef = args.includes('--base') ? args[args.indexOf('--base') + 1] : 'or
 try {
   process.exitCode = args.includes('--helper') ? await onHelper() : await checkHere();
 } catch (err) {
-  // a gate that couldn't run says so and fails: the worker reports it as not run, never as passed
-  console.log(`The gates could not run: ${(err as Error).message}`);
-  process.exitCode = 2;
+  // a gate that couldn't run says so and fails: the worker reports it as not run, never as passed. Gates that lost HQ,
+  // the worker runs again once it answers.
+  const unreached = err instanceof HqUnreachable;
+  console.log(`The gates could not ${unreached ? 'reach HQ' : 'run'}: ${(err as Error).message}`);
+  process.exitCode = unreached ? UNREACHED_EXIT : 2;
 }
 
 // --helper: the same gates on a lent machine's helper, when the type check runs: it's what takes the time (Prettier and

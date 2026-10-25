@@ -373,7 +373,7 @@ test('Share: the desk phone sends only a card\'s Share part, never on a card abo
 const callToken = async (who = 'wren') => (await h.voice(`call-context?agent=${who}`)).body.token as string;
 const hash = (t: string) => createHash('sha256').update(t).digest('hex');
 
-test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token only assigns jobs, until the call ends', async () => {
+test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and manages work as its agent, until the call ends', async () => {
   const voice = (route: string, token: string, body?: unknown) => call(`/api/voice/${route}`, token, body);
   assert.equal((await voice('call-context?agent=wren', WORKER_TOKEN)).status, 401);
   assert.equal((await call('/api/worker/claim', VOICE_TOKEN, { seat: 'v', engine: 'test' })).status, 401);
@@ -396,15 +396,19 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token only assign
   for (const type of ['chat', 'status']) assert.equal((await agent('event', t, { type, to: 'bolt', text: 'on it' })).status, 403, type);
   assert.deepEqual(await h.feed(), quiet);
   for (const id of ['board', 'skittles', 'nobody-here']) assert.equal((await agent('job', t, { agent: id, title: 'x', prompt: 'y' })).status, 403, id);
-  for (const [route, body] of [['request', { kind: 'decision', title: 't', body: 'b' }], ['request-answer', { id: 1 }], ['request-close', { id: 1 }],
+  for (const [route, body] of [['request', { kind: 'decision', title: 't', body: 'b' }], ['request-answer', { id: 1 }],
     ['mail', undefined], ['note?id=1', undefined], ['phone', undefined]] as const)
     assert.equal((await agent(route, t, body)).status, 403, route);
+  // (closing a card that is not the call agent's is HQ's own refusal)
+  assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
   // a promise on its own call's list, nothing else: not another call's item or job
   const kit = await callToken('kit');
   const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', what: 'Coming-soon page', quote: 'Build it' })).body.id;
   const kitsJob = (await agent('job', kit, { agent: 'kit', title: 'Coming-soon page', prompt: 'x', item: kitsItem })).body.id;
   assert.equal((await agent('item', t, { kind: 'task', owner: 'wren', what: 'Something else', quote: 'y' })).status, 403);
-  for (const [route, body] of [['item-drop', { id: kitsItem, why: 'x' }], ['cancel', { id: kitsJob }]] as const) assert.equal((await agent(route, t, body)).status, 403, route);
+  assert.equal((await agent('item-drop', t, { id: kitsItem, why: 'x' })).status, 403);
+  // (cancel: open to a call as hq cancel is to its agent's jobs, and wren may cancel neither kit's job nor one kit queued)
+  assert.equal((await agent('cancel', t, { id: kitsJob })).status, 404);
   assert.equal(h.job(kitsJob).status, 'queued');
   // a call where nobody spoke (the voice line sends that at hang-up): the token dies, nothing follows up, and the call's
   // row (made at its start, for what's recorded during it) goes

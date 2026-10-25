@@ -3,13 +3,20 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 // Each blocked-report attempt has its own network deadline while the run is frozen.
 const BLOCK_ASK_MS = 5_000;
+// How long fetch waits for an answer when the request has no deadline of its own (undici's headersTimeout)
+const FETCH_WAITS_MS = 300_000;
 
 export function hqReports(url: string, token?: string) {
-  async function api(path: string, body: unknown = {}, signal?: AbortSignal) {
+  // waitsMs: how long this request waits for HQ's answer, which HQ holds a job's request to (its reins)
+  async function api(path: string, body: unknown = {}, signal?: AbortSignal, waitsMs = FETCH_WAITS_MS) {
     const response = await fetch(`${url}/api/worker/${path}`, {
       method: 'POST',
       body: JSON.stringify(body),
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'x-hq-wait-ms': String(waitsMs),
+      },
       signal,
     });
     if (!response.ok) throw new ResponseError(path, response.status);
@@ -23,7 +30,7 @@ export function hqReports(url: string, token?: string) {
       try {
         const timeout = ms ? AbortSignal.timeout(ms) : undefined;
         const deadline = signal && timeout ? AbortSignal.any([signal, timeout]) : (signal ?? timeout);
-        return await api(path, body, deadline);
+        return await api(path, body, deadline, ms);
       } catch (err) {
         if (!(err instanceof TypeError) || wait > 64_000) throw err;
         await sleep(wait, undefined, { signal });

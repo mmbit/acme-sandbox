@@ -8,6 +8,8 @@ export type Snapshot = {
   seatMeasurements?: Record<string, import('./headroom.ts').Measurement>;
   planner?: 3;
   planningSizes?: [number, Size][];
+  // Active pauses' release jobs. Their merge endpoints and prerequisites must not wait on pacing.
+  pauseUntil?: number[];
   windows?: Record<string, { deadline: number | null; aim: number | null }>;
   room?: number;
   seatRuns?: Record<string, number>;
@@ -22,7 +24,7 @@ export type Snapshot = {
   // the board's pacing switch (HQ's Settings › Seats), absent from snapshots stored before pacing was played.
   pacing?: boolean;
 };
-export type OrderingSnapshot = Pick<Snapshot, 'now' | 'planner' | 'windows' | 'jobs' | 'deployLagMs'>;
+export type OrderingSnapshot = Pick<Snapshot, 'now' | 'planner' | 'windows' | 'pauseUntil' | 'jobs' | 'deployLagMs'>;
 
 // An open job (queued, running, waiting for the board, or done with its pull request in review), by its id: what it
 // starts after and waits for (other jobs in the snapshot by id, or gone: released, or never), the cards it waits on

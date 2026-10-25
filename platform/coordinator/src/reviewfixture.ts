@@ -46,12 +46,13 @@ function storePr(
     added?: number;
     removed?: number;
     reviewClass?: string;
+    verdict?: string;
   } = {},
 ) {
   return db
     .prepare(
-      `insert into prs (number, branch, author, status, files, sha, round, since, added, removed, review_class)
-      select ?, 'job/' || id, agent, ?, ?, ?, ?, ?, ?, ?, ? from jobs where id = ? on conflict(number) do update set status = excluded.status, round = excluded.round, sha = excluded.sha`,
+      `insert into prs (number, branch, author, status, files, sha, round, since, added, removed, review_class, verdict)
+      select ?, 'job/' || id, agent, ?, ?, ?, ?, ?, ?, ?, ?, ? from jobs where id = ? on conflict(number) do update set status = excluded.status, round = excluded.round, sha = excluded.sha`,
     )
     .run(
       number,
@@ -63,6 +64,7 @@ function storePr(
       recorded.added ?? null,
       recorded.removed ?? null,
       recorded.reviewClass ?? null,
+      recorded.verdict ?? null,
       job,
     );
 }

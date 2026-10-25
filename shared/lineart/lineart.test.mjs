@@ -60,6 +60,20 @@ test("a company's own palette lies over the one it names, CSS variables and all"
   assert.throws(() => paletteOf('neon'), /no palette called neon/);
 });
 
+test("a line on the accent takes the palette's onAccent, the ink where it sets none", () => {
+  const lines = s =>
+    s.box(0, 0, 0, 1, 1, 1, { accent: 'top' }).line(
+      [
+        [0, 0, 1],
+        [1, 1, 1],
+      ],
+      { onAccent: true },
+    );
+  const lit = drawing(lines, { ink: '#111', onAccent: '#eee' }, { W: 100, H: 100 });
+  assert.match(lit, /<path d="[^"]*" fill="none" stroke="#eee"/);
+  assert.match(drawing(lines, { ink: '#111' }, { W: 100, H: 100 }), /<path d="[^"]*" fill="none" stroke="#111"/);
+});
+
 test('every example draws the same bytes twice in every palette, with one accent shape', () => {
   for (const { build, W, H, title } of Object.values(EXAMPLES))
     for (const palette of Object.keys(PALETTES)) {

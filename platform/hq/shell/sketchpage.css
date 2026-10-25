@@ -1,0 +1,388 @@
+/* One sketch full screen (sketchpage.js): paper on a desk, keys in the look's own drawing (the brownstone's hard
+   shadows, Wire's keys with a lip: body.keys). */
+.sk-page {
+  --sk-desk: #4b3a31;
+  --sk-key: var(--paper);
+  --sk-key-ink: var(--ink);
+  --sk-key-lip: var(--shadow);
+  --sk-key-down: var(--press);
+  --sk-key-down-lip: var(--shadow-press);
+  --sk-send: var(--red);
+  --sk-send-ink: #fff;
+  --sk-tray: #2f241e;
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  max-width: none;
+  height: var(--app-h, 100dvh);
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  border: 0;
+  /* (the desk's own words: a look's paper can be dark) */
+  color: #fbf3e4;
+  font: 16px/1.3 var(--font);
+  /* the desk under a lamp */
+  background:
+    radial-gradient(ellipse at 50% 0%, rgb(255 226 170 / 22%), transparent 65%),
+    repeating-linear-gradient(92deg, rgb(0 0 0 / 6%) 0 2px, transparent 2px 9px), var(--sk-desk);
+  overscroll-behavior: none;
+}
+.sk-page::backdrop {
+  background: rgb(0 0 0 / 40%);
+}
+body.keys .sk-page {
+  --sk-desk: #d8d1c6;
+  --sk-key: var(--key-bg);
+  --sk-key-ink: var(--key-ink);
+  --sk-key-lip: var(--key-lip);
+  --sk-key-down: var(--key-down);
+  --sk-key-down-lip: var(--key-down-lip);
+  --sk-send: var(--key-on-bg);
+  --sk-send-ink: var(--key-on-ink);
+  --sk-tray: #bdb4a6;
+  color: var(--key-ink);
+}
+.sk-page button {
+  font: inherit;
+  cursor: pointer;
+}
+.sk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  /* (below the status bar and, as a home-screen app, iOS's blurred band: style.css's --sat) */
+  height: calc(60px + var(--sat));
+  padding: var(--sat) max(12px, var(--sar)) 0 max(12px, var(--sal));
+  flex: none;
+}
+.sk-bar > button,
+.sk-more > button {
+  min-width: 44px;
+  height: 40px;
+  padding: 0 10px;
+  color: var(--sk-key-ink);
+  background: var(--sk-key);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--key-r, var(--r));
+  box-shadow: var(--sk-key-lip);
+  font-size: 20px;
+  line-height: 1;
+}
+body.keys .sk-bar > button,
+body.keys .sk-more > button {
+  border: 1px solid var(--key-edge);
+}
+.sk-bar > button:active:not([disabled]),
+.sk-more > button:active {
+  transform: var(--sk-key-down);
+  box-shadow: var(--sk-key-down-lip);
+}
+.sk-bar > button[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.sk-back {
+  font-size: 16px !important;
+}
+/* (over Wire's own fields: a label on the desk, no box) */
+body .sk-page .sk-bar input.sk-label {
+  flex: 1;
+  min-width: 60px;
+  padding: 6px 4px;
+  font: inherit;
+  font-size: 18px;
+  color: inherit;
+  text-align: center;
+  text-overflow: ellipsis;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  box-shadow: none;
+  outline: none;
+}
+.sk-label:focus {
+  border-bottom-color: currentColor;
+}
+.sk-label::placeholder {
+  color: inherit;
+  opacity: 0.55;
+}
+.sk-state {
+  font-size: 13px;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.sk-state.warn {
+  color: var(--orange);
+  opacity: 1;
+}
+.sk-more {
+  position: relative;
+}
+.sk-page .sk-menu {
+  position: absolute;
+  top: 48px;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  min-width: 210px;
+  padding: 6px;
+  color: var(--sk-key-ink);
+  background: var(--sk-key);
+  border: var(--bw) solid var(--line);
+  border-radius: var(--r-lg);
+  box-shadow: var(--shadow-lg);
+}
+.sk-page .sk-menu[hidden] {
+  display: none;
+}
+.sk-page .sk-menu button {
+  padding: 10px 12px;
+  text-align: left;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--r);
+}
+.sk-page .sk-menu button:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+.sk-page .sk-menu .sure {
+  color: #fff;
+  background: var(--alarm, var(--red));
+}
+.sk-bar .sk-send {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  font-size: 16px;
+  color: var(--sk-send-ink);
+  background: var(--sk-send);
+}
+body.keys .sk-bar .sk-send {
+  box-shadow: var(--key-on-lip);
+}
+.sk-send svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+@media (max-width: 600px) {
+  .sk-back span,
+  .sk-send span,
+  .sk-state {
+    display: none;
+  }
+}
+
+/* the desk and the page on it, drawn on with the whole hand resting on the glass */
+.sk-desk {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+}
+.sk-sheet {
+  position: relative;
+  background-color: #fffdf8;
+  /* a faint dot grid to draw to (the paper only: the sketch's picture has none) */
+  background-image: radial-gradient(circle, rgb(60 50 70 / 16%) 1px, transparent 1.4px);
+  background-size: 24px 24px;
+  border-radius: 3px;
+  box-shadow:
+    0 1px 1px rgb(0 0 0 / 30%),
+    0 10px 30px rgb(0 0 0 / 35%);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+.sk-page.erasing .sk-sheet {
+  cursor: cell;
+}
+.sk-sheet canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.sk-sheet canvas.wet {
+  pointer-events: none;
+}
+.sk-flying {
+  position: fixed;
+  z-index: 3;
+  pointer-events: none;
+  border-radius: 3px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / 35%);
+  transform-origin: center;
+}
+
+/* the pictures on the page (sketchscraps.js): taped on under the ink, the picked one's handles over it, and the Paste
+   bubble a held press brings. */
+.sk-scraps {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.sk-scrap {
+  position: absolute;
+  box-sizing: border-box;
+  padding: var(--mat);
+  background: #fff;
+  box-shadow: 0 1px 4px rgb(40 30 50 / 30%);
+  transform-origin: center;
+  transition: box-shadow 0.15s;
+}
+.sk-scrap img {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* (the tape: drawn the same in the sketch's picture, sketchscraps.js drawScrap) */
+.sk-scrap::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(var(--tape-h) / -2);
+  width: var(--tape-w);
+  height: var(--tape-h);
+  background: rgb(246 236 200 / 80%);
+  transform: translateX(-50%) rotate(-4deg);
+}
+.sk-scrap.busy img {
+  opacity: 0.55;
+}
+.sk-scrap.lifted {
+  box-shadow: 0 12px 26px rgb(40 30 50 / 35%);
+}
+.sk-scrap.landing {
+  animation: sk-land 0.42s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@keyframes sk-land {
+  from {
+    opacity: 0;
+    scale: 1.25;
+    box-shadow: 0 24px 40px rgb(40 30 50 / 30%);
+  }
+}
+.sk-picked {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px dashed var(--sk-send);
+  border-radius: 2px;
+  transform-origin: center;
+  pointer-events: none;
+}
+.sk-picked[hidden] {
+  display: none;
+}
+.sk-picked button {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  pointer-events: auto;
+  touch-action: none;
+  color: var(--sk-send-ink);
+  background: var(--sk-send);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  box-shadow: 0 2px 6px rgb(0 0 0 / 30%);
+}
+.sk-picked .sk-unpin {
+  left: -16px;
+  top: -16px;
+  font-size: 20px;
+  line-height: 1;
+}
+.sk-picked .sk-grip {
+  right: -16px;
+  bottom: -16px;
+  cursor: nwse-resize;
+  background:
+    linear-gradient(135deg, transparent 42%, #fff 42% 50%, transparent 50% 62%, #fff 62% 70%, transparent 70%),
+    var(--sk-send);
+}
+.sk-sheet.taking {
+  outline: 3px dashed var(--sk-send);
+  outline-offset: 6px;
+}
+.sk-callout {
+  position: fixed;
+  z-index: 3;
+  padding: 9px 16px;
+  color: #fff;
+  font:
+    600 15px/1 system-ui,
+    sans-serif;
+  background: rgb(30 30 32 / 92%);
+  border: 0;
+  border-radius: 9px;
+  box-shadow: 0 6px 20px rgb(0 0 0 / 35%);
+  transform: translate(-50%, calc(-100% - 18px));
+  animation: sk-pop 0.18s ease-out;
+}
+.sk-callout::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -6px;
+  border: 7px solid transparent;
+  border-bottom: 0;
+  border-top-color: rgb(30 30 32 / 92%);
+  transform: translateX(-50%);
+}
+@keyframes sk-pop {
+  from {
+    opacity: 0;
+    scale: 0.8;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sk-scrap.landing,
+  .sk-callout {
+    animation: none;
+  }
+}
+
+/* A save refused for its size (sketchpage.js full): a note at the top of the desk, on every screen. */
+.sk-full {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  z-index: 2;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 0;
+  padding: 10px 10px 10px 16px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font: 15px/1.35 var(--font, system-ui);
+  color: #2b2230;
+  background: #fff4dc;
+  border-radius: 12px;
+  box-shadow: 0 6px 24px rgb(0 0 0 / 25%);
+}
+.sk-full button {
+  flex: none;
+  min-height: 40px;
+  padding: 0 14px;
+  font: inherit;
+  font-weight: 600;
+  color: var(--sk-send-ink);
+  background: var(--sk-send);
+  border: 0;
+  border-radius: 99px;
+  cursor: pointer;
+}

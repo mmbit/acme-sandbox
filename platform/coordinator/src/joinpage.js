@@ -12,6 +12,8 @@
 // for a rejoin).
 import { CallAudio } from './callaudio.js';
 import { Figure } from './figure.js';
+import { listPeople } from './people.js';
+import { WalkThrough } from './walk.js';
 
 const page = JSON.parse(document.getElementById('join-page').textContent);
 const w = page.words;
@@ -24,8 +26,11 @@ const FRAME = 320; // samples in 20 ms at 16 kHz
 const JITTER_S = 0.08; // the line sends in real time: a little ahead absorbs the network's jitter
 const LATE_S = 0.5; // a frame that would play later than this is dropped, so the call never lags behind
 const RECONNECT_MS = 120_000; // the line keeps a dropped person's place this long
-const COLOURS = ['#e8505b', '#5b8def', '#3fa45b', '#9b72cf', '#e97d2c', '#2b9aa0'];
 let call = null;
+// a walk-through: the shared preview under the call (joinwalk.js)
+const walk = page.walk
+  ? new WalkThrough({ words: w, token, tile, reduced, audio: () => call?.audio, onHangUp: () => call && leave(call) })
+  : null;
 
 // ---- the lobby
 const form = $('.joinform'),
@@ -42,22 +47,26 @@ const when = iso =>
 $('.until').textContent = w.until.replace('{time}', when(page.until));
 // a call at a set time: Join waits until the link opens
 const opensIn = page.opens ? Date.parse(page.opens) - Date.now() : 0;
+const joinButtons = [...document.querySelectorAll('.join')];
+for (const button of joinButtons) button.dataset.words = button.textContent;
 if (opensIn > 0) {
-  $('.join').disabled = true;
+  joinButtons.forEach(b => (b.disabled = true));
   $('.until').textContent = w.opens.replace('{time}', when(page.opens));
   setTimeout(
     () => {
-      $('.join').disabled = false;
+      joinButtons.forEach(b => (b.disabled = false));
       $('.until').textContent = w.until.replace('{time}', when(page.until));
     },
     Math.min(opensIn, 2 ** 31 - 1),
   );
 }
+// (on a walk-through, which of its two buttons: to show our pages, or not)
 form.addEventListener('submit', e => {
   e.preventDefault();
-  join();
+  join(e.submitter ?? joinButtons[0]);
 });
-$('.rejoin').addEventListener('click', () => join());
+// (a walk-through asks again, with both its buttons)
+$('.rejoin').addEventListener('click', () => (walk ? lobby('') : join(joinButtons[0])));
 // before joining, the agent looks at the pointer, and at the name as it's typed
 addEventListener('pointermove', e => {
   if (!call && document.activeElement !== input) figure.lookAt(e.clientX, e.clientY);
@@ -80,7 +89,7 @@ const cleanName = () =>
     .filter(Boolean)
     .join(' ');
 
-async function join() {
+async function join(button) {
   const name = cleanName();
   if (!name) return lobby(w.nameNeeded);
   const length = [...name].length;
@@ -88,12 +97,12 @@ async function join() {
     return lobby(w.nameLong.replace('{length}', String(length)).replace('{most}', String(page.nameLength)));
   sessionStorage.setItem('join-name', name);
   input.value = name;
-  const button = $('.join');
-  button.disabled = true;
+  joinButtons.forEach(b => (b.disabled = true));
   button.textContent = w.joining;
   $('.error').hidden = true;
   figure.cheer();
   const c = (call = { name, you: null, key: null, people: new Map(), colours: new Map(), levels: [] });
+  c.show = button.value === 'show';
   c.audio = new CallAudio({
     worklet: '/join/assets/mic-worklet.js',
     lead: JITTER_S,
@@ -210,55 +219,16 @@ function enter(c) {
     $('.live time').textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
   }, 1000);
   chime(c, true);
+  void walk?.joined(c.show);
 }
 
+// the room's people as the line lists them: a chime as someone comes in (not this person) or goes
 function showPeople(c, people) {
-  const list = $('.people'),
-    now = new Map((people ?? []).map(p => [String(p.id), p]));
-  for (const li of [...list.children])
-    if (!now.has(li.dataset.id) && !li.classList.contains('gone')) {
-      li.classList.add('gone');
-      li.addEventListener('animationend', () => li.remove());
-      setTimeout(() => li.remove(), 600);
-      chime(c, false);
-    }
-  for (const [id, p] of now) {
-    let li = list.querySelector(`li[data-id="${CSS.escape(id)}"]`);
-    if (!li) {
-      li = person(c, id);
-      if (id === c.you) list.prepend(li);
-      else {
-        list.append(li);
-        if (c.people.size) chime(c, true);
-      }
-    }
-    li.querySelector('b').textContent = String(p.name ?? '');
-    li.querySelector('.avatar').textContent = initials(String(p.name ?? ''));
-    li.querySelector('.muted-mark').style.visibility = p.muted ? 'visible' : 'hidden';
-  }
-  c.people = now;
-  $('.count').textContent = String(now.size);
+  const { came, went } = listPeople($('.people'), c, people, w.you);
+  if (went) chime(c, false);
+  if (came) chime(c, true);
+  $('.count').textContent = String(c.people.size);
 }
-
-function person(c, id) {
-  if (!c.colours.has(id)) c.colours.set(id, COLOURS[c.colours.size % COLOURS.length]);
-  const li = document.createElement('li');
-  li.dataset.id = id;
-  li.style.setProperty('--who', c.colours.get(id));
-  li.innerHTML = `<span class="avatar"></span><span class="who"><b></b>${id === c.you ? '<small></small>' : ''}</span><svg class="muted-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M4 4l16 16"/></svg>`;
-  const you = li.querySelector('small');
-  if (you) you.textContent = w.you;
-  return li;
-}
-
-const initials = name =>
-  name
-    .split(/\s+/)
-    .map(part => part.match(/[\p{L}\p{N}]/u)?.[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join('')
-    .toUpperCase();
 
 // what the agent says, a sentence at a time, its words coming in at about the pace it speaks them; the sentence before
 // stays, faded
@@ -310,6 +280,7 @@ function leave(c, error) {
 function over(c, why) {
   c.ws?.close(1000);
   stop(c);
+  walk?.over();
   document.body.classList.remove('incall');
   $('.room').hidden = true;
   $('.controls').hidden = true;
@@ -325,15 +296,17 @@ function over(c, why) {
 // back to the lobby with what went wrong
 function lobby(error) {
   call = null;
-  document.body.className = 'lobby';
+  document.body.classList.remove('incall', 'walking');
+  document.body.classList.add('lobby');
   $('.over').hidden = true;
   $('.lobbycard').hidden = false;
-  const button = $('.join');
-  button.disabled = false;
-  button.textContent = w.join;
+  for (const b of joinButtons) {
+    b.disabled = false;
+    b.textContent = b.dataset.words;
+  }
   const message = $('.error');
   message.textContent = error;
-  message.hidden = false;
+  message.hidden = !error;
   input.focus();
 }
 
@@ -387,6 +360,8 @@ function frame(now) {
     if (state === 'listening' && who) figure.lookAt(who.left + who.width / 2, who.top + who.height / 2);
     else figure.lookAt(null);
   } else if (tile.dataset.state !== 'idle') figure.state = tile.dataset.state = 'idle';
+  // (minimised over a walk-through, the bubble's face moves instead)
+  if (walk?.frame(now, tile.dataset.state, level)) return;
   tile.style.setProperty('--level', level.toFixed(3));
   figure.level = level;
   figure.frame(now);

@@ -33,6 +33,7 @@ const PRODUCT = 'https://hello.preview.test';
 const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
 // (the frame.js module, the screenshot route and the framing checks below)
 const frameJs = await readFile(`${ROOT}/shared/review/frame.js`, 'utf8');
+const inkJs = await readFile(`${ROOT}/shared/review/ink.js`, 'utf8');   // (the pen)
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hello</title>
   <style>body { font: 18px system-ui; margin: 24px; } h1 { margin-top: 80px; }</style>
   <h1>Hello, whoever you are</h1><p>A little card for a friend.</p><script src="/__review/review.js" defer></script>`;
@@ -74,6 +75,7 @@ await context.route(`${base}/api/**`, async r => {
   const url = new URL(r.request().url()), path = url.pathname;
   if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
   if (path === '/api/requests' || path === '/api/gazette') return r.fulfill({ json: [] });
+  if (path === '/api/language') return r.fulfill({ json: { lang: 'en', languages: [{ code: 'en', own: 'English' }] } }); // (a call reads it before it dials, Settings shows it)
   if (path === '/api/preview/link') return r.fulfill({ json: { url: r.request().postDataJSON().url } });
   if (path === '/api/review/products') return r.fulfill({ json: products() });
   if (path === '/api/review/shares') return r.fulfill({ json: [] });   // (no outside links: shares-check.mjs has those)
@@ -98,6 +100,7 @@ await context.route(`${PRODUCT}/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (path === '/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
   if (path === '/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
+  if (path === '/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
   if (path === '/__review/notes') {
     const posted = r.request().postDataJSON(), added = note('hello', posted.note);
     if (posted.shot) { Object.assign(added, { element: posted.element, viewport: posted.viewport, shot: true }); photos.set(added.id, posted.shot); }
@@ -112,7 +115,7 @@ await context.route(`${PRODUCT}/**`, r => {
   const waiting = () => notes.filter(n => n.slug === 'hello' && n.status === 'pending');
   if (path === '/__review/mine') {
     const withShots = new URL(r.request().url()).searchParams.has('shots');
-    const markOf = ({ element: e, viewport: v }) => e.kind === 'general' ? null : { kind: e.kind, tag: e.tag, selector: e.selector, rect: e.rect, area: e.area, path: e.path, view: { x: v.x, y: v.y, w: v.w, h: v.h } };
+    const markOf = ({ element: e, viewport: v }) => e.kind === 'general' ? null : { kind: e.kind, tag: e.tag, selector: e.selector, rect: e.rect, area: e.area, path: e.path, ink: e.ink, view: { x: v.x, y: v.y, w: v.w, h: v.h } };
     const list = waiting().map(n => ({ id: n.id, note: n.note, page: n.page, kind: n.element.kind, text: n.element.text,
       ...(withShots ? { here: true, mark: markOf(n), shot: n.shot ? { url: `${base}/api/review/shot?id=${n.id}`, element: n.element, viewport: n.viewport } : null,
         pictures: (n.pictures ?? []).map(p => ({ file: p.file, url: `${base}/api/review/shot?id=${n.id}&pic=${p.file}` })) } : {}) }));   // (pictures)
@@ -195,7 +198,7 @@ async function pinNote(where, text, startPin, mouse = page.mouse) {
   await where.waitForSelector('review-mode .sheet:not([hidden])');
   await where.fill('review-mode textarea', text);
   const [pinned, viewportWidth] = await where.evaluate(() => { const r = document.querySelector('h1').getBoundingClientRect(); return [{ x: r.x, y: r.y, w: r.width, h: r.height }, innerWidth]; });
-  const polaroid = where.locator('review-mode .polaroid .img img');
+  const polaroid = where.locator('review-mode .polaroid .img :is(img, canvas)');
   await polaroid.waitFor();
   assert.ok(await showsMark(polaroid, pinned, viewportWidth), 'the polaroid is framed on the pinned headline');
   const count = () => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent;
@@ -206,7 +209,7 @@ async function pinNote(where, text, startPin, mouse = page.mouse) {
 }
 // nothing of review mode's covers the page after a pin: only its pin (the dock) is there
 const overPage = where => where.evaluate(() => [...document.querySelector('review-mode').shadowRoot.querySelectorAll('.ui > *')]
-  .filter(el => !el.hidden && !el.classList.contains('dock') && !(el.matches('svg.ink') && !el.querySelector('path').getAttribute('d')) && getComputedStyle(el).display !== 'none' && getComputedStyle(el).opacity !== '0' && el.getBoundingClientRect().height > 0)
+  .filter(el => !el.hidden && !el.classList.contains('dock') && !(el.localName === 'canvas' && !el.getContext('2d').getImageData(0, 0, el.width, el.height).data.some(v => v)) && getComputedStyle(el).display !== 'none' && getComputedStyle(el).opacity !== '0' && el.getBoundingClientRect().height > 0)
   .map(el => el.className));
 await pinNote(frame, 'Make the headline warmer', () => page.click('#viewer .bar .pin'));
 await sendCountsAll('the pinned note counts too');
@@ -382,11 +385,11 @@ assert.deepEqual(await overPage(tab), [], 'nothing comes up over the page in a t
 // one
 const items = () => tab.$$eval('review-mode .menu .items button:not([hidden])', bs => bs.map(b => b.firstChild.textContent));
 await tab.click('review-mode .more');
-assert.deepEqual(await items(), ['General note', 'My notes', 'Send my notes'], 'the board has a Send in the tool');
+assert.deepEqual(await items(), ['General note', 'My notes', 'Listen as I draw', 'Send my notes'], 'the board has a Send in the tool');
 assert.equal(await tab.textContent('review-mode .menu .cap'), `Review · ${pendingHello()} notes to send`);
 // every line of it on one line on a phone: the count only in the caption, a sub-line only what its title doesn't say
 const subs = () => tab.$$eval('review-mode .menu .items button:not([hidden]) small', s => s.map(x => x.textContent));
-assert.deepEqual(await subs(), ['About it all, not one spot', 'Read, change or delete', 'Tick and send in HQ']);
+assert.deepEqual(await subs(), ['About it all, not one spot', 'Read, change or delete', 'Off', 'Tick and send in HQ']);
 assert.deepEqual(await tab.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
 assert.equal(await tab.textContent('review-mode .more .count'), String(notes.filter(n => n.slug === 'hello' && n.status === 'pending').length), "the count is the board's notes waiting on the product");
 await shot('menu', tab);
@@ -457,18 +460,22 @@ await tab.waitForFunction(n => document.querySelector('review-mode').shadowRoot.
 await tab.click('review-mode .side .x');
 assert.ok(await tab.isHidden('review-mode .side') && await tab.isVisible('review-mode .fab'), 'its button closes it, and the pin is back');
 
-// ---- Shift + drag draws a rectangle: its four corners are the circle's line, and the note is a circle's in every other way.
-// Without Shift, the freehand circle. Change brings the mark back on the element, Redraw marks it again (Escape there puts
-// the sheet back), and a note pinned on another page opens that page first
-const ink = () => tab.$eval('review-mode', h => h.shadowRoot.querySelector('.ink path').getAttribute('d'));
-const numbers = d => (d.match(/-?\d+(\.\d+)?/g) ?? []).map(Number);
-const near = (a, b) => a.length === b.length && a.every((x, i) => Math.abs(x - b[i]) <= 1.5);
+// ---- Shift + drag draws a rectangle: its four corners are the line (the pen's, ink.js), and the note is a circle's in
+// every other way. Without Shift, the freehand line. Change brings the mark back on the element, Redraw marks it again
+// (Escape there puts the sheet back), and a note pinned on another page opens that page first
+// (the ink on screen: how much of it, and whether there's some within 5 px of a point.)
+const ink = () => tab.$eval('review-mode', h => { const c = h.shadowRoot.querySelector('.ink'); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.filter((v, i) => i % 4 === 3 && v > 128).length; });
+const inkNear = ([x, y]) => tab.$eval('review-mode', (h, [x, y]) => {
+  const c = h.shadowRoot.querySelector('.ink'), k = c.width / c.getBoundingClientRect().width;
+  return c.getContext('2d').getImageData(Math.round((x - 5) * k), Math.round((y - 5) * k), Math.round(10 * k), Math.round(10 * k)).data.some((v, i) => i % 4 === 3 && v > 128);
+}, [x, y]);
+const inkOn = async points => (await Promise.all(points.map(inkNear))).every(Boolean);
 async function draw(points, shift = false) {
   await tab.waitForSelector('review-mode .veil:not([hidden])');
   if (shift) await tab.keyboard.down('Shift');
   await tab.mouse.move(...points[0]); await tab.mouse.down();
   for (const p of points.slice(1)) await tab.mouse.move(...p, { steps: 3 });
-  const drawn = await ink();
+  const drawn = await tab.$eval('review-mode', h => { const c = h.shadowRoot.querySelector('.wet'); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some(v => v); });
   await tab.mouse.up(); if (shift) await tab.keyboard.up('Shift');
   await tab.waitForSelector('review-mode .sheet:not([hidden])');
   return drawn;
@@ -477,28 +484,28 @@ const pinIt = async words => { await tab.fill('review-mode .sheet textarea', wor
 const para = await tab.locator('body > p').boundingBox(), head = await tab.locator('body > h1').boundingBox();
 const [x0, y0, x1, y1] = [Math.round(para.x - 12), Math.round(para.y - 10), Math.round(para.x + 300), Math.round(para.y + para.height + 10)];
 await tab.click('review-mode .fab', { force: true });
-const dragged = await draw([[x0, y0], [x0 + 100, y0 + 30], [x1, y1]], true);
-assert.deepEqual(numbers(dragged), [x0, y0, x1, y0, x1, y1, x0, y1], 'a rectangle while it is dragged');
+const corners = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]], edges = [[(x0 + x1) / 2, y0], [x1, (y0 + y1) / 2], [(x0 + x1) / 2, y1], [x0, (y0 + y1) / 2]];
+assert.ok(await draw([[x0, y0], [x0 + 100, y0 + 30], [x1, y1]], true), 'a rectangle while it is dragged');
+assert.ok(await inkOn(edges) && !(await inkNear([(x0 + x1) / 2, (y0 + y1) / 2])), 'and once it is drawn');
 await pinIt('Box this line');
 const boxed = notes.find(n => n.note === 'Box this line');
 assert.equal(boxed.element.kind, 'circle', 'a circle to everyone who reads the note');
-assert.deepEqual(boxed.element.path, [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+assert.deepEqual(boxed.element.ink[0].points.map(p => p.slice(0, 2)), [...corners, corners[0]]);
 assert.deepEqual(boxed.element.area, { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
 const oval = n => Array.from({ length: n }, (_, i) => [Math.round(head.x + 150 + 190 * Math.cos(i / n * 2 * Math.PI)), Math.round(head.y + head.height / 2 + 45 * Math.sin(i / n * 2 * Math.PI))]);
 await tab.click('review-mode .fab', { force: true });
-const free = await draw(oval(16));
-assert.ok(numbers(free).length >= 32, 'without Shift, the freehand line');
+await draw(oval(16));
 await pinIt('Circle the headline');
 const circled = notes.find(n => n.note === 'Circle the headline');
-assert.ok(circled.element.kind === 'circle' && circled.element.path.length >= 16);
+assert.ok(circled.element.kind === 'circle' && circled.element.ink[0].points.length >= 16, 'without Shift, the freehand line');
 // Change: the rectangle back where it was, on its element
 await side(tab);
 await tab.click('review-mode .side li:has-text("Box this line") button:has-text("Change")');
 await tab.waitForSelector('review-mode .sheet:not([hidden])');
 assert.ok(await tab.isHidden('review-mode .side'), 'the sidebar steps aside');
 assert.equal(await tab.inputValue('review-mode .sheet textarea'), 'Box this line');
-await tab.waitForFunction(() => document.querySelector('review-mode').shadowRoot.querySelector('.ink path').getAttribute('d'));
-assert.ok(near(numbers(await ink()), [x0, y0, x1, y0, x1, y1, x0, y1]), `the rectangle is back around the line: ${await ink()}`);
+await tab.waitForFunction(() => { const c = document.querySelector('review-mode').shadowRoot.querySelector('.ink'); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some(v => v); });
+assert.ok(await inkOn(edges), 'the rectangle is back around the line');
 await shot('change-rectangle', tab);
 // Redraw: Escape puts the sheet back as it was; then a circle around the headline replaces it
 await tab.click('review-mode .redraw');
@@ -506,16 +513,16 @@ await tab.waitForSelector('review-mode .veil:not([hidden])');
 assert.ok(await tab.isHidden('review-mode .sheet') && !(await ink()), 'the sheet and the old mark step aside');
 await tab.keyboard.press('Escape');
 await tab.waitForSelector('review-mode .sheet:not([hidden])');
-assert.ok(near(numbers(await ink()), [x0, y0, x1, y0, x1, y1, x0, y1]) && await tab.inputValue('review-mode .sheet textarea') === 'Box this line', 'Escape: the sheet and the mark as they were');
+assert.ok(await inkOn(edges) && await tab.inputValue('review-mode .sheet textarea') === 'Box this line', 'Escape: the sheet and the mark as they were');
 await tab.click('review-mode .redraw');
 await draw(oval(20));
-assert.ok(numbers(await ink()).length >= 40, 'the new circle stays on the page with the sheet');
-await tab.locator('review-mode .polaroid .img img').waitFor();
+assert.ok(await ink() > 100 && await inkOn(oval(20).slice(0, 1)), 'the new circle stays on the page with the sheet');
+await tab.locator('review-mode .polaroid .img :is(img, canvas)').waitFor();
 await tab.fill('review-mode .sheet textarea', 'Circle this headline instead');
 await tab.click('review-mode .send');
 await tab.waitForSelector('review-mode .side:not([hidden]) .words:has-text("Circle this headline instead")', { timeout: 20_000 });
 const redrawn = edits.at(-1);
-assert.ok(redrawn.element.kind === 'circle' && redrawn.element.path.length >= 20 && redrawn.shot?.startsWith('data:image/jpeg') && redrawn.page === `${PRODUCT}/`, 'the new mark goes with its screenshot');
+assert.ok(redrawn.element.kind === 'circle' && redrawn.element.ink[0].points.length >= 20 && redrawn.shot?.startsWith('data:image/jpeg') && redrawn.page === `${PRODUCT}/`, 'the new mark goes with its screenshot');
 assert.ok(await tab.isHidden('review-mode .sheet') && !(await ink()), 'saved: back to My notes, no mark left on the page');
 // a note pinned on another page: Change opens that page, then its sheet and its mark there
 const away = note('hello', 'On the other page'); Object.assign(away, { page: '/elsewhere?x=1', element: circled.element, viewport: circled.viewport }); notes.push(away);
@@ -524,8 +531,8 @@ await side(tab);
 await Promise.all([tab.waitForURL(`${PRODUCT}/elsewhere?x=1`), tab.click('review-mode .side li:has-text("On the other page") button:has-text("Change")')]);
 await tab.waitForSelector('review-mode .sheet:not([hidden])', { timeout: 10_000 });
 assert.equal(await tab.inputValue('review-mode .sheet textarea'), 'On the other page');
-await tab.waitForFunction(() => document.querySelector('review-mode').shadowRoot.querySelector('.ink path').getAttribute('d'));
-assert.ok(near(numbers(await ink()), numbers(free).concat()), 'its circle on that page');
+await tab.waitForFunction(() => { const c = document.querySelector('review-mode').shadowRoot.querySelector('.ink'); return c.getContext('2d').getImageData(0, 0, c.width, c.height).data.some(v => v); });
+assert.ok(await inkOn([oval(16)[0], oval(16)[4], oval(16)[12]]), 'its circle on that page');
 await tab.click('review-mode [data-cancel]');
 await tab.waitForSelector('review-mode .side:not([hidden])');
 await tab.keyboard.press('Escape');
@@ -755,6 +762,7 @@ await context.route(`${SHELF}/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (path === '/hello/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
   if (path === '/hello/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
+  if (path === '/hello/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
   if (path === '/hello/__review/coach') return r.fulfill({ json: { show: false } });
   if (path.includes('/__review/') && r.request().method() === 'POST') { posted.push(path); return r.fulfill({ json: { ok: true, id: ++lastId } }); }
   return r.fulfill({ contentType: 'text/html', body: PAGE.replace('src="/__review/', 'src="./__review/') });
@@ -774,6 +782,7 @@ await context.route(`${base}/__review/**`, r => {
   const path = new URL(r.request().url()).pathname, hqNotes = () => notes.filter(n => n.slug === 'hq' && n.status === 'pending');
   if (path === '/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
   if (path === '/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
+  if (path === '/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
   if (path === '/__review/mine') return r.fulfill({ json: { notes: hqNotes().length, list: hqNotes().map(n => ({ id: n.id, note: n.note, page: n.page })), sent: false, more: false } });
   if (path === '/__review/notes') { onHq.push(path); notes.push(note('hq', r.request().postDataJSON().note)); return r.fulfill({ json: { ok: true, id: lastId } }); }

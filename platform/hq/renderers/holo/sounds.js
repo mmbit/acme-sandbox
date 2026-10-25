@@ -29,6 +29,17 @@ export const sfx = {
   twinkle: () => [91, 95, 98, 103].forEach((n, i) => shimmer(n, 0.3, { vol: 0.035, at: i * 0.07 })),
   micOn: () => { sweep({ vol: 0.03 }); chirp(79, 0.07, { at: 0.02 }); chirp(86, 0.1, { at: 0.08 }); },
   micOff: () => { chirp(86, 0.07, { slide: 0.8 }); chirp(79, 0.12, { slide: 0.8, at: 0.06 }); sweep({ vol: 0.025, freq: 3000, sweep: 1 / 6, at: 0.1 }); },
+  // a call minimised into its bubble: a sweep closing on a falling chirp; opened again, opening on a rising one; the
+  // bubble settling into a corner, a sub's soft knock under a glint
+  minimise: () => { sweep({ vol: 0.03, freq: 2600, sweep: 1 / 5 }); chirp(88, 0.12, { slide: 0.6 }); },
+  restore: () => { sweep({ vol: 0.03 }); chirp(76, 0.12, { slide: 1.6 }); },
+  dock: () => { sub(40, { vol: 0.08 }); chirp(93, 0.04, { vol: 0.04, slide: 1 }); },
+  // a call watched back: play, a sweep opening on two chirps climbing; pause, closing on two falling; a jump, a glint
+  // gliding; the scrubber crossing a moment, a pin of light
+  watchPlay: () => { sweep({ vol: 0.02 }); chirp(79, 0.05); chirp(86, 0.07, { at: 0.05 }); },
+  watchPause: () => { sweep({ vol: 0.02, freq: 2600, sweep: 1 / 5 }); chirp(86, 0.05, { slide: 0.8 }); chirp(79, 0.07, { slide: 0.8, at: 0.05 }); },
+  watchJump: () => chirp(91, 0.05, { vol: 0.06, slide: 1.4 }),
+  watchTick: () => tone(note(100), 0.01, { type: 'sine', vol: 0.018, attack: 0.002 }),
   // a switch flicked: a chirp gliding up for on, down for off
   toggle: (on = true) => chirp(on ? 84 : 89, 0.07, { slide: on ? 1.3 : 0.75 }),
 };

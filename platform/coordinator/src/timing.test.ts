@@ -35,6 +35,15 @@ test('comparable jobs exclude complicated timings while the audit retains and ex
   });
 });
 
+test("only an estimate's references read: the same rows as in the whole pool, and nothing else", () => {
+  const clean = h.pastJob({ title: 'Read the references', run: { started, ended } });
+  const rebuilt = h.pastJob({ title: 'Read the references', run: { started, ended, outcome: 'rebuilt', seat: null } });
+  h.pastJob({ title: 'Not a reference', run: { started, ended } });
+  const whole = pastJobs().filter(job => job.id === clean || job.id === rebuilt);
+  assert.deepEqual(pastJobs([rebuilt, clean, 999_999]), whole);
+  assert.deepEqual(pastJobs([]), []);
+});
+
 test('zero or reversed run intervals cannot become clean comparison times', () => {
   const zero = h.pastJob({ run: { started, ended: started } });
   const reversed = h.pastJob({ run: { started: ended, ended: started } });

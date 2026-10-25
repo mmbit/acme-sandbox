@@ -41,6 +41,10 @@ body {
   --press-tile: translateY(calc(var(--depth-tile) - var(--depth-pressed)));
   --shadow-press: 0 var(--depth-pressed) 0 var(--lip);
   --shadow-hover: 0 var(--depth-hover) 0 var(--lip);
+  /* and a button under a pointer, halfway down to pressed (style.css --hover-button). */
+  --depth-button-hover: calc((var(--depth-button) + var(--depth-pressed)) / 2);
+  --hover-button: translateY(calc(var(--depth-button) - var(--depth-button-hover)));
+  --shadow-hover-button: 0 var(--depth-button-hover) 0 var(--lip);
   --shadow-sm: none;
   --shadow: none;
   --shadow-lg: 0 24px 60px color-mix(in srgb, var(--k-ink) 22%, transparent);
@@ -109,6 +113,7 @@ body {
   --key-on-lip: 0 var(--depth-button) 0 var(--k-side);
   /* (a key that's on, picked or held: down on its lip, so it reads as pressed) */
   --key-on-down-lip: 0 var(--depth-pressed) 0 var(--k-side);
+  --key-on-hover-lip: 0 var(--depth-button-hover) 0 var(--k-side);
   /* a tile: the lip of a key that opens something, the deepest */
   --tile-lip: 0 var(--depth-tile) 0 var(--lip);
   --key-r: 999px;
@@ -187,11 +192,13 @@ body.wire-dark .brand img {
   transform: var(--press);
   box-shadow: var(--shadow-press);
 }
-/* (a HUD key that's on stays down on its lip) */
+/* (a HUD key that's on stays down on its lip, under a pointer too.) */
 .tools button[aria-pressed='true'],
 .tools button[aria-pressed='true']:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--key-on-down-lip);
+  --hover-button: var(--press);
+  --hover-lip: var(--key-on-down-lip);
 }
 .brand b,
 #panel h2,
@@ -239,6 +246,29 @@ body.wire-dark .brand img {
   border: 0;
   background: var(--k-panel);
   box-shadow: var(--key-lip);
+  transition:
+    transform 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
+}
+/* (and a key under a pointer and pressed, with no outline or fill of HQ-OS's one hover: only a keyboard's focus has its
+   ring. #tool outweighs style.css's .crt hover, whose :is() takes its heaviest item.) */
+#tool .crt .apps button:is(:hover, :focus-visible) {
+  background: var(--k-panel);
+  outline: 0;
+}
+#tool .crt .apps button:focus-visible {
+  outline: 2px solid var(--k-ink);
+  outline-offset: 3px;
+}
+@media (hover: hover) {
+  .crt .apps button:not(:active, .down):hover {
+    transform: var(--hover-button);
+    box-shadow: var(--shadow-hover-button);
+  }
+}
+.crt .apps button:is(:active, .down) {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
 }
 /* (rows apart by the gap and the lip under each key, so they look as far apart as the columns). */
 .crt .apps {
@@ -270,7 +300,9 @@ body.touring #card {
 #card {
   background: var(--card-bg);
 }
-#tool {
+#tool,
+#call-layer {
+  /* (a call's own layer too) */
   background: color-mix(in srgb, var(--k-ink) 25%, transparent);
 }
 #panel-close {
@@ -288,6 +320,19 @@ body.touring #card {
 #panel-close:is(:active, .down) {
   transform: var(--press);
   box-shadow: var(--shadow-press);
+}
+/* (the close keys go in a little under a pointer, as every key does: style.css --hover-button.) */
+#panel-close,
+.wire .close {
+  transition:
+    transform 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
+}
+@media (hover: hover) {
+  :is(#panel-close, .wire .close):not(:active, .down):hover {
+    transform: var(--hover-button);
+    box-shadow: var(--shadow-hover-button);
+  }
 }
 /* a preview's bar: the colourway's ink, with its words and Share in the ground's colour */
 #viewer .bar {
@@ -360,14 +405,18 @@ body.touring #card {
   #hud .brand {
     flex-shrink: 0; /* (its words stay on it: the keys wrap first) */
   }
-  .tools {
+  /* (and HQ's own cap for a touch screen's search key off: the six keys stand in one row.) */
+  .tools,
+  .tools:has(#btn-find) {
+    flex-wrap: wrap; /* (the drawer under the row) */
     max-width: none;
     gap: 5px;
   }
   .tools :is(#btn-sound, #btn-music, #btn-tour) {
     order: 5; /* (open, on a row of their own under the rest) */
   }
-  /* HQ's search key: the row has room for five keys, so it goes first in the drawer. */
+  /* HQ's search key: the row has room for six keys (the board's five and More), so it goes first in the drawer.
+     */
   .tools #btn-find {
     order: 5;
   }
@@ -380,9 +429,6 @@ body.touring #card {
     order: 4;
   }
   .tools:not(.more-open) :is(#btn-sound, #btn-music, #btn-tour) {
-    display: none;
-  }
-  .tools .lbl {
     display: none;
   }
   .tools button,
@@ -403,6 +449,19 @@ body.touring #card {
     padding: 2px 8px;
     font-size: 12.5px;
     white-space: nowrap;
+  }
+}
+/* (on the narrowest phones, 360 px, the six keys a little smaller, so the row still fits beside the logo.) */
+@media (max-width: 380px) {
+  .tools,
+  .tools:has(#btn-find) {
+    gap: 3px;
+  }
+  .tools button,
+  .tools a.desk {
+    min-width: 36px;
+    height: 36px;
+    padding: 0 6px;
   }
 }
 /* HQ-OS's lists (Jobs, Mail, People, Seats and the rest): no prompt, each heading a label, each title bold over its
@@ -516,6 +575,29 @@ body.touring #card {
   border-radius: var(--r-lg);
   background: var(--k-panel);
   box-shadow: var(--key-lip);
+  transition:
+    transform 0.12s var(--ease),
+    box-shadow 0.12s var(--ease);
+}
+/* (its key goes in under a pointer and pressed, with no outline or fill round it and its name: a keyboard's focus keeps
+   a ring.) */
+#tool .crt .applist .open:is(:hover, :focus-visible) {
+  background: none;
+  outline: 0;
+}
+#tool .crt .applist .open:focus-visible {
+  outline: 2px solid var(--k-ink);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  .applist .open:not(:active, .down):hover .pic {
+    transform: var(--hover-button);
+    box-shadow: var(--shadow-hover-button);
+  }
+}
+.applist .open:is(:active, .down) .pic {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
 }
 .applist .pic::after {
   display: none;
@@ -1420,66 +1502,13 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   color: var(--ink);
 }
 .wire .log {
+  /* (its well's lines and look are the shell's, steplog.js, which a task's card shares: style.css .steplog.) */
   flex: 1 0 196px;
   height: 0;
-  margin: 0;
-  padding: 8px 12px;
-  border-radius: 18px;
-  background: var(--sand);
-  list-style: none;
-  font-size: 13.5px;
-  line-height: 1.3;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  touch-action: pan-y;
-  scrollbar-width: thin;
-}
-.wire .log li {
-  display: flex;
-  gap: 10px;
-  padding: 4px 0;
-  color: var(--muted);
-  cursor: pointer;
-}
-.wire .log li:last-child {
-  color: var(--ink);
-  font-weight: 600;
-  animation: wire-step 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2);
-}
-.wire .log span {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.wire .log li:last-child span {
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  -webkit-box-orient: vertical;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.wire .log li.open span {
-  display: block;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-.wire .log time {
-  flex: none;
-  font-size: 12px;
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 @keyframes wire-blink {
   50% {
     opacity: 0.35;
-  }
-}
-@keyframes wire-step {
-  from {
-    opacity: 0;
-    transform: translateY(8px);
   }
 }
 .wire .pace {
@@ -1660,8 +1689,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
 @media (prefers-reduced-motion: reduce) {
   .wire .avatar svg,
   #projects .pj-face.on::after,
-  .wire .state i,
-  .wire .log li:last-child {
+  .wire .state i {
     animation: none;
   }
 }
@@ -1692,6 +1720,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   --pj-surface: var(--k-panel);
   --pj-frame-r: 34px;
   --pj-frame-lift: 0 var(--depth-tile) 0 var(--lip-deep), var(--shadow-lg);
+  --pj-hud-reach: var(--depth-button); /* (the HUD's keys' lip, straight down.) */
   font-weight: 500;
 }
 /* (on a dark colourway the keys a shade off the panel they lie on, as the big key's own keys are) */
@@ -1778,7 +1807,7 @@ body.wire-dark #projects {
   border-radius: 50%;
   animation: wire-spin 6s linear infinite;
 }
-/* (a mark on a tile big enough for its drawing to breathe: the desk phone's handset, body and dial.) */
+/* (a mark on a tile big enough for its drawing to breathe.) */
 .pj-mark {
   width: 34px;
   height: 34px;
@@ -1819,4 +1848,81 @@ body.projects .wire:has(> .solo:not([hidden])) > :not(.solo) {
   .pj-where h1 {
     font-size: 24px;
   }
+}
+
+/* ---- the call player (shell/callplayer.css) in this look: its own ground, keys with a lip, round and lit in the accent. */
+.cp[data-look='wire'] {
+  --cp-ground: var(--k-ground);
+  --cp-text: var(--k-ink);
+  --cp-key: var(--key-bg);
+  --cp-key-ink: var(--key-ink);
+  --cp-key-edge: 1.5px solid var(--key-edge);
+  --cp-key-r: var(--key-r);
+  --cp-key-lip: var(--key-lip);
+  --cp-key-down: var(--key-down);
+  --cp-key-down-lip: var(--key-down-lip);
+  --cp-accent: var(--k-accent);
+  --cp-accent-ink: var(--k-on-accent);
+  --cp-track: color-mix(in srgb, var(--k-ink) 12%, var(--k-panel));
+  --cp-track-edge: 0;
+  --cp-tap: #2f6bdc;
+  --cp-page: #1d9a5b;
+  --cp-ink: #e0484f;
+  --cp-panel: var(--k-panel);
+  --cp-panel-edge: 0;
+  --cp-panel-text: var(--k-ink);
+  --cp-panel-dim: var(--k-muted);
+  --cp-now: var(--k-accent);
+  --cp-now-ink: var(--k-on-accent);
+  --cp-screen-edge: 0;
+  --cp-screen-shadow:
+    0 0 0 1.5px color-mix(in srgb, var(--k-ink) 14%, transparent),
+    0 24px 60px color-mix(in srgb, var(--k-ink) 24%, transparent);
+  --cp-r: 18px;
+  background: var(--k-ground);
+  font-weight: 500;
+}
+.cp[data-look='wire'] .wp-keys .wp-play {
+  background: var(--key-on-bg);
+  color: var(--key-on-ink);
+  box-shadow: var(--key-on-lip);
+}
+.cp[data-look='wire'] .wp-keys .wp-play:active {
+  box-shadow: var(--key-on-down-lip);
+}
+.cp[data-look='wire'] .wp-track {
+  height: 8px;
+  margin-top: -4px;
+  border-radius: 999px;
+  overflow: visible;
+}
+.cp[data-look='wire'] :is(.wp-loaded, .wp-done) {
+  border-radius: 999px;
+}
+.cp[data-look='wire'] .wp-thumb {
+  left: -12px;
+  top: -10px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--k-panel);
+  box-shadow:
+    0 3px 0 var(--lip),
+    0 0 0 1.5px color-mix(in srgb, var(--k-ink) 18%, transparent);
+}
+.cp[data-look='wire'] .wp-bubble {
+  border: 0;
+  border-radius: 999px;
+  bottom: 24px;
+  box-shadow: 0 3px 0 var(--k-side);
+}
+.cp[data-look='wire'] .wp-side {
+  border-radius: var(--r-lg);
+  box-shadow: 0 var(--depth-button) 0 var(--lip);
+  text-shadow: none;
+}
+.cp[data-look='wire'] .wp-moment[aria-current] {
+  border-radius: 12px;
+  font-weight: 650;
 }

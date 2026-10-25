@@ -7,6 +7,7 @@
 // on the thread, never on one job. HQ tells nobody by itself: whether the board hears, and the new time it's given, is
 // the CEO's call.
 import { db } from './db.ts';
+import * as jobs from './jobs.ts';
 import { companyFormats } from './company.ts';
 import { findProject, findThread, type Thread } from './projects.ts';
 import { standing, type Forecast } from './forecast.ts';
@@ -50,7 +51,9 @@ export function threadOf(target: { thread?: string; job?: number; pr?: number })
   if (target.thread !== undefined) {
     const thread = findThread(target.thread);
     if (!thread) return `there's no thread ${target.thread} (hq thread list)`;
-    return thread.status === 'open' ? thread : `${thread.id} is done: a window goes on an open thread`;
+    return thread.status === 'open' || inReview(thread.id)
+      ? thread
+      : `${thread.id} is done: a window goes on an open thread`;
   }
   const pr =
     target.pr == null
@@ -70,6 +73,23 @@ export function threadOf(target: { thread?: string; job?: number; pr?: number })
   if (!job) return pr ? `no job on a thread made pull request #${pr.number}` : `there's no job #${target.job}`;
   if (!job.thread) return `job #${job.id} is in no thread`;
   return threadOf({ thread: job.thread });
+}
+
+function inReview(thread: string) {
+  return db
+    .prepare(
+      `select 1 from jobs j where j.thread = ? and j.kind = 'work' and
+      (select status from prs where branch = ${jobs.workBranch('j')} order by number desc limit 1) in ${jobs.OPEN_PRS} limit 1`,
+    )
+    .get(thread);
+}
+
+// The saved windows still ordering work. The queue supplies done tasks whose PRs remain open.
+export function current(reviewing: (string | null)[] = []) {
+  const threads = db
+    .prepare("select id, deadline, aim from threads where status = 'open' or id in (select value from json_each(?))")
+    .all(JSON.stringify(reviewing)) as { id: string; deadline: number | null; aim: number | null }[];
+  return Object.fromEntries(threads.map(({ id, deadline, aim }) => [id, { deadline, aim }]));
 }
 
 // A thread's window as hq window gives it: its deadline, and its aim when given. Without one the thread's aim stays while
@@ -106,14 +126,13 @@ export function withWindow<S extends OrderingSnapshot>(queue: S, thread: string,
   };
 }
 
-// The open threads whose window a forecast misses (forecast.ts standing): their planned finish past the deadline, or
-// none in sight.
+// Active threads whose forecast misses their window: planned finish past the deadline, or none in sight.
 export function misses(f: Forecast) {
   return [...f.threads.values()]
     .filter(o => standing(o) === 'misses')
     .flatMap(o => {
       const t = findThread(o.thread);
-      if (t?.status !== 'open') return [];
+      if (!t || (t.status !== 'open' && !inReview(t.id))) return [];
       const project = findProject(t.project)?.name ?? t.project;
       return [{ thread: t.id, project, name: t.name, deadline: o.deadline!, finish: o.finish }];
     })

@@ -205,7 +205,9 @@ test('credential-call follow-ups and jobs holding keys never expose estimate sco
   }
   assert.equal(h.jobs.holdsKeys(jobReader.id), false);
   assert.equal((await h.agent('estimate/audit', callReader.token)).status, 403);
-  assert.equal((await h.agent('sizes', callReader.token, {})).status, 403);
+  // (a call revises a size as its agent does, server.ts MANAGE_ROUTES: only the CEO's, and a size names no scopes)
+  const handed = (await h.agent('job', callReader.token, { agent: 'kit', title: 'Again', prompt: 'x' })).body.id;
+  assert.equal((await h.agent('sizes', callReader.token, { job: handed, time: '30m', why: 'Slipped' })).status, 403);
 });
 
 async function privateComparisons(token: string, privateJobs: number[], safe: number, queued: number) {

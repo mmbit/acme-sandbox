@@ -240,6 +240,17 @@ test("a probe's first reading at the start threshold holds its yield", () => {
   assert.ok(y.has(2));
 });
 
+test("a reined heartbeat's answer (its job past its share of HQ's time) leaves a window yield it heard as it was, and reads the rest", () => {
+  const y = new Map<number, Asked>();
+  heard(y, 1, { yield: 'window' }, {});
+  assert.equal(heard(y, 1, { reined: true }, {}), undefined);
+  assert.equal(y.get(1)?.why, 'window');
+  assert.equal(heard(y, 1, { yield: 'paused' }, {}), undefined);
+  assert.equal(y.get(1)?.why, 'paused');
+  assert.equal(heard(y, 1, { reined: true }, {}), 'carrying on', 'the pause it heard is lifted');
+  assert.equal(heard(y, 2, { reined: true }, {}), undefined);
+});
+
 test("other work waiting: a yield is cancelled once nothing waits, unless it's a held one", () => {
   const y = new Map<number, Asked>();
   heard(y, 1, { yield: 'waiting' }, {});

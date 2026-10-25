@@ -7,6 +7,8 @@
   },
   "dependencies": {
     "@huggingface/transformers": "^4.3.0",
+    "@rrweb/record": "2.2.0",
+    "@rrweb/replay": "2.2.0",
     "@simplewebauthn/browser": "^14.0.0",
     "@simplewebauthn/server": "^14.0.3",
     "entities": "^8.1.0",

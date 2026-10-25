@@ -6,7 +6,7 @@ import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
 import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf, strandedWaits, type Named } from './jobs.ts';   // (failedNote) (holdsCustomerData) (strandedWaits)
-import { mergePullRequest, closePullRequest, pullRequestState, landed, addedLines } from './github.ts';   // (landed) (addedLines)
+import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
 import { unreadable, missing, ceo, roles, names, infra, reviewSettings } from './company.ts';   // (names, infra)
@@ -154,7 +154,7 @@ export function startReview(
   if (panelCalledBack(pinned, round, files, links)) return;
   // A pull request of only the office's records merges without a review, before any round of one (round 0: its first
   // push, or a fix sent back before review): one already in the loop (its code put back since, say) goes on to its ruling.
-  if (!prev?.round && officeOnly(author, branch, files, links)) {
+  if (!prev?.round && officeOnly(author, branch, files, links, pr)) {
     return void mergeOffice({ number: pr, branch, author, sha, files: JSON.stringify(files) } as Pr); // (files: ARCHIVE_MERGE)
   }
   reviewRound(pinned, { round, base, before }, files, links, pushedSince);
@@ -1023,7 +1023,7 @@ export function mainMerged(report: { pr?: unknown; head?: unknown; sha?: unknown
   const ours = report.head === pr.sha || report.head === mainMerge(pr.number, pr.sha);
   if (ours && isSha(report.sha)) {
     db.prepare('insert or replace into main_merges (pr, sha, head) values (?, ?, ?)').run(pr.number, pr.sha, report.sha);
-    if (pr.status === 'stuck' && (ruled(pr.number, pr.round, pr.sha) || officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links)))) {
+    if (pr.status === 'stuck' && (ruled(pr.number, pr.round, pr.sha) || officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number))) {
       db.prepare("update prs set status = 'open' where number = ?").run(pr.number);
       publish({ type: 'log', agent: panel.attribution(pr.number), text: `PR #${pr.number} is open again: the branch moved by the worker's merge of main, which is merged next` });
     }
@@ -1051,21 +1051,37 @@ const mainMerge = (pr: number, sha: string) =>
 // judges it against the board's words (boardWords), even when a note or a card is all it is.
 const OFFICE = new RegExp(readFileSync(new URL('office.paths', import.meta.url), 'utf8').trim().split('\n').join('|'));
 // (The archive: their profile's older lines, worker.ts oversized() asks for that move.)
-export const officeOnly = (author: string, branch: string, files: string[], links: string[]) => files.length > 0 && !links.length
+// pr: the pull request's number; one whose diff rewrote the decision log is reviewed from then on (reviewRecords).
+export const officeOnly = (author: string, branch: string, files: string[], links: string[], pr: number) => files.length > 0 && !links.length
   && files.every(f => OFFICE.test(f) && (!f.startsWith('company/people/') || f === `company/people/${author}.md` || f === archive(author)))
-  && !ledger.asked(branch).some(i => i.kind !== 'message');
+  && !ledger.asked(branch).some(i => i.kind !== 'message') && !db.prepare('select 1 from office_reviewed where pr = ?').get(pr);
+// The decision log (office.paths) only grows unreviewed: agents take its entries as the board's word, so a pull request
+// whose diff removes or changes an earlier line of it goes to the panel like any change, and stays there for its later
+// pushes.
+const DECISION_LOG = 'company/DECISIONS.md';
+db.exec('create table if not exists office_reviewed (pr integer primary key)');
+function reviewRecords(pr: Pr) {
+  db.prepare('insert or ignore into office_reviewed (pr) values (?)').run(pr.number);
+  publish({ type: 'log', agent: pr.author, text: `PR #${pr.number} removes or changes earlier entries of the decision log, so it gets a review` });
+  const row = db.prepare('select * from prs where number = ?').get(pr.number) as Pr;
+  if (row.status !== 'open' || !row.sha || reachedPanel(row)) return;   // (a later push's round has its panel already)
+  queueTriage(row.number, row.branch, row.sha, row.round, JSON.parse(row.files), JSON.parse(row.links),
+    `\n\nIt removes or changes earlier entries of ${DECISION_LOG}, which agents read as the board's decisions: check each such change is one the board made.`, row.fixes_from);
+}
 // Unreviewed, so nothing in it may look like a key (the events' pattern) or be one of the key store's values: one that
 // does goes back to its author, and one GitHub can't show (or shows only in part) waits for the next sweep, why in STATUS.md.
 async function mergeOffice(pr: Pr) {
-  let added: string | undefined;
+  let diff: Awaited<ReturnType<typeof pullRequestDiff>>;
   try {
-    added = await addedLines(pr.number);
+    diff = await pullRequestDiff(pr.number);
   } catch (err) {
     hold(pr.number, `it only updates records, but reading what it adds failed (${String((err as Error)?.message ?? err).slice(0, 200)}); HQ tries again every 5 minutes`);
     return;
   }
-  if (added === undefined) return;
+  if (diff === undefined) return;
   hold(pr.number, null);
+  if (diff.altered.includes(DECISION_LOG)) return reviewRecords(pr);
+  const { added } = diff;
   if (new RegExp(KEYS.source).test(added) || secrets.redact(added) !== added)
     return fixJob(pr, 'Removing a key', `Your pull request #${pr.number} (branch ${pr.branch}) only updates records, but what it adds looks like a key or holds one of the company's keys. Take it out (a key never goes in text: name it instead), and push again.`, 'a key in records that merge unreviewed');
   const m = await mergeAlone(pr, `Merge PR #${pr.number} (${pr.author}'s records)`, m => {
@@ -1226,7 +1242,7 @@ export function sweepAction(
     if (!misjudged(saved.job)) return undefined;
     return { kind: 'ruling' as const, ...saved, author: authorSince(pr.branch, saved.job.id), merges: false };
   }
-  if (officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links)))
+  if (officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number))
     return { kind: 'office' as const, author: authorSince(pr.branch, pr.since), merges: true };
   const judged = ruling(pr.number, pr.round, pr.sha);
   const merges = judged?.decision === 'merge' && !changedFor(judged.id).length;

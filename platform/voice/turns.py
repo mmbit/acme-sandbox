@@ -1,30 +1,9 @@
-"""Each call turn's numbers from the call agents' own session records, for the timing log (infra/call-times.sh).
-
-    python turns.py [/data/claude]     (by hand, inside the voice container: the call agents' CLAUDE_CONFIG_DIR)
-
-Numbers and tool names only, never a word said on the call.
-"""
-import json, sys, time
+"""Each call turn's numbers from a call agent's own session record, for the timing log (infra/call-times.sh):
+numbers and tool names only, never a word said on the call."""
+import json
 from datetime import datetime
-from pathlib import Path
 
-DAYS = 8  # (the server status shows 7; call-times.sh keeps what it has seen)
 THINKING = ('thinking', 'redacted_thinking')
-
-
-def main(root):
-    now = time.time()
-    for path in sorted(Path(root).glob('projects/*/*.jsonl')):
-        # (not a call that's still on: its last turn may be half done)
-        if not now - DAYS * 86400 <= path.stat().st_mtime < now - 120:
-            continue
-        try:
-            found = turns(path)
-        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:  # (a record of another shape)
-            print(f'turns: {path.name}: {error!r}', file=sys.stderr)
-            continue
-        for stamp, line in found:
-            print(stamp, line)
 
 
 def turns(path):
@@ -98,7 +77,3 @@ def block(entry):
 
 def when(entry):
     return datetime.fromisoformat(entry['timestamp'].replace('Z', '+00:00'))
-
-
-if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else '/data/claude')

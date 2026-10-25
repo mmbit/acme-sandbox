@@ -641,6 +641,213 @@ button:disabled {
   animation: rise 0.3s both;
 }
 
+/* ---- a walk-through (joinwalk.js): the shared preview fills the page, the call screen comes and goes over it, and
+   the call minimised floats above both. */
+.join + .join {
+  margin-top: 10px;
+}
+.notice.watch {
+  margin-top: -8px;
+  background: var(--soft);
+  font-size: 0.94rem;
+}
+.walk {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--bg);
+  visibility: hidden;
+}
+body.walking .walk {
+  visibility: visible;
+}
+body.walking .own {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: inherit;
+  transform-origin: 100% 100%;
+  transition:
+    opacity 0.32s cubic-bezier(0.2, 0.8, 0.2, 1),
+    transform 0.42s cubic-bezier(0.2, 0.9, 0.25, 1),
+    visibility 0s;
+}
+body.walking.min .own {
+  opacity: 0;
+  transform: scale(0.94);
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.26s ease-in,
+    transform 0.36s cubic-bezier(0.4, 0, 0.6, 1),
+    visibility 0s 0.36s;
+}
+.controls .pages {
+  background: var(--soft);
+  color: var(--ink);
+}
+.controls .pages .fill {
+  fill: currentColor;
+}
+body:not(.walking) .controls .pages {
+  display: none;
+}
+
+/* the call, minimised: the agent's face, alive while it speaks, the eye while the page is seen, Pause and hang up */
+.callbubble {
+  --cb-accent: var(--accent);
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 6px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow:
+    0 1px 2px rgb(20 28 45 / 0.12),
+    0 12px 32px rgb(20 28 45 / 0.22);
+  backdrop-filter: blur(14px) saturate(1.4);
+  -webkit-backdrop-filter: blur(14px) saturate(1.4);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  will-change: transform;
+  transition:
+    scale 0.2s cubic-bezier(0.3, 1.5, 0.5, 1),
+    box-shadow 0.2s;
+}
+.callbubble.held {
+  scale: 1.06;
+  cursor: grabbing;
+  box-shadow:
+    0 2px 4px rgb(20 28 45 / 0.12),
+    0 22px 48px rgb(20 28 45 / 0.3);
+}
+.cb-face {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  background: radial-gradient(
+    circle at 50% 42%,
+    color-mix(in srgb, var(--glow) 70%, var(--card)) 0,
+    color-mix(in srgb, var(--glow) 22%, var(--card)) 70%
+  );
+  box-shadow: 0 0 0 calc(2px + var(--cb-level, 0) * 7px) color-mix(in srgb, var(--glow) 65%, transparent);
+  transition: box-shadow 0.08s linear;
+}
+/* (the head and shoulders: a drawing's head sits in its upper half, as joinfigure.js's parts expect) */
+.cb-figure svg {
+  position: absolute;
+  left: -60%;
+  top: -44%;
+  width: 220%;
+  height: auto;
+  overflow: visible;
+  pointer-events: none;
+}
+.cb-figure [data-part] {
+  transform-box: fill-box;
+  transform-origin: 50% 50%;
+}
+.cb-figure [data-part='figure'],
+.cb-figure [data-part='body'] {
+  transform-origin: 50% 100%;
+}
+.cb-figure [data-part='head'] {
+  transform-origin: 50% 85%;
+}
+.cb-figure [data-part='mouth-open'] {
+  transform-origin: 50% 0;
+  transform: scale(1, 0);
+}
+.callbubble[data-state='thinking'] .cb-face {
+  box-shadow: 0 0 0 3px #9b72cf;
+}
+.cb-eye {
+  position: absolute;
+  left: 46px;
+  top: -2px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 20px;
+  border-radius: 99px;
+  background: #e8505b;
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 2px 6px rgb(20 28 45 / 0.25);
+  animation: rise 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.4) both;
+}
+.cb-eye svg {
+  width: 17px;
+  height: 11px;
+}
+.cb-lid {
+  fill: #fff;
+}
+.cb-pupil {
+  fill: #1b2130;
+  animation: glance 5s ease-in-out infinite;
+}
+@keyframes glance {
+  0%,
+  40%,
+  100% {
+    transform: translateX(0);
+  }
+  50%,
+  62% {
+    transform: translateX(-2.4px);
+  }
+  72%,
+  84% {
+    transform: translateX(2.4px);
+  }
+}
+.cb-keys {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.cb-pause {
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 99px;
+  background: var(--soft);
+  color: var(--ink);
+  font-size: 0.95rem;
+}
+.callbubble.paused .cb-pause {
+  background: var(--cb-accent);
+  color: var(--on);
+}
+.cb-hangup {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: #d9434f;
+  color: #fff;
+}
+.cb-hangup svg {
+  width: 24px;
+  height: 24px;
+  fill: currentColor;
+  stroke: none;
+}
+
 /* ---- a phone */
 @media (max-width: 859px) {
   .top {
@@ -710,6 +917,14 @@ button:disabled {
   .controls button {
     flex: 1;
     justify-content: center;
+  }
+  /* (a walk-through's third button keeps to its drawing on a phone: its words are its label) */
+  .controls .pages {
+    flex: none;
+    padding: 0 18px;
+  }
+  .controls .pages span {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

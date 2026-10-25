@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import * as api from './api.ts';
 import { print } from './output.ts';
-import type { Machine, Spec } from './runs.ts';
+import type { Machine } from './machines.ts';
+import type { Spec } from './runs.ts';
 
 // set for the command run here, so a tool that sends itself off with hq run (the demo kit's renders) runs as it is
 const HERE_ENV = 'HQ_RUN_HERE';

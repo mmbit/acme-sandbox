@@ -2,7 +2,7 @@
 // server).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('preview-pass', {
@@ -57,8 +57,12 @@ test("a pass opens its own preview host, view-only: never the chat's route, revi
   assert.equal(await check(pass.cookie, 'cycles.preview.company.test'), 302);
   assert.equal(await check('pp=not-a-pass', HELLO), 302);
   assert.equal(await check('', HELLO), 302);
-  // no review mode: an empty script, and no notes
-  assert.equal((await on(HELLO, '/__review/review.js', pass.cookie)).text, '/* review mode: off */\n');
+  // no review mode: only the watch-along's answer to HQ's frame, and no notes
+  const framed = readFileSync(new URL('../../../shared/watchalong/framed.js', import.meta.url), 'utf8');
+  assert.equal(
+    (await on(HELLO, '/__review/review.js', pass.cookie)).text,
+    `/* review mode: off */\n${framed.replace('{{HQ_ORIGIN}}', `https://${HQ}`)}`,
+  );
   const note = await on(HELLO, '/__review/notes', pass.cookie, {
     note: 'x',
     page: `https://${HELLO}/`,

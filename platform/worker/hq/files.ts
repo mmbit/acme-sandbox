@@ -67,6 +67,10 @@ export const readWords = (path: string) => readTextOrStdin(path).replace(/\n+$/,
 // made first by another slot, with a symlink in it to one of this job's files, and then overwritten with a sender's bytes.
 export const privateFolder = (name: string) => mkdtempSync(`${tempRoot()}/${name}.`);
 
+// A picture the coordinator sent (its type and base64 bytes) as a private .png or .jpg (savePrivately).
+export const savePicture = (name: string, type: string, base64: string) =>
+  savePrivately(name, type === 'image/png' ? 'png' : 'jpg', Buffer.from(base64, 'base64'));
+
 // A new file of mode 0600, named <name>.XXXXXX.<extension>, with these bytes in it.
 export function savePrivately(name: string, extension: string, bytes: Buffer) {
   for (;;) {

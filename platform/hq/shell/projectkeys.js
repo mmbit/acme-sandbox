@@ -187,7 +187,8 @@ export const threadMarks = (t, p) =>
 function eta(t) {
   const e = threadEta(t);
   if (!e) return `<span class="pj-note">${icon('finish')}<span>No time yet</span></span>`;
-  return `<details class="pj-eta" data-eta="${esc(t.id)}"><summary class="pj-key">${icon('finish')}<span>${esc(e.time)}</span></summary><p>${esc(e.sums)}</p></details>`;
+  // (a booked start, with the start's mark)
+  return `<details class="pj-eta" data-eta="${esc(t.id)}"><summary class="pj-key">${icon(e.booked ? 'tour' : 'finish')}<span>${esc(e.time)}</span></summary><p>${esc(e.sums)}</p></details>`;
 }
 // A pause, as a mark: only that it's paused (why is the CEO's brief, never the board's to read; a decision of the
 // board's is lit instead)
@@ -257,7 +258,11 @@ function deliverables(p) {
         .slice()
         .sort((a, b) => b.finished.localeCompare(a.finished))
         .slice(0, 2)
-        .map(t => `<li class="pj-was"><span>${nameHtml(t, 'name')}</span><small>done</small></li>`);
+        // (done as the icon set's tick, named for a reader.)
+        .map(
+          t =>
+            `<li class="pj-was"><span>${nameHtml(t, 'name')}</span><small>${icon('tick', 'pj-done', 'Done')}</small></li>`,
+        );
   return `<ul class="pj-next pj-deliverables">${[...routine, ...items].join('')}</ul>`;
 }
 // When a deliverable's done, by the planner (its line's finish, threadLine's, from now), or that it waits on the board,

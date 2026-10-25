@@ -137,6 +137,7 @@ test('hq window: on a thread named by its id, a job on it or a pull request; set
     (await h.agent('plan/done', (await h.start({ agent: 'moss', title: 'x' })).token, { thread: shop })).status,
     200,
   );
+  h.mergedPr(9101);
   const done = await h.agent('window', kit.token, { thread: shop, deadline: '2h' });
   assert.equal(done.status, 409, 'an open thread');
   assert.match(done.body.error, new RegExp(`${shop} is done: a window goes on an open thread`));

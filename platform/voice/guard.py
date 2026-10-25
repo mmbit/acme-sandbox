@@ -4,9 +4,9 @@ from pathlib import Path
 
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
-CALL_TOOLS = ['add', 'call', 'estimate', 'eta', 'expedite', 'hang_up', 'history', 'intercom', 'job', 'pin_sent', 'pin_words', 'promise',
-              'reach', 'replace', 'search', 'waiting', 'when']
-PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note']
+CALL_TOOLS = ['add', 'call', 'estimate', 'eta', 'expedite', 'hang_up', 'history', 'intercom', 'job', 'manage', 'pin_sent', 'pin_words',
+              'promise', 'reach', 'replace', 'screen', 'search', 'sketch', 'waiting', 'when']
+PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')
 
@@ -27,13 +27,16 @@ def cli_tools(names, builtin, tool_set=None):
 
 
 # The call agent reads the company's files (main, read only), hands work on with hq job (and adds to it), puts promises
-# and corrections on the call's list, looks things up with hq search, history, call, intercom and projects (eta) and
-# searches the web (WebSearch runs at Anthropic: the line opens no connection for it); nothing else. The line's own
-# folders and /proc are off limits to its Read, Grep and Glob: the OS keeps the server's token from it, this is a second
-# fence. If hq_tools.py won't start, the CLI still does (MCP servers are optional): calls work, without its tools.
+# and corrections on the call's list, manages the company's work with hq's management commands (manage), looks things
+# up with hq search, history, call, intercom and projects (eta), searches the web (WebSearch runs at Anthropic: the line
+# opens no connection for it), and sees the caller's screen on a walk-through (screen) and the board's sketches
+# (sketch), both through the voice line's own socket; nothing else. No shell: it runs as the line's uid, which can read
+# /seat (README's "Trust"). The line's own folders and /proc are off limits to its Read, Grep and Glob: the OS keeps the
+# server's token from it, this is a second fence. If hq_tools.py won't start, the CLI still does (MCP servers are
+# optional): calls work, without its tools.
 TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch')  # (WebSearch)
 # A call out to a partner: no built-in tool and nothing of the company's looked up, so an outsider's words can't steer
-# a look-up (house rule 9)
+# a look-up (house rule 9). Its screen tool shows only the partner's own screen.
 PARTNER = cli_tools(PARTNER_TOOLS, '', 'partner')
 
 
@@ -77,13 +80,15 @@ def sign_in_pipe(seat_token):
     return r
 
 
-def agent_env(environ, hq_url, sign_in_fd, call_token, agent):
+def agent_env(environ, hq_url, sign_in_fd, call_token, agent, screen=None):
     """The call agent's whole environment: nothing of the server's passes but PATH and HOME (sign_in_fd:
-    sign_in_pipe)."""
+    sign_in_pipe). screen: the line's screen socket and the session's key, on a call with a screen (hq_tools.py's
+    screen and sketch tools read them; hq never gets them)."""
     return {'PATH': environ['PATH'], 'HOME': environ.get('HOME', '/data/call'), 'LANG': 'C.UTF-8',
             'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR': str(sign_in_fd), 'CLAUDE_CONFIG_DIR': '/data/claude',
             'DISABLE_AUTOUPDATER': '1', 'HQ_URL': hq_url, 'HQ_TOKEN': call_token, 'HQ_AGENT': agent,
             'HQ_CALL': '1',  # (hq job and hq item: the brief and the words on stdin, never a file)
             # The briefing has the repo's AGENTS.md already: the CLI's own copy (CLAUDE.md in the checkout) was the
             # same 5 KB again in every call's first request
-            'CLAUDE_CODE_DISABLE_CLAUDE_MDS': '1'}
+            'CLAUDE_CODE_DISABLE_CLAUDE_MDS': '1',
+            **({'SCREEN_SOCKET': screen[0], 'SCREEN_KEY': screen[1]} if screen else {})}

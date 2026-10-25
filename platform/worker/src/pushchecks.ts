@@ -8,8 +8,15 @@ import { alive, dropLaunch, endOf, howEnded, type CheckRun, type Checks, type La
 import { whole } from './outcome.ts';
 import { redact } from './safety.ts';
 
-// passed: exit 0; failed: exit 1, a finding; null: it couldn't run (any other end: no tools, a crash).
-export type CheckOutcome = { passed: boolean | null; report: string };
+// passed: exit 0; failed: exit 1, a finding; null: it couldn't run (any other end: no tools, a crash). unreached: it
+// ended because HQ couldn't be reached (exit UNREACHED_EXIT), so it runs again (runCheck).
+export type CheckOutcome = { passed: boolean | null; report: string; unreached?: boolean };
+// A check's exit when it lost HQ (shared/gates/lent.ts UNREACHED_EXIT): a deploy restarted HQ for longer than its own
+// tries ride out. Nothing of the change failed, so it isn't the author's: the check waits until HQ answers again
+// (CheckOptions.reachable) and runs again on the same commit, up to UNREACHED_TRIES times in a row before it counts as
+// one that couldn't run.
+const UNREACHED_EXIT = 3;
+const UNREACHED_TRIES = 3;
 // name: its key in the record; launch: starts it (detached.ts launch); turn: waits for a place to run it, if it must
 // (one an earlier process launched takes its place too, so the checks still running count against the limit).
 // A check here runs to its end: it's our own code, so a slow one is fixed where it is, its time in the log (outcomeOf).
@@ -22,7 +29,8 @@ export type CheckSpec<Name extends string = string> = {
   lent?: { ms: number; launch: () => Launched };
 };
 // keep: writes the run's record with these checks in it; watch and unwatch: the shares' view of a running check
-// (worker.ts checking); said: its outcome in the worker's log.
+// (worker.ts checking); said: its outcome in the worker's log; reachable: resolves once HQ answers (a check that lost
+// it runs again then).
 export type CheckOptions<Name extends string = string> = {
   runs: string;
   signal?: AbortSignal;
@@ -31,6 +39,7 @@ export type CheckOptions<Name extends string = string> = {
   unwatch: (pid: number) => void;
   said: (name: Name, words: string) => void;
   wait?: (ms: number) => Promise<unknown>;
+  reachable?: () => Promise<unknown>;
 };
 
 // The runs in their push's checks, by job, with how to write each one's record: a reload writes them and goes.
@@ -95,7 +104,16 @@ async function runCheck<Name extends string>(
   }
   for (;;) {
     o.signal?.throwIfAborted();
-    const ended = await watchLaunch(spec.name, check, o, wait, tracked);
+    const { unreached, ...ended } = await watchLaunch(spec.name, check, o, wait, tracked);
+    if (unreached && (check.unreached ?? 0) < UNREACHED_TRIES) {
+      check.unreached = (check.unreached ?? 0) + 1;
+      o.said(spec.name, 'lost HQ, so it runs again on the same commit once HQ answers');
+      await o.reachable?.();
+      dropLaunch(o.runs, check.launched!);
+      if (check.lent && spec.lent) start(spec.lent.launch, spec.lent);
+      else start(spec.launch);
+      continue;
+    }
     if (!check.lent || ended.passed !== null) return ended;
     o.said(spec.name, 'had no verdict from the lent machine, so it runs here');
     dropLaunch(o.runs, check.launched!);
@@ -160,15 +178,17 @@ function outcomeOf<Name extends string>(
   let passed: boolean | null = null;
   if (!stopped.length && how.exit === 0) passed = true;
   else if (!stopped.length && how.exit === 1) passed = false;
-  const words = stopped.length
-    ? `could not complete (${stopped[0]})`
-    : passed === null
-      ? 'could not run'
-      : passed
-        ? 'passed'
-        : 'failed';
-  o.said(name, `${words} in ${Math.round((Date.now() - check.began!) / 1000)} s`);
-  return { passed, report };
+  const unreached = !stopped.length && how.exit === UNREACHED_EXIT;
+  o.said(name, `${endWords(stopped, unreached, passed)} in ${Math.round((Date.now() - check.began!) / 1000)} s`);
+  return { passed, report, unreached };
+}
+
+// How a check ended, for the worker's log
+function endWords(stopped: string[], unreached: boolean, passed: boolean | null) {
+  if (stopped.length) return `could not complete (${stopped[0]})`;
+  if (unreached) return 'could not reach HQ';
+  if (passed === null) return 'could not run';
+  return passed ? 'passed' : 'failed';
 }
 
 const HEAD_BYTES = 16 << 20;

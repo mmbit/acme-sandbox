@@ -2,6 +2,7 @@
 //
 // ground: behind everything; ink: every line, dot and hatch; paper: a face that has no tone of its own (the line looks
 // leave faces bare). accent and accentSide: the one shape where the picture's story is, and a cylinder's side under it.
+// onAccent: a line drawn on the accent, where ink wouldn't read (ink if left out).
 // shade: how faces turned from the light and shadows are shaded: 'dots', 'hatch' or 'flat'. tones (flat looks):
 // a tone's [top, left, right] colours; a tone a palette leaves out is plain. shadow and pool: the flat looks' colours
 // for a cast shadow and the ground under a scene (null: none). Any CSS colour goes, var(--x) included, in an SVG.

@@ -232,16 +232,50 @@ for (const look of RENDERERS)
       await page.mouse.up();
     };
 
-    // HQ opens on the agents view, with no switch beside the logo: the desktop's Projects app opens the projects view
+    // HQ opens on the agents view, with no switch beside the logo: the HUD's Projects key opens the projects view, the
+    // desktop has no app for it
     assert.equal(await page.$('#views'), null, `${at}: no switch`);
     assert.ok(await page.$eval('#projects', e => e.hidden), `${at}: the projects view is hidden at first`);
     await header(page, at, device === 'phone');
     await tap(page, '#btn-computer');
-    await page.waitForSelector('[data-app=projects]');
-    assert.equal(await page.$('[data-app=jobs]'), null, `${at}: the Jobs app is the projects view now`);
-    await tap(page, '[data-app=projects]');
-    await page.waitForSelector('[data-business]');
+    await page.waitForSelector('[data-app=notes]');
+    assert.deepEqual(await page.$$('[data-app=projects], [data-app=jobs]'), [], `${at}: no Projects or Jobs app`);
+    await tap(page, '#tool [data-close]');
     await page.waitForSelector('#tool', { state: 'hidden' });
+    // (the logo's width aside: its clock may turn a minute in between.)
+    const hudBoxes = () =>
+      page.$$eval('#hud .brand, #hud .tools > *', els =>
+        els
+          .filter(e => e.offsetParent)
+          .map(e => {
+            const { x, y, width, height } = e.getBoundingClientRect();
+            return [e.id, x, y, e.id ? width : null, height];
+          }),
+      );
+    const before = await hudBoxes();
+    await tap(page, '#btn-projects');
+    await page.waitForSelector('[data-business]');
+    assert.equal(
+      await page.getAttribute('#btn-projects', 'aria-pressed'),
+      'true',
+      `${at}: the key down while it's out`,
+    );
+    // (the header never moves as the view comes out: every key where it was, and the view clear under them)
+    assert.deepEqual(await hudBoxes(), before, `${at}: the header stays put`);
+    const gap = await page.evaluate(
+      () =>
+        document.querySelector('#projects .pj-modal').offsetTop -
+        Math.max(
+          ...[...document.querySelectorAll('#hud .brand, #hud .tools > *')].map(e => e.getBoundingClientRect().bottom),
+        ),
+    );
+    assert.ok(gap >= 14, `${at}: the view clear of the header (${gap} px)`);
+    // (a second press closes it, and one more opens it again)
+    await tap(page, '#btn-projects');
+    await page.waitForSelector('#projects', { state: 'hidden' });
+    assert.equal(await page.getAttribute('#btn-projects', 'aria-pressed'), 'false', `${at}: the key up once it's in`);
+    await tap(page, '#btn-projects');
+    await page.waitForSelector('#projects [data-business]');
     // (the view's own close, the big key's way: the HUD has no way out of its own.)
     assert.ok(!(await page.$('#btn-leave')), `${at}: no way out in the HUD's tools`);
     assert.ok(await page.$('#projects .pj-head [data-leave]'), `${at}: the view's own close`);
@@ -290,6 +324,16 @@ for (const look of RENDERERS)
       (await texts(page, '.pj-board > [role=status]'))[0] ?? '',
       /^No new jobs can start: the worker has been short of memory/,
       `${at}: why nothing starts, while it lasts`,
+    );
+    // (once the view has flown out of the HUD's key: on its way it passes the HUD.)
+    await page.waitForFunction(
+      () =>
+        !document
+          .querySelector('#projects')
+          .getAnimations({ subtree: true })
+          .some(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity),
+      null,
+      { polling: 250 },
     );
     const hud = await page.evaluate(() => ({
       hud: document.querySelector('#hud').getBoundingClientRect().bottom,
@@ -352,12 +396,12 @@ for (const look of RENDERERS)
     await shot('business');
     // the board sorts them by dragging one held still, and a drag opens nothing (the order kept: the coordinator's
     // projects test)
-    const drag = async (from, to) => {
+    const drag = async (from, to, hold = true) => {
       const a = await page.locator(from).boundingBox(),
         b = await page.locator(to).boundingBox();
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
-      await page.waitForSelector('.pj-lifted');
+      if (hold) await page.waitForSelector('.pj-lifted');
       for (let i = 1; i <= 8; i++)
         await page.mouse.move(a.x + a.width / 2 + ((b.x - a.x) * i) / 8, a.y + a.height / 2 + ((b.y - a.y) * i) / 8);
       await page.mouse.up();
@@ -368,6 +412,23 @@ for (const look of RENDERERS)
     assert.equal(await title(), 'The shopfront', `${at}: a drag opens nothing`);
     await drag('[data-project=shop]', '[data-project=news]');
     assert.deepEqual(await texts(page, '[data-project] b'), ['The sticker shop', 'The newsletter'], `${at}: and back`);
+    // a mouse that drags at once lifts the tile as it moves, and the level stays put
+    if (device !== 'phone') {
+      await drag('[data-project=shop]', '[data-project=news]', false);
+      assert.deepEqual(
+        await texts(page, '[data-project] b'),
+        ['The newsletter', 'The sticker shop'],
+        `${at}: dragged at once`,
+      );
+      assert.equal(await title(), 'The shopfront', `${at}: no swipe under a mouse drag`);
+      await page.waitForTimeout(300); // (the dropped tile home before it's aimed at)
+      await drag('[data-project=news]', '[data-project=shop]');
+      assert.deepEqual(
+        await texts(page, '[data-project] b'),
+        ['The sticker shop', 'The newsletter'],
+        `${at}: and back again`,
+      );
+    }
     // a swipe brings the next business in, and a business of one project opens at its tiles too
     await swipe(-140);
     await level('The office');
@@ -545,7 +606,12 @@ for (const look of RENDERERS)
       ],
       at,
     );
+    // (its front says what it found in a line, its back lists each.)
     await tap(page, '.pj-level [data-job="41"]');
+    await page.waitForSelector('.pj-card .pj-front .pj-summary');
+    assert.equal((await texts(page, '.pj-card .pj-front .pj-summary'))[0], 'Found 1 blocking finding and 2 notes.', at);
+    assert.equal(await page.$('.pj-card .pj-front :is(.pj-findings, .pj-readers)'), null, `${at}: the front is short`);
+    await tap(page, '.pj-card [data-turn]');
     await page.waitForSelector('.pj-card .pj-findings li.blocking');
     assert.deepEqual(
       await page.$$eval('.pj-card .pj-findings li', lines =>
@@ -628,6 +694,8 @@ for (const look of RENDERERS)
     await tap(page, '.pj-level [data-job="58"]');
     await page.waitForFunction(() => document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await page.$('#projects .pj-card')), `${at}: no sheet of its own for a job at work`);
+    // (and from here it steps to no other agent's: the board's note.)
+    assert.equal(await page.$('.wire .solo .sides'), null, `${at}: no sides to agents of other work`);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await agentCard()), at);
@@ -647,7 +715,7 @@ for (const look of RENDERERS)
     await page.waitForSelector('.pj-card.flipped');
     assert.deepEqual(
       await texts(page, '.pj-card .pj-back h4'),
-      ['Its reviews and fixes', 'What it did', 'Then, once it’s merged'],
+      ['Its reviews and fixes', 'What it did', 'Then, once it’s merged', 'Its steps'],
       at,
     );
     assert.ok(
@@ -662,8 +730,8 @@ for (const look of RENDERERS)
       job: document.querySelector('.pj-card').getBoundingClientRect().top,
     }));
     assert.ok(under.job >= under.hud - 1, `${at}: the job is under the HUD (${JSON.stringify(under)})`);
-    await tap(page, '.pj-steps > summary');
-    await page.waitForFunction(() => !document.querySelector('.pj-log').textContent.includes('Loading'));
+    // (its steps there at once, as the agents' big keys' are.)
+    await page.waitForSelector('.pj-card .pj-back .steplog li[data-k]');
     assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
     assert.deepEqual(await offScreen(), [], at);
     await shot('job');
@@ -674,6 +742,126 @@ for (const look of RENDERERS)
     );
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.pj-card'));
+    await page.keyboard.press('Escape');
+    await level('The sticker shop');
+    await page.keyboard.press('Escape');
+    await level('The shopfront');
+
+    // a done task's card: on its front what it did in a line, its review loop's output never shown raw; turned over by
+    // the mark in its corner, its record, who read it and its steps as the agents' big keys show theirs, a tap opening
+    // a step; both faces on the screen and scrolling, a short one too.
+    await page.evaluate(async () => {
+      const { loadProjects } = await import('/shell/data.js');
+      const t = (await loadProjects(true)).projects[0].threads[0],
+        review = t.jobs.find(j => j.id === 41),
+        chosen = review.triage.selection;
+      t.jobs.push({
+        ...review,
+        id: 40,
+        agent: 'quill',
+        kind: 'consolidate',
+        stage: 'triage',
+        step: 'Choosing the reviewers',
+        findings: undefined,
+        triage: { ...review.triage, job: 40 },
+        created: '2026-09-25T08:30:00Z',
+        finished: '2026-09-25T08:45:00Z',
+        result: JSON.stringify({ decision: 'review', reason: chosen.reason, reviewers: chosen.reviewers }),
+      });
+      await (await import('/shell/projects.js')).openProjects({ job: 40 });
+    });
+    const still = () =>
+      page.waitForFunction(() => !document.querySelector('.pj-card')?.getAnimations({ subtree: true }).length, null, {
+        polling: 250,
+      });
+    // (the card whole between the HUD and the screen's foot, and its face scrolled as far as it goes, if it can)
+    const onScreen = () =>
+      page.evaluate(() => {
+        const c = document.querySelector('.pj-card').getBoundingClientRect(),
+          hud = document.querySelector('#hud').getBoundingClientRect().bottom,
+          faces = document.querySelector('.pj-card-faces');
+        faces.scrollTop = faces.scrollHeight;
+        const scrolls = faces.scrollHeight <= faces.clientHeight + 1 || faces.scrollTop > 0;
+        faces.scrollTop = 0;
+        return {
+          inside: c.left >= 0 && c.right <= innerWidth && c.top >= hud - 1 && c.bottom <= innerHeight + 1,
+          scrolls,
+        };
+      });
+    await page.waitForSelector('.pj-pop .pj-card[data-job-open="40"]');
+    await still();
+    assert.match(
+      (await texts(page, '.pj-card .pj-front .pj-summary'))[0] ?? '',
+      /^Chose Tally and Wren to review it: A product page with a price on it, as \S+ is: one read for the copy and the price, one for how it looks on a phone\.$/,
+      at,
+    );
+    assert.ok(await page.$('.pj-card .pj-front .pj-why-big svg[data-icon=tick]'), `${at}: done as the tick`);
+    assert.ok(!(await page.$eval('.pj-card', c => c.textContent.includes('{'))), `${at}: no raw output, either side`);
+    assert.equal(await page.$('.pj-card-keys [data-turn]'), null, `${at}: no turn key beside the close`);
+    assert.ok(
+      await page.$eval('.pj-card', c => {
+        const r = c.getBoundingClientRect(),
+          m = c.querySelector(':scope > .pj-turns[data-turn]').getBoundingClientRect();
+        return (
+          m.right <= r.right && m.bottom <= r.bottom && m.left > r.left + r.width / 2 && m.top > r.top + r.height / 2
+        );
+      }),
+      `${at}: the turn mark in its bottom corner`,
+    );
+    assert.deepEqual(await onScreen(), { inside: true, scrolls: true }, `${at}: its front`);
+    await shot('done-front');
+    await tap(page, '.pj-card [data-turn]');
+    await page.waitForSelector('.pj-card.flipped');
+    await still();
+    await page.waitForSelector('.pj-card .pj-back .pj-record');
+    const record = await texts(page, '.pj-card .pj-record dt');
+    assert.deepEqual(record.slice(0, 3), ['Started', 'Finished', 'Start to end'], at);
+    assert.ok(
+      record.some(t => /^Agent time, sized /.test(t)),
+      `${at}: its agent time against its size (${record})`,
+    );
+    assert.deepEqual(
+      await texts(page, '.pj-card .pj-back .pj-readers .pj-row b'),
+      ['Tally', 'Wren', 'Quill', 'Rook'],
+      `${at}: who read it, by name`,
+    );
+    await page.waitForSelector('.pj-card .pj-back .steplog li[data-k]');
+    assert.ok(
+      await page.$$eval('.pj-card .steplog li[data-k]', lines =>
+        lines.every(l => /^\d\d:\d\d$/.test(l.querySelector('time').textContent)),
+      ),
+      `${at}: each step with its time`,
+    );
+    assert.ok(
+      await page.$eval('.pj-card .steplog', l => l.scrollTop + l.clientHeight >= l.scrollHeight - 2),
+      `${at}: its steps at the newest`,
+    );
+    await page.$eval('.pj-card .steplog li[data-k]', li => li.click());
+    assert.ok(await page.$('.pj-card.flipped .steplog li.open'), `${at}: a tap opens a step, the card stays turned`);
+    assert.deepEqual(await onScreen(), { inside: true, scrolls: true }, `${at}: its back`);
+    assert.ok(!(await page.$eval('.pj-card', c => c.textContent.includes('{'))), at);
+    await shot('done-back');
+    // (and on a short screen, its front scrolls inside the screen)
+    await tap(page, '.pj-card [data-turn]');
+    await page.waitForSelector('.pj-card:not(.flipped)');
+    await page.setViewportSize({ width: w, height: 360 });
+    await still();
+    const short = await onScreen();
+    assert.ok(
+      await page.$eval('.pj-card-faces', f => f.scrollHeight > f.clientHeight),
+      `${at}: a short screen's front overflows`,
+    );
+    assert.deepEqual(short, { inside: true, scrolls: true }, `${at}: a short screen's front`);
+    await page.setViewportSize({ width: w, height: h });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.pj-card'));
+    await page.evaluate(async () => {
+      const t = (await (await import('/shell/data.js')).loadProjects(true)).projects[0].threads[0];
+      t.jobs.splice(
+        t.jobs.findIndex(j => j.id === 40),
+        1,
+      );
+    });
     await page.keyboard.press('Escape');
     await level('The sticker shop');
     await page.keyboard.press('Escape');
@@ -1066,7 +1254,11 @@ for (const look of RENDERERS)
     });
     await page.waitForFunction(() => document.querySelector('.pj-card h2')?.textContent === 'Measure the replies');
     await tap(page, '.pj-card [data-turn]');
-    assert.deepEqual(await texts(page, '.pj-card .pj-back h4'), ['Then, once it’s merged', 'Also waiting for it'], at);
+    assert.deepEqual(
+      await texts(page, '.pj-card .pj-back h4'),
+      ['Then, once it’s merged', 'Also waiting for it', 'Its steps'],
+      at,
+    );
     assert.deepEqual(
       await page.$$eval('.pj-card .pj-back .pj-rows > li > .pj-row', r =>
         r.map(e => [e.querySelector(':scope > .cover')?.dataset.job, e.querySelector('.pj-tag').textContent]),

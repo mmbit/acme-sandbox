@@ -29,11 +29,13 @@ where it suffices.
 
 ## Settled
 
-Nothing yet.
+- **Phone lines and care deployments** (24 October): brand.yaml `phoneLines`, a list of lines routed on the number
+  dialled and the caller (each its number, callers, agent, care deployment, words and calls a day); the care engine
+  deployed once per product whose `product.yaml` says `engine: care`, the one with `chat: true` serving the shops' chat
+  and owning the line to HQ. Both companies are on it. The old single `phoneLine` is still read as one line
+  (`phonelines.ts` `lines()`, `platform/voice/phone_timing.py`); the next carry takes that read out.
 
 ## Open
 
 - `platform/hq/shell/desk.js`: decks built before 4 October tag their messages `{ onlyonery: 'deck' }`, so the desk
   still answers to one company's name. Generic form: rebuild those decks, then drop the old tag.
-- The voice line's call kinds are branches, not a list, so a partners line or a second voice agent needs foundation
-  edits (found by Onlyonery). Generic form: call kinds as entries in the company's own files.

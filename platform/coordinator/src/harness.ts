@@ -18,6 +18,7 @@ import type { AddressInfo } from 'node:net';
 import { fixtureRepo } from './fixture.ts';
 import { recordedReviews, type JobFields } from './reviewfixture.ts';
 import { recordedPastJobs } from './pastjobs.fixture.ts';
+import { recordedCalls } from './calls.fixture.ts';
 import { codedArgs, codedBody, word } from './testwords.ts';
 
 export const WORKER_TOKEN = 'worker-secret',
@@ -240,9 +241,7 @@ export async function harness(
   const { mergedPr, ended, storedPr, failedJobs, clearReviewHistory } = recordedReviews(db, queue);
   // Jobs that ended before the test.
   const pastJob = recordedPastJobs(db, { storedPr, mergedPr });
-  // A recorded call linked to its follow-up job.
-  const storedCall = (id: number, agent: string, job: number) =>
-    db.prepare("insert into calls (id, ts, agent, lines, job) values (?, 'now', ?, '[]', ?)").run(id, agent, job);
+  const { storedCall, liveCall } = recordedCalls(db, voice);
   // A job as HQ lists it (its status, result, note...)
   const job = (id: number) => (jobs.listJobs() as any[]).find(j => j.id === id);
   // A persisted stuck review whose replacement can still report.
@@ -310,6 +309,7 @@ export async function harness(
     failedJobs,
     clearReviewHistory,
     storedCall,
+    liveCall,
     pastJob,
   };
 }
@@ -326,8 +326,8 @@ export async function until(ready: () => unknown, what: string, ms = 5_000) {
 // request (its state, the title it was merged under), never which calls were made. Anything else goes to the real fetch.
 export type PullRequest = {
   state: 'open' | 'closed';
-  added?: string; // what its diff adds (github.ts addedLines)
-  files?: { filename: string; additions: number; patch?: string }[]; // GitHub's own list of its files, in place of `added`'s
+  added?: string; // what its diff adds (github.ts pullRequestDiff)
+  files?: import('./github.ts').PullRequestFile[]; // GitHub's own list of its files, in place of `added`'s
   merged: boolean;
   mergeable: boolean | null;
   head: string;
@@ -363,18 +363,14 @@ function playGithub() {
     await gh.wait?.(method, compared ? Number(compared[1]) : n, init.signal);
     if (compared) return json({ ahead_by: pr(Number(compared[1])).aheadBy });
     const p = pr(n);
-    // the files' diffs (github.ts addedLines): a test sets what a pull request adds as p.added
-    if (method === 'GET' && u.includes('/files'))
-      return json(
-        p.files ?? [
-          {
-            patch: (p.added ?? '')
-              .split('\n')
-              .map(l => `+${l}`)
-              .join('\n'),
-          },
-        ],
-      );
+    // the files' diffs (github.ts pullRequestDiff): a test sets what a pull request adds as p.added, a page at a time
+    if (method === 'GET' && u.includes('/files')) {
+      const query = new URL(u).searchParams,
+        size = Number(query.get('per_page') ?? 30),
+        page = Number(query.get('page') ?? 1);
+      const files = p.files ?? [{ patch: (p.added ?? '').replace(/^/gm, '+') }];
+      return json(files.slice((page - 1) * size, page * size));
+    }
     if (method === 'GET')
       return json({
         merged: p.merged,

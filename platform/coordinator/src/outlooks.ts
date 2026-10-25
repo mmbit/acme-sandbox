@@ -6,39 +6,64 @@ import { findThread, ownerOf, type Thread } from './projects.ts';
 import { findAgent, findJob, isOpenJob, nameOf } from './jobs.ts';
 import { codeOf } from './jobcodes.ts';
 import { standing, undrawnWords, type Forecast, type ThreadOutlook } from './forecast.ts';
-import type { Wait } from './eta.ts';
-import { HORIZON_DAYS } from './simulation.ts';
+import type { QueuedJob, Wait } from './eta.ts';
+import { DAY_MS, HORIZON_DAYS } from './simulation.ts';
+import { companyTime } from './company.ts';
 import { alike, scores, wordsOf } from './matching.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
-// (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall). None while it
-// has no open work.
+// (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall), with the time
+// its work is booked to start when that's past the play's horizon (booked). None while it has no open work.
 export function outlookOf(id: string, f: Forecast) {
   const o = f.threads.get(id);
   if (!o) return null;
+  const booked = o.eta === null ? bookedOf(o, f) : null;
   return {
     ...{ eta: o.eta, finish: o.finish, deadline: o.deadline, aim: o.aim, slack: o.slack, standing: standing(o) },
     ...{ held: o.held, left_ms: o.left_ms, waits: o.waits, cards: o.cards, chain: o.chain, next: o.next, jobs: o.jobs },
-    stall: o.eta === null ? stallOf(o) : null,
+    stall: o.eta === null ? stallOf(o, booked) : null,
+    booked,
   };
 }
 
+// The time a thread without an ETA has work booked to start past the play's horizon (bookedStart): the latest such
+// start among its own jobs and the chain that sets its finish, which the play can't reach, so it's what holds the
+// thread. Null when none is, or something else (a stall, a missing task) holds it.
+function bookedOf(o: ThreadOutlook, f: Forecast) {
+  if (o.undrawn.length || o.chain.some(l => l.causes.some(w => w.on === 'stalled'))) return null;
+  const ids = new Set([...o.jobs, ...o.chain.map(l => l.job)]);
+  const starts = f.snapshot.jobs.flatMap(j => (ids.has(j.id) ? (bookedStart(j, f) ?? []) : []));
+  return starts.length ? Math.max(...starts) : null;
+}
+
+// When a job is booked to start (hq job --when a time: its time wakes, or its not_before where that's later), when
+// that's past the play's horizon; null otherwise. A not_before alone (a retry's or a usage limit's wait) is no booking.
+function bookedStart(j: QueuedJob, f: Forecast) {
+  const at = j.wakes.flatMap(w => ('at' in w && !w.deploy ? [w.at] : []));
+  if (!at.length) return null;
+  const start = Math.max(j.notBefore, ...at);
+  return start > f.snapshot.now + HORIZON_DAYS * DAY_MS ? start : null;
+}
+
 // What stops a thread without an ETA: no task drawn while a window is at stake, a
-// stall the play sees, or nothing merging within its horizon.
-function stallOf(o: ThreadOutlook) {
+// stall the play sees, work booked to start past its horizon, or nothing merging within it.
+function stallOf(o: ThreadOutlook, booked: number | null) {
   const undrawn = undrawnWords(o);
   if (undrawn) return undrawn;
   const stalled = o.chain.flatMap(l => l.causes).find(w => w.on === 'stalled') as
     Extract<Wait, { on: 'stalled' }> | undefined;
   if (stalled) return stalled.why;
-  const days = o.waits.find(w => w.on === 'horizon') as Extract<Wait, { on: 'horizon' }> | undefined;
-  return `nothing in the queue's play lets it merge within ${days?.days ?? HORIZON_DAYS} days`;
+  const days = (o.waits.find(w => w.on === 'horizon') as Extract<Wait, { on: 'horizon' }> | undefined)?.days;
+  if (booked !== null)
+    return `booked to start ${companyTime(booked)}, past the ${days ?? HORIZON_DAYS} days the queue's play looks ahead`;
+  return `nothing in the queue's play lets it merge within ${days ?? HORIZON_DAYS} days`;
 }
 
 // GET /api/projects with each thread's outlook (projects.ts listProjectBoard gives the rest).
 // Each open job of a thread carries its estimate: its agent time as sized and what the play has left of it, and when it
 // starts, is done and merges in the play, and its finish: its work live, as a thread's finish is its last job's (each
-// null where the play has none, as for a review run).
+// null where the play has none, as for a review run), and for one the play has no start for, when it's booked to start
+// past the play's horizon (bookedStart).
 // (start and done; left_ms and finish)
 type BoardJob = { id: number; status: string };
 export function withOutlooks<B extends { projects: { threads: { id: string; jobs: BoardJob[] }[] }[] }>(
@@ -60,7 +85,8 @@ export function withOutlooks<B extends { projects: { threads: { id: string; jobs
 }
 
 const estimateOf = (job: number, f: Forecast) => {
-  const played = f.usual.get(job);
+  const played = f.usual.get(job),
+    row = f.snapshot.jobs.find(j => j.id === job);
   return {
     size_ms: f.sizes.usual.get(job)?.agent_ms ?? null,
     left_ms: played?.left_ms ?? null,
@@ -68,6 +94,7 @@ const estimateOf = (job: number, f: Forecast) => {
     done: played?.done ?? null,
     merged: played?.merged ?? null,
     finish: played?.merged == null ? null : played.merged + f.snapshot.deployLagMs,
+    booked: played?.start == null && row ? bookedStart(row, f) : null,
   };
 };
 

@@ -39,6 +39,12 @@ export const projectLines = {
   run: outlooks.projects,
 };
 
+// hq now: who's at work and what each open card holds up, live (outlooks.ts).
+export const now = {
+  help: outlooks.nowHelp,
+  run: outlooks.now,
+};
+
 // (help reads the company's line for a project when it's shown)
 // (hq project business in the help and the usage line below)
 export const project = {
@@ -76,7 +82,7 @@ export const project = {
       stop(
         'usage: hq project say <project> "sentence", hq project new <id> "name" --code XX --owner <agent> [--business <id>], hq project code <project> XX, hq project owner <project> <agent>, hq project business <project> <business | none>, hq project rename <project> "name", hq project done <project>, or hq project pause | resume <project>',
       );
-    const answer = await api.call('project-notes', { body: api.withSpeaker({ project: id, text: sentence }) });
+    const answer = await api.change('project-notes', { body: api.withSpeaker({ project: id, text: sentence }) });
     if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
       stop(`Nothing recorded: ${api.errorIn(answer.body, 'no answer')}`);
     }
@@ -92,7 +98,7 @@ async function newProject(given: string[]) {
     stop(
       `usage: hq project new <id> "name" --code XX --owner <agent> [--business <id>]\n${companyLevels().lines.project}`,
     );
-  const answer = await api.call('projects/new', { body: api.withSpeaker({ id, name, ...values }) });
+  const answer = await api.change('projects/new', { body: api.withSpeaker({ id, name, ...values }) });
   const made = api.parseOrNull(answer.body) as { id?: string } | null;
   if (!api.isSuccess(answer.status) || !made?.id) stop(`No project was made: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Project ${id} made, owned by ${values.owner}: its plan is hq plan ${id}.`);
@@ -101,7 +107,7 @@ async function newProject(given: string[]) {
 // hq project code (the coordinator's plan.ts setCode).
 async function setCode([id, code, ...rest]: string[]) {
   if (!id || !code || rest.length) stop('usage: hq project code <project> XX');
-  const answer = await api.call('projects/code', { body: api.withSpeaker({ id, code }) });
+  const answer = await api.change('projects/code', { body: api.withSpeaker({ id, code }) });
   const given = api.parseOrNull(answer.body) as { code?: string } | null;
   if (!api.isSuccess(answer.status) || !given?.code) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`${id}'s tasks' codes start ${text(given.code)}- now.`);
@@ -109,7 +115,7 @@ async function setCode([id, code, ...rest]: string[]) {
 
 async function setOwner([id, owner, ...rest]: string[]) {
   if (!id || !owner || rest.length) stop('usage: hq project owner <project> <agent>');
-  const answer = await api.call('projects/owner', { body: api.withSpeaker({ id, owner }) });
+  const answer = await api.change('projects/owner', { body: api.withSpeaker({ id, owner }) });
   if (shown(api.parseOrNull(answer.body)?.ok) !== 'true')
     stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`${owner} owns ${id} now.`);
@@ -128,7 +134,7 @@ async function setBusiness([id, business, ...rest]: string[]) {
 async function renameProject([id, name, ...rest]: string[]) {
   if (!id || !name?.trim() || rest.length)
     stop(`usage: hq project rename <project> "name"\n${companyLevels().lines.project}`);
-  const answer = await api.call('projects/rename', { body: api.withSpeaker({ id, name }) });
+  const answer = await api.change('projects/rename', { body: api.withSpeaker({ id, name }) });
   const renamed = api.parseOrNull(answer.body) as { name?: string } | null;
   if (!api.isSuccess(answer.status) || !renamed?.name)
     stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
@@ -137,7 +143,7 @@ async function renameProject([id, name, ...rest]: string[]) {
 
 async function projectDone([id, ...rest]: string[]) {
   if (!id || rest.length) stop('usage: hq project done <project>');
-  const answer = await api.call('projects/done', { body: api.withSpeaker({ id }) });
+  const answer = await api.change('projects/done', { body: api.withSpeaker({ id }) });
   if (shown(api.parseOrNull(answer.body)?.ok) !== 'true')
     stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`${id} is done: it has left the lists, and shows among the completed projects.`);
@@ -147,7 +153,7 @@ type Thread = { id: string; project: string; name: string; owner: string; goal: 
 
 async function moveThread([id, project, ...rest]: string[]) {
   if (!id || !project || rest.length) stop('usage: hq thread move <project>/<slug> <project>');
-  const answer = await api.call('threads/move', { body: api.withSpeaker({ id, project }) });
+  const answer = await api.change('threads/move', { body: api.withSpeaker({ id, project }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing moved: ${api.errorIn(answer.body, 'no answer')}`);
   const moved = JSON.parse(answer.body) as Thread;
   print(`Thread ${text(moved.name)} is ${text(moved.id)} now; ${id} still finds it.`);
