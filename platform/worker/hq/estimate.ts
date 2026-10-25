@@ -243,7 +243,7 @@ export const at = (ms: number) =>
 async function setSize([target, time, why = '', ...rest]: string[]) {
   const job = /^#?([0-9]+)$/.exec(target ?? '')?.[1];
   if (!job || !time || rest.length) stop('usage: hq estimate set <job> <time: 90m, 2h, 1h30m> ["why"]');
-  const answer = await api.call('sizes', { body: api.withSpeaker({ job: Number(job), time, why }) });
+  const answer = await api.change('sizes', { body: api.withSpeaker({ job: Number(job), time, why }) });
   const set = api.parseOrNull(answer.body);
   if (set?.ok !== true) stop(`Couldn't re-size #${job}: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Job #${job} is sized at ${duration(set.size.agent_ms / 60_000)} of agent time now.`);

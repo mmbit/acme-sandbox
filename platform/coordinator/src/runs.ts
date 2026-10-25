@@ -238,6 +238,9 @@ export const routeTable: RouteTable = {
     answer(request.res, withdrawRun(job, runId(request))),
   ),
   'POST /api/agent/runs/:id(\\d+)/stop': forJob((job, request) => answer(request.res, stopRun(job, runId(request)))),
+  'GET /api/agent/runs/:id(\\d+)/lines': forJob((job, request) =>
+    answer(request.res, listRunLines(job, runId(request), request.url.searchParams.get('after'))),
+  ),
   'GET /api/agent/runs/:id(\\d+)/output': forJob((job, request) =>
     sendFile(request.res, resultFile(job, runId(request), 'output.txt'), 'text/plain; charset=utf-8'),
   ),
@@ -440,6 +443,16 @@ function stopRun(job: Job, id: number) {
   end(id, 'waiting', 'stopped', 'its job stopped it');
   end(id, 'running', 'stopped', 'its job stopped it');
   return showRun(job, id);
+}
+
+// The run's output its helper's beats brought, after the first `after` lines (hq run lines): while it runs, and for a
+// while once it ended, a stopped one too, which sends no output at its end
+function listRunLines(job: Job, id: number, given: string | null) {
+  const row = ownRun(job, id);
+  if (!row) return new Refusal(404, 'no such run of this job');
+  const after = Number(given ?? 0);
+  if (!Number.isSafeInteger(after) || after < 0) return new Refusal(400, 'after: the number of lines already read');
+  return { state: settle(row).state, ...machines.linesAfter(id, after) };
 }
 
 function resultFile(job: Job, id: number, name: string) {
@@ -870,9 +883,9 @@ function mayTake(helper: Helper, kind: Kind, row: RunRow) {
   return row.passed === 1 || !lentPresent(kind.name) || waited(row) > runSettings().takeMinutes * 60_000;
 }
 
-// The fastest free machine first. A faster machine whose helper of the kind asked for work in the last READY_MS and has
-// no run takes it on its next ask, so a slower one leaves it. While the faster ones are busy, a slower one takes it once
-// it has waited takeMinutes, as this server's helper would.
+// The fastest free machine first. A faster machine whose helper of the kind asked for work in the last READY_MS, has
+// no run and room for one (fitsMachine) takes it on its next ask, so a slower one leaves it. While the faster ones are
+// busy, a slower one takes it once it has waited takeMinutes, as this server's helper would.
 // (a machine is busy with a kind once each of its helpers of it has a run)
 function firstInLine(machine: number, kind: Kind, row: RunRow) {
   const helpers = machines.kindHelpers(kind.name, true);
@@ -882,7 +895,10 @@ function firstInLine(machine: number, kind: Kind, row: RunRow) {
     openRuns('running').filter(running => running.machine === helper.machine && running.kind === kind.name).length >=
     kind.helpers;
   const ready = (helper: machines.KindHelper) =>
-    helper.asked !== null && Date.now() - Date.parse(helper.asked) < READY_MS && !busy(helper);
+    helper.asked !== null &&
+    Date.now() - Date.parse(helper.asked) < READY_MS &&
+    !busy(helper) &&
+    fitsMachine(helper.machine, kind);
   if (faster.some(ready)) return false;
   return !faster.some(busy) || waited(row) > runSettings().takeMinutes * 60_000;
 }
@@ -891,13 +907,15 @@ const waited = (row: RunRow) => Date.now() - Date.parse(row.created);
 
 // A lent machine takes a run only while it fits the memory its runs may hold in all (runs.machineMemoryGb), each running
 // run counted at its kind's memoryGb: its helpers of several kinds, each capped alone, never ask more of it together.
+// A run of a kind with GPUs also waits while another such run holds the machine: each gets all its cards, and their
+// memory isn't counted here.
 function fitsMachine(machine: number, kind: Kind) {
   const settings = runSettings();
+  const running = openRuns('running').filter(run => run.machine === machine);
+  const declared = new Map(settings.kinds.map(other => [other.name, other]));
+  if (kind.gpus && running.some(run => declared.get(run.kind ?? '')?.gpus)) return false;
   if (!settings.machineMemoryGb) return true;
-  const memoryOf = new Map(settings.kinds.map(declared => [declared.name, declared.memoryGb]));
-  const held = openRuns('running')
-    .filter(running => running.machine === machine)
-    .reduce((sum, running) => sum + (memoryOf.get(running.kind ?? '') ?? 0), 0);
+  const held = running.reduce((sum, run) => sum + (declared.get(run.kind ?? '')?.memoryGb ?? 0), 0);
   return held + kind.memoryGb <= settings.machineMemoryGb;
 }
 
@@ -999,7 +1017,7 @@ async function finishRun(helper: Helper, attempt: string, body: IncomingMessage)
   }
   renameSync(received, `${DIR}/${id}/files.tar.gz`);
   rmSync(`${DIR}/${id}/bundle.tar.gz`, { force: true });
-  machines.dropLines(id);
+  machines.endLines(id);
   sayMachines();
   if (helper.name === 'lent') publishHolds();
   return { ok: true };
@@ -1024,8 +1042,8 @@ function settle(row: RunRow) {
 // it (or a lent machine again, of a kind this server doesn't take yet), and nothing the lent one sent of it is kept.
 // This server's is lost, and its job hears why.
 function lose(row: RunRow, why: string) {
-  machines.dropLines(row.id);
   if (row.helper === 'server') return end(row.id, 'running', 'lost', why);
+  machines.clearLines(row.id);
   const kind = runSettings().kinds.find(found => found.name === row.kind);
   const next =
     !kind || serverTakes(kind) ? "this server's helper takes it" : `it waits for ${helperName('lent')} again`;
@@ -1046,7 +1064,7 @@ function end(id: number, from: RunState, to: RunState, why: string) {
     .run(to, why, new Date().toISOString(), id, from);
   if (ended.changes) {
     clearFiles(id);
-    machines.dropLines(id);
+    machines.endLines(id);
   }
   sayMachines();
 }

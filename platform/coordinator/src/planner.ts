@@ -112,13 +112,7 @@ export function backward(
   sizes: ReadonlyMap<number, Size>,
   terminals: ReadonlyMap<number, number> = new Map(),
 ) {
-  const rows = new Map(snapshot.jobs.map(j => [j.id, j]));
-  const followers = new Map<number, { id: number; lag: number }[]>();
-  for (const row of rows.values())
-    for (const edge of precedence(row, snapshot.deployLagMs).jobs) {
-      const prior = dependencyRun(edge, terminals);
-      followers.set(prior, [...(followers.get(prior) ?? []), { id: row.id, lag: edge.lag ?? 0 }]);
-    }
+  const { rows, releases, followers } = backwardGraph(snapshot, terminals);
   // (each job's latest finish twice: from the windows still open at the pass's now, and from every window, which only
   // orders work that serves no open one: compare's missed.)
   const timings = new Map<number, Timing>(),
@@ -129,9 +123,10 @@ export function backward(
     if (visiting.has(id)) throw new Error(`Job precedence has a cycle at #${id}`);
     visiting.add(id);
     const row = rows.get(id)!;
-    const own = row.due === null ? Infinity : row.due - snapshot.deployLagMs;
-    let open = row.due !== null && row.due >= snapshot.now ? own : Infinity,
-      any = own;
+    const own = row.due === null ? Infinity : row.due - snapshot.deployLagMs,
+      release = releases.has(id) ? snapshot.now : Infinity;
+    let open = Math.min(release, row.due !== null && row.due >= snapshot.now ? own : Infinity),
+      any = Math.min(release, own);
     for (const follower of followers.get(id) ?? []) {
       const next = visit(follower.id);
       if (!next.missed) open = Math.min(open, (next.latestStart ?? Infinity) - follower.lag);
@@ -156,6 +151,20 @@ export function backward(
   };
   for (const id of rows.keys()) visit(id);
   return timings;
+}
+
+function backwardGraph(snapshot: OrderingSnapshot, terminals: ReadonlyMap<number, number>) {
+  const rows = new Map(snapshot.jobs.map(j => [j.id, j]));
+  // A pause's release gets an immediate window floor at its merge endpoint, including the review rounds.
+  // Open windows still propagate their earlier latest starts through the same dependency graph. Passed ones do not.
+  const releases = new Set((snapshot.pauseUntil ?? []).map(id => terminals.get(id) ?? id));
+  const followers = new Map<number, { id: number; lag: number }[]>();
+  for (const row of rows.values())
+    for (const edge of precedence(row, snapshot.deployLagMs).jobs) {
+      const prior = dependencyRun(edge, terminals);
+      followers.set(prior, [...(followers.get(prior) ?? []), { id: row.id, lag: edge.lag ?? 0 }]);
+    }
+  return { rows, releases, followers };
 }
 
 // The running job ready work `waiting` pauses, if any (jobs.ts makesRoom, and the play: simulation.ts). Spare downtime

@@ -16,7 +16,7 @@ export const seatWarning = {
     if (given[0] === '--help') return print(USAGE);
     if (!given.length) return show(await api.call('seat-warnings'));
     if (given.length === 1 && given[0] === 'off')
-      return show(await api.call('seat-warnings', { body: api.withSpeaker({ warning: null }) }));
+      return show(await api.change('seat-warnings', { body: api.withSpeaker({ warning: null }) }));
     const flags = ['--week-percent', '--five-hour-percent', '--week-hours', '--five-hour-hours'];
     const { values, args } = takeValues(given, flags, 'Warning unchanged');
     if (args.length || !Object.keys(values).length) stop(USAGE);
@@ -26,7 +26,7 @@ export const seatWarning = {
       const window = flag.startsWith('week-') ? 'week' : 'five_hour';
       (warning[window] ??= {})[flag.endsWith('percent') ? 'percent' : 'hours'] = Number(value);
     }
-    show(await api.call('seat-warnings', { body: api.withSpeaker({ warning }) }));
+    show(await api.change('seat-warnings', { body: api.withSpeaker({ warning }) }));
   },
 };
 

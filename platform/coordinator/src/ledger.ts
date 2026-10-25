@@ -11,6 +11,7 @@ import { codeOf } from './jobcodes.ts';
 import { ceo, companyFormats, companyTime, names, roles, timeZone, unstaffed } from './company.ts';
 import * as chat from './chat.ts';
 import * as pictures from './pictures.ts';
+import * as watchalong from './watchalong.ts';
 import { send, MAX } from './messages.ts';
 import * as windows from './windows.ts';
 import { placeOn } from './projects.ts';
@@ -21,7 +22,7 @@ export type Item = { id: number; call: number; kind: string; owner: string; what
   status: string; job: number | null; request: number | null; ref: string | null; why: string | null; replaces: number | null; by: number | null;
   acted_at: string | null; board: number | null; due: number | null };
 type Call = { id: number; ts: string; agent: string; request: number | null; lines: string; job: number | null; status: string;
-  processed_at: string | null; attempts: number; lines_at: string | null; resumes: string | null; reply: string | null };
+  processed_at: string | null; attempts: number; lines_at: string | null; resumes: string | null; reply: string | null; customers: number };
 
 export const KINDS = ['task', 'decision', 'briefing', 'promise', 'question'];
 export const WHAT = 200;
@@ -537,10 +538,10 @@ export function followUp(id: number) {
     title: `Follow up on your call with the board${added ? ' (the board added something' + (c.attempts ? `, attempt ${c.attempts + 1})` : ')')
       : again ? ` (attempt ${c.attempts + 1})` : ''}` }).id;
   db.prepare('update calls set job = ?, attempts = attempts + 1, reply = null where id = ?').run(job, id);
-  // The call was about that card's customer, or the follow-up this one replaces read a customer's details: the call stays
-  // about a customer (memory.ts customerCall reads it off its follow-up). So does one that carried on from such a call:
-  // its briefing had that call's transcript.
-  const aboutCustomer = (x: Call) => (x.request && customerCard(x.request)) || holdsCustomerData(x.job);
+  // The call was about that card's customer, a look-up on it handed it a customer's details (calls.customers), or the
+  // follow-up this one replaces read them: the call stays about a customer (memory.ts customerCall reads it off its
+  // follow-up). So does one that carried on from such a call: its briefing had that call's transcript.
+  const aboutCustomer = (x: Call) => (x.request && customerCard(x.request)) || holdsCustomerData(x.job) || !!x.customers;
   const earlier = resumesOf(c).map(getCall).filter(x => !!x);
   if ([c, ...earlier].some(aboutCustomer)) handedCustomerData(job);
   // A call that carried on from earlier ones starts its follow-up once theirs have finished, so it finds their items to
@@ -555,9 +556,10 @@ export function followUp(id: number) {
 
 // A call the sweep ended (its line lost for 3 hours) whose voice line hands the transcript over after all: the call gets
 // it, and a follow-up that has it (the one that never ran is cancelled; one that did checks hq items first). No fresh
-// attempts: a call that used its three gets none, and the sweep says so on HQ's feed.
-export function late(id: number, lines: string[]) {
-  db.prepare('update calls set lines = ?, lines_at = ?, processed_at = null, reply = null where id = ?').run(JSON.stringify(lines), iso(), id);
+// attempts: a call that used its three gets none, and the sweep says so on HQ's feed. times: its lines' (call.ts
+// handOver).
+export function late(id: number, lines: string[], times: string | null = null) {
+  db.prepare('update calls set lines = ?, line_times = ?, lines_at = ?, processed_at = null, reply = null where id = ?').run(JSON.stringify(lines), times, iso(), id);
   const c = getCall(id)!;
   if (c.attempts >= ATTEMPTS) return c.job;
   if (c.job) cancelJob(c.job, `call #${id}'s transcript came in late: a new follow-up has it`);
@@ -645,8 +647,9 @@ const callAt = (c: Call) => companyFormats().time(Date.parse(c.ts), 'en');
 export function sweep(now = Date.now()) {
   for (const c of db.prepare("select * from calls where status = 'live' and ts < ?").all(new Date(now - LIVE_MS).toISOString()) as Call[]) try {
     // (its token goes with it: calls.id can be used again, and a late hand-over must not find another call)
-    if (!count(c.id)) { db.prepare('delete from calls where id = ?').run(c.id); db.prepare('delete from call_tokens where call = ?').run(c.id); pictures.forgetCall(c.id); continue; }
+    if (!count(c.id)) { db.prepare('delete from calls where id = ?').run(c.id); db.prepare('delete from call_tokens where call = ?').run(c.id); pictures.forgetCall(c.id); watchalong.forgetCall(c.id); continue; }
     db.prepare("update calls set status = 'ended' where id = ?").run(c.id);
+    watchalong.endCall(c.id);
     followUp(c.id);
   } catch (err) { console.error(`Call #${c.id}:`, err); }
   const due = db.prepare(`select * from calls c where status = 'ended' and processed_at is null and ts < ?

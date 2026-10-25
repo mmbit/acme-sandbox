@@ -44,7 +44,8 @@ draw in the order they're added: add them back to front (further back is smaller
   `left`, `right`).
 - `cylinder(x, y, z, r, h, { tone, accent })`, `ball(x, y, z, r, { tone, accent })`.
 - `quad(points, face, { tone, accent })`: a flat panel (a window, a door, a screen) shaded like the face it lies on.
-- `line(points, { thin })`: an arm, a cable, a mullion; `thin` at half the weight.
+- `line(points, { thin, onAccent })`: an arm, a cable, a mullion; `thin` at half the weight; `onAccent` for a line
+  drawn on the accent shape, in the palette's `onAccent`.
 - `shadow(points, z)` on the ground, and `pool(x, y, rx, ry)`: a patch of sparse dots under a scene.
 - `plate(x, y, w, d, h, { z, tone })`: a base plate, its top at `z` (0).
 - `room(x, y, z, w, d, h, { wall, floor, windows, tone })`: a room cut away, its floor slab and two far walls.
@@ -83,5 +84,5 @@ paletteOf({
 
 Any CSS colour goes in an SVG, `var()` included: a drawing in variables repaints itself with the page's colours, so one
 drawing serves every colour scheme a site offers. A canvas needs real colours. The keys: `ground`, `ink`, `paper`,
-`accent`, `accentSide`, `shade` (`dots`, `hatch` or `flat`), and for flat looks `tones` (a tone's `[top, left, right]`),
-`shadow` and `pool`.
+`accent`, `accentSide`, `onAccent` (a line on the accent; the ink if left out), `shade` (`dots`, `hatch` or `flat`), and
+for flat looks `tones` (a tone's `[top, left, right]`), `shadow` and `pool`.

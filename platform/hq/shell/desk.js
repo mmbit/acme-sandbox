@@ -4,14 +4,14 @@
 //   Intercom  a directive for the CEO: one line (typed, or held-to-talk and transcribed), optional details
 //   Computer  a retro screen: everyone in the building (the directory), the inbox, the review notes waiting for
 //             the board, the AI seats, the latest jobs and this device's notifications
-import { esc, cap, grow, store as saved, roleHtml } from '../util.js';
+import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 import { loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
   loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
-  loadReviewProducts, loadReviewNotes, reviewShot, reviewPicture, sendNotes, discardNotes, uploadPhoto, uploadDocument, sendZipChunk, loadZipField, uploadPicture, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
+  loadReviewProducts, loadReviewNotes, reviewShot, reviewPicture, sendNotes, discardNotes, uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
-  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage } from './data.js';
+  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, setPersonSketchbook, guestColleagues, loadLanguage, setLanguage } from './data.js'; // (setPersonSketchbook)
 import { sfx, hush } from './audio.js';
-import { CallAudio } from './callaudio.js';   // (a call's audio, the join page's too)
+import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
 import { companyFormats, dayTime, timeOf } from '../world/clock.js';
 import { scene, look, pick, lookName, RENDERERS, dressed, cover } from './stage.js';   // (cover)
@@ -55,7 +55,8 @@ const $ = s => document.querySelector(s);
 // photo studio's (studio.js), when the company runs the studio.
 let own = [], ownDone = false;
 const kitApps = (Array.isArray(theme.apps) ? theme.apps : []).filter(n => typeof n === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(n)).map(id => [id, `/kits/${id}/app.js`]);
-const platformApps = [...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
+// The Sketchbook (sketchbook.js) is on every computer
+const platformApps = [['sketchbook', '/shell/sketchbook.js'], ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
 const ownLoaded = Promise.resolve().then(() => Promise.all([...platformApps, ...kitApps]
   .map(([id, url]) => import(url).then(mod => mod.app && mod.draw ? { id, mod } : null, e => { console.warn(`[hq] ${url}: its HQ app didn't load`, e); return null; }))))
   .then(list => { own = list.filter(Boolean); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
@@ -69,6 +70,7 @@ export const companyApps = () => ownLoaded.then(() => own.map(k => ({ id: k.id, 
 const hq = () => ({ dev: world.dev, open: (which, opts) => openComputer(which, opts), numbers: (app, back) => { numbersFor(app, back); openComputer('numbers'); }, who, ago });
 let open = null, idx = 0, tab = 'people', timer = null;
 const root = () => $('#tool');
+export { callAgent };
 // Shared with the projects view
 export const ago = ts => { const m = Math.round((Date.now() - new Date(ts)) / 60000); return isNaN(m) ? '' : m < 1 ? 'just now' : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`; };
 export const who = id => world.agents.get(id)?.data.name || (id ? id[0].toUpperCase() + id.slice(1) : 'Someone');
@@ -101,7 +103,7 @@ export function initDesk() {
     e.preventDefault(); e.stopPropagation();
     openJob(Number(link.dataset.job));
   }, true);
-  addEventListener('keydown', e => { if (e.key === 'Escape' && open) closeTool(); });
+  addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
   document.addEventListener('visibilitychange', () => { if (document.hidden && voice && voice.phase !== 'sending') finishVoice(); });
 }
@@ -363,6 +365,14 @@ function wireShare(el, s, o) {
       for (const p of [...s.people, ...recent]) if (sameName(p.name, name)) p.title = saved.title;
       o.redraw(s, '');
     }),
+    book: (name, on) => busy(async () => {
+      const saved = await setPersonSketchbook(world.dev, name, on);
+      for (const p of [...s.people, ...recent]) if (sameName(p.name, name)) p.sketchbook = saved.sketchbook;
+      const said = saved.sketchbook ? `${esc(name)} has a Sketchbook of their own now: it opens from their link’s page, and you see theirs in yours.`
+        : `${esc(name)}’s Sketchbook is closed. What they drew stays in yours.`;
+      o.redraw(s, said);
+      return said;
+    }),
   });
   const end = el.querySelector('[data-end]'), msg = () => el.querySelector('.invites .msg');
   if (end) end.onclick = async () => {
@@ -431,8 +441,7 @@ function backTo(path, origin) {
 }
 function closeTool() {
   if (!open) return;
-  if (call) call.from = 'closing'; // closed mid-call: the call ends, and a toast says where its notes will be
-  endCall(); forgetAge();
+  forgetAge();   // (a call goes on: it's a layer of its own, call.js)
   open = null; clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
   if (voice) { voice.rec.cancel(); voice = null; }
   const el = root(); el.hidden = true; el.innerHTML = ''; sfx.close();
@@ -453,7 +462,7 @@ const SIGNS = { problem: icon('alert'), done: icon('tick') };
 const alertHtml = (html, kind = 'problem') => `<span class="alert ${kind}" role="${kind === 'problem' ? 'alert' : 'status'}"><span class="sign">${SIGNS[kind]}</span><span class="words">${html}</span></span>`;
 // (and an empty or problem state's sign, which a look shows if it draws one: style.css hides it)
 const stateSign = name => `<span class="sign">${icon(name)}</span>`;
-function tell(line, words, kind = 'problem') {
+export function tell(line, words, kind = 'problem') {
   if (line) line.innerHTML = words ? alertHtml(esc(words), kind) : '';
 }
 // ---------------------------------------------------------------- open requests: one source of truth
@@ -569,8 +578,8 @@ function renderPhone() {
       ${deck ? `<a class="signin" href="${esc(deck)}" target="_blank" rel="noopener">Open the presentation ↗</a>` : ''}
       ${pairsHtml(card.pairs)}${cardHtml(r, shownCard, clipsHtml(unpaired) + picsHtml(unpaired) + filesHtml(r))}${guest ? guestHtml(r) : ''}
       ${r.grants ? `<p class="grant">${esc(r.grants)}</p>` : ''}
-      ${login ? '' : mail ? mailHtml(r, mail) : call ? callHtml(call, true) : asking ? `<label class="key">${esc(guest.name)}’s email address<input type="email" id="guest-email" autocomplete="off" spellcheck="false"></label><p class="hint">Asked once. The page sends a code there before it shows anything, and never shows the address.</p>`
-        : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key">${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${SIGNS.problem}<span>${esc(refusedKeys.get(r.id)[k])}</span></p>` : ''}`).join('')
+      ${login ? '' : mail ? mailHtml(r, mail) : call ? callHtml(call, true) : asking ? `<label class="key" data-private>${esc(guest.name)}’s email address<input type="email" id="guest-email" autocomplete="off" spellcheck="false"></label><p class="hint">Asked once. The page sends a code there before it shows anything, and never shows the address.</p>`
+        : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key"${address ? ' data-private' : ' data-watchalong-hide'}>${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${SIGNS.problem}<span>${esc(refusedKeys.get(r.id)[k])}</span></p>` : ''}`).join('')
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
       <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
@@ -874,15 +883,18 @@ const nameHtml = p => {
   const badge = !p.title ? '' : `<button type="button" class="badge" data-title="${esc(p.name)}" data-was="${esc(p.title)}" aria-label="${esc(p.name)}’s title: ${esc(p.title)}. Change it">${esc(p.title)}</button>`;
   return `<b class="named">${esc(p.name)}${plus}</b>${badge}`;
 };
+// A person's own Sketchbook, on or off: a sketch's pen they keep, sent to the CEO from their link's page (sketches.ts).
+const bookHtml = p => `<button type="button" class="book" data-book="${esc(p.name)}" aria-pressed="${!!p.sketchbook}" title="${p.sketchbook ? `${esc(p.name)} has a Sketchbook of their own: tap to close it` : `Give ${esc(p.name)} a Sketchbook of their own`}">✎ Their own Sketchbook<small>${p.sketchbook ? 'On' : 'Off'}</small></button>`;
 const againHtml = list => list.length ? `<p class="again">${list.map(r => `<button type="button" data-again="${esc(r.name)}">${esc(r.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}</button>`).join('')}</p>` : '';
 // open: Remove on each; o.invite: the Invite form (open, unless the share only reopens)
 function peopleHtml(list, open, o = {}) {
   const invite = o.invite ?? open;
-  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at">${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
+  // (bookHtml)
+  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${o.titled && p.address ? bookHtml(p) : ''}${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
       <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
   // (Recent atop the form)
   return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
-    ${invite ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false"><button>Invite</button></form>` : ''}
+    ${invite ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" data-private placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false"><button>Invite</button></form>` : ''}
     <p class="msg" role="status"></p></div>`;
 }
 const refused = err => err.refusal?.error ? `${cap(err.refusal.error)}.` : 'That didn’t go through. Try again.';
@@ -898,6 +910,11 @@ function wirePeople(el, on) {
     try { say(await on.invite(b.dataset.again)); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
   });
   box.querySelectorAll('[data-title]').forEach(b => b.onclick = () => titleField(b, on.title, () => say('That didn’t go through. Try again.')));
+  // (a person's own Sketchbook)
+  box.querySelectorAll('[data-book]').forEach(b => b.onclick = async () => {
+    b.disabled = true;
+    try { say(await on.book(b.dataset.book, b.getAttribute('aria-pressed') !== 'true')); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
+  });
   box.querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
     if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Tap again to remove'; sfx.blip(); return; }
     b.disabled = true;
@@ -1003,14 +1020,14 @@ function wireGuest(el, r) {
 // (Answers: the mail a reply goes on the thread of.)
 // (the answered card shows who it went to: its answer has the text)
 const mailtoLine = (label, v) => v?.length ? `<dt>${label}</dt><dd>${esc([v].flat().join(', '))}</dd>` : '';
-const mailtoHtml = m => `<dl class="mailto">${mailtoLine('To', m.to)}${mailtoLine('Cc', m.cc)}${mailtoLine('From', m.from)}${mailtoLine('Replies to', m.replyTo)}${mailtoLine('Signed by', m.signed && `${m.signed}, an AI agent`)}${mailtoLine('Answers', m.answers && `mail #${m.answers}`)}</dl>`;
+const mailtoHtml = m => `<dl class="mailto" data-private>${mailtoLine('To', m.to)}${mailtoLine('Cc', m.cc)}${mailtoLine('From', m.from)}${mailtoLine('Replies to', m.replyTo)}${mailtoLine('Signed by', m.signed && `${m.signed}, an AI agent`)}${mailtoLine('Answers', m.answers && `mail #${m.answers}`)}</dl>`;
 // its attachments under the text: each picture (a tap shows it big), a PDF by its name
 function mailFilesHtml(r, m) {
   const files = (m.attachments ?? []).map(f => ({ ...f, src: world.dev ? f.src : `/api/outbox/file?id=${Number(r.id)}&n=${Number(f.n)}` }));
   const pdfs = files.filter(f => f.type === 'application/pdf');
   const pictures = files.filter(f => f.type !== 'application/pdf').map(f => ({ src: f.src, title: f.name }));
   const pdfLinks = pdfs.map(f => `<a href="${esc(f.src)}" download>${esc(f.name)}</a>`).join(' · ');
-  return figuresHtml(pictures) + (pdfs.length ? `<p class="mail-files">${pdfLinks}</p>` : '');
+  return figuresHtml(pictures) + (pdfs.length ? `<p class="mail-files" data-private>${pdfLinks}</p>` : '');
 }
 // a card's files (hq ask --file), under its text: each a download by its name, for
 // the steps that say where it goes; a month after the card closed, its name alone
@@ -1025,9 +1042,9 @@ const mailKey = m => `mail.${m.id}`;
 function mailHtml(r, m) {
   const kept = saved.get(mailKey(m), null);
   return `${mailtoHtml(m)}
-    <label class="key">Subject<input id="mail-subject" maxlength="200" spellcheck="true" value="${esc(kept?.subject ?? m.subject)}"></label>
-    <label class="key">The email<textarea id="mail-text" rows="10" spellcheck="true">${esc(kept?.text ?? m.text)}</textarea></label>
-    ${m.preview && !world.dev ? `<p class="mail-as">As it will go</p><iframe class="mail-letter" id="mail-letter" title="The email as it will go" sandbox></iframe>`
+    <label class="key" data-private>Subject<input id="mail-subject" maxlength="200" spellcheck="true" value="${esc(kept?.subject ?? m.subject)}"></label>
+    <label class="key" data-private>The email<textarea id="mail-text" rows="10" spellcheck="true">${esc(kept?.text ?? m.text)}</textarea></label>
+    ${m.preview && !world.dev ? `<p class="mail-as">As it will go</p><iframe class="mail-letter" id="mail-letter" data-private title="The email as it will go" sandbox></iframe>`
       : `<p class="mail-sign">${esc(m.signoff)}</p>`}${mailFilesHtml(r, m)}
     <p class="hint" id="mail-hint" data-mail="${m.id}">${mailHint(m)}</p>`;
 }
@@ -1101,7 +1118,7 @@ function callHtml(c, open = false) {
   const phone = c.kind === 'phone';
   const when = c.at ? callTime(c.at) : open ? 'As soon as you say Call' : '';
   const number = open && phone && c.ending ? `<dt>Number</dt><dd><span id="call-number">Ending ${esc(c.ending)}</span><button type="button" class="call-show" id="call-show">Show</button>${c.digits ? ', then types dial-in digits' : ''}</dd>` : '';
-  return `<dl class="mailto">${mailtoLine('Who', phone ? `${c.name} calls ${c.who}` : `${c.name} meets ${c.who} in a call room`)}${mailtoLine('About', c.about)}${number}
+  return `<dl class="mailto" data-private>${mailtoLine('Who', phone ? `${c.name} calls ${c.who}` : `${c.name} meets ${c.who} in a call room`)}${mailtoLine('About', c.about)}${number}
     ${mailtoLine('Language', c.lang && LANGUAGE.of(c.lang))}${mailtoLine('When', when && (phone ? `${when}, only within calling hours (${c.hours})` : when))}${mailtoLine('Held', heldWhen(c))}</dl>
     ${open ? `<p class="hint" id="call-hint">${phone ? `${esc(c.name)} says first that they’re an AI and that a written transcript is kept. One call, never redialled.` : 'You get a link to send them. It opens for one call.'}</p>` : ''}${heldHtml(c)}`;
 }
@@ -1202,7 +1219,7 @@ function renderPast() {
     pictures(r).length && `${pictures(r).length} ${pictures(r).length === 1 ? 'picture' : 'pictures'}`].filter(Boolean).join(' · ');
   const total = Math.max(past.total, list.length);
   el.innerHTML = list.length ? `<p class="past-cap">${total} answered ${total === 1 ? 'card' : 'cards'}, newest first</p><ul class="past-list">${list.map((r, i) => `
-    <li>${covered('', `data-card="${i}"`, r.title, `<b>${withJobLinks(r.title)}</b><span class="meta">${esc(day(r.answered || r.created))}${r.agent ? ` · ${esc(who(r.agent))}` : ''}${answerLine(r) ? ` · ${esc(answerLine(r).slice(0, 80))}` : ''}</span>${has(r) ? `<span class="has">${esc(has(r))}</span>` : ''}`)}</li>`).join('')}</ul>
+    <li${r.kind === 'mail' ? ' data-private' : ''}>${covered('', `data-card="${i}"`, r.title, `<b>${withJobLinks(r.title)}</b><span class="meta">${esc(day(r.answered || r.created))}${r.agent ? ` · ${esc(who(r.agent))}` : ''}${answerLine(r) ? ` · ${esc(answerLine(r).slice(0, 80))}` : ''}</span>${has(r) ? `<span class="has">${esc(has(r))}</span>` : ''}`)}</li>`).join('')}</ul>
     ${past.more ? `<button class="past-older" data-older>Older cards ›</button>` : ''}`
     : `<div class="quiet">${stateSign('filed')}<b>Nothing answered yet.</b><span>Cards you answer are kept here.</span></div>`;
   el.querySelectorAll('[data-card]').forEach(b => b.onclick = () => { past.at = +b.dataset.card; sfx.blip(); renderPast(); el.scrollTop = 0; });
@@ -1224,7 +1241,7 @@ function renderPastCard(el, list, at) {
       <p class="meta"><span class="tag-k">${esc(r.kind || 'request')}</span> ${r.agent ? `from <b>${esc(who(r.agent))}</b> · ` : ''}asked ${esc(day(r.created))}${r.answered ? ` · ${r.status === 'done' ? 'filed' : 'answered'} ${esc(day(r.answered))}` : ''}</p>
       <h3>${withJobLinks(r.title)}</h3>
       ${r.status === 'done' ? `<p class="said"><b>Filed</b> ${esc(r.closing ? names.hq : who(r.agent))} ${r.mail?.status === 'withdrawn' ? 'withdrew the draft: it wasn’t sent' : `took it off your ${esc(names.phone)}`}${said ? `. ${inline(said)}` : '.'}</p>`
-        : said ? `<p class="said"><b>You answered</b> ${inline(said)}</p>` : ''}
+        : said ? `<p class="said"${r.kind === 'mail' ? ' data-private' : ''}><b>You answered</b> ${inline(said)}</p>` : ''}
       ${r.closing ? `<p class="said"><b>${esc(names.hq)}</b> ${inline(r.closing)}</p>` : ''}
       ${deck ? `<a class="signin" href="${esc(deck)}" target="_blank" rel="noopener">Open the presentation ↗</a>` : ''}
       ${pairsHtml(card.pairs)}${clipsHtml(unpaired)}${picsHtml(unpaired, r)}${filesHtml(r)}${r.kind === 'guest' && r.guest ? checklistHtml(r.guest) : ''}${r.kind === 'mail' && r.mail ? mailtoHtml(r.mail) : ''}${r.kind === 'call' && r.call ? callHtml(r.call) : ''}
@@ -1814,7 +1831,7 @@ function ageFlow(a, done) {
   return done ? '<button type="button" class="make again" data-age-make>Make a new key</button><p class="hint">Backups made before keep needing the old key.</p>'
     : `<button type="button" class="make" data-age-make>${KEY}Make the backup key</button>`;
 }
-const ageHtml = (r, k, done) => { const a = ages.get(`${r.id}:${k}`); return `<div class="key agekey" data-age="${esc(k)}">${esc(keyLabel(k))}${done ? ' <b class="saved">saved ✓</b>' : ''}
+const ageHtml = (r, k, done) => { const a = ages.get(`${r.id}:${k}`); return `<div class="key agekey" data-age="${esc(k)}" data-watchalong-hide>${esc(keyLabel(k))}${done ? ' <b class="saved">saved ✓</b>' : ''}
   <div data-age-flow>${ageFlow(a, done)}</div><input type="hidden" data-key="${esc(k)}" value="${a?.ready ? esc(a.recipient) : ''}"></div>`; };
 function wireAge(el, r) {
   el.querySelectorAll('[data-age]').forEach(box => {
@@ -1900,14 +1917,14 @@ const PICTURE = icon('picture');
 const GROW = icon('grow');
 let voice = null; // the recording (then the transcription) in progress: { phase: arming | live | sending, rec, locked, base, preview }
 // The board's language (Settings › Language), for the browser's live preview of the intercom's voice note: read as the
-// intercom opens and as Settings changes it. A call reads it as it starts (startCall), and the coordinator transcribes
+// intercom opens and as Settings changes it. A call reads it as it starts (call.js), and the coordinator transcribes
 // in it.
 let boardLang = 'en';
 const voiceLang = () => boardLang;
 const mmss = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 // The line under the intercom: empty in the normal run of things. A real error (a call, a line, the microphone, the words or
 // a picture that didn't go through) shows as one, an alert (tell); it and any hint go when the board does something next.
-const say = (s, error = false) => {
+export const say = (s, error = false) => {
   const m = $('#dir-msg'); if (!m) return;
   if (error) tell(m, s); else m.textContent = s;
 };
@@ -1931,16 +1948,6 @@ export function openIntercom() {
         <input type="file" id="dir-file" accept="image/*" multiple hidden>
         <button class="send" id="dir-send">Send</button>
         ${window.AudioWorkletNode && window.isSecureContext ? `<button class="mic call-btn" id="call" title="Call ${ceo}: talk hands-free" aria-label="Call ${ceo}">${PHONE}</button>` : ''}
-      </div>
-      <div class="call" id="call-screen" hidden>
-        <p class="state" id="call-state" aria-live="polite">Connecting…</p>
-        <p class="note" id="call-note" role="status" hidden></p>
-        <p class="note" id="call-mic" role="status" hidden></p><!-- (the microphone hears nothing) -->
-        <p class="note" id="call-net" role="status" hidden></p><!-- (the line hears the board late: lagging) -->
-        <p class="said" id="call-said"></p>
-        <!-- pictures on a call: the strip and the attach button -->
-        <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
-        <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-skip">Interrupt</button><button class="hangup" id="call-end">Hang up</button></div>
       </div>
       <p class="msg" id="dir-msg" aria-live="polite"></p>
     </div>`)) return;
@@ -1988,13 +1995,13 @@ export function openIntercom() {
     size(big); saved.set('intercomSize', big ? 'large' : 'small'); $('#chat').scrollTop = $('#chat').scrollHeight; sfx.blip();
   };
   device.addEventListener('paste', e => {
-    if (call) return; // (not during a call: the line is put away, and the call screen takes it)
+    if (inCall()) return; // (not during a call: the call screen takes it)
     const files = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'));
     if (files.length) { e.preventDefault(); intercomTray.add(files); }
   });
-  device.addEventListener('dragover', e => { if (!call && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
-  device.addEventListener('drop', e => { if (call || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
-  $('#call')?.addEventListener('click', startCall);
+  device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
+  device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
+  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), 0, [], true));
   const poll = () => loadChat(world.dev).then(paintChat, () => {});
   poll(); timer = setInterval(poll, 3000);
   if (!canRecord) return;
@@ -2014,261 +2021,10 @@ export function openIntercom() {
 }
 const intercomTray = new Tray(0, () => $('#dir-pics'), say);   // the board's pictures for its next line (tray.js)
 // a line's pictures, small, in its bubble: a tap shows one big (wirePics)
+// A line from a person the board invited (a sketch from their own Sketchbook): theirs, not the board's, with its picture.
+const guestLine = (m, i) => `<li class="guest" data-m="${i}"><span>${esc(m.text)}</span>${linePictures(m)}</li>`;
 const linePictures = m => m.pictures?.length ? `<span class="pics">${m.pictures.map(id => `<button type="button" data-pic="${esc(pictureUrl(world.dev, id))}" data-label="Picture #${Number(id)}" aria-label="Show picture #${Number(id)} bigger"><img src="${esc(pictureUrl(world.dev, id))}" alt="" loading="lazy"></button>`).join('')}</span>` : '';
 
-// ---------------------------------------------------------------- calls
-// A live call with anyone on the team, streamed both ways over one WebSocket to the voice line (platform/voice):
-// the microphone goes out as 20 ms frames of 16 kHz PCM, the agent's voice comes back the same way and plays as
-// it arrives. The voice line hears when the board stops talking, and stops the agent when the board talks over it.
-// The call's audio is callaudio.js's, shared with the join link's page: the voice through an <audio> element for the
-// echo canceller, the screen kept on, the microphone brought back after the screen went off.
-let call = null;
-// Call someone from their panel: the intercom opens straight into the call.
-// Hanging up goes back to where the call started: the desk phone, or HQ itself.
-// pins: the review notes a call from Reviews is about (its Call, next to Send); hanging up goes back to Reviews.
-export function callAgent(id, name, request, pins) { const from = pins?.length ? 'notes' : open; openIntercom(); startCall(null, id, name, request, pins); if (call) call.from = from ?? 'hq'; }
-async function startCall(e, agent = world.company.ceo, name = ceoName(), request = 0, pins = []) {
-  if (call) return;
-  const c = call = { agent, name, request, pins, voiced: [], kept: [], keptFrom: 0 };
-  c.audio = new CallAudio({ worklet: 'shell/mic-worklet.js', lead: 0.05, send: frame => sendFrame(c, frame),
-    lost: err => endCall(`The microphone stopped. ${microphoneFix(err)}`), warn: why => showSoundNote(soundNote(why)), tick: () => { onAir(c); lagging(c); } });
-  root().querySelector('.intercom header b').textContent = `Call · ${name}`;
-  hush(true, 'call'); root().querySelector('.intercom').classList.add('in-call'); $('#call-screen').hidden = false;
-  say(''); // (the last call's "the line dropped" goes)
-  $('#call-skip').onclick = () => { stopPlayback(c); c.ws?.send(JSON.stringify({ type: 'interrupt' })); };
-  $('#call-end').onclick = () => endCall();
-  startPictures(c);
-  callSay('Starting the microphone…', '');
-  c.audio.keepAwake(); // (first, still in the tap: Safari grants the first lock only seconds after one)
-  try { await c.audio.start(); } catch { return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`); }
-  const l = await loadLanguage(world.dev).catch(() => null);   // the board's language, which the line speaks and hears
-  if (call !== c) return;
-  if (!l) return endCall('The language can’t be read right now. Try again in a moment.');
-  boardLang = l.lang;
-  callSay('Dialling…');
-  // never stuck: if nobody picks up, say so
-  c.ring = setTimeout(() => { if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`); }, 30000);
-  connect(c, { agent, lang: voiceLang(), request, ...(pins?.length ? { pins } : {}) });   // (pins)
-}
-const microphoneFix = err => err.name === 'NotAllowedError' ? `Check ${names.hq}’s microphone permission, then call again.`
-  : err.name === 'NotReadableError' ? 'Close any other app using it, then call again.' : 'Call again.';
-// One connection to the voice line. When it drops (the phone switched networks), reconnect to the same call.
-function connect(c, hello) {
-  const ws = c.ws = new WebSocket(`${location.origin.replace(/^http/, 'ws')}/voice/ws`);
-  ws.binaryType = 'arraybuffer';
-  c.late = 0; c.heardAt = undefined;   // (lagging: this connection's)
-  ws.onopen = () => { if (!c.id) callSay('Ringing…'); ws.send(JSON.stringify(hello)); };
-  ws.onmessage = m => {
-    if (call !== c || c.ws !== ws) return;
-    if (m.data instanceof ArrayBuffer) return (c.heardAt = performance.now()), play(c, m.data);
-    const ev = JSON.parse(m.data), name = c.name;
-    if (ev.type === 'pong') { c.late = Number(ev.late) || 0; c.heardAt = performance.now(); forgetHeard(c, ev.heard); }
-    else if (ev.type === 'call') { c.t0 ??= performance.now(); c.id = ev.id || c.id; c.call = Number(ev.call) || c.call; c.key = String(ev.key ?? '') || c.key; c.live = true; c.tries = 0; resend(c, ev.heard); picturesLive(c); }
-    else if (ev.type === 'state') { callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: name }[ev.state] ?? ''); }
-    else if (ev.type === 'heard') { c.said = ''; callSay(null, `“${ev.text}”`); }
-    else if (ev.type === 'said') { c.said = `${c.said ?? ''} ${ev.text}`.trim(); callSay(null, c.said); c.audio.startSentence('voice'); c.ticking = false; }
-    else if (ev.type === 'tick') { c.audio.startSentence('tick'); c.ticking = true; } // (the line's tick while a tool step runs: not a sentence, but its own start too)
-    // the line's own words when the agent can't answer (its seat at its limit, signed out, an error), from pickup on, until a
-    // reply gets through: shown apart from what's being said, so they stay in view
-    else if (ev.type === 'notice') { const n = $('#call-note'); if (n) { tell(n, ev.text ?? ''); n.hidden = !ev.text; } }
-    else if (ev.type === 'clear') stopPlayback(c);
-    else if (ev.type === 'picture') pictureState(c, ev);
-    // the agent hung up once the board had said goodbye: as the Hang up button does
-    else if (ev.type === 'hangup') endCall();
-  };
-  ws.onclose = e => {
-    if (call !== c || c.ws !== ws) return;
-    // the call waits 30 s on the other end: keep trying to get back to it
-    if (c.id && e.code !== 4000 && (c.tries = (c.tries ?? 0) + 1) <= 12) {
-      c.live = false; c.audio.mark('reconnecting'); stopPlayback(c); callSay('Reconnecting…');
-      return setTimeout(() => { if (call === c) connect(c, { resume: c.id }); }, Math.min(500 * c.tries, 2500));
-    }
-    endCall('The line dropped. Call again?');
-  };
-}
-// The board's words outlast a dropped connection. From pickup on, each microphone frame (FRAME samples) is kept until
-// the line says it has it (`heard`: its samples so far, all call, with each pong): what was still queued in a socket
-// that dropped, and what the microphone made while reconnecting. None is dropped unheard: the pongs clear it twice a
-// second while connected, it grows only as the socket's own queue does on a weak uplink, and a reconnect ends within
-// the line's 30 s hold. The line's `call` on the new connection says what it has; the rest goes first, with a ping
-// from when it was made every PING_MS, so the line reads it as late and waits for all of it before it answers
-// (platform/voice, LATE). (An older line says nothing: none is kept.).
-const FRAME = 320;
-function sendFrame(c, frame) {
-  if (!c.id) return;   // (not picked up yet: nobody hears it)
-  c.kept.push({ frame, at: performance.now() });
-  if (c.ws?.readyState === 1 && c.live) c.ws.send(frame);
-}
-function forgetHeard(c, heard) {
-  const n = Number.isFinite(heard) ? Math.min(c.kept.length, Math.floor((heard - c.keptFrom) / FRAME)) : c.kept.length;
-  if (n > 0) { c.kept.splice(0, n); c.keptFrom += n * FRAME; }
-}
-function resend(c, heard) {
-  forgetHeard(c, heard);
-  let pinged = -Infinity;
-  for (const { frame, at } of c.kept) {
-    if (at - pinged >= PING_MS) { pinged = at; c.ws.send(JSON.stringify({ type: 'ping', t: Math.round(at) })); }
-    c.ws.send(frame);
-  }
-}
-// the agent's voice as it plays, the line's tick apart, for the ON AIR sign
-function play(c, buf) {
-  const at = c.audio.play(new Int16Array(buf)), last = c.voiced.at(-1);
-  if (c.ticking) return;
-  if (last && at.start <= last[1] + 1e-6) last[1] = at.end; else c.voiced.push([at.start, at.end]);
-}
-function stopPlayback(c) { c.audio.stopPlayback(); c.voiced = []; }
-// The ON AIR sign lights while someone on the call speaks: the board (the microphone loud enough to be a voice, about
-// -34 dBFS once the browser has taken the room's noise out) or the agent (its voice playing). Only while the call's audio
-// clock moves (callaudio.js checks it on the same tick): a context that's suspended (iOS took the audio away) or stuck (running,
-// its clock frozen, the speaker paused) holds the analyser's last buffer and its clock, so neither tells anything then.
-function onAir(c) {
-  const t = c.audio.ctx.currentTime, moving = c.audio.moving;
-  if (moving) {
-    if (c.audio.micLevel() > 0.02) c.loudAt = performance.now();
-    while (c.voiced[0]?.[1] < t) c.voiced.shift();
-  } else c.loudAt = undefined;
-  const on = !!c.live && moving && (performance.now() - (c.loudAt ?? -1e9) < 400 || c.voiced[0]?.[0] <= t);
-  root().querySelector('.intercom header')?.classList.toggle('on-air', on);
-}
-// The line running behind. On a weak connection the microphone's frames back up and reach the line late, in a burst
-// (nothing is lost on the way, nor with a dropped connection: sendFrame), and the line waits for them before it answers
-// (platform/voice, LATE). Twice a second a ping goes beside the frames, and the line answers how late it came, on HQ's
-// monotonic clock against its own. The screen says so while the line hears the board over 1.5 s
-// late, nothing has come back from it for 4 s since this connection's first ping, or the frames wait here unsent
-// (bufferedAmount, at the 64 kB a second they come to at most), and until 3 s after it caught up; each spell goes in
-// the timeline. (How late the line hears, not how long a pong takes: the pongs come back behind the reply's audio,
-// which goes out ahead of its playing, so its audio coming counts as the line answering.)
-const PING_MS = 500, LAGGING_S = 1.5, UNANSWERED_MS = 4000, CAUGHT_UP_MS = 3000;
-function lagging(c) {
-  const now = performance.now(), ws = c.ws;
-  if (!c.live || ws?.readyState !== 1) return;
-  if (now - (c.pinged ?? -PING_MS) >= PING_MS) { c.pinged = now; c.heardAt ??= now; ws.send(JSON.stringify({ type: 'ping', t: Math.round(now) })); }
-  const silent = now - c.heardAt, behind = Math.max(c.late, ws.bufferedAmount / 64000, silent > UNANSWERED_MS ? silent / 1000 : 0);
-  if (behind > LAGGING_S) {
-    if (!c.lagAt) c.audio.mark('lagging');
-    c.lagAt = now; c.lagMax = Math.max(c.lagMax ?? 0, behind); c.lagShown = Math.round(behind);
-  } else if (c.lagAt && now - c.lagAt > CAUGHT_UP_MS) { c.audio.mark('caught up', undefined, c.lagMax); c.lagAt = c.lagMax = 0; }
-  const n = $('#call-net'), text = c.lagAt ? `Weak connection: ${c.name} hears you about ${c.lagShown} s late.` : '';
-  if (n && n.textContent !== text) { tell(n, text); n.hidden = !text; }
-}
-// What the call's screen says under its state about the call's sound (callaudio.js warn), until it's fine again
-const soundNote = why => !why ? ''
-  : why === 'paused' ? 'The call’s sound is paused. Tap the screen to resume it.'
-  : why === 'silent' ? 'No sound from your microphone. Check it isn’t muted.'
-  : why === 'starting' ? `The microphone isn’t starting. Check ${names.hq}’s microphone permission.`
-  : `No sound from your microphone. ${microphoneFix(why)}`;
-function showSoundNote(text) {
-  const n = $('#call-mic'); if (n && n.textContent !== text) { tell(n, text); n.hidden = !text; }
-}
-// ---- pictures on a call
-// While the call is live the board attaches or pastes a picture. Each one is redrawn as a JPEG (shrink()), uploaded for
-// this call, and the voice line gets its number. The line shows it to the agent with the board's next words, or on its
-// own after a quiet moment, and says how far it got: 'received', then 'seen', or 'failed' (a restarted agent lost it, for
-// one: platform/voice). It says them all again when the call resumes. The strip under the words shows each picture's
-// state.
-// The agent sees them in the order the board picked them: each takes its place in c.queued when it's picked, and goes
-// to the line once it's uploaded and the ones before it are sent or failed. A number sent stays in c.unanswered until
-// the line answers, and goes again when the call resumes (the line ignores a number it knows).
-function startPictures(c) {
-  c.queued = []; c.unanswered = []; c.urls = []; c.uploads = new AbortController(); // (hanging up stops the uploads on their way)
-  const strip = $('#call-pics'); strip.innerHTML = ''; strip.hidden = true;
-  $('#call-attach').disabled = true; // (until the line picks up: the upload needs the call's number)
-  $('#call-attach').onclick = () => $('#call-file').click();
-  $('#call-file').onchange = e => { sharePictures(c, e.target.files); e.target.value = ''; };
-  c.paste = e => pastePictures(c, e);
-  addEventListener('paste', c.paste);
-}
-// the line picked up, or took the call back after a reconnect: numbers it hasn't answered go again, in order, then the
-// ones that waited for it
-function picturesLive(c) {
-  $('#call-attach').disabled = false;
-  for (const id of c.unanswered) c.ws.send(JSON.stringify({ type: 'picture', id }));
-  sendPictures(c);
-}
-// the uploaded pictures at the front of the queue go to the line, while it has the call on this connection
-function sendPictures(c) {
-  while (c.live && c.ws?.readyState === 1 && c.queued[0]?.id) {
-    const { id } = c.queued.shift();
-    c.unanswered.push(id);
-    c.ws.send(JSON.stringify({ type: 'picture', id }));
-  }
-}
-function pastePictures(c, e) {
-  if (call !== c || !c.call || e.target.closest?.('input, textarea, [contenteditable]')) return;
-  const items = [...(e.clipboardData?.items ?? [])].filter(i => i.kind === 'file').map(i => i.getAsFile());
-  const files = e.clipboardData?.files.length ? [...e.clipboardData.files] : items.filter(Boolean);
-  if (!files.some(f => f.type.startsWith('image/'))) return;
-  e.preventDefault();
-  sharePictures(c, files);
-}
-function sharePictures(c, files) {
-  for (const file of [...files].filter(f => f.type.startsWith('image/'))) sharePicture(c, file);
-}
-async function sharePicture(c, file) {
-  // The call the board picked it on, by its key: a call that ends while the picture is redrawn or sent can give its
-  // number to the next one, and the coordinator refuses the key of a call that's gone (pictures.ts).
-  const on = { call: c.call, key: c.key, signal: c.uploads.signal }, place = { id: 0 };
-  c.queued.push(place);
-  const strip = $('#call-pics'), li = document.createElement('li');
-  li.className = 'busy'; li.innerHTML = `<span class="thumb">${PICTURE}</span><i>Sending…</i>`;
-  strip.hidden = false; strip.append(li); strip.scrollLeft = strip.scrollWidth;
-  try {
-    const blob = await shrink(file), url = URL.createObjectURL(blob);
-    c.urls.push(url); li.querySelector('.thumb').innerHTML = `<img src="${url}" alt="">`;
-    if (call !== c) return;
-    const { id } = await uploadPicture(world.dev, blob, on);
-    if (call !== c) return;
-    li.dataset.picture = place.id = id;
-    sendPictures(c);
-  } catch (err) {
-    if (call !== c) return;
-    c.queued.splice(c.queued.indexOf(place), 1); // (the ones after it go without it)
-    sendPictures(c);
-    const status = +String(err?.message ?? '').match(/\d{3}$/)?.[0];
-    pictureSays(li, 'failed', err === 'decode' ? 'Couldn’t read it' : status === 413 ? 'Too big to send' : status === 409 ? 'The call ended'
-      : status === 429 ? 'Too many pictures' : status ? `Not sent (error ${status})` : `Couldn’t reach ${names.hq}`);
-  }
-}
-// what the voice line says about a picture: it has it, the agent has it, or it couldn't use it (or lost it)
-function pictureState(c, ev) {
-  const unanswered = c.unanswered.indexOf(Number(ev.id));
-  if (unanswered >= 0) c.unanswered.splice(unanswered, 1);
-  const li = $(`#call-pics [data-picture="${Number(ev.id)}"]`); if (!li) return;
-  if (ev.state === 'received') pictureSays(li, 'sent', 'Sent');
-  else if (ev.state === 'seen') pictureSays(li, 'seen', `${c.name} has it`);
-  else if (ev.state === 'failed') pictureSays(li, 'failed', PICTURE_FAILED[ev.why] ?? `${c.name} couldn’t open it`);
-}
-// (why the line let it go; a turn stopped before its request isn't one: the session sends it with the next.)
-const PICTURE_FAILED = { 'too many': 'Too many pictures', lost: 'Lost. Share it again' };
-const pictureSays = (li, state, text) => { li.className = state; li.querySelector('i').textContent = text; };
-function stopPictures(c) {
-  removeEventListener('paste', c.paste);
-  c.uploads.abort();
-  for (const url of c.urls) URL.revokeObjectURL(url);
-}
-function callSay(state, said) { const s = $('#call-state'); if (s && state != null) s.textContent = state; if (said != null) $('#call-said').textContent = said; }
-function endCall(why) {
-  const c = call; if (!c) return;
-  call = null; clearTimeout(c.ring);
-  // (how the voice played here, numbers only, and its timeline in seconds after the line picked up)
-  const { played, timeline } = c.audio.report(c.t0);
-  if (c.ws?.readyState === 1) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));
-  c.ws?.close(); c.voiced = []; stopPictures(c); c.audio.close();
-  hush(false, 'call');
-  root().querySelector('.intercom')?.classList.remove('in-call');
-  const h = root().querySelector('.intercom header b'); if (h) h.textContent = `${cap(names.intercom)} · ${cap(ceoName())}`;
-  root().querySelector('.intercom header')?.classList.remove('on-air');
-  const s = $('#call-screen'); if (s) s.hidden = true;
-  for (const n of [$('#call-note'), $('#call-mic'), $('#call-net')]) if (n) { n.textContent = ''; n.hidden = true; }   // (the next call starts without the last one's notice; call-mic, lagging)
-  if (c.agent === world.company.ceo && !c.request && c.id) notesDue = Date.now(); // the transcript reaches the chat in a moment
-  if (c.live || c.id) watchCall(c.agent, Date.now(), c.call);
-  // (only why it ended, if not by hanging up: the chat says the notes are coming, a toast's tap goes where they appear.
-  if (!c.from) return say(why ?? '', true);
-  if (c.from === 'phone') openPhone(); else if (c.from === 'notes') openComputer('notes');   // (notes)
-  else if (c.from !== 'closing') closeTool();
-  toast(`<b>Call with ${esc(c.name)} ended</b>${why ? `<br>${esc(why)}` : ''}`, c.agent === world.company.ceo && !c.request ? openIntercom : () => openComputer('calls'));
-}
 
 // Why the CEO's turn waits, as the coordinator knows it (chat.ts paused): the board sees that, not "thinking", and the turn
 // starts on its own once it's over. A time today shows as the time, a later one with its day.
@@ -2282,11 +2038,13 @@ const pausedLine = (p, ceo) => p.why === 'restarting' ? `Paused: restarting. ${c
 // After a call with the CEO the transcript takes a moment to reach the chat (up to half a minute after a dropped line); from
 // then until the notes arrive, the coordinator says they're coming (chat.ts history()).
 let notesDue = 0;
+export const notesComing = () => { notesDue = Date.now(); };
+export const intercomOpen = () => open === 'intercom';
 function paintChat(c) {
   const list = $('#chat'); if (!list || !c) return;
   chatLines = c.messages;
   // shown: seen (once the marks have loaded, as the count waits for them; not during a call, which hides the chat)
-  if (seen && !call && !document.hidden && c.messages.length) markSeen('intercom', Math.max(...c.messages.map(m => Number(m.id))));
+  if (seen && !inCall() && !document.hidden && c.messages.length) markSeen('intercom', Math.max(...c.messages.map(m => Number(m.id))));
   if (notesDue && (Date.now() - notesDue > 120e3 || c.messages.some(m => m.who === 'call' && new Date(m.ts) > notesDue - 60e3))) notesDue = 0;
   c.thinking = c.thinking || !!notesDue && 'notes';
   const last = c.messages.at(-1)?.id ?? 0, fresh = list.dataset.last && +list.dataset.last !== last && c.messages.at(-1)?.who === world.company.ceo;
@@ -2294,8 +2052,8 @@ function paintChat(c) {
   if (list.dataset.last === String(last) && list.dataset.thinking === state) return;
   list.dataset.last = last; list.dataset.thinking = state;
   const hint = c.messages.length ? '' : list.querySelector('.hint')?.outerHTML ?? '', ceo = esc(ceoName());
-  // (the board's own lines break where it typed them, an agent's wrapped ones join)
-  list.innerHTML = hint + c.messages.map((m, i) => m.who === 'call' ? `<li class="call" data-m="${i}">${PHONE}${withJobLinks(m.text)}</li>` : `<li class="${m.who === 'board' ? 'me' : 'ceo'} prose" data-m="${i}">${prose(m.text, undefined, { breaks: m.who === 'board' })}${linePictures(m)}</li>`).join('')
+  // (the board's own lines break where it typed them, an agent's wrapped ones join); a guest's.
+  list.innerHTML = hint + c.messages.map((m, i) => m.who === 'call' ? `<li class="call" data-m="${i}">${PHONE}${withJobLinks(m.text)}</li>` : m.who === 'guest' ? guestLine(m, i) : `<li class="${m.who === 'board' ? 'me' : 'ceo'} prose" data-m="${i}">${prose(m.text, undefined, { breaks: m.who === 'board' })}${linePictures(m)}</li>`).join('')
     + (c.thinking === 'notes' ? `<li class="ceo typing">The call notes are on their way to ${ceo}…</li>` : c.paused ? `<li class="ceo typing">${pausedLine(c.paused, ceo)}</li>`
       : c.thinking ? `<li class="ceo typing">${cap(ceo)} is thinking…</li>` : '');
   // a tap copies a message whole: selecting one in a scrolling chat on a phone is fiddly (a selection made by hand stays)
@@ -2434,9 +2192,8 @@ const BELL = icon('bell');
 const apps = () => [...APPS, ...own.map(k => [k.id, esc(k.mod.app.name), esc(k.mod.app.what ?? ''), icon(k.mod.app.icon), k.mod.app.group])];
 // Each app's last field is its group, by what the board does with it: work to look at, talking, the business, and the
 // team and the machine (Settings last). The home screen reads them in HOME_GROUPS' order (homeGroups).
+// (the projects view is the HUD's own key, not an app)
 const APPS = [
-  // (the projects view, over the building.)
-  ['projects', 'Projects', 'Businesses, projects and who’s doing what', icon('app-projects'), 'work'],
   ['notes', 'Reviews', 'Your notes on previews', icon('app-notes'), 'work'],
   ['artifacts', 'Artifacts', 'Everything you’ve been shown', icon('app-artifacts'), 'work'],
   ['calls', 'Calls', 'Notes from your calls', icon('app-calls'), 'talk'],
@@ -2449,10 +2206,10 @@ const APPS = [
   ['settings', 'Settings', 'Seats, alerts, look', icon('app-settings'), 'team'],
 ];
 // A job's link, wherever it is (a machine's key, an agent's panel or key, a card, HQ's search): what it's in closes, and
-// the projects view opens on the job's thread with its card in front. With words being typed or on a call, it opens in
-// a new HQ, leaving this one as it is.
+// the projects view opens on the job's thread with its card in front (a call goes on over it). With words being typed,
+// it opens in a new HQ, leaving this one as it is.
 export function openJob(id) {
-  if (typing() || call) { window.open(`/?open=jobs&job=${Number(id)}`, '_blank', 'noopener'); return; }
+  if (typing()) { window.open(`/?open=jobs&job=${Number(id)}`, '_blank', 'noopener'); return; }
   closeTool(); closePanel();
   if (scene?.carded?.()) scene.focus({ kind: 'home' });   // (a look’s key out big)
   openProjects({ job: id });
@@ -2462,7 +2219,6 @@ export function openJob(id) {
 // moves on from a field with text in it, which the app saved first)
 export function openComputer(which = 'home', opts = {}) {
   if (open === 'computer' && typing() && !opts.force) return;
-  if (which === 'projects') { closeTool(); openProjects(); return; }   // (an app that's a view: the computer makes way)
   if (!ownDone && which !== 'home' && !apps().some(a => a[0] === which)) { ownLoaded.then(() => openComputer(which, opts)); return; } // (a company app still loading)
   tab = apps().some(a => a[0] === which) ? which : 'home';
   const app = apps().find(a => a[0] === tab);
@@ -2692,28 +2448,31 @@ function followUpWords(c) {
     : c.status === 'blocked' ? `${name} is waiting for your answer on the ${names.phone}, then writes up the call.` : `${name} didn’t get through it all and tries again in a few minutes.`;
   return c.agent === world.company.ceo && !c.request ? `${cap(name)}’s notes are in the ${names.intercom} chat.` : `${name} followed up.`;
 }
+// One item heard on a call, as a list item (its job a link): the call log's, and the call player's (callplayer.js)
+export function heardLine(i) {
+  const [cls, mark, word] = HEARD[i.status] ?? ['open', '○', i.status];
+  const by = i.status === 'handled' ? (i.job ? `${esc(who(i.agent ?? i.owner))} · job ${jobNameLink(i.job, i.job_code)}` : esc(i.request ? `your answer · request #${Number(i.request)}` : who(i.owner)))
+    : i.status === 'open' ? `${esc(who(i.owner))}${i.job ? ` · job ${jobNameLink(i.job, i.job_code)}` : ''}` : withJobLinks(i.why ?? '');
+  const line = i.status === 'replaced' && by ? by : `${esc(word)}${by ? ` · ${by}` : ''}`; // a correction's why says "changed on a later call" itself
+  return `<li class="heard-${esc(cls)}"><span class="mark" title="${esc(word)}">${mark}</span><span>${withJobLinks(i.what)}${i.board ? ' <em>(you added this)</em>' : ''}<span class="by">${line}</span></span></li>`;
+}
+// A call with a walk-through recorded: its key to watch it back
+const watchKey = c => `<button type="button" class="cp-watch" data-watch="${Number(c.id)}"><i aria-hidden="true"></i>Watch it back</button>`;
 let callWanted = null;
 async function callLog(el) {
   const calls = await loadCalls(world.dev);
+  if (calls.some(c => c.recorded)) await stylesheet('shell/callplayer.css');   // (the Watch it back key's look).
   // Another call's box, open or half typed, stays as it was when the list redraws after an add.
   const drafts = new Map([...el.querySelectorAll('details.missed')].map(d => [d.dataset.call, [d.open, d.querySelector('textarea').value]]));
   // What we heard on a finished call folds into one line, and stays as the board left it
   const unfolded = new Map([...el.querySelectorAll('details.heard-box')].map(d => [d.dataset.call, d.open]));
-  const heard = i => {
-    const [cls, mark, word] = HEARD[i.status] ?? ['open', '○', i.status];
-    // (as HTML, its job a link)
-    const by = i.status === 'handled' ? (i.job ? `${esc(who(i.agent ?? i.owner))} · job ${jobNameLink(i.job, i.job_code)}` : esc(i.request ? `your answer · request #${Number(i.request)}` : who(i.owner)))
-      : i.status === 'open' ? `${esc(who(i.owner))}${i.job ? ` · job ${jobNameLink(i.job, i.job_code)}` : ''}` : withJobLinks(i.why ?? '');
-    const line = i.status === 'replaced' && by ? by : `${esc(word)}${by ? ` · ${by}` : ''}`; // a correction's why says "changed on a later call" itself
-    return `<li class="heard-${esc(cls)}"><span class="mark" title="${esc(word)}">${mark}</span><span>${withJobLinks(i.what)}${i.board ? ' <em>(you added this)</em>' : ''}<span class="by">${line}</span></span></li>`;
-  };
   const badge = c => c.state === 'failed' ? ['failed', 'stuck'] : !c.processed ? ['running', 'writing'] : c.handled < c.total ? ['queued', 'open'] : ['done', 'done'];
   const missed = c => `<details class="missed" data-call="${Number(c.id)}"><summary>+ We missed something</summary>
     <div class="row"><textarea rows="2" enterkeyhint="send" aria-label="What ${esc(who(c.agent))} missed on this call" placeholder="One thing ${esc(who(c.agent))} should pick up"></textarea></div>
     <div class="row"><button class="cta" data-add>Add it</button>${canRecord ? `<button class="mic" data-mic title="Tap to talk, tap again to stop" aria-label="Dictate it">${MIC}</button>` : ''}<span class="chars"></span><span class="msg" role="status"></span></div></details>`;
   // (each call's notes as prose, who it was with by their engine's mark)
   el.innerHTML = calls.length ? `<p class="cap"><i class="prompt">&gt; </i>${calls.length} CALLS</p><ul class="rows calls">${calls.map(c => { const [cls, word] = badge(c);
-    return `<li data-call="${Number(c.id)}"><span class="st st-${cls}">${word}</span><b>${markOf(c.agent)}${esc(who(c.agent))}${c.request ? ` · about request #${Number(c.request)}` : ''}</b><span class="dim">${esc(ago(c.ts))}${c.total ? ` · ${handledOf(c)}` : ''}</span>${followUpHtml(c)}${c.total ? `<details class="heard-box" data-call="${Number(c.id)}"${(unfolded.get(String(c.id)) ?? cls !== 'done') ? ' open' : ''}><summary class="heard-cap">What we heard · ${Number(c.total)}</summary><ul class="heard">${(c.items ?? []).map(heard).join('')}</ul></details>` : ''}${missed(c)}</li>`; }).join('')}</ul>`
+    return `<li data-call="${Number(c.id)}"><span class="st st-${cls}">${word}</span><b>${markOf(c.agent)}${esc(who(c.agent))}${c.request ? ` · about request #${Number(c.request)}` : ''}</b><span class="dim">${esc(ago(c.ts))}${c.total ? ` · ${handledOf(c)}` : ''}</span>${followUpHtml(c)}${c.recorded ? watchKey(c) : ''}${c.total ? `<details class="heard-box" data-call="${Number(c.id)}"${(unfolded.get(String(c.id)) ?? cls !== 'done') ? ' open' : ''}><summary class="heard-cap">What we heard · ${Number(c.total)}</summary><ul class="heard">${(c.items ?? []).map(heardLine).join('')}</ul></details>` : ''}${missed(c)}</li>`; }).join('')}</ul>`
     : `<p><i class="prompt">&gt; </i>No calls yet. Call anyone from their panel, or ${esc(ceoName())} from the ${esc(names.intercom)}.</p>`;
   el.querySelectorAll('details.missed').forEach(d => {
     const field = d.querySelector('textarea'), add = d.querySelector('[data-add]'), count = d.querySelector('.chars'), msg = d.querySelector('.msg');
@@ -2737,6 +2496,11 @@ async function callLog(el) {
       callLog(el);
     };
   });
+  // a walk-through call watched back, full screen over HQ (callplayer.js).
+  el.querySelectorAll('[data-watch]').forEach(b => b.onclick = async () => {
+    const { openCallPlayer } = await import('./callplayer.js');
+    openCallPlayer(calls.find(c => c.id === Number(b.dataset.watch)));
+  });
   // (a call asked for by HQ's search, once: its notes open and in view, after the computer puts back its scroll)
   const wanted = callWanted != null && el.querySelector(`li[data-call="${Number(callWanted)}"]`);
   callWanted = null;
@@ -2748,7 +2512,7 @@ async function callLog(el) {
 // line that doesn't send one, by agent and time. A silent call's row is deleted and the next call can get its id (the
 // agent matched too doesn't tell them apart): a newer watcher for an id stops the older one, so one toast per call.
 const watching = new Map();
-function watchCall(agent, since, id) {
+export function watchCall(agent, since, id) {
   const me = {};
   if (id) watching.set(id, me);
   const check = async () => {
@@ -2763,6 +2527,9 @@ function watchCall(agent, since, id) {
   setTimeout(check, 30e3);
 }
 // The company inbox (read-only): mail to any address at the company's domain (brand.yaml's mail.domain). Tap a message to read it.
+// What shows a person's details (Mail's rows, an email card, a delivery address, people's emails, a call out's number) is
+// marked data-private and a card's keys data-watchalong-hide, which a walk-through call's recording keeps out
+// (shared/watchalong).
 // A company app can open it at one message (openComputer's opts.mail: mailWanted; here and at the end of inbox)
 let mailWanted = null;
 // The 15 s refresh leaves a message that's open as it is: new mail goes in above it.
@@ -2829,7 +2596,7 @@ async function inbox(el) {
     const top = Number(rows.querySelector('[data-mail]').dataset.mail);
     rows.insertAdjacentHTML('afterbegin', mail.filter(m => m.id > top).map(mailRow).join(''));
     el.querySelector('.cap').innerHTML = mailCap(mail.length);
-  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(mail.length)}</p>${mailGroups(all)}<ul class="rows mail">${mail.map(mailRow).join('')}</ul>`
+  } else el.innerHTML = all.length ? `<p class="cap">${mailCap(mail.length)}</p>${mailGroups(all)}<ul class="rows mail" data-private>${mail.map(mailRow).join('')}</ul>`
     : `<p><i class="prompt">&gt; </i>No mail yet. Anything sent to ${brand.mail?.domain ? `an @${esc(brand.mail.domain)} address` : 'the company'} lands here.</p>`;
   el.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { if (mailGroup === b.dataset.group) return; sfx.blip(); mailGroup = b.dataset.group; el.innerHTML = ''; inbox(el); el.scrollTop = 0; });
   el.querySelectorAll('[data-mail]').forEach(d => d.ontoggle = async () => {

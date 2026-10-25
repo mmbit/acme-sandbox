@@ -73,13 +73,18 @@ export async function upload(req: IncomingMessage, res: ServerResponse) {
   if (card && !answerable(card))
     return reply(res, 409, { error: 'that card is no longer waiting for an answer' }, true);
   if (full(callId, card)) return refuse(req, res, 429, 'too many pictures at once');
+  const id = store(p, callId || null, card || null);
+  return reply(res, 200, { id, type: p.type, bytes: p.clean.length });
+}
+// A stripped picture's row and file, for a call, a card or the intercom (call and card null).
+function store(p: { type: string; clean: Buffer }, call: number | null, card: number | null) {
   const id = Number(
     db
       .prepare('insert into pictures (created, type, bytes, call, request) values (?, ?, ?, ?, ?)')
-      .run(new Date().toISOString(), p.type, p.clean.length, callId || null, card || null).lastInsertRowid,
+      .run(new Date().toISOString(), p.type, p.clean.length, call, card).lastInsertRowid,
   );
   keepFile(file({ id, type: p.type }), p.clean);
-  return reply(res, 200, { id, type: p.type, bytes: p.clean.length });
+  return id;
 }
 // GET /api/pictures/waiting[?request=<id>]: the board's tray as the coordinator knows it, every picture uploaded for a
 // line and not sent yet. HQ shows them again when the intercom (or the card) opens, after a reload too, so the board
@@ -132,6 +137,11 @@ const sameKey = (hash: string, key: string) => {
     got = Buffer.from(key);
   return want.length === got.length && timingSafeEqual(want, got);
 };
+// Whether this key is the live call's own (watchalong.ts too).
+export const opensCall = (call: number, key: string) => {
+  const token = liveToken(call);
+  return !!token && sameKey(token, key);
+};
 // A call's key for HQ's uploads, from its token's hash (call.ts context(), through the voice line): one call's alone,
 // and it says nothing about the token
 export const callKey = (hash: string) => createHash('sha256').update(`call pictures ${hash}`).digest('base64url');
@@ -149,8 +159,8 @@ const answerable = (card: number) => {
   return !!r && takesPictures(r);
 };
 const count = (sql: string, ...values: number[]) => (db.prepare(sql).get(...values) as { n: number }).n;
-// What the bytes are, whatever the header says: a JPEG or a PNG, stripped, or null.
-function picture(raw: Buffer) {
+// What the bytes are, whatever the header says: a JPEG or a PNG, stripped, or null. (sketches.ts too)
+export function picture(raw: Buffer) {
   if (raw[0] === 0xff && raw[1] === 0xd8) {
     const clean = stripJpeg(raw);
     return clean && { type: 'image/jpeg', clean };
@@ -175,6 +185,13 @@ export function waiting(v: unknown, card = 0) {
     }),
   };
 }
+// A picture from bytes the coordinator holds already (a sketch the board sends: sketches.ts, whose picture was read as
+// one when it was saved), stripped and kept as an upload is, waiting for its line.
+export function keep(raw: Buffer) {
+  const p = picture(raw);
+  if (!p) throw new Error('not a picture: a sketch keeps only pictures it has read');
+  return { id: store(p, null, null), type: p.type };
+}
 export const attach = (ids: number[], line: number) => {
   for (const id of ids) db.prepare('update pictures set chat = ? where id = ?').run(line, id);
 };
@@ -183,15 +200,19 @@ export const answered = (ids: number[]) => {
   for (const id of ids) db.prepare('update pictures set answered = 1 where id = ?').run(id);
 };
 // What an agent reads next to a line or a call: the pictures and how to look at them, or ''.
-export function mention(ids: number[]) {
+// (theirs: the line is an invited person's, not the board's, chat.ts fromGuest)
+export function mention(ids: number[], theirs = false) {
   if (!ids.length) return '';
   const list = ids.map(id => `#${id}`).join(ids.length === 2 ? ' and ' : ', ');
-  const one = ids.length === 1;
+  const one = ids.length === 1,
+    some = one ? 'a picture' : `${ids.length} pictures`;
   return (
-    `(The board attached ${one ? 'a picture' : `${ids.length} pictures`}, ${list}. Save ${one ? 'it' : 'them'} with ` +
+    `(${theirs ? `${one ? 'A picture' : some} came with their line` : `The board attached ${some}`}, ${list}. Save ${one ? 'it' : 'them'} with ` +
     `\`hq picture ${ids.join(' ')}\`, then read the file${one ? '' : 's'} to look at ${one ? 'it' : 'them'}.)`
   );
 }
+// The intercom line a picture went with, or null (sketches.ts).
+export const lineOf = (id: number) => row(id)?.chat ?? null;
 export const ofLine = (line: number) =>
   (db.prepare('select id from pictures where chat = ? order by id').all(line) as { id: number }[]).map(p => p.id);
 // Every line's pictures at once, for a read of many lines (intercom.ts)

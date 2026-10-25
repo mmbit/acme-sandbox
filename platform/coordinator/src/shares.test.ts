@@ -2,7 +2,7 @@
 // DATA_DIR, the real server, a stand-in email service)
 import { test, after, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -60,6 +60,8 @@ const { ORIGIN } = await import('./config.ts');
 const { db } = await import('./db.ts');
 const feedback = await import('./feedback.ts');
 const shares = await import('./shares.ts');
+const jobs = await import('./jobs.ts');
+const { createJob } = jobs;
 (await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
 const server = createServer(app).listen(0);
 after(() => server.close());
@@ -168,7 +170,12 @@ const pinNote = (ps: string, host: string, page: string, note = 'The button is h
     origin: `https://${host}`,
     body: { note, page, element: { tag: 'button', text: 'Buy' } },
   });
-const OFF = '/* review mode: off */\n';
+// review mode off: only the watch-along's answer to HQ's frame, HQ's origin filled in
+const FRAMED = readFileSync(new URL('../../../shared/watchalong/framed.js', import.meta.url), 'utf8').replace(
+  '{{HQ_ORIGIN}}',
+  'https://hq.company.test',
+);
+const OFF = `/* review mode: off */\n${FRAMED}`;
 const submit = (ps: string, host: string) =>
   call('/__review/submit', { host, cookie: ps, origin: `https://${host}`, body: {} });
 const jobsCount = () => (db.prepare('select count(*) n from jobs').get() as { n: number }).n;
@@ -543,9 +550,9 @@ test('End’s job holds the notes in full while the brief fits the model’s con
   // paging as the brief says reaches every note it left out, as this job's
   const paged: any[] = [];
   for (
-    let page = feedback.sentTo('bolt', undefined, before);
+    let page = feedback.sentTo({ id: job, agent: 'bolt' }, undefined, before);
     page.length;
-    page = feedback.sentTo('bolt', undefined, page.at(-1)!.id)
+    page = feedback.sentTo({ id: job, agent: 'bolt' }, undefined, page.at(-1)!.id)
   )
     paged.push(...page);
   const mine = paged.filter(n => n.job === job).map(n => n.id);
@@ -572,9 +579,9 @@ test('End’s job carries as much of a long invitation roll as fits, and hq revi
   assert.ok(from > 1 && from <= invited.length, 'the roll stops where the brief has no more room for it');
   const listed: string[] = [];
   for (
-    let page = feedback.reviewersOf(share.id, 'bolt') as any;
+    let page = feedback.reviewersOf(share.id, { id: job!, agent: 'bolt' }) as any;
     ;
-    page = feedback.reviewersOf(share.id, 'bolt', page.from + page.lines.length) as any
+    page = feedback.reviewersOf(share.id, { id: job!, agent: 'bolt' }, page.from + page.lines.length) as any
   ) {
     listed.push(...page.lines);
     if (page.from + page.lines.length > page.total) break;
@@ -588,7 +595,12 @@ test('End’s job carries as much of a long invitation roll as fits, and hq revi
     listed.some(l => l === `- job #${job} had 1 note`),
     'and the job its notes went to',
   );
-  assert.equal(feedback.reviewersOf(share.id, 'wren'), 404, 'only for an agent whose job had its notes');
+  const unrelated = createJob({ agent: 'bolt', title: 'something else', prompt: 'x' }).id;
+  assert.equal(
+    feedback.reviewersOf(share.id, { id: unrelated, agent: 'bolt' }),
+    404,
+    'only for a job that had its notes',
+  );
 });
 
 test('End sends the notes to the owner as one job, and the link stops everywhere at once', async () => {
@@ -624,7 +636,27 @@ test('End sends the notes to the owner as one job, and the link stops everywhere
       .map(n => ({ ...n })),
     [{ status: 'sent', job: row.job }],
   );
-  assert.equal(feedback.forWorker(ids[0]).note, 'The price is hidden'); // hq note works for the owner
+  assert.equal((feedback.noteFor(ids[0], { id: row.job, agent: 'bolt' }) as any).note, 'The price is hidden'); // hq note works for the owner's job
+  // ...and for no other job of the owner's: the reviewer's own details stay with the job they went to
+  const unrelated = createJob({ agent: 'bolt', title: 'something else', prompt: 'x' }).id;
+  assert.equal(feedback.noteFor(ids[0], { id: unrelated, agent: 'bolt' }), 404);
+  assert.ok(jobs.holdsCustomerData(row.job), 'the job holds the mark');
+  // so its held proposal says so in place of the brief; one made before the mark gets both at the server's start
+  const proposal = db
+    .prepare('select p.id, p.brief from proposals p join sorts s on s.proposal = p.id where s.job = ?')
+    .get(row.job) as any;
+  assert.match(
+    proposal.brief,
+    /^HQ made this job from the outside notes on Hello.*\n\nIts brief holds a customer's own details, so it stays with the job\.$/s,
+  );
+  db.prepare('update jobs set customers = 0 where id = ?').run(row.job);
+  db.prepare('update proposals set brief = ? where id = ?').run(
+    proposal.brief.replace(/\n\n.*$/s, `\n\n${job.prompt}`),
+    proposal.id,
+  );
+  feedback.markOutsideJobs();
+  assert.ok(jobs.holdsCustomerData(row.job));
+  assert.equal((db.prepare('select brief from proposals where id = ?').get(proposal.id) as any).brief, proposal.brief);
   // the board's Reviews lists them now they went, with who wrote each
   assert.deepEqual(
     feedback
@@ -907,7 +939,8 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.equal(feedback.listShares().find((s: any) => s.id === first.id)!.people[0].title, 'UX specialist');
   // Recent: by name and title only, the latest first, for the board alone
   const recent = await call('/api/review/people', { cookie: 's=board-session' });
-  assert.deepEqual(recent.json()[0], { name: 'Fenna', title: 'UX specialist' });
+  // (sketchbook: whether the board gave her a Sketchbook of her own, sketchpeople.ts.)
+  assert.deepEqual(recent.json()[0], { name: 'Fenna', title: 'UX specialist', sketchbook: false });
   assert.notEqual((await call('/api/review/people')).status, 200);
   // invited again on another preview by her name alone, at the address she had; a name nobody shared with lately is not
   const again = await invite({ page: `https://${HELLO}/`, name: 'Fenna', days: 1 });
@@ -916,6 +949,11 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.equal(stranger.status, 400);
   // her notes reach their reader with the title, and how to read it; never her own door or tool
   const fenna = await signIn(again.link);
+  // the board's switch on her row gives her a Sketchbook of her own, a button on her door's page
+  assert.doesNotMatch((await call(fenna.path, { cookie: fenna.g })).text, /Your Sketchbook/);
+  assert.equal((await board('/api/review/people/sketchbook', { name: 'Fenna', on: true })).json().sketchbook, true);
+  assert.equal(feedback.listShares().find((s: any) => s.id === again.id)!.people[0].sketchbook, true);
+  assert.match((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/">Your Sketchbook</);
   assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
   const pinned = await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped');
   assert.doesNotMatch((await call('/__review/mine', { host: HELLO, cookie: fenna.ps })).text, /UX specialist/);
@@ -1188,6 +1226,7 @@ test('notes not yet sent get an early look about hourly; a fix it made thanks th
   assert.equal(jobsCount(), before + 1);
   const look = lastJob();
   assert.equal(look.agent, 'bolt');
+  assert.ok(jobs.holdsCustomerData(look.id), "the look holds the reviewers' details: the mark keeps them with it");
   assert.match(look.prompt, /It's still open/);
   assert.match(look.prompt, /for one thing only: what is plainly broken/);
   assert.match(look.prompt, /`hq note <id> fixed "\.\.\."`/);
@@ -1475,4 +1514,34 @@ test("a tester invite on a product with plans: its door says in the product's wo
   writeFileSync(`${repo}/products/orbit/product.yaml`, 'name: Orbit\nstatus: preview\nowner: bolt\nplans: [crew]\n');
   assert.equal((await call(wanda.path, { cookie: wanda.g })).status, 503);
   feedback.endShare({ id: share.id });
+});
+
+test("a share's door offers its walk-through call once the board said Call, through the same join link, to its own people only", async () => {
+  const callouts = await import('./callouts.ts');
+  const callcard = await import('./callcard.ts');
+  const job = (await import('./jobs.ts')).createJob({ agent: 'bolt', title: 'Walk Sam through', prompt: 'x' }).id;
+  const share = await makeShare(`https://${HELLO}/`);
+  const { g, path } = await signIn(share.link);
+  const filed = callouts.file('bolt', job, {
+    link: true,
+    who: 'Sam',
+    about: 'the hello page',
+    why: 'Walk Sam through the hello page and hear what is unclear.',
+    card: 'Bolt walks Sam through the hello page.',
+    lang: 'en',
+    share: share.id,
+  }) as { id: number; request: number };
+  // the board hasn't said Call yet: the door has only its own Open
+  assert.doesNotMatch((await call(path, { cookie: g })).text, /Talk it through/);
+  assert.equal((await call(`${path}/talk`, { cookie: g })).status, 404);
+  const approved = callcard.approve({ id: filed.request }) as { link: string };
+  const door = await call(path, { cookie: g });
+  assert.match(door.text, new RegExp(`<a class="button" href="${path}/talk">Talk it through with Bolt</a>`));
+  const talk = await call(`${path}/talk`, { cookie: g });
+  assert.equal(talk.status, 302);
+  assert.equal(talk.headers.location, approved.link);
+  // signed out, the door asks for the code first; the call's end closes it again
+  assert.equal((await call(`${path}/talk`)).status, 401);
+  callouts.finish(callouts.byId(filed.id)!, 'done', 'the call was held');
+  assert.doesNotMatch((await call(path, { cookie: g })).text, /Talk it through/);
 });

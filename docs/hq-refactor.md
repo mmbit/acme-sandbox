@@ -226,12 +226,14 @@ Flagged, not moved: desk.js:68,99–104 postMessage key `onlyonery` (shared with
 
 ## Steps
 **The check: `platform/hq/pixel-check.mjs --ref origin/main [--only …] [--brand file]`.** Serves the ref's tree (via
-`git show ref:path`) and the working tree from two `node:http` servers, both in dev mode with mock data; renders both in
-Playwright per scenario; compares in the page (canvas getImageData); writes base/new/diff PNGs to $TMPDIR only on a
-difference; any differing pixel exits 1. Setup: seeded mulberry32 `Math.random` via addInitScript; `page.clock.install()`
+`git show ref:path`) and the working tree from two `node:http` servers, both in dev mode with mock data.
+Playwright renders each scenario and captures screenshots of the visible page, covering DOM, 2D and WebGL renderers.
+`check()` compares the PNG Buffers in Node with `Buffer.equals()`. Only on a mismatch does `report()` call `diff()`,
+which counts differing pixels and draws them in red over a faded base image in the page. `report()` then writes
+base/new/diff PNGs to $TMPDIR. Any PNG mismatch exits 1. Setup: seeded mulberry32 `Math.random` via addInitScript; `page.clock.install()`
 + `pauseAt`; Google Fonts aborted; `waitForFunction` with `polling: 100`. Stable dev hooks only: `world.paused`, `frame`,
 `cam`, `hit`, `S`, `L` (kept as aliases by shell/dev.js).
-- **Tier A, stills** (paused, `hq.frame(10)`; canvas and full page): desktop 1280×800 at hours 3, 7 (fog,
+- **Tier A, stills** (paused, `hq.frame(10)`): desktop 1280×800 at hours 3, 7 (fog,
   ?date=2026-10-30), 12 clear, 16 rain, 19.5, 23; 12-24 17:00 snow; 12-31 23:30; 09-25 bunting; walls on; zoomed on
   lobby, penthouse, basement; billboard at t = 1.8, 5.3, 9, 13, 16.5, 19.8, 23.6, 27.6. iPhone 390×844 dpr 2; tablet
   1024×768 at night.

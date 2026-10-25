@@ -99,9 +99,10 @@ ARG SMART_TURN_SHA256=2bb026316b14a660486a75b1733cd3fbab8c2fd0314dc9af7be49f8cca
 RUN curl -fsSL -o smart-turn-v3.2-cpu.onnx "$SMART_TURN/smart-turn-v3.2-cpu.onnx" \
     && printf '%s  %s\n' "$SMART_TURN_SHA256" smart-turn-v3.2-cpu.onnx | sha256sum -c -
 # turns.py too (server.py logs each call's numbers from it, then forgets the session), echo.py, aloud.py (numbers in
-# words, shared with On Air), room.py (a call out's room on the join page) and endpoint.py
+# words, shared with On Air), room.py (a call out's room on the join page), endpoint.py and dictate.py (a note's live
+# dictation)
 COPY voice/server.py voice/aloud.py voice/guard.py voice/hq_tools.py voice/turns.py voice/echo.py voice/room.py \
-     voice/endpoint.py /app/
+     voice/endpoint.py voice/dictate.py /app/
 # (and the TypeScript it runs, beside it as in the repo)
 COPY worker/bin/hq /usr/local/bin/hq
 COPY worker/hq /usr/local/hq

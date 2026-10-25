@@ -51,6 +51,7 @@ export function withFindings<J extends Job>(
 ): (J & { findings?: ReturnType<typeof summaryOf>; fixes?: ReturnType<typeof fixOf> })[] {
   const shown = shownOf(
     jobs.filter(j => j.status === 'done' && j.pr && (j.kind === 'review' || j.kind === 'consolidate')),
+    id => !summaries.has(id),
   );
   const fixes = fixesOf(jobs.filter(j => j.stage === 'fix'));
   return jobs.map(j => {
@@ -80,7 +81,7 @@ type Fixing = {
 // A task drawn from the inbox has its pull request and round in review_fix_tasks, not on its job (reviewinbox.ts), and
 // the findings it fixes (task); the blocking findings the round's ruling sent back to the author before this fix
 // (findings.ts finding_rulings) are `sent`, none for a ruling not acted on. One read for every fix, and one for their
-// findings' words.
+// findings' words. The fixes through db.ts jobs_listed, never their rows.
 function fixesOf(jobs: { id: number }[]) {
   const rows = db
     .prepare(
@@ -90,7 +91,7 @@ function fixesOf(jobs: { id: number }[]) {
         (select r.blocking from finding_rulings r join jobs c on c.id = r.ruling
         where c.pr = coalesce(t.pr, j.pr) and c.round = coalesce(t.round, j.round) and c.id < j.id
         order by c.id desc limit 1) sent
-      from jobs j left join review_fix_tasks t on t.job = j.id where j.id in (select value from json_each(?))
+      from jobs j indexed by jobs_listed left join review_fix_tasks t on t.job = j.id where j.id in (select value from json_each(?))
       and j.stage = 'fix' and coalesce(t.pr, j.pr) is not null and coalesce(t.round, j.round) is not null`,
     )
     .all(JSON.stringify(jobs.map(j => j.id))) as Fixing[];
@@ -127,14 +128,25 @@ export function findingsOf(id: number) {
   return { findings: job.kind === 'review' ? reviewerLines(job) : rulingLines(job) };
 }
 
-const shownOf = (jobs: { id: number }[]) => {
+// (through db.ts jobs_listed, and each one's output only where `read` asks for it: a summary kept needs none.)
+const shownOf = (jobs: { id: number }[], read: (id: number) => boolean = () => true) => {
   const rows = db
     .prepare(
-      `select id, agent, kind, stage, pr, round, sha, output from jobs where id in (select value from json_each(?))
+      `select id, agent, kind, stage, pr, round, sha from jobs indexed by jobs_listed where id in (select value from json_each(?))
       and status = 'done' and pr is not null and voided is null and (kind = 'review' or ${RULINGS})`,
     )
-    .all(JSON.stringify(jobs.map(j => j.id))) as Shown[];
-  return new Map(rows.map(r => [r.id, r]));
+    .all(JSON.stringify(jobs.map(j => j.id))) as Omit<Shown, 'output'>[];
+  const unread = rows.filter(r => read(r.id)).map(r => r.id);
+  const outputs = new Map(
+    unread.length
+      ? (
+          db
+            .prepare('select id, output from jobs where id in (select value from json_each(?))')
+            .all(JSON.stringify(unread)) as { id: number; output: string | null }[]
+        ).map(r => [r.id, r.output])
+      : [],
+  );
+  return new Map(rows.map(r => [r.id, { ...r, output: outputs.get(r.id) ?? null }]));
 };
 
 // A done job's output never changes, so its summary is kept. None for one that reported no findings or no verdict.

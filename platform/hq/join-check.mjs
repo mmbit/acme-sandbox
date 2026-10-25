@@ -6,6 +6,11 @@
 // captions); a second person joining and talking (their ring, the agent listening); a tool step (thinking); mute; a
 // dropped connection coming back into the same room; leaving; the agent hanging up; a closed link; a full room; the
 // Dutch and German words; the platform's own figure for an agent without a drawing. At a laptop's size and a phone's.
+// A walk-through link: the walk-through's notice and two buttons of equal
+// weight; joining without showing records nothing and loads no recorder; joining to show records only the preview in
+// the frame (another origin, with the real review.js and the watch-along's answer), never the page's own parts; the
+// frame filling the page under the minimised call, its eye, Pause and Resume, opening the call screen over the frame
+// (which stays loaded), and leaving; a guest who sent their notes (review mode off in the frame) still seen.
 //   node platform/hq/join-check.mjs [screenshot folder]     (BROWSER=webkit for Safari's engine)
 // Against the real voice line instead (platform/voice/room_standin.py: the real room, mixer and call around stand-in
 // models; a Python with numpy and websockets): the opening, the mouth with it, a question from the microphone and its
@@ -47,8 +52,10 @@ const { joinPage, joinAsset } = await import('../coordinator/src/joinpage.ts');
 const TOKEN = 'Jx'.repeat(21) + 'Q'; // 43 characters, as the coordinator makes them
 const UNTIL = new Date(Date.now() + 3 * 3600e3).toISOString();
 const PRIVACY = 'https://shop.example/privacy#calls';
+const WALK = 'Wx'.repeat(21) + 'Q';
 const agentOf = {
   [TOKEN]: { id: 'ada', name: 'Ada' },
+  [WALK]: { id: 'ada', name: 'Ada' },
   ['Gx'.repeat(21) + 'Q']: { id: 'nobody-drawn', name: 'Bo' },
 };
 const langOf = { en: 'en', nl: 'nl', de: 'de' };
@@ -68,6 +75,7 @@ const server = createServer((req, res) => {
       privacy: PRIVACY,
       until: UNTIL,
       ...(url.searchParams.has('later') ? { opens: new Date(Date.now() + 600e3).toISOString() } : {}),
+      ...(m[1] === WALK ? { walk: { url: `${preview}/`, hosts: [preview], what: 'Hello' } } : {}),
     };
     const { html, csp } = joinPage(view);
     res.writeHead(200, {
@@ -78,7 +86,8 @@ const server = createServer((req, res) => {
     });
     return res.end(html);
   }
-  const asset = /^\/join\/assets\/([\w.-]+)$/.exec(url.pathname)?.[1];
+  if (req.method === 'POST' && url.pathname.startsWith('/api/watchalong/')) return watchAlong(req, res, url);
+  const asset = /^\/join\/assets\/((?:vendor\/)?[\w.-]+)$/.exec(url.pathname)?.[1];
   const found = asset && joinAsset(asset);
   if (found) {
     res.writeHead(200, { 'content-type': found.type, 'x-content-type-options': 'nosniff' });
@@ -92,8 +101,51 @@ const server = createServer((req, res) => {
   res.writeHead(404, { 'content-type': 'text/plain' });
   res.end('This link has closed');
 });
+// The watch-along's routes as the coordinator answers them (watchalong.ts): one start on the join link's token, then
+// the page's batches, kept here as they come
+const recorded = { starts: [], events: [] };
+async function watchAlong(req, res, url) {
+  let body = '';
+  for await (const chunk of req) body += chunk;
+  const answer = url.pathname.endsWith('/join')
+    ? (recorded.starts.push(JSON.parse(body).token), { id: 1, events: '/api/watchalong/events?id=1&key=k' })
+    : (recorded.events.push(...JSON.parse(body).events), { ok: true });
+  res.writeHead(200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(answer));
+}
+// A preview host of another origin, as the walk-through frames it: a page with review mode's real script and the
+// watch-along's answer after it, which says hello to the page framing it and records itself when that page asks
+// (feedback.ts serves them the same way); for a guest who sent their notes (reviewOff) the tool is off and only the
+// answer comes
+const REVIEW = readFileSync(new URL('../../shared/review/review.js', import.meta.url), 'utf8');
+const FRAMED = readFileSync(new URL('../../shared/watchalong/framed.js', import.meta.url), 'utf8');
+let reviewOff = false;
+const previewServer = createServer((req, res) => {
+  const path = new URL(req.url, 'http://x').pathname;
+  const script = body => {
+    res.writeHead(200, { 'content-type': 'text/javascript; charset=utf-8' });
+    res.end(body);
+  };
+  if (path === '/__review/review.js')
+    return script(
+      (reviewOff ? '/* review mode: off */\n' : REVIEW.replace('{{HQ_ORIGIN}}', base)) +
+        FRAMED.replace('{{HQ_ORIGIN}}', base),
+    );
+  if (path === '/__review/watchalong.js') return script(joinAsset('watchalong.js').body);
+  if (path === '/__review/vendor/rrweb-record.js') return script(joinAsset('vendor/rrweb-record.js').body);
+  if (path !== '/' && path !== '/two') {
+    res.writeHead(404);
+    return res.end();
+  }
+  res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><meta charset="utf-8"><title>Hello</title><h1>Hello, the preview</h1>
+<button id="buy">Add to basket</button> <input id="note" aria-label="Your note"> <a href="/two">Page two</a>
+<p style="height:1500px">A long page.</p><script src="/__review/review.js" defer></script>`);
+});
 await new Promise(r => server.listen(0, '127.0.0.1', r));
+await new Promise(r => previewServer.listen(0, '127.0.0.1', r));
 const base = `http://localhost:${server.address().port}`;
+const preview = `http://127.0.0.1:${previewServer.address().port}`;
 const line = process.env.LINE_PYTHON ? await realLine(process.env.LINE_PYTHON) : null;
 const useWebkit = process.env.BROWSER === 'webkit';
 const browser = useWebkit
@@ -422,6 +474,187 @@ async function refused(context, code, words, label) {
   await page.close();
 }
 
+// ---- a walk-through
+const customs = (from = 0, tag = null) =>
+  recorded.events.slice(from).filter(e => e.type === 5 && (tag === null || e.data.tag === tag));
+const eyeShows = page => page.evaluate(() => !document.querySelector('.cb-eye').hidden);
+async function walkChecks(context, label) {
+  recorded.starts.length = recorded.events.length = 0;
+  await room(context, (ws, ev) =>
+    ws.send(
+      JSON.stringify({
+        type: 'room',
+        you: 'p1',
+        key: 'k-walk',
+        people: people(['p1', ev.name]),
+        agent: { name: 'Ada', look: 'ada' },
+      }),
+    ),
+  );
+  const page = await context.newPage();
+  const errors = errorsOf(page),
+    loaded = [];
+  page.on('request', r => loaded.push(new URL(r.url()).pathname));
+  page.on('console', m => m.type() === 'error' && !shooting && errors.push(`${m.text()} (${m.location().url})`));
+  await page.goto(`${base}/join/${WALK}`);
+  const notices = await page.$$eval('.notice', all => all.map(n => n.textContent));
+  ok(
+    notices[0].includes('We keep a written transcript of this call, never its sound.') &&
+      notices[1].includes('Ada also sees our pages as you use them') &&
+      notices[1].includes('Pause stops it at any time.'),
+    `${label} walk-through: the notice says what Ada sees and what's kept, before joining`,
+  );
+  const buttons = await page.$$eval('.join', all =>
+    all.map(b => {
+      const c = getComputedStyle(b);
+      return {
+        words: b.textContent,
+        look: [b.offsetWidth, b.offsetHeight, c.backgroundColor, c.color, c.fontSize, c.fontWeight, c.borderRadius],
+      };
+    }),
+  );
+  ok(
+    buttons.map(b => b.words).join(' / ') === 'Join and show our pages / Join without showing them' &&
+      JSON.stringify(buttons[0].look) === JSON.stringify(buttons[1].look),
+    `${label} walk-through: two buttons of equal weight, the same size, style and colour`,
+  );
+  await shot(page, `${SHOTS}/${label}-walk-lobby.png`);
+
+  // joining without showing: the call over the preview, and nothing recorded or even loaded for it
+  await page.fill('#name', 'Sam Walker');
+  await page.click('.join >> nth=1');
+  await page.waitForSelector('body.min .callbubble');
+  await page.waitForTimeout(1800);
+  ok(
+    (await page.isVisible('iframe.walk')) &&
+      !(await page.isVisible('.controls')) &&
+      !(await eyeShows(page)) &&
+      !(await page.isVisible('.cb-pause')),
+    `${label} walk-through: joined, the preview fills the page and the call floats over it, with no eye and no Pause`,
+  );
+  ok(
+    !recorded.starts.length && !recorded.events.length && !loaded.some(p => /watchalong|rrweb/.test(p)),
+    `${label} walk-through: joining without showing records nothing, and the recorder never loads`,
+  );
+  await shot(page, `${SHOTS}/${label}-walk-unseen.png`);
+  await page.click('.cb-hangup');
+  await page.waitForSelector('.over:not([hidden])');
+  await page.click('.rejoin');
+  ok(
+    (await page.isVisible('.lobbycard')) && (await page.$$('.join:visible')).length === 2,
+    `${label} walk-through: joining again asks again, with both buttons`,
+  );
+
+  // joining to show our pages: the frame's page records itself into the page's stream, and nothing of the page's own
+  await page.click('.join >> nth=0');
+  await page.waitForSelector('body.min .callbubble');
+  await page.waitForFunction(() => !document.querySelector('.cb-eye').hidden, null, { timeout: 10_000 });
+  ok(recorded.starts.join() === WALK, `${label} walk-through: the recording starts on the join link's own token`);
+  const frame = page.frameLocator('iframe.walk');
+  await frame.locator('#buy').click();
+  await frame.locator('#note').fill('my private words');
+  await sleep(2400);
+  const kept = JSON.stringify(recorded.events);
+  if (process.env.WALK_DEBUG) writeFileSync(`${SHOTS}/${label}-walk-events.json`, kept);
+  ok(
+    customs(0, 'tap').some(e => e.data.payload.label === 'Add to basket'),
+    `${label} walk-through: the preview in the frame is recorded, a tap with what was tapped`,
+  );
+  ok(!kept.includes('my private words'), `${label} walk-through: what the guest types stays out`);
+  ok(
+    !['Sam Walker', 'Ada (AI)', 'A walk-through of', 'never its sound', 'Join and show'].some(w => kept.includes(w)),
+    `${label} walk-through: nothing of the join page itself, nor the name typed, is recorded`,
+  );
+  await shot(page, `${SHOTS}/${label}-walk-seen.png`);
+
+  // Pause: the eye goes and nothing more is recorded until Resume
+  await page.click('.cb-pause');
+  await sleep(1200);
+  const paused = recorded.events.length;
+  await frame.locator('#buy').click();
+  await sleep(1600);
+  ok(
+    !(await eyeShows(page)) &&
+      (await page.textContent('.cb-pause')) === 'Resume' &&
+      customs(0, 'paused').length === 1 &&
+      !customs(paused, 'tap').length,
+    `${label} walk-through: Pause takes the eye away and stops the recording at once`,
+  );
+  await page.click('.cb-pause');
+  await page.waitForFunction(() => !document.querySelector('.cb-eye').hidden);
+  await sleep(1200);
+  ok(customs(0, 'resumed').length === 1, `${label} walk-through: Resume brings it back`);
+
+  // the call screen opens over the frame, which stays loaded, and goes back to the pages
+  const inFrame = page.frames().find(f => f.url().startsWith(preview));
+  await inFrame.evaluate(() => (window.stillHere = true));
+  await page.click('.cb-face');
+  await page.waitForFunction(() => !document.body.classList.contains('min') && !document.querySelector('.callbubble'));
+  ok(
+    (await page.isVisible('.controls')) && (await inFrame.evaluate(() => window.stillHere)),
+    `${label} walk-through: open shows the call screen over the frame, and the frame stays loaded`,
+  );
+  await shot(page, `${SHOTS}/${label}-walk-open.png`);
+  await page.click('.controls .pages');
+  await page.waitForSelector('body.min .callbubble');
+  ok(await eyeShows(page), `${label} walk-through: back to the pages, the call minimised again`);
+
+  // leaving ends the recording
+  await page.click('.cb-hangup');
+  await page.waitForSelector('.over:not([hidden])');
+  await sleep(1500);
+  const left = recorded.events.length;
+  await sleep(1500);
+  ok(recorded.events.length === left, `${label} walk-through: leaving stops the recording`);
+  ok(!(await overflow(page)), `${label} walk-through: nothing runs off the side`);
+  // (WebKit reports rrweb's look into the preview's frame, another origin, as an error though rrweb catches it and
+  // records on: the steps above read the recording)
+  const own = errors.filter(e => !(useWebkit && /from accessing a frame with origin/.test(e)));
+  ok(own.length === 0, `${label} walk-through: no errors on the page: ${own.join('; ')}`);
+  await context.close();
+}
+
+// A guest who sent their notes and can't add more: review mode is off in the frame, and showing our pages still records
+// it
+async function sentGuestChecks(context, label) {
+  recorded.starts.length = recorded.events.length = 0;
+  reviewOff = true;
+  await room(context, (ws, ev) =>
+    ws.send(
+      JSON.stringify({
+        type: 'room',
+        you: 'p1',
+        key: 'k-walk',
+        people: people(['p1', ev.name]),
+        agent: { name: 'Ada', look: 'ada' },
+      }),
+    ),
+  );
+  const page = await context.newPage();
+  const errors = errorsOf(page);
+  page.on('console', m => m.type() === 'error' && !shooting && errors.push(`${m.text()} (${m.location().url})`));
+  await page.goto(`${base}/join/${WALK}`);
+  await page.fill('#name', 'Sam Walker');
+  await page.click('.join >> nth=0');
+  await page.waitForSelector('body.min .callbubble');
+  await page.waitForFunction(() => !document.querySelector('.cb-eye').hidden, null, { timeout: 10_000 });
+  const frame = page.frameLocator('iframe.walk');
+  await frame.locator('#buy').click();
+  await sleep(2400);
+  const inFrame = page.frames().find(f => f.url().startsWith(preview));
+  ok(
+    customs(0, 'tap').some(e => e.data.payload.label === 'Add to basket') &&
+      !(await inFrame.evaluate(() => window.__reviewMode ?? false)),
+    `${label} walk-through, a guest who sent their notes: no review mode in the frame, the eye shows and the tap is recorded`,
+  );
+  await page.click('.cb-hangup');
+  await page.waitForSelector('.over:not([hidden])');
+  const own = errors.filter(e => !(useWebkit && /from accessing a frame with origin/.test(e)));
+  ok(own.length === 0, `${label} walk-through, a guest who sent their notes: no errors on the page: ${own.join('; ')}`);
+  reviewOff = false;
+  await context.close();
+}
+
 async function languages(context) {
   const page = await context.newPage();
   await page.goto(`${base}/join/${TOKEN}?later`);
@@ -557,6 +790,8 @@ try {
           'full',
         );
       }
+      await walkChecks(await browser.newContext({ ...size, permissions: ['microphone'] }), label);
+      await sentGuestChecks(await browser.newContext({ ...size, permissions: ['microphone'] }), label);
       await context.close();
     }
   console.log(
@@ -565,6 +800,7 @@ try {
 } finally {
   await browser.close();
   server.close();
+  previewServer.close();
   line?.process.kill();
   rmSync(DATA, { recursive: true, force: true });
 }

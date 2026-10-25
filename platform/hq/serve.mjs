@@ -20,9 +20,10 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     // (and the keys' motion, the statistics and the signs Slate shares, shared/tactile/, shared/stats/ and shared/signs/
     // with the contrast sums it imports.)
     const sharedKit = /^shared\/(tactile|stats|signs|contrast)\/[a-z]+\.js$/.test(path);
-    // (and review mode's framing rule, which HQ's note thumbnails import, the platform's sound kit, its button that asks
-    // once more and its contrast sums, and the holidays' table and the shared formats the clock imports)
-    const review = { '__review/frame.js': 'shared/review/frame.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
+    // (and review mode's framing rule, which HQ's note thumbnails import, its pen, which the Sketchbook draws with, the
+    // platform's sound kit, its button that asks once more and its contrast sums, and the holidays' table and the shared
+    // formats the clock imports; the pen)
+    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
       'shared/holidays/holidays.js': 'shared/holidays/holidays.js', 'shared/format/format.js': 'shared/format/format.js' }[path];
     const body = path.includes('..') ? null : files[path] ?? await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
       : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null);

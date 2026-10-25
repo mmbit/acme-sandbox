@@ -99,16 +99,17 @@ const FILES: [string, string, RegExp][] = [
 // job that heard it (calls.job: its follow-up, or for a call about a request the job that heard it, jobs.ts tell()),
 // once that job is done. The CEO's intercom chat job hears calls too: its last message is a reply in a conversation,
 // not a report, and never a summary. A call that carried on from a customer call (calls.resumes: its briefing had that
-// call's transcript) is about the customer too, from its start (customer_before). One that carried on from a card for keys
-// is its own agent's too, through any further call that carried on from it (own_only).
+// call's transcript) is about the customer too, from its start (customer_before), and so is a call a look-up on it
+// handed a customer's details (customer_read: jobs.ts readerHanded). One that
+// carried on from a card for keys is its own agent's too, through any further call that carried on from it (own_only).
 //
-const CALLS = `select *, customer_card or customer_data or customer_before customer from (select c.id, c.ts, c.agent, c.request, c.lines, c.job, c.status = 'live' live,
+const CALLS = `select *, customer_card or customer_data or customer_read or customer_before customer from (select c.id, c.ts, c.agent, c.request, c.lines, c.job, c.status = 'live' live,
   ${keysCondition()} own_only,
-  coalesce(r.customers, 0) customer_card,
+  coalesce(r.customers, 0) customer_card, c.customers customer_read,
   sj.agent heard_by, sj.kind heard_kind, sj.status heard_status, sj.result summary, coalesce(sj.customers, 0) customer_data,
   coalesce(sj.kind = 'work' and sj.status = 'done' and coalesce(sj.result, '') != '', 0) reported,
   exists (select 1 from json_each(c.resumes) e join calls ec on ec.id = e.value left join requests er on er.id = ec.request
-    left join jobs ej on ej.id = ec.job where coalesce(er.customers, 0) or coalesce(ej.customers, 0)) customer_before   --
+    left join jobs ej on ej.id = ec.job where coalesce(er.customers, 0) or coalesce(ej.customers, 0) or ec.customers) customer_before   --
   from calls c left join requests r on r.id = c.request left join jobs sj on sj.id = c.job)`;
 const ENDED = 'not live';
 // Kind work only: reviews are the panel's, and the CEO's intercom chat is a conversation with the board, not a report.
@@ -530,7 +531,7 @@ export async function search(q: unknown, reader: Reader, limit?: unknown) {
   const query = String(q ?? '').trim();
   if (!query) return 400;
   const { hits, terms, words } = await ranked(query, reader, clamp(limit, 8));
-  if (hits.some(h => aboutCustomer(h.doc))) jobs.handedCustomerData(reader.id);
+  if (hits.some(h => aboutCustomer(h.doc))) jobs.readerHanded(reader);
   if (hits.some(h => aboutKeys(h.doc))) jobs.handedKeys(reader.id);
   return { ...(words ? { words } : {}), hits: hits.map(h => ({ source: h.source, title: h.title, pointer: h.pointer, snippet: snippet(h.body, terms),
     score: Number(h.score.toFixed(4)), ...(h.source === ARCHIVE ? { archived: true, note: h.note } : {}) })) };
@@ -574,7 +575,7 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
     left join jobs j on j.id = r.job where coalesce(j.agent, r.agent) = ? and r.kind != 'login'${where('request', 'r.id')} order by r.id desc limit ?`).all(agent, n) as any[];
   const calls = db.prepare(`${CALLS} where agent = ? and not live${where('call', 'id')} order by id desc limit ?`).all(agent, n) as any[];
   const reportShown = (j: { id: number; customers: number }) => jobs.readsReport(j, reader), cardShown = (r: { id: number }) => jobs.readsCard(r.id, reader);
-  if (done.some(j => j.customers && reportShown(j)) || requests.some(r => r.customers && cardShown(r))) jobs.handedCustomerData(reader.id);   // (a call here is only its number)
+  if (done.some(j => j.customers && reportShown(j)) || requests.some(r => r.customers && cardShown(r))) jobs.readerHanded(reader);   // (a call here is only its number)
   if (done.some(j => j.report && reportShown(j) && keysReport(j.id))) jobs.handedKeys(reader.id);
   return { agent,
     // (a review loop's job by its full name, its step and round with the work's title: nameOf.)
@@ -593,7 +594,7 @@ export async function history(reader: Reader, q: unknown, limit?: unknown) {
 export function call(id: unknown, reader: Reader) {
   const c = callRow(Number(id) || 0), access = canRead(c, reader);
   if (access !== true) return access;
-  if (c.customer) jobs.handedCustomerData(reader.id);
+  if (c.customer) jobs.readerHanded(reader);
   if (c.own_only) jobs.handedKeys(reader.id);
   const base = { id: c.id, ts: c.ts, agent: c.agent, request: c.request, job: c.job };
   const by = c.heard_by && `job #${c.job}, ${who(c.heard_by)}'s`;

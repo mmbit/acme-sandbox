@@ -706,6 +706,30 @@ test('hq care: the job HQ handed the card reads the problem in general words (ne
   for (const j of [job, other, owner]) await h.finish(j);
 });
 
+test("an email reply saved by the board stays with the board when care answers or its want expires", async t => {
+  const org = `${repo}/company/org.yaml`, before = readFileSync(org, 'utf8');
+  writeFileSync(org, before.replace(/^roles:\n/m, 'roles:\n  care: wren\n'));
+  try {
+    for (const outcome of ['draft', 'limit', 'expired']) await t.test(outcome, async () => {
+      const c = await cardOfMail((await toCompany(`board-${outcome}@example.org`, 'Where is my parcel?')).id);
+      const reply = 'I checked your parcel. It arrives tomorrow.';
+      assert.equal((await boardCall('/api/care/draft', { id: c.id, was: await shown(c.id), text: reply })).status, 200);
+      if (outcome === 'expired') care.expireWants(Date.now() + (care.WANT_MINUTES + 1) * 60_000);
+      else {
+        const answer = outcome === 'draft' ? { draft: 'We will check your parcel.', lang: 'en' } : { none: 'limit' };
+        assert.equal((await drafted(c, answer)).status, 200);
+      }
+      const kept = await one(c.id);
+      assert.deepEqual([kept.status, kept.job, kept.draft], ['waiting', null, reply]);
+      assert.equal((await careState()).drafts.some((w: any) => w.case === c.case), false);
+      assert.equal((await boardCall('/api/care/draft', { id: c.id, was: reply, text: `${reply} Thank you.` })).status, 200);
+      assert.equal((await one(c.id)).draft, `${reply} Thank you.`);
+    });
+  } finally {
+    writeFileSync(org, before);
+  }
+});
+
 test('a customer waiting on a person goes to roles.care to investigate: its job alone reads the whole card, drafts with what it found, or passes it on; the board\'s if it ends without', async () => {
   const org = `${repo}/company/org.yaml`, before = readFileSync(org, 'utf8');
   writeFileSync(org, before.replace(/^roles:\n/m, 'roles:\n  care: wren\n'));
@@ -782,6 +806,7 @@ test('a customer waiting on a person goes to roles.care to investigate: its job 
       await unanswered(u);
       const t = await one(u.id);
       assert.equal(t.status, 'team');
+      assert.ok(!t.lines.some((l: any) => l.who === 'note' && /write the reply yourself/i.test(l.text)), 'the team has the card, so the board is not told to write its reply');
       assert.match((db.prepare('select prompt from jobs where id = ?').get(t.job) as any).prompt, /, language not read yet \(the one they wrote in\)\./);
       unreadJobs.push(t.job);
     }

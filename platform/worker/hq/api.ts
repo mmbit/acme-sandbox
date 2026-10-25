@@ -60,6 +60,8 @@ async function request(route: string, options: CallOptions): Promise<{ status: n
     payload = Buffer.from(JSON.stringify(body));
   }
   if (payload !== undefined) headers['content-length'] = String(payload.length);
+  // (HQ holds a job past its share of its time no longer than this leaves room for its answer)
+  if (timeoutMs) headers['x-hq-wait-ms'] = String(timeoutMs);
   const started = Date.now();
   try {
     return await new Promise((resolve, reject) => {
@@ -68,6 +70,7 @@ async function request(route: string, options: CallOptions): Promise<{ status: n
         url,
         { method, headers, agent: false },
         answer => {
+          tellRein(answer.headers['x-hq-rein']);
           const chunks: Buffer[] = [];
           answer.on('data', (chunk: Buffer) => chunks.push(chunk));
           answer.on('end', () => resolve({ status: answer.statusCode ?? 0, bytes: Buffer.concat(chunks) }));
@@ -85,6 +88,11 @@ async function request(route: string, options: CallOptions): Promise<{ status: n
   } catch (error) {
     throw unreachable(error, url, Date.now() - started, timeoutMs);
   }
+}
+
+// A job past its share of HQ's time hears it on every answer, with what to do (the coordinator's reins.ts)
+function tellRein(words: string | string[] | undefined) {
+  if (words) console.error(`hq: ${words}`);
 }
 
 export async function get(route: string): Promise<string> {
@@ -126,6 +134,30 @@ export async function createOnce(
   }
   const refused = failure ? failure.sentNothing : isRefusal(answer.status);
   return { made: false, refused, status: answer.status, error: errorIn(answer.body), failure: failure?.message };
+}
+
+// A call that changes something (cancel, a pause, a window, a plan's thread): the answer of a change HQ made (2xx with
+// JSON) or refused (4xx: HQ says why, and nothing changed), for the command to word. Anything else may have come after
+// HQ made it (no answer, a dropped connection, a time-out, a server error, an answer that isn't JSON): hq stops with
+// exit 3, "Not confirmed", so a retry checks first and never does it twice. No connection at all (6, 7) sent nothing and
+// keeps its own exit code.
+export async function change(route: string, options: CallOptions = {}): Promise<Answer> {
+  let answer: Answer;
+  try {
+    answer = await call(route, options);
+  } catch (error) {
+    if (error instanceof ApiError && !error.sentNothing)
+      stop(
+        `Not confirmed: HQ may or may not have made the change (${route}: ${error.message}). Check before doing it again.`,
+        3,
+      );
+    throw error;
+  }
+  if (isRefusal(answer.status) || (isSuccess(answer.status) && parseOrNull(answer.body) !== null)) return answer;
+  return stop(
+    `Not confirmed: HQ may or may not have made the change (${route}: HTTP ${httpCode(answer.status)}). Check before doing it again.`,
+    3,
+  );
 }
 
 // A read HQ may refuse this job (hq mail, hq orders: org.yaml's roles decide). A refusal stops hq with HQ's reason.

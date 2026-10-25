@@ -20,6 +20,7 @@ import {
 } from './matching.ts';
 import { play, type Outlook, type Planned, type QueuedJob, type Size, type Snapshot } from './eta.ts';
 import { snapshot } from './backlog.ts';
+import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
 import { history, latestGiven } from './sizes.ts';
@@ -157,12 +158,14 @@ export function outlooks(now = Date.now(), planned: SizedPlan[] = [], paces: Pac
 export function played(now = Date.now(), planned: SizedPlan[] = [], paces: Pace[] = ['usual', 'slow']) {
   const { snapshot: queue, sizes, sizedBy } = prepared(now, planned, paces);
   const empty = new Map<number, Outlook>();
+  // (the order the work goes in rests on the queue's planning sizes alone: worked out once for both paces)
+  const order = playOrder(queue, sizes.slow);
   return {
     snapshot: queue,
     sizes,
     sizedBy,
-    usual: paces.includes('usual') ? play(queue, sizes.usual, { pace: 'usual' }) : empty,
-    slow: paces.includes('slow') ? play(queue, sizes.slow, { pace: 'slow' }) : empty,
+    usual: paces.includes('usual') ? play(queue, sizes.usual, { pace: 'usual', order }) : empty,
+    slow: paces.includes('slow') ? play(queue, sizes.slow, { pace: 'slow', order }) : empty,
   };
 }
 // The snapshot and each pace's sizes, ready to play: hq when plays them several ways (when.ts).

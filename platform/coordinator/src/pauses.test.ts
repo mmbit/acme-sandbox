@@ -13,6 +13,7 @@ const { read } = await import('./followthrough.ts');
 const { agreements } = await import('./agreements.ts');
 const { snapshot } = await import('./backlog.ts');
 const { ceo } = await import('./company.ts');
+const { moveJob } = await import('./regroup.ts');
 const { agreed } = await followthroughFixture(h);
 
 const reset = () =>
@@ -220,6 +221,107 @@ test('hq job onto a paused thread is queued and told it is held; the play holds 
   const id = Number(/Queued job #(\d+)/.exec(out.out)![1]);
   const played = snapshot(Date.now()).jobs.find(j => j.id === id)!;
   assert.deepEqual(played.waitsFor, [gate.id], 'the play starts it after the job the pause waits for');
+});
+
+test('a pause of the work in no thread holds it, a fix round and review there too, and lets it go as it lifts', async () => {
+  reset();
+  const [view, gates] = [thread('view', 'shop'), thread('gates', 'shop')];
+  const work = h.queue({ agent: 'kit' });
+  const fix = h.queue({ agent: 'kit', stage: 'fix', pr: 9, branch: 'job/77' });
+  const review = h.queue({ agent: 'rook', kind: 'review', pr: 9 });
+  const meeting = h.queue({ agent: 'wren', kind: 'meeting' });
+  const expedited = h.queue({ agent: 'moss', expedite: true });
+  const followUp = h.queue({ agent: 'bolt', title: 'Follow up on your call with the board' });
+  h.storedCall(1, 'bolt', followUp);
+  const onThread = h.queue({ agent: 'moss', thread: view });
+  const gate = await h.start({ agent: 'moss', thread: gates });
+  assert.equal(
+    pauses.pause({ project: 'unsorted', why: 'No new start' }, 'wren'),
+    `only ${ceo()} (work in no thread's owner) or the CEO pauses unsorted`,
+  );
+  assert.match(
+    pauses.pause({ project: 'unsorted', why: 'No new start', until: [work] }, ceo()) as string,
+    new RegExp(`#${work} is on work in no thread, which the pause would hold`),
+  );
+  const p = pause({ project: 'unsorted', why: 'No new start without a deadline', until: [gate.id] });
+  assert.equal(p.held, 3, 'the work, the fix round and the review');
+  for (const id of [work, fix, review]) assert.equal(await h.claim(engineOf(id)), null, `#${id} is held`);
+  assert.deepEqual(h.job(work).wakes, ['paused with work in no thread'], 'the projects view says what holds it');
+  assert.match(h.jobs.openJobs({}).find(j => j.id === fix)!.line, /queued paused with work in no thread:/);
+  assert.deepEqual(snapshot(Date.now()).jobs.find(j => j.id === work)!.waitsFor, [gate.id], 'the play holds it too');
+  const proposed = snapshot(Date.now(), [{ id: -1, agent: 'kit', title: 'Proposed work', engine: engineOf(work) }]);
+  assert.deepEqual(proposed.jobs.find(j => j.id === -1)!.waitsFor, [gate.id], 'proposed work waits for the gate too');
+  assert.equal(h.jobs.pausedOn(meeting), null, "a meeting's seat isn't held");
+  for (const id of [expedited, followUp, onThread])
+    assert.equal((await h.claim(engineOf(id)))?.id, id, `#${id} runs: expedited, the call's follow-up, on a thread`);
+
+  await merge(gate, 81);
+  pauses.sweep();
+  assert.deepEqual(pauses.open(), [], 'lifted by itself');
+  for (const id of [work, fix, review]) assert.equal((await h.claim(engineOf(id)))?.id, id, `#${id} starts`);
+});
+
+test('a pause of the work in no thread waits only for work that can run and merge under it', async () => {
+  reset();
+  const gates = thread('gates', 'shop');
+  const followUp = h.queue({ agent: 'bolt', title: 'Follow up on your call with the board' });
+  h.storedCall(1, 'bolt', followUp);
+  const expedited = h.queue({ agent: 'moss', expedite: true });
+  const afterFollowUp = h.queue({ agent: 'moss', thread: gates, after: followUp });
+  const afterExpedited = h.queue({ agent: 'moss', thread: gates, after: expedited });
+  const why = 'No new start without a deadline';
+  assert.match(
+    String(pauses.pause({ project: 'unsorted', why, until: [followUp] }, ceo())),
+    new RegExp(`#${followUp} is on work in no thread, which the pause would hold`),
+    "the call's follow-up runs, but its review would wait",
+  );
+  assert.match(
+    String(pauses.pause({ project: 'unsorted', why, until: [afterFollowUp] }, ceo())),
+    new RegExp(`#${afterFollowUp} needs #${followUp} first, on work in no thread, which the pause would hold`),
+  );
+  const p = pause({ project: 'unsorted', why, until: [afterExpedited] });
+  assert.deepEqual(
+    p.until.map(u => u.id),
+    [afterExpedited],
+    'expedited work merges on its checks, ahead of its review',
+  );
+});
+
+test('work the pause of the work in no thread holds moves to a thread only once it lifts', async () => {
+  reset();
+  const view = thread('view', 'shop');
+  const work = h.queue({ agent: 'kit' });
+  const followUp = h.queue({ agent: 'bolt', title: 'Follow up on your call with the board' });
+  h.storedCall(1, 'bolt', followUp);
+  pause({ project: 'unsorted', why: 'No new start' });
+  assert.match(
+    String(moveJob(work, view, 'kit')),
+    /holds this work where it is/,
+    'its lead may move it, not out of the hold',
+  );
+  assert.equal(h.job(work).thread, null);
+  assert.equal(typeof moveJob(followUp, view, 'bolt'), 'object', 'what the pause lets go moves');
+  assert.equal(typeof pauses.resume({ project: 'unsorted' }, 'kit'), 'string', 'only the CEO resumes it');
+  assert.deepEqual(pauses.resume({ project: 'unsorted' }, ceo()), { ok: true, target: 'unsorted' });
+  assert.deepEqual(moveJob(work, view, 'kit'), { thread: view, jobs: [work] });
+});
+
+test('work the pause of the work in no thread holds goes onto a thread by an item link only once it lifts', async () => {
+  reset();
+  const view = thread('view', 'shop');
+  const work = h.queue({ agent: 'kit' });
+  const followup = await h.start({ agent: ceo() });
+  const { item } = agreed({ kind: 'task', status: 'open' }, Date.now(), ceo(), { job: followup.id });
+  pause({ project: 'unsorted', why: 'No new start' });
+  const link = () => h.agent('item-link', followup.token, { id: item, to: { job: work }, thread: view });
+  const refused = await link();
+  assert.equal(refused.status, 400);
+  assert.match(refused.body.error, /holds this work where it is/);
+  assert.equal(h.job(work).thread, null);
+  assert.deepEqual(pauses.resume({ project: 'unsorted' }, ceo()), { ok: true, target: 'unsorted' });
+  const linked = await link();
+  assert.equal(linked.status, 200, JSON.stringify(linked.body));
+  assert.equal(h.job(work).thread, view);
 });
 
 test("the follow-through read lists the pauses first, with the board's item and the work still running on them", async () => {

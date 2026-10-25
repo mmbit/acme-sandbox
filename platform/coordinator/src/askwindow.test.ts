@@ -37,11 +37,7 @@ async function intercom() {
   const turn = db.prepare("select id from jobs where kind = 'chat' order by id desc limit 1").get() as { id: number };
   return (chat = (await h.claimJob(turn.id)).token);
 }
-const liveCall = async (agent: string) => {
-  const ctx = await h.voice(`call-context?agent=${agent}&request=0`);
-  assert.equal(ctx.status, 200, JSON.stringify(ctx.body));
-  return ctx.body.token as string;
-};
+const liveCall = async (agent: string) => (await h.liveCall(agent)).token;
 // The CEO's messages from this test on.
 let since = 0;
 const toCeo = () =>

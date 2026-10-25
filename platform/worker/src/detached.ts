@@ -175,8 +175,16 @@ export type RunRecord = {
 export type Checks = { body: Record<string, unknown>; spent: unknown; runs: Record<string, CheckRun> };
 // A check launched (and when, for its time in the log and a lent launch's limit ms), or none while it waits for its
 // turn. lent: the launch sends it to a lent machine's helper (pushchecks.ts CheckSpec). stopped: what the job's shares
-// stopped of it, so it couldn't complete (worker.ts stopProcess). (ms, lent);
-export type CheckRun = { launched?: Launched; began?: number; ms?: number; lent?: boolean; stopped: string[] };
+// stopped of it, so it couldn't complete (worker.ts stopProcess). unreached: its launches in a row that lost HQ
+// (pushchecks.ts runCheck). (ms, lent);
+export type CheckRun = {
+  launched?: Launched;
+  began?: number;
+  ms?: number;
+  lent?: boolean;
+  stopped: string[];
+  unreached?: number;
+};
 export const recordOf = (runs: string, job: number) => `${runs}/${job}.json`;
 export function keepRecord(runs: string, r: RunRecord) {
   assertOwned();

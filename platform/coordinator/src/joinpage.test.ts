@@ -57,9 +57,56 @@ test("the agent's own drawing, or the platform's figure when it has none or one 
   }
 });
 
-test("the assets are the page script, the drawing script, the call's audio and the microphone worklet, nothing else", () => {
-  for (const name of ['join.js', 'figure.js', 'callaudio.js', 'mic-worklet.js'])
+test("a walk-through link says what the agent sees and keeps, and asks with two buttons of equal weight; an ordinary link keeps today's words", () => {
+  const walk = { url: 'https://shop.preview.example/start', hosts: ['https://shop.preview.example'], what: 'the shop' };
+  const { html, csp } = joinPage(view({ walk }));
+  assert.match(html, /A walk-through of the shop with Ada from Testco/);
+  assert.match(html, /Ada is an AI assistant\. We keep a written transcript of this call, never its sound\./);
+  assert.match(
+    html,
+    /Ada also sees our pages as you use them, never another tab or app\..*Pause stops it at any time\./,
+  );
+  const buttons = [...html.matchAll(/<button type="submit" class="([^"]+)"[^>]*>([^<]+)</g)].map(m => [m[1], m[2]]);
+  assert.deepEqual(buttons, [
+    ['join', 'Join and show our pages'],
+    ['join', 'Join without showing them'],
+  ]);
+  // Enter in the name field must not choose: the form's first (default) button is disabled
+  assert.match(html, /<form class="joinform"[^>]*>(?:(?!<button)[\s\S])*<button type="submit" hidden disabled/);
+  assert.match(html, /<iframe class="walk" data-src="https:\/\/shop\.preview\.example\/start"/);
+  // the page's own parts never reach a recording: only the frame is outside the hidden part
+  assert.match(html, /<body[^>]*><div class="own" data-watchalong-hide>/);
+  assert.match(html, /<\/div>\n<iframe class="walk"/);
+  assert.match(csp, /frame-src 'self' https:\/\/shop\.preview\.example; style-src-attr/);
+  assert.doesNotMatch(csp, /worker-src/); // (the join page draws no canvas: nothing to sample)
+
+  const ordinary = joinPage(view());
+  assert.match(ordinary.html, /never a recording\./);
+  assert.doesNotMatch(ordinary.html, /<iframe class|class="notice watch"/);
+  assert.equal([...ordinary.html.matchAll(/type="submit"/g)].length, 1);
+  assert.doesNotMatch(ordinary.csp, /frame-src/);
+  const dutch = joinPage(view({ walk, lang: 'nl' })).html;
+  assert.match(dutch, /Een rondleiding door the shop/);
+  assert.match(dutch, />Deelnemen en onze pagina’s laten zien<.*>Deelnemen zonder ze te laten zien</s);
+  const german = joinPage(view({ walk, lang: 'de', words: { walkNotice: '{agent} ist eine KI.' } })).html;
+  assert.match(german, /Ada ist eine KI\./);
+  assert.match(german, />Beitreten und unsere Seiten zeigen<.*>Beitreten, ohne sie zu zeigen</s);
+});
+
+test("the assets are the page's scripts, the call's audio and microphone worklet, and a walk-through's bubble and recorder, nothing else", () => {
+  for (const name of [
+    'join.js',
+    'figure.js',
+    'people.js',
+    'callaudio.js',
+    'mic-worklet.js',
+    'walk.js',
+    'callbubble.js',
+    'watchalong.js',
+    'vendor/rrweb-record.js',
+  ])
     assert.match(joinAsset(name)!.type, /^text\/javascript/);
   assert.match(joinAsset('mic-worklet.js')!.body, /registerProcessor\('mic'/);
-  for (const name of ['../joinpage.ts', 'joinpage.ts', 'toString', '__proto__']) assert.equal(joinAsset(name), null);
+  for (const name of ['../joinpage.ts', 'joinpage.ts', 'vendor/record.js', 'toString', '__proto__'])
+    assert.equal(joinAsset(name), null);
 });

@@ -106,6 +106,46 @@ in the order the board picked them: HQ sends a number only once the pictures pic
 and the line keeps each picture's place from when its number came, so one still being fetched holds back the ones after
 it.
 
+A walk-through: the caller shows our pages while they talk (the board on its HQ call, a guest in a call out's room;
+the phone has no screen and never asks), and the coordinator keeps a live mirror of their screen
+(`shared/watchalong`).
+
+With each of the caller's turns (an unprompted pictures-only one too) the line asks the
+coordinator's `screen-turn` (`{purpose, ref, after, seen, briefed}`: `call` and the call's number, or `callout` and the
+call out's) within 1.5 s, as it sits between the caller's last word and the model: no answer in time, or a refusal,
+and the turn goes as it would have, with one log line, and an agent that has seen the screen this session hears it
+couldn't be read (its moments come with the next turn). With a watch-along on, the turn's message carries, in front of
+the caller's words, the coordinator's briefing until the session has had it, then the moments since the agent's last
+turn as lines (`#12 17:03:12 tapped "Add to basket" (button)`), and, after any shared pictures, a picture of the screen
+as their turn ended when it changed since the last one the session has.
+
+Screen pictures count against the same 20 MB
+as shared ones, and a call has at most 40 of them, the screen tool's included; past either, lines only, and the agent
+hears once that pictures have stopped.
+
+Paused, the agent hears once that the caller paused showing their screen, and
+gets nothing more (the tool refuses too) until it's on again.
+
+The transcript gets one line for a turn with moments,
+before the caller's words (`Board: (on screen: #12 ...; #13 ...; a picture of the screen went with it)`): paths,
+labels and "typed", never values, as the coordinator words them.
+
+A restarted session has neither the briefing nor the
+picture, and gets both again.
+
+The agent's `screen` tool (below) asks through the line, never with the call's token:
+the line listens on its own socket (`/data/call/screen.sock`, 0600), and each session's CLI gets its path and a key of
+its own in its environment (`SCREEN_SOCKET`, `SCREEN_KEY`: `hq` never gets them). The line finds the call by the key
+(a restarted session's new one; an ended call's answers nothing), refuses on a call with no screen, while paused and
+past the budget, and otherwise asks the coordinator's `screen` and counts the picture.
+
+The board's sketches: the agent's `sketch` tool, on the board's own calls,
+shows a sketch from the board's Sketchbook by its number or a few words of its label, through the same socket and key (a
+`sketch` ask; the phone has no key, so no sketches there). The line refuses it on a call out (the partner's words could steer a look-up) and past the 20 MB, asks
+the coordinator's `sketch` (`{call, sketch}`: a live call's only) and counts the picture against the 20 MB, not the
+screen's 40. The coordinator sends a PNG at most 1568 px on its long side, with a line saying which sketch it is and
+when it was drawn and last changed; a label that matches several gives the latest with something drawn and names the
+rest, and one that matches none lists the latest sketches.
 The transcript is written to the line's volume as the call goes, the board's words as each piece is heard, even ones
 not answered yet: while the board talks on, a pause that sounds finished sends the message so far and its next words take it back, so a
 long message may exist nowhere else until the board stops. If the line restarts mid-call, it hands that transcript over
@@ -154,16 +194,37 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
 - `pin_words(pin, words)` and `pin_sent(pin, job | answered)`: on a call the board rang from HQ's Reviews about the notes
   it ticked (`pins` in HQ's hello, then call-context's body; the briefing lists them, and their screenshots and the
   pictures added to them, each named by its kind, go with the session's first message, a restarted one's too
-  <!-- -->): new words for a pin, or the pin sent with the job queued for it or as
+ ): new words for a pin, or the pin sent with the job queued for it or as
   answered on the call. The answer tells the agent to say plainly which of the board's notes went to which work, by what
   they are. Starting the call sends no pin; one left
   waits in HQ.
+- `manage(command)`: run one of hq's management commands as its words (`["cancel", "123", "why"]`).
+  `hq_tools.py`'s `MANAGE` defines the commands and subcommands. Others are refused before hq runs.
+  The coordinator opens their routes to the call token (`server.ts` `MANAGE_ROUTES`) and applies its
+  own rules on who may do what, as for the agent's jobs: the CEO's call may cancel any agent-queued job, a colleague's
+  only its own. Its short lines (a why, a name) go as hq's arguments, as off the call. The agent says aloud what it did,
+  which is what its follow-up reads in the transcript; the briefing tells it to act on the call, never leave it to the
+  follow-up. A change whose answer is lost (no answer, a server error, an answer that isn't JSON) stops hq with exit 3
+  (`api.ts` `change`), which the tool answers as not confirmed, to check before doing it again; exit 1 is a refusal
+  or a wrong command, 6 and 7 reached no HQ. On a call about a customer's details (its card, or a look-up on the call
+  that handed it them) a change carrying the agent's words (a why, a name, a title, a topic) is refused (`server.ts`
+  `CUSTOMER_CALL_SHUT`): they would reach HQ's feed and colleagues who don't hold them. One that only names what's
+  there or sets a number or a time goes ahead. What's left
+  out of `MANAGE` speaks as a job a call doesn't have, needs a job's folder, would pass by the marking of who holds a
+  customer's details, or (a card's rewrite, an Overseer note) would carry misheard words or have no run to release it.
+- `screen(at?, region?, since?)`: on a walk-through, the caller's screen through the voice line (above), on the board's
+  calls and a partner's: now (1568 px), at a past moment (`at`: `-20s`, `17:03:12` or `#12`), a `region` zoomed (`x`,
+  `y`, `width`, `height` as fractions of the screen), or the moment list `since` a time. A picture comes with its
+  moment's line.
 - `search`, `history`, `call` and `intercom`: read-only look-ups (below); they put nothing anywhere. <!-- intercom: -->
 - `eta(query)`: where planned work stands now. `hq projects <words>` finds the open threads a project's or thread's name
   or a few words name ("The checkout", "the levels") and answers each with its ETA, agent time left, window
   (planned finish, deadline, slack or by how much it misses), what it waits on and what goes on next, all by name: the
   coordinator's `outlooks.ts findOutlooks` reads the forecast as last played (the same outlook `hq thread` and the projects view
-  show), so it answers in well under a second. Read-only.
+  show), so it answers in well under a second. A card a thread waits on reads "the board: <its title>". With no query
+  it runs `hq now` (the coordinator's `goingon.ts`, the same words the briefing opens its company section with, fresh):
+  everyone HQ counts at work, each on its run with its seat, thread and window and, while a hold is on, why it runs;
+  then each open desk phone card with the work that waits on it. Read-only.
 - `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
   finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
 - `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish.
@@ -222,6 +283,19 @@ gets their place back with `rejoin`, which carries the `key` the room message ga
 list shows. Once six places are held, a newcomer takes the place of whoever has been away longest. Words still being recognised when their speaker's place is gone, after a bye or so, go to whoever was
 loudest of those left. The room ends 2 minutes after the last person leaves, or when the agent hangs up
 (everyone hears `hangup`, then 4000), and a link is good for that one call (4004 after).
+
+## Dictation
+
+Review mode writes a note's words down while the board says them (`dictate.py`), with the calls' own VAD and Parakeet.
+`/voice/dictate` is internal: Caddy doesn't route it, and only the coordinator reaches it, for its
+`/__review/dictate` (`feedback.ts`), with this line's token (`Authorization: Bearer`, else 1008) and `?lang=` (the
+board's language, for `unhesitating`; blank for an outside reviewer, whose words are written as heard). In: binary frames of 16 kHz mono 16-bit PCM, any length, then
+`{"type":"end"}` when the mic stops. Out: `{"type":"heard","text","partial"}` with all the words so far, once each
+phrase ends (`partial: false`) and from a look at the phrase still being spoken every 0.8 s of it (`partial: true`, one
+look at a time, beside the audio). After `end` the last phrase ends where the audio did, its words go, then
+`{"type":"done"}` and the line closes. A dictation runs 5 minutes at most (a note's 4,000 characters), and takes in 5 minutes of
+audio at most however fast it comes, then ends the same way with `"limit": true` on `done`. Two run at once: a third is closed at once with 1013 `busy`. Each logs one
+line at its end, how long and how many phrases, never the words. Tests: `test_dictate.py`.
 
 ## A care call on the phone line
 
@@ -421,15 +495,19 @@ other busy processes on the same cores.
 
 Trust (`guard.py`, tested by `test_guard.py`): the line holds `VOICE_TOKEN`, which the coordinator accepts only on
 `/api/voice/*` (call-context, call-end, call-ticket). Each call gets its own call token from call-context, good as that agent
-until call-end revokes it for `hq job` (and the look-ups below) and for putting a promise or a correction of an open
-item on its own call's list (`POST /api/agent/item`), nothing else: it reads no items, and earlier calls as its agent
+until call-end revokes it for `hq job` (and the look-ups below), hq's management commands (`manage`) and for putting a
+promise or a correction of an open item on its own call's list (`POST /api/agent/item`), nothing else of a job's (what
+speaks as the job a call doesn't have: status, cards filed or waited for, a follow-up's items and reply): it reads no items, and earlier calls as its agent
 does (`memory.ts`): any ended call, but one about a card for keys only if it is its own agent's and one about a customer
 only for org.yaml's `roles.customerData`. The call agent runs as the same uid as the line, so
 the line makes itself non-dumpable (its environment and memory in /proc become root's) and hands the agent an
 allowlisted environment. The container sees one Claude seat's token (`/seat`, kept by the worker's keeper), the
 server's checkout of main (`/repo`, read only) and its own `/data`; no other seat, no job's files. The agent's Read,
 Grep and Glob are denied `/seat`, `/data`, `/proc` and the rest, but that only holds for Claude's own tools: the uid can
-read `/seat`, so anything it runs could too. That is why it has no shell: its tools are MCP tools (`hq_tools.py`)
+read `/seat`, so anything it runs could too. That is why it has no shell: a shell could read the seat's sign-in and
+send it anywhere, steered by any text the agent
+reads (a web result, a misheard word). The fence is around the shell, not the management: the agent manages the
+company's work through `manage` as its jobs do through hq. Its tools are MCP tools (`hq_tools.py`)
 that runs hq from an argument list with only the call's `HQ_*` in its environment (never the seat's sign-in), and on a
 call hq takes the brief and the words on stdin and no file (`HQ_CALL`). A call's job is a short title (140 characters) and the
 whole brief (8,000); longer is refused with the reason, never cut (`hq_tools.py` and the coordinator both check), and
@@ -441,8 +519,8 @@ A call out's token opens no coordinator route (`server.ts` `PARTNER_ROUTES` is e
 tools (note, no_transcript and hang_up) and looks nothing up.
 Five more tools, `search`, `history`, `call` (one call in full, by number), `intercom` (the board's intercom: a day
 in full, or lines by words and meaning) and `eta` (where planned work stands), run `hq search`, `hq history`,
-`hq call`, `hq intercom` and `hq projects <words>` read-only. The call token opens the coordinator's search, history,
-call, intercom and outlooks routes. Search and history show shared files and the work their access rules permit,
+`hq call`, `hq intercom` and `hq projects <words>` (`hq now` with no words) read-only. The call token opens the
+coordinator's search, history, call, intercom, outlooks and now routes. Search and history show shared files and the work their access rules permit,
 intercom shows the board's chat, and call reads ended calls subject to the customer and key restrictions
 (`platform/coordinator/src/memory.ts`, `intercom.ts`; the Library note "Memory search"). Outlooks shows matching open
 threads across the company, with their plans, job titles, agent and thread names, and the titles of board cards they

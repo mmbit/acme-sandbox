@@ -6,7 +6,7 @@ import { minute, present, print, stop, text } from './output.ts';
 import { takeValues } from './flags.ts';
 
 const CALL_USAGE =
-  'usage: hq phone call --to <number> | --link --who "<partner>" --about "<words>" --card "<a line for the board>" --lang <en|nl|de> [--at <when>] [--digits <d>] <file | ->, or hq phone call <id>'; // (--card)
+  'usage: hq phone call --to <number> | --link --who "<partner>" --about "<words>" --card "<a line for the board>" --lang <en|nl|de> [--at <when>] [--digits <d>] [--share <id>] <file | ->, or hq phone call <id>'; // (--card)
 
 export const phone = {
   // (--card)
@@ -16,7 +16,7 @@ export const phone = {
                                                      takes them, the account's state and where the number sends a call
                                                      (no keys, no callers' numbers)
    hq phone call --to <number> | --link --who "<partner>" --about "<words>" --card "<a line for the board>"
-                 --lang <en|nl|de> [--at <when>] [--digits <d>] [--topic "<topic>"] <file | ->
+                 --lang <en|nl|de> [--at <when>] [--digits <d>] [--share <id>] [--topic "<topic>"] <file | ->
                                                      a call to an outside partner in your own voice, as an AI, for the
                                                      board to approve on its desk phone (Call or Don't call): a phone
                                                      call to --to (+31 20 123 4567, as written in our line's country, or
@@ -31,7 +31,10 @@ export const phone = {
                                                      card's More. --at: 2026-10-20 14:30 on the company's clock
                                                      (or a UTC time with Z), else as soon as it's approved; a phone call
                                                      goes only within the calling hours. --digits: typed once it answers
-                                                     (a meeting's dial-in: 0-9 # *, w waits half a second). The line
+                                                     (a meeting's dial-in: 0-9 # *, w waits half a second). --share:
+                                                     with --link, a walk-through of a preview the board shared (its
+                                                     share number): the call's page shows it under the call, and the
+                                                     share's people find the call on their invite too. The line
                                                      says first, in fixed words, who you are, that you're an AI, what
                                                      it's about and that a transcript is kept. One call, never
                                                      redialled. When it ends you get a follow-up job. No customer's
@@ -59,7 +62,7 @@ async function fileCall(given: string[]) {
   const linked = given.includes('--link');
   const { values, args } = takeValues(
     given.filter(a => a !== '--link'),
-    ['--to', '--who', '--about', '--card', '--lang', '--at', '--digits', '--topic'],
+    ['--to', '--who', '--about', '--card', '--lang', '--at', '--digits', '--share', '--topic'],
     'No call was filed',
   );
   if (args.length !== 1 || (args[0] !== '-' && !isReadable(args[0]))) stop(CALL_USAGE);
@@ -73,6 +76,7 @@ async function fileCall(given: string[]) {
     why: readWords(args[0]),
     ...(values.at ? { at: values.at } : {}),
     ...(values.digits ? { digits: values.digits } : {}),
+    ...(values.share ? { share: values.share } : {}),
     ...(values.topic ? { topic: values.topic } : {}),
   };
   const answer = await api.orNoAnswer(api.call('callout', { body: api.withSpeaker(call), timeoutMs: 30_000 }));
@@ -96,7 +100,7 @@ async function showCall(id: string) {
   const how =
     call.kind === 'phone'
       ? `a phone call${present(call.ending) ? ` to a number ending ${text(call.ending)}` : ''}`
-      : 'by a join link';
+      : `by a join link${present(call.share) ? `, walking through ${text(call.share.what)}` : ''}`;
   const when = present(call.at) ? `at ${minute(call.at)} UTC` : 'as soon as approved';
   print(
     `Call #${text(call.id)} with ${text(call.who)}, about ${text(call.about)} (${how}, in ${text(call.lang)}, ${when}): ${text(call.status)}`,

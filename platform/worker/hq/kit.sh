@@ -13,7 +13,7 @@ api() { curl -sf -K <(auth) -X POST "$HQ_URL/api/agent/$1" -H "content-type: app
 get() { curl -sf -K <(auth) "$HQ_URL/api/agent/$1"; }
 post() {
   curl -s --max-time 30 -K <(auth) -w '\n%{http_code}' -X POST "$HQ_URL/api/agent/$1" \
-    -H "content-type: application/json" --data-binary @-
+    -H "content-type: application/json" -H "x-hq-wait-ms: 30000" --data-binary @-
 }
 get_unless_refused() {
   local answer

@@ -20,7 +20,7 @@ export const owed = {
 
 async function closeOwed(slug: string | undefined, why: string | undefined) {
   if (!slug || !why) stop('usage: hq owed close <slug> "why"');
-  const answer = await api.call('owed-close', { body: { slug, why }, timeoutMs: 30_000 });
+  const answer = await api.change('owed-close', { body: { slug, why }, timeoutMs: 30_000 });
   if (answer.status !== 200) stop(`Couldn't close it: ${api.errorIn(answer.body, 'no answer')}`);
   print(`${slug} owes the board nothing more.`);
 }

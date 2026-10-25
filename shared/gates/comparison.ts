@@ -1,5 +1,6 @@
 // Base test comparisons shared by worker-started pushes. The owning runner keeps the ticket out of suite environments
 // and helper bundles.
+import { reaching } from './lent.ts';
 
 type Compared = { failed: Set<string>; passed: Set<string>; notInstalled: Map<string, string> };
 type Claim = { test: string; failed?: boolean; yours?: boolean; running?: number };
@@ -15,15 +16,18 @@ export async function compareBase(
   if (!ticket) return run(new Set(tests));
   const code = JSON.parse(ticket);
   if (code.commit !== base) throw new Error('The comparison ticket names a different base commit');
-  const call = async (action: string, tests: unknown) => {
-    const answer = await fetch(`${process.env.HQ_URL}/api/agent/tests/base/${action}`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${process.env.HQ_TOKEN}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ ...code, environment, tests }),
-    });
-    if (!answer.ok) throw new Error(`The base comparison ${action} failed: HTTP ${answer.status}`);
-    return answer.json();
-  };
+  // Retried through an HQ restart like lent.ts's calls; a claim takes the tests, so it is retried only while it never
+  // connected.
+  const call = (action: string, tests: unknown) =>
+    reaching(async () => {
+      const answer = await fetch(`${process.env.HQ_URL}/api/agent/tests/base/${action}`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${process.env.HQ_TOKEN}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...code, environment, tests }),
+      });
+      if (!answer.ok) throw new Error(`The base comparison ${action} failed: HTTP ${answer.status}`);
+      return answer.json();
+    }, action === 'claim');
   const compared: Compared = { failed: new Set(), passed: new Set(), notInstalled: new Map() };
   let pending = tests;
   let reused = 0;

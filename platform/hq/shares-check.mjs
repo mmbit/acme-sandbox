@@ -205,7 +205,7 @@ const rows = (page, scope) =>
   page.$$eval(`${scope} .invites li:not(.none)`, li =>
     li.map(x => [
       x.querySelector('.person b').textContent,
-      x.querySelector('.person .meta:last-child').textContent,
+      x.querySelector('.person .meta:not(.at)').textContent, // (not the last child)
       !!x.querySelector('[data-send-link]'),
       !!x.querySelector('[data-remove]'),
     ]),
@@ -778,7 +778,7 @@ try {
   await tess.click(tool('.fab'), { force: true });
   const tessH1 = await tess.locator('h1').boundingBox();
   await tess.mouse.click(tessH1.x + 40, tessH1.y + tessH1.height / 2);
-  await tess.waitForSelector(tool('.polaroid img'));
+  await tess.waitForSelector(tool('.polaroid canvas')); // (a new mark's screenshot is drawn there)
   await tess.fill(tool('textarea'), 'The headline could be warmer');
   await tess.click(tool('.send'));
   await tess.waitForFunction(
@@ -788,7 +788,7 @@ try {
   );
   await generalNote(tess, 'The privacy pages differ from app to app', 2);
   await tess.click(tool('.more'));
-  assert.deepEqual(await items(tess), ['General note', 'My notes', 'Send my notes']);
+  assert.deepEqual(await items(tess), ['General note', 'My notes', 'Listen as I draw', 'Send my notes']);
   assert.equal(await tess.textContent(tool('.menu .cap')), 'Review · 2 notes to send');
   assert.deepEqual(await tess.evaluate(wrappedMenuLines), [], "Tess's menu, on a desktop");
   await shot(tess, 'menu-tester-desktop');

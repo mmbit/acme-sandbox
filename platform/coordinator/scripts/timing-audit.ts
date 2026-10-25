@@ -44,7 +44,7 @@ const evidenceFor = (runs: Run[]) => ({
   outcomes: [...new Set(runs.map(run => run.outcome))].join(','),
   invalid_runs: runs.filter(run => !(run.minutes > 0)).length,
   unknown_seats: 0,
-  replaced: 0,
+  is_replacement: 0,
 });
 const work = [...runsByJob.values()].filter(runs => runs[0].kind === 'work');
 const terminalDone = work.filter(

@@ -1,7 +1,6 @@
 // A call out's card on the board's desk phone (callouts.ts): what it shows, and its two buttons, Call and Don't call.
 // Call on a phone call dials it if it's due (callsweep.ts); on a link it makes the join link, its hash kept, and the
 // answer carries it for the board to send.
-import { randomBytes } from 'node:crypto';
 import type { IncomingMessage } from 'node:http';
 import { db } from './db.ts';
 import { publish } from './events.ts';
@@ -10,7 +9,7 @@ import { secret } from './secrets.ts';
 import { companyTime } from './company.ts';
 import { answerRequest } from './jobs.ts';
 import { hoursText } from './callrules.ts';
-import { agentName, byRequest, end, HOUR, list, MINUTE, sha256, view, type Callout } from './callouts.ts';
+import { agentName, byRequest, end, HOUR, linkToken, list, MINUTE, sha256, view, type Callout } from './callouts.ts';
 import { dialDue } from './callsweep.ts';
 
 export function card(c: any) {
@@ -46,7 +45,7 @@ export function approve(b: any) {
     at = c.at && Date.parse(c.at) > decided ? Date.parse(c.at) : null;
   let link: { link: string; opens: string; closes: string } | null = null;
   if (c.kind === 'link') {
-    const token = randomBytes(32).toString('base64url');
+    const token = linkToken(c.id);
     const opens = new Date(at ? Math.max(decided, at - 15 * MINUTE) : decided).toISOString();
     const closes = new Date(at ? at + 3 * HOUR : decided + 24 * HOUR).toISOString();
     link = { link: `${ORIGIN}/join/${token}`, opens, closes };
@@ -68,7 +67,7 @@ export function approve(b: any) {
     link
       ? `Approved: a join link for ${c.who}, open from ${companyTime(Date.parse(link.opens))} until ${companyTime(Date.parse(link.closes))} ` +
           "(the company's clock), for one call. The board has it on its card to send them; if they'd rather have it by email, draft " +
-          `one with it (hq mail draft). You get a follow-up job once the call has ended. The link: \`${link.link}\``
+          `one with it (hq mail draft). ${walks(c)}You get a follow-up job once the call has ended. The link: \`${link.link}\``
       : `Approved: ${name} calls ${c.who} ${at ? `at ${companyTime(at)}` : 'now'} (only within the calling hours, ${hoursText()}, ` +
           "the company's clock). One call, never redialled. You get a follow-up job once it has ended.",
   );
@@ -76,6 +75,11 @@ export function approve(b: any) {
   if (c.kind === 'phone') void dialDue().catch(err => console.error('callouts: the dial failed:', err));
   return { ok: true, ...link };
 }
+// A walk-through's link reaches its share's people from their invite too (shares.ts): only they see its pages in the call
+const walks = (c: Callout) =>
+  c.share
+    ? "Everyone on the share it walks through finds the call on their invite too, and only they see the share's pages in it. "
+    : '';
 export function decline(b: any) {
   const c = byRequest(Number(b.id));
   if (c?.status !== 'open') return 404;

@@ -1,9 +1,13 @@
 """The call agent's tools, as a tiny MCP server over stdio in place of a shell (guard.TOOLS, guard.PARTNER)."""
-import json, os, re, subprocess, sys
+import json, os, re, socket, subprocess, sys
 from concurrent.futures import ThreadPoolExecutor, wait
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_*
 HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL') if k in os.environ}
+# The screen tool (and the sketch tool) asks the voice line itself, on its
+# socket, by the session's key (guard.agent_env): the line keeps the call's picture budget and its own token. Neither is
+# here on a call with no screen.
+SCREEN_SOCKET, SCREEN_KEY = os.environ.get('SCREEN_SOCKET', ''), os.environ.get('SCREEN_KEY', '')
 # (the coordinator refuses longer ones from a call too: server.ts, ledger.ts, messages.ts)
 TITLE, BRIEF, WHAT, ADD = 140, 8000, 200, 8000
 PIN_WORDS = 4000  # a pin's words, as long as the note box takes (feedback.ts)
@@ -199,13 +203,18 @@ TOOLS += [
     {'name': 'eta', 'description': 'Where planned work stands now, before you tell the board when it will be done: for '
      "a project or a thread by its name or a few words ('The checkout', 'the game's levels'), each open thread's "
      'ETA, the agent time it has left, its window (the time agreed with the board) with its planned finish and the slack '
-     'that leaves or by how much it misses, what it waits on and what goes on next, all by name, live from the plan '
-     'HQ plays, in a second. For new work, use when. With extra_seat (5x or 20x), replay the whole live plan '
+     'that leaves or by how much it misses, what it waits on (a card as "the board: <its title>") and what goes on next, '
+     'all by name, live from the plan HQ plays, in a second. With no query, what is going on right now, fresh each '
+     "time: everyone HQ counts at work (the board's number), each on its job or review with its seat, thread and "
+     'window and, while a hold is on, why it runs, then every open desk phone card with the work waiting on it. Use it '
+     "whenever the board asks who's working, whether a hold leaks or what a card holds up: your briefing's list is from "
+     'the start of the call. For new work, use when. With extra_seat (5x or 20x), replay the whole live plan '
      'with a hypothetical added Claude Max seat at any time. Returns every project, thread and window before and '
      'after, measured capacity, assumptions and confidence. Query is optional for that replay. Nothing changes.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
-                   'description': "the project's or thread's name, or a few words"},
+                   'description': "the project's or thread's name, or a few words; leave it out for what's going on "
+                   'right now'},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
     {'name': 'estimate', 'description': 'Find clean past jobs with briefs, reports, changed files and actual agent times. Compare their scope yourself before supplying size, refs and why to job, or size to when. Search ranking is only a candidate list, never an estimate.',
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
@@ -225,6 +234,39 @@ TOOLS += [
          'after': {'type': 'integer', 'minimum': 1, 'description': 'the job that must merge before this work starts'},
          'by': {'type': 'string', 'description': "the board's time in UTC: 14:30 or 2026-10-06T14:30Z"},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
+]
+# Managing the company's work on the call: hq's management commands, as the agent runs them off the
+# call, with the coordinator's own rules on who may do what. Each command, and which of its own commands it takes (None:
+# all of them; '': the command alone; '#': a number, to read one). None of them takes a file, waits for the board or
+# speaks as the job a call doesn't have (status, ask, wait, reply, meeting say...). Their short lines go as hq's
+# arguments, as off the call; a brief and the board's words still go on stdin (job, add, reach). The coordinator opens
+# only these commands' routes to a call's token (server.ts MANAGE_ROUTES).
+MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
+          'thread': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
+          'meeting': {'', '#', 'ask', 'asks', 'set', 'join', 'drop'}, 'jobs': None, 'requests': None, 'close': None,
+          'topic': None, 'summary': None, 'followthrough': {''}, 'estimate': {'set'}, 'seat-warning': None,
+          'owed': {'', 'close'}}
+TOOLS += [
+    {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
+     'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
+     '(stop), pause or resume a thread or project (thread pause <project>/<slug> "why", thread resume, project pause, '
+     'project resume), move a job to another thread (job move <job> <project>/<slug>), drop, order or retitle a task '
+     '(plan drop <job> "why", plan move, plan title), draw, rename or close threads (plan thread, plan need, plan rename, '
+     'plan done, thread move), set or lift a window (window <project>/<slug> | <job> <time | none>), a job\'s waits '
+     '(waits), its size (estimate set), projects (project say, new, owner, rename, done), the inbox (inbox, inbox accept, '
+     'inbox drop), meetings (meeting ask, asks, set, join, drop), the desk phone\'s cards (requests, close <card>, topic), '
+     'a product\'s return to the board that its words close (owed, owed close <slug> "why"), a '
+     'decision (decision, decision link), subscription warnings (seat-warning), a stuck pull request back to review '
+     '(review), and reads (jobs, plan '
+     '<project>, thread list, summary, followthrough). HQ allows you what it allows you off the call. It acts at once: '
+     "then tell the board what you did, in plain words: that's what your follow-up reads in the transcript. Never "
+     "promise it for after the call when this can do it now.",
+     'inputSchema': {'type': 'object', 'required': ['command'], 'additionalProperties': False, 'properties': {
+         'command': {'type': 'array', 'minItems': 1,
+                     'items': {'type': 'string', 'minLength': 1},
+                     'description': 'the hq command\'s words after hq, one per item, as on the command line without '
+                     'quotes: ["cancel", "123", "the board dropped it"], ["thread", "pause", "shop/launch-deck", '
+                     '"waits for the board\'s photos"]'}}}},
 ]
 # Ending the call: the agent can hang up once the board has clearly said goodbye.
 # The tool itself does nothing: the voice line sees the agent use it in the reply's stream (server.py, Call.leave) and
@@ -249,6 +291,38 @@ TOOLS += [
      "itself), without asking whether it's done. The line hangs up once your goodbye has played, and if the board "
      'speaks before then, the call stays open.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+]
+# A walk-through: the caller shows our pages, and the line brings the agent the moments since its last turn and a
+# picture of the screen with each of their turns. The screen tool looks closer, on the board's calls and a partner's.
+MOMENT = re.compile(r'^(-[0-9]{1,4}[smh]|[0-9]{1,2}:[0-9]{2}(:[0-9]{2})?|#[0-9]{1,6})$')  # (the coordinator reads it)
+FRACTION = {'type': 'number', 'minimum': 0, 'maximum': 1}
+SCREEN_TOOL = {
+    'name': 'screen', 'description': "The screen of the person on the call, while they show you our pages (a "
+    'walk-through): what is on it now, at a past moment, a part of it zoomed in, or the list of what they did since a '
+    "time. Each of their turns already brings you what they did since your last one and a picture when the screen "
+    'changed: use this for a closer look or to look back. Its pictures share the call\'s picture budget with those, so '
+    'ask for one only when you need it. Never read its lines or numbers out: say what you see, as someone looking over '
+    'their shoulder would.',
+    'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+        'at': {'type': 'string', 'pattern': MOMENT.pattern, 'description': "a past moment, for its picture: '-20s' "
+               "(that long ago), '17:03:12' (a time as the moment lines give it) or '#12' (a moment's number). Left "
+               'out: now'},
+        'region': {'type': 'object', 'required': ['x', 'y', 'width', 'height'], 'additionalProperties': False,
+                   'properties': {k: FRACTION for k in ('x', 'y', 'width', 'height')},
+                   'description': 'a part of the screen to zoom into, in fractions of its width and height (0 to 1) '
+                   'from its top left: {x: 0.5, y: 0, width: 0.5, height: 0.5} is the top right quarter'},
+        'since': {'type': 'string', 'pattern': MOMENT.pattern, 'description': 'instead of a picture, the list of what '
+                  "they did since then: '-2m', '17:03' or '#12'"}}}}
+TOOLS += [SCREEN_TOOL]
+# The board's Sketchbook: a sketch it means on the call, through the line too (it counts the picture in the call's).
+TOOLS += [
+    {'name': 'sketch', 'description': "One of the board's sketches (its Sketchbook in HQ), when it means one on the "
+     "call: by its number ('12') or a few words of its label ('tote bag'). Shows you its picture, with its label and "
+     'when it was drawn and last changed; a label that matches several shows the latest and names the rest, and none '
+     'lists the latest sketches. Its picture stays in the call, so open one only when the board means it.',
+     'inputSchema': {'type': 'object', 'required': ['sketch'], 'additionalProperties': False, 'properties': {
+         'sketch': {'type': 'string', 'minLength': 1, 'maxLength': 200,
+                    'description': "its number, '12', or a few words of its label"}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -275,6 +349,7 @@ PARTNER_TOOLS = [
      'goodbye first, then use this in the same reply. Never on a pause or a silence, or while something is still '
      'open. The line hangs up once your goodbye has played, and if they speak before then, the call stays open.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
+    SCREEN_TOOL,  #.
 ]
 
 
@@ -282,8 +357,8 @@ LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')  # (eta)
 
 
 def look(name, a):
-    """(ok, text): runs `hq search|history|call|intercom` (or `hq projects` for eta) from an argument list, in the
-    allowlisted environment."""
+    """(ok, text): runs `hq search|history|call|intercom` (or `hq projects` for eta, `hq now` for eta with no query)
+    from an argument list, in the allowlisted environment."""
     extra = a.get('extra_seat')
     if name == 'eta' and 'extra_seat' in a and extra not in ('5x', '20x'):
         return False, 'extra_seat takes 5x or 20x'
@@ -293,7 +368,7 @@ def look(name, a):
         if type(cid) is not int or cid < 1:
             return False, 'call needs its number, like 12'
         query = str(cid)
-    elif not isinstance(query, str) or (name in ('search', 'intercom', 'eta', 'estimate') and not query.strip() and not (name == 'eta' and extra)):
+    elif not isinstance(query, str) or (name in ('search', 'intercom', 'estimate') and not query.strip()):
         return False, f'{name} needs a query'
     if len(query) > 500:
         return False, f'query too long ({len(query):,} > 500): ask something shorter'
@@ -305,8 +380,9 @@ def look(name, a):
         'estimate': ['hq', 'estimate', query, *(['--agent', agent] if agent else [])],
         'call': ['hq', 'call', query],
         'intercom': ['hq', 'intercom', query],
+        # (with neither a query nor extra_seat: hq now.)
         'eta': ['hq', 'projects', *([query] if query.strip() else []),
-                *(['--extra-seat', extra] if extra else [])],
+                *(['--extra-seat', extra] if extra else [])] if query.strip() or extra else ['hq', 'now'],
         'history': ['hq', 'history'] + ([query] if query.strip() else []),
     }
     return looked(name, commands[name])
@@ -380,6 +456,8 @@ def hq(name, a):
         return pin(name, a)
     if name == 'reach':
         return reach(a)
+    if name == 'manage':
+        return manage(a.get('command'))
     if name not in ('promise', 'replace'):
         return False, f'no tool {name}: hand work on with job, note a promise with promise'
     what, item, owner = str(a.get('what', '')).strip(), a.get('item'), str(a.get('owner', ''))
@@ -483,6 +561,33 @@ def reach(a):
     return answered(reply, 'Nothing was sent', 'it may or may not have gone')
 
 
+def manage(command):
+    """manage: one of hq's management commands (MANAGE), from an argument list. Its answer is hq's, or why not."""
+    if not (isinstance(command, list) and command and all(type(w) is str and w for w in command)):
+        return False, 'command is the hq command\'s words, one per item, like ["cancel", "123", "why"]'
+    if any('\n' in w or '\r' in w for w in command):
+        return False, 'each word is one line'
+    name, sub = command[0], command[1] if len(command) > 1 else None
+    if name not in MANAGE:
+        return False, (f'hq {name} is not a management command on a call: {", ".join(sorted(MANAGE))}. Hand work on '
+                       'with job, note a promise with promise')
+    takes, given = MANAGE[name], '' if sub is None else '#' if re.fullmatch(r'(findings:)?[0-9]+', sub) else sub
+    if takes is not None and given not in takes:
+        shown = ', '.join({'': '(nothing more)', '#': 'a number'}.get(t, t) for t in sorted(takes))
+        return False, f'on a call, hq {name} takes {shown}'
+    # hq's management commands (api.ts change): 1 is a refusal or a wrong command, so nothing changed; 6 and 7 reached
+    # no HQ; anything else may have come after HQ made the change
+    code, out, err = run(command, '')
+    if code == 0:
+        return True, out
+    if code == 1:
+        return False, err or out
+    if code in (6, 7):
+        return False, f"HQ couldn't be reached, so nothing changed (hq {name}: exit {code}). Try again in a moment."
+    said = err or out or f'hq {name}: exit {code}'
+    return False, f'Not confirmed: {said}. It may or may not have happened: check it before you do it again.'
+
+
 def answered(reply, refusal, unconfirmed, again=UNSURE, by='hq'):
     """(ok, text) from run's reply: done only when hq confirms it, and refused only when hq's refusal says nothing
     happened. Anything else may have come after the coordinator saved it (hq: exit 3, "Not confirmed"): a retry could
@@ -543,6 +648,53 @@ def partner(name, a):
     return False, f'no tool {name} on a call with a partner'
 
 
+def screen(a):
+    """(ok, content) of the screen tool: the voice line's answer on its socket, as MCP content (a picture and its moment
+    line, or the moment list), or its refusal."""
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': "There's no screen on this call: nobody is showing our pages."}]
+    if any(k in a and not (isinstance(a[k], str) and MOMENT.fullmatch(a[k])) for k in ('at', 'since')):
+        return False, [{'type': 'text', 'text': "at and since take '-20s', '17:03:12' or '#12'"}]
+    region = a.get('region')
+    if 'region' in a and not (isinstance(region, dict) and set(region) == {'x', 'y', 'width', 'height'} and all(
+            type(v) in (int, float) and 0 <= v <= 1 for v in region.values())):
+        return False, [{'type': 'text', 'text': 'region takes x, y, width and height, each a fraction from 0 to 1'}]
+    if 'since' in a and ('at' in a or 'region' in a):
+        return False, [{'type': 'text', 'text': 'since gives the moment list: ask for a picture (at, region) apart'}]
+    got = line_asked({k: a[k] for k in ('at', 'region', 'since') if k in a})
+    if 'error' in got or 'picture' in got:
+        return shown(got)
+    return True, [{'type': 'text', 'text': '\n'.join(got.get('lines') or []) or 'Nothing since then.'}]
+
+
+def sketch(a):
+    """(ok, content) of the sketch tool: the voice line's answer on its socket (a sketch's picture and its line), or
+    its refusal."""
+    asked = a.get('sketch')
+    if not isinstance(asked, str) or not asked.strip() or len(asked) > 200:
+        return False, [{'type': 'text', 'text': "sketch is its number, '12', or a few words of its label"}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': "Sketches can't be shown on this call."}]
+    return shown(line_asked({'sketch': asked}))
+
+
+def line_asked(asked):
+    """The voice line's answer on its socket to one ask, by this session's key."""
+    with socket.socket(socket.AF_UNIX) as line:  # (the line always answers or closes: it waits on the coordinator)
+        line.connect(SCREEN_SOCKET)
+        line.sendall((json.dumps({**asked, 'key': SCREEN_KEY}) + '\n').encode())
+        return json.loads(b''.join(iter(lambda: line.recv(1 << 16), b'')))
+
+
+def shown(got):
+    """(ok, content) of the line's answer: its refusal, or a picture and its line, as MCP content."""
+    if 'error' in got:
+        return False, [{'type': 'text', 'text': str(got['error'])}]
+    picture, line = got['picture'], got.get('line')
+    return True, [{'type': 'image', 'data': picture['data'], 'mimeType': picture['type']},
+                  *([{'type': 'text', 'text': line}] if line else [])]
+
+
 def awaited(name, a):
     """(ok, text) of the board's tool, as soon as the coordinator answers, or within STILL s that it's still waiting."""
     future = WORK.submit(lambda: when(a) if name == 'when' else (look if name in LOOK_UPS else hq)(name, a))
@@ -585,6 +737,9 @@ def answer(msg, offered=TOOLS):
     elif method == 'tools/call':
         p = msg.get('params', {})
         name, arguments = p.get('name'), p.get('arguments') or {}
+        if name == 'screen' or (name == 'sketch' and offered is TOOLS):  # (its own content: a picture and its line)
+            ok, content = (screen if name == 'screen' else sketch)(arguments)
+            return {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': not ok}}
         if offered is PARTNER_TOOLS:
             ok, text = partner(name, arguments)
         elif name == 'waiting':

@@ -72,11 +72,29 @@ test('--helper rides out HQ restarting: the run sent once HQ takes connections a
   assert.match(lent.out, /\(on attic\)$/m);
 });
 
-test('helper reporting keeps its run through a disconnect, and two in a row or a lost submission leave it incomplete', async () => {
+// HQ down for longer than one more try 5 s later is ridden out too.
+test("--helper rides out HQ down for longer than a moment from the run's first poll", async () => {
+  const { run } = clone(
+    {
+      'shared/gates/tests-on-helper.sh': ON_HELPER,
+      'kits/adds/sum.ts': sum('a + b'),
+      'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    },
+    { 'kits/adds/notes.md': 'touched\n' },
+  );
+  const lent = run(await playedHq(undefined, { RESTARTING: '1', RESTART_MS: '6500' }), 'tests.ts', ['--helper']);
+  assert.equal(lent.status, 0, lent.out);
+  assert.match(lent.out, /^- kits\/adds \(node --test, 1 file\): 1 passed/m);
+});
+
+// (UNREACHED_EXIT, 3: the worker runs it again once HQ answers, never its author)
+test('helper reporting rides out disconnects in a row; HQ unreached past the window, or a submission lost once HQ may have it, ends it unreached', async () => {
   for (const [settings, status] of [
     [{ REPORT_DISCONNECTS: '1' }, 0],
-    [{ REPORT_DISCONNECTS: '2' }, 2],
-    [{ DROP_SUBMIT: '1' }, 2],
+    [{ REPORT_DISCONNECTS: '3' }, 0],
+    [{ REPORT_DISCONNECTS: '1000', HQ_RETRY_MS: '2500' }, 3],
+    [{ DROP_SUBMIT: '1' }, 3],
+    [{ DROP_SUBMIT: 'body' }, 3],
   ] as const) {
     const env = await playedHq(undefined, settings);
     const outcomes = join(mkdtempSync(join(tmpdir(), 'tests-transport-')), 'outcomes.json');
@@ -91,7 +109,10 @@ test('helper reporting keeps its run through a disconnect, and two in a row or a
     const ran = run(env, 'tests.ts', ['--helper', '--outcomes', outcomes]);
     assert.equal(ran.status, status, ran.out);
     if (status === 0) assert.deepEqual(JSON.parse(readFileSync(outcomes, 'utf8')), { passed: 1 });
-    else assert.throws(() => readFileSync(outcomes), { code: 'ENOENT' });
+    else {
+      assert.match(ran.out, /^The tests could not reach HQ: /m);
+      assert.throws(() => readFileSync(outcomes), { code: 'ENOENT' });
+    }
   }
 });
 

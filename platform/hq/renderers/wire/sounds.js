@@ -37,6 +37,23 @@ export const sfx = {
   clack: (v = 1, p = 0) => foley('clack', { hold: 0, size: 1.2, pitch: p - 4 }, { vol: v }),
   landing: (index, bounce) => bounce < 2 && sfx.clack(bounce ? 0.35 : 1, (index * 5) % 12),
   press: () => click(1.1),
+  // a call minimised into its bubble: a small key let go, then caught; opened again, pressed; the bubble settling
+  // into a corner, the softest clack
+  minimise: () => {
+    click(0.8, 4, 0.7);
+    click(0.6, 7, 0.4);
+  },
+  restore: () => click(1, 0, 0.8),
+  dock: () => foley('clack', { hold: 0, size: 0.8, pitch: 2 }, { vol: 0.45 }),
+  // a call watched back: play, a key pressed and caught; pause, a lighter key let go; a jump, a small key; the
+  // scrubber crossing a moment, the faintest click
+  watchPlay: () => {
+    click(1.1, -2, 0.8);
+    click(0.7, 5, 0.35);
+  },
+  watchPause: () => click(0.9, 3, 0.7),
+  watchJump: () => click(0.75, 5, 0.55),
+  watchTick: () => click(0.45, 8, 0.18),
   flip: () => {
     click(1, 2, 0.8);
     foley('flip', { material: 'card' }, { vol: 0.35 });

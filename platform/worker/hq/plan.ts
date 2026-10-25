@@ -177,7 +177,7 @@ async function drawThread(given: string[]) {
   const { values, args } = takeValues(rest, ['--slug'], 'No thread was drawn');
   const [project, name, goal, ...more] = args;
   if (!project || !name?.trim() || !goal?.trim() || more.length) stop(threadUsage());
-  const answer = await api.call('plan/thread', { body: api.withSpeaker({ project, name, goal, needs, ...values }) });
+  const answer = await api.change('plan/thread', { body: api.withSpeaker({ project, name, goal, needs, ...values }) });
   const drawn = api.parseOrNull(answer.body) as Placed | null;
   if (!api.isSuccess(answer.status) || !drawn?.id)
     stop(`No thread was drawn: ${api.errorIn(answer.body, 'no answer')}`);
@@ -193,7 +193,7 @@ async function renameThread(given: string[]) {
   const { values, args } = takeValues(given, ['--slug'], 'Nothing changed');
   const [thread, name, goal, ...more] = args;
   if (!thread || !name?.trim() || goal?.trim() === '' || more.length) stop(renameUsage());
-  const answer = await api.call('plan/rename', { body: api.withSpeaker({ thread, name, goal, ...values }) });
+  const answer = await api.change('plan/rename', { body: api.withSpeaker({ thread, name, goal, ...values }) });
   const renamed = api.parseOrNull(answer.body) as Placed | null;
   if (!api.isSuccess(answer.status) || !renamed?.id) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(
@@ -218,7 +218,7 @@ function placedLines(t: Placed) {
 async function need(action: 'need' | 'unneed', args: string[]) {
   const [thread, needs, ...rest] = args;
   if (!thread || !needs || rest.length) stop(USAGE);
-  const answer = await api.call('plan/need', { body: api.withSpeaker({ thread, needs, drop: action === 'unneed' }) });
+  const answer = await api.change('plan/need', { body: api.withSpeaker({ thread, needs, drop: action === 'unneed' }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   print(
     action === 'need' ? `${thread} starts once ${needs} is done and merged.` : `${thread} no longer needs ${needs}.`,
@@ -229,7 +229,7 @@ async function need(action: 'need' | 'unneed', args: string[]) {
 async function change(route: string, args: string[], body: (args: string[]) => object, count = 2) {
   if (args.length !== count || args.some(arg => !arg.trim())) stop(USAGE);
   if (route !== 'plan/done' && !/^[0-9]+$/.test(args[0])) stop(USAGE);
-  const answer = await api.call(route, { body: api.withSpeaker(body(args)) });
+  const answer = await api.change(route, { body: api.withSpeaker(body(args)) });
   const made = api.parseOrNull(answer.body) as { ok?: boolean; order?: number[] } | null;
   if (!api.isSuccess(answer.status) || !made?.ok) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
   if (route === 'plan/move') return print(`In order now: ${made.order!.map(id => `#${id}`).join(', ')}.`);

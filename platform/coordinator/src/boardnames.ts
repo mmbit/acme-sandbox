@@ -25,10 +25,11 @@ function named(kind: Kind, id: string, words: string): string {
   return row?.plain ?? words;
 }
 // A thing the board reads with its names in `fields` (each field's words: its kind) as the board's
-function withNames<T, F extends keyof T & string>(x: T, id: string, fields: Record<F, Kind>): T {
+// (`name`: how each is read, one at a time unless a view read them all: boardNames)
+function withNames<T, F extends keyof T & string>(x: T, id: string, fields: Record<F, Kind>, name = named): T {
   const out = { ...x };
   for (const [field, kind] of Object.entries(fields) as [F, Kind][])
-    (out as Record<string, unknown>)[field] = named(kind, id, String(x[field]));
+    (out as Record<string, unknown>)[field] = name(kind, id, String(x[field]));
   return out;
 }
 // Jobs as the board reads them (rows of jobs.ts jobRows, or any with an id and a title): each one's title, its after's
@@ -44,10 +45,11 @@ type Titles = {
 export function boardJobs<T extends { id: number }>(rows: T[]): (T & Titles)[] {
   const listed = rows as (T & Titles)[];
   const ids = listed.flatMap(j => [j.id, ...(j.after ? [j.after] : []), ...(j.waits ?? []).map(w => w.id)]);
+  // (the jobs through db.ts jobs_listed, never their rows.)
   const plain = new Map(
     (
       prepared(
-        `select j.id, n.plain from jobs j join board_names n on n.kind = 'task' and n.id = cast(j.id as text)
+        `select j.id, n.plain from jobs j indexed by jobs_listed join board_names n on n.kind = 'task' and n.id = cast(j.id as text)
         and n.words = j.title where ${namedTask('j')} and n.plain is not null and j.id in (select value from json_each(?))`,
       ).all(JSON.stringify([...new Set(ids)])) as { id: number; plain: string }[]
     ).map(r => [r.id, r.plain]),
@@ -74,6 +76,26 @@ export const boardThread = <T extends { id: string; name: string; goal: string }
   withNames(t, t.id, { name: 'thread', goal: 'goal' });
 export const boardSentence = <T extends { text: string }>(project: string, s: T) =>
   withNames(s, project, { text: 'sentence' });
+// The same for a view that shows every project, thread and sentence (projects.ts listProjectBoard): their plain names
+// read at once, not one read for each.
+export function boardNames() {
+  const key = (kind: string, id: string, words: string) => JSON.stringify([kind, id, words]);
+  const plain = new Map(
+    (
+      prepared(
+        "select kind, id, words, plain from board_names where kind in ('project', 'thread', 'goal', 'sentence') and plain is not null",
+      ).all() as { kind: Kind; id: string; words: string; plain: string }[]
+    ).map(n => [key(n.kind, n.id, n.words), n.plain]),
+  );
+  const name = (kind: Kind, id: string, words: string) => plain.get(key(kind, id, words)) ?? words;
+  return {
+    project: <T extends { id: string; name: string }>(p: T) => withNames(p, p.id, { name: 'project' }, name),
+    thread: <T extends { id: string; name: string; goal: string }>(t: T) =>
+      withNames(t, t.id, { name: 'thread', goal: 'goal' }, name),
+    sentence: <T extends { text: string }>(project: string, s: T) => withNames(s, project, { text: 'sentence' }, name),
+  };
+}
+export type BoardNames = ReturnType<typeof boardNames>;
 
 // A meeting's topic as the board reads it, the plain one, or the agents' own while it has none (meetingboard.ts
 // meetingSeats).

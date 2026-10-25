@@ -122,40 +122,47 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
   if (refused) return refused;
   if (!ask.for || !jobs.findAgent(String(ask.for))) return 'name the fix task agent with --for <agent>';
   if (item.decision === 'close') return inOneStep(() => reviewclosure.redraw(item, by, ask));
-  return inOneStep(() => {
-    const fix = fixFor(item.thread, ask.findings, by, { pr: item.pr, touchups: true });
-    if (typeof fix === 'string') return fix;
-    if (!fix) return `${id} has no findings left to assign`;
-    if (
-      item.thread &&
-      (ask.newThread != null || (ask.thread != null && findThread(String(ask.thread))?.id !== item.thread))
-    )
-      return 'review fix tasks belong to the reviewed thread';
-    const title = ask.title == null ? reviewed(fix) : taskTitle(ask.title);
-    if (!title) return ask.title == null ? UNNAMED : BAD_TITLE;
-    const target = reviewwork.target(item, ask, by);
-    if ('refusal' in target) return target.refusal;
-    const thread = 'thread' in target ? target.thread : null;
-    if (!item.thread && thread) {
-      const bound = reviewwork.bind(item, thread);
-      if (bound) return bound;
-    }
-    const job = jobs.createJob({
-      agent: String(ask.for),
-      title,
-      prompt: instructions(fix),
-      thread,
-      branch: fix.branch,
-      round: fix.round,
-      stage: 'fix',
-      queuedBy: by,
-      plannedBy: by,
-      insteadOf: fix.replaces,
+  try {
+    return inOneStep(() => {
+      const fix = fixFor(item.thread, ask.findings, by, { pr: item.pr, touchups: true });
+      if (typeof fix === 'string') return fix;
+      if (!fix) return `${id} has no findings left to assign`;
+      if (
+        item.thread &&
+        (ask.newThread != null || (ask.thread != null && findThread(String(ask.thread))?.id !== item.thread))
+      )
+        return 'review fix tasks belong to the reviewed thread';
+      const title = ask.title == null ? reviewed(fix) : taskTitle(ask.title);
+      if (!title) return ask.title == null ? UNNAMED : BAD_TITLE;
+      const target = reviewwork.target(item, ask, by);
+      if ('refusal' in target) return target.refusal;
+      const thread = 'thread' in target ? target.thread : null;
+      if (!item.thread && thread) {
+        const bound = reviewwork.bind(item, thread);
+        // (undone whole: the thread target() drew for it, and its plan change and event, go too)
+        if (bound) throw new RefusedError(bound);
+      }
+      const job = jobs.createJob({
+        agent: String(ask.for),
+        title,
+        prompt: instructions(fix),
+        thread,
+        branch: fix.branch,
+        round: fix.round,
+        stage: 'fix',
+        queuedBy: by,
+        plannedBy: by,
+        insteadOf: fix.replaces,
+      });
+      recordTask(job.id, fix);
+      return { job: job.id, thread };
     });
-    recordTask(job.id, fix);
-    return { job: job.id, thread };
-  });
+  } catch (err) {
+    if (err instanceof RefusedError) return err.message;
+    throw err;
+  }
 }
+class RefusedError extends Error {}
 
 // The author's fix tasks for a ruling's blocking findings, or its touch-ups' check, accepted as its owner would (hq inbox
 // accept findings:<pr> --for <author> --findings <ids>): one per task the consolidator named, in its order, under its

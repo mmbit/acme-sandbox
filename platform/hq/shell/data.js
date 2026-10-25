@@ -214,6 +214,9 @@ export async function guestRelease(dev, id, person) {
 // can be.
 const MOCK_LANGUAGE = { lang: 'en', languages: [{ code: 'en', name: 'English', own: 'English' }, { code: 'nl', name: 'Dutch', own: 'Nederlands' },
   { code: 'de', name: 'German', own: 'Deutsch' }] };
+// A watch-along on the board's live call, by the call's key: where its page posts (watchalong.ts). On mock data there's
+// nowhere to post: nothing is recorded.
+export const startWatchalong = (dev, call, key) => dev ? Promise.resolve({ id: 0, events: null }) : post('/api/watchalong/start', { call, key });
 export const loadLanguage = dev => dev ? Promise.resolve({ ...MOCK_LANGUAGE }) : get('/api/language');
 export const setLanguage = (dev, lang) => dev ? Promise.resolve(Object.assign(MOCK_LANGUAGE, { lang })) : post('/api/language', { lang });
 export async function guestLang(dev, id, lang, person) {
@@ -422,6 +425,24 @@ export const loadJobLog = (dev, id) => dev ? Promise.resolve(mockLog()) : get(`/
 const mockLog = () => ['Read platform/coordinator/src/jobs.ts', 'Grep “claimNext” in platform/coordinator/src', 'I’ll add the wait to the claim query, then test it.',
   'Edit platform/coordinator/src/jobs.ts', '$ cd platform/coordinator && node --test src/jobs.test.ts', 'Plan: ✓ Read the queue · ✓ Add the wait · Test it']
   .map((text, i, all) => ({ ts: new Date(Date.now() - (all.length - i) * 47e3).toISOString(), agent: null, text }));
+// A job's record for its card's back (the coordinator's jobfacts.ts): when it started and finished, its agent time
+// against its size, and its pull request. Dev mode's from the mock job's own times.
+export async function loadJobFacts(dev, id) {
+  if (!dev) return get(`/api/jobs/facts?id=${Number(id)}`);
+  const j = await loadJob(dev, id),
+    start = Date.parse(j?.created ?? ''),
+    end = Date.parse(j?.finished ?? '');
+  if (!j || isNaN(start)) return { started: null, finished: null, agent_ms: null, estimate_ms: null, pr: null };
+  const took = isNaN(end) ? null : end - start,
+    merged = !isNaN(end) && j.status === 'done' ? new Date(end + 30 * 60e3).toISOString() : null;
+  return {
+    started: j.created,
+    finished: j.finished ?? null,
+    agent_ms: took,
+    estimate_ms: took && Math.round(took * 0.8),
+    pr: j.pr ? { number: j.pr, status: merged ? 'merged' : 'open', merged_at: merged, added: 148, removed: 23, verdict: merged && 'merge' } : null,
+  };
+}
 // what the company got done each day, the last 14 (Wire's numbers: the coordinator's work.ts)
 export const loadWork = dev => dev ? mockList('work') : get('/api/work');
 // what's on the plate and done in the last 24 hours, hour by hour (HQ's throughput: the coordinator's work.ts piles).
@@ -436,17 +457,20 @@ export const loadNumbersApp = (dev, slug, days, mode) => dev
 // routes (platform/coordinator/src/care.ts)
 // A Care action: a refusal arrives in plain words ({ error }), and they become the Error's message (.status is the HTTP
 // status; 0: the coordinator can't be reached), so the board reads why, not a code. Without a body it's a GET (Find a case).
-async function act(url, body) {
+// (act, refused and copy: the Sketchbook's too, sketchdata.js)
+// A Blob body goes as it is, with its own type (a sketch's picture).
+export async function act(url, body) {
+  const sent = body instanceof Blob ? { type: body.type, data: body } : { type: 'application/json', data: JSON.stringify(body) };
   const res = await fetch(url, body === undefined ? { credentials: 'same-origin', headers: { accept: 'application/json' } }
-    : { method: 'POST', credentials: 'same-origin', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }).catch(() => null);
+    : { method: 'POST', credentials: 'same-origin', headers: { 'content-type': sent.type }, body: sent.data }).catch(() => null);
   if (!res) throw refused(0, 'Could not reach the coordinator. Try again.');
   if (res.status === 401) return toLogin();
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw refused(res.status, typeof json?.error === 'string' && json.error ? json.error : `That didn’t go through (error ${res.status}). Try again in a minute.`);
   return json;
 }
-const refused = (status, words) => Object.assign(new Error(words), { status });
-const copy = v => JSON.parse(JSON.stringify(v));
+export const refused = (status, words) => Object.assign(new Error(words), { status });
+export const copy = v => JSON.parse(JSON.stringify(v));
 // Dev mode plays the coordinator on mock/care*.json, in memory: the list, each card's full text by id, the sent cards and
 // every remedy (both paged by 2 here, so Older shows), with the same refusals as the server.
 let careMock = null;
@@ -658,6 +682,12 @@ export async function setPersonTitle(dev, name, title) {
   title = title.replace(/\s+/g, ' ').trim().slice(0, 40) || null;
   (mock.shares ?? []).flatMap(s => s.people).filter(p => p.name === name).forEach(p => { p.title = title; });
   return { name, title };
+}
+// A person's own Sketchbook (sketches.ts grant): the board's switch, on or off.
+export async function setPersonSketchbook(dev, name, on) {
+  if (!dev) return post('/api/review/people/sketchbook', { name, on });
+  (mock.shares ?? []).flatMap(s => s.people).filter(p => p.name === name).forEach(p => { p.sketchbook = on; });
+  return { name, sketchbook: on };
 }
 export async function removeFromShare(dev, id, name) {
   if (!dev) return post('/api/review/shares/remove', { id, name });

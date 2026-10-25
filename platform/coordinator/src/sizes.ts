@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { db, redacted } from './db.ts';
 import { ceo } from './company.ts';
-import { ORIGIN, cleanPastJobs, type JobOrigin } from './matching.ts';
+import { ORIGIN, cleanPastJobs, pastJobs, type JobOrigin } from './matching.ts';
 import { MODEL as SIZER } from './smallmodel.ts';
 import { duration } from '../../worker/hq/waits.ts';
 
@@ -39,7 +39,8 @@ export function readQueuedSize(given: { size?: unknown; refs?: unknown; why?: un
   const refs = given.refs ?? [];
   if (!Array.isArray(refs) || refs.some(id => !Number.isSafeInteger(id) || id <= 0))
     return '--refs takes the comparable done job numbers';
-  const clean = new Set(cleanPastJobs().map(j => j.id));
+  // only the references are read: the check needs no other past job.
+  const clean = new Set(refs.length ? cleanPastJobs(pastJobs(refs)).map(j => j.id) : []);
   if (refs.some(id => !clean.has(id))) return 'each estimate reference must be a done job with clean recorded time';
   return { agent_ms: agentMs, refs: [...new Set(refs)], why: given.why.trim() };
 }

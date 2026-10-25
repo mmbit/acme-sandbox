@@ -169,6 +169,65 @@ test("a check sent to a lent machine first: a verdict there is the check's, and 
   rmSync(dir, { recursive: true });
 });
 
+test('a check that lost HQ (exit 3) waits until HQ answers and runs again on the same commit, never counted; three in a row, and the next counts', async () => {
+  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+  // unreached on its first launch, passing on its second
+  const flaky =
+    'if [ -f "$1/tried" ]; then echo clean; else touch "$1/tried"; echo "The tests could not reach HQ"; exit 3; fi';
+  const said: string[] = [];
+  let asked = 0;
+  const waiting = { ...options(dir, said), reachable: async () => void asked++ };
+  const report = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [stand(dir, 'tests', flaky)], waiting);
+  assert.deepEqual(report.tests, { passed: true, report: 'clean' });
+  assert.equal(launches(dir), 'tests\ntests\n');
+  assert.equal(asked, 1, 'it waited for HQ before it ran again');
+  assert.deepEqual(said, [
+    'tests could not reach HQ',
+    'tests lost HQ, so it runs again on the same commit once HQ answers',
+    'tests passed',
+  ]);
+  // HQ answering the worker but never the check: past UNREACHED_TRIES it's one that couldn't run
+  rmSync(`${dir}/launches`);
+  const never = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [stand(dir, 'tests', 'echo lost; exit 3')], waiting);
+  assert.deepEqual(never.tests, { passed: null, report: 'lost' });
+  assert.equal(launches(dir), 'tests\n'.repeat(4));
+  rmSync(dir, { recursive: true });
+});
+
+test("a lent check that lost HQ runs again on the lent machine; past UNREACHED_TRIES it runs here, and one that still loses HQ couldn't run", async () => {
+  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+  const said: string[] = [];
+  const waiting = { ...options(dir, said), reachable: async () => {} };
+  const lostOnce =
+    'if [ -f "$1/tried" ]; then echo "clean (on attic)"; else touch "$1/tried"; echo "could not reach HQ"; exit 3; fi';
+  const there = await (
+    await workerProcess()
+  ).runChecks(
+    8,
+    { body: pushed(), spent: {}, runs: {} },
+    [{ ...stand(dir, 'gates', 'echo here'), lent: lentOf(dir, lostOnce, 10_000) }],
+    waiting,
+  );
+  assert.deepEqual(there.gates, { passed: true, report: 'clean (on attic)' });
+  assert.equal(launches(dir), 'gates-lent\ngates-lent\n');
+  rmSync(`${dir}/launches`);
+  const never = await (
+    await workerProcess()
+  ).runChecks(
+    8,
+    { body: pushed(), spent: {}, runs: {} },
+    [{ ...stand(dir, 'gates', 'echo lost here; exit 3'), lent: lentOf(dir, 'echo lost; exit 3', 10_000) }],
+    waiting,
+  );
+  assert.deepEqual(never.gates, { passed: null, report: 'lost here' });
+  assert.equal(launches(dir), 'gates-lent\n'.repeat(4) + 'gates\n');
+  rmSync(dir, { recursive: true });
+});
+
 test("a reload keeps a lent launch's own limit, whatever the spec the next process builds", async () => {
   const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
   const there = 'echo started > "$1/lent-ran"; while [ ! -f "$1/go" ]; do sleep 0.05; done; echo "clean (on attic)"';

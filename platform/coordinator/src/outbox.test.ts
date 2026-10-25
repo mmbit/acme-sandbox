@@ -460,9 +460,10 @@ test('hq close withdraws the drafter\'s own open draft unsent, saying nothing of
   const vera = await running('vera'), pylon = await running('pylon'), count = taken.length;
   await heard('vera');
 
-  // another agent's draft isn't theirs to withdraw, and hq close says why rather than failing silently
+  // another agent's draft isn't theirs to withdraw, and hq close says why rather than failing silently (exit 1: a
+  // refusal, which the call's manage tool tells apart from a change not confirmed)
   const theirs = await hq(pylon, 'close', String(old.id));
-  assert.equal(theirs.code, 22, theirs.out);
+  assert.equal(theirs.code, 1, theirs.out);
   assert.match(theirs.out, /isn't an open card of yours/);
   assert.equal((await card('Our first introduction')).mail.status, 'open');
 
@@ -484,14 +485,14 @@ test('hq close withdraws the drafter\'s own open draft unsent, saying nothing of
   const going = board('/api/outbox/send', { id: sending.id });
   await until(() => taken.length > count, 'the email service has it');
   const refused = await hq(vera, 'close', String(sending.id));
-  assert.equal(refused.code, 22, refused.out);
+  assert.equal(refused.code, 1, refused.out);
   assert.match(refused.out, /being sent right now/);
   release();
   assert.equal((await going).status, 200);
 
   // a sent one is untouched
   assert.equal((await board('/api/outbox/send', { id: sent.id })).status, 200);
-  assert.equal((await hq(vera, 'close', String(sent.id))).code, 22);
+  assert.equal((await hq(vera, 'close', String(sent.id))).code, 1);
   const after = await archived(sent.id);
   assert.deepEqual([after.mail.status, after.status], ['sent', 'answered']);
   assert.match(after.answer, /^Sent email #/);

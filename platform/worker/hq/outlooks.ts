@@ -49,6 +49,11 @@ export const projectsHelp = `
    hq projects <words>                               the same for the threads a project's or thread's name or a few words
                                                      find ("The checkout"), by project, everything in names: what
                                                      the board hears on a call (its eta tool)`;
+export const nowHelp = `
+   hq now                                            what's going on right now: everyone HQ counts at work, each on its
+                                                     run with its seat, thread and window and, while a hold is on, why
+                                                     it runs; then each open desk phone card with the work that waits on
+                                                     it (the call's eta tool with no query)`;
 export const help = `
    hq thread <project>/<slug>                        one thread: its estimate and window, the chain of jobs that sets its
                                                      ETA, and each open job with its size, time left, start, merge and
@@ -64,6 +69,14 @@ export async function projects(args: string[]) {
   const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the threads."));
   if (!threads.length) return print('No open threads.');
   print(...threads.map(projectLine));
+}
+
+export async function now(args: string[]) {
+  if (args.length) stop('usage: hq now');
+  const { text: going } = JSON.parse(await api.orStop(api.get('now'), "Couldn't read what's going on.")) as {
+    text: string;
+  };
+  print(going);
 }
 
 // The thread's id and name, then its estimate in one line, then the job that goes on next.
@@ -172,7 +185,7 @@ async function printOutlooks(words: string) {
 function namedWaitWords(w: NamedWait, own: string) {
   if (w.on === 'job') return namedWork(w, own);
   if (w.on === 'board' && !w.paused && w.request)
-    return `the board's answer on its card "${text(w.title)}"${w.at ? `, expected about ${at(w.at)}` : ''}`;
+    return `the board: "${text(w.title)}"${w.at ? ` (its answer expected about ${at(w.at)})` : ''}`;
   return waitWords(w);
 }
 

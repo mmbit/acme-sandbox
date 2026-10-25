@@ -61,7 +61,9 @@ const FLATTEN = {
     return [{ kind: 'ellipse', cx, cy, rx: item.r, ry: item.r, role: item.accent ? 'accent' : `${item.tone}-ball` }];
   },
   quad: item => [poly(item.pts, roleOf(item, item.face))].filter(shape => Math.abs(area(shape.pts)) > 1e-6),
-  line: item => [{ kind: 'line', pts: item.pts.map(project), role: item.thin ? 'thin' : 'line' }],
+  line: item => [
+    { kind: 'line', pts: item.pts.map(project), role: item.thin ? 'thin' : 'line', onAccent: item.onAccent },
+  ],
   shadow: item => [poly(item.pts, 'shadow')],
   pool: item => [poly(item.pts, 'pool')],
 };

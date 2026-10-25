@@ -345,6 +345,46 @@ test("a pull request of only the office's records (its author's own profile, the
   assert.equal(github.pr(105).merged, false);
 });
 
+test("a key on a later page of GitHub's list of files is found all the same", async () => {
+  const n = 135;
+  const notes = Array.from({ length: 100 }, (_, i) => ({ filename: `knowledge/notes/platform/n${i}.md`, additions: 1, patch: '+Fine.' }));
+  github.pr(n).files = [...notes, { filename: 'knowledge/notes/platform/z.md', additions: 1, patch: '+The shop key: sk_live_0123456789abcdef' }];
+  await submit(n, { files: github.pr(n).files!.map(f => f.filename!) });
+  await until(() => db.prepare("select 1 from jobs where branch = ? and step = 'Removing a key'").get(`review/${n}`), 'the key sent back');
+  assert.equal(github.pr(n).merged, false);
+});
+
+test("the decision log only grows unreviewed: a pull request that removes or changes an earlier entry gets a review, its retry sweep and later pushes too", async () => {
+  const n = 132;
+  github.pr(n).files = [{ filename: 'company/DECISIONS.md', additions: 1, deletions: 1, patch: '-## 2026-10-18: old words\n+## 2026-10-18: new words' }];
+  await submit(n, { files: ['company/DECISIONS.md', 'company/people/bolt.md'], triage: [] });
+  await until(() => queued(n).some(j => j.kind === 'consolidate'), 'a review queued');
+  const triage = db.prepare("select prompt from jobs where pr = ? and stage = 'triage'").all(n) as { prompt: string }[];
+  assert.equal(triage.length, 1);
+  assert.match(triage[0].prompt, /removes or changes earlier entries of company\/DECISIONS\.md/);
+  assert.deepEqual([prs(n).status, github.pr(n).merged], ['open', false], 'not merged unreviewed');
+  await review.actOnRulings();
+  assert.equal(queued(n).filter(j => j.kind === 'consolidate').length, 1, "the retry sweep neither merges it nor queues its panel again");
+  assert.equal(github.pr(n).merged, false);
+  github.pr(n).files = [{ filename: 'company/DECISIONS.md', additions: 1, patch: '+## 2026-10-25: more' }];
+  await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false, 'a later push that only adds is reviewed all the same');
+  // only adding to it still merges straight in (#106 above)
+  const added = 133;
+  github.pr(added).files = [{ filename: 'company/DECISIONS.md', additions: 2, patch: '+## 2026-10-25: new\n+Why.' }];
+  await submit(added, { files: ['company/DECISIONS.md'] });
+  await until(() => github.pr(added).merged, 'the addition merged');
+  assert.deepEqual(queued(added), [], 'no reviewers');
+});
+
+test("moving the decision log under another name gets a review too: GitHub reports the new name, with no deleted line", async () => {
+  const n = 134;
+  github.pr(n).files = [{ filename: 'knowledge/notes/decision-archive.md', previous_filename: 'company/DECISIONS.md', status: 'renamed', additions: 0, deletions: 0 }];
+  await submit(n, { files: ['knowledge/notes/decision-archive.md'], triage: [] });
+  await until(() => queued(n).some(j => j.kind === 'consolidate'), 'a review queued');
+  assert.deepEqual([prs(n).status, github.pr(n).merged], ['open', false], 'not merged unreviewed');
+});
+
 test("records that do what the board asked on a call get a review against its words, at the first push and the retry sweep alike", async () => {
   const n = 107;
   const job = await h.start({ agent: 'bolt', branch: `review/${n}` });
@@ -3148,7 +3188,7 @@ test("the sweep holds records-only work for its owner's blocking ruling, includi
         const inbox = await import(${JSON.stringify(new URL('./reviewinbox.ts', import.meta.url).href)});
         const pr = db.prepare('select * from prs where number = ?').get(${n});
         console.log(JSON.stringify({ item: inbox.get(${n}), action: review.sweepAction(pr)?.kind ?? null,
-          recordsOnly: review.officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links)) }));`;
+          recordsOnly: review.officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number) }));`;
       for (let restart = 0; restart < 2; restart++) {
         const printed = execFileSync(process.execPath, ['--input-type=module', '-e', replay], {
           env: { ...process.env, DATA_DIR: directory }, encoding: 'utf8',

@@ -331,3 +331,13 @@ test('owner-assigned discipline fixes stay in task order before review and retai
     writeFileSync(file, previous);
   }
 });
+
+test('records whose push rewrote the decision log are planned as a review, not as records', async () => {
+  const { reviewPlans } = await import('./reviewplan.ts');
+  const author = h.ended({ agent: 'bolt', engine: 'claude' });
+  h.storedPr(1203, author, 'open', ['company/DECISIONS.md'], { sha: 'd'.repeat(40), round: 0, since: author });
+  const plan = () => reviewPlans(Date.now())({ ...jobs.findJob(author)!, engine: 'claude', origin: 'work' })!;
+  assert.equal(plan().count, 0, 'records alone merge without a panel');
+  h.db.prepare('insert into office_reviewed (pr) values (?)').run(1203);
+  assert.ok(plan().count > 0, 'the panel that reviews it is planned');
+});

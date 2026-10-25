@@ -78,6 +78,9 @@ export function settle() {
 export const template = (proposal: number) =>
   db.prepare('insert or ignore into sorts (proposal) values (?)').run(proposal);
 
+// What a held job's proposal says in place of a brief that holds a customer's own details (feedback.ts markOutsideJobs too).
+export const PRIVATE_BRIEF = "Its brief holds a customer's own details, so it stays with the job.";
+
 // job, made by `from` (a colleague, or hq) under a template name or holding several things, waits until the owner of
 // project sorts it. why: in a line, what HQ made it from. Again for one sorted already: it holds again, as a new proposal.
 export function hold(job: number, o: { from: string; project: string | null; why: string; keep?: boolean }) {
@@ -91,7 +94,7 @@ export function hold(job: number, o: { from: string; project: string | null; why
   ).run(job, Date.now());
   // (a customer's own details stay with the job: jobs.ts holdsCustomerData)
   const brief = `${o.why} Job #${job}, ${row.agent}'s, waits until you sort it.\n\n${
-    row.customers ? "Its brief holds a customer's own details, so it stays with the job." : row.prompt
+    row.customers ? PRIVATE_BRIEF : row.prompt
   }`.slice(0, BRIEF_MAX);
   const open = openFor(job);
   // (grown, its owner hears of it again: a planning job that left it open left it only as it stood, as bundles)

@@ -8,7 +8,7 @@ and a clock that moves with the audio (32 ms a VAD window). The Call tests need 
 `python3 -m venv /tmp/v && /tmp/v/bin/pip install numpy`, then run this with /tmp/v/bin/python); without it only stray()
 is tested. replay.py runs the same kind of call through the real models.
 """
-import asyncio, base64, contextlib, io, json, os, sys, tempfile, threading, types, unittest, unittest.mock
+import asyncio, base64, contextlib, io, json, os, re, sys, tempfile, threading, types, unittest, unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -511,7 +511,8 @@ class German(unittest.IsolatedAsyncioTestCase):
         brain = Brain()
         brain.voice, brain.reply, brain.respell = voice, words, respell or {}
         SPOKEN.clear(), VOICED.clear()
-        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(server, 'CALL_LOGS', Path(d)):
+        with tempfile.TemporaryDirectory() as d, unittest.mock.patch.object(server, 'CALL_LOGS', Path(d)), \
+                unittest.mock.patch.object(server, 'hq', no_screen(server.hq)):
             call = server.Call(lambda x: asyncio.sleep(0), lambda e: asyncio.sleep(0), lambda: asyncio.sleep(0), 'juno', lang,
                                brain=brain)
             await call.answer('Hallo?', None)
@@ -567,10 +568,16 @@ class German(unittest.IsolatedAsyncioTestCase):
             self.assertIn('bis morgen um 00:10', server.cant_answer('Juno', 'limit', NOW + 86_400_000 + 600_000, 'Europe/Amsterdam', 'de'))
 
 
+def no_screen(coordinator):
+    """A stand-in coordinator that has no watch-along on (screen-turn), and answers the rest as `coordinator` does."""
+    return lambda method, path, body=None: {'on': False} if path == 'screen-turn' else coordinator(method, path, body)
+
+
 class Juno(unittest.IsolatedAsyncioTestCase):
     """A call with Juno around the stand-ins: the board's words go in window by window."""
     async def asyncSetUp(self):
         self.tmp = tempfile.TemporaryDirectory()
+        self.real_hq, server.hq = server.hq, no_screen(server.hq)
         server.CALL_LOGS, server.LIVE, server.WAIT = Path(self.tmp.name), Path(self.tmp.name), {'done': 0.01, 'open': 0.02}
         self.events, self.audio = [], []
 
@@ -593,7 +600,7 @@ class Juno(unittest.IsolatedAsyncioTestCase):
         self.turn_end, server.turn_end = server.turn_end, NS(finished=self.finished)
 
     def tearDown(self):
-        server.now_ms, server.turn_end = self.now_ms, self.turn_end
+        server.now_ms, server.turn_end, server.hq = self.now_ms, self.turn_end, self.real_hq
         self.tmp.cleanup()
 
     def finished(self, audio):
@@ -910,6 +917,25 @@ class Hold(Juno):
                                               "whole message instead.) Can you check the orders? and the invoices from last week")
         self.assertEqual(self.call.lines[:1], ['Board: Can you check the orders? and the invoices from last week'])
         self.assertEqual(len(self.call.lines), 2)  # (the reply taken back is gone; the one to the whole message is there)
+
+    async def test_each_line_has_when_it_was_said_and_a_message_taken_back_keeps_its_start(self):
+        """The board's words carry when they began (taken back and said again with more: when they first began), the
+        agent's reply when it started being heard, and the file on disk has them beside the lines, one each."""
+        server.now_ms = lambda: NOW + CLOCK[0] * 1000  # (the wall clock moves with the line's)
+        began = server.now_ms()
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await self.settle()  # (its reply is heard, then taken back)
+        more = server.now_ms()
+        await self.talk('and the invoices from last week', 30)
+        await self.quiet(30)
+        await self.settle()
+        self.assertEqual(len(self.call.lines), 2)
+        board, reply = self.call.times
+        self.assertLess(abs(board - began), 500)  # (the stand-in VAD ends a segment sooner than PAUSE: a little before)
+        self.assertGreater(reply, more + 30 * 32)  # (heard once the words that took the first one back were over)
+        on_disk = json.loads(self.call.file.read_text())
+        self.assertEqual((on_disk['lines'], on_disk['times']), (self.call.lines, self.call.times))
 
     async def test_a_long_message_taken_back_at_every_pause_is_on_disk_for_a_restart(self):
         """The board talks on, each pause sends the message so far and its next words take it back, so nothing is ever
@@ -1751,7 +1777,7 @@ class Room(Juno):
         await super().asyncSetUp()
         self.brain = Brain()
         self.brain.opening, self.brain.token = OPENING, 't1'
-        self.ended, self.hq, server.hq = [], server.hq, lambda method, path, body=None: self.ended.append((path, body))
+        self.ended, self.hq, server.hq = [], server.hq, no_screen(lambda method, path, body=None: self.ended.append((path, body)))
         self.tickets = []
         room.ROOMS.clear(), room.ENDED.clear(), SPOKEN.clear()
         self.saved = room.EMPTY_SECONDS, room.HANG_UP_WAIT_SECONDS
@@ -2111,7 +2137,8 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                           {'id': 5, 'kind': 'picture', 'type': 'image/jpeg', 'data': JPEG},
                           {'id': 6, 'kind': 'screenshot', 'type': 'image/gif', 'data': JPEG},
                           {'id': '7', 'kind': 'screenshot', 'type': 'image/jpeg', 'data': JPEG},
-                          {'id': 8, 'kind': 'screenshot', 'type': 'image/png', 'data': JPEG}]
+                          {'id': 8, 'kind': 'screenshot', 'type': 'image/png', 'data': JPEG},
+                          {'id': 9, 'kind': 'screenshot', 'type': 'image/jpeg', 'data': BROKEN}]  #.
         call = server.Call(lambda x: asyncio.sleep(0), lambda e: asyncio.sleep(0), lambda: asyncio.sleep(0), 'juno', 'en', pins=[5, 6])
         await call.start()
         self.assertEqual(call.picture_bytes, 2 * len(JPEG), 'they count towards what the session sends')
@@ -2606,16 +2633,19 @@ class Hung(Proc):
 JPEG = base64.b64encode(b'\xff\xd8\xff\xe0 a photo').decode()
 DOT = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='  # (a real PNG, 1 px)
 PHOTO = lambda n: base64.b64encode(f'\xff\xd8\xff\xe0 photo{n}'.encode('latin-1')).decode()  # (another one, as long)
+BROKEN = base64.b64encode(b'\xff\xd8\xff\xe0' + bytes(96)).decode()
+BROKEN = BROKEN[:80] + '!' + BROKEN[81:]  # (a JPEG's start, its base64 broken well past its first characters)
 
 
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 class Pictures(Juno):
     """The board shares pictures on HQ's call screen: the line fetches each from the coordinator (call 7's: #17 a JPEG,
-    #18 not base64, #19 a GIF, #20 to #26 more JPEGs, #27 #17's bytes shared again; anything else it refuses), and the
+    #18 not base64, #19 a GIF, #20 to #26 more JPEGs, #27 #17's bytes shared again, #28 a JPEG whose base64 breaks
+    partway; anything else it refuses), and the
     agent sees them with the board's next words, or on their own after a quiet moment."""
     async def asyncSetUp(self):
         await super().asyncSetUp()
-        self.hq, server.hq, self.fetched = server.hq, self.coordinator, []
+        self.hq, server.hq, self.fetched = server.hq, no_screen(self.coordinator), []
         self.held = {}  # a picture's fetch waits for its threading.Event
 
     async def asyncTearDown(self):
@@ -2628,7 +2658,8 @@ class Pictures(Juno):
         if (n := int(path.split('id=')[1].split('&')[0])) in self.held:
             self.held[n].wait(5)
         pictures = {17: ('image/jpeg', JPEG), 18: ('image/jpeg', 'not base64!'), 19: ('image/gif', base64.b64encode(b'GIF89a').decode()),
-                    **{n: ('image/jpeg', PHOTO(n)) for n in range(20, 27)}, 27: ('image/jpeg', JPEG)}
+                    **{n: ('image/jpeg', PHOTO(n)) for n in range(20, 27)}, 27: ('image/jpeg', JPEG),
+                    28: ('image/jpeg', BROKEN)}  #.
         for n, (kind, data) in pictures.items():
             if path == f'picture?id={n}&call=7':
                 return {'id': n, 'type': kind, 'data': data}
@@ -2672,9 +2703,9 @@ class Pictures(Juno):
         self.assertEqual(self.states()[-2:], [(17, 'seen', None), (20, 'seen', None)])
 
     async def test_a_picture_the_line_cannot_use_is_refused_and_the_call_goes_on(self):
-        for n in (99, 18, 19):  # the coordinator refuses it (not this call's, or the call ended), bad data, not a JPEG or PNG
-            await self.call.show(n)
-        self.assertEqual(self.states(), [(n, 'failed', 'unreadable') for n in (99, 18, 19)])
+        for n in (99, 18, 28, 19):  # the coordinator refuses it (not this call's, or the call ended), bad data (at its
+            await self.call.show(n)  # start, partway), not a JPEG or PNG
+        self.assertEqual(self.states(), [(n, 'failed', 'unreadable') for n in (99, 18, 28, 19)])
         await self.quiet(100)
         await asyncio.sleep(0.3)
         self.assertEqual(self.brain.asked, [])
@@ -2793,6 +2824,240 @@ class Pictures(Juno):
         await asyncio.sleep(0.3)
         await self.settle()
         self.assertEqual((self.brain.asked, self.brain.shown), (["(I've shared 6 pictures on screen.)"], [list(range(20, 26))]))
+
+
+# (a real JPEG, 2 x 1 px, whose header the CLI reads: it turns away a picture whose size it can't tell)
+GREY = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////wAALCAABAAIBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAv/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8A{}//Z'.format
+SHOT = lambda version: base64.b64encode(f'\xff\xd8\xff\xe0 screen{version}'.encode('latin-1')).decode()  # (the screen at that version)
+BRIEF = 'This is a walk-through: trust the screen.'
+MOMENTS = ['#12 17:03:12 tapped "Add to basket" (button)', '#13 17:03:14 page /shop/mug']
+
+
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class Screen(Juno):
+    """A walk-through: the board shows our pages on its call (call 7). The coordinator's watch-along answers each
+    turn's screen-turn from `turns` (a dict, an exception it raises, or a function it runs first), as the coordinator
+    does: a picture only when the screen's version isn't the one the line has seen, none while paused, its briefing
+    until the session has had it. The screen tool's route (screen) answers from `looks`."""
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.turns, self.looks, self.asked = [], [], []
+        server.hq = self.coordinator
+
+    def coordinator(self, method, path, body=None):
+        self.asked.append((path, body))
+        if path == 'call-end':
+            return None
+        answer = (self.turns if path == 'screen-turn' else self.looks).pop(0)
+        answer = answer() if callable(answer) else answer
+        if isinstance(answer, Exception):
+            raise answer
+        if path != 'screen-turn' or not answer['on']:
+            return answer
+        changed = answer['version'] != body['seen'] and not answer['paused'] and body['picture']
+        return {**answer, **({'picture': {'type': 'image/jpeg', 'data': SHOT(answer['version'])}} if changed else {}),
+                **({} if body['briefed'] else {'brief': BRIEF})}
+
+    def on(self, version, lines, last, paused=False):
+        return {'on': True, 'paused': paused, 'lines': lines, 'last': last, 'version': version}
+
+    async def turn(self, words):
+        """The board says `words`, and Juno's answer plays out."""
+        await self.talk(words, 30)
+        await self.quiet(20)
+        await self.settle()
+        await self.quiet(250)
+
+    def screen_turns(self):
+        return [(body['after'], body['seen'], body['briefed']) for path, body in self.asked if path == 'screen-turn']
+
+    async def test_a_turn_brings_the_moments_and_a_picture_of_the_screen_before_the_words(self):
+        agent = self.call.brain = server.Agent('juno', 'en')
+        agent.proc, agent.call = Proc(['Tap the blue button.', 'Yes.']), 7
+        self.turns = [self.on(4, MOMENTS, 13), self.on(4, [], 13)]
+        await self.turn('What do I do here?')
+        image, words = agent.proc.heard_messages[0]['content']
+        self.assertEqual((image['type'], image['source']['data']), ('image', SHOT(4)))
+        self.assertTrue(words['text'].startswith(BRIEF), 'the briefing first')
+        self.assertLess(words['text'].index(MOMENTS[0]), words['text'].index(MOMENTS[1]))
+        self.assertTrue(words['text'].endswith('\n\nWhat do I do here?'), 'the moments before the words')
+        self.assertEqual(self.call.lines, [f'Board: (on screen: {MOMENTS[0]}; {MOMENTS[1]}; a picture of the screen went with it)',
+                                           'Board: What do I do here?', 'Juno: Tap the blue button.'])
+        await self.turn('Done.')  # (the same screen, nothing new: the words alone)
+        self.assertEqual(agent.proc.heard_messages[1]['content'], [{'type': 'text', 'text': 'Done.'}])
+        self.assertEqual(self.call.lines[3:], ['Board: Done.', 'Juno: Yes.'])
+        self.assertEqual([body for path, body in self.asked][0], {'purpose': 'call', 'ref': '7', 'after': 0, 'seen': 0, 'briefed': False,
+                                                                     'picture': True})
+        self.assertEqual(self.screen_turns(), [(0, 0, False), (13, 4, True)])
+        self.assertEqual((self.call.screen['pictures'], self.call.picture_bytes), (1, len(SHOT(4))))
+
+    async def test_pictures_of_the_screen_stop_at_forty_a_call_the_tools_included(self):
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(n)}, 'line': f'#{n} 17:00:00 page /'} for n in range(100, 139)]
+        for _ in range(39):
+            self.assertIn('picture', await self.call.screen_tool({}))
+        self.turns = [self.on(1, MOMENTS[:1], 12), self.on(2, MOMENTS[1:], 13), self.on(3, [], 13)]
+        for words in ('This one?', 'And this?', 'Still there?'):
+            await self.turn(words)
+        self.assertEqual(self.brain.shown, [['screen'], [], []])
+        self.assertEqual([body['picture'] for path, body in self.asked if path == 'screen-turn'], [True, False, False],
+                         'past the count, no picture is asked for')
+        self.assertIn(MOMENTS[1], self.brain.asked[1], 'the moments go on')
+        self.assertIn(server.SCREEN_WORDS['full'], self.brain.asked[1])
+        self.assertEqual(self.brain.asked[2], 'Still there?', 'told once')
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['full']})
+        self.looks = [{'lines': MOMENTS}]
+        self.assertEqual(await self.call.screen_tool({'since': '#12'}), {'lines': MOMENTS})
+        self.assertEqual(self.call.screen['pictures'], 40)
+
+    async def test_pictures_of_the_screen_stop_within_the_sessions_bytes(self):
+        self.turns = [self.on(1, [], 0), self.on(2, [], 0)]
+        with unittest.mock.patch.object(server, 'SESSION_BYTES', 2 * len(SHOT(1)) - 1):  # (room for one)
+            await self.turn('Look.')
+            await self.turn('And now?')
+        self.assertEqual(self.brain.shown, [['screen'], []])
+        self.assertIn(server.SCREEN_WORDS['full'], self.brain.asked[1])
+        self.assertEqual(self.call.picture_bytes, len(SHOT(1)))
+
+    async def test_paused_the_agent_hears_it_once_and_gets_nothing_more_until_it_is_on_again(self):
+        self.turns = [self.on(5, ['#14 17:04:00 paused'], 14, paused=True), self.on(5, ['#15 17:04:30 typed in Name'], 15, paused=True),
+                      self.on(6, ['#16 17:05:00 resumed'], 16), self.on(6, ['#17 17:06:00 paused'], 17, paused=True)]
+        await self.turn('One moment.')
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['paused']})
+        for words in ('Still here.', 'Back.', 'Paused again.'):
+            await self.turn(words)
+        self.assertEqual(self.brain.shown, [[], [], ['screen'], []])
+        first, still, back, again = self.brain.asked
+        self.assertIn('#14 17:04:00 paused', first)
+        self.assertIn(server.SCREEN_WORDS['paused'], first)
+        self.assertEqual(still, 'Still here.', 'nothing more while paused')
+        self.assertIn('#16 17:05:00 resumed', back)
+        self.assertNotIn(server.SCREEN_WORDS['paused'], back)
+        self.assertIn(server.SCREEN_WORDS['paused'], again, 'paused again: told again')
+        self.assertNotIn('screen', [path for path, body in self.asked], 'the tool asked nothing while paused')
+        self.assertNotIn('Board: (on screen: #15 17:04:30 typed in Name)', self.call.lines)
+
+    async def test_a_restarted_session_gets_the_briefing_and_the_picture_again(self):
+        self.turns = [self.on(4, MOMENTS, 13), self.on(4, [], 13)]
+        await self.turn('Here.')
+        await self.call.restart(self.call.lines)
+        await self.turn('Again?')
+        self.assertEqual(self.screen_turns(), [(0, 0, False), (13, 0, False)])
+        self.assertEqual(self.brain.shown, [['screen'], ['screen']])
+        self.assertTrue(self.brain.asked[1].startswith(BRIEF))
+
+    async def test_a_room_asks_by_its_call_out_and_a_phone_call_never_asks(self):
+        for phone in (False, True):
+            self.call = server.Call(self.call.send_audio, self.call.send_event, self.call.clear, 'juno', 'en',
+                                    phone=phone, callout=12, brain=self.brain)
+            self.call.transcribe = self.transcribe
+            self.turns = [self.on(1, MOMENTS, 13)]
+            await self.call.start()
+            await self.turn('Hello?')
+            self.call.end()
+        self.assertEqual([(body['purpose'], body['ref']) for path, body in self.asked if path == 'screen-turn'], [('callout', '12')])
+        self.assertIsNone(self.brain.screen, 'no screen tool on the phone')
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['none']})
+        self.assertEqual(self.brain.shown, [['screen'], []])
+
+    async def test_a_turn_asked_again_on_a_new_seat_leaves_the_next_turn_its_picture(self):
+        """The turn's session stopped at its seat's limit and the line moved to a seat with room: the fresh session
+        has never seen the screen, so the next turn brings its picture again, though nothing changed."""
+        self.turns = [self.on(4, MOMENTS, 13), self.on(4, [], 13), self.on(4, [], 13)]
+        await self.turn('One.')
+        self.brain.reply = [server.Unanswered('limit')]
+        self.brain.moved = lambda: setattr(self.brain, 'reply', REPLY) or True  # (the worker moved it: it answers there)
+        await self.turn('Two.')
+        self.brain.moved = lambda: False
+        await self.turn('Three.')
+        self.assertEqual(self.screen_turns(), [(0, 0, False), (13, 4, True), (13, 0, False)])
+        self.assertEqual([len(shown) for shown in self.brain.shown], [1, 0, 0, 1])
+
+    async def test_a_coordinator_that_fails_or_is_slow_leaves_the_turn_as_it_was(self):
+        slow = lambda: threading.Event().wait(0.3) or self.on(1, MOMENTS, 13)
+        failed = lambda: HTTPError('http://hq/api/voice/screen-turn', 500, 'Internal Server Error', {}, None)
+        self.turns = [failed(), self.on(1, MOMENTS[:1], 12), failed(), ValueError('not JSON'), slow, self.on(2, MOMENTS[1:], 13)]
+        with unittest.mock.patch.object(server, 'SCREEN_TURN_SECONDS', 0.05):
+            for words in ('One.', 'Two.', 'Three.', 'Four.', 'Five.', 'Six.'):
+                await self.turn(words)
+        unread = f"({server.SCREEN_WORDS['unread']})\n\n"
+        # (before the screen was ever on, nothing; after, the agent hears it wasn't read, and has its moments next time)
+        self.assertEqual(self.brain.asked[0], 'One.')
+        self.assertEqual(self.brain.asked[2:5], [unread + 'Three.', unread + 'Four.', unread + 'Five.'])
+        self.assertIn(MOMENTS[1], self.brain.asked[5])
+        self.assertEqual([len(shown) for shown in self.brain.shown], [0, 1, 0, 0, 0, 1])
+        self.assertEqual(self.screen_turns(), [(0, 0, False), (0, 0, False), *[(12, 1, True)] * 4])
+        self.assertEqual([line for line in self.call.lines if 'on screen' not in line][::2],
+                         ['Board: One.', 'Board: Two.', 'Board: Three.', 'Board: Four.', 'Board: Five.', 'Board: Six.'])
+
+    async def test_the_screen_tool_reaches_its_call_through_the_lines_socket(self):
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.assertEqual(socket_path.stat().st_mode & 0o777, 0o600)
+        self.call.new_screen_key()
+        self.assertEqual(self.brain.screen, (str(server.SCREEN_SOCKET), self.call.screen_key))
+        region = {'x': 0.5, 'y': 0, 'width': 0.5, 'height': 0.5}
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(9)}, 'line': MOMENTS[0]}, {'lines': MOMENTS}]
+        first = await self.tool(socket_path, self.call.screen_key, {'at': '#12', 'region': region}, {'since': '-2m'})
+        self.assertEqual(first, [(False, [{'type': 'image', 'data': SHOT(9), 'mimeType': 'image/jpeg'}, {'type': 'text', 'text': MOMENTS[0]}]),
+                                 (False, [{'type': 'text', 'text': '\n'.join(MOMENTS)}])])
+        self.assertEqual([body for path, body in self.asked], [{'purpose': 'call', 'ref': '7', 'at': '#12', 'region': region},
+                                                               {'purpose': 'call', 'ref': '7', 'since': '-2m'}])
+        self.assertEqual((self.call.screen['pictures'], self.call.picture_bytes), (1, len(SHOT(9))))
+        old = self.call.screen_key
+        await self.call.restart([])  # (a new session, a new key: the old one answers nothing)
+        new = self.call.screen_key
+        self.call.end()  # (an ended call's neither)
+        for key in (old, new):
+            self.assertEqual(await self.tool(socket_path, key, {}), [(True, [{'type': 'text', 'text': server.SCREEN_WORDS['gone']}])])
+        self.assertEqual(len(self.asked), 2)
+
+    async def test_the_sketch_tool_shows_a_sketch_within_the_calls_bytes_and_never_on_a_call_out(self):
+        """The line asks the coordinator's sketch route for its call and counts the picture against the call's bytes; a
+        refusal comes back in the coordinator's words; a picture that isn't a PNG whose data decodes fails the tool,
+        uncounted; the socket routes a sketch ask to it."""
+        png = base64.b64encode(b'\x89PNG\r\n\x1a\n sketch').decode()
+        broken = base64.b64encode(b'\x89PNG\r\n\x1a\n' + bytes(96)).decode()
+        broken = broken[:80] + '!' + broken[81:]  # (a PNG's start, its base64 broken well past it)
+        line = 'Sketch #3 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
+        sketch = {'picture': {'type': 'image/png', 'data': png}, 'line': line}
+        refused = HTTPError('http://hq/api/voice/sketch', 404, 'Not Found', {}, io.BytesIO(b'{"error": "No sketch #9."}'))
+        self.looks = [sketch, refused, {'picture': {'type': 'image/jpeg', 'data': JPEG}, 'line': line},
+                      {'picture': {'type': 'image/png', 'data': broken}, 'line': line}, sketch, sketch]
+        start = self.call.picture_bytes
+        self.assertEqual(await self.call.sketch_tool({'sketch': 'tote'}), {'picture': sketch['picture'], 'line': line})
+        self.assertEqual(await self.call.sketch_tool({'sketch': '9'}), {'error': 'No sketch #9.'})
+        for asked in ('mug', 'cap'):  # (a JPEG, not a sketch's PNG; a PNG broken partway)
+            with self.assertRaises(ValueError):
+                await self.call.sketch_tool({'sketch': asked})
+        with unittest.mock.patch.object(server, 'SESSION_BYTES', start + 2 * len(png) - 1):  # (room for one)
+            self.assertEqual(await self.call.sketch_tool({'sketch': '3'}), {'error': server.SKETCH_WORDS['full']})
+        self.assertEqual(self.call.picture_bytes, start + len(png))
+        self.assertEqual(self.call.screen['pictures'], 0, "a sketch isn't a picture of the screen")
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        writer.write((json.dumps({'sketch': '3', 'key': self.call.screen_key}) + '\n').encode())
+        self.assertEqual(json.loads(await reader.read()), {'picture': sketch['picture'], 'line': line})
+        writer.close()
+        self.assertEqual([body for path, body in self.asked],
+                         [{'call': 7, 'sketch': s} for s in ('tote', '9', 'mug', 'cap', '3', '3')])
+        self.call.callout = 12
+        self.assertEqual(await self.call.sketch_tool({'sketch': '3'}), {'error': server.SKETCH_WORDS['none']})
+        self.assertEqual(len(self.asked), 6, 'nothing asked on a call out')
+
+    async def tool(self, socket_path, key, *calls):
+        """hq_tools.py's screen tool as the call agent's CLI runs it, with the line's socket and a session's key: each
+        call's (isError, content)."""
+        env = guard.agent_env({'PATH': os.environ['PATH']}, 'http://127.0.0.1:9', 3, 'call-token', 'juno', (str(socket_path), key))
+        msgs = [{'jsonrpc': '2.0', 'id': i + 1, 'method': 'tools/call', 'params': {'name': 'screen', 'arguments': a}} for i, a in enumerate(calls)]
+        proc = await asyncio.create_subprocess_exec(*guard.HQ_TOOLS, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
+        out, _ = await proc.communicate(''.join(json.dumps(m) + '\n' for m in msgs).encode())
+        return [(r['result']['isError'], r['result']['content']) for r in map(json.loads, out.decode().splitlines())]
 
 
 @unittest.skipUnless(np is not None and limit_model.installed(), 'needs numpy and the Claude CLI (the worker and the voice image have it)')
@@ -2951,6 +3216,91 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([e['text'] for e in self.events if e.get('type') == 'said'], ['Thank you, talk soon.'])
         self.assertEqual(call.lines[-1], 'Juno: Thank you, talk soon.')
         self.assertTrue(call.leaving, 'it hangs up')
+
+    async def test_a_walk_through_s_screen_reaches_the_model_and_its_tool_through_the_real_cli(self):
+        """A walk-through as the line runs it, with SCREEN_PICTURES at 2: the first turn's picture of the screen and its
+        moments in the message, the screen tool's picture through the line's socket in the tool's result, and on the
+        next turn, the budget spent, the moments and that pictures have stopped, without one. The CLI's copies of the
+        pictures go with the session."""
+        d, bodies = limit_model.tmp(), []
+        tool = {'type': 'tool_use', 'id': 'toolu_1', 'name': 'mcp__hq__screen', 'input': {'at': '#12'}}
+
+        class Model(BaseHTTPRequestHandler):  # the screen tool first, then a few words on each request after it
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or b'{}')
+                if not self.path.startswith('/v1/messages') or not body.get('stream') or body.get('max_tokens', 0) < 100:
+                    self.send_response(404)  # (the CLI's side requests)
+                    return self.end_headers()
+                bodies.append(body)
+                block = tool if len(bodies) == 1 else {'type': 'text', 'text': 'The blue button.'}
+                delta = ({'type': 'input_json_delta', 'partial_json': json.dumps(tool['input'])} if block is tool
+                         else {'type': 'text_delta', 'text': block['text']})
+                events = [{'type': 'message_start', 'message': {'id': 'm', 'type': 'message', 'role': 'assistant', 'model': 'claude-opus-5-5',
+                                                                'content': [], 'usage': {'input_tokens': 2, 'output_tokens': 1}}},
+                          {'type': 'content_block_start', 'index': 0, 'content_block': {**block, 'input': {}} if block is tool else {**block, 'text': ''}},
+                          {'type': 'content_block_delta', 'index': 0, 'delta': delta}, {'type': 'content_block_stop', 'index': 0},
+                          {'type': 'message_delta', 'delta': {'stop_reason': 'tool_use' if block is tool else 'end_turn'}, 'usage': {'output_tokens': 9}},
+                          {'type': 'message_stop'}]
+                self.send_response(200)
+                self.send_header('content-type', 'text/event-stream')
+                self.end_headers()
+                self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
+        model = ThreadingHTTPServer(('127.0.0.1', 0), Model)
+        threading.Thread(target=model.serve_forever, daemon=True).start()
+        turns = [{'on': True, 'paused': False, 'lines': MOMENTS, 'last': 13, 'version': 1, 'brief': BRIEF,
+                  'picture': {'type': 'image/jpeg', 'data': GREY('D')}},
+                 {'on': True, 'paused': False, 'lines': ['#14 17:03:20 typed in Name on the mug'], 'last': 14, 'version': 2,
+                  'picture': {'type': 'image/jpeg', 'data': GREY('T')}}]
+        asked = []
+        saved = server.SCREEN_SOCKET, server.SESSIONS
+        self.addCleanup(lambda: [setattr(server, k, v) for k, v in zip(('SCREEN_SOCKET', 'SESSIONS'), saved)])
+        server.SCREEN_SOCKET, server.SESSIONS = Path(d, 'screen.sock'), Path(d, 'projects')
+        screens = await server.serve_screens(server.SCREEN_SOCKET)
+        try:
+            call = self.line(f'http://127.0.0.1:{model.server_address[1]}', d)
+            context = server.hq
+
+            def coordinator(method, path, body=None):
+                asked.append((path, body))
+                if path == 'call-context':
+                    return {**context(method, path, body), 'call': 7}
+                if path == 'screen':
+                    return {'picture': {'type': 'image/jpeg', 'data': GREY('L')}, 'line': MOMENTS[0]}
+                return turns.pop(0) if path == 'screen-turn' else None
+            server.hq = coordinator
+            with unittest.mock.patch.object(server, 'SCREEN_PICTURES', 2):
+                await call.start()
+                await asyncio.wait_for(call.answer('What do I tap?', None), 60)
+                await asyncio.wait_for(call.answer('That one?', None), 60)
+            # (the CLI's copies of the pictures, where it keeps them: they go with the session)
+            copies = lambda: [*server.PICTURE_COPIES.glob(f"claude-*/{re.sub('[^A-Za-z0-9]', '-', d)}/*/images/*"),
+                              *Path(d).rglob('*.jpg')]  # (and the tool's, beside the session's records)
+            self.assertEqual(len(copies()), 2)
+            call.end()
+            for _ in range(100):
+                if not copies():
+                    break
+                await asyncio.sleep(0.1)
+            self.assertEqual(copies(), [])
+        finally:
+            screens.close()
+            model.shutdown()
+            model.server_close()
+        self.assertEqual(len(bodies), 3, 'the screen tool ran, and each turn reached the model')
+        first, result, second = ([m for m in body['messages'] if m['role'] == 'user'][-1]['content'] for body in bodies)
+        words = next(part['text'] for part in first if part['type'] == 'text' and 'What do I tap?' in part['text'])
+        self.assertEqual((first[0]['type'], first[0]['source']['data']), ('image', GREY('D')), 'the picture first')
+        self.assertTrue(words.startswith(BRIEF) and words.rstrip().endswith('What do I tap?'))
+        self.assertIn(MOMENTS[1], words)
+        self.assertIn(GREY('L'), json.dumps(result), "the tool's picture reached the model")
+        self.assertNotIn('image', [part.get('type') for part in second], 'the budget is spent')
+        self.assertIn('#14 17:03:20 typed in Name on the mug', json.dumps(second))
+        self.assertIn(server.SCREEN_WORDS['full'], json.dumps(second))
+        self.assertEqual([body for path, body in asked if path == 'screen'], [{'purpose': 'call', 'ref': '7', 'at': '#12'}])
+        self.assertEqual(call.screen['pictures'], 2)
 
     async def test_the_goodbye_then_hang_up_says_it_once(self):
         await self.goodbye('bye', server.HANG_UP_TOOL)

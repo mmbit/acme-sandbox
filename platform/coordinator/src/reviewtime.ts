@@ -13,11 +13,12 @@ const LOOP_GUESS_MS = 15 * MINUTE_MS;
 export const SLOW_SHARE = 0.8;
 export function loopSizes(now: number) {
   // (the week's runs first, by their end, then their jobs: one that started in the week ended in it)
-  // jobs_run_sizes covers the jobs columns here to skip wide job rows (db.ts).
+  // jobs_review_runs covers the jobs columns here to skip wide job rows (db.ts).
   const runs = db
     .prepare(
-      `select j.kind, sum((julianday(r.ended) - julianday(r.started)) * 86400000) ms from runs r cross join jobs j indexed by jobs_run_sizes
-      on j.id = r.job where j.kind in ('review', 'consolidate') and j.status = 'done' and r.started > ? and r.ended > ?
+      `select j.kind, sum((julianday(r.ended) - julianday(r.started)) * 86400000) ms from runs r
+      cross join jobs j indexed by jobs_review_runs on j.id = r.job
+      where j.kind in ('review', 'consolidate') and j.status = 'done' and r.started > ? and r.ended > ?
       group by j.id`,
     )
     .all(...Array(2).fill(iso(now - WEEK_MS))) as { kind: string; ms: number }[];

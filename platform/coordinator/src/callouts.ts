@@ -19,17 +19,25 @@
 //     with the call: the follow-up's brief has neither, it reads them with hq phone call. The board reads them on the
 //     call's card once it has ended (callcard.ts).
 //   - A job that holds a customer's details files no call (house rule 7), as it files no email draft (outbox.ts).
+//   - A link may name a preview the board shared (shares.ts, --share): a walk-through. Its page shows that preview in a
+//     frame under the call, and its people get the same link on their share's door. The guest's own page records what it
+//     shows only once they say so (watchalong.ts), and the recording ends with the call, or goes with it when the call
+//     leaves nothing behind.
 // Here: the table, the agent's side and the call's end; the board's card: callcard.ts; the dial and the sweep:
 // callsweep.ts; the call itself on the voice line: callline.ts.
-import { createHash } from 'node:crypto';
-import { db, redacted } from './db.ts';
+import { createHash, createHmac } from 'node:crypto';
+import { db, redacted, columnsOf } from './db.ts';
+import { ORIGIN } from './config.ts';
 import { publish } from './events.ts';
-import { secret } from './secrets.ts';
+import { secret, serverKey } from './secrets.ts';
 import { ceo, timeZone } from './company.ts';
 import { boardId, closeRequest, createJob, createRequest, findAgent, holdsCustomerData } from './jobs.ts';
 import { atTime, dialable, hoursText } from './callrules.ts';
 import * as words from './callwords.ts';
 import { codeOf } from './jobcodes.ts';
+import * as shares from './shares.ts';
+import * as watchalong from './watchalong.ts';
+import { ownerOf } from './owedproducts.ts';
 
 // status: open (on the desk phone), declined, withdrawn (by its filer), approved (to dial, or the link made), dialling
 // (Twilio asked, not answered yet), live (on the line), done, missed (busy, no answer), failed, expired (a link nobody
@@ -37,12 +45,14 @@ import { codeOf } from './jobcodes.ts';
 // phone call's one stream. token_hash: the agent's token on the call (it opens no route: server.ts). transcript, notes: JSON
 // lists of lines. twilio_ended: when Twilio said a live call ended. outcome: how it ended, in a line for the filer.
 // blanked: when the sweep blanked its transcript and notes, 12 months on (null words without it: never handed over).
+// share: the shared preview a link walks through (shares.ts), or null.
 db.exec(`create table if not exists callouts (id integer primary key, created text not null, agent text not null, job integer,
   request integer not null unique, kind text not null, number text, digits text, who text not null, about text not null,
   why text not null, lang text not null, at text, status text not null default 'open', decided text, sid text,
   link_hash text unique, opens text, closes text, ticket_hash text unique, ticket_expires integer, token_hash text unique,
   started text, twilio_ended text, ended text, outcome text, transcript text, notes text, objected integer not null default 0,
-  followup integer, blanked text)`);
+  followup integer, blanked text, share integer)`);
+if (!columnsOf('callouts').includes('share')) db.exec('alter table callouts add column share integer');
 redacted('callouts', 'who', 'about', 'why', 'transcript', 'notes');
 
 type Kind = 'phone' | 'link';
@@ -80,6 +90,7 @@ export type Callout = {
   objected: number;
   followup: number | null;
   blanked: string | null;
+  share: number | null;
 };
 
 const CALLS_PER_HOUR = 3,
@@ -115,6 +126,7 @@ type Filing = {
   at: string | null;
   digits: string | null;
   number: string | null;
+  share: number | null;
 };
 // An agent in org.yaml, from a job that holds no customer's details, at most CALLS_PER_HOUR an hour
 function rules(agent: string, job: number): Refusal | null {
@@ -169,8 +181,18 @@ function filing(b: any): Filing | Refusal {
     ];
   const number = kind === 'phone' ? toRing(b.to) : null;
   if (Array.isArray(number)) return number;
+  const share = b.share == null ? null : sharedPreview(b.share, kind);
+  if (Array.isArray(share)) return share;
   // (card)
-  return { kind, who, about, why, card, lang: String(b.lang) as words.Lang, at, digits, number };
+  return { kind, who, about, why, card, lang: String(b.lang) as words.Lang, at, digits, number, share };
+}
+// --share: an open share of the board's, for a join link to walk through
+function sharedPreview(id: unknown, kind: Kind): number | Refusal {
+  if (kind !== 'link') return [400, '--share: with --link only, a call room that walks through a shared preview'];
+  const s = Number.isInteger(Number(id)) ? shares.byId(Number(id)) : undefined;
+  if (!s) return [404, `--share: no share #${String(id)}`];
+  if (!shares.isOpen(s)) return [409, `--share: share #${s.id} has ended, so there's nothing to walk through`];
+  return s.id;
 }
 // --to: a number our line can ring; board: the board's own saved number, for a test call to the board, which no agent
 // knows
@@ -190,7 +212,10 @@ function toRing(to: string): string | Refusal {
 }
 // The board's card on the desk phone (Call, Don't call: callcard.ts), and the call's row
 function save(agent: string, job: number, c: Filing, topic: unknown) {
-  const title = c.kind === 'phone' ? `Call ${c.who} about ${c.about}` : `A call room with ${c.who} about ${c.about}`;
+  const title =
+    c.kind === 'phone'
+      ? `Call ${c.who} about ${c.about}`
+      : `A call room with ${c.who} about ${c.about}${c.share ? `, walking through ${shareName(c.share)}` : ''}`;
   const card = createRequest({
     kind: 'call',
     title,
@@ -203,10 +228,10 @@ function save(agent: string, job: number, c: Filing, topic: unknown) {
   if (typeof card === 'number') return card;
   const { lastInsertRowid } = db
     .prepare(
-      `insert into callouts (created, agent, job, request, kind, number, digits, who, about, why, lang, at)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into callouts (created, agent, job, request, kind, number, digits, who, about, why, lang, at, share)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .run(now(), agent, job, card.id, c.kind, c.number, c.digits, c.who, c.about, c.why, c.lang, c.at);
+    .run(now(), agent, job, card.id, c.kind, c.number, c.digits, c.who, c.about, c.why, c.lang, c.at, c.share);
   return { id: Number(lastInsertRowid), request: card.id };
 }
 
@@ -281,6 +306,10 @@ export function end(c: Callout, status: Status, outcome: string) {
     `update callouts set status = ?, outcome = ?, ended = ?, number = null, digits = null, ticket_hash = null, token_hash = null,
     decided = coalesce(decided, ?) where id = ?`,
   ).run(status, outcome, now(), now(), c.id);
+  // (its walk-through's recording: kept with what the call left, gone with a call that left nothing or whose other side
+  // would rather we kept no transcript)
+  if (!c.objected && (list(c.transcript).length || list(c.notes).length)) watchalong.endCallout(c.id);
+  else watchalong.forgetCallout(c.id);
 }
 // Who hears it: the agent who filed it, or the CEO once that agent has left org.yaml
 const filer = (c: Pick<Callout, 'agent'>) => (findAgent(c.agent) ? c.agent : ceo());
@@ -302,5 +331,24 @@ export const view = (c: Callout) => ({
   hours: hoursText(),
   timeZone: timeZone(),
   ...(c.kind === 'link' && c.opens ? { opens: c.opens, closes: c.closes } : {}),
+  ...(c.share ? { share: { id: c.share, what: shareName(c.share) } } : {}),
   ...(ENDED.includes(c.status) ? { outcome: c.outcome } : {}),
+});
+
+// ---- walk-throughs
+// A join link's token: an HMAC of the call under the server's own key (callouts.key), so a share's door can lead its
+// people to the link the board sent while the table keeps only its sha256
+const KEY = serverKey('callouts');
+export const linkToken = (id: number) => createHmac('sha256', KEY).update(`join:${id}`).digest('base64url');
+// What a share opens, by the name its door gives it (the product, or the shop)
+const shareName = (id: number) => String(ownerOf(shares.byId(id)!.about).name);
+// A share's walk-through call while its link is open: the newest, its agent's name and its link
+shares.onWalkThrough(share => {
+  const c = db
+    .prepare(
+      `select * from callouts where share = ? and kind = 'link' and status in ('approved', 'live') and opens <= ?
+      and closes > ? order by id desc`,
+    )
+    .get(share, now(), now()) as Callout | undefined;
+  return c ? { agent: agentName(c.agent), link: `${ORIGIN}/join/${linkToken(c.id)}` } : null;
 });

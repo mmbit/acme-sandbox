@@ -197,6 +197,23 @@ test('a window that has passed goes after every window still open, and before wo
   assert.ok(start(1) < start(3), 'ahead of work with no window');
 });
 
+test('a pause release with a passed window leaves more urgent running work uninterrupted', () => {
+  const input = snapshot(
+    [work(1, { status: 'running', seat: 'codex', due: 60 * MINUTE }), work(2, { due: -72 * 60 * MINUTE })],
+    { pauseUntil: [2] },
+  );
+  const seen = play(
+    input,
+    sizes([
+      [1, 180],
+      [2, 30],
+    ]),
+  );
+  assert.equal(seen.get(1)!.done, 180 * MINUTE);
+  assert.equal(seen.get(2)!.start, 180 * MINUTE);
+  assert.ok(!seen.get(2)!.waits.some(wait => wait.on === 'queue' && wait.pausing));
+});
+
 test('reviewers and rulings occupy slots, fix runs have their own engine, and merge edges await the last run', () => {
   const owner = work(1, {
     reviewPlan: {

@@ -12,6 +12,11 @@ type Paused = {
   running: { id: number; status: string }[];
 };
 
+// (the work in no thread: the coordinator's jobs.ts DESK.)
+const DESK = `
+                                                     The project unsorted (or its group's code) is the work in no
+                                                     thread: what a call and HQ queue there (the intercom, meetings,
+                                                     a call's follow-up and expedited work go on)`;
 const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<project>');
 
 export const help = (kind: Kind) => `
@@ -21,7 +26,7 @@ export const help = (kind: Kind) => `
                                                      those jobs are all done and merged. Work already running goes on
                                                      (stop it, or let it finish: hq stop pauses a review or ruling). The
                                                      CEO or the project's owner. A hold the board agreed goes in as a
-                                                     pause, then hq item link <item> pause:<${kind}>
+                                                     pause, then hq item link <item> pause:<${kind}>${kind === 'project' ? DESK : ''}
    ${`hq ${kind} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
                                                      the board's item: the CEO only)`;
 
@@ -39,7 +44,7 @@ export async function pause(kind: Kind, given: string[]) {
   }
   const [id, why, ...rest] = args;
   if (!id || !why?.trim() || rest.length) stop(`usage: hq ${kind} pause ${named(kind)} "why" [--until <job>]...`);
-  const answer = await api.call('pauses', { body: api.withSpeaker({ [kind]: id, why, until }) });
+  const answer = await api.change('pauses', { body: api.withSpeaker({ [kind]: id, why, until }) });
   const paused = api.parseOrNull(answer.body) as Paused | null;
   if (!api.isSuccess(answer.status) || !paused?.target)
     stop(`Nothing was paused: ${api.errorIn(answer.body, 'no answer')} (hq followthrough lists the pauses)`);
@@ -58,7 +63,7 @@ export async function pause(kind: Kind, given: string[]) {
 
 export async function resume(kind: Kind, [id, ...rest]: string[]) {
   if (!id || rest.length) stop(`usage: hq ${kind} resume ${named(kind)}`);
-  const answer = await api.call('pauses/resume', { body: api.withSpeaker({ [kind]: id }) });
+  const answer = await api.change('pauses/resume', { body: api.withSpeaker({ [kind]: id }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing was resumed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Resumed ${id}: its queued work starts as seats free up.`);
 }
@@ -83,7 +88,7 @@ export const decision = {
     const [name, ...rest] = args;
     if (!name?.trim() || rest.length || !blocks.length)
       stop('usage: hq decision "name" --blocks <project | project/thread>..., or hq decision link <id> <card>');
-    const answer = await api.call('decisions', { body: { name, blocks } });
+    const answer = await api.change('decisions', { body: { name, blocks } });
     const made = api.parseOrNull(answer.body) as { id?: number; blocks?: string[] } | null;
     if (!api.isSuccess(answer.status) || !made?.id)
       stop(`Nothing was paused: ${api.errorIn(answer.body, 'no answer')}`);
@@ -97,7 +102,7 @@ export const decision = {
 async function link([id, card, ...rest]: string[]) {
   if (!/^[0-9]+$/.test(id ?? '') || !/^[0-9]+$/.test(card ?? '') || rest.length)
     stop('usage: hq decision link <id> <card>');
-  const answer = await api.call('decisions/link', { body: { id: Number(id), card: Number(card) } });
+  const answer = await api.change('decisions/link', { body: { id: Number(id), card: Number(card) } });
   if (!api.isSuccess(answer.status)) stop(`Not tied: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Card #${card} asks decision #${id}: the board's answer on it lets the work go.`);
 }

@@ -31,10 +31,12 @@ dialog.zoom img {
   transform-origin: 0 0;
   -webkit-user-drag: none;
 }
+/* (below the status bar and, as a home-screen app, iOS's blurred band: style.css's --sat.
+  .) */
 .zoom-close {
   position: absolute;
-  top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
+  top: max(12px, var(--sat));
+  right: max(12px, var(--sar));
   width: 44px;
   height: 44px;
   padding: 0;

@@ -1,6 +1,8 @@
 // Looking things up (the coordinator's memory.ts): the knowledge base and more by meaning and words (hq search), this
 // agent's own past work (hq history), a call with the board (hq call), and the board's intercom (hq intercom).
+import { writeFileSync } from 'node:fs';
 import * as api from './api.ts';
+import { savePicture } from './files.ts';
 import { present, print, stop, text } from './output.ts';
 
 // (in any of the platform's languages)
@@ -135,13 +137,23 @@ export const call = {
   help: `
    hq call <id> [a-b]                                a call with the board, yours or a colleague's, every line and its
                                                      summary (one about a customer: only to the jobs working on it); for a
-                                                     call your job works for, its numbered transcript, as above`,
+                                                     call your job works for, its numbered transcript, as above
+   hq call <id> moments                              a walk-through call's recording (its screen was shown): what was done
+                                                     (#14 tapped "Add to basket" (button)) and its transcript's lines
+                                                     ([12] Board: ...) in one timeline, each with its time on the
+                                                     company's clock
+   hq call <id> screen <time> [--out <path>]         a PNG of that call's screen then, the pen's ink drawn, a moment's tap
+                                                     ringed: a time of day (17:03:12), a moment (#14) or a time from the
+                                                     call's start (+2m10s); saved to --out or a new file
+                                                     $TMPDIR/call-<id>-screen.XXXXXX.png, its path and time printed`,
   //
 
   // A call this job works for (the call ledger): its transcript, numbered (or lines a to b). Otherwise any call the
   // coordinator shows this agent (memory.ts), every line and its summary.
-  async run([id, lines = '']: string[]) {
-    if (!/^[0-9]+$/.test(id ?? '') || !/^[0-9]+(-[0-9]+)?$/.test(lines || '1')) stop('usage: hq call <id> [a-b]');
+  async run([id, lines = '', ...rest]: string[]) {
+    if (/^[0-9]+$/.test(id ?? '') && lines === 'moments' && !rest.length) return moments(id);
+    if (/^[0-9]+$/.test(id ?? '') && lines === 'screen') return screen(id, rest);
+    if (!/^[0-9]+$/.test(id ?? '') || !/^[0-9]+(-[0-9]+)?$/.test(lines || '1') || rest.length) stop(CALL_USAGE);
     const answer = await api.call(`call?id=${id}${lines ? `&lines=${lines}` : ''}`);
     if (answer.status === 404) stop(`No call #${id} you can read (it doesn't exist, or it's still going on).`);
     if (answer.status !== 200) stop(`hq call: ${api.errorIn(answer.body, 'no answer')}`);
@@ -152,6 +164,39 @@ export const call = {
     );
   },
 };
+
+const CALL_USAGE = 'usage: hq call <id> [a-b | moments | screen <time> [--out <path>]]';
+
+// hq call <id> moments and screen <time> (the coordinator's callviews.ts timeline, screenAt), on hq call's access.
+async function moments(id: string) {
+  const found = JSON.parse(await viewed(id, 'moments'));
+  print(
+    `(Times in ${text(found.timeZone)}.${present(found.untimed) ? ` Only the moments: ${text(found.untimed)}.` : ''})\n`,
+  );
+  print((found.lines as unknown[]).map(text).join('\n'));
+}
+async function screen(id: string, args: string[]) {
+  const out = args.indexOf('--out'),
+    path = out < 0 ? '' : (args[out + 1] ?? '');
+  const at = args.filter((_, i) => out < 0 || (i !== out && i !== out + 1));
+  if (at.length !== 1 || (out >= 0 && !path)) stop(CALL_USAGE);
+  const found = JSON.parse(await viewed(id, 'screen', `&at=${api.uri(at[0])}`));
+  let saved = path;
+  if (path) writeFileSync(path, Buffer.from(text(found.picture.data), 'base64'), { mode: 0o600 });
+  else saved = savePicture(`call-${id}-screen`, 'image/png', text(found.picture.data));
+  print(`${text(found.line)} (${Number(found.width)}×${Number(found.height)} px) → ${saved}`);
+}
+async function viewed(id: string, view: string, more = '') {
+  const answer = await api.call(`call?id=${id}&view=${view}${more}`);
+  if (answer.status === 200) return answer.body;
+  const error = api.errorIn(answer.body, 'no answer');
+  // (HQ's bare 404: no such call for this job, as hq call says it)
+  stop(
+    answer.status === 404 && error === 'not found'
+      ? `No call #${id} you can read (it doesn't exist, or it's still going on).`
+      : `hq call: ${error}`,
+  );
+}
 
 function summaryOf({ summary, summary_left_out, job }: { summary?: string; summary_left_out?: string; job?: number }) {
   if (present(summary)) return `\n\nSummary (job #${job}'s report):\n${text(summary)}`;

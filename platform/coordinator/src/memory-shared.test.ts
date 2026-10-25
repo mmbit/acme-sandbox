@@ -25,6 +25,9 @@ async function run(id: number): Promise<Running> {
 const done = (j: Running, result = 'ok', status = 'done') => h.finish(j, { status, result });
 // An agent at work, to search and read with: a job of its own, running.
 const at = (agent: string) => h.start({ agent, title: `Looking things up (${agent})` });
+// A call's briefing shows its agent's last eight finished jobs (call.ts recentWork), and one whose report holds a
+// customer's details makes the call about the customer from its start: eight plain ones push it out.
+const briefedPlain = async (agent: string) => { for (let i = 0; i < 8; i++) await done(await at(agent)); };
 // A call with the board, as the voice line has it: its context (and the call's token), then the transcript at the end;
 // during: what happens while it's on (a picture shared). Its number and its follow-up, as HQ's Calls lists them. The
 // agent's earlier calls not followed up yet ended a day ago: it doesn't carry on from them (call.ts carriedOn), unless
@@ -163,6 +166,7 @@ test("A summary is its job's whole report: shared unless that job was handed a c
   assert.equal((await agent(`call?id=${c.id}`, penny.token)).body.summary, 'Pukeko budget set to 60, and the takahebank refund for Jan Jansen is done.');
 
   // A follow-up that asks for keys itself is shared as any other: a key's value never reaches its report (db.ts redacted())
+  await briefedPlain('penny');
   const third = await call('penny', ['Board: the weka payroll runs on the 25th.']);
   const weka = await run(third.job);
   await h.ask(weka, { kind: 'credential', urgency: 'today', title: 'The weka bank key', body: 'Enter it.', secrets: 'STRIPE_TEST_WEKA_KEY' });
@@ -262,6 +266,7 @@ test("A job handed a customer call's item holds their details from the start: th
 // Search by meaning (#1878) compares the shared calls too, under the same rules as their words. A fake model: "grumblebox"
 // and "quibbleport" are one made-up concept, so only meaning finds the call by the word it doesn't have.
 test("By meaning, too: another agent's call is found through a synonym, and not once its follow-up holds a customer's details", async () => {
+  await briefedPlain('penny');
   const c = await call('penny', ['Board: complaints go to the grumblebox from now on.', 'Penny: the grumblebox, noted.']);
   const follow = await run(c.job);
   const vec = (t: string, kind: 'query' | 'passage') => {

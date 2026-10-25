@@ -388,7 +388,7 @@ const seatList = (seats: Seat[]) => seats.map(seat => `${seat.agent} (job #${sea
 // A meeting route's answer: a GET without a body, else a POST. A refusal stops hq with the command's words and HQ's
 // reason.
 async function answer<T = unknown>(route: string, refused: string, body?: object): Promise<T> {
-  const reply = await api.call(route, { body });
+  const reply = body ? await api.change(route, { body }) : await api.call(route);
   const parsed = api.parseOrNull(reply.body);
   if (!api.isSuccess(reply.status) || parsed === null)
     stop(`${refused}: ${api.errorIn(reply.body, 'no answer') || `HQ answered ${api.httpCode(reply.status)}`}`);

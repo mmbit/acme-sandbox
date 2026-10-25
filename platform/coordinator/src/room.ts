@@ -9,6 +9,7 @@ import { publish } from './events.ts';
 import { readyOn, findAgent, type ReadySeat } from './jobs.ts';
 import { ceo } from './company.ts';
 import * as jam from './jam.ts';
+import * as lowmemory from './lowmemory.ts';
 
 export const STARVED_MS = 5 * 60_000;
 const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
@@ -48,6 +49,7 @@ export function reportRoom(
     jobs?: unknown;
     claims?: unknown;
     capacity?: unknown;
+    memory?: unknown;
   },
   now = Date.now(),
 ) {
@@ -78,6 +80,7 @@ export function reportRoom(
     jobs: jobs.sort((x, y) => y.mb - x.mb),
     waiting,
   };
+  lowmemory.report(workerReport.memory, lastReport.free, now);
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
   jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);

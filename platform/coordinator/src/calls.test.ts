@@ -547,8 +547,8 @@ test('the call reaches a running job, as often as it needs, by its number and it
   db.prepare("update jobs set engine = 'codex' where id = ?").run(codex.id);
   const waiting = jobs.createJob({ agent: 'moss', title: 'Not yet', prompt: 'x' }).id;
   const ctx = await context('juno');
-  assert.match(ctx.prompt, new RegExp(`- #${running.id}, moss: The site \\(running\\)`), 'the briefing lists work under way by number');
-  assert.match(ctx.prompt, /Reviews under way:\n- none/);
+  assert.match(ctx.prompt, new RegExp(`- #${running.id}, moss: The site \\(job on seat-\\d+, since [^)]*\\), in no thread\\.`), 'the briefing lists work under way by number');
+  assert.match(ctx.prompt, /Reviews queued:\n- none/);
   assert.match(ctx.prompt, /When the board's settled word matters to work already under way before the call ends[\s\S]*pass it on with reach, as often as the board's word needs; anything still\s+being worked out goes to the follow-up\./);
   const own = (await h.agent('job', ctx.token, { agent: 'moss', title: 'Queued here', prompt: 'x' })).body.id as number;
   const reach = (job: number, to: string, text = 'Only something insecure blocks it now.') =>

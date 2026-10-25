@@ -1647,3 +1647,91 @@ test("a call about a card the intercom filed: the turn's final message is the re
   assert.equal(await replyOf(c.id), 'The second headline it is. 🙂', "the call's notes are the reply the board read in the intercom");
   assert.equal((await history()).messages.at(-1).text, 'The second headline it is. 🙂');
 });
+
+// A call's token manages the company's work as its agent's jobs do (server.ts MANAGE_ROUTES), but on a call about a
+// customer's details it makes no change that carries words, which reach HQ's feed and colleagues who don't hold them
+// (CUSTOMER_CALL_SHUT); one that only names the job, a cancel without a why, goes ahead.
+test("a call manages work as off it; a customer's call reads, and changes nothing with its words", async () => {
+  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-33?', body: 'Jan Jansen, cracked mug', agent: ceo(), customers: true }) as { id: number };
+  const plain = await aCall(ceo(), []), about = await aCall(ceo(), [], card.id);
+  const queued = (await agent('job', plain.token, { agent: 'kit', title: 'Mug photos', prompt: 'x' })).body.id;
+  const other = (await agent('job', plain.token, { agent: 'kit', title: 'Mug box', prompt: 'x' })).body.id;
+  const before = JSON.stringify(await h.feed());
+  for (const [route, body] of [['cancel', { id: queued, why: 'Jan Jansen refunded' }], ['plan/drop', { id: queued, why: 'Jan Jansen' }],
+    ['pauses', { project: 'office', why: 'Jan Jansen' }], ['decisions', { name: 'Refund Jan Jansen?', blocks: ['office'] }],
+    ['proposals/drop', { id: 1, why: 'Jan Jansen' }], ['meetings/set', { asks: [1], topic: 'Jan Jansen' }],
+    ['owed-close', { slug: 'x', why: 'Jan Jansen' }]] as const) {
+    assert.equal((await agent(route, about.token, body)).status, 409, route);
+  }
+  assert.equal(h.job(queued).status, 'queued');
+  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
+  for (const route of ['meetings/asks', 'jobs', 'owed', 'proposals']) assert.equal((await agent(route, about.token)).status, 200, `reads stay open: ${route}`);
+  // a change that only names the job carries no words of the customer's, and goes ahead
+  assert.equal((await agent('cancel', about.token, { id: queued, why: ' ' })).status, 200, 'a cancel without a why');
+  assert.equal(h.job(queued).status, 'cancelled');
+  assert.equal((await agent('cancel', plain.token, { id: other, why: 'the board dropped it' })).status, 200, 'another call cancels with a why');
+  assert.equal(h.job(other).status, 'cancelled');
+  for (const route of ['event', 'reply', 'followthrough-verdict', 'item-drop']) {
+    assert.equal((await agent(route, plain.token, { text: 'x', verdict: 'ok' })).status, 403, `a call has no job to speak as: ${route}`);
+  }
+  await about.end();
+  await plain.end();
+});
+
+// A call that isn't about a customer, by an agent who reads their details (roles.customerData), is about one once a
+// look-up hands it them: its changes with words are refused from then on, a call carrying on from it is about the
+// customer too, and its follow-up holds their details.
+test("a call that reads a customer's card is about the customer from then on", async () => {
+  const reader = roles().customerData![0];
+  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-34?', body: 'Piet Pieters, bent fork', agent: ceo(), customers: true }) as { id: number };
+  const first = await aCall(reader, ['Board: What did Piet ask for?', 'Board: A new fork, I think.']);
+  const queued = (await agent('job', first.token, { agent: 'kit', title: 'Fork photos', prompt: 'x' })).body.id;
+  assert.ok(!memory.customerCall(first.id), 'not about a customer at its start');
+  const read = await agent(`requests?id=${card.id}`, first.token);
+  assert.equal(read.body[0]?.body, 'Piet Pieters, bent fork', 'the card in full: its reader reads customer data');
+  assert.ok(memory.customerCall(first.id), 'about the customer from then on');
+  const before = JSON.stringify(await h.feed());
+  assert.equal((await agent('cancel', first.token, { id: queued, why: 'Piet Pieters refunded' })).status, 409, 'a cancel with a why');
+  assert.equal(h.job(queued).status, 'queued');
+  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
+  await first.end();
+  assert.ok(jobs.holdsCustomerData(callRow(first.id).job), 'its follow-up holds their details');
+  const next = await aCall(reader, ['Board: Hello again.'], 0, { carry: true });
+  assert.deepEqual(JSON.parse(callRow(next.id).resumes), [first.id]);
+  assert.ok(memory.customerCall(next.id), 'a call carrying on from it is about the customer too');
+  await next.end();
+});
+
+// The same for what a call's briefing shows its agent (call.ts recentWork): a customer's report among its finished jobs,
+// at its start, or a customer card's answer among its requests, at a restart once one has come in.
+test("a call whose briefing shows a customer's report or card answer is about the customer", async () => {
+  const [reader, other] = roles().customerData!;
+  const { id: done } = jobs.createJob({ agent: reader, title: 'Refund case C-35', prompt: 'x' });
+  db.prepare("update jobs set status = 'done', result = 'Refunded Klaas Klaassen in full', customers = 1, finished = ? where id = ?").run(new Date().toISOString(), done);
+  const first = await aCall(reader, ['Board: How did the refund go?']);
+  assert.match(first.prompt, /Refunded Klaas Klaassen in full/, 'the report in its briefing: its agent reads customer data');
+  assert.ok(memory.customerCall(first.id), 'about the customer from its start');
+  const queued = (await agent('job', first.token, { agent: 'kit', title: 'Spoon photos', prompt: 'x' })).body.id;
+  const before = JSON.stringify(await h.feed());
+  assert.equal((await agent('cancel', first.token, { id: queued, why: 'Klaas Klaassen refunded' })).status, 409, 'a cancel with a why');
+  assert.equal(h.job(queued).status, 'queued');
+  assert.equal(JSON.stringify(await h.feed()), before, "nothing of the customer's in HQ's feed");
+  await first.end();
+  assert.ok(jobs.holdsCustomerData(callRow(first.id).job), 'its follow-up holds their details');
+  const next = await aCall(reader, ['Board: Hello again.'], 0, { carry: true });
+  assert.ok(memory.customerCall(next.id), 'a call carrying on from it is about the customer too');
+  await next.end();
+
+  const second = await aCall(other, ['Board: Anything from the desk phone?']);
+  assert.ok(!memory.customerCall(second.id), 'not about a customer at its start');
+  const card = jobs.createRequest({ kind: 'decision', title: 'Refund case C-36?', body: 'Joke Jansen, chipped bowl', agent: other, customers: true }) as { id: number };
+  db.prepare("update requests set status = 'answered', answer = 'Refund Joke Jansen in full' where id = ?").run(card.id);
+  const again = await voice('call-context', { agent: other, lang: 'en', request: 0, token: second.token });
+  assert.match(again.body.prompt, /Refund Joke Jansen in full/, "the card's answer in the restarted briefing");
+  assert.ok(memory.customerCall(second.id), 'about the customer from the restart');
+  const kept = (await agent('job', second.token, { agent: 'kit', title: 'Bowl photos', prompt: 'x' })).body.id;
+  assert.equal((await agent('cancel', second.token, { id: kept, why: 'Joke Jansen refunded' })).status, 409, 'a cancel with a why');
+  assert.equal(h.job(kept).status, 'queued');
+  await second.end();
+  assert.ok(jobs.holdsCustomerData(callRow(second.id).job), 'its follow-up holds their details');
+});

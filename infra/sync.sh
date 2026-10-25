@@ -83,6 +83,10 @@ if [ -n "$HQ_DATA" ] && [ -z "$(find "$errors_tried" -mmin -60 2>/dev/null)" ]; 
   timeout 300 python3 infra/app_errors.py "$HQ_DATA" >/dev/null || echo "app_errors.py failed: its next run, in an hour, reads from the same point" >&2
 fi
 
+# The stack's containers' states and restart counts for HQ's crash watch (infra/containers.py, the coordinator's
+# crashes.ts), every minute
+[ -z "$HQ_DATA" ] || timeout 60 python3 infra/containers.py "$HQ_DATA" || echo "containers.py failed" >&2
+
 # No token in any URL or .git/config: git asks infra/git-credential.sh, which reads the env file at call time.
 # Idempotent; also moves the first clone's token URL out of an older checkout.
 git remote set-url origin "https://github.com/$REPO.git"

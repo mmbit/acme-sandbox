@@ -141,6 +141,9 @@ class Guard(unittest.TestCase):
         self.assertEqual((env['HQ_TOKEN'], env['HQ_AGENT'], env['HQ_CALL']), ('call-token', 'juno', '1'))
         self.assertEqual(env['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'], '7')  # (the sign-in itself on that pipe, never here)
         self.assertFalse({'v', 'w', 'g'} & set(env.values()))
+        # a call with a screen: the line's screen socket and the session's key, for the screen tool
+        screen = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', ('/data/call/screen.sock', 'k1'))
+        self.assertEqual({k: v for k, v in screen.items() if k not in env}, {'SCREEN_SOCKET': '/data/call/screen.sock', 'SCREEN_KEY': 'k1'})
 
     def test_tools_read_search_and_hand_on_only(self):
         args = dict(zip(TOOLS[1::2], TOOLS[2::2]))
@@ -165,10 +168,11 @@ class Guard(unittest.TestCase):
         self.assertIn('--strict-mcp-config', PARTNER)
 
     def test_a_call_out_looks_nothing_up(self):
-        """A partner's call has exactly note, no_transcript and hang_up: no search or history, whose answers are the
-        company's files, jobs and the board's answers, and which the partner's words could steer (house rule 9)."""
+        """A partner's call has exactly note, no_transcript, hang_up and screen (their own screen on a walk-through): no
+        search or history, whose answers are the company's files, jobs and the board's answers, and which the partner's
+        words could steer (house rule 9)."""
         import hq_tools
-        self.assertEqual(PARTNER_TOOLS, ['hang_up', 'no_transcript', 'note'])
+        self.assertEqual(PARTNER_TOOLS, ['hang_up', 'no_transcript', 'note', 'screen'])
         self.assertEqual(sorted(t['name'] for t in hq_tools.PARTNER_TOOLS), PARTNER_TOOLS)
 
     def test_a_call_cannot_hand_on_a_file(self):
@@ -201,6 +205,27 @@ def coordinator(test, refuse=None, lose=None):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     test.addCleanup(lambda: (srv.shutdown(), srv.server_close(), setattr(Coordinator, 'refuse', None), setattr(Coordinator, 'lose', None)))
     return f'http://127.0.0.1:{srv.server_port}'
+
+
+def line_socket(test, answers):
+    """A stand-in voice line's screen socket for one test: its path, and what each connection asked (each gets the next
+    of answers)."""
+    folder = tempfile.mkdtemp()
+    test.addCleanup(shutil.rmtree, folder)
+    path, asked = os.path.join(folder, 'screen.sock'), []
+    line = socket.socket(socket.AF_UNIX)
+    line.bind(path)
+    line.listen()
+    test.addCleanup(line.close)
+
+    def serve():
+        while answers:
+            conn, _ = line.accept()
+            with conn:
+                asked.append(json.loads(conn.makefile().readline()))
+                conn.sendall((json.dumps(answers.pop(0)) + '\n').encode())
+    threading.Thread(target=serve, daemon=True).start()
+    return path, asked
 
 
 class HqTools(unittest.TestCase):
@@ -240,7 +265,7 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'waiting', 'hang_up'])
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'manage', 'waiting', 'hang_up', 'screen', 'sketch'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -256,7 +281,7 @@ class HqTools(unittest.TestCase):
                                capture_output=True, text=True, timeout=60)
             self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
         out = [json.loads(line)['result'] for line in r.stdout.splitlines()]
-        self.assertEqual([t['name'] for t in out[0]['tools']], ['note', 'no_transcript', 'hang_up'])
+        self.assertEqual([t['name'] for t in out[0]['tools']], ['note', 'no_transcript', 'hang_up', 'screen'])
         text = lambda n: (out[n]['isError'], '\n'.join(part['text'] for part in out[n]['content']))
         self.assertEqual(text(1), (False, hq_tools.NOTE_ANSWER))
         self.assertEqual(text(2), (False, hq_tools.NO_TRANSCRIPT_ANSWER))
@@ -267,6 +292,62 @@ class HqTools(unittest.TestCase):
         self.assertIn("don't say it again", hq_tools.NO_TRANSCRIPT_ANSWER)
         for reply in out[1:]:
             self.assertNotIn('Never say one aloud', '\n'.join(part['text'] for part in reply['content']))
+
+    def test_the_screen_tool_asks_the_voice_line_on_its_socket_with_the_sessions_key(self):
+        """On the board's call and a partner's: the line's answer as MCP content (a picture and its moment line, the
+        moment list, or the line's refusal); arguments it can't take never reach the line; hq never gets the key."""
+        region = {'x': 0.5, 'y': 0, 'width': 0.5, 'height': 0.5}
+        picture = {'type': 'image/jpeg', 'data': '/9j/4AAQ'}
+        moments = ['#12 17:03:12 tapped "Add to basket" (button)', '#13 17:03:14 page /shop/mug']
+        path, asked = line_socket(self, [{'picture': picture, 'line': moments[0]}, {'lines': moments},
+                                         {'error': 'They paused showing their screen.'}, {'lines': []}])
+        with tempfile.TemporaryDirectory() as d:
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            out = self.call(('screen', {'at': '-20s', 'region': region, 'key': 'another'}), ('screen', {'since': '17:03'}),
+                            ('screen', {}), ('screen', {'at': 'yesterday'}), ('screen', {'since': '#12', 'at': '#13'}),
+                            ('screen', {'region': {**region, 'x': 2}}), ('history', {}), env=env)
+            msg = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'screen', 'arguments': {'since': '-2m'}}}
+            partner = subprocess.run([*HQ_TOOLS, 'partner'], input=json.dumps(msg) + '\n', env=env, capture_output=True, text=True, timeout=60)
+            log = Path(d, 'hq.log').read_text()
+        replies = [(r['result']['isError'], r['result']['content']) for r in [*out[1:], json.loads(partner.stdout)]]
+        self.assertEqual(replies[:3], [(False, [{'type': 'image', 'data': '/9j/4AAQ', 'mimeType': 'image/jpeg'}, {'type': 'text', 'text': moments[0]}]),
+                                       (False, [{'type': 'text', 'text': '\n'.join(moments)}]),
+                                       (True, [{'type': 'text', 'text': 'They paused showing their screen.'}])])
+        self.assertEqual([error for error, _ in replies[3:6]], [True, True, True])
+        self.assertEqual(replies[7], (False, [{'type': 'text', 'text': 'Nothing since then.'}]))
+        self.assertEqual(asked, [{'at': '-20s', 'region': region, 'key': 'key-1'}, {'since': '17:03', 'key': 'key-1'}, {'key': 'key-1'},
+                                 {'since': '-2m', 'key': 'key-1'}])
+        self.assertIn('ARG history', log)
+        self.assertNotIn('key-1', log)
+        self.assertNotIn('SCREEN_', log)
+
+    def test_the_sketch_tool_asks_the_voice_line_for_a_sketch_by_number_or_words(self):
+        """On the board's call: the line's answer as MCP content (the sketch's picture and its line, or the line's
+        refusal); an empty ask never reaches the line; a partner's call has no sketch tool; hq never gets the key."""
+        picture = {'type': 'image/png', 'data': 'iVBORw0K'}
+        line = 'Sketch #12 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
+        path, asked = line_socket(self, [{'picture': picture, 'line': line}, {'error': 'No sketch has those words in its label.'}])
+        with tempfile.TemporaryDirectory() as d:
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            out = self.call(('sketch', {'sketch': '#12'}), ('sketch', {'sketch': 'mug lid'}), ('sketch', {'sketch': ' '}),
+                            ('sketch', {}), env=env)
+            msg = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'sketch', 'arguments': {'sketch': '12'}}}
+            partner = subprocess.run([*HQ_TOOLS, 'partner'], input=json.dumps(msg) + '\n', env=env, capture_output=True, text=True, timeout=60)
+            none = self.call(('sketch', {'sketch': '12'}), env=self.env(d, 'http://127.0.0.1:9'))
+            self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
+        replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
+        self.assertEqual(replies[:2], [(False, [{'type': 'image', 'data': 'iVBORw0K', 'mimeType': 'image/png'}, {'type': 'text', 'text': line}]),
+                                       (True, [{'type': 'text', 'text': 'No sketch has those words in its label.'}])])
+        self.assertEqual([error for error, _ in replies[2:]], [True, True])
+        self.assertEqual(asked, [{'sketch': '#12', 'key': 'key-1'}, {'sketch': 'mug lid', 'key': 'key-1'}])
+        self.assertTrue(json.loads(partner.stdout)['result']['isError'], 'no sketches for a partner')
+        self.assertIn("can't be shown on this call", none[1]['result']['content'][0]['text'])
+
+    def test_a_call_with_no_screen_has_a_screen_tool_that_says_so(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = self.call(('screen', {}), env=self.env(d, 'http://127.0.0.1:9'))
+        self.assertTrue(out[1]['result']['isError'])
+        self.assertIn('no screen on this call', out[1]['result']['content'][0]['text'])
 
     def test_every_answer_on_the_boards_call_says_its_numbers_are_not_for_saying(self):
         """Done, refused or looked up, the agent speaks next: each answer carries the rule, except hang_up's.
@@ -561,6 +642,24 @@ class HqTools(unittest.TestCase):
                     f"Not confirmed: the item may or may not be recorded ({why}). Don't record it again: it may be there already. "
                     "Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."))
 
+    def test_a_management_change_is_done_refused_or_not_confirmed_by_hqs_exit_code(self):
+        """manage answers what hq's exit code says: done, refused (nothing changed), not confirmed (the answer was lost
+        after HQ had the change: never a refusal, so a retry checks first) or HQ not reached."""
+        draw = ('manage', {'command': ['cancel', '123', 'the board dropped it']})
+        cases = [(dict(lose='no id'), False, 'Cancelled job #123.'), (dict(refuse="job #123 isn't yours to cancel"), True, "isn't yours"),
+                 (dict(lose='drop'), True, 'Not confirmed'), (dict(lose=500), True, 'Not confirmed')]
+        for given, error, said in cases:
+            with self.subTest(**given), tempfile.TemporaryDirectory() as d:
+                url = coordinator(self, **given)
+                out = self.call(draw, env=self.env(d, url))[1]['result']
+                self.assertEqual(out['isError'], error, out)
+                self.assertIn(said, out['content'][0]['text'])
+                self.assertEqual([s[1] for s in Coordinator.seen], ['/api/agent/cancel'])
+        with tempfile.TemporaryDirectory() as d:
+            out = self.call(draw, env=self.env(d, 'http://127.0.0.1:9'))[1]['result']
+        self.assertTrue(out['isError'])
+        self.assertIn("HQ couldn't be reached, so nothing changed", out['content'][0]['text'])
+
     def test_bad_arguments_never_reach_hq(self):
         with tempfile.TemporaryDirectory() as d:
             ok = {'agent': 'bolt', 'title': 'x', 'brief': 'y'}
@@ -569,7 +668,13 @@ class HqTools(unittest.TestCase):
                    ('job', {**ok, 'agent': 'Bolt Smith'}), ('job', {**ok, 'item': '7'}), ('job', {**ok, 'item': 0}),
                    ('say', {'agent': 'bolt', 'text': 'x'}), ('status', {'agent': 'bolt', 'text': 'x'}), ('forward', {'agent': 'bolt', 'text': 'x'}),
                    ('promise', {'owner': '--call', 'what': 'x'}), ('promise', {'owner': 'bolt', 'what': ' '}), ('replace', {'item': '7', 'what': 'x'}),
-                   ('replace', {'item': True, 'what': 'x'}), ('replace', {'item': 7})]
+                   ('replace', {'item': True, 'what': 'x'}), ('replace', {'item': 7}),
+                   # (manage: only hq's management commands, one line a word)
+                   ('manage', {'command': ['status', 'x']}), ('manage', {'command': ['job', 'bolt', 'x', '-']}), ('manage', {'command': ['job']}),
+                   ('manage', {'command': ['followthrough', 'ok']}), ('manage', {'command': ['inbox', '--hook']}),
+                   ('manage', {'command': ['meeting', 'say', 'x']}), ('manage', {'command': ['estimate', 'x']}),
+                   ('manage', {'command': ['cancel', '7', 'two\nlines']}), ('manage', {'command': ['cancel', 7]}),
+                   ('manage', {'command': []}), ('manage', {'command': 'cancel 7'}), ('manage', {'command': ['--as', 'bolt', 'cancel', '7']})]
             out = self.call(*bad, env={**fake_hq(d), 'HQ_URL': 'http://127.0.0.1:9'})
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual(len(out), 1 + len(bad))
@@ -606,6 +711,15 @@ class HqTools(unittest.TestCase):
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertTrue(all(r['result']['isError'] for r in out[1:]))
 
+    def test_eta_with_no_query_reads_whats_going_on_now(self):
+        # (who's at work and what each open card holds up, fresh each time: hq now.)
+        with tempfile.TemporaryDirectory() as d:
+            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno')}
+            self.call(('eta', {}), ('eta', {'query': ' '}), env=env)
+            log = Path(d, 'hq.log').read_text()
+        self.assertEqual(log.count('ARG now\n'), 2)
+        self.assertNotIn('ARG projects', log)
+
     def test_a_call_is_read_in_full_by_its_number(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
@@ -629,7 +743,7 @@ class HqTools(unittest.TestCase):
             bad = [('search', {'query': ' '}), ('search', {}), ('when', {'what': ' '}), ('when', {}), ('when', {'what': '--by'}),
                    ('when', {'what': 'x', 'agent': '--after'}), ('when', {'what': 'x', 'size': 'soon'}), ('when', {'what': 'x', 'by': '$(id)'}),
                    *[('when', {'what': 'x', 'after': after}) for after in (0, -1, True, '123', None)], ('search', {'query': ['x']}), ('history', {'query': 35}),
-                   ('intercom', {'query': ' '}), ('intercom', {}), ('eta', {'query': ' '}), ('eta', {}), ('eta', {'query': ['x']}),
+                   ('intercom', {'query': ' '}), ('intercom', {}), ('eta', {'query': ['x']}),
                    ('call', {}), ('call', {'id': '12; id'}), ('call', {'id': '12'}), ('call', {'id': 0}), ('call', {'id': -3}),
                    ('call', {'id': True}), ('call', {'id': 12.5})]
             out = self.call(*bad, env={**fake_hq(d), 'HQ_URL': 'http://127.0.0.1:9'})
@@ -757,6 +871,36 @@ class CallsList(unittest.TestCase):
         self.assertEqual([e for e, _ in out], [False, True])
         self.assertEqual(out[1][1], 'no tool items: hand work on with job, note a promise with promise')
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
+
+    def test_the_call_manages_the_companys_work_as_off_the_call(self):
+        """manage runs hq's management commands under the call token, with HQ's own rules on who may."""
+        other, _ = self.start('kit')
+        queued = lambda token, agent, code: int(re.search(r'Queued job #(\d+)', self.tools(token, agent, ('job', {
+            'agent': 'moss', 'code': code, **ESTIMATE, 'title': code.title(), 'brief': 'x'}))[0][1])[1])
+        kits = queued(other, 'kit', 'KITS')
+        token, _ = self.start('juno')  # (the fixture's CEO)
+        drop, keep = queued(token, 'juno', 'DROP'), queued(token, 'juno', 'KEEP')
+        out = self.tools(other, 'kit', ('manage', {'command': ['cancel', str(keep), 'not mine to cancel']}))
+        self.assertTrue(out[0][0], out)
+        out = self.tools(token, 'juno', ('manage', {'command': ['cancel', str(drop), 'the board dropped it']}),
+                         ('manage', {'command': ['cancel', str(kits), 'the board dropped this one too']}),
+                         ('manage', {'command': ['plan', 'thread', 'office', 'Launch', 'The launch is out', '--slug', 'launch']}),
+                         ('manage', {'command': ['job', 'move', str(keep), 'office/launch']}),
+                         ('manage', {'command': ['window', 'office/launch', '18:00']}),
+                         ('manage', {'command': ['thread', 'pause', 'office/launch', 'waits for the board']}),
+                         ('manage', {'command': ['thread', 'resume', 'office/launch']}),
+                         ('manage', {'command': ['jobs', 'moss']}), ('manage', {'command': ['summary']}))
+        self.assertEqual([e for e, _ in out], [False] * 9, out)
+        self.assertEqual(out[0][1].splitlines()[0], f'Cancelled job #{drop}.')
+        self.assertEqual(self.db('select id, status from jobs where id in (?, ?, ?) order by id', kits, drop, keep),
+                         [(kits, 'cancelled'), (drop, 'cancelled'), (keep, 'queued')])
+        self.assertEqual(self.db('select thread from jobs where id = ?', keep), [('office/launch',)])
+        self.assertIn(f'#{keep}', out[7][1])
+        # (what speaks as a job a call doesn't have stays closed at the coordinator, whatever runs hq)
+        for args in (['status', 'x'], ['followthrough', 'ok'], ['reply', 'x']):
+            self.assertNotEqual(self.hq(token, 'juno', *args).returncode, 0, args)
+        for t in (other, token):
+            self.voice('call-end', {'agent': 'juno' if t == token else 'kit', 'lines': [], 'token': t})
 
     def test_the_boards_correction_replaces_an_open_item_on_the_line(self):
         first, call1 = self.start('moss')

@@ -110,22 +110,23 @@ export const strike = (f, dur, partials, { vol = 0.1, ...o } = {}) =>
 export const note = midi => 440 * 2 ** ((midi - 69) / 12); // a MIDI note's frequency
 // A rendered sound (stereo channels L and R at rate sr, as the platform's sound kit renders them: /foley.js) through
 // the look's own sounds, so mute and a swap reach it as they reach the rest
-export function sample({ L, R, sr }, { vol = 1, at = 0 } = {}) {
+export function sample({ L, R, sr }, { vol = 1, at = 0, bus = packBus } = {}) {
   if (!context) return;
   const b = context.createBuffer(2, L.length, sr), s = context.createBufferSource(), g = context.createGain();
   b.copyToChannel(L, 0); b.copyToChannel(R, 1);
   s.buffer = b; g.gain.value = vol;
-  s.connect(g).connect(packBus); s.start(context.currentTime + at);
+  s.connect(g).connect(bus); s.start(context.currentTime + at);
 }
 // A sound of the platform's sound kit (/foley.js), rendered once per take (four takes each, picked at random, so repeats
 // don't grate), once the kit has loaded.
 const kit = import('../foley.js'),
   takes = new Map();
 export function foley(name, params = {}, { vol = 1, at = 0 } = {}) {
+  const bus = packBus; // (the bus it was asked on: cue's, or the look's then)
   kit.then(k => {
     const look = `${name}${JSON.stringify(params)}#${1 + Math.floor(Math.random() * 4)}`;
     if (!takes.has(look)) takes.set(look, k.render(name, { ...params, seed: Number(look.at(-1)) }));
-    sample(takes.get(look), { vol: vol * 0.5, at });
+    sample(takes.get(look), { vol: vol * 0.5, at, bus });
   });
 }
 
@@ -165,6 +166,17 @@ const CHIPTUNE = {
   flap: () => noise(0.25, { vol: 0.05, freq: 900 }),
   ring: () => [0, 0.18, 0.5, 0.68].forEach(at => { tone(note(88), 0.12, { type: 'square', vol: 0.05, at }); tone(note(91), 0.12, { type: 'square', vol: 0.04, at: at + 0.06 }); }),
   twinkle: () => [96, 100, 103, 108].forEach((n, i) => tone(note(n), 0.25, { type: 'sine', vol: 0.06, at: i * 0.07 })),
+  // a call minimised into its bubble: a soft whoop falling away as it shrinks; opened again, rising; the bubble
+  // settling into a corner, a little bump
+  minimise: () => { tone(note(81), 0.16, { type: 'triangle', vol: 0.08, slide: 0.5 }); tone(note(88), 0.08, { type: 'square', vol: 0.035, at: 0.02, slide: 0.6 }); },
+  restore: () => { tone(note(69), 0.16, { type: 'triangle', vol: 0.08, slide: 2 }); tone(note(76), 0.08, { type: 'square', vol: 0.035, at: 0.06, slide: 1.6 }); },
+  dock: () => { tone(note(64), 0.07, { type: 'triangle', vol: 0.1, slide: 0.8 }); noise(0.03, { vol: 0.03, freq: 900, type: 'lowpass' }); },
+  // a call watched back (callplayer.js): a tape deck's key going down and two notes stepping up to play, down to pause;
+  // a jump, a quick glide; the scrubber crossing a moment, the faintest tick
+  watchPlay: () => { noise(0.02, { vol: 0.035, freq: 1800 }); tone(note(72), 0.05, { vol: 0.06, at: 0.012 }); tone(note(79), 0.08, { vol: 0.06, at: 0.06 }); },
+  watchPause: () => { noise(0.02, { vol: 0.035, freq: 1500 }); tone(note(79), 0.05, { type: 'triangle', vol: 0.08, at: 0.012 }); tone(note(72), 0.08, { type: 'triangle', vol: 0.08, at: 0.06 }); },
+  watchJump: () => tone(note(76), 0.07, { type: 'triangle', vol: 0.07, slide: 1.5 }),
+  watchTick: () => noise(0.012, { vol: 0.022, freq: 5200 }),
   // the intercom's mic: a soft radio key-up, and a squelch when it lets go
   micOn: () => { noise(0.05, { vol: 0.035, freq: 2400 }); tone(note(79), 0.07, { type: 'sine', vol: 0.07, at: 0.02 }); tone(note(86), 0.1, { type: 'sine', vol: 0.07, at: 0.08 }); },
   micOff: () => { tone(note(86), 0.07, { type: 'sine', vol: 0.06 }); tone(note(79), 0.12, { type: 'sine', vol: 0.06, at: 0.06 }); noise(0.16, { vol: 0.025, freq: 1500, at: 0.1 }); },
@@ -201,6 +213,16 @@ const CHIPTUNE = {
 // 'landing'). (play)
 let pack = {};
 export const sfx = Object.fromEntries(Object.keys(CHIPTUNE).map(name => [name, (...a) => (pack.sfx?.[name] ?? CHIPTUNE[name])(...a)]));
+// A call's own controls are heard over the hush the call puts on HQ (the minimised call's bubble), never louder than
+// HQ's own sounds.
+let cueBus = null;
+export function cue(name, ...a) {
+  if (!context || !prefs.sound) return;
+  if (!cueBus) { cueBus = context.createGain(); cueBus.gain.value = sfxBus.gain.value; cueBus.connect(context.destination); }
+  const look = packBus;
+  packBus = cueBus;
+  try { play(name, ...a); } finally { packBus = look; }
+}
 export function play(name, ...a) {
   const sound = sfx[name] ?? pack.sfx?.[name];
   if (!sound) throw new Error(`HQ has no sound called ${name}`);

@@ -19,10 +19,19 @@
 !shared/html/escape.ts
 # the route tables' engine (platform/coordinator/src/runs.ts).
 !shared/routes/routes.ts
+# the watch-along's store, which keeps a call's recorded pages (platform/coordinator/src/watchalong.ts).
+!shared/watchalong/store.ts
+# and what the call's agent sees of it: its moments and the live mirror in Chromium.
+!shared/watchalong/moments.ts
+!shared/watchalong/mirror.ts
+# the one headless Chromium driver, which the mirror and a company's print renders start.
+!shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import
 !shared/format/format.js
 # the rule for what a commit's lines changed count, which HQ's daily lines read (platform/coordinator/src/commitlines.ts)
 !platform/worker/src/countedlines.ts
+# The fallback estimate scale shared by work, intercom and call prompts.
+!platform/worker/src/estimating.ts
 # the order numbers' check digit, which payments.ts gives and a company's kits check (shared/ordernumber)
 !shared/ordernumber/ordernumber.js
 # the holidays' one table, which a company's kits read (kits/holidays: the order emails' sign-off)

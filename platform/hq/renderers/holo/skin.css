@@ -14,6 +14,7 @@ body {
   /* (glass has no lip: the depth scale, style.css --depth-*, reads as a tile giving a little under a pointer and more pressed.
     ) */
   --hover-tile: scale(.985); --press-tile: var(--press); --shadow-hover: var(--shadow);
+  --hover-button: scale(.98); --shadow-hover-button: var(--shadow-sm); /* (a button under a pointer, halfway.) */
   --on-accent: #03131a; --deep: #021016; --on-deep: #dcf8ff;
   --sand: rgba(110, 225, 255, .1); --rule: rgba(110, 225, 255, .16); --inset: inset 0 0 6px rgba(90, 220, 255, .12);
   --tint-gold: color-mix(in srgb, var(--gold) 15%, transparent); --tint-green: color-mix(in srgb, var(--green) 18%, transparent); --tint-red: color-mix(in srgb, var(--red) 18%, transparent);
@@ -25,7 +26,17 @@ body {
 .brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast, #panel, .device, .bubble, #namecard, #card, #hint {
   -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); }
 .brand, .tools button, .tools a.desk, #zoom button, #status > span, .toast { background: rgba(6, 26, 36, .62); }
-#tool { background: rgba(0, 8, 12, .6); }
+#tool, #call-layer { background: rgba(0, 8, 12, .6); }
+/* a minimised call: a pane of glass with the face's screen lit inside and its keys drawn in line */
+.callbubble { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); background: rgba(6, 26, 36, .7); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-lg); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
+.callbubble.held { box-shadow: 0 0 40px rgba(90, 220, 255, .4), inset 0 0 28px rgba(90, 220, 255, .1); }
+.callbubble .cb-face { border: 1px solid var(--line); border-radius: 10px; }
+.callbubble .cb-eye { border: 1px solid rgba(255, 255, 255, .6); border-radius: 999px; box-shadow: 0 0 10px rgba(255, 80, 90, .7); }
+.callbubble .cb-eye svg { fill: none; stroke: currentColor; }
+.callbubble .cb-keys button { background: var(--glass); color: var(--ink); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); text-transform: uppercase; letter-spacing: .06em; }
+.callbubble .cb-keys button:active { transform: var(--press); }
+.callbubble .cb-keys .cb-pause[aria-pressed=true] { background: var(--cy); color: var(--scr-ink); border-color: var(--cy); box-shadow: var(--cy-glow); }
+.callbubble .cb-keys .cb-hangup { background: color-mix(in srgb, var(--red) 70%, transparent); color: #fff; border-color: var(--red); border-radius: 999px; }
 #panel h2, .device header b, #card b, .brand b, .masthead h2, #panel h3, .gz-tabs button { text-transform: uppercase; letter-spacing: .08em; }
 #panel h2, .device header b, #card b, .brand b, .masthead h2 { text-shadow: 0 0 10px rgba(110, 225, 255, .55); font-weight: 700; }
 /* the board's devices: dark glass, opaque enough that a speech bubble behind never reads through (the desk phone's was
@@ -62,7 +73,7 @@ body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, 
 .pj-tile b { font-size: 16px; } .pj-where h1 { font-size: 24px; }
 /* (the view and an open job: dark glass over the dimmed deck, the head's strip solid for the list scrolling under it.
   ) */
-#projects { --pj-surface: rgba(4, 18, 26, .86); --pj-head: #041119; --pj-card: rgba(5, 22, 30, .95); }
+#projects { --pj-surface: rgba(4, 18, 26, .86); --pj-head: #041119; --pj-card: rgba(5, 22, 30, .95); --pj-hud-reach: 0px; } /* (--pj-hud-reach: the HUD's glass has no lip.) */
 :is(.pj-modal, .pj-card) { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
 :is(.pj-business, [data-project])::before { content: none; }
 #projects .pj-tile {
@@ -79,3 +90,63 @@ body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, 
 /* (on a lit tile the board's mark is an amber ring with its sign in the amber's light: the shell's swap of the two
    colours puts the see-through amber on the sign, which vanishes.) */
 .pj-tile.lit .pj-tile-top .pj-mark.you { background: transparent; color: var(--pj-on-you); box-shadow: inset 0 0 0 1px var(--pj-you-lip), 0 0 10px rgba(255, 190, 92, .35); }
+
+/* ---- the call player (shell/callplayer.css) in this look: glass over the deck, thin glowing lines, lettered in capitals. */
+.cp[data-look='holo'] {
+  --cp-ground: #020c12;
+  --cp-text: var(--ink);
+  --cp-key: rgba(6, 26, 36, 0.62);
+  --cp-key-ink: var(--ink);
+  --cp-key-edge: 1px solid var(--line);
+  --cp-key-r: var(--r);
+  --cp-key-lip: var(--shadow-sm);
+  --cp-key-down: var(--press);
+  --cp-key-down-lip: var(--shadow-press);
+  --cp-accent: var(--scr);
+  --cp-accent-ink: var(--scr-ink);
+  --cp-track: rgba(2, 16, 22, 0.8);
+  --cp-track-edge: 1px solid var(--line);
+  --cp-tap: #7ab8ff;
+  --cp-page: #7dffc4;
+  --cp-ink: #ff6b8a;
+  --cp-panel: rgba(4, 20, 28, 0.66);
+  --cp-panel-edge: 1px solid var(--line);
+  --cp-screen-edge: 1px solid var(--line);
+  --cp-screen-shadow: 0 0 40px rgba(90, 220, 255, 0.28), 0 0 0 4px rgba(90, 220, 255, 0.08);
+  background:
+    radial-gradient(ellipse at 50% 120%, rgba(60, 200, 255, 0.16), transparent 60%),
+    repeating-linear-gradient(0deg, rgba(110, 225, 255, 0.04) 0 1px, transparent 1px 4px), #020c12;
+}
+.cp[data-look='holo'] :is(.cp-close, .wp-keys button, .wp-side) {
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+.cp[data-look='holo'] .wp-keys .wp-play {
+  border-radius: 50%;
+  border-color: var(--scr);
+  box-shadow: var(--cy-glow, 0 0 18px rgba(128, 234, 255, 0.6));
+}
+.cp[data-look='holo'] :is(.cp-title b, .wp-speed, .wp-cap) {
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.cp[data-look='holo'] .wp-done {
+  box-shadow: 0 0 10px var(--scr);
+}
+.cp[data-look='holo'] .wp-thumb {
+  left: -8px;
+  top: -8px;
+  width: 16px;
+  height: 22px;
+  border: 1px solid #effcff;
+  border-radius: 3px;
+  background: var(--scr);
+  box-shadow: 0 0 14px var(--scr);
+}
+.cp[data-look='holo'] .wp-bubble {
+  border: 1px solid var(--line);
+  box-shadow: 0 0 12px rgba(128, 234, 255, 0.5);
+}
+.cp[data-look='holo'] .wp-moment[aria-current] {
+  box-shadow: 0 0 12px rgba(128, 234, 255, 0.45);
+}

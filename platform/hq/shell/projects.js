@@ -1,7 +1,8 @@
 // HQ's projects view: businesses, projects, threads and tasks.
 import { esc } from '../util.js';
 import * as world from '../world/world.js';
-import { loadProjects, loadRoom, loadJob, loadJobLog, loadThread, sortProjects, loadFindings } from './data.js';
+import { loadRoom, loadJob, loadJobLog, loadThread, loadFindings, loadJobFacts } from './data.js'; // (loadJobFacts)
+import { loadBoard, keepOrder } from './boardload.js';
 import { sfx } from './audio.js';
 import { openPhone } from './desk.js';
 import { scene } from './stage.js';
@@ -10,11 +11,11 @@ import { flyTo } from './hud.js';
 import './projectkeys.js';
 import { levelHtml, SKELETON } from './projectlevels.js'; // (SKELETON)
 import { rowState } from './threads.js';
-import { jobSheet, followSteps, findingsOf } from './jobsheet.js';
+import { jobSheet, followSteps, findingsOf, factsOf, stepsKept } from './jobsheet.js'; // (factsOf, stepsKept)
 import * as levels from './levels.js';
 import { sortable, sorting, sortGesture } from './sorting.js';
 import { sides } from './sides.js';
-import { keepCovers } from './covers.js';
+import { keepCovers, coversIn } from './covers.js'; // (coversIn)
 
 const $ = s => document.querySelector(s);
 const REFRESH_MS = 20000;
@@ -37,8 +38,9 @@ let board = null,
   // while no job can start for memory, the coordinator's line saying so (room.ts), else null
   room = null,
   // where the board is: a business, a project and a thread in it, or a group (recurring, unsorted); jobId: the job open
-  // over it (lookedUp: one asked for by a link that the board no longer holds); steps: whether the open job's steps
-  // show; back: whether it's turned over; notice: what came of a work link's job, if it isn't there (gone, unopened)
+  // over it (lookedUp: one asked for by a link that the board no longer holds); back: whether it's turned over (its
+  // steps show there); notice: what came of a work link's job, if it isn't there
+  // (gone, unopened)
   view = {
     business: null,
     project: null,
@@ -46,7 +48,6 @@ let board = null,
     group: null,
     jobId: null,
     showDone: false,
-    steps: false,
     back: false,
     notice: null,
     unkept: false,
@@ -80,7 +81,6 @@ export function initProjects() {
   $('#projects').innerHTML = `<div class="pj-modal"></div>${sides('pj-sides')}`;
   $('#projects .pj-sides').hidden = true; // (until paint shows a level's: none while the projects load)
   $('#projects').addEventListener('click', tapped);
-  $('#projects').addEventListener('toggle', toggled, true);
   levels.swipes($('#projects'), {
     mayDrag: () => !view.jobId && here().beside.length > 1 && !sorting(),
     onSwipe: step,
@@ -113,7 +113,7 @@ export async function openProjects(at = {}) {
     sfx.open();
     levels.fly(modal(), at.from);
   }
-  view = { ...view, jobId: at.job ?? null, group: at.group ?? null, steps: false, back: false, notice: null };
+  view = { ...view, jobId: at.job ?? null, group: at.group ?? null, back: false, notice: null };
   // (a work link lands on the job's thread, the job's card in front: at once where the board read before holds it,
   // else once refresh() has it.)
   landing = at.job ?? null;
@@ -147,11 +147,14 @@ export async function closeProjects() {
   await levels.fly(modal(), null, true);
   if (move === mine) switched(false);
 }
+// The HUD's Projects key: it opens the view, flying out of the key, and a second press closes it
+export const toggleProjects = from => (projectsOpen() && !shutting() ? closeProjects() : openProjects({ from }));
 const shutting = () => $('#projects').classList.contains('pj-shut');
 function switched(on) {
   $('#projects').hidden = !on;
   $('#projects').classList.remove('pj-shut');
   document.body.classList.toggle('projects', on);
+  $('#btn-projects').setAttribute('aria-pressed', on);
   if (on) measureInset();
 }
 // the keys start under the HUD, however many rows its tools wrap to, and scroll under it out of sight
@@ -161,7 +164,7 @@ function measureInset() {
 }
 async function refresh(motion = '') {
   try {
-    [board, { line: room }] = await Promise.all([loadProjects(world.dev), loadRoom(world.dev)]);
+    [board, { line: room }] = await Promise.all([loadBoard(world.dev), loadRoom(world.dev)]);
     for (const t of projects().flatMap(p => p.threads)) closed.delete(t.id);
     const done = projects().flatMap(p => p.done);
     if (done.some(t => t.id === view.thread)) closed.set(view.thread, await loadThread(world.dev, view.thread));
@@ -173,7 +176,8 @@ async function refresh(motion = '') {
       }
     }
     await land(true);
-    await keepCovers(board);
+    // (the level about to paint waits on its own covers alone.)
+    await keepCovers(board, coversIn(levelHtml(here(), { view, board, opening })));
   } catch {
     if (!board)
       modal().innerHTML = `<div class="pj-board"><p class="pj-notice" role="status">The projects didn’t load. Trying again…</p></div>${LOADING}`;
@@ -259,11 +263,13 @@ function tapped(e) {
   else if (data.side) step(Number(data.side));
 }
 // A tap on the dimmed page round the view closes it, one beside the open job closes that, and one on its card (not on
-// a key or a link) turns it over, as the home page's big key does.
+// a key or a link) turns it over, as the home page's big key does; one on a line of its steps opens that line, as there
 function blank(e) {
+  const step = e.target.closest('.pj-card .steplog li[data-k]');
   if (e.target === $('#projects')) closeProjects();
   else if (e.target.closest('.pj-pop') && !e.target.closest('.pj-card')) closeJob();
-  else if (e.target.closest('.pj-card') && !e.target.closest('a, summary, .pj-log')) turnJob();
+  else if (step && !e.target.closest('a')) step.classList.toggle('open');
+  else if (e.target.closest('.pj-card') && !e.target.closest('a, summary, .steplog')) turnJob();
 }
 // A task opens: one at work as its agent's card, the very one the home page shows (a look's own big key, out of the
 // task's row over the view, or the agent's panel); any other as its own card, flown out of its row.
@@ -276,7 +282,7 @@ function openJob(id, row) {
   }
   sfx.press();
   origin = row.getBoundingClientRect();
-  go({ jobId: id, steps: false, back: false });
+  go({ jobId: id, back: false });
 }
 async function closeJob() {
   const card = $('#projects .pj-card'),
@@ -286,7 +292,7 @@ async function closeJob() {
   const mine = supersede();
   $('#projects .pj-pop')?.classList.add('pj-shut');
   if (card) await levels.fly(card, row?.getBoundingClientRect(), true);
-  if (move === mine) go({ jobId: null, steps: false, back: false });
+  if (move === mine) go({ jobId: null, back: false });
 }
 // The open job's card, turned over (where it has a back)
 function turnJob() {
@@ -334,7 +340,7 @@ async function sorted(ids) {
   sfx.blip();
   let order;
   try {
-    ({ order } = await sortProjects(world.dev, ids));
+    ({ order } = await keepOrder(world.dev, ids));
   } catch {
     view.unkept = true;
     $('#projects .pj-unkept')?.remove();
@@ -346,17 +352,13 @@ async function sorted(ids) {
   $('#projects .pj-unkept')?.remove();
 }
 
-// ---------------------------------------------------------------- the open job's steps
-// read while they show
-function toggled(e) {
-  const d = e.target;
-  if (!d.matches?.('.pj-steps')) return;
-  view.steps = d.open;
-  const j = jobsOnBoard().find(x => x.id === view.jobId);
-  if (d.open && j) followSteps(d, j, id => loadJobLog(world.dev, id));
-}
-
 // ---------------------------------------------------------------- drawing
+// what the open job's card reads as it shows: a finished review's findings, its record and its steps
+const reads = {
+  findings: id => loadFindings(world.dev, id),
+  facts: id => loadJobFacts(world.dev, id),
+  steps: id => loadJobLog(world.dev, id),
+};
 function paint(motion = '') {
   const el = $('#projects');
   if (view.business && !businesses().some(e => e.id === view.business)) view.business = null;
@@ -366,6 +368,7 @@ function paint(motion = '') {
   const kept = {
     board: el.querySelector('.pj-board')?.scrollTop ?? 0,
     job: el.querySelector('.pj-card-faces')?.scrollTop ?? 0,
+    steps: stepsKept(el),
     sums: [...el.querySelectorAll('.pj-eta[open]')].map(d => d.dataset.eta),
     focus: levels.focusOf(el, TAPPABLE),
   };
@@ -376,15 +379,9 @@ function paint(motion = '') {
   const starved = room ? `<p class="pj-notice" role="status">${esc(room)}</p>` : '';
   modal().innerHTML = `<div class="pj-board">${starved}${notice}${unkept}${levelHtml(l, { view, board, opening })}</div>`;
   el.querySelector('.pj-pop')?.remove();
-  const listed = findingsOf(
-    job,
-    id => loadFindings(world.dev, id),
-    () => paint(),
-  );
-  el.insertAdjacentHTML(
-    'beforeend',
-    jobSheet(job, jobsOnBoard(), { steps: view.steps, back: view.back, findings: listed }),
-  );
+  const listed = findingsOf(job, reads.findings, paint),
+    facts = factsOf(job, reads.facts, paint, board);
+  el.insertAdjacentHTML('beforeend', jobSheet(job, jobsOnBoard(), { back: view.back, findings: listed, facts }));
   el.dataset.level = l.at;
   // (the level's sides while a swipe would step, as the swipe's mayDrag)
   el.querySelector('.pj-sides').hidden = Boolean(view.jobId) || l.beside.length < 2;
@@ -393,7 +390,7 @@ function paint(motion = '') {
   const sheet = el.querySelector('.pj-card');
   if (sheet && sameJob) sheet.querySelector('.pj-card-faces').scrollTop = kept.job;
   if (sheet && !sameJob) levels.fly(sheet, origin);
-  if (sheet && view.steps) toggled({ target: sheet.querySelector('.pj-steps') ?? {} });
+  if (sheet) followSteps(sheet, job, reads.steps, sameJob ? kept.steps : null);
   if (kept.focus) el.querySelectorAll(kept.focus.selector)[kept.focus.index]?.focus({ preventScroll: true });
   levels.moveIn(el, motion);
   arriving = levels.settled(el);

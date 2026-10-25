@@ -179,7 +179,7 @@ test("a photo goes from the crew's card through the keeper's edit to the board's
   assert.equal(studioJobs().length, 1);
   assert.equal(joined(studioJobs()[0].id), 3);
   assert.equal((await h.agent('studio/edit', other.token, { id })).status, 403);
-  // (a fix or style the settings don't have is refused before the model; company: job #14307)
+  // (a fix or style the settings don't have is refused before the model)
   assert.equal((await h.agent('studio/edit', keeper.token, { id, fixes: ['glow'] })).status, 400);
   assert.equal((await h.agent('studio/edit', keeper.token, { id, style: 'beach' })).status, 400);
   const edited = await h.agent('studio/edit', keeper.token, {
@@ -552,7 +552,7 @@ test("a desk-phone card's product shots join the studio for an open request: for
   }
   const { id: request } = await requestFor('mug'),
     add = { card, request, style: 'white' };
-  // (company: job #14307: no request, a closed one, or a check photo, and it doesn't come in)
+  // (no request, a closed one, or a check photo, and it doesn't come in)
   assert.equal((await h.agent('studio/add', dex.token, { ...add, request: undefined })).status, 400);
   assert.equal((await h.agent('studio/add', dex.token, { ...add, request: 9999 })).status, 400);
   assert.equal((await h.agent('studio/add', dex.token, { ...add, field: 1 })).status, 409);
@@ -612,7 +612,7 @@ test('the board\'s comment on an approval reaches the keeper; the pages a photo 
         .prepare('select r.status from studio_requests r join studio_photos p on p.request = r.id where p.id = ?')
         .get(id) as any
     ).status;
-  assert.equal(requestOf(), 'done'); // (answered: company: job #14307)
+  assert.equal(requestOf(), 'done'); // (answered)
 
   // "this should change": a note it must have; then off the sites and back to the keeper with it, in one step
   assert.equal((await h.board('/api/studio/change', { photo: asShown(id)[0], note: ' ' })).status, 400);

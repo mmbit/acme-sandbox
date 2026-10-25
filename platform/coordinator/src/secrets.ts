@@ -1,6 +1,7 @@
 // Keys the board hands over on the desk phone. They live only on the server, one file per key, readable by the
 // coordinator alone: never in the database, the repo, a request's answer or a log. Product containers get the
 // keys their product.yaml declares (infra/products.py); agents get test-environment keys only.
+import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { DATA_DIR } from './config.ts';
 
@@ -150,6 +151,14 @@ export const keepMadeKey = (name: string, value: string) => {
   writeFileSync(`${DIR}/${name}`, value, { mode: 0o600 });
   held = null;
 };
+
+// a key the server makes itself on first use (32 random bytes, hex) and keeps in DATA_DIR as <name>.key, beside the key
+// store and outside it, so no card can overwrite it: what it signs, HQ alone can sign.
+export function serverKey(name: string) {
+  const file = `${DATA_DIR}/${name}.key`;
+  if (!existsSync(file)) try { writeFileSync(file, randomBytes(32).toString('hex'), { mode: 0o600, flag: 'wx' }); } catch { /* made meanwhile */ }
+  return readFileSync(file, 'utf8').trim();
+}
 
 // delete keys whose job is done (a one-off delivery address once its parcel has shipped)
 export const forget = (names: string[]) => { for (const n of names) if (validNames(n)) rmSync(`${DIR}/${n}`, { force: true }); held = null; };

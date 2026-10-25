@@ -14,6 +14,7 @@ import { seatPlaces } from './places.ts';
 import { assertOwned, ownRun, ownershipSignal, requestSignal, sleepOwned, waitOwned } from './ownership.ts';
 import { readAs, returnSignIn } from './signin.ts';
 import { measurement } from '../tooling/metrics.ts';
+import { DEFAULT_ESTIMATE_SCALE } from './estimating.ts';
 import { execFile, execFileSync, spawn, spawnSync } from 'node:child_process';
 import { availableParallelism } from 'node:os';
 import { existsSync, mkdirSync, chmodSync, lchownSync, lstatSync, readdirSync, readFileSync, realpathSync, renameSync, utimesSync } from 'node:fs';
@@ -41,6 +42,7 @@ import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
 import { Reload } from './reload.ts';
 import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
+import { memoryWatch, type MemoryCause, type MemoryVerdict } from './lowmemory.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
 import { hqReports, ResponseError } from './reports.ts';
@@ -159,6 +161,10 @@ const JOB_MOST_MB = Number(process.env.JOB_MOST_MB ?? 2560), JOB_SHARE_MB = Numb
 const JOB_PROCESSES = Number(process.env.JOB_PROCESSES ?? 400), JOB_HOT_MS = Number(process.env.JOB_HOT_MINUTES ?? 10) * 60_000;
 const JOB_CORES = Math.max(2, availableParallelism() / 2), STARVED_MS = 5 * 60_000, SHARES_MS = 15_000, REPORT_MS = 60_000;
 const ROOM_REQUEST_MS = 10_000, ROOM_FRESH_MS = 3 * REPORT_MS;
+// Under LOW_MEMORY_MB free HQ tells the running agents to start nothing heavy, and that memory is back at MEMORY_BACK_MB
+// (lowmemory.ts). Busy, the worker starts jobs down to FREE_MB + JOB_MB free, so the low line sits under that and the
+// line back above it. A verdict that changes is reported at once.
+const LOW_MEMORY_MB = Number(process.env.LOW_MEMORY_MB ?? 2048), MEMORY_BACK_MB = Number(process.env.MEMORY_BACK_MB ?? 3072);
 const { samples: CAPACITY_SAMPLES, job: CAPACITY_JOB } = JSON.parse(readFileSync(new URL('../capacity.json', import.meta.url), 'utf8')) as { samples: number; job: number };
 const inSlot = new Map<string, { job: Job; me: Me; seat: string }>();   // (each slot's job, from its claim to its end: runJob)
 const SESSION = procStat(process.pid)!.sid;   // (this process's session, which the CLIs it launches share)
@@ -167,12 +173,15 @@ const reload = new Reload();
 // A job in a slot, its slot's ids looked up once, and its CLI's launch while one runs (none during its push's checks)
 type SlotJob = { job: Job; me: Me; uid: number; gid: number; launch?: Launched };
 // The room as the watch last saw it: since when it's been short, and the work HQ counts as waiting only for memory
-type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; answeredAt: number; reporting: boolean };
+// and the memory verdict last sent (lowmemory.ts)
+type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; answeredAt: number; reporting: boolean; memory?: MemoryVerdict };
+type Memory = { verdict: MemoryVerdict; cause?: MemoryCause };
 
 async function watchShares() {
   const watch: RoomWatch = { waiting: 0, reportedAt: 0, answeredAt: 0, reporting: false };
   let before: ProcessSnapshot[] = [], at = Date.now(), pending = new Set<string>();   // (the session groups asked for: overShare)
   const hotSince = new Map<number, number>();   // each job (uid) past the cores, since when
+  const memoryOf = memoryWatch(LOW_MEMORY_MB, MEMORY_BACK_MB);
   while (!shuttingDown) {
     await sleep(SHARES_MS);
     try {
@@ -181,7 +190,8 @@ async function watchShares() {
       before = procs; at = t;
       const short = !room(false);
       watch.shortSince = short ? watch.shortSince ?? t : undefined;
-      if (!watch.reporting && t - watch.reportedAt >= REPORT_MS) void reportRoom(watch, jobs, uses, short, t);
+      const memory = memoryOf(freeMb(false), new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])));
+      if (!watch.reporting && (t - watch.reportedAt >= REPORT_MS || memory.verdict !== watch.memory)) void reportRoom(watch, jobs, uses, short, t, memory);
       const starved = watch.shortSince !== undefined && t - watch.shortSince >= STARVED_MS && t - watch.answeredAt <= ROOM_FRESH_MS && watch.waiting > 0;
       const cli = new Set(jobs.flatMap(j => j.launch ? [...cliProcesses(procs, j.launch)] : []));
       for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
@@ -228,15 +238,16 @@ function sampleCapacity(sampled: SlotJob[], uses: Map<number, JobUse>, intervalM
 
 // HQ hears the room and each job's share, and answers how much ready work only memory keeps from starting (room.ts):
 // what the claims of the engines with a free slot and a seat to start on would take (memoryClaims).
-async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number) {
+async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, JobUse>, short: boolean, t: number, memory: Memory) {
   watch.reportedAt = t;
   watch.reporting = true;
+  watch.memory = memory.verdict;   // (a failed report's verdict goes with the next minute's)
   const shares = jobs.flatMap(j => {
     const use = uses.get(j.uid);
     return use ? [{ job: j.job.id, mb: Math.round(use.memoryMb), cores: use.cores }] : [];
   });
   try {
-    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity() }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(), memory }, AbortSignal.timeout(ROOM_REQUEST_MS));
     watch.waiting = Number(answer?.waiting) || 0;
     watch.answeredAt = t;
   } catch (err) { log('room:', err); }
@@ -1147,6 +1158,7 @@ How work happens here:
   Inspect \`hq estimate "..."\` for clean past jobs and compare their scope, briefs, reports and changes.
   Choose the agent time yourself, then queue with \`hq job ... --size <90m> --refs <job,job> --why "scope comparison"\`.
   Omit --refs only when no comparable job fits, and say why. HQ saves this estimate once, when queued.
+  ${DEFAULT_ESTIMATE_SCALE}
   For new work, get the time for the board with \`hq when "..." --size <90m>\`,
   with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq thread <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
@@ -1212,13 +1224,13 @@ async function runJob(seat: Seat, job: Job, slot: string, probe = false, adopted
   inSlot.set(slot, { job, me, seat: seat.id });
   capacityTrial.note(`Job #${job.id}: ${adopted ? 'taken over' : 'claimed'}, slot ${slot}, seat ${seat.id}, engine ${job.engine}, kind ${job.kind}`);
   // A downtime job may be asked to yield (to other work, or a filling window): runJobIn stops it at its next step. A
-  // probe stays one until a heartbeat with its first reading is answered.
+  // probe stays one until a heartbeat with its first reading is answered (and read: not reined, downtime.ts heard).
   await ownRun({ job: job.id, runs: RUNS,
     heartbeat: async () => {
       const util = windowUsed(seat), first = probe && util !== undefined;
       return { reply: await hq.api('heartbeat', { job: job.id, seat: seat.id, util, probe: first || undefined, ...inTheWay() }), first };
     },
-    answered: ({ reply, first }) => { if (first) probe = false; heartbeatAnswered(job, slot, reply, first); },
+    answered: ({ reply, first }) => { if (first && !reply?.reined) probe = false; heartbeatAnswered(job, slot, reply, first); },
     stop: () => { killAll(me); running.get(slot)?.stop(); running.delete(slot); inChecks.delete(job.id); }, log,
   }, async () => {
     let body: Record<string, unknown> | undefined, thrown: unknown;
@@ -2267,10 +2279,23 @@ async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (c
   const specs = [gates, tests];
   const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
     watch: (pid, stopped) => checking.set(pid, stopped), unwatch: pid => checking.delete(pid),
-    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal() }));
+    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers }));
   remove(`${TESTED}/${job.id}`);
   await keepRendersOf(job, me, dir, checks.body.files as string[]);
   return body;
+}
+
+// Resolves once HQ answers its /health (as infra/hq-up.sh asks it after a deploy), for a check that lost HQ to run again
+// (pushchecks.ts).
+const HEALTH_POLL_MS = 15_000;
+async function hqAnswers() {
+  for (;;) {
+    assertOwned();
+    try {
+      if ((await fetch(`${HQ}/health`, { signal: requestSignal(AbortSignal.timeout(10_000)) })).ok) return;
+    } catch { /* not yet */ }
+    await sleep(HEALTH_POLL_MS);
+  }
 }
 
 // Each check's outcome and time go to the worker's log, for what the pipeline costs a push. One runs as the job's own
@@ -2540,6 +2565,7 @@ function slotsIsolated() {
 }
 
 const capacitySettings = JSON.stringify({ freeMb: FREE_MB, jobMb: JOB_MB, seatMb: SEAT_MB, shareMb: JOB_SHARE_MB, mostMb: JOB_MOST_MB,
+  lowMemoryMb: LOW_MEMORY_MB, memoryBackMb: MEMORY_BACK_MB,
   jobCores: JOB_CORES, jobProcesses: JOB_PROCESSES, jobHotMs: JOB_HOT_MS, sampleMs: SHARES_MS, captureSamples: CAPACITY_SAMPLES, startReservationMs: STARTING_MS, workSlots: WORK_SLOTS.length, seatRuns: SEAT_RUNS });
 log('capacity settings:', capacitySettings);
 capacityTrial.note(`Capacity settings: ${capacitySettings}`);

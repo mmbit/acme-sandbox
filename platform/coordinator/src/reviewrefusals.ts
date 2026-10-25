@@ -10,12 +10,14 @@ export function reason(db: DatabaseSync, job: number) {
     ?.reason;
 }
 
+// The day's refusals first, then each one's job by its id: left to the planner, a table of few or no refusals goes
+// inside, and every job's row is read through its brief and output while HQ's writes wait (the report's connection).
 export function report(db: DatabaseSync, now = Date.now()) {
   const refused = db
     .prepare(
       `select r.job, j.pr, j.round, coalesce(j.stage, j.kind) stage,
       iif(j.customers, '(holds a customer''s details)', r.reason) reason
-      from review_refusals r join jobs j on j.id = r.job where r.at >= ? order by r.job`,
+      from review_refusals r cross join jobs j on j.id = r.job where r.at >= ? order by r.job`,
     )
     .all(now - 86_400_000);
   return ['== review reads refused in the last 24 hours', ...refused.map(read => JSON.stringify(read))].join('\n');

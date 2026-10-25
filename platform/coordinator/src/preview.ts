@@ -17,10 +17,12 @@
 // link that gives that device the same access as the page's (the board's or that share's), on this host only and for an
 // hour.
 // A running agent job checks a product's preview with a pass (createPass, hq preview): see below.
-import { createHash, randomBytes } from 'node:crypto';
+// The watch-along's mirror loads the pictures, fonts and stylesheets of a preview a recorded page was on with a pass of
+// HQ's own (previewfiles.ts), which check() lets through.
+import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { db } from './db.ts';
-import { PUBLIC_HOST, ZONE } from './config.ts';   // (ZONE)
+import { PREVIEW, PUBLIC_HOST } from './config.ts'; // (PREVIEW).
 import { FRONT } from './approvals.ts';
 import * as shares from './shares.ts';
 import { shelfOf } from './shelves.ts';
@@ -29,8 +31,9 @@ import * as owed from './owed.ts';
 import { logStep } from './log.ts';
 import { plansOf } from './pricing.ts';
 import * as players from './players.ts';
+import { mirrorOpens, sha256 } from './previewfiles.ts';
 
-export const PREVIEW = `.preview.${ZONE}`;
+export { PREVIEW }; // (config.ts's.)
 const DAYS = 30;
 // A link for another device stays good while its page may show it, and the access it hands on lasts an hour
 const HANDED_LINK_MS = 15 * 60_000,
@@ -63,7 +66,6 @@ export const boardOn = (req: IncomingMessage, host: string) => !!boardKey(req, h
 const PASS_MS = 60 * 60_000;
 db.exec(`create table if not exists preview_passes (hash text primary key, job integer not null, agent text not null,
   host text not null, run text not null, created text not null, expires integer not null, player text)`);
-const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 const passOf = (req: IncomingMessage, host: string) =>
   db.prepare(`select p.job, p.run, p.player from preview_passes p join jobs j on j.id = p.job and j.token = p.run and
     j.status = 'running' where p.hash = ? and p.host = ? and p.expires > ?`).get(sha256(cookie(req, 'pp') ?? ''), host, Date.now()) as
@@ -106,6 +108,10 @@ export function check(req: IncomingMessage, res: ServerResponse) {
   const uri = String(req.headers['x-forwarded-uri'] ?? '/');
   const boardOnly = new URL(req.url ?? '/', 'http://x').searchParams.has('board');
   const v = viewer(req, host, uri);
+  if (!v && !boardOnly && mirrorOpens(cookie(req, 'pp'), req.headers['x-forwarded-method'], host, uri)) {
+    res.writeHead(200);
+    return res.end();
+  }
   if (v && (v.board || !boardOnly || v.share?.tester)) {
     // a pass is an agent's job, not a viewer: it looks as a visitor with nothing held does, unless it's the job's test player
     const product = productAt(host, uri);

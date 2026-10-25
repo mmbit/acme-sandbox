@@ -106,7 +106,7 @@ const DOWNLOAD_FILE = /\.(?:pdf|stl|3mf|obj)$/i;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 export const byId = (id: number) => db.prepare('select * from review_shares where id = ?').get(id) as Share | undefined;
-const isOpen = (s: Share) => !s.ended && Date.parse(s.ends) > Date.now();
+export const isOpen = (s: Share) => !s.ended && Date.parse(s.ends) > Date.now();
 const door = (share: number, nonce: string) => guests.doorLink(`share:${share}:${nonce}`);
 export const linkOf = (p: Person) => door(p.share, p.nonce).url;
 // A share's people in the order they were invited, the removed ones too (their notes stay theirs)
@@ -714,6 +714,18 @@ function planStep(s: Share, lang: keyof typeof TESTER) {
   if (!plans) throw new guests.DoorError(`products/${s.about} names no plans for its tester invite's vouchers`);
   return plans.tester[lang] ?? '';
 }
+// A walk-through call on the share (callouts.ts, a join link naming it, once the board said Call): its door offers it to
+// the share's people too, through the same join page.
+type WalkThrough = { agent: string; link: string };
+let walkThrough: (share: number) => WalkThrough | null = () => null;
+export const onWalkThrough = (find: (share: number) => WalkThrough | null) => {
+  walkThrough = find;
+};
+const TALK = {
+  en: (agent: string) => `Talk it through with ${agent}`,
+  nl: (agent: string) => `Bespreek het met ${agent}`,
+  de: (agent: string) => `Sprich es mit ${agent} durch`,
+};
 guests.addDoor(link => {
   const p = db.prepare('select * from review_share_people where link = ?').get(link) as Person | undefined;
   const s = p && byId(p.share);
@@ -756,6 +768,10 @@ guests.addDoor(link => {
       return now && isOpen(now) && seal && still?.link === p.link && onIt(still) ? handOff(now, p.guest, seal) : null;
     },
     shut: (lang, own) => SHUT[lang](own && !!p.submitted && !p.removed),
+    talk: lang => {
+      const call = walkThrough(s.id);
+      return call ? { button: TALK[lang](call.agent), go: call.link } : null;
+    },
   };
 });
 guests.addOnward(onward);

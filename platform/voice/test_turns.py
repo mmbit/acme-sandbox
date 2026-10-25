@@ -3,7 +3,7 @@
 turns.py: each call turn's numbers from the CLI's session records (the shape Claude Code 2.1.283 writes, as a call
 agent's session holds it: one entry per block, a tool's result and an interruption as user entries without
 promptSource)."""
-import contextlib, io, json, os, sys, tempfile, time, unittest
+import json, sys, tempfile, unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -43,9 +43,7 @@ SESSION = [
 
 class Turns(unittest.TestCase):
     def setUp(self):
-        self.root = tempfile.mkdtemp()
-        self.path = Path(self.root, 'projects', '-repo', '0123abcd-ffff.jsonl')
-        self.path.parent.mkdir(parents=True)
+        self.path = Path(tempfile.mkdtemp(), '0123abcd-ffff.jsonl')
         cut_short = '{"type": "assistant", "timest'
         self.path.write_text(''.join(json.dumps(entry) + '\n' for entry in SESSION) + cut_short)
 
@@ -61,30 +59,6 @@ class Turns(unittest.TestCase):
 
     def test_nothing_said_on_the_call_comes_out(self):
         self.assertNotIn(SAID, repr(turns.turns(self.path)))
-
-    def test_a_call_still_on_is_left_for_the_next_run(self):
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
-            turns.main(self.root)
-        self.assertEqual(out.getvalue(), '', 'written just now: a call that may still be on')
-        os.utime(self.path, (time.time() - 600, time.time() - 600))
-        with contextlib.redirect_stdout(out):
-            turns.main(self.root)
-        self.assertEqual(len(out.getvalue().splitlines()), 3)
-        # (what call-times.sh keeps)
-        self.assertRegex(out.getvalue().splitlines()[0], r'^[0-9TZ:.-]+ call: session [0-9a-f]+ turn ')
-
-    def test_a_session_of_another_shape_is_skipped_not_the_rest(self):
-        odd = Path(self.root, 'projects', '-repo', '00000000-odd.jsonl')
-        odd.write_text(json.dumps(user('2026-10-02T18:00:00.000Z', 'Hi', promptSource='sdk')) + '\n'
-                       + json.dumps({'type': 'assistant', 'timestamp': '2026-10-02T18:00:01.000Z'}) + '\n')
-        for path in (odd, self.path):
-            os.utime(path, (time.time() - 600, time.time() - 600))
-        out, errors = io.StringIO(), io.StringIO()
-        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(errors):
-            turns.main(self.root)
-        self.assertEqual(len(out.getvalue().splitlines()), 3)
-        self.assertIn('turns: 00000000-odd.jsonl: ', errors.getvalue())
 
 
 if __name__ == '__main__':

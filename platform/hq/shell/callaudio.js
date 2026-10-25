@@ -1,4 +1,4 @@
-// A call's audio in the browser, for HQ's call screen (desk.js, "calls") and the join link's page
+// A call's audio in the browser, for HQ's call screen (call.js) and the join link's page
 // (platform/coordinator/src/joinpage.js): the microphone out to the voice line, the line's audio played as it comes, and
 // the screen kept on. The join page loads this same file from /join/assets/ (joinpage.ts).
 // The voice plays from an <audio> element fed by a MediaStream, never straight to the speakers: the echo canceller only
@@ -129,6 +129,10 @@ export class CallAudio {
     this.out = ctx.createMediaStreamDestination();
     this.voice = ctx.createGain(); // (every frame of the line's audio, and whatever else the page plays into the call)
     this.voice.connect(this.out);
+    // (and how loud it plays, for a minimised call's face: callbubble.js).
+    this.voiceMeter = ctx.createAnalyser();
+    this.voiceMeter.fftSize = 512;
+    this.voice.connect(this.voiceMeter);
     // (and something always plays into it, silence between replies: the context renders a MediaStream destination only
     // while a source is connected to it, and each frame's source lets go of it as it ends or is cut. Starved like that,
     // Safari plays the stream's last 50 ms over and over until the next reply connects one: a word cut off loops as a
@@ -336,11 +340,12 @@ export class CallAudio {
 
   // how loud the microphone is now (RMS, 0 to 1)
   micLevel() {
-    const samples = (this.samples ??= new Float32Array(this.level.fftSize));
-    this.level.getFloatTimeDomainData(samples);
-    let sum = 0;
-    for (const s of samples) sum += s * s;
-    return Math.sqrt(sum / samples.length);
+    return rms(this.level, (this.samples ??= new Float32Array(this.level.fftSize)));
+  }
+
+  // how loud the agent's voice plays now (RMS, 0 to 1)
+  voiceLevel() {
+    return rms(this.voiceMeter, (this.voiceSamples ??= new Float32Array(this.voiceMeter.fftSize)));
   }
 
   // How the call's audio played, numbers only (never anything said): the hang-up numbers, and the timeline in seconds
@@ -398,4 +403,11 @@ export class CallAudio {
       this.mark(kind, now - (t - at) * 1000, ...numbers);
     }
   }
+}
+
+function rms(analyser, samples) {
+  analyser.getFloatTimeDomainData(samples);
+  let sum = 0;
+  for (const s of samples) sum += s * s;
+  return Math.sqrt(sum / samples.length);
 }

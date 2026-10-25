@@ -19,10 +19,14 @@ export const PUBLIC_HOST = process.env.PUBLIC_HOST ?? 'localhost';
 // so HQ's cookies stay on its own host and products wait for a domain. Keep this in step with infra/products.py's zone.
 // (with mailout, payments, approvals, manifests and pages reading it, not copies)
 export const ZONE = /(^|\.)\d{1,3}([.-]\d{1,3}){3}(\.|$)/.test(PUBLIC_HOST) ? '' : PUBLIC_HOST.split('.').slice(1).join('.');
+// How a preview host's name ends: <slug>.preview.<zone> (preview.ts, and the watch-along's mirror, previewfiles.ts)
+export const PREVIEW = `.preview.${ZONE}`;
 export const ORIGIN = PUBLIC_HOST === 'localhost' ? `http://localhost:${PORT}` : `https://${PUBLIC_HOST}`;
 export const COMMIT = process.env.GIT_COMMIT ?? 'dev';
 export const WORKER_TOKEN = process.env.WORKER_TOKEN ?? '';
 export const VOICE_TOKEN = process.env.VOICE_TOKEN ?? '';   // the voice line's (platform/voice): its /api/voice/* routes only
+// The voice line itself, on the voice network (infra/compose.yaml): review mode's dictation (dictation.ts).
+export const VOICE_URL = process.env.VOICE_URL ?? 'http://voice:8080';
 // This server's own run helpers' (platform/helper, one per kind: infra/run_helpers.py): their /api/helper/* routes only.
 export const RUNS_TOKEN = process.env.RUNS_TOKEN ?? '';
 

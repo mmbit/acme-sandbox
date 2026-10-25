@@ -24,20 +24,18 @@ export function queue<T extends Claim>(runs: T[], orders: ReadonlyMap<number, Ti
   return { runs, pending: new Set(runs), next: 0, groups: new Map(), base, orders };
 }
 
+// choose: the seats' choices with their occupancy now (playseats.ts choices).
 export function take<T extends Claim>(
   queue: Queue<T>,
   seats: capacity.Moment,
   limits: Record<string, number>,
-  busy: Map<string, number>,
+  choose: ReturnType<typeof capacity.choices>,
   occupants: (seat: string) => { kind: string }[],
 ) {
   while (!queue.pending.has(queue.runs[queue.next])) queue.next++;
   let picked = queue.runs[queue.next];
-  const available = capacity.choose(picked.row, picked.order, seats, busy, limits, false);
-  const seat =
-    !('id' in available) && available.on === 'queue'
-      ? capacity.choose(picked.row, picked.order, seats, new Map(), limits, false)
-      : available;
+  const { seat: available, roomSeat } = choose(picked.row, picked.order);
+  const seat = !('id' in available) && available.on === 'queue' ? roomSeat : available;
   if ('id' in seat && reviewroom.shared(limits[seat.engine] ?? Infinity)) {
     const order = reviewroom.claimOrder(
       occupants(seat.id),
@@ -60,19 +58,22 @@ export function take<T extends Claim>(
 function groupsOn<T extends Claim>(queue: Queue<T>, seat: capacity.Seat, now: number, limits: Record<string, number>) {
   const cached = queue.groups.get(seat.id);
   if (cached) return cached;
-  const groups = new Map<string, Group<T>>();
+  // (by kind, then the board's and spare standing; in the order they first come up)
+  const groups = new Map<string, Group<T>[]>(),
+    indexed: Group<T>[] = [];
   const alone = capacity.at([seat], now);
   if (!capacity.available(seat, now)) return [];
   for (const run of queue.runs) {
     if (!queue.pending.has(run)) continue;
     if ((limits[seat.engine] ?? Infinity) <= 0 || !capacity.takes(seat, run.row, run.order, alone)) continue;
     const spare = spareOnly(run.row, run.order);
-    const key = `${Number(!!run.row.board)}:${run.row.kind}:${Number(spare)}`;
-    let group = groups.get(key);
-    if (!group) groups.set(key, (group = { runs: [], next: 0, spare }));
+    let kind = groups.get(run.row.kind);
+    if (!kind) groups.set(run.row.kind, (kind = []));
+    const slot = 2 * Number(!!run.row.board) + Number(spare);
+    let group = kind[slot];
+    if (!group) indexed.push((group = kind[slot] = { runs: [], next: 0, spare }));
     group.runs.push(run);
   }
-  const indexed = [...groups.values()];
   queue.groups.set(seat.id, indexed);
   return indexed;
 }

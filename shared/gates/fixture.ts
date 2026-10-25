@@ -64,7 +64,9 @@ export const sum = (body: string) => `export const sum = (a: number, b: number) 
 // takes the next of `states` (the last stays), each a state and the machine that has the run then, until the check
 // stops it, answering that after PLAYED_STOP_MS. PLAYED_TIMED_OUT: each run stopped at its limit, as a helper's is
 // (exit code 124, with its output). The network fails as `env` says: REPORT_DISCONNECTS drops that many
-// GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it, and RESTARTING plays HQ restarting.
+// GETs unanswered, DROP_SUBMIT drops the first run's submission once HQ has it ('body': after its answer's headers;
+//.), and RESTARTING plays HQ restarting (RESTART_MS: down that long from the run's
+// first poll).
 // playedHq returns its HQ_URL and HQ_TOKEN, for the check's environment, with `env`.
 // (#5575 and #5602's network failures)
 const PLAYED_HQ = `
@@ -107,6 +109,10 @@ const answer = async (req, res) => {
     if (spec.bring.length) execFileSync('tar', ['-czf', 'files.tar.gz', ...spec.bring], { cwd: tree });
     const runStates = JSON.parse(process.env.RUN_STATES ?? 'null')?.[runs.length] ?? states;
     runs.push({ tree, output, exitCode, states: [...runStates] });
+    if (process.env.DROP_SUBMIT === 'body' && runs.length === 1) {
+      res.writeHead(200, { 'content-length': 64 });
+      return res.write('{"id"', () => res.destroy());
+    }
     if (process.env.DROP_SUBMIT && runs.length === 1) return res.destroy();
     return res.end(JSON.stringify({ id: runs.length }));
   }
@@ -125,12 +131,12 @@ const answer = async (req, res) => {
 };
 if (!process.env.RESTARTING) createServer(answer).listen(0, function () { console.log(this.address().port); });
 // as a deploy does: down (connections refused) as the push sends its run, and again from the run's first poll, which
-// it drops unanswered, each time back within the one more try's POLL_MS
+// it drops unanswered
 let dropped = false;
 const restarting = createServer((req, res) => {
   if (dropped || req.method !== 'GET' || req.url.split('/').length !== 5) return answer(req, res);
   dropped = true;
-  down(3000);
+  down(Number(process.env.RESTART_MS ?? 3000));
 });
 const down = ms => {
   const { port } = restarting.address();

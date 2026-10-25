@@ -8,6 +8,11 @@
 //   - No cookies, no analytics, nothing from another site. The page keeps only the name typed, in sessionStorage, for a
 //     rejoin.
 //   - Words: the platform's below in English, Dutch and German, each overridable by brand.yaml's callsOut.join.<lang>.
+//   - A walk-through (a link naming a shared preview, callouts.ts) says more before joining: that the agent sees our
+//     pages and what's recorded (walkNotice, watch), with two buttons of equal weight, to join and show them or to join
+//     without (the guest agrees to being recorded before it starts, and saying no costs them nothing). Joined, the
+//     preview fills the page in a frame, the call minimised over it (joinwalk.js). The page's own parts are never
+//     recorded: they sit in .own, marked data-watchalong-hide, and only the frame's page records itself.
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { ORIGIN, REPO_DIR } from './config.ts';
@@ -27,6 +32,8 @@ export type JoinView = {
   privacy: string | null;
   until: string;
   opens?: string; // a call at a set time: the link works from a little before it
+  // a walk-through: where its frame starts, the origins it may reach (the share's hosts), and what it shows
+  walk?: { url: string; hosts: string[]; what: string };
 };
 
 // The longest name the call takes, in characters: room.py's NAME_LENGTH, worked out there (a real full name, and what
@@ -69,6 +76,20 @@ export const WORDS: Record<JoinLang, Record<string, string>> = {
     closed: 'This link has closed. Ask the person who sent it for a new one.',
     micDenied: 'The microphone didn’t start. Allow it in your browser’s settings, then try again.',
     dropped: 'The connection dropped. Try joining again.',
+    // a walk-through's
+    walkTitle: 'A walk-through of {what} with {agent} from {company}',
+    walkNotice: '{agent} is an AI assistant. We keep a written transcript of this call, never its sound.',
+    watch:
+      '{agent} also sees our pages as you use them, never another tab or app. We record what’s on them, where you scroll, tap and draw, and that you type, never what. We keep it 90 days, to see where our pages are unclear and fix them. Pause stops it at any time.',
+    show: 'Join and show our pages',
+    noShow: 'Join without showing them',
+    callWith: 'Call with {agent}',
+    pause: 'Pause',
+    resume: 'Resume',
+    open: 'Open the call',
+    pages: 'Back to the pages',
+    watched: '{agent} sees this page',
+    paused: 'Paused: {agent} doesn’t see this page',
   },
   nl: {
     plate: '{agent} (AI) · {company}',
@@ -104,6 +125,20 @@ export const WORDS: Record<JoinLang, Record<string, string>> = {
     closed: 'Deze link werkt niet meer. Vraag wie hem stuurde om een nieuwe.',
     micDenied: 'De microfoon startte niet. Sta hem toe in de instellingen van je browser en probeer het opnieuw.',
     dropped: 'De verbinding viel weg. Probeer opnieuw deel te nemen.',
+    // a walk-through's
+    walkTitle: 'Een rondleiding door {what} met {agent} van {company}',
+    walkNotice: '{agent} is een AI-assistent. We houden een geschreven verslag van dit gesprek bij, nooit het geluid.',
+    watch:
+      '{agent} ziet ook onze pagina’s terwijl je ze gebruikt, nooit een ander tabblad of andere app. We nemen op wat erop staat, waar je scrolt, tikt en tekent, en dat je typt, maar nooit wat. We bewaren het 90 dagen, om te zien waar onze pagina’s onduidelijk zijn en dat te verbeteren. Met Pauze stopt het meteen.',
+    show: 'Deelnemen en onze pagina’s laten zien',
+    noShow: 'Deelnemen zonder ze te laten zien',
+    callWith: 'Gesprek met {agent}',
+    pause: 'Pauze',
+    resume: 'Verder',
+    open: 'Gesprek openen',
+    pages: 'Terug naar de pagina’s',
+    watched: '{agent} ziet deze pagina',
+    paused: 'Gepauzeerd: {agent} ziet deze pagina niet',
   },
   de: {
     plate: '{agent} (KI) · {company}',
@@ -140,6 +175,21 @@ export const WORDS: Record<JoinLang, Record<string, string>> = {
     micDenied:
       'Das Mikrofon ist nicht angegangen. Erlaube es in den Einstellungen deines Browsers und versuch es noch einmal.',
     dropped: 'Die Verbindung ist abgebrochen. Tritt noch einmal bei.',
+    // a walk-through's
+    walkTitle: 'Eine Führung durch {what} mit {agent} von {company}',
+    walkNotice:
+      '{agent} ist ein KI-Assistent. Wir führen ein schriftliches Protokoll dieses Gesprächs, nie eine Tonaufnahme.',
+    watch:
+      '{agent} sieht auch unsere Seiten, während du sie nutzt, nie einen anderen Tab oder eine andere App. Wir zeichnen auf, was darauf steht, wo du scrollst, tippst und zeichnest, und dass du etwas eingibst, aber nie was. Wir bewahren es 90 Tage auf, um zu sehen, wo unsere Seiten unklar sind, und sie zu verbessern. Mit Pause stoppt es sofort.',
+    show: 'Beitreten und unsere Seiten zeigen',
+    noShow: 'Beitreten, ohne sie zu zeigen',
+    callWith: 'Gespräch mit {agent}',
+    pause: 'Pause',
+    resume: 'Weiter',
+    open: 'Gespräch öffnen',
+    pages: 'Zurück zu den Seiten',
+    watched: '{agent} sieht diese Seite',
+    paused: 'Pausiert: {agent} sieht diese Seite nicht',
   },
 };
 
@@ -149,8 +199,15 @@ const CSS = readFileSync(new URL('./joinpage.css', import.meta.url), 'utf8');
 const ASSETS: Record<string, URL> = {
   'join.js': new URL('./joinpage.js', import.meta.url),
   'figure.js': new URL('./joinfigure.js', import.meta.url),
+  'people.js': new URL('./joinpeople.js', import.meta.url),
   'callaudio.js': new URL('../../hq/shell/callaudio.js', import.meta.url),
   'mic-worklet.js': new URL('../../hq/shell/mic-worklet.js', import.meta.url),
+  // a walk-through's: the frame and the minimised call over it, HQ's own bubble, and the watch-along's recorder
+  'walk.js': new URL('./joinwalk.js', import.meta.url),
+  'callbubble.js': new URL('../../hq/shell/callbubble.js', import.meta.url),
+  'watchalong.js': new URL('../../../shared/watchalong/watchalong.js', import.meta.url),
+  'strokes.js': new URL('../../../shared/watchalong/strokes.js', import.meta.url),
+  'vendor/rrweb-record.js': new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), // (watchalong.ts RECORDER)
 };
 
 export function joinPage(view: JoinView): { html: string; csp: string } {
@@ -166,12 +223,13 @@ export function joinPage(view: JoinView): { html: string; csp: string } {
     agent: view.agent.name,
     nameLength: NAME_LENGTH,
     words,
+    walk: !!view.walk,
   };
   const json = JSON.stringify(page).replace(/</g, '\\u003c');
   const html = `<!doctype html><html lang="${view.lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title>${esc(words.plate)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}
+<meta name="robots" content="noindex"><meta name="referrer" content="no-referrer"><title data-watchalong-hide>${esc(words.plate)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}
 <style>${css}</style><script type="module" src="/join/assets/join.js"></script>
-<body class="lobby"><header class="top"><img class="logo${l.pixelated ? ' pixelated' : ''}" src="${src}" alt="${esc(b.logo?.alt ?? view.company)}"><p class="live" hidden><i></i><time>0:00</time></p></header>
+<body class="lobby"><div class="own" data-watchalong-hide><header class="top"><img class="logo${l.pixelated ? ' pixelated' : ''}" src="${src}" alt="${esc(b.logo?.alt ?? view.company)}"><p class="live" hidden><i></i><time>0:00</time></p></header>
 <main>
 <section class="stage">
 <figure class="agent" data-ai-generated="true" data-participant="ai" data-state="idle">
@@ -183,13 +241,13 @@ export function joinPage(view: JoinView): { html: string; csp: string } {
 </section>
 <section class="side">
 <div class="card lobbycard">
-<h1>${esc(words.title)}</h1>
-<p class="notice"><b class="badge">${esc(words.ai)}</b> <span>${esc(words.notice)}</span>${view.privacy ? ` <a href="${esc(view.privacy)}" target="_blank" rel="noopener noreferrer">${esc(words.privacyLink)}</a>` : ''}</p>
+<h1>${esc(view.walk ? words.walkTitle : words.title)}</h1>
+<p class="notice"><b class="badge">${esc(words.ai)}</b> <span>${esc(view.walk ? words.walkNotice : words.notice)}</span>${view.privacy ? ` <a href="${esc(view.privacy)}" target="_blank" rel="noopener noreferrer">${esc(words.privacyLink)}</a>` : ''}</p>${view.walk ? `\n<p class="notice watch">${esc(words.watch)}</p>` : ''}
 <form class="joinform" novalidate>
 <label for="name">${esc(words.name)}</label>
 <input id="name" name="name" autocomplete="name" required>
 <p class="hint">${esc(words.nameHint)}</p>
-<button type="submit" class="join">${esc(words.join)}</button>
+${joinButtons(view, words)}
 <p class="error" role="alert" hidden></p>
 <p class="small">${esc(words.mic)} <span class="until"></span></p>
 </form>
@@ -202,15 +260,28 @@ export function joinPage(view: JoinView): { html: string; csp: string } {
 <div class="card over" hidden><p class="said"></p><button type="button" class="rejoin">${esc(words.rejoin)}</button></div>
 </section>
 </main>
-<nav class="controls" hidden><button type="button" class="mute" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="on" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/><path class="off" d="M4 4l16 16"/></svg><span>${esc(words.mute)}</span></button><button type="button" class="leave"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14c5-5 13-5 18 0l-2.5 2.5-3.5-2v-2.6a10 10 0 0 0-6 0v2.6l-3.5 2z"/></svg><span>${esc(words.leave)}</span></button></nav>
+<nav class="controls" hidden><button type="button" class="mute" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path class="on" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/><path class="off" d="M4 4l16 16"/></svg><span>${esc(words.mute)}</span></button><button type="button" class="leave"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 14c5-5 13-5 18 0l-2.5 2.5-3.5-2v-2.6a10 10 0 0 0-6 0v2.6l-3.5 2z"/></svg><span>${esc(words.leave)}</span></button>${view.walk ? PAGES_BUTTON.replaceAll('{pages}', esc(words.pages)) : ''}</nav>
 <p class="reconnecting" role="status" hidden>${esc(words.reconnecting)}</p>
-<script type="application/json" id="join-page">${json}</script>
+<script type="application/json" id="join-page">${json}</script></div>
+${view.walk ? `<iframe class="walk" data-src="${esc(view.walk.url)}" title="${esc(view.walk.what)}"></iframe>` : ''}
 </body></html>`;
   const hash = createHash('sha256').update(css).digest('base64');
   // the voice line is on the page's own host; named too, as older Safari doesn't count wss: as 'self'
-  const csp = `default-src 'none'; script-src 'self'; style-src 'sha256-${hash}'; img-src 'self'; font-src 'self'; connect-src 'self' ${ORIGIN.replace(/^http/, 'ws')}; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`;
+  // a walk-through's frame: the share's hosts, and HQ's own for the sign-in it passes through on the way (preview.ts).
+  // The recorder compares a changed style attribute in a scratch document of this page's, under this policy (this page
+  // puts no outside markup anywhere).
+  const walk = view.walk ? `; frame-src 'self' ${view.walk.hosts.join(' ')}; style-src-attr 'unsafe-inline'` : '';
+  const csp = `default-src 'none'; script-src 'self'; style-src 'sha256-${hash}'; img-src 'self'; font-src 'self'; connect-src 'self' ${ORIGIN.replace(/^http/, 'ws')}; media-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'${walk}`;
   return { html, csp };
 }
+
+// Join, or on a walk-through the two of equal weight: to show our pages, or not (the same class, so the same look).
+// A disabled button ahead of them is the form's default, so Enter in the name field chooses neither.
+const joinButtons = (view: JoinView, words: Record<string, string>) =>
+  view.walk
+    ? `<button type="submit" hidden disabled aria-hidden="true"></button><button type="submit" class="join" value="show">${esc(words.show)}</button><button type="submit" class="join" value="">${esc(words.noShow)}</button>`
+    : `<button type="submit" class="join">${esc(words.join)}</button>`;
+const PAGES_BUTTON = `<button type="button" class="pages" aria-label="{pages}"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"/><rect class="fill" x="11.5" y="11.5" width="7" height="5.5" rx="1.2"/></svg><span>{pages}</span></button>`;
 
 export function joinAsset(name: string): { type: string; body: string } | null {
   const file = Object.hasOwn(ASSETS, name) ? ASSETS[name] : null;
@@ -228,7 +299,10 @@ function wordsFor(view: JoinView) {
   return Object.fromEntries(
     Object.entries(merged).map(([k, v]) => [
       k,
-      v.replaceAll('{agent}', view.agent.name).replaceAll('{company}', view.company),
+      v
+        .replaceAll('{agent}', view.agent.name)
+        .replaceAll('{company}', view.company)
+        .replaceAll('{what}', view.walk?.what ?? ''),
     ]),
   );
 }

@@ -9,6 +9,9 @@ import { answered, signedForm } from './phone.ts';
 import { agentName, byId, finish, now, sha256, type Callout } from './callouts.ts';
 import * as words from './callwords.ts';
 import * as joinpage from './joinpage.ts';
+import * as shares from './shares.ts';
+import * as watchalong from './watchalong.ts';
+import { ownerOf } from './owedproducts.ts';
 
 // POST /api/twilio/status?callout=<id>: Twilio's word that a call it placed has ended (signed, phone.ts). Busy, no answer
 // and a failure end it here; a call the voice line took ends with its hand-over (handOver).
@@ -94,6 +97,9 @@ export function context(b: any) {
   };
 }
 // The agent on a call out, by its token, which reaches no route (server.ts PARTNER_ROUTES)
+// What the agent is told once the person on the call shows it our pages (a walk-through on a join link: watchalong.ts
+// screenTurn, with their next turn).
+export const WATCHING = watchalong.briefing('they', 'their');
 export const tokenAgent = (token: string) =>
   token
     ? (db.prepare("select id, agent from callouts where token_hash = ? and status = 'live'").get(sha256(token)) as
@@ -131,7 +137,7 @@ export function handOver(b: any) {
 // other token, unknown or not, with the same status
 export function joinRoute(req: IncomingMessage, res: ServerResponse) {
   const path = new URL(req.url ?? '/', 'http://x').pathname;
-  const asset = /^\/join\/assets\/([\w.-]+)$/.exec(path);
+  const asset = /^\/join\/assets\/((?:vendor\/)?[\w.-]+)$/.exec(path);
   if (asset) {
     const found = joinpage.joinAsset(asset[1]);
     if (!found) {
@@ -162,6 +168,7 @@ export function joinRoute(req: IncomingMessage, res: ServerResponse) {
     privacy: brand().callsOut?.privacy?.[c.lang] ?? null,
     until: c.closes!,
     opens: c.opens!,
+    walk: walkOf(c),
   });
   res.writeHead(200, { ...page, 'content-security-policy': shown.csp });
   res.end(shown.html);
@@ -170,5 +177,21 @@ const CLOSED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><meta name
 <meta name="robots" content="noindex"><title>This link has closed</title>
 <style>body{font:17px/1.5 system-ui,sans-serif;max-width:32em;margin:15vh auto;padding:0 1.5em;color:#222}p{margin:0 0 1em}</style></head>
 <body><p lang="en">This link has closed.</p><p lang="nl">Deze link is gesloten.</p><p lang="de">Dieser Link ist geschlossen.</p></body></html>`;
+// A walk-through's shared preview, while the share is open: where its frame starts, the hosts it may reach, and its name
+function walkOf(c: Callout) {
+  const s = c.share ? shares.byId(c.share) : undefined;
+  if (!s || !shares.isOpen(s)) return undefined;
+  const hosts = [...new Set(shares.reaches(s).map(r => `https://${r.host}`))];
+  return { url: `https://${s.host}${s.start}`, hosts, what: String(ownerOf(s.about).name) };
+}
+// POST /api/watchalong/join {token}: the guest's page starts recording what it shows, on the join link's own token,
+// only while its walk-through call is on (the voice line made it live). A guest's typing stays hidden. Its mirror shows
+// only the previews the share reaches
+export function startWatching(token: string) {
+  const c = token ? openLink(token) : undefined;
+  const walk = c && walkOf(c);
+  if (!c || c.status !== 'live' || !walk || Date.now() > Date.parse(c.closes!)) return 409;
+  return watchalong.startOnCallout(c.id, walk.hosts);
+}
 const openLink = (token: string) =>
   db.prepare('select * from callouts where link_hash = ?').get(sha256(token)) as Callout | undefined;

@@ -151,3 +151,50 @@ test("a job's measured memory: its own peak, else its agent's median for its kin
   reportRoom({ jobs: [{ job: next, mb: 800, cores: 1 }] });
   assert.equal(measuredMb(next), 1200, 'its own peak: the most a report ever gave it');
 });
+
+test('memory really low: each running job hears it once, the job that caused it its nudge (firmer the next time), and that it is back; nothing otherwise, nor as a session stops', async () => {
+  const hog = await h.start({ agent: 'bolt' }),
+    other = await h.start({ agent: 'juno' });
+  const said = async (j: { token: string }, stopping = false) =>
+    ((await h.agent('inbox', j.token, { stopping })).body as { memory?: number; text: string }[])
+      .filter(m => m.memory)
+      .map(m => m.text);
+  const room = (memory: unknown, free: number) =>
+    h.worker('room', { short: false, free, jobs: [], claims: [], memory });
+
+  await room({ verdict: 'between' }, 2500);
+  assert.deepEqual(await said(other), [], 'not low: nothing');
+  await room({ verdict: 'low', cause: { job: hog.id, tookMb: 3500, freeMb: 5120 } }, 1536);
+  assert.deepEqual(await said(other, true), [], 'nothing as a session stops');
+  const [low] = await said(other);
+  assert.match(low, /short of memory right now \(1\.5 GB free\)\. Don't start anything heavy/);
+  assert.deepEqual(await said(other), [], 'once a spell');
+  const [nudge] = await said(hog);
+  assert.match(
+    nudge,
+    /short of memory right now[^\n]*\n.*own use is what brought .* it took 3\.4 GB of the 5\.0 GB that was free/,
+  );
+
+  await room({ verdict: 'low', cause: { job: other.id, tookMb: 3000, freeMb: 5120 } }, 1400);
+  await room({ verdict: 'between' }, 2500);
+  assert.deepEqual([await said(hog), await said(other)], [[], []], 'still the one spell, and no end yet');
+  await room({ verdict: 'calm' }, 3500);
+  for (const j of [hog, other]) {
+    assert.match((await said(j)).join(), /memory again \(3\.4 GB free\)/);
+    assert.deepEqual(await said(j), [], 'that it is back, once');
+  }
+
+  await room({ verdict: 'low', cause: { job: hog.id, tookMb: 2048, freeMb: 4096 } }, 1800);
+  await room({ verdict: 'calm' }, 3600);
+  const firmer = await said(hog);
+  assert.equal(firmer.length, 1);
+  assert.match(
+    firmer[0],
+    /^HQ: this job has now brought the server short of memory 2 times: this time it took 2\.0 GB/,
+  );
+  assert.deepEqual(
+    [await said(hog), await said(other)],
+    [[], []],
+    'a spell over before their next step: only its cause hears of it',
+  );
+});

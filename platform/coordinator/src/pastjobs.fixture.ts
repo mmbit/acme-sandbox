@@ -4,17 +4,23 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 import type { recordedReviews } from './reviewfixture.ts';
 
 // The columns a test names (as the jobs table has them), with times in ms. run: its one run on claude-a, whose started
-// and ended are also the job's started and finished unless overridden. merged: its pull request merged then (numbered
-// as the job's `pr` if named), changing `files`. sized: the agent time the estimate stored when the job was queued.
+// and ended are also the job's started and finished unless overridden; runs: several, in order, the first's start and
+// the last's end the job's. merged: its pull request merged then (numbered as the job's `pr` if named), changing
+// `files`, with review's lines and verdict; byBranch: that pull request known by the job's branch alone, the job's `pr`
+// left unset (a work job's). sized: the agent time the estimate stored when the job was queued.
 export type PastJobFields = {
   created?: number;
   finished?: number;
-  run?: { started: number; ended: number; outcome?: string; seat?: string | null };
+  run?: Run;
+  runs?: Run[];
   merged?: number;
   files?: string[];
+  review?: { added?: number; removed?: number; verdict?: string };
+  byBranch?: boolean;
   sized?: number;
   [column: string]: unknown;
 };
+type Run = { started: number; ended: number; outcome?: string; seat?: string | null };
 
 // The columns a test leaves out: kit's work, queued by juno, done.
 const DEFAULTS = {
@@ -31,31 +37,37 @@ export function recordedPastJobs(
   { storedPr, mergedPr }: Pick<ReturnType<typeof recordedReviews>, 'storedPr' | 'mergedPr'>,
 ) {
   let prs = 9000;
-  return ({ run, merged, files = [], sized, created, finished, ...columns }: PastJobFields) => {
-    const ended = finished ?? run?.ended ?? Date.now();
+  return ({
+    run,
+    runs = run ? [run] : [],
+    merged,
+    files = [],
+    review,
+    byBranch,
+    sized,
+    created,
+    finished,
+    ...columns
+  }: PastJobFields) => {
+    const [first, last] = [runs[0], runs.at(-1)];
+    const ended = finished ?? last?.ended ?? Date.now();
     const row: Record<string, unknown> = {
       ...DEFAULTS,
-      created: at(created ?? run?.started ?? ended),
-      started: run && at(run.started),
+      created: at(created ?? first?.started ?? ended),
+      started: first && at(first.started),
       finished: at(ended),
       ...columns,
+      pr: byBranch ? undefined : columns.pr,
     };
     const names = Object.keys(row).filter(name => row[name] !== undefined);
     const statement = db.prepare(`insert into jobs (${names}) values (${names.map(() => '?')})`);
     const values = names.map(name => row[name]) as SQLInputValue[];
     const { lastInsertRowid } = statement.run(...values);
     const id = Number(lastInsertRowid);
-    if (run)
-      db.prepare('insert into runs (job, seat, started, ended, ended_as) values (?, ?, ?, ?, ?)').run(
-        id,
-        run.seat === undefined ? 'claude-a' : run.seat,
-        at(run.started),
-        at(run.ended),
-        run.outcome ?? 'done',
-      );
+    storeRuns(db, id, runs);
     if (merged !== undefined) {
       const number = Number(columns.pr ?? ++prs);
-      storedPr(number, id, 'merged', files);
+      storedPr(number, id, 'merged', files, review);
       mergedPr(number, merged);
     }
     if (sized !== undefined)
@@ -65,6 +77,18 @@ export function recordedPastJobs(
       ).run(id, String(row.created), sized, sized);
     return id;
   };
+}
+
+// A job's runs, each on claude-a and done unless it names its seat and outcome
+function storeRuns(db: DatabaseSync, job: number, runs: Run[]) {
+  for (const run of runs)
+    db.prepare('insert into runs (job, seat, started, ended, ended_as) values (?, ?, ?, ?, ?)').run(
+      job,
+      run.seat === undefined ? 'claude-a' : run.seat,
+      at(run.started),
+      at(run.ended),
+      run.outcome ?? 'done',
+    );
 }
 
 const at = (ms: number) => new Date(ms).toISOString();

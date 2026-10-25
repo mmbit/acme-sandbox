@@ -18,8 +18,9 @@ export const scene = () => {
     ball: (x, y, z, r, o = {}) => add({ kind: 'ball', x, y, z, r, tone: o.tone ?? 'plain', accent: o.accent }),
     // A flat panel: its corners in 3D, and the face it lies like (top | left | right), which sets its shade.
     quad: (pts, face, o = {}) => add({ kind: 'quad', pts, face, tone: o.tone ?? 'plain', accent: o.accent }),
-    // A line through points in 3D. thin: half the weight (lattices, mullions, hatching drawn by hand).
-    line: (pts, o = {}) => add({ kind: 'line', pts, thin: !!o.thin }),
+    // A line through points in 3D. thin: half the weight (lattices, mullions, hatching drawn by hand). onAccent: drawn
+    // on the accent shape, in the palette's onAccent so it reads there.
+    line: (pts, o = {}) => add({ kind: 'line', pts, thin: !!o.thin, onAccent: !!o.onAccent }),
     // A shadow cast on the ground at height z: its outline as [x, y] points.
     shadow: (pts, z = 0) => add({ kind: 'shadow', pts: pts.map(([x, y]) => [x, y, z]) }),
     // A pool of ground under a scene: an ellipse at height z, sparsely shaded.

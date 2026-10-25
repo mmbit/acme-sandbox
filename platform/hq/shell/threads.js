@@ -2,7 +2,7 @@
 // under its job), and one rule for what waits on the board, the same at every level (business, project, thread, job),
 // which lights it in the accent.
 import { state as jobState, CHIP } from './jobs.js';
-import { clockWhen } from '../world/clock.js';
+import { clockWhen, fromNow } from '../world/clock.js';
 import { glance } from '../../../shared/signs/signs.js';
 import { cap } from '../util.js';
 import { withJobLinks } from './prose.js';
@@ -140,10 +140,15 @@ export function rowState(j) {
   return s === 'waits' || s === 'blocked' ? 'after' : 'planned';
 }
 // Where a task's played times stand (the coordinator's outlooks.ts estimate): when it starts and when it's done, each
-// in words where the play has one. Done is its finish, its work live, the time a thread's "Done about" gives for its
-// last task
+// in words where the play has one. Done is its finish, its work live: the time a thread's "Done about" gives for its
+// last task. A job the play has no start for may be booked past the play's horizon (hq job --when); its start then says
+// when it's booked for.
 export const planned = j => ({
-  start: j.estimate?.start ? `starts ${clock(j.estimate.start)}` : null,
+  start: j.estimate?.start
+    ? `starts ${clock(j.estimate.start)}`
+    : j.estimate?.booked
+      ? `booked for ${fromNow(j.estimate.booked)}`
+      : null,
   done: j.estimate?.finish ? `done about ${clock(j.estimate.finish)}` : null,
 });
 // A task's title under its thread, without the thread's name in front: "The shop's checkout: gift wrap" under
@@ -257,11 +262,18 @@ const etaPlace = (t, p) => {
 };
 // A thread's live estimate in words (the forecast's outlook), for its head: when it's done, or that it has no time yet;
 // and its sums, the agent time its open work has left and how that sits in its window (the slack before its deadline,
-// what it gives of its aim, or by how much it misses), or why it has no time. Never in alarm colours: a later time is
-// news. null while it has no open work.
+// what it gives of its aim, or by how much it misses), or why it has no time: for work booked to start past the
+// play's horizon (outlooks.ts booked), when it's booked for, with booked set.
+// Never in alarm colours: a later time is news. null while it has no open work.
 export function threadEta(t) {
   const o = t.outlook;
   if (!o) return null;
+  if (o.finish === null && o.booked)
+    return {
+      booked: true,
+      time: `Booked for ${fromNow(o.booked)}`,
+      sums: `${glance(o.left_ms)} of agent time left, from then.`,
+    };
   if (o.finish === null)
     return { time: 'No time yet', sums: `${cap(o.stall ?? 'nothing in the queue lets it merge')}.` };
   return { time: `Done about ${clock(o.finish)}`, sums: `${glance(o.left_ms)} of agent time left.${windowWords(o)}` };

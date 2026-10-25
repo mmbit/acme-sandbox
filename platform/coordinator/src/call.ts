@@ -7,16 +7,19 @@ import { db } from './db.ts';
 import { REPO_DIR } from './config.ts';
 import * as chat from './chat.ts';
 import * as intercom from './intercom.ts';
-import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob, handedCustomerData } from './jobs.ts';
+import { findAgent, nameOf, boardId, callModel, callSeat, readsReport, readsCard, REPORT_LEFT_OUT, extendJob, handedCustomerData, readerHanded } from './jobs.ts';
 import * as messages from './messages.ts';
 import { customerCall } from './memory.ts';
 import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
+import * as watchalong from './watchalong.ts';
 import * as feedback from './feedback.ts';
-import { heldFor, isHidden } from './later.ts';
+import * as goingon from './goingon.ts';
+import * as forecast from './forecast.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
+import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
 
 // The streaming voice line (platform/voice) asks for the prompt, and hands the transcript over the same way.
 // A call can be about one of the agent's own desk phone requests: then the transcript is the board's answer to it.
@@ -44,6 +47,9 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // What the line itself says when the agent can't answer: whether a Claude seat has room now (callSeat), and the company's
 // clock for the time a limit ends. respell: the company's words as the speech engines should say them (company.ts).
 const line = () => ({ seat: callSeat(), timeZone: timeZone(), respell: respellings() });
+// What the agent is told once the board shows it its screen on the call (a walk-through: watchalong.ts screenTurn, with
+// the board's next turn).
+export const WATCHING = watchalong.briefing('the board', 'its');
 // pins: the review notes the board ticked when it rang from HQ's Reviews (feedback.ts pinsFor): the call is about them,
 // for good (a restart reads them from the call, not the line), and the voice line gets their screenshots (pins in the
 // answer). Ones sent or discarded since HQ showed them don't come; if none are left, it's a call like any other.
@@ -244,35 +250,44 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
 }
 
 // The call ended: its row gets the transcript, and its first follow-up (ledger.ts). A call where nobody spoke and
-// nothing was recorded leaves nothing behind.
-export function handOver(agent: string, lines: string[], request = 0, token = '') {
+// nothing was recorded leaves nothing behind. times: when each line was said (the voice line's clock, ms), kept only
+// one a line (calls.line_times).
+export function handOver(agent: string, lines: string[], request = 0, token = '', times?: unknown) {
   const bound = token ? (db.prepare('select call from call_tokens where hash = ?').get(sha256(token)) as { call: number | null } | undefined)?.call : undefined;
   if (token) db.prepare('delete from call_tokens where hash = ?').run(sha256(token));
   const was = bound ? db.prepare('select id, status, lines from calls where id = ? and agent = ?').get(bound, agent) as { id: number; status: string; lines: string } | undefined : undefined;
   // A late transcript (the sweep ended the call) goes to that call (ledger.late); one whose call isn't found (its token
   // unknown, or swept a day after it expired) gets a new row.
   const req = about(agent, request);
-  if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines); return { ok: true }; }
+  const said = lineTimes(lines, times);
+  if (was?.status === 'ended' && was.lines === '[]' && lines?.length) { ledger.late(was.id, lines, said); return { ok: true }; }
   const live = was?.status === 'live' ? was.id : undefined;
   const recorded = live ? ledger.items(live).length > 0 : false;
   if ((!lines?.length && !recorded) || !findAgent(agent)) {
-    if (live) { db.prepare('delete from calls where id = ?').run(live); pictures.forgetCall(live); }   // (its number can come back)
+    // (its number can come back)
+    if (live) { db.prepare('delete from calls where id = ?').run(live); pictures.forgetCall(live); watchalong.forgetCall(live); }
     return { ok: true };
   }
   const ts = new Date().toISOString();
   const id = live ?? Number(db.prepare("insert into calls (ts, agent, lines) values (?, ?, '[]')").run(ts, agent).lastInsertRowid);
-  db.prepare("update calls set ts = ?, lines_at = ?, request = ?, lines = ?, status = 'ended' where id = ?")
-    .run(ts, ts, req?.id ?? null, JSON.stringify(lines ?? []), id);
+  db.prepare("update calls set ts = ?, lines_at = ?, request = ?, lines = ?, line_times = ?, status = 'ended' where id = ?")
+    .run(ts, ts, req?.id ?? null, JSON.stringify(lines ?? []), said, id);
+  watchalong.endCall(id);
   ledger.followUp(id);
   return { ok: true };
 }
 
+const lineTimes = (lines: string[], times: unknown) =>
+  Array.isArray(times) && lines?.length && times.length === lines.length && times.every(t => Number.isFinite(t) && t > 0)
+    ? JSON.stringify(times.map(Math.round)) : null;
+
 // The call log for HQ's computer: each call, its follow-up (the reply it set, ledger.ts reply) and what the team
 // took from it (each item's plain line and where it stands). Never the transcript, nor the words an item quotes: the
-// board is never shown its own transcripts (DECISIONS.md, 2026-09-28).
+// board is never shown its own transcripts (DECISIONS.md, 2026-09-28). recorded: it has a walk-through to watch back
+// (watchalong.ts).
 export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c.job, c.status as state, c.processed_at is not null as processed, c.attempts, j.status, c.reply
   from calls c left join jobs j on j.id = c.job where c.status != 'live' order by c.id desc limit 30`).all() as any[])
-  .map(c => ({ ...c, ...ledger.forBoard(c.id) }));
+  .map(c => ({ ...c, ...ledger.forBoard(c.id), recorded: watchalong.recorded(c.id) }));
 
 // On the phone: who they are, how to talk, and the company as it is right now; listed: the open items it numbers, and
 // where each one's line ends. The open items come before the parts that can grow (the company right now), so an
@@ -284,7 +299,7 @@ function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, ph
 ## You
 ${profile(read(`company/people/${agent.replace(/[^a-z0-9-]/g, '')}.md`))}
 
-${recentWork(agent)}${req ? `## What this call is about
+${recentWork(agent, call)}${req ? `## What this call is about
 Your own desk phone request to the board, #${req.id}: ${req.title}
 ${req.body.length > 20_000 ? `${req.body.slice(0, 20_000).trimEnd()}… (cut here: the request has ${req.body.length.toLocaleString('en')} characters)` : req.body}
 After the call you get the transcript, and ${req.status === 'open' ? "the request stays on the board's desk phone until you close it" : `the request is off the board's desk phone already (${req.status})`}.
@@ -318,10 +333,13 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // with promise) or leaves it untimed, and never asks the board by when.
   // A time from the when tool: the work played into the plan (when.ts).
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
+  // What's going on now: the eta tool with no query (hq now, goingon.ts).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
   // goodbye in its own words.
   // add: what the board adds to a job the call queued goes into it (addToJob).
   // reach: the board's settled word to work under way, for real need only, as often as the board's word needs
+  // manage: the agent manages the company's work on the call as off it (voice hq_tools.py MANAGE, server.ts
+  // MANAGE_ROUTES), never a promise for the follow-up to do it
   // No numbers aloud: the briefing and the tools number the work for the agent's tools, never for the board's ears.
   // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
   // WebSearch is enabled by guard.TOOLS.
@@ -342,15 +360,21 @@ your follow-up's, after the call.
 You can look things up during the call: the search tool finds the Handbook, playbooks, notes, the shared craft library,
 the board's earlier calls with everyone, the intercom and your own past work by meaning and by words, history lists your own recent work, call reads an earlier call
 (yours or a colleague's) and its summary by its number, intercom reads the board's intercom chat (a day in full, or lines by words),
-eta reads where planned work stands now (a project's or thread's ETA, its window and slack, what it waits on), and
+eta reads where planned work stands now (a project's or thread's ETA, its window and slack, what it waits on, the board's
+cards by name) and, with no query, what's going on right now: who's at work on what, why each runs while a hold is on, and
+what each open card holds up, fresh each time (the briefing's list is from the call's start), and
 the company's files (main) are your working directory for Grep, Glob and Read, and WebSearch searches the web for what's
 outside the company (a fact, a price, the news).
 When these can answer the board's question, look it up now and answer on the call, never "I'll check after the call": only
 live state they can't see (logs, the servers, ad platforms) or work too long for a call waits for the follow-up.
+You manage the company's work on the call as you do off it, with the manage tool (hq's cancel, stop, pauses, the plan,
+threads, windows, waits, the inbox, meetings, the desk phone's cards): when the board decides it, do it then and there
+and say what you did, never leave it to your follow-up.
 Hand work to a colleague with the job tool: a short
 title and the full brief, in their terms (it's all they get). Before queueing, use estimate to inspect past jobs' scopes
 and clean actual times. You know this task's context: judge its size between comparable jobs and give job your size,
-refs and why. With no comparable scope, give your reason and an empty refs list. That estimate is saved once at queue
+refs and why. With no comparable scope, give your reason and an empty refs list. ${DEFAULT_ESTIMATE_SCALE}
+That estimate is saved once at queue
 time. Only the CEO changes it when work slips. Use the same size with when. When the board adds to or changes a job you queued on this
 call, put it into that job with add and its number, then and there: never a second job beside it, nor a promise to add
 it after the call. When the board's settled word matters to work already under way before the call ends (a running job,
@@ -406,11 +430,13 @@ ${read('AGENTS.md').trim()}
 
 // Their own recent work, so a call about something they did finds it: jobs finished, the rest of the last day by title,
 // and their latest desk phone requests. A report or card about a customer stays with the job working on it (jobs.ts
-// Reader): the call has no job.
-function recentWork(agent: string) {
-  const caller = { id: 0, agent };
+// Reader): the call has no job. One shown to an agent that reads them (roles.customerData) makes `call` a call about a
+// customer (readerHanded).
+function recentWork(agent: string, call: number) {
+  const caller = { id: 0, agent, callId: call };
   const report = (j: Record<string, any>) => {
     if (!readsReport({ id: j.id, customers: j.customers }, caller)) return `(${REPORT_LEFT_OUT})`;
+    if (j.customers && j.result) readerHanded(caller);
     return cut(j.result, 500) || 'no report';
   };
   const done = (db.prepare(`select j.id, j.title, j.step, j.round, j.status, j.result, j.customers, (select number from prs
@@ -424,9 +450,14 @@ function recentWork(agent: string) {
     order by coalesce(j.finished, j.created) desc, j.id desc limit 41 offset 8`).all(agent, day) as Record<string, any>[];
   const earlier = today.slice(0, 40).map(j => `- Job #${j.id}, ${nameOf(j as { title: string })} (${j.status}${j.pr ? `, PR #${j.pr}` : ''})`).join('\n')
     + (today.length > 40 ? '\n- …and more: history lists them all' : '');
-  const asked = (db.prepare(`select r.id, r.title, r.status, r.answer from requests r left join jobs j on j.id = r.job
+  const answer = (r: Record<string, any>) => {
+    if (!r.answer || !readsCard(r.id, caller)) return '';
+    if (r.customers) readerHanded(caller);
+    return `. The board answered: ${cut(r.answer, 1500)}`;
+  };
+  const asked = (db.prepare(`select r.id, r.title, r.status, r.answer, r.customers from requests r left join jobs j on j.id = r.job
     where coalesce(j.agent, r.agent) = ? and r.kind != 'login' order by r.id desc limit 5`).all(agent) as Record<string, any>[])
-    .map(r => `- #${r.id}, ${r.title} (${r.status})${r.answer && readsCard(r.id, caller) ? `. The board answered: ${cut(r.answer, 1500)}` : ''}`).join('\n') || '- none';
+    .map(r => `- #${r.id}, ${r.title} (${r.status})${answer(r)}`).join('\n') || '- none';
   return `## Your own recent work
 The last jobs you finished (most recent first; their report is their last message):
 ${done}
@@ -439,21 +470,14 @@ report. If the board asks about something you did that isn't here, look it up no
 `;
 }
 
-// The company right now: the team, the desk phone, work and reviews under way, the intercom's latest and the newest
-// decisions
+// The company right now: the team, what's going on (goingon.ts: who's at work, the holds, the desk phone's cards and what
+// waits on each), work and reviews queued, the intercom's latest and the newest decisions
 function companyNow() {
   const rows = (sql: string) => db.prepare(sql).all() as Record<string, string>[];
-  // (a card for later is off the desk phone until then: the board put it aside, or it isn't due yet)
-  // (or it's held until work it waits for is live)
-  const laterNote = (hiddenUntil: string) => isHidden(hiddenUntil) ? ` (for later: off the desk phone until ${companyTime(Date.parse(hiddenUntil))})` : '';
-  const heldNote = (id: string) => { const work = heldFor(Number(id)); return work ? ` (held: off the desk phone until ${work} is live)` : ''; };
-  const requests = rows("select id, title, hidden_until from requests where status = 'open' order by id")
-    .map(r => `- ${r.title}${heldNote(r.id)}${laterNote(r.hidden_until)}`).join('\n') || '- none';
-  // (by number, and the reviews under way, for reach)
-  // (step, round: a job's name, nameOf.)
-  const jobs = rows("select id, agent, title, step, round, status from jobs where status in ('running', 'queued', 'blocked') and kind in ('work', 'chat') order by id desc limit 15")
+  // (by number, for reach and add: what's running is in goingon's list; step, round: a job's name, nameOf.)
+  const jobs = rows("select id, agent, title, step, round, status from jobs where status in ('queued', 'blocked') and kind in ('work', 'chat') order by id desc limit 15")
     .map(j => `- #${j.id}, ${j.agent}: ${nameOf(j as { title: string })} (${j.status})`).join('\n') || '- none';
-  const reviews = rows("select id, agent, title, step, round, status from jobs where status in ('running', 'queued') and kind in ('review', 'consolidate') order by id desc limit 10")
+  const reviews = rows("select id, agent, title, step, round, status from jobs where status = 'queued' and kind in ('review', 'consolidate') order by id desc limit 10")
     .map(j => `- #${j.id}, ${j.agent}: ${nameOf(j as { title: string })} (${j.status})`).join('\n') || '- none';
   const team = (org().departments ?? []).flatMap((d: any) => (d.agents ?? []).filter((a: any) => !a.temp).map((a: any) => `- ${a.name}${a.pronouns ? ` (${a.pronouns})` : ''}: ${titleOf(a, '')} (${d.name})`)).join('\n');
   // a call's transcript and a desk phone answer stay with the jobs that hear them: the briefing only says they happened.
@@ -470,11 +494,11 @@ ${boardToday.lines.map(l => `- ${l}`).join('\n')}
   return `## The company right now
 The team:
 ${team}
-Waiting on the board's desk phone:
-${requests}
-Work in progress:
+
+${goingon.words(forecast.current())}
+Queued or waiting for the board (the newest):
 ${jobs}
-Reviews under way:
+Reviews queued:
 ${reviews}
 The intercom chat, the board's typed conversation with the CEO. Everything ever said there is there to look up (the
 intercom tool, and search): before you tell the board something wasn't asked or written down, look there.

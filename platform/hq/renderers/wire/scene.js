@@ -16,6 +16,7 @@ import { jobNameLink } from '../../shell/prose.js';
 import { engineMark } from '../../shell/engine.js';
 import { icon } from '../../shell/icons.js';
 import { sides } from '../../shell/sides.js';
+import { fillSteps } from '../../shell/steplog.js';
 import { theme } from '../../shell/brand.js';
 import { pace } from './pace.js';
 // Slate's motion, the brand guide's too (shared/tactile).
@@ -439,7 +440,7 @@ function key(t, big = false) {
     // (each face's corner says it turns over, in the job sheet's icon for it.)
     const turns = `<span class="turns">${icon('redo')}</span>`;
     el.innerHTML = big
-      ? `<div class="faces"><section class="front">${head}<span class="state"></span><p class="doing"></p><ol class="log"></ol><footer class="pace"></footer>${turns}</section>
+      ? `<div class="faces"><section class="front">${head}<span class="state"></span><p class="doing"></p><ol class="log steplog"></ol><footer class="pace"></footer>${turns}</section>
         <section class="back">${head}<div class="last"><span class="lbl">Last finished</span><p></p></div><div class="next"><span class="lbl">Up next</span><p></p></div><div class="week"></div><p class="who"></p>${turns}</section></div>`
       : `${head}<b class="clock"></b><p class="doing"></p><footer class="foot"></footer>`;
     for (const face of el.querySelectorAll('.face'))
@@ -750,9 +751,10 @@ function solo(i, from = 0, origin = null) {
     was = box.querySelector(':scope > .key');
   if (was) was.replaceWith(S.card);
   else box.replaceChildren(S.card);
-  // (its sides, where a swipe goes on to another, kept from key to key)
+  // (its sides, where a swipe goes on to another, kept from key to key; none for one out of the projects view, which
+  // never steps)
   const beside = box.querySelector(':scope > .sides');
-  if (S.tiles.length < 2) beside?.remove();
+  if (S.tiles.length < 2 || origin) beside?.remove();
   else if (!beside) box.insertAdjacentHTML('beforeend', sides());
   box.hidden = false;
   root.classList.add('alone');
@@ -787,25 +789,16 @@ async function steps(t) {
   logFill(card);
 }
 // The log's lines, the newest in full and the older ones on a line each (a tap opens one). It stays at the bottom as
-// lines come in, unless it was scrolled up to read.
+// lines come in, unless it was scrolled up to read (the shell's steplog.js, which a task's card shares.)
 function logFill(card) {
   const ol = card.querySelector('.log');
   if (!ol || !card.steps) return;
-  const all = card.steps.slice(-40),
-    keyOf = l => `${l.ts}|${l.text}`;
-  if ([...ol.children].map(li => li.dataset.k).join('\n') === all.map(keyOf).join('\n')) return;
-  const bottom = !card.filled || ol.scrollHeight - ol.scrollTop - ol.clientHeight < 24,
-    open = new Set([...ol.querySelectorAll('li.open')].map(li => li.dataset.k));
-  ol.innerHTML = all.length
-    ? all
-        .map(
-          l =>
-            `<li data-k="${esc(keyOf(l))}"${open.has(keyOf(l)) ? ' class="open"' : ''}><span>${esc(l.text)}</span><time>${ago(new Date(l.ts).getTime())}</time></li>`,
-        )
-        .join('')
-    : '<li class="aside">No steps yet</li>';
+  fillSteps(ol, card.steps.slice(-40), {
+    time: ts => ago(new Date(ts).getTime()),
+    empty: 'No steps yet',
+    first: !card.filled,
+  });
   card.filled = true;
-  if (bottom) ol.scrollTop = ol.scrollHeight;
 }
 function leave() {
   const t = S.tiles[S.solo],
@@ -853,8 +846,10 @@ function shown(el) {
   const r = el.getBoundingClientRect();
   return r.bottom > S.top && r.top < innerHeight;
 }
+// (none from a key out of the shell's own place, a task in the projects view: the agents beside it on the board aren't
+// that view's.)
 function step(by) {
-  if (S.solo === null) return;
+  if (S.solo === null || S.origin) return;
   solo(S.solo + by, by);
   keys.swipe();
 }
@@ -957,7 +952,10 @@ function pet(el, id, dt) {
 // On the big key, a sideways drag carries it, and far enough it goes on to the next one (followSwipes); the keys step
 // through them, and - (or the zoom key) goes back to the board. A wheel only ever scrolls what's under it.
 function touch() {
-  const swipes = followSwipes(root.querySelector('.solo'), { card: () => S.card, onStep: step });
+  const swipes = followSwipes(root.querySelector('.solo'), {
+    card: () => (S.origin ? null : S.card),
+    onStep: step,
+  });
   root.addEventListener('click', e => {
     const line = e.target.closest('.log li[data-k]'),
       side = e.target.closest('.solo [data-side]');

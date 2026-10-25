@@ -37,6 +37,9 @@ const FILES_MAX_BYTES = 200 * 1024 * 1024;
 const CALL_MS = 60_000;
 // A bundle's download and a run's uploads (a push's tests carry the whole repo: a few hundred MB)
 const TRANSFER_MS = 15 * 60_000;
+// How long a run's output and files are sent again while HQ can't be reached: as long as a deploy waits for HQ to
+// answer (infra/hq-up.sh's HQ_UP_S).
+const HQ_RETRY_MS = Number(process.env.HQ_RETRY_MS ?? 10 * 60_000);
 // A run's exit code when its time ran out, as timeout(1) gives
 const TIMED_OUT = 124;
 const KILL_STEP_MS = 100;
@@ -481,9 +484,22 @@ function gpuUse() {
   );
 }
 
+// A run's output or files to HQ, tried again while HQ restarts (fetch's TypeError: no connection, or one lost mid-way)
+// for up to HQ_RETRY_MS: both are safe to send twice, and the beats go on meanwhile, so HQ doesn't take the run back as
+// quiet.
 async function upload(path, body, headers) {
-  const answer = await callHq('POST', path, { body, headers, timeoutMs: TRANSFER_MS });
-  if (answer.status !== 200) throw new Error(`${path.split('/').pop()}: HTTP ${answer.status}`);
+  const since = Date.now();
+  for (let wait = 1000; ; wait = Math.min(wait * 2, 30_000)) {
+    try {
+      const answer = await callHq('POST', path, { body, headers, timeoutMs: TRANSFER_MS });
+      if (answer.status !== 200) throw new Error(`${path.split('/').pop()}: HTTP ${answer.status}`);
+      return;
+    } catch (error) {
+      if (!(error instanceof TypeError) || Date.now() - since >= HQ_RETRY_MS) throw error;
+      console.error(`${path.split('/').pop()}: HQ not reached (${error.message}), tried again in ${wait / 1000} s`);
+    }
+    await sleep(wait);
+  }
 }
 
 async function callHq(method, path, { json, body, headers = {}, timeoutMs = CALL_MS, signal } = {}) {

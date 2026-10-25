@@ -18,6 +18,7 @@ const { db, jobs } = h;
 const projects = await import('./projects.ts');
 const forecast = await import('./forecast.ts');
 const windows = await import('./windows.ts');
+const wakes = await import('./wakes.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE;
@@ -47,7 +48,7 @@ const reportRoom = () =>
 
 beforeEach(async () => {
   db.exec(
-    'delete from jobs; delete from threads; delete from runs; delete from predictions; delete from seats; delete from waits; delete from prs',
+    'delete from jobs; delete from threads; delete from runs; delete from predictions; delete from seats; delete from waits; delete from prs; delete from wakes',
   );
   T = Date.now();
   for (const engine of ['claude', 'codex'])
@@ -166,6 +167,38 @@ test('a thread nothing finishes says why, and misses its window', async () => {
     listed.out,
     /^game\/levels {2}.*: no ETA \(No claude seat.*\).*; MISSES its deadline .* UTC: no finish in sight/m,
   );
+});
+
+test("a thread whose work is booked past the play's horizon says when it's booked for, not only that it has no time", async () => {
+  const later = thread('later'),
+    soon = thread('soon'),
+    held = thread('held');
+  // (booked as hq job --when books it: a time wake, to the minute)
+  const book = (job: number, at: number) => {
+    const given = wakes.readWhen(`${new Date(at).toISOString().slice(0, 16)}Z`, T);
+    assert.ok(Array.isArray(given), String(given));
+    wakes.hold(job, given, T);
+  };
+  const at = Math.ceil((T + 20 * 24 * HOUR) / MINUTE) * MINUTE;
+  book(queued(later), at);
+  book(queued(soon), Math.ceil((T + HOUR) / MINUTE) * MINUTE);
+  // (a usage limit's or a retry's wait, past the horizon too: no booking)
+  db.prepare('update jobs set not_before = ? where id = ?').run(at, queued(held));
+  forecast.refresh(T);
+  const board = await h.board('/api/projects');
+  const threadOf = (id: string) =>
+    board.body.projects.find((p: any) => p.id === 'game').threads.find((t: any) => t.id === id);
+  const shown = (id: string) => threadOf(id).outlook;
+  assert.equal(shown(later).finish, null);
+  assert.equal(shown(later).booked, at, 'its start, which the play never reaches');
+  assert.equal(threadOf(later).jobs[0].estimate.booked, at, "and its job's, for its row");
+  assert.match(shown(later).stall, /^booked to start .+, past the \d+ days/);
+  assert.equal(shown(soon).booked, null, 'a booking inside the horizon gives a time instead');
+  assert.ok(shown(soon).finish > T + HOUR);
+  assert.equal(shown(held).finish, null);
+  assert.equal(shown(held).booked, null, 'a not_before alone is no booking');
+  assert.equal(threadOf(held).jobs[0].estimate.booked, null);
+  assert.match(shown(held).stall, /^nothing in the queue's play lets it merge/);
 });
 
 // The call's eta tool runs hq projects <words>: the threads a name or a few words find, everything by name.
@@ -290,4 +323,51 @@ test("found by a project's or thread's name or words, on a call too: each thread
   const none = await h.hq(lead, 'projects', 'zebra');
   assert.equal(none.code, 0, none.out);
   for (const name of unmatched.body.known) assert.ok(none.out.includes(name), name);
+});
+
+test("on a call, a thread names each card it waits on as the board's: through the work it waits for, and its pause's decision", async () => {
+  db.exec('delete from requests; delete from request_waits; delete from pauses; delete from decisions');
+  const levels = thread('levels'),
+    art = thread('art'),
+    checkout = thread('checkout', 'shop');
+  const card = (title: string) =>
+    Number(
+      db
+        .prepare("insert into requests (created, kind, title, body) values (?, 'decision', ?, 'x')")
+        .run(new Date().toISOString(), title).lastInsertRowid,
+    );
+  const ahead = queued(checkout, { title: 'Pay by card' });
+  db.prepare('insert into request_waits (job, request) values (?, ?)').run(ahead, card('Build the runtime image'));
+  queued(levels, { after: ahead, title: 'Level two' });
+  queued(art, { title: 'Draw the caves' });
+  const style = card('Pick the art style');
+  db.prepare("insert into decisions (name, by, at, request) values ('the art style', 'juno', ?, ?)").run(
+    new Date().toISOString(),
+    style,
+  );
+  db.prepare(
+    "insert into pauses (project, thread, why, by, at, decision) values ('game', ?, 'Waits for the style', 'juno', ?, last_insert_rowid())",
+  ).run(art, new Date().toISOString());
+  const decisions = await import('./decisions.ts');
+  const plan = decisions.create('Approve the game plan', ['game'], 'juno');
+  assert(typeof plan === 'object', String(plan));
+  const approval = jobs.createRequest({
+    kind: 'decision',
+    title: 'Approve the game plan',
+    body: 'Approve the plan before the game work starts.',
+    agent: 'juno',
+    decides: plan.id,
+  });
+  assert(typeof approval === 'object', String(approval));
+  forecast.refresh(T);
+  const lead = await h.start({ agent: 'juno' });
+  const said = await h.hq(lead, 'projects', 'the', 'game');
+  assert.equal(said.code, 0, said.out);
+  assert.match(
+    said.out,
+    /- The levels: .*the board: "Build the runtime image" \(its answer expected about .*\), .*"Pay by card" \(Bolt's in The checkout\)/,
+  );
+  assert.match(said.out, /- The levels: .*the board: "Approve the game plan"/, "the game's pause holds the levels too");
+  assert.match(said.out, /- The art: .*the board: "Pick the art style" \(its answer expected about .*\)/);
+  assert.match(said.out, /- The art: .*the board: "Approve the game plan"/);
 });

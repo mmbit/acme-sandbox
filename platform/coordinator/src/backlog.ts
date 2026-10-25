@@ -1,10 +1,9 @@
-// The queue as it stands, the play's input (eta.ts Snapshot): each open job with what it waits for, the seats, and what
-// the play takes from the record (how many jobs an engine runs at once, the rates the seats fill at, the lag to a deploy,
-// when the board answers a card, how long a review run takes). Everything that reads the database or the clock is here,
-// so the play itself stays a function of what this gives it.
+// The play's live input: jobs, waits, seats, capacity and measured sizes, review runs and delays.
+// The play itself reads only this snapshot, never the database or the clock.
 import { db, prepared } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as pauses from './pauses.ts';
+import * as windows from './windows.ts';
 import { ORIGIN } from './matching.ts';
 import { configuredPlans } from './seatcapacity.ts';
 import { fillRates } from './headroom.ts';
@@ -13,15 +12,12 @@ import { reviewPlans, type ProspectiveRun } from './reviewplan.ts';
 import * as threadorder from './threadorder.ts';
 import { unloop } from './plancycles.ts';
 import { plannerCapacity } from './room.ts';
-import { median, wholeSeconds } from './arithmetic.ts';
+import { wholeSeconds } from './arithmetic.ts';
+import { answerTimes } from './answertime.ts';
 import { deployLag } from './deploytime.ts';
 import { heldWindows } from './inbox.ts';
 import type { OrderingSnapshot, Planned, QueuedJob, SeatNow, Snapshot } from './eta.ts';
 
-const MINUTE_MS = 60_000,
-  HOUR_MS = 60 * MINUTE_MS,
-  DAY_MS = 24 * HOUR_MS,
-  WEEK_MS = 7 * DAY_MS;
 const iso = (ms: number) => new Date(ms).toISOString();
 
 type Row = {
@@ -48,15 +44,14 @@ type Row = {
   thread: string | null;
   board: number;
   follow_through: number;
+  desk_lets: number; // (in no thread, what the desk's pause lets go: jobs.ts deskLets)
   spent_ms: number;
   cards: string;
   wakes: string;
 };
 
-// The queue now: open jobs (chats left out) and done work whose latest pull request is in review, oldest first; then
-// work not queued yet, as if queued now (hq when). The rows are looked up among open jobs and the work on the
-// branches of pull requests in review, never every job read. Thread deadlines come from the open threads' windows.
-//
+// Open jobs except chats, done work still in review, then prospective work (hq when).
+// Deadlines come from threads still open or in review. Historical jobs stay out of the read.
 export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = []): Snapshot {
   const queue = orderingSnapshot(now, planned),
     capacity = plannerCapacity(now),
@@ -99,10 +94,11 @@ export function orderingSnapshot(
   const waits = placement?.waits ?? jobs.outstandingWaitsByJob([...open.keys()]);
   const answers = answerTimes(now),
     lag = deployLag(now);
-  const windows = windowsOf();
+  const reviewing = rows.filter(row => row.kind === 'work' && row.status === 'done').map(row => row.thread);
+  const threadWindows = windows.current(reviewing);
   const paused = jobs.pauseAllowed(),
     due = new Map(
-      Object.entries(windows).flatMap(([id, window]) =>
+      Object.entries(threadWindows).flatMap(([id, window]) =>
         window.deadline === null ? [] : [[id, window.deadline] as const],
       ),
     ),
@@ -119,24 +115,27 @@ export function orderingSnapshot(
     return job;
   });
   if (placement) inThreads(rows, queued, placement.place, rounds, keepLoops);
-  return { now, planner: 3, windows, jobs: queued, deployLagMs: lag };
+  return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 
 function queueRows(now: number) {
-  // The status index reads open work without scanning completed briefs. The PR branch index finds work in review.
+  // jobs_queue holds every jobs column here, by state then id: open work and the done work in review are read without
+  // a row's brief and output, and prs_plan finds the pull requests in review without their verdicts (db.ts).
   const columns = `j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.engine, j.for_seat, j.downtime,
     j.after, j.request, j.not_before, j.held_by, j.created, j.branch, j.pr, j.seat, j.thread,
     coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished,
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
     (select json_group_array(request) from (${jobs.openCards('j.id')})) cards,
     (select json_group_array(json_object('kind', kind, 'arg', arg)) from wakes where job = j.id and met is null) wakes,
-    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through`;
-  const inReview = `select w.id from prs p cross join jobs w on w.branch = p.branch where p.status in ${jobs.OPEN_PRS}
-    union select cast(substr(p.branch, 5) as integer) from prs p where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
+    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through, ${jobs.deskLets('j')} desk_lets`;
+  const inReview = `select w.id from prs p indexed by prs_plan cross join jobs w on w.branch = p.branch
+    where p.status in ${jobs.OPEN_PRS} union select cast(substr(p.branch, 5) as integer) from prs p indexed by prs_plan
+    where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
   const rows = db
     .prepare(
-      `select ${columns} from jobs j indexed by jobs_status where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
-      union all select ${columns} from jobs j where j.id in (${inReview}) and j.kind = 'work' and j.status = 'done'
+      `select ${columns} from jobs j indexed by jobs_queue where j.kind != 'chat' and j.status in ${jobs.OPEN_JOBS}
+      union all select ${columns} from jobs j indexed by jobs_queue where j.id in (${inReview}) and j.kind = 'work'
+        and j.status = 'done'
         and (select status from prs where branch = ${jobs.workBranch('j')} order by number desc limit 1) in ${jobs.OPEN_PRS}`,
     )
     .all({ now: iso(now) }) as Row[];
@@ -167,15 +166,6 @@ function inThreads(
   if (!keepLoops) unloop(queued);
 }
 
-function windowsOf() {
-  const threads = db.prepare("select id, deadline, aim from threads where status = 'open'").all() as {
-    id: string;
-    deadline: number | null;
-    aim: number | null;
-  }[];
-  return Object.fromEntries(threads.map(({ id, deadline, aim }) => [id, { deadline, aim }]));
-}
-
 // Planned work as a queued job: nothing run of it yet, nothing it waits on but its --after.
 const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
   ...{ kind: 'work', origin: 'work', status: 'queued', for_seat: null, downtime: 0, request: null, not_before: 0 },
@@ -188,6 +178,7 @@ const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
     seat: null,
     created: iso(now),
     board: 0,
+    desk_lets: 0,
     spent_ms: 0,
     cards: '[]',
     wakes: '[]',
@@ -280,15 +271,18 @@ function waitForBranch(job: QueuedJob, prior: number, c: Context) {
 function holdForPauses(job: QueuedJob, row: Row, c: Context) {
   if (c.paused && row.status !== 'running' && row.status !== 'done')
     if (!c.paused.has(row.id)) job.reasons.push({ on: 'board', paused: true });
-  // A paused thread or project holds it (a review too) until the jobs the pause waits for merge, or until it's resumed
-  // by hand (pauses.ts)
-  if (row.status === 'queued')
-    for (const p of c.holds.get(row.thread)!) {
-      if (!p.until.length) stall(job, `${p.target} is paused until it's resumed`);
-      for (const id of p.until)
-        if (c.open.has(id)) waitFor(job, id);
-        else stall(job, `${p.target} is paused until job #${id} merges, which ended without merged work`);
-    }
+  // A paused thread or project, or the desk (work in no thread), holds it (a review too) until its jobs merge and the
+  // board answers its decision's card (queued or parked: work needing it hears it), or it's resumed by hand (pauses.ts).
+  const held = ['queued', 'blocked'].includes(row.status) && (row.thread !== null || row.desk_lets === 0);
+  for (const p of held ? c.holds.get(row.thread)! : []) {
+    if (p.card !== null && !job.cards.some(o => o.request === p.card))
+      job.cards.push({ request: p.card, at: c.answers(p.card) });
+    if (row.status !== 'queued') continue;
+    if (!p.until.length && p.card === null) stall(job, `${p.target} is paused until it's resumed`);
+    for (const id of p.until)
+      if (c.open.has(id)) waitFor(job, id);
+      else stall(job, `${p.target} is paused until job #${id} merges, which ended without merged work`);
+  }
 }
 
 const stall = (job: QueuedJob, why: string) => {
@@ -364,31 +358,4 @@ function seats(): SeatNow[] {
     ...{ week: s.week ?? 0, weekResets: s.week_resets, stop: (s.stop ?? STOP_DEFAULT) / 100 },
     credits: s.credits === 1,
   }));
-}
-
-// ---- what the play needs from the record
-
-// When the board is expected to answer an open card: the median time cards of its kind took over the last two weeks
-// (any kind's, with fewer than FEW of its own), counting only those that took longer than this one has been open so
-// far. None took that long: as the play starts. The hour of the day (the board sleeps) isn't played yet.
-const ANSWERS_OVER_MS = 2 * WEEK_MS,
-  FEW = 3;
-function answerTimes(now: number) {
-  const answered = db
-    .prepare(
-      `select kind, (julianday(answered) - julianday(created)) * 86400000 ms from requests
-      where answered is not null and answered > ?`,
-    )
-    .all(iso(now - ANSWERS_OVER_MS)) as { kind: string; ms: number }[];
-  return (request: number) => {
-    const card = prepared('select kind, created from requests where id = ?').get(request) as
-      { kind: string; created: string } | undefined;
-    if (!card) return now;
-    const created = Date.parse(card.created),
-      open = now - created;
-    const own = answered.filter(a => a.kind === card.kind);
-    const longer = (own.length >= FEW ? own : answered).map(a => a.ms).filter(ms => ms > open);
-    const typical = median(longer);
-    return typical === null ? now : Math.max(now, Math.round(created + typical));
-  };
 }

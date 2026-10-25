@@ -74,6 +74,53 @@ class Shell(unittest.TestCase):
                         {'command': 'id'}):
             self.assertIsInstance(shell.commands(request, known), str, request)
 
+    def test_githubs_keys_are_kept_and_unknown_key_ids_fetch_them_at_most_once_a_minute(self):
+        fetched, jwks, monotonic = [], shell.jwks, shell.time.monotonic
+        clock = [1000.0]
+        shell.jwks, shell.time.monotonic = (lambda: fetched.append(1) or KEYS), (lambda: clock[0])
+        shell.keys_kept.update(keys={}, at=None, got=None)
+        try:
+            unknown = enc(json.dumps({'alg': 'RS256', 'kid': 'nope'}).encode()) + '.' + enc(b'{}') + '.x'
+            for _ in range(50):
+                self.assertEqual(shell.verified(unknown, REPO, AUD)[1], 'an unknown key')
+            self.assertEqual(shell.verified(token(), REPO, AUD)[1], '')
+            self.assertEqual(len(fetched), 1)
+            clock[0] += shell.KEYS_RETRY_S
+            shell.verified(unknown, REPO, AUD)
+            shell.verified(unknown, REPO, AUD)
+            self.assertEqual(len(fetched), 2)
+        finally:
+            shell.jwks, shell.time.monotonic = jwks, monotonic
+            shell.keys_kept.update(keys={}, at=None, got=None)
+
+    def test_keys_that_didnt_load_are_refused_for_their_own_reason_and_never_trusted_past_an_hour(self):
+        fetches, jwks, monotonic = [], shell.jwks, shell.time.monotonic
+        clock, down = [1000.0], []
+
+        def fetch():
+            fetches.append(1)
+            if down:
+                raise urllib.error.URLError('timed out')
+            return KEYS
+        shell.jwks, shell.time.monotonic = fetch, (lambda: clock[0])
+        shell.keys_kept.update(keys={}, at=None, got=None)
+        try:
+            down.append(1)
+            for _ in range(3):
+                self.assertEqual(shell.verified(token(), REPO, AUD)[1], "GitHub's keys didn't load")
+            self.assertEqual(len(fetches), 1)
+            down.clear()
+            clock[0] += shell.KEYS_RETRY_S
+            self.assertEqual(shell.verified(token(), REPO, AUD)[1], '')
+            down.append(1)
+            clock[0] += shell.KEYS_KEPT_S
+            for _ in range(3):
+                self.assertEqual(shell.verified(token(), REPO, AUD)[1], "GitHub's keys didn't load")
+            self.assertEqual(len(fetches), 3)
+        finally:
+            shell.jwks, shell.time.monotonic = jwks, monotonic
+            shell.keys_kept.update(keys={}, at=None, got=None)
+
     def test_tests_takes_only_infras_own_test_files(self):
         for name in ('shell.py', 'sync.sh', '../infra/test_shell.py', 'test_shell.py; id', 'test_nothing.py', None, ['x']):
             self.assertIsInstance(shell.commands({'action': 'tests', 'test': name}), str, name)

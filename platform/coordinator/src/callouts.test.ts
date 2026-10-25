@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 import { cardOf as shown } from '../../hq/shell/card.js';
 
@@ -505,4 +505,102 @@ test('a call whose hand-over never came ends done, and its card says nothing was
 test("an inbound call still gets the company's message, and a call out's stream isn't the board's", async () => {
   assert.equal(await twilio('/api/twilio/voice', { From: '+31205550123', AccountSid: ACCOUNT }), 200);
   assert.equal((await voice('call-ticket', { ticket: 'unknown' })).status, 404);
+});
+
+// ---- walk-throughs
+const { ORIGIN } = await import('./config.ts');
+const watchStore = await import('../../../shared/watchalong/store.ts');
+const watching = watchStore.open(db, `${h.dataDir}/watchalong`);
+const HELLO_PAGE = 'https://hello.preview.company.test/';
+// The board's share of the hello preview with Sam (feedback.ts): its id
+const shareHello = async () => {
+  const shared = await board('/api/review/shares', {
+    page: HELLO_PAGE,
+    name: 'Sam',
+    email: 'sam@example.org',
+    days: 3,
+  });
+  assert.equal(shared.status, 200);
+  return Number(shared.body.id);
+};
+const startWatching = (token: string) =>
+  h.send('/api/watchalong/join', { origin: ORIGIN, 'content-type': 'application/json' }, { token });
+const live = async (id: number) =>
+  (await voice('call-context', { agent: 'juno', lang: 'en', callout: id, phone: false, request: 0, pins: [] })).body;
+const batch = { events: [{ type: 4, timestamp: Date.now(), data: {} }] };
+const postEvents = async (events: string) =>
+  (await h.send(events, { origin: ORIGIN, 'content-type': 'application/json' }, batch)).status;
+
+test("a join link walks through a share the board made: its card says so, and its page frames the share's preview", async () => {
+  const juno = await h.start({ agent: 'juno' });
+  const share = await shareHello();
+  for (const [flags, why] of [
+    [['--to', PARTNER, '--share', String(share)], /--share: with --link only/],
+    [['--link', '--share', '999999'], /no share #999999/],
+  ] as const)
+    assert.match((await fileCall(juno, ...flags)).out, why);
+  const f = filed((await fileCall(juno, '--link', '--share', String(share))).out);
+  const card = await cardOf(f.request);
+  assert.match(card.title, /A call room with Print API about our parcel, walking through /);
+  assert.equal(card.call.share.id, share);
+  const { link } = (await board('/api/callouts/approve', { id: f.request })).body;
+  assert.match(
+    (db.prepare('select answer from requests where id = ?').get(f.request) as { answer: string }).answer,
+    /Everyone on the share it walks through finds the call on their invite too/,
+  );
+  const page = await h.send(new URL(link).pathname);
+  assert.equal(page.status, 200);
+  assert.match(page.text, /<iframe class="walk" data-src="https:\/\/hello\.preview\.company\.test\/"/);
+  assert.match(page.text, /Join and show our pages/);
+  assert.match(page.headers['content-security-policy'], /frame-src 'self' https:\/\/hello\.preview\.company\.test;/);
+  // an ordinary link frames nothing
+  const plain = filed((await fileCall(juno, '--link')).out);
+  const plainPage = await h.send(
+    new URL((await board('/api/callouts/approve', { id: plain.request })).body.link).pathname,
+  );
+  assert.doesNotMatch(plainPage.text, /<iframe class="walk"/);
+  // a share that ended has nothing to walk through: refused when filed, and the page goes back to an ordinary call's
+  await board('/api/review/shares/end', { id: share });
+  assert.match((await fileCall(juno, '--link', '--share', String(share))).out, /has ended/);
+  assert.doesNotMatch((await h.send(new URL(link).pathname)).text, /<iframe class="walk"/);
+});
+
+test("a walk-through records only once its call is on, on the join link's own token, and ends or goes with the call", async () => {
+  const juno = await h.start({ agent: 'juno' });
+  const share = await shareHello();
+  const walk = async () => {
+    const f = filed((await fileCall(juno, '--link', '--share', String(share))).out);
+    const { link } = (await board('/api/callouts/approve', { id: f.request })).body;
+    return { ...f, token: link.split('/join/')[1] as string };
+  };
+  const kept = await walk();
+  assert.equal((await startWatching(kept.token)).status, 409, 'nobody is in the call yet');
+  assert.equal((await startWatching('x'.repeat(43))).status, 409);
+  const ctx = await live(kept.id);
+  const started = await startWatching(kept.token);
+  assert.equal(started.status, 200);
+  const { id, events } = started.json;
+  assert.equal(watchStore.find(watching, id)!.typed, 'hidden', "a guest's typing is never kept");
+  // (its mirror shows only the previews the share reaches.)
+  assert.deepEqual(watchStore.find(watching, id)!.origins, ['https://hello.preview.company.test']);
+  assert.equal(await postEvents(events), 200);
+  // the page loaded again (a reload, a second tab): one recording a link, the newest, and the first one's batches 409
+  const again = await startWatching(kept.token);
+  assert.equal(again.status, 200);
+  assert.equal(await postEvents(events), 409);
+  assert.equal(await postEvents(again.json.events), 200);
+  const handOver = { agent: 'juno', token: ctx.token, callout: kept.id, notes: [], objected: false };
+  await voice('call-end', { ...handOver, lines: ['Sam: This button is hard to find.'] });
+  assert.equal(await postEvents(again.json.events), 409, 'the call is over, so is its recording');
+  assert.equal(watchStore.read(watching, id)!.events.length, 1);
+  assert.equal((await startWatching(kept.token)).status, 409);
+
+  // a call whose other side would rather we kept no transcript takes its recording with it
+  const gone = await walk();
+  const goneCtx = await live(gone.id);
+  const goes = (await startWatching(gone.token)).json;
+  assert.equal(await postEvents(goes.events), 200);
+  await voice('call-end', { ...handOver, token: goneCtx.token, callout: gone.id, lines: [], objected: true });
+  assert.equal(watchStore.find(watching, goes.id), undefined);
+  assert.equal(existsSync(`${h.dataDir}/watchalong/${goes.id}.ndjson.gz`), false);
 });

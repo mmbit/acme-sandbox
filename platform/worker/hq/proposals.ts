@@ -149,7 +149,7 @@ async function accept(given: string[]) {
     ...(thread !== undefined && { thread }),
     ...(newThread !== undefined && { newThread }),
   };
-  const answer = await api.call('proposals/accept', { body });
+  const answer = await api.change('proposals/accept', { body });
   const queued = api.parseOrNull(answer.body) as {
     job?: number;
     code?: string | null;
@@ -164,7 +164,7 @@ async function accept(given: string[]) {
 
 async function drop([id, why, ...rest]: string[]) {
   if (!INBOX_ID.test(id ?? '') || !why?.trim() || rest.length) stop('usage: hq inbox drop <id> "why"');
-  const answer = await api.call('proposals/drop', { body: { id: id.startsWith(FINDINGS) ? id : Number(id), why } });
+  const answer = await api.change('proposals/drop', { body: { id: id.startsWith(FINDINGS) ? id : Number(id), why } });
   const done = api.parseOrNull(answer.body) as { ok?: boolean; told?: boolean } | null;
   if (!api.isSuccess(answer.status) || !done?.ok) stop(`Not dropped: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Dropped #${id}. ${done.told ? 'Its proposer heard why.' : 'Its proposer reads why in hq inbox.'}`);

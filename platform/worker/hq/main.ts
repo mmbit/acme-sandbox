@@ -22,6 +22,7 @@ import { StopError, print, stop } from './output.ts';
 import { phone } from './phone.ts';
 import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
+import { sketch, sketches } from './sketches.ts';
 import { preview } from './preview.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
@@ -62,6 +63,7 @@ const COMMANDS: Record<string, Command> = {
   followthrough,
   summary,
   projects: projects.projectLines,
+  now: projects.now,
   items: ledger.items,
   item: ledger.item,
   reply: ledger.reply,
@@ -69,6 +71,8 @@ const COMMANDS: Record<string, Command> = {
   owed,
   photos: cards.photos,
   picture,
+  sketches,
+  sketch,
   studio,
   'seat-warning': seatWarning,
   wait: cards.wait,
@@ -136,6 +140,8 @@ function printHelp() {
 }
 
 // A stop says why on stderr (when it has words). A call that failed without an answer exits silently with its code.
+// Anything else is a fault in hq, which may come after HQ made a change: 70 (sysexits' EX_SOFTWARE), never 1, which
+// says nothing changed (a refusal, a wrong command).
 function exitFor(error: unknown) {
   if (error instanceof StopError) {
     if (error.message) process.stderr.write(`${error.message}\n`);
@@ -143,5 +149,5 @@ function exitFor(error: unknown) {
   }
   if (error instanceof ApiError) return error.exitCode;
   console.error(error);
-  return 1;
+  return 70;
 }
