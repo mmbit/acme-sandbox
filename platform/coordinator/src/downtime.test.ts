@@ -82,10 +82,48 @@ test("a seat ahead of its week's pace takes, until its weekly reset, the board's
   const due = queue('For the board by tonight', { thread: h.dueThread({ deadline: Date.now() + H }) });
   const board = queue('What the board asked on a call');
   h.storedCall(1, 'bolt', board);
+  // (work handed an open item from the call is the board's word too; one whose item was dropped isn't)
+  const item = (status: string) => db.prepare(`insert into call_items (call, kind, owner, what, quote, status, ts)
+    values (1, 'task', 'bolt', 'Paint the gate', 'Board: paint the gate.', ?, 'x') returning id`).get(status) as { id: number };
+  const carries = queue('The gate, as the board asked'), dropped = queue('The fence, dropped since');
+  for (const [job, status] of [[carries, 'open'], [dropped, 'dropped']] as const)
+    db.prepare('update jobs set item = ? where id = ?').run(item(status).id, job);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  assert.deepEqual([await paced(), await paced(), await paced()], [board, due, undefined], 'the rest waits for the reset');
+  assert.deepEqual([await paced(), await paced(), await paced(), await paced()], [board, carries, due, undefined], 'the rest waits for the reset');
+  assert.equal(h.job(dropped).status, 'queued');
   assert.equal(h.job(later).status, 'queued');
-  assert.deepEqual([(await claim(0.2))?.id, (await claim(0.2))?.id, (await claim(0.2))?.id], [later, undated, spare], 'not paced: all');
+  const unpaced = async () => (await claim(0.2))?.id;
+  assert.deepEqual([await unpaced(), await unpaced(), await unpaced(), await unpaced()], [later, undated, dropped, spare], 'not paced: all');
+});
+
+test("a board item's pull request keeps the board's word on a paced seat until it merges: its fixes and its reviews", async () => {
+  reset();
+  const reset2 = Date.now() + 2 * 24 * H;
+  const item = (status: string, job: number | null = null) => (db.prepare(`insert into call_items (call, kind, owner, what,
+    quote, status, job, ts) values (1, 'task', 'bolt', 'Paint the gate', 'Board: paint the gate.', ?, ?, 'x') returning id`)
+    .get(status, job) as { id: number }).id;
+  // work done with its pull request open: the item it carried is handled (ledger.ts finished()), or the one it was handed
+  const pr = (number: number, status: string, carried: (work: number) => void) => {
+    const work = queue('The gate');
+    db.prepare("update jobs set status = 'done' where id = ?").run(work);
+    carried(work);
+    db.prepare("insert into prs (number, branch, author, status) values (?, ?, 'bolt', ?)").run(number, `job/${work}`, status);
+    const fix = queue('Fixing the tests');
+    db.prepare("update jobs set branch = ?, pr = ? where id = ?").run(`job/${work}`, number, fix);
+    return fix;
+  };
+  const carries = pr(9001, 'open', work => db.prepare('update jobs set item = ? where id = ?').run(item('handled'), work));
+  const handed = pr(9002, 'stuck', work => item('handled', work));
+  const merged = pr(9003, 'merged', work => db.prepare('update jobs set item = ? where id = ?').run(item('handled'), work));
+  const dropped = pr(9004, 'open', work => db.prepare('update jobs set item = ? where id = ?').run(item('dropped'), work));
+  const plain = pr(9005, 'open', () => {});
+  const review = queue('Reviewing');
+  db.prepare("update jobs set kind = 'review', branch = (select branch from prs where number = 9001), pr = 9001 where id = ?").run(review);
+  const board = (id: number) => (db.prepare(`select ${jobs.BOARD_CALL('j')} board from jobs j where id = ?`).get(id) as { board: number }).board;
+  assert.deepEqual([carries, handed, review, merged, dropped, plain].map(board), [1, 1, 1, 0, 0, 0]);
+  const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
+  assert.deepEqual([await paced(), await paced(), await paced(), await paced()], [carries, handed, review, undefined],
+    'the rest waits for the reset');
 });
 
 test('downtime work that windowed work waits for runs like any other: on a seat past its spare room, and in the order', async () => {

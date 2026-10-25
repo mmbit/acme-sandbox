@@ -729,7 +729,8 @@ test('hq preview rejects empty players and clears inherited vouchers from view-o
 });
 
 test('hq photos saves into a new folder in the job\'s TMPDIR, never a folder another slot could have made first', async () => {
-  const victim = `${tmp}/victim`, planted = '/tmp/request-77';
+  // (the shared temp folder another slot writes in, and the job's own.)
+  const victim = `${tmp}/victim`, planted = `${tmpdir()}/request-77`;
   writeFileSync(victim, 'keep');
   for (const d of [planted, `${tmp}/request-77`]) { mkdirSync(d, { recursive: true }); symlinkSync(victim, `${d}/0-front-of-the-card.png`); }
   try {
@@ -1154,11 +1155,11 @@ test('mail --to asks HQ for that address (it filters before its limit); a subjec
 test("a company's own command (kits/<kit>/hq-<name>.sh) runs in hq with its helpers and is in hq's help; a platform name stays the platform's", async () => {
   const repo = `${tmp}/company`;
   mkdirSync(`${repo}/kits/pinwheel`, { recursive: true });
-  writeFileSync(`${repo}/kits/pinwheel/hq-things.sh`, '#   hq things <n>                                    the things, by number\nr=$(get "things?n=$2") || exit 1\njq -r \'"thing \\(.id)"\' <<<"$r"\n');
+  writeFileSync(`${repo}/kits/pinwheel/hq-things.sh`, '#   hq things <n>                                    the things, by number\nr=$(get "things?n=$2") || exit 1\necho "thing $2: $r"\n');
   writeFileSync(`${repo}/kits/pinwheel/hq-status.sh`, '#   hq status                                        a kit can\'t take this name\necho kit-status\n');
   const own = (...args: string[]) => new Promise<{ code: number; out: string }>(resolve =>
     execFile('bash', [HQ, ...args], { env: { ...env, HQ_REPO: repo } }, (e, out) => resolve({ code: (e as any)?.code ?? 0, out })));
-  assert.deepEqual(await own('things', '7'), { code: 0, out: 'thing 42\n' });
+  assert.deepEqual(await own('things', '7'), { code: 0, out: 'thing 7: {"id":42}\n' });
   assert.equal(last().url, '/api/agent/things?n=7');
   assert.match(last().auth ?? '', /^Bearer job-token-/);
   const help = await own();

@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright DISABLE_AUTOUPDATER=1 CI=1
 # Pinned: a rebuild installs exactly what was reviewed (bump deliberately).
 # (codex 0.157.1 to 0.160.1: the first that knows GPT-6.1 Sol)
-RUN npm install -g @anthropic-ai/claude-code@2.1.283 @openai/codex@0.160.1 playwright@1.63.0 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.293 @openai/codex@0.160.1 playwright@1.63.0 \
     && playwright install --with-deps chromium
 # The other CLIs a seat can run (src/clis/), root's so no job replaces them: Mistral's Vibe (Python 3.12, which uv
 # brings, as Debian 12 has 3.11) and Google's Antigravity CLI (a Go binary, checked against its manifest's sha512; it

@@ -55,7 +55,17 @@ async function drawAway(folder, options) {
   const minutes = Math.max(MIN_MINUTES, Math.ceil(frames / SLOWEST_FPS / 60));
   for (;;) {
     const carried = [relative(ROOT, folder), audio, ...needed].filter(Boolean);
-    const flags = ['--kind', KIND, '--fallback', 'here', '--paths', 'shared/demo', '--with', carried.join(',')];
+    // the kit and what it imports (core.mjs: shared/browser)
+    const flags = [
+      '--kind',
+      KIND,
+      '--fallback',
+      'here',
+      '--paths',
+      'shared/demo,shared/browser',
+      '--with',
+      carried.join(','),
+    ];
     const back = ['--bring', relative(ROOT, join(folder, 'back')), '--minutes', String(minutes)];
     const ran = await hqRun([...flags, ...back], ['node', 'shared/demo/away.mjs', spec]);
     const missing = join(folder, 'back', 'missing.json');

@@ -850,6 +850,19 @@ class CallsList(unittest.TestCase):
         self.voice('call-end', {'agent': 'bolt', 'lines': ['Board: the pale button, let me think.'], 'token': token})
         self.assertEqual(self.db('select status from review_notes where id = ?', pale), [('pending',)])  # (it waits for Send or another call)
 
+    def test_the_ceos_call_expedites_and_a_refusal_says_why(self):
+        token, _ = self.start('juno')
+        queued = self.tools(token, 'juno', ('job', {'agent': 'kit', 'code': 'CLAIM', **ESTIMATE, 'title': 'Fix the claim', 'brief': 'The claim stalls.'}))[0][1]
+        job = int(re.search(r'Queued job #(\d+)', queued)[1])
+        out = self.tools(token, 'juno', ('expedite', {'job': job}), ('expedite', {'job': 999999}))
+        self.assertEqual(out[0], (False, f'#{job} is expedited: it starts next, and merges once a push passes its gates and tests.'))
+        self.assertEqual(out[1], (True, "Nothing expedited: there's no job #999999: check the number"))
+        self.assertEqual(self.db('select expedite from jobs where id = ?', job), [(1,)])
+        self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
+        token, _ = self.start('kit')
+        self.assertEqual(self.tools(token, 'kit', ('expedite', {'job': job})), [(True, 'Nothing expedited: only the CEO expedites a job: ask juno')])
+        self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
+
     def test_a_call_token_adds_to_no_other_call_and_reads_no_items_nor_its_own_transcript(self):
         said = 'Board: the secret plan for the brand film.'
         other, theirs = self.start('moss')
@@ -887,7 +900,7 @@ class CallsList(unittest.TestCase):
                          ('manage', {'command': ['plan', 'thread', 'office', 'Launch', 'The launch is out', '--slug', 'launch']}),
                          ('manage', {'command': ['job', 'move', str(keep), 'office/launch']}),
                          ('manage', {'command': ['window', 'office/launch', '18:00']}),
-                         ('manage', {'command': ['thread', 'pause', 'office/launch', 'waits for the board']}),
+                         ('manage', {'command': ['thread', 'pause', 'office/launch', 'waits for the board', '--by-hand']}),
                          ('manage', {'command': ['thread', 'resume', 'office/launch']}),
                          ('manage', {'command': ['jobs', 'moss']}), ('manage', {'command': ['summary']}))
         self.assertEqual([e for e, _ in out], [False] * 9, out)

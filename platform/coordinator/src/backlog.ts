@@ -44,7 +44,8 @@ type Row = {
   thread: string | null;
   board: number;
   follow_through: number;
-  desk_lets: number; // (in no thread, what the desk's pause lets go: jobs.ts deskLets)
+  pause_lets: number; // (what no pause holds: jobs.ts pauseLets)
+  sorter: number | null; // (the owner's job its sort waits for: sorting.ts)
   spent_ms: number;
   cards: string;
   wakes: string;
@@ -127,7 +128,8 @@ function queueRows(now: number) {
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
     (select json_group_array(request) from (${jobs.openCards('j.id')})) cards,
     (select json_group_array(json_object('kind', kind, 'arg', arg)) from wakes where job = j.id and met is null) wakes,
-    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through, ${jobs.deskLets('j')} desk_lets`;
+    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through, ${jobs.pauseLets('j')} pause_lets,
+    (select p.heard_by from sorts x join proposals p on p.id = x.proposal where x.job = j.id and p.status = 'open') sorter`;
   const inReview = `select w.id from prs p indexed by prs_plan cross join jobs w on w.branch = p.branch
     where p.status in ${jobs.OPEN_PRS} union select cast(substr(p.branch, 5) as integer) from prs p indexed by prs_plan
     where p.status in ${jobs.OPEN_PRS} and p.branch like 'job/%'`;
@@ -178,7 +180,8 @@ const plannedRow = (p: Omit<Planned, 'size'>, now: number): Row => ({
     seat: null,
     created: iso(now),
     board: 0,
-    desk_lets: 0,
+    pause_lets: 0,
+    sorter: null,
     spent_ms: 0,
     cards: '[]',
     wakes: '[]',
@@ -213,6 +216,9 @@ function queuedJob(row: Row, c: Context): QueuedJob {
   if (row.status === 'blocked' && !row.request) job.reasons.push({ on: 'board' });
   const wakes = JSON.parse(row.wakes) as Wake[];
   job.wakes = wakes.map(w => wakeOf(w, c));
+  // (its sort comes at the end of the owner's job that took it: held there, it holds this one too.)
+  if (row.sorter !== null && row.sorter !== row.id && c.open.has(row.sorter))
+    job.dependencies = [{ job: row.sorter, until: 'done' }];
   holdForPauses(job, row, c);
   // (a planning job: the earliest window of the findings it holds, inbox.ts heldWindows.)
   job.due = row.thread ? (c.due.get(row.thread) ?? null) : (c.held.get(row.id) ?? null);
@@ -271,17 +277,18 @@ function waitForBranch(job: QueuedJob, prior: number, c: Context) {
 function holdForPauses(job: QueuedJob, row: Row, c: Context) {
   if (c.paused && row.status !== 'running' && row.status !== 'done')
     if (!c.paused.has(row.id)) job.reasons.push({ on: 'board', paused: true });
-  // A paused thread or project, or the desk (work in no thread), holds it (a review too) until its jobs merge and the
-  // board answers its decision's card (queued or parked: work needing it hears it), or it's resumed by hand (pauses.ts).
-  const held = ['queued', 'blocked'].includes(row.status) && (row.thread !== null || row.desk_lets === 0);
+  // A paused thread or project, or the desk (work in no thread), holds it (a review too) until the board answers its
+  // decision's card (queued or parked: work needing it hears it), or it's resumed (pauses.ts). Its --until jobs only
+  // wake its owner to judge: the play reads the resume as coming after them, the earliest it can.
+  const held = ['queued', 'blocked'].includes(row.status) && row.pause_lets === 0;
   for (const p of held ? c.holds.get(row.thread)! : []) {
     if (p.card !== null && !job.cards.some(o => o.request === p.card))
       job.cards.push({ request: p.card, at: c.answers(p.card) });
     if (row.status !== 'queued') continue;
-    if (!p.until.length && p.card === null) stall(job, `${p.target} is paused until it's resumed`);
-    for (const id of p.until)
-      if (c.open.has(id)) waitFor(job, id);
-      else stall(job, `${p.target} is paused until job #${id} merges, which ended without merged work`);
+    if (p.untilTime !== null) job.wakes.push({ at: Math.max(p.untilTime, c.now) });
+    const open = p.until.filter(id => c.open.has(id));
+    if (p.untilTime === null && !open.length && p.card === null) stall(job, `${p.target} is paused until it's resumed`);
+    for (const id of open) waitFor(job, id);
   }
 }
 
@@ -316,7 +323,8 @@ const released = (id: number) =>
 type Wake = { kind: string; arg: string };
 function wakeOf(wake: Wake, c: Context): QueuedJob['wakes'][number] {
   if (wake.kind === 'at') return { at: Number(wake.arg) };
-  if (wake.kind === 'followed' || wake.kind === 'ended' || wake.kind === 'sorted') return { at: c.now }; // (sorted)
+  // (sorted: the owner's job that sorts it, queuedJob)
+  if (wake.kind === 'followed' || wake.kind === 'ended' || wake.kind === 'sorted') return { at: c.now };
   if (wake.kind !== 'deployed')
     return { at: c.now + c.lag * (wake.kind === 'deploy' ? Number(wake.arg) : 1), deploy: true };
   const job = wake.arg.startsWith('pr:')

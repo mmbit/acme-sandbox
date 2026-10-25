@@ -201,6 +201,23 @@ test('a paced seat holds undated work in the play until its pacing lifts, as the
   const start = predictions.outlook(T0).get(undated)!.start!;
   assert.ok(start > T0 + 24 * HOUR && start < reset, 'held now, and let go before the reset');
   assert.equal(await h.claim('claude', { seat: 'claude-a', pacedUntil: reset }), null, 'nor does the claim start it');
+  // (work carrying the board's call item is the board's word: the play starts it now, as the claim does)
+  const carried = queued('Paint the harbour gate, as the board asked');
+  const item = h.db
+    .prepare(
+      `insert into call_items (call, kind, owner, what, quote, ts)
+    values (1, 'task', 'kit', 'Paint the gate', 'Board: paint the gate.', 'x') returning id`,
+    )
+    .get() as { id: number };
+  h.db.prepare('update jobs set item = ? where id = ?').run(item.id, carried);
+  await reportCapacity();
+  assert.ok(predictions.outlook(T0).get(carried)!.start! < T0 + HOUR, "the play doesn't hold it");
+  assert.equal(
+    (await h.claim('claude', { seat: 'claude-a', pacedUntil: reset }))?.id,
+    carried,
+    'and the claim starts it',
+  );
+  h.db.prepare("update jobs set status = 'cancelled' where id = ?").run(carried);
   await h.board('/api/seats/pacing', { on: false });
   assert.ok(predictions.outlook(T0).get(undated)!.start! < start, 'pacing off, it starts sooner');
   await h.board('/api/seats/pacing', { on: true });

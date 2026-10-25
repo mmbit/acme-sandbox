@@ -317,31 +317,39 @@ not its project's, and a job keeps only its project's. A move that would leave a
 
 A hold on a line of work ("no game work until the projects view is back") is state, not prose:
 `hq project pause <project> "why"` or `hq thread pause <project>/<slug> "why"`, by the CEO or the project's owner, with
-`--until <job>` for each job that lifts it. It lives in HQ's db (`pauses.ts`), not in `projects.yaml`, so it holds the
+what wakes them to judge it: `--until <job>` for each job it waits for, `--until-time <time>`, or `--by-hand` (nothing
+does). One naming none of them is refused. It lives in HQ's db (`pauses.ts`), not in `projects.yaml`, so it holds the
 moment it's made. While it stands, the claim starts nothing queued on the thread, or on any thread of the project: no
 work, and no review, ruling or fix of its pull requests, which wait in review until it lifts. Work already running goes on; the CEO's
 hourly follow-through check lists it under the pause, to stop (`hq stop`) or let finish as the pause's reason says.
 `hq stop` on a running review or ruling pauses it at its next step instead: it goes back in the queue in its session,
 and the pause holds it until it lifts, so a half-written review is never read as a verdict. A
 job queued onto a paused thread is accepted and told it's held, `hq jobs` and HQ's projects view say it's paused,
-the live estimate plays it after the jobs the pause waits for, and the projects view shows the pause with why and
-until what.
+the live estimate plays it after the jobs the pause waits for (the earliest its owner could lift it), and the projects
+view shows the pause with why and what it waits for.
 
 The work in no thread has a pause of its own: `hq project pause unsorted "why"` (or the code of `projects.yaml`'s
 `groups.unsorted`), the CEO's alone. It holds what lands there however it got there: work a call queued, HQ's fix
 rounds and reviews on a pull request whose work had no thread, HQ's template and fault jobs before they're sorted. A
 hold that pauses projects pauses this one too, or what it misses there starts anyway. It lets go of what no hold should
 keep: the intercom, a meeting's seats, a board call's follow-up (the board heard, which is how a hold goes in and
-lifts) and expedited work. Work it holds stays in no thread until it lifts: `hq job move` refuses to sort it out, as it
+lifts), expedited work, and an owner's sort that holds something open on a thread no pause holds (a job HQ made
+that waits for it, review findings, a proposal for that thread): the hold doesn't keep work it lets run waiting on a
+sort it never lets start. The play reads a job waiting for its sort as starting after that sort's job. Work it holds stays in no thread until it lifts: `hq job move` refuses to sort it out, as it
 refuses to move work off any pause.
 
-With `--until`, the pause resumes by itself once all those jobs are done and merged, the test a wait (`hq waits`) meets.
-Work closed with every commit on main already meets it. Work closed unmerged, like a job it waits for that fails or is
-cancelled, leaves it standing: the check reads "the pause won't resume by itself". Without
-`--until`, `hq project resume` or `hq thread resume` ends it. Only the CEO resumes a pause the CEO made or one carrying
-the board's item. A pause can't wait for a job on what it pauses, or for one that needs work there first (its after,
+Nothing lifts a pause by itself (board, 25 Oct): what it waits for wakes its owner, who judges. Once its
+`--until-time` has come and every `--until` job has merged or ended (closed with its commits on main, closed unmerged,
+failed, cancelled, or done with nothing to merge), HQ queues its owner a job (the CEO for one carrying the board's
+item), `pausewake.ts`: the pause's why, what was met, and each job's report and whether its work is on main. That job
+is never held by a pause or the company's pause, and runs as soon as it can, which pacing lets through. The owner
+lifts it (`hq project resume` or `hq thread resume`), takes the results to the board, or keeps it on for what's still
+missing: the same `hq ... pause` on a paused target, by whoever may resume it, keeps that pause with the new why and
+conditions, and they wake the owner afresh. The CEO's hourly check flags a pause whose waited-on work ended, or whose
+woken owner left it on with nothing to wake them again, as off track that hour. Only the CEO resumes a pause the CEO
+made or one carrying the board's item; a pause for the board's decision ends with the board's answer on its card. A pause can't wait for a job on what it pauses, or for one that needs work there first (its after,
 its waits, another pause's `--until`, at any depth), which it would hold for good. A later `hq waits` change that would
-close such a loop is refused too. A job meant to resume a pause by hand goes in a thread outside it.
+close such a loop is refused too. A job meant to end before a pause is judged goes in a thread outside it.
 
 A hold the board agrees on a call is recorded as the pause, and its item linked to it:
 `hq item link <item> pause:<project or thread>` (a decision already handled goes on it as it is). The follow-through

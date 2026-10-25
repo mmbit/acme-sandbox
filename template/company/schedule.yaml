@@ -17,8 +17,61 @@
   code: ROUND
   routine: morning-round
 
-# Suggested, for once the company has code: the onboarding offers them (playbooks/intake.md), and the founding job
-# takes the ones the board wants out of the comments, each with the agent who runs it.
+# Suggested: the onboarding offers them (playbooks/intake.md), and the founding job takes the ones the board wants out
+# of the comments, each with the agent who runs it.
+# The company's own running, and the CVE check, since every company runs a
+# server:
+# - id: cve-watch
+#   agent: <the security lead, or the CEO>
+#   at: "every 12h"
+#   title: Check for major CVEs in what we run
+#   code: CVE
+#   routine: cve-watch
+#   prompt: |
+#     Where the security note with its list of checks is.
+# - id: weekly-strategy
+#   agent: <whoever looks after the business, or the CEO>
+#   at: "Mon 09:00"
+#   title: Weekly strategy review
+#   code: STRATEGY
+#   routine: strategy
+# - id: weekly-books
+#   agent: <the finance lead>
+#   at: "Mon 08:00"
+#   title: Weekly books check
+#   code: BOOKS
+#   routine: books
+#   prompt: |
+#     Where the books are and the tool that writes them, the invoices mailbox, and the month's close's attachment.
+# - id: weekly-docs-sweep
+#   agent: <whoever keeps the knowledge base>
+#   at: "Mon 07:00"
+#   title: Weekly docs sweep
+#   code: DOCS
+#   downtime: true
+#   routine: docs-sweep
+# - id: weekly-process-review
+#   agent: ceo
+#   at: "Fri 15:00"
+#   title: Weekly process review
+#   code: PROCESS
+#   routine: process-review
+# - id: daily-newsletter
+#   agent: ceo
+#   at: "17:00"
+#   title: The newsletter
+#   code: NEWS
+#   routine: newsletter
+# - id: support-articles
+#   agent: <whoever runs care>
+#   at: "03:00"
+#   title: Nightly support articles
+#   code: ARTICLES
+#   downtime: true
+#   routine: support-articles
+#   prompt: |
+#     Where the knowledge base is, its rules, where the last pass is recorded and where the sources are.
+# Once the company has code:
 # - id: weekly-code-quality
 #   agent: <the code quality lead>
 #   at: "Mon 10:00"
@@ -40,12 +93,19 @@
 #   title: Nightly test run on main
 #   code: TESTS
 #   routine: tests
-# Suggested from the start, since every company runs a server:
-# - id: cve-watch
-#   agent: <the security lead, or the CEO>
-#   at: "every 12h"
-#   title: Check for major CVEs in what we run
-#   code: CVE
-#   routine: cve-watch
+# - id: weekly-security-audit
+#   agent: <the security lead>
+#   at: "Tue 10:00"
+#   title: Weekly security audit
+#   code: AUDIT
+#   downtime: true
+#   routine: security-audit
 #   prompt: |
-#     Where the security note with its list of checks is.
+#     Where the security note with its list of weekly audits is, and the threat model.
+# - id: weekly-foundation-sweep
+#   agent: <roles.foundation, if the company keeps the foundation with others>
+#   at: "Fri 10:00"
+#   title: Weekly foundation sweep
+#   code: FSWEEP
+#   routine: foundation-sweep
+# An On Air show is no entry here: it runs from company/shows.yaml (shared/routines/show.md).

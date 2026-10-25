@@ -7,6 +7,7 @@ import { isReadable, readText, readTextOrStdin } from './files.ts';
 import { takeItemFlags, takeThread, takeValues, takeWhen } from './flags.ts';
 import { stopped } from './ledger.ts';
 import { minute, present, print, shown, stop, text, warn } from './output.ts';
+import { liftWords } from './pauses.ts';
 
 // (the pointer to hq waits add; the title's line)
 // (--thread new: drawn in the project's plan)
@@ -250,10 +251,11 @@ function printQueued(
       `Not in ${text(queued.followOn)}: a thread is one pull request, and this waits for that thread's own work to be ` +
         `deployed, so it's a thread of its own after the release.`,
     );
-  const paused = queued.paused as { target: string; why: string; until: number[] } | undefined;
+  const paused = queued.paused as
+    { target: string; why: string; untilTime: string | null; until: number[] } | undefined;
   if (paused) {
-    const until = paused.until.length ? `, until ${paused.until.map(id => `#${id}`).join(' and ')} merged` : '';
-    print(`Held: ${text(paused.target)} is paused (${text(paused.why)})${until}. It starts once that's resumed.`);
+    const lift = liftWords({ untilTime: paused.untilTime, until: paused.until.map(id => ({ id })) });
+    print(`Held: ${text(paused.target)} is paused (${text(paused.why)}) until ${lift}. It starts once that's resumed.`);
   }
   if (when.length > 0) print(`It starts once these have happened: ${when.join(', ')}.`);
   if (present(queued.untilCall))
@@ -324,18 +326,21 @@ export const expedite = {
                                                      running job starts ahead of everything and merges on its gates and
                                                      tests; one that has pushed, its pull request still in review, merges
                                                      now if its last push passed them. Its review follows on what merged,
-                                                     and anything blocking is its author's next job. Not a thread's task
-                                                     (queue the fix with hq job --expedite), nor ordinary work`,
+                                                     and anything blocking is its author's next job. A thread's task
+                                                     that hasn't started leaves its thread as its own job; one that ran
+                                                     stays (queue the fix with hq job --expedite). Never ordinary work`,
 
+  // (a refusal opens "Nothing expedited", as the call's expedite tool reads it: hq_tools.py.)
   async run([id, ...rest]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '') || rest.length) stop('usage: hq expedite <job id>');
-    const answer = await api.call('expedite', { body: { id: Number(id) } });
+    const answer = await api.change('expedite', { body: { id: Number(id) } });
     const done = api.parseOrNull(answer.body);
-    if (shown(done?.ok) !== 'true') stop(`Couldn't expedite #${id}: ${api.errorIn(answer.body, 'no answer')}`);
+    if (shown(done?.ok) !== 'true') stop(`Nothing expedited: ${api.errorIn(answer.body, 'HQ refused it')}`);
+    const left = done.from !== undefined ? ` It left ${shown(done.from)} and runs on its own branch from main.` : '';
     print(
       done.merged !== undefined
         ? `PR #${shown(done.merged)} merged expedited; it deploys within a minute, and its review follows on what merged.`
-        : `#${id} is expedited: it starts ${shown(done.starts)}, and merges once a push passes its gates and tests.`,
+        : `#${id} is expedited: it starts ${shown(done.starts)}, and merges once a push passes its gates and tests.${left}`,
     );
   },
 };

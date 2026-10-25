@@ -1335,6 +1335,7 @@ test("a machine set up with its install command: one command with its key, the m
         gpus: false,
         helpers: 2,
         sockets: true,
+        alone: false,
       },
     ],
     busy: [],
@@ -1383,6 +1384,37 @@ test("a machine set up with its install command: one command with its key, the m
   const key = /HELPER_KEY=(helper_[\w-]{43})/.exec(again.body.install)![1];
   assert.equal((await asHelper('/api/helper/setup', {})).status, 401);
   assert.equal((await asKey(key, '/api/helper/setup', {})).status, 200);
+  await h.finish(job);
+});
+
+test('a kind that keeps its helpers alone: the manager hears so, and only a helper on a network of its own takes its runs, never one an older manager made', async t => {
+  declareKinds(
+    t,
+    `${TESTS_KIND}
+    model:
+      about: a model's own commands
+      sockets: true
+      alone: true
+`,
+  );
+  await lendOne();
+  const kinds = (await asHelper('/api/helper/setup', {})).json.kinds;
+  assert.deepEqual(
+    kinds.map((kind: { name: string; alone: boolean }) => [kind.name, kind.alone]),
+    [
+      ['tests', false],
+      ['model', true],
+    ],
+  );
+  const job = await h.start({ agent: 'bolt' });
+  const sent = await sendRun(job.token, { command: 'true', kind: 'model' });
+  const locked = await asHelper('/api/helper/take', { kind: 'model', slot: 1, locked: true });
+  assert.equal(locked.status, 400, 'on the shared network an older manager made');
+  assert.match(locked.text, /installed again/);
+  assert.equal(stateOf(sent.json.id), 'waiting');
+  const alone = await asHelper('/api/helper/take', { kind: 'model', slot: 1, locked: true, alone: true });
+  assert.equal(alone.json.id, takeOf(sent.json.id));
+  assert.equal(alone.json.sockets, true);
   await h.finish(job);
 });
 

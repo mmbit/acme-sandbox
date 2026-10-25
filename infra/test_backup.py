@@ -451,7 +451,7 @@ try:
     writer.kill()
     writer.wait()
     after = sqlite3.connect(db).execute('select count(*) from jobs').fetchone()[0]
-    check(st['state'] == 'ok' and st['ok_key'].startswith('daily/'), f'the night: ok ({st.get("ok_key")}, {st.get("ok_bytes")} bytes, {st.get("ok_seconds")} s)')
+    check(st['state'] == 'ok' and st['ok_key'].startswith('daily/'), f'the night: ok ({st.get("ok_key")}, {st.get("ok_bytes")} bytes, {st.get("ok_seconds")} s{", " + st["error"] if st.get("error") else ""})')  #.
     check(after > before + 100, f'the writer kept writing throughout ({before} → {after} jobs)')
     shared = json.load(open(f'{hq}/backup-status.json'))
     check(shared == status_file() and oct(os.stat(f'{hq}/backup-status.json').st_mode & 0o777) == '0o644', 'status left for the coordinator, readable')

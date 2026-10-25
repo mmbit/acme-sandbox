@@ -112,7 +112,7 @@ and which helpers have a run) and keeps it so:
   Install again.
 - everything is named for HQ's host, so one machine can lend itself to several companies' HQs.
 
-The page's remove command (`MANAGER=remove`) takes all of it away again: the helpers, the proxy, the network, the
+The page's remove command (`MANAGER=remove`) takes all of it away again: the helpers, the proxy, the networks, the
 manager and the key. `hq run helper` prints the install command (without a key) and the remove command for an agent
 setting a machine up with the board. Only the board adds a machine or sees its key.
 
@@ -146,7 +146,7 @@ a light for each of its run's cores, and big, its use over the last minutes and 
 ## What the helper can reach
 
 The container connects out to HQ over HTTPS and nowhere else. On a machine set up with its install command it sits on
-a Docker network of its own with no route out (`internal`), and its one way out is the manager's proxy, which opens a
+the manager's Docker network with no route out (`internal`), shared with that HQ's other helpers there, and its one way out is the manager's proxy, which opens a
 connection (CONNECT) to HQ's host and the package registries only (`registry.npmjs.org`, `pypi.org`,
 `files.pythonhosted.org`: `FIXED` in manager.mjs, which HQ can't change), never to a private address, whatever a name
 resolves to. Every run is code from our own repo, but the sandbox
@@ -170,7 +170,12 @@ assumes it could be hostile:
   that filter, on the machines set up with their install command alone: HQ gives its runs only to a helper that says
   it's on the manager's network (`locked`), never to this server's or one started by hand. So a run reaches what its
   helper does: its own loopback, HQ and the registries through the proxy, for its packages (cached in the helper's
-  `/cache`, which npm and a wheel's pinned hash check), and nothing else.
+  `/cache`, which npm and a wheel's pinned hash check), and the other helpers of the machine for that HQ, which share
+  its network.
+- **A kind that keeps its helpers alone** (`alone: true`, for runs whose commands nobody reviewed, such as a local
+  model's) gives each of its helpers an internal network of its own, with the proxy as its only other member: its
+  runs reach their own loopback and the proxy's hosts, and no other helper. HQ gives its runs only to a helper that says
+  so (`alone`), which a manager older than it doesn't make, so the machine is installed again first.
 - **Nothing left behind.** When the command ends, or its time runs out, `kill(-1)` as uid 1000 ends every process the
   run started (detached ones too), and `--init` reaps them, all before its files are packed. A run that outlives it
   (stopping or ending the process that sends it) stops the helper after a few seconds, and Docker's restart ends it. The

@@ -42,8 +42,9 @@ Settle these, roughly in this order:
    and what it needs (a Twilio number for the phone, an email service for the mail). If it wants care, settle the first
    instructions for its domain, basic for now: they grow with the company. Also a push when an AI seat
    runs low (`warning:` in `company/seats.yaml`, off unless the board wants it), and the routines in
-   `company/schedule.yaml`'s suggestions (the morning round runs from the start, and the CVE check is offered then
-   too; the others once there's code).
+   `company/schedule.yaml`'s suggestions, each in a line: what it does, how often, and that each one spends the AI
+   seats' capacity (the morning round runs from the start, and the CVE check is offered then too; the ones for code
+   once there's code).
 7. **The access it will need:** a domain, mail, payments, accounts elsewhere. Name them only: each becomes a card
    later, with its steps.
 

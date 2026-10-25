@@ -413,6 +413,10 @@ db.exec(`create table if not exists call_tokens (hash text primary key, agent te
 db.exec(`create table if not exists call_items (id integer primary key, call integer not null, kind text not null, owner text not null,
   what text not null, quote text not null, lines text, status text not null default 'open', job integer, request integer, ref text,
   why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer)`);
+// (the open ones and their jobs, which the queue's every read asks for: jobs.ts BOARD_CALL)
+db.exec('create index if not exists call_items_open on call_items (status, job)');
+// The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL): a few rows, not every pull request's
+db.exec("create index if not exists prs_open on prs (branch) where status in ('open', 'stuck', 'board')");
 redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending', 'landing');
 redacted('requests', 'title', 'body', 'answer', 'topic', 'questions');
 redacted('calls', 'lines', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref'); redacted('events', 'text');
@@ -549,12 +553,16 @@ export function meetingProjects(meeting: number) {
 }
 
 // A paused project or thread (pauses.ts): thread null pauses the whole project. item: the board's call item it carries
-// out (hq item link <item> pause:<id>). decision: the board's decision it waits for (decisions.ts). resumed: when it
-// ended, by its CEO or owner (resumed_by) or, null, by its pause_until jobs all being done and merged. Here rather than
-// in that module: claim() reads them.
+// out (hq item link <item> pause:<id>). decision: the board's decision it waits for (decisions.ts). until_time: the time
+// that wakes its owner (ISO). woken: the job HQ queued its owner once what it waits for (its time, its pause_until jobs
+// settled) was met, to judge what's next. resumed: when it ended, by its CEO or owner (resumed_by) or, null, by the
+// board's answer on its decision's card. pause_until.on_main: that job's commits reached main with its pull request
+// closed (review.ts close). Here rather than in that module: claim() reads them.
 db.exec(`create table if not exists pauses (id integer primary key, project text not null, thread text, why text not null,
-    by text not null, at text not null, item integer, resumed text, resumed_by text, decision integer);
-  create table if not exists pause_until (pause integer not null, job integer not null, primary key (pause, job))`);
+    by text not null, at text not null, item integer, resumed text, resumed_by text, decision integer, until_time text,
+    woken integer);
+  create table if not exists pause_until (pause integer not null, job integer not null, on_main integer not null default 0,
+    primary key (pause, job))`);
 redacted('pauses', 'why');
 // A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
 // it once there is one; answered, when the board answered that card; released, when the board let what it holds go in
@@ -643,6 +651,8 @@ once('2026-10-23-expedite', () => {
   if (lacks('jobs', 'expedite')) db.exec('alter table jobs add column expedite integer not null default 0');
   if (lacks('prs', 'expedited')) db.exec('alter table prs add column expedited integer not null default 0');
 });
+// A pause's time (pauses.until_time)
+once('2026-10-24-pauses-until-time', () => lacks('pauses', 'until_time') && db.exec('alter table pauses add column until_time text'));
 // When each push was first pushed (pushes.at): those from before, when the first run on that commit was made.
 once('2026-10-23-pushes-at', () => {
   if (!lacks('pushes', 'at')) return;
@@ -679,6 +689,12 @@ once('2026-10-21-calls-reply', () => {
     and id in (select job from calls where status = 'ended' and processed_at is null)`);
 });
 // A live call handed a customer's details by a look-up (jobs.ts readerHanded).
+// A pause's condition wakes its owner rather than lifting it (pauses.ts wake)
+once('2026-10-25-pauses-wake', () => {
+  if (lacks('pauses', 'until_time')) db.exec('alter table pauses add column until_time text');
+  if (lacks('pauses', 'woken')) db.exec('alter table pauses add column woken integer');
+  if (lacks('pause_until', 'on_main')) db.exec('alter table pause_until add column on_main integer not null default 0');
+});
 once('2026-10-24-calls-customers', () => {
   if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
 });

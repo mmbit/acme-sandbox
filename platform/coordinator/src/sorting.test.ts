@@ -139,6 +139,40 @@ test("a message no session took waits for its sort by its thread's project owner
   assert.equal(await claimable(job), true);
 });
 
+test("a message from a job on a windowed thread no pause holds gets its sort and runs while the desk and the CEO's project are paused", async () => {
+  const pauses = await import('./pauses.ts');
+  const { ceo } = await import('./company.ts');
+  const { set } = await import('./windows.ts');
+  const { orderingSnapshot } = await import('./backlog.ts');
+  const deadline = Date.now() + 3_600_000;
+  set(projects.findThread('game/world')!, { deadline, aim: deadline }, ceo());
+  const desks = [{ project: 'unsorted' }, { project: h.dueThread().split('/')[0] }];
+  for (const target of desks) pauses.pause({ ...target, why: 'Until both trials report', byHand: true }, ceo());
+  try {
+    const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
+    const made = await say(bolt, ceo(), 'The scope is bigger than its size: judge it.');
+    const job = made.body.job as number;
+    assert.equal(h.job(job).thread, 'game/world', "it takes its sender's thread");
+    proposals.sweep();
+    const sorter = h.jobs.listJobs().find(j => j.agent === 'wren' && j.status === 'queued')!.id;
+    assert.equal(h.jobs.pausedOn(sorter), null, 'the hold lets its owner sort it');
+    let play = orderingSnapshot(Date.now()).jobs;
+    assert.deepEqual(play.find(j => j.id === job)!.dependencies, [{ job: sorter, until: 'done' }], 'after its sort');
+    assert.equal(play.find(j => j.id === sorter)!.due, deadline, "the sort takes the thread's window");
+    assert.equal(play.find(j => j.id === job)!.due, deadline);
+    pauses.pause({ thread: 'game/world', why: 'Wait', byHand: true }, ceo());
+    assert.equal(h.jobs.pausedOn(sorter), 'unsorted', 'with all it holds paused, the desk holds it again');
+    pauses.resume({ thread: 'game/world' }, ceo());
+    assert.equal(await claimable(sorter), true);
+    proposals.accept(held(job)!.id, 'wren', { title: 'Judge the bigger scope', code: 'SCOPE' });
+    play = orderingSnapshot(Date.now()).jobs;
+    assert.equal(play.find(j => j.id === job)!.dependencies, undefined);
+    assert.equal(await claimable(job), true);
+  } finally {
+    for (const target of desks) pauses.resume(target, ceo());
+  }
+});
+
 test('a later message joining a sorted job that has not started holds it for its sort again', async () => {
   const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
   const job = (await say(bolt, 'kit', 'Draw the door.')).body.job as number;

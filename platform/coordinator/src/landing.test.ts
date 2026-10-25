@@ -139,7 +139,10 @@ test("hq job --lands keeps the failed job's paused project until it resumes", as
   const chime = await h.start({ agent: 'chime', title: 'Something else' });
   const { ceo } = await import('./company.ts');
   const chief = await h.start({ agent: ceo(), title: 'Pause the game' });
-  assert.equal((await h.agent('pauses', chief.token, { project: 'game', why: 'Wait for the board' })).status, 200);
+  assert.equal(
+    (await h.agent('pauses', chief.token, { project: 'game', why: 'Wait for the board', byHand: true })).status,
+    200,
+  );
   const reply = await lands(chime, failed);
   assert.equal(reply.status, 200, JSON.stringify(reply.body));
   await h.finish(chime);

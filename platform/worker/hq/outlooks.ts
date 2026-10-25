@@ -1,10 +1,11 @@
 // hq projects and hq thread <id>: each thread's live estimate from HQ's forecast (the coordinator's forecast.ts and
 // outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its planned finish
 // against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of the status report.
-import { when } from './when.ts';
+import { lateLines, when } from './when.ts';
 import * as api from './api.ts';
 import { at, duration, waitWords, type Wait } from './estimate.ts';
 import { print, stop, text } from './output.ts';
+import { liftWords, type Lift } from './pauses.ts';
 // A job's code after its number, none for one without
 const codeOf = (code: unknown) => (typeof code === 'string' && code ? ` ${code}` : '');
 
@@ -37,7 +38,12 @@ type Job = {
   waits: Wait[];
 };
 type Line = { id: string; name: string; owner: string; outlook: Outlook | null; next: Job | null };
-type Detail = Line & { goal: string; status: string; jobs: Job[] };
+type Detail = Line & {
+  goal: string;
+  status: string;
+  jobs: Job[];
+  pause?: (Lift & { target: string; why: string }) | null;
+};
 
 export const projectsHelp = `
    hq projects                                       every open thread in a line: its ETA, the agent time its open work
@@ -68,8 +74,19 @@ export async function projects(args: string[]) {
   if (args.length) return printOutlooks(args.join(' '));
   const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the threads."));
   if (!threads.length) return print('No open threads.');
-  print(...threads.map(projectLine));
+  print(
+    ...threads.map(projectLine),
+    ...missLines(threads.filter(t => t.outlook?.standing === 'misses').map(t => t.id)),
+  );
 }
+
+// What to do about threads that miss their deadlines (when.ts lateLines: on a call only).
+const missLines = (missing: string[]) =>
+  missing.length
+    ? lateLines(
+        `${missing.map(text).join(', ')} ${missing.length > 1 ? 'miss their deadlines' : 'misses its deadline'}`,
+      )
+    : [];
 
 export async function now(args: string[]) {
   if (args.length) stop('usage: hq now');
@@ -120,6 +137,11 @@ export async function thread(id: string) {
   const o = t.outlook;
   print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
   print(estimateWords(o, t.id));
+  print(...missLines(o?.standing === 'misses' ? [t.id] : []));
+  if (t.pause)
+    print(
+      `Paused${t.pause.target === t.id ? '' : ` with ${text(t.pause.target)}`} (${text(t.pause.why)}) until ${liftWords(t.pause)}.`,
+    );
   if (!o) return;
   if (o.held && o.eta !== null && o.held > o.eta) print(`by ${at(o.held)} four times in five`);
   if (o.chain.length)
@@ -180,6 +202,8 @@ async function printOutlooks(words: string) {
       print(`- ${text(t.name)}: ${estimateWords(t.outlook, t.name, namedWaitWords)}${next}`);
     }
   }
+  const threads = f.projects.flatMap(p => p.threads);
+  print(...missLines(threads.filter(t => t.outlook?.standing === 'misses').map(t => t.name)));
 }
 
 function namedWaitWords(w: NamedWait, own: string) {

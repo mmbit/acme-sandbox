@@ -77,10 +77,12 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def check_model(arguments, manifest, model, measurement, evidence):
+def check_model(arguments, manifest, model, measurement, evidence, action=None, admission=None):
     before = snapshot()
     evidence.record('before', measurement, before=before,
                     peakUsedMiB=[gpu['usedMiB'] for gpu in before])
+    if admission:
+        admission(before, model)
     stopped = threading.Event()
     failures = []
     sampler = threading.Thread(target=sample, args=(stopped, measurement, failures, evidence))
@@ -95,7 +97,7 @@ def check_model(arguments, manifest, model, measurement, evidence):
         ready = read_message(runtime)
         check_ready(ready, manifest, model)
         evidence.record('ready', measurement, ready=ready, loadSeconds=time.monotonic() - started)
-        round_trip(runtime, manifest['runtime'], model, measurement, evidence)
+        (action or round_trip)(runtime, manifest['runtime'], model, measurement, evidence)
         check_shutdown(runtime, measurement, evidence)
     except Exception as failure:
         evidence.record('failed', measurement, failure=str(failure))

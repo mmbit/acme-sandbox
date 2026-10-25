@@ -237,11 +237,14 @@ async function voice(slug: string, req: IncomingMessage, guest: boolean) {
   try { return await transcribe(req, guest ? undefined : boardLanguage()); } finally { v.busy = false; }
 }
 
+// The one upgrade HQ takes (server.ts shouldUpgradeCallback): any other comes as an ordinary request, as Caddy's
+// forward_auth asks /api/me before each call with the call's own Upgrade headers.
+export const dictates = (req: IncomingMessage) =>
+  new URL(req.url ?? '/', 'http://x').pathname.slice(productOf(req)?.base.length ?? 0) === '/__review/dictate';
 // The upgrade to a live dictation (<base>/__review/dictate, server.ts), let in as a clip is (product above), and carried
 // to the voice line. A refusal is a plain status.
 export function dictate(req: IncomingMessage, socket: Duplex, head: Buffer) {
-  const pathname = new URL(req.url ?? '/', 'http://x').pathname;
-  if (pathname.slice(productOf(req)?.base.length ?? 0) !== '/__review/dictate') return dictation.refuse(socket, 404);
+  if (!dictates(req)) return dictation.refuse(socket, 404);
   const p = reviewerOn(req);
   if (!p || req.headers.origin !== (p.slug === HQ ? ORIGIN : `https://${p.host}`)) return dictation.refuse(socket, 403);
   const v = startVoice(p.slug);

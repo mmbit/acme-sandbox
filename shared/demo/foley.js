@@ -91,17 +91,25 @@ function floor(c, y, hz) { // a gentle cut under hz, in place: keeps a rub or a 
 }
 // Noise above 9 kHz is fizz, not air: nothing satisfying lives there, a phone plays it as hiss and the AAC encoder
 // smears it. A 4-pole roll-off for every noise sound (a bright slide, pitched up, measures 3.05 acum with it, 3.95 without).
-function soften(c, o) {
-  const f = [0, 1, 2, 3].map(() => SVF(c.sr).set(9000, 0.1));
+// A sound that moves rolls off from 6 kHz instead (a pencil, a breath; lower narrows a texture's band into judder), and
+// eases in over 40 ms (`ease`): a bright, sudden one sounds like someone blowing into a microphone.
+function soften(c, o, hz = 9000) {
+  const f = [0, 1, 2, 3].map(() => SVF(c.sr).set(hz, 0.1));
   for (let i = 0; i < o.n; i++) { o.L[i] = f[1].lp(f[0].lp(o.L[i])); o.R[i] = f[3].lp(f[2].lp(o.R[i])); }
 }
+function ease(c, o, secs) { // a raised-cosine onset over secs, in place
+  const n = Math.min(o.n, c.n(secs));
+  for (let i = 0; i < n; i++) { const e = 0.5 - 0.5 * Math.cos((Math.PI * i) / n); o.L[i] *= e; o.R[i] *= e; }
+}
 // What moves (a slide, a swish, a page through the air) is a soft breath: noise low-passed to a warm band (hz(x), x 0..1),
-// its weight cut under floorHz, shaped by env(x, t). A bright band of noise grates, so movements stay dark and quiet.
+// its weight cut under floorHz, shaped by env(x, t). A bright band of noise grates, so movements stay dark and quiet,
+// and a breath eases in over a third of its length (60 ms at most), so it never starts like a puff at a microphone.
 function breath(c, secs, hz, env, floorHz = 600) {
   const n = c.n(secs), y = new Float32Array(n), a = SVF(c.sr), b = SVF(c.sr), h = SVF(c.sr).set(floorHz, 0.1), k = SVF(c.sr).set(floorHz, 0.1);
+  const on = Math.max(1, Math.min(c.n(0.06), Math.round(n / 3)));
   for (let i = 0; i < n; i++) {
     const x = i / n; if ((i & 15) === 0) { const f = hz(x); a.set(f, 0.1); b.set(f, 0.1); }
-    y[i] = k.hp(h.hp(b.lp(a.lp(c.nz())))) * env(x, i / c.sr);
+    y[i] = k.hp(h.hp(b.lp(a.lp(c.nz())))) * env(x, i / c.sr) * (i < on ? 0.5 - 0.5 * Math.cos((Math.PI * i) / on) : 1);
   }
   return y;
 }
@@ -112,6 +120,10 @@ function air(c, o, at, ...args) {
   o.add(l, at, Math.SQRT1_2, -1).add(r, at, Math.SQRT1_2, 1);
   return [l, r];
 }
+// The swish inside a sound that lands (a flip's lift and flutter, a deal's flight, a lock's lead-in): a breath SWISH
+// (10 dB) under what its env asks, so it sits quietly under the landing it leads to.
+const SWISH = 0.32;
+const swish = (c, o, at, secs, hz, env, floorHz) => air(c, o, at, secs, hz, (x, t) => SWISH * env(x, t), floorHz);
 
 // ---------- materials: the struck-object model behind knock, tink, tick, clack, snap and lock ----------
 // f: first mode Hz at size 1; r, a, t: mode ratios, amplitudes and T60 decay (s); w: contact time (s);
@@ -137,7 +149,7 @@ function impact(c, p = {}) { // mono: contact pulse -> modes, plus contact noise
   return y;
 }
 // Exported so a company's own kit can build its own palette from the same parts and register it in SOUNDS.
-export { SVF, bus, pulse, modes, thump, blip, grain, breath, air };
+export { SVF, bus, pulse, modes, thump, blip, grain, breath, air, swish };
 
 // For porting a score's numpy synthesis onto the kit: sample times, sweeps, Gaussian noise and the score's filters.
 // A biquad's Q as the SVF's res (k = 1 / Q = 2 - 1.96 res); FLAT is Butterworth's flat 2-pole response (Q 0.707)
@@ -264,7 +276,7 @@ function snap(c, p) { // magnetic snap: a tiny rising pull, then a hard click wi
 
 function lock(c, p) { // falls into place: a short slide, latch click, the body settling home, a small glassy "yes"; hit = the latch
   const s = p.size ?? 1, sl = p.slide ?? 0.16, ring = p.ring ?? 0.35, pt = p.pitch || 0, g = 0.024 * s, o = bus(c, sl + 1);
-  if (sl > 0) air(c, o, 0, sl, x => (1300 + 600 * x) / Math.sqrt(s), x => 0.35 * Math.pow(x, 1.5), 600 / Math.sqrt(s));
+  if (sl > 0) swish(c, o, 0, sl, x => (1300 + 600 * x) / Math.sqrt(s), x => 0.35 * Math.pow(x, 1.5), 600 / Math.sqrt(s));
   o.add(impact(c, { material: 'plastic', size: 0.55 * s, force: 1.1, pitch: pt }), sl, 0.8, -0.05);
   o.add(impact(c, { material: 'metal', size: 0.4 * s, decay: 0.08, force: 1, pitch: pt }), sl, 0.45);
   o.add(impact(c, { material: 'wood', size: 1.5 * s, force: 0.9, pitch: pt }), sl + g, 0.95, 0.05);
@@ -386,14 +398,14 @@ function slide(c, p) { // a sheet or piece slid gently across the table, easing 
 function flip(c, p) { // page flip (paper) or card flip (card): lift or flick, flutter through the air, flap down; hit = the landing
   const card = p.material === 'card', s = p.size ?? 1, d = p.dur ?? (card ? 0.2 : 0.42), land = d * 0.86, o = bus(c, d + 0.25), gr = grain(c);
   // a card's flick is a crisp tick: its low thump is cut away, or the card reads as a knock
-  if (card) { o.add(floor(c, floor(c, impact(c, { material: 'card', size: 0.45 * s, force: 1.1 }), 700), 700), 0, 0.5); o.add(noiseEnv(c, 0.004, 'hp', 3000, 0.1, () => 0.3)); }
+  if (card) { o.add(floor(c, floor(c, impact(c, { material: 'card', size: 0.45 * s, force: 1.1 }), 700), 700), 0, 0.5 * SWISH); o.add(noiseEnv(c, 0.004, 'hp', 3000, 0.1, () => 0.3), 0, SWISH); }
   // a page's lift is one steady swell that the flutter rises out of: a short lift whose grain swung it 0 to 2.4 times
   // died before the flutter had risen, and a short or pitched-up page (a small leaf, 0.12 s) turned the gap into a
   // 25 to 50 Hz shake (judder up to 79 at 0.14 to 0.2 s; now 30 at most, 0.12 to 0.42 s, every size, 6 semitones up)
-  else air(c, o, 0, d * 0.5, x => 1500 + 500 * x, x => 0.12 * Math.sin(Math.PI * x) * (0.6 + 0.4 * gr(30)));
+  else swish(c, o, 0, d * 0.5, x => 1500 + 500 * x, x => 0.12 * Math.sin(Math.PI * x) * (0.6 + 0.4 * gr(30)));
   const fl = (card ? 45 : 22) * c.rnd(0.9, 1.1), a0 = d * 0.15, span = land - a0;
   // the flutter is a gentle sway (a deep one at 20 to 50 Hz reads as a judder), a soft breath through the air
-  air(c, o, a0, span, x => (1100 + 900 * Math.sin(Math.PI * x)) / Math.sqrt(s),
+  swish(c, o, a0, span, x => (1100 + 900 * Math.sin(Math.PI * x)) / Math.sqrt(s),
     (x, t) => 0.3 * Math.pow(Math.sin(Math.PI * x), 1.5) * (0.75 + 0.25 * Math.abs(Math.sin(Math.PI * fl * t))), (card ? 900 : 700) / Math.sqrt(s));
   o.add(impact(c, { material: 'card', size: (card ? 0.9 : 1.7) * s, force: card ? 0.9 : 0.55 }), land, 0.9);
   o.add(noiseEnv(c, 0.05, 'lp', 600, 0.1, (x, t) => 0.5 * Math.exp(-t / 0.012)), land);
@@ -402,11 +414,11 @@ function flip(c, p) { // page flip (paper) or card flip (card): lift or flick, f
 
 function deal(c, p) { // a card dealt: it leaves the deck, swishes, slaps down and skids a hair; hit = the landing
   const s = p.size ?? 1, felt = (p.surface ?? 'felt') === 'felt', fly = p.fly ?? 0.11, at = 0.04 + fly, o = bus(c, at + 0.3);
-  air(c, o, 0, 0.045, x => 1800 + 400 * x, x => 0.2 * x);
-  air(c, o, 0.03, fly, x => 2100 - 500 * x, x => 0.3 * Math.sin(Math.PI * x)); // a soft swish through the air
+  swish(c, o, 0, 0.045, x => 1800 + 400 * x, x => 0.2 * x);
+  swish(c, o, 0.03, fly, x => 2100 - 500 * x, x => 0.3 * Math.sin(Math.PI * x)); // a soft swish through the air
   o.add(impact(c, { material: 'card', size: s, force: felt ? 0.5 : 0.9 }), at, 0.9, 0.15);
   o.add(noiseEnv(c, 0.06, 'lp', felt ? 1500 : 4000, 0.1, (x, t) => (felt ? 0.5 : 0.8) * Math.exp(-t / 0.012)), at, 1, 0.15);
-  air(c, o, at + 0.008, 0.03, () => 1700, x => 0.08 * (1 - x));
+  swish(c, o, at + 0.008, 0.03, () => 1700, x => 0.08 * (1 - x));
   return { o, hit: at };
 }
 
@@ -515,7 +527,10 @@ function hall(c, o, amount, t60) {
 // strokes in a row read as loud as a bell and gritty at full volume. Wherever the kit plays a sound (the player,
 // mix.mjs, synth.mjs) one that moves plays at MOVES of its level: the kit's own marked `moves`, a company's own by its
 // `kind` or `also` 'glide'. render() leaves it whole, so a sound built from the kit's keeps its own balance.
-export const MOVES = 0.5;
+// A level is a peak, and a breath held for half a second at a ding's peak is far louder than the ding, so a movement
+// plays 18 dB under its level, under everything else (mix.mjs sets the bed by the sounds that don't move, so a film's
+// bed doesn't follow it down).
+export const MOVES = 0.125;
 export const moves = def => !!def && (def.moves ?? (def.kind === 'glide' || def.also === 'glide'));
 /** The gain the kit plays a sound at, by name: MOVES for one that moves, else 1. */
 export const playedAt = name => (moves(SOUNDS[name]) ? MOVES : 1);
@@ -554,7 +569,7 @@ export function render(name, params = {}, sr = 48000) {
   if (p.notes || count > 1) return repeat(name, p, count, sr);
   const c = kit(sr, p.seed ?? 1); let { o, hit: h } = def.fn(c, p);
   if (p.pitch && !def.tuned) { const k = semi(p.pitch); o = varispeed(c, o, k); h /= k; }
-  tilt(c, o, p.bright ?? 0.5); if (!def.tuned) soften(c, o); room(c, o, p.room ?? 0.2);
+  tilt(c, o, p.bright ?? 0.5); if (!def.tuned) soften(c, o, moves(def) ? 6000 : 9000); if (moves(def)) ease(c, o, 0.04); room(c, o, p.room ?? 0.2);
   if (p.pan) { const a = ((clamp(p.pan, -1, 1) + 1) * Math.PI) / 4, gl = Math.cos(a) * Math.SQRT2, gr = Math.sin(a) * Math.SQRT2;
     for (let i = 0; i < o.n; i++) { const l = o.L[i], r = o.R[i]; o.L[i] = gl * (p.pan < 0 ? l + r * (1 - gr) : l); o.R[i] = gr * (p.pan > 0 ? r + l * (1 - gl) : r); } }
   let pk = 0; for (let i = 0; i < o.n; i++) pk = Math.max(pk, Math.abs(o.L[i]), Math.abs(o.R[i]));

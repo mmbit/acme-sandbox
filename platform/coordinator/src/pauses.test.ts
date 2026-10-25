@@ -9,6 +9,7 @@ import type { Pause } from './pauses.ts';
 const { h, thread, engineOf } = await projectsHarness('pauses');
 const { db } = h;
 const pauses = await import('./pauses.ts');
+const pausewake = await import('./pausewake.ts');
 const { read } = await import('./followthrough.ts');
 const { agreements } = await import('./agreements.ts');
 const { snapshot } = await import('./backlog.ts');
@@ -18,9 +19,10 @@ const { agreed } = await followthroughFixture(h);
 
 const reset = () =>
   db.exec(`delete from jobs; delete from prs; delete from threads; delete from pauses; delete from pause_until;
-    delete from calls; delete from call_items; delete from followthrough_checks`);
+    delete from calls; delete from call_items; delete from followthrough_checks; delete from settings where key = 'company.paused'`);
+// (with no condition named, by hand: nothing wakes its owner)
 const pause = (ask: Parameters<typeof pauses.pause>[0], agent = ceo()) => {
-  const p = pauses.pause(ask, agent);
+  const p = pauses.pause({ byHand: !ask.until?.length && ask.untilTime == null, ...ask }, agent);
   assert.equal(typeof p, 'object', typeof p === 'string' ? p : '');
   return p as Pause;
 };
@@ -91,29 +93,137 @@ test('hq stop pauses a running review or ruling on a paused thread, and it goes 
   assert.equal((await h.heartbeat(again!)).body.yield, undefined, 'to its end');
 });
 
-test('--until resumes the pause by itself once all its jobs are done and merged, as a wait is met', async () => {
+test("--until wakes the pause's owner once its jobs have all merged or ended, and the pause stays on until resumed", async () => {
   reset();
   const [levels, view] = [thread('levels'), thread('view', 'shop')];
   const held = h.queue({ agent: 'kit', thread: levels });
   const first = await h.start({ agent: 'moss', thread: view });
   const second = await h.start({ agent: 'moss', thread: view });
-  const p = pause({ thread: levels, why: 'Until the view and the desktop are done', until: [first.id, second.id] });
+  const p = pause(
+    { thread: levels, why: 'Until the view and the desktop are done', until: [first.id, second.id] },
+    'wren',
+  );
   assert.deepEqual(
     p.until.map(u => u.state),
     ['running', 'running'],
   );
   await merge(first, 71);
-  assert.equal(await h.claim(engineOf(held)), null, 'one of two merged: still paused');
   await h.finish(second, { status: 'done', pr: 72, branch: `job/${second.id}` });
   assert.equal(pauses.open()[0].until[1].state, 'in review (PR #72)');
-  assert.equal(await h.claim(engineOf(held)), null, 'done but in review: still paused');
-  db.prepare("update prs set status = 'merged' where number = 72").run();
-  pauses.sweep();
-  assert.deepEqual(pauses.open(), []);
-  const row = db.prepare('select resumed, resumed_by from pauses').get() as { resumed: string; resumed_by: null };
-  assert.ok(row.resumed, 'recorded as resumed');
-  assert.equal(row.resumed_by, null, 'by its jobs, not by hand');
+  pausewake.sweep();
+  assert.equal(pauses.open()[0].woken, null, 'one still in review: nothing wakes yet');
+  db.prepare("update prs set status = 'closed' where number = 72").run();
+  db.prepare("insert into settings (key, value) values ('company.paused', ?)").run(JSON.stringify({ by: 'board' }));
+  pausewake.sweep();
+  const [still] = pauses.open();
+  assert.ok(still.woken, 'both ended, one merged and one closed unmerged: its owner is woken');
+  assert.deepEqual(
+    still.until.map(u => u.state),
+    ['merged', 'done without merged work'],
+  );
+  assert.equal(await h.claim(engineOf(held)), null, 'and the pause still holds its work');
+  const woke = db.prepare('select id, agent, prompt from jobs where id = ?').get(still.woken!) as {
+    id: number;
+    agent: string;
+    prompt: string;
+  };
+  assert.equal(woke.agent, 'wren', 'the owner who paused it');
+  assert.match(
+    woke.prompt,
+    /The pause on game\/levels \(paused by wren, .*\): Until the view and the desktop are done/,
+  );
+  assert.match(woke.prompt, new RegExp(`#${first.id} moss: .*It ended merged[.]`));
+  assert.match(woke.prompt, new RegExp(`#${second.id} moss: .*It ended done without merged work[.]\\n {2}Its report:`));
+  assert.match(woke.prompt, /nothing lifts it but a resume/);
+  assert.match(woke.prompt, /hq thread resume game\/levels/);
+  assert.match(woke.prompt, /hq thread pause game\/levels "why" --until <that job>/);
+  assert.equal(h.jobs.pausedOn(woke.id), null, 'no pause holds the job that judges it');
+  assert.equal((await h.claim(engineOf(woke.id)))?.id, woke.id, "nor the company's pause");
+  db.prepare("delete from settings where key = 'company.paused'").run();
+  pausewake.sweep();
+  assert.equal(
+    db.prepare('select count(*) n from jobs where agent = ? and id > ?').get('wren', woke.id)!.n,
+    0,
+    'woken once',
+  );
+
+  const next = h.queue({ agent: 'moss', thread: view });
+  const kept = pause({ thread: levels, why: 'The desktop again, with results', until: [next] }, 'wren');
+  assert.equal(kept.id, still.id, 'the owner keeps it on for what is missing: the same pause, on new conditions');
+  assert.equal(kept.woken, null);
+  assert.equal(typeof pauses.resume({ thread: levels }, 'wren'), 'object', 'only a resume lifts it');
   assert.equal((await h.claim(engineOf(held)))?.id, held);
+});
+
+test("--until-time wakes the owner once its time has come; a pause carrying the board's item wakes the CEO", async () => {
+  reset();
+  thread('levels');
+  const t = Date.now();
+  const followup = await h.start({ agent: ceo() });
+  const { item } = agreed({ kind: 'task', status: 'handled' }, t, ceo(), { job: followup.id });
+  pause({ project: 'game', why: 'Until the board has seen the trial', untilTime: '2h' }, 'wren');
+  const linked = await h.agent('item-link', followup.token, { id: item, to: { pause: 'game' } });
+  assert.equal(linked.status, 200, JSON.stringify(linked.body));
+  pausewake.sweep(t + 60 * 60_000);
+  assert.equal(pauses.open()[0].woken, null, 'not yet');
+  pausewake.sweep(t + 2 * 60 * 60_000 + 60_000);
+  const [p] = pauses.open();
+  const woke = db.prepare('select agent, prompt from jobs where id = ?').get(p.woken!) as {
+    agent: string;
+    prompt: string;
+  };
+  assert.equal(woke.agent, ceo(), "the board's hold: the CEO judges it");
+  assert.match(woke.prompt, /its time came \(/);
+  assert.match(woke.prompt, new RegExp(`call item #${item}`));
+});
+
+test('a pause names what wakes its owner: one with no time, work or --by-hand is refused, from the CEO too, and so is a time past or unread', () => {
+  reset();
+  const levels = thread('levels');
+  const why = 'Hold it';
+  for (const agent of [ceo(), 'wren'])
+    assert.match(String(pauses.pause({ thread: levels, why }, agent)), /say what wakes you to judge game\/levels/);
+  assert.match(String(pauses.pause({ project: 'game', why, until: [] }, 'wren')), /say what wakes you to judge game/);
+  assert.match(String(pauses.pause({ thread: levels, why, untilTime: 'tomorrow' }, 'wren')), /can't read --until-time/);
+  assert.match(
+    String(pauses.pause({ thread: levels, why, untilTime: '2020-01-01T08:00Z' }, 'wren')),
+    /--until-time .* has passed already/,
+  );
+  assert.deepEqual(pauses.open(), [], 'nothing paused');
+});
+
+test('--until-time never lifts the pause by itself, its work merged or not: its owner judges it, and the play starts its work then', async () => {
+  reset();
+  const [levels, view] = [thread('levels'), thread('view', 'shop')];
+  const held = h.queue({ agent: 'kit', thread: levels });
+  const now = Date.now();
+  const p = pause({ thread: levels, why: 'Not before the morning', untilTime: '2h' });
+  assert.ok(Math.abs(Date.parse(p.untilTime!) - (now + 2 * 3600e3)) < 5e3, 'two hours on');
+  assert.equal(await h.claim(engineOf(held)), null, 'held before its time');
+  const played = snapshot(now).jobs.find(j => j.id === held)!;
+  assert.deepEqual(played.wakes, [{ at: Date.parse(p.untilTime!) }], 'the play starts it at the time');
+  assert.equal(pauses.pauseOf(levels)?.untilTime, p.untilTime, 'hq thread shows what it waits for');
+  pausewake.sweep(Date.parse(p.untilTime!) + 3600e3);
+  assert.equal(pauses.open().length, 1, 'past its time: still paused');
+  assert.ok(pauses.open()[0].woken, 'and its owner woken');
+  assert.equal(await h.claim(engineOf(held)), null, 'and holding');
+  assert.equal(typeof pauses.resume({ thread: levels }, ceo()), 'object', 'its owner lifts it');
+  assert.equal((await h.claim(engineOf(held)))?.id, held);
+
+  reset();
+  thread('levels');
+  thread('view', 'shop');
+  const gate = await h.start({ agent: 'moss', thread: view });
+  const both = pause({
+    thread: levels,
+    why: 'After the view, and not before the morning',
+    untilTime: '2h',
+    until: [gate.id],
+  });
+  await merge(gate, 81);
+  pausewake.landed(`job/${gate.id}`);
+  pausewake.sweep(Date.parse(both.untilTime!) + 3600e3);
+  assert.equal(pauses.open().length, 1, 'its work merged and its time past: still paused');
 });
 
 test('a pause is refused where it could never resume, or by anyone but the CEO and the owner', async () => {
@@ -129,16 +239,30 @@ test('a pause is refused where it could never resume, or by anyone but the CEO a
   assert.match(String(pauses.pause({ thread: levels, why, until: [done.id] }, 'wren')), /merged already/);
   const ended = await h.start({ agent: 'moss', thread: view });
   await h.finish(ended);
-  assert.match(String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')), /never resume by itself/);
+  assert.match(
+    String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')),
+    /nothing is left for it to wake you/,
+  );
   db.prepare("insert into prs (number, branch, author, status) values (75, ?, 'moss', 'open')").run(`job/${ended.id}`);
   db.prepare("insert into prs (number, branch, author, status) values (76, ?, 'moss', 'closed')").run(
     `job/${ended.id}`,
   );
-  assert.match(String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')), /never resume by itself/);
+  assert.match(
+    String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')),
+    /nothing is left for it to wake you/,
+  );
   assert.match(String(pauses.pause({ thread: 'game/none', why }, 'wren')), /no thread game\/none/);
   assert.match(String(pauses.pause({ thread: levels, why: ' ' }, 'wren')), /say why/);
-  pause({ thread: levels, why }, 'wren');
-  assert.match(String(pauses.pause({ thread: levels, why }, 'wren')), /paused already/);
+  assert.match(
+    String(pauses.pause({ thread: levels, why }, 'wren')),
+    /say what wakes you to judge game\/levels: --until/,
+  );
+  assert.match(String(pauses.pause({ thread: levels, why, untilTime: 'soon' }, 'wren')), /--until-time/);
+  pause({ thread: levels, why }, ceo());
+  assert.match(
+    String(pauses.pause({ thread: levels, why, byHand: true }, 'wren')),
+    /paused already .*only the CEO changes it/,
+  );
 });
 
 test('a pause or a wait that would hold its own way out is refused, across projects too', async () => {
@@ -217,7 +341,12 @@ test('hq job onto a paused thread is queued and told it is held; the play holds 
   const out = await h.hq(lead, 'job', 'kit', 'Next level', brief, '--new');
   assert.equal(out.code, 0, out.out);
   assert.match(out.out, /Queued job #(\d+)/);
-  assert.match(out.out, new RegExp(`Held: ${levels} is paused \\(Wait for the view\\), until #${gate.id} merged`));
+  assert.match(
+    out.out,
+    new RegExp(
+      `Held: ${levels} is paused \\(Wait for the view\\) until it's resumed: its owner judges it once #${gate.id} has merged or ended`,
+    ),
+  );
   const id = Number(/Queued job #(\d+)/.exec(out.out)![1]);
   const played = snapshot(Date.now()).jobs.find(j => j.id === id)!;
   assert.deepEqual(played.waitsFor, [gate.id], 'the play starts it after the job the pause waits for');
@@ -256,8 +385,10 @@ test('a pause of the work in no thread holds it, a fix round and review there to
     assert.equal((await h.claim(engineOf(id)))?.id, id, `#${id} runs: expedited, the call's follow-up, on a thread`);
 
   await merge(gate, 81);
-  pauses.sweep();
-  assert.deepEqual(pauses.open(), [], 'lifted by itself');
+  pausewake.sweep();
+  assert.ok(pauses.open()[0].woken, 'its gate merged: the CEO is woken, the pause still on');
+  for (const id of [work, fix, review]) assert.equal(await h.claim(engineOf(id)), null, `#${id} is still held`);
+  pauses.resume({ project: 'unsorted' }, ceo());
   for (const id of [work, fix, review]) assert.equal((await h.claim(engineOf(id)))?.id, id, `#${id} starts`);
 });
 
@@ -346,7 +477,10 @@ test("the follow-through read lists the pauses first, with the board's item and 
     text.startsWith('Paused (the claim holds everything queued on them, reviews and fixes too):\n- game (project'),
     text,
   );
-  assert.match(text, /1 queued held\): Game work slows the two things meant to speed it up · until resumed by hand/);
+  assert.match(
+    text,
+    /1 queued held\): Game work slows the two things meant to speed it up · by hand: nothing wakes its owner/,
+  );
   assert.match(
     text,
     new RegExp(`item #${item} \\(call \\d+, decision\\): No game work until the projects build lands`),
@@ -365,6 +499,35 @@ test("the follow-through read lists the pauses first, with the board's item and 
     'the decision shows the pause as its work',
   );
   assert.match(text, new RegExp(`item #${item} .*· the pause on game`));
+});
+
+test('the follow-through read flags a pause whose waited-on work ended, and one its woken owner left with nothing to wake them', async () => {
+  reset();
+  const [levels, view] = [thread('levels'), thread('view', 'shop')];
+  const trial = await h.start({ agent: 'moss', thread: view, title: 'Run the trial' });
+  const check = await h.start({ agent: ceo(), title: 'Follow-through check' });
+  pause({ thread: levels, why: 'Until the trial has reported', until: [trial.id] });
+  assert.match(
+    read({ id: check.id, agent: ceo() }),
+    /· wakes its owner at #\d+ \(moss, running\) merged or ended\n {2}no call item/,
+  );
+  await h.finish(trial);
+  assert.match(
+    read({ id: check.id, agent: ceo() }),
+    new RegExp(`Off track, act this hour: #${trial.id} ended done without merged work, with the pause still on`),
+    'before the sweep wakes its owner',
+  );
+  pausewake.sweep();
+  const woken = pauses.open()[0].woken!;
+  assert.match(
+    read({ id: check.id, agent: ceo() }),
+    new RegExp(`Met: what it waited for is met and its owner judges it in #${woken} `),
+  );
+  db.prepare("update jobs set status = 'done' where id = ?").run(woken);
+  assert.match(
+    read({ id: check.id, agent: ceo() }),
+    new RegExp(`Off track, act this hour: its owner was woken \\(#${woken}\\), which ended with it still on`),
+  );
 });
 
 test('a handled item linked to a pause acknowledges its call follow-up', async () => {
@@ -413,7 +576,7 @@ test('a pause keeps customer item summaries and quotes with jobs allowed to read
   assert.equal(customers(helper), 1);
 });
 
-test('work the pause waits for, closed with its commits on main already, resumes it; a redraw carries the wait', async () => {
+test('work the pause waits for, closed with its commits on main already, wakes its owner; a redraw carries the wait', async () => {
   reset();
   const [levels, view] = [thread('levels'), thread('view', 'shop')];
   const gate = await h.start({ agent: 'moss', thread: view });
@@ -426,8 +589,10 @@ test('work the pause waits for, closed with its commits on main already, resumes
     [redrawn],
   );
   db.prepare('update jobs set branch = ? where id = ?').run(`job/${redrawn}`, redrawn);
-  pauses.landed(`job/${redrawn}`);
-  assert.deepEqual(pauses.open(), []);
+  pausewake.landed(`job/${redrawn}`);
+  assert.equal(pauses.open()[0].until[0].state, 'done, its commits on main');
+  pausewake.sweep();
+  assert.ok(pauses.open()[0].woken, 'still on, its owner woken');
 });
 
 test('hq thread pause and hq project resume, as the CEO runs them', async () => {
@@ -442,12 +607,21 @@ test('hq thread pause and hq project resume, as the CEO runs them', async () => 
   assert.match(
     paused.out,
     new RegExp(
-      `^Paused ${levels}: Wait for the view\\n1 queued job on it held\\. It resumes by itself once #${gate.id} \\(moss, running\\) is done and merged`,
+      `^Paused ${levels}: Wait for the view\\n1 queued job on it held\\. Once #${gate.id} \\(moss, running\\) has merged or ended, HQ queues you a job to judge it; only hq thread resume ${levels} lifts it\\.`,
     ),
   );
   assert.match(paused.out, new RegExp(`Started before the pause: #${running.id}\\. Stop each`));
-  const again = await h.hq(ceoJob, 'project', 'pause', 'game', 'All of it');
+  const open = await h.hq(ceoJob, 'project', 'pause', 'game', 'All of it');
+  assert.notEqual(open.code, 0, 'nothing named to wake its owner: refused');
+  assert.match(open.out, /say what wakes you to judge game: --until/);
+  const again = await h.hq(ceoJob, 'project', 'pause', 'game', 'All of it', '--by-hand');
   assert.equal(again.code, 0, again.out);
+  assert.match(again.out, /It holds until hq project resume game: nothing wakes you about it\./);
+  const shown = await h.hq(ceoJob, 'thread', levels);
+  assert.match(
+    shown.out,
+    /Paused \(Wait for the view\) until it's resumed: its owner judges it once #\d+ \(moss, running\) has merged or ended\./,
+  );
   assert.notEqual((await h.hq(ceoJob, 'project', 'pause', 'game', 'Twice')).code, 0);
   const resumed = await h.hq(ceoJob, 'project', 'resume', 'game');
   assert.equal(resumed.code, 0, resumed.out);

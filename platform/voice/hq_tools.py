@@ -116,7 +116,8 @@ TOOLS = [
 TOOLS += [
     {'name': 'expedite', 'description': "The CEO's only: a structural fix to HQ itself goes first (hq expedite). A "
      'queued or running job starts ahead of everything and merges on its checks; one that has pushed, its pull request '
-     'still in review, merges now if its last push passed them. Its review follows on what merged.',
+     'still in review, merges now if its last push passed them. Its review follows on what merged. A thread\'s task '
+     'that hasn\'t started leaves its thread as its own job; a refusal says why and what to do instead.',  #.
      'inputSchema': {'type': 'object', 'required': ['job'], 'additionalProperties': False, 'properties': {
          'job': {'type': 'integer', 'minimum': 1, 'description': 'the fix\'s job number'}}}},
     {'name': 'add', 'description': 'When the board adds to or changes a job you queued on this call, add it to that '
@@ -200,6 +201,7 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
                    'description': "a day, days, a day's hours, or words"}}}},
+    # (a thread past its window, or when past by, answers with what to check first: worker/hq when.ts lateLines)
     {'name': 'eta', 'description': 'Where planned work stands now, before you tell the board when it will be done: for '
      "a project or a thread by its name or a few words ('The checkout', 'the game's levels'), each open thread's "
      'ETA, the agent time it has left, its window (the time agreed with the board) with its planned finish and the slack '
@@ -210,7 +212,8 @@ TOOLS += [
      "whenever the board asks who's working, whether a hold leaks or what a card holds up: your briefing's list is from "
      'the start of the call. For new work, use when. With extra_seat (5x or 20x), replay the whole live plan '
      'with a hypothetical added Claude Max seat at any time. Returns every project, thread and window before and '
-     'after, measured capacity, assumptions and confidence. Query is optional for that replay. Nothing changes.',
+     'after, measured capacity, assumptions and confidence. Query is optional for that replay. A thread that misses its '
+     'window comes with what to check and do before you tell the board a time: do it. Nothing changes.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
                    'description': "the project's or thread's name, or a few words; leave it out for what's going on "
@@ -224,7 +227,8 @@ TOOLS += [
      'choose size yourself, then it plays that size into the plan as it stands, every seat and window counted, in a '
      'few seconds: the earliest it can be done without making any window miss, and the window to set. With by (the '
      "board's time), whether it makes that time, and only if not, what would: windows giving or one more seat. "
-     'Give the board the time it says. With extra_seat (5x or 20x), omit what and its flags to replay the whole '
+     'Give the board the time it says, but a finish past by comes with what to check and do first: do it. '
+     'With extra_seat (5x or 20x), omit what and its flags to replay the whole '
      'existing plan before and after an added Claude Max seat, with every window and capacity confidence. '
      'Use this whenever the board asks whether another seat would help, even if no deadline misses. Nothing changes.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
@@ -249,8 +253,8 @@ MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review':
 TOOLS += [
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
-     '(stop), pause or resume a thread or project (thread pause <project>/<slug> "why", thread resume, project pause, '
-     'project resume), move a job to another thread (job move <job> <project>/<slug>), drop, order or retitle a task '
+     '(stop), pause or resume a thread or project (thread pause <project>/<slug> "why" with --until <job>, --until-time '
+     '<time> or --by-hand: what wakes you to judge it, never lifts it; thread resume, project pause, project resume), move a job to another thread (job move <job> <project>/<slug>), drop, order or retitle a task '
      '(plan drop <job> "why", plan move, plan title), draw, rename or close threads (plan thread, plan need, plan rename, '
      'plan done, thread move), set or lift a window (window <project>/<slug> | <job> <time | none>), a job\'s waits '
      '(waits), its size (estimate set), projects (project say, new, owner, rename, done), the inbox (inbox, inbox accept, '
@@ -266,7 +270,7 @@ TOOLS += [
                      'items': {'type': 'string', 'minLength': 1},
                      'description': 'the hq command\'s words after hq, one per item, as on the command line without '
                      'quotes: ["cancel", "123", "the board dropped it"], ["thread", "pause", "shop/launch-deck", '
-                     '"waits for the board\'s photos"]'}}}},
+                     '"waits for the board\'s photos", "--by-hand"]'}}}},
 ]
 # Ending the call: the agent can hang up once the board has clearly said goodbye.
 # The tool itself does nothing: the voice line sees the agent use it in the reply's stream (server.py, Call.leave) and

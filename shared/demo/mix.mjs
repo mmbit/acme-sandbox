@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { render as foley, SOUNDS, playedAt } from './foley.js';
-import { SR, SFX, SVF, scaled, render as renderSong, renderSfx, readWav, writeWav, lufs, freeverb } from './synth.mjs';
+import { SR, SFX, SVF, scaled, render as renderSong, renderSfx, readWav, writeWav, lufs, freeverb, playLevel } from './synth.mjs';
 import { scan, BARS } from './harsh.mjs'; // the sharpest moment of a track
 
 const dB = x => Math.pow(10, x / 20);
@@ -139,14 +139,20 @@ export async function mix(specIn, { base = process.cwd(), noBed = false, stems =
   }
   const end = Math.max(0, ...placed.map(p => p.start + p.s.L.length / SR));
   const duration = spec.duration ?? end + 0.2, N = Math.ceil(duration * SR);
-  // the effects bus, with a small room
-  const sL = new Float32Array(N), sR = new Float32Array(N), rL = new Float32Array(N), rR = new Float32Array(N);
+  // the effects bus, with a small room, in two: what moves and the rest. Parallel compression (glue) lifts what sits under
+  // the loudest hits, up to 10 dB at 26 dB under, so a swish turned down came back up; and a bed set against everything
+  // went down with the swish, the master pushing both back up. Glue and the bed take the sounds that don't move (all of
+  // them when only movements play), and a swish turned down stays down.
+  const buses = [0, 1].map(() => Array.from({ length: 4 }, () => new Float32Array(N))), [still, moving] = buses;
   for (const p of placed) {
-    const o = Math.round(p.start * SR);
-    for (let i = Math.max(0, -o); i < p.s.L.length && o + i < N; i++) { const l = p.s.L[i], r = p.s.R[i]; sL[o + i] += l; sR[o + i] += r; rL[o + i] += l * p.send; rR[o + i] += r * p.send; }
+    const o = Math.round(p.start * SR), [eL, eR, rL, rR] = playLevel(p.sound) === 1 ? still : moving;
+    for (let i = Math.max(0, -o); i < p.s.L.length && o + i < N; i++) { const l = p.s.L[i], r = p.s.R[i]; eL[o + i] += l; eR[o + i] += r; rL[o + i] += l * p.send; rR[o + i] += r * p.send; }
   }
-  freeverb(rL, rR, sL, sR, { size: 0.3, damp: 0.55, predelay: 0.012, ...(M.reverb || {}) });
+  const quiet = (L, R) => !L.some(x => x !== 0) && !R.some(x => x !== 0), [sL, sR] = quiet(still[0], still[1]) ? moving : still;
+  for (const [eL, eR, rL, rR] of buses) if (!quiet(eL, eR)) freeverb(rL, rR, eL, eR, { size: 0.3, damp: 0.55, predelay: 0.012, ...(M.reverb || {}) });
   glue(sL, sR, M.glue ?? 0.4);
+  const reference = lufs(sL, sR);
+  if (sL !== moving[0]) for (let i = 0; i < N; i++) { sL[i] += moving[0][i]; sR[i] += moving[1][i]; }
   const sfxLufs = lufs(sL, sR);
   // the bed: placed, filtered, faded, set `level` LU under the effects, then ducked by them
   const bL = new Float32Array(N), bR = new Float32Array(N);
@@ -161,7 +167,7 @@ export async function mix(specIn, { base = process.cwd(), noBed = false, stems =
       const e = Math.min(1, (i - from) / (B.fadeIn * SR + 1), (to - i) / (B.fadeOut * SR + 1));
       bL[i] = l * e; bR[i] = r * e;
     }
-    const bl = lufs(bL, bR), k = bl > -60 ? dB(sfxLufs + B.level - bl) : 1; // (a silent bed stays as it is)
+    const bl = lufs(bL, bR), k = bl > -60 ? dB(reference + B.level - bl) : 1; // (a silent bed stays as it is)
     // duck: a fast follower on the effects (10 ms look-ahead); a hit at full level takes `duck` dB off, 30 dB quieter takes none
     const a = 1 - Math.exp(-1 / (0.004 * SR)), rel = 1 - Math.exp(-1 / (B.release * SR)), look = Math.round(0.01 * SR), env = new Float32Array(N);
     let e = 0, ref = 1e-9;
@@ -190,7 +196,7 @@ export async function mix(specIn, { base = process.cwd(), noBed = false, stems =
     markers: [...markers].filter(([, t]) => t >= 0 && t <= duration).map(([name, t]) => ({ t: +t.toFixed(4), name })).sort((a, b) => a.t - b.t),
     sections: (g?.sections || []).map(s => ({ ...s, start: +(s.start + shift).toFixed(4), end: +(s.end + shift).toFixed(4) })), cues, ...(spec.title ? { title: spec.title } : {}) };
   const sorted = squeeze.slice().sort((a, b) => a - b), sharpest = (await scan({ L, R, sr: SR })).reduce((top, window) => (window.measurements.sharpness > (top?.measurements.sharpness ?? 0) ? window : top), null);
-  const stats = { ...st, limitMedian: sorted[Math.floor(sorted.length / 2)] ?? 0, limitMax: sorted[0] ?? 0, sfxLufs: +sfxLufs.toFixed(1), bedUnder: bedLufs == null ? null : +(sfxLufs - bedLufs).toFixed(1), cues: placed.length,
+  const stats = { ...st, limitMedian: sorted[Math.floor(sorted.length / 2)] ?? 0, limitMax: sorted[0] ?? 0, sfxLufs: +sfxLufs.toFixed(1), bedUnder: bedLufs == null ? null : +(reference - bedLufs).toFixed(1), cues: placed.length,
     sharpest: sharpest && { t: +sharpest.t.toFixed(1), acum: +sharpest.measurements.sharpness.toFixed(2) } };
   return { L, R, beats, stats, squeeze, ceiling: M.ceiling ?? -2, stems: stems ? { sfx: [sL.map(x => x * gain), sR.map(x => x * gain)], bed: bed ? [bL.map(x => x * gain), bR.map(x => x * gain)] : null } : null };
 }
@@ -208,7 +214,7 @@ async function main(argv) {
   const bfile = out.replace(/\.wav$/i, '') + '.beats.json';
   fs.writeFileSync(bfile, JSON.stringify(res.beats) + '\n');
   const s = res.stats;
-  console.log(`${out}: ${res.beats.duration.toFixed(2)} s, ${s.cues} cues, ${s.lufs} LUFS, peaks under ${res.ceiling} dBTP${s.bedUnder != null ? `, bed ${s.bedUnder} LU under the effects` : ''}, hits limited ${-s.limitMedian} dB (median) to ${-s.limitMax} dB${s.sharpest ? `, sharpest moment ${s.sharpest.acum} acum at ${s.sharpest.t} s` : ''}, rendered in ${((performance.now() - t0) / 1000).toFixed(2)} s`);
+  console.log(`${out}: ${res.beats.duration.toFixed(2)} s, ${s.cues} cues, ${s.lufs} LUFS, peaks under ${res.ceiling} dBTP${s.bedUnder != null ? `, bed ${s.bedUnder} LU under the effects that don't move` : ''}, hits limited ${-s.limitMedian} dB (median) to ${-s.limitMax} dB${s.sharpest ? `, sharpest moment ${s.sharpest.acum} acum at ${s.sharpest.t} s` : ''}, rendered in ${((performance.now() - t0) / 1000).toFixed(2)} s`);
   if (s.limitMax < -12) console.log(`  note: some hits lose over 12 dB to the limiter (--levels shows which). Turn those cues' vol down, or add texture between hits.`);
   if (s.sharpest?.acum > BARS.tone.sharpness) console.log(`  note: the moment at ${s.sharpest.t} s is sharper than ${BARS.tone.sharpness} acum (brighter than real paper): darker cues there, or \`bright\` under 0.5.`);
   if (flags.has('--levels')) res.beats.cues.forEach((c, i) => console.log(`  ${c.t.toFixed(2).padStart(6)} s  ${(c.sound + (c.name ? ` (${c.name})` : '')).padEnd(20)} limited ${String(-res.squeeze[i]).padStart(4)} dB${c.start !== c.t ? `, starts ${c.start.toFixed(2)}` : ''}`));

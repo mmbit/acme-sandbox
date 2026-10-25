@@ -228,18 +228,33 @@ const stillOpen = (t: number) => {
 
 // ---- the read (hq followthrough)
 
-// The paused projects and threads (pauses.ts), first: each with why, until what, the board's item, how much queued work
-// it holds, and the work on it still running, which started before the pause.
+// The paused projects and threads (pauses.ts), first: each with why, what wakes its owner, the board's item, how much
+// queued work it holds, and the work on it still running, which started before the pause. One whose waited-on work
+// ended, or whose owner was woken and hasn't decided, is flagged for this hour.
 function pausesPart(open: OpenByID, reader: jobs.Reader) {
   const lines = pauses.open().map(p => {
     const decided =
       p.decision &&
       `the board decides "${p.decision.name}" (${p.decision.card ? `card #${p.decision.card}` : 'no card yet'})`;
     const waits = [
-      ...(p.until.length ? [`${p.until.map(u => `#${u.id} (${u.agent}, ${u.state})`).join(' and ')} merged`] : []),
-      ...(decided ? [decided] : []),
+      ...(p.untilTime ? [`${p.untilTime.slice(0, 16).replace('T', ' ')} UTC`] : []),
+      ...(p.until.length
+        ? [`${p.until.map(u => `#${u.id} (${u.agent}, ${u.state})`).join(' and ')} merged or ended`]
+        : []),
     ];
-    const until = waits.length ? `until ${waits.join(' and ')}` : 'until resumed by hand';
+    const until = [
+      ...(waits.length ? [`wakes its owner at ${waits.join(' and ')}`] : []),
+      ...(decided ? [`until ${decided}`] : []),
+    ];
+    const ended = p.until.filter(u => !UNDER_WAY.some(w => u.state.startsWith(w)));
+    const woken = p.woken && open.get(p.woken);
+    const flag = woken
+      ? `\n  Met: what it waited for is met and its owner judges it in ${woken.line}`
+      : p.woken
+        ? `\n  Off track, act this hour: its owner was woken (#${p.woken}), which ended with it still on and nothing to wake them again`
+        : ended.length
+          ? `\n  Off track, act this hour: ${ended.map(u => `#${u.id} ended ${u.state}`).join(' and ')}, with the pause still on`
+          : '';
     const item = p.item ? itemWords(p.item, reader) : 'no call item linked';
     const running = p.running.map(r => {
       const line = open.get(r.id)?.line ?? `#${r.id} ${r.agent}, ${r.status} (${r.kind}): ${jobs.nameOf(r)}`;
@@ -247,10 +262,14 @@ function pausesPart(open: OpenByID, reader: jobs.Reader) {
       return `\n  Still on it: ${line} · started ${since}${r.status === 'queued' ? ', held mid-run' : ''}`;
     });
     const at = `${p.at.slice(0, 16).replace('T', ' ')} UTC`;
-    return `- ${p.target} (${p.kind}, paused by ${p.by} ${at}, ${p.held} queued held): ${p.why} · ${until}\n  ${item}${running.join('')}`;
+    const lifts = until.join(', ') || 'by hand: nothing wakes its owner';
+    return `- ${p.target} (${p.kind}, paused by ${p.by} ${at}, ${p.held} queued held): ${p.why} · ${lifts}${flag}\n  ${item}${running.join('')}`;
   });
   return `Paused (the claim holds everything queued on them, reviews and fixes too):\n${lines.join('\n') || '- nothing'}`;
 }
+
+// (where a waited-on job is while it can still end with what the pause waits for: pauses.ts untilWords)
+const UNDER_WAY = ['queued', 'running', 'waiting for the board', 'in review'];
 
 function runningPart(open: OpenByID, last: Check | undefined) {
   const running = [...open.values()].filter(j => j.status === 'running');
@@ -291,9 +310,15 @@ const currentAlarm = () => JSON.parse(setting(ALARM) ?? 'null') as Alarm | null;
 // The check's own text, every company's. The company's own words for it (org.yaml's followThrough.prompt) come after
 // it, as a routine's additions do (schedule.ts). (Acting from the run when the way out is itself held.)
 // (a slip's cause, the scheduler's or the task's, instead of cutting by hand)
-const PROMPT = `HQ's hourly check: it sets what the board agreed and what threatens the plan against the work actually
-running, to make sure work gets done. HQ queues it while the board's agreements stand or the summary has something in
-it. It is a short read, not a report: the board hears nothing from it unless something needs its judgment.
+// (judged against what the board is waiting for, not whether HQ's rules held: board, 25 Oct)
+const PROMPT = `HQ's hourly check. Its own question, each hour: is the board getting what it asked for, and if not, why
+not and what do you do now? It judges against what the board wants in real terms, never against whether HQ's rules
+held: rules that held while the board still lacks what it asked for are off track. HQ queues it while the board's
+agreements or pauses stand or the summary has something in it. It is a short read, not a report: the board hears
+nothing from it unless something needs its judgment.
+
+Delivered means one thing: the board has seen it and said yes, this is what I want. Not a job ending, merging or
+deploying. Until the board has said yes, what it asked for is open, and this check acts on it.
 
 1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    what finished since the last check (threads done and the board's items, merged and deployed: whether the board hears
@@ -307,16 +332,33 @@ it. It is a short read, not a report: the board hears nothing from it unless som
    each still running from before the pause), what the board agreed that still stands (in its own words for your
    calls' decisions), the work on each and where it stands, what's running now, what starts next, and what the last
    check did.
-2. Compare. Off track is anything that threatens the plan; work running or about to start against an agreement (a
-   hold, a pause, an order); agreed work that isn't moving or that nobody is on; and agreed work that no longer serves
-   why the board wanted it: read an agreement as the board said it, not as a later brief narrowed it. Work still running
-   on a pause started before it: stop it (\`hq stop\`) or let it finish, as the pause's reason says. A hold the board
-   agreed on a project or thread that isn't a pause yet goes in as the pause (\`hq project pause\` or \`hq thread
-   pause\`, \`--until\` the jobs that lift it, then \`hq item link <item> pause:<project or thread>\`), not as waits or a
-   line in a brief.
-3. On track, and nothing in the summary needs you since the last check: \`hq followthrough ok\`, and stop. No
-   report, no message, no card.
-4. Off track: find the cause on real state and fix it now, never one job moved by hand. The plan orders the work by
+2. List what the board is waiting for: each thing it asked for, in its own words (a product, a deadline, an
+   experiment's or a trial's results, a fix, an answer, anything), from its agreements, the items and holds it agreed,
+   and the summary. For each, where it really stands, read on real state (what's on main, the reports, what's live,
+   the cards it answered), never on job states: does the board have it and has it said yes? If not, is the work that
+   gets it there moving, and does it reach the board by the time it agreed?
+3. Compare. Off track is anything the board asked for that it doesn't have and that isn't on its way to it on time:
+   nobody on it, the work not moving, or the work that should bring it ended without it (a job done, merged or deployed
+   with no result in it is not delivery). Also anything that threatens the plan; work running or about to start
+   against an agreement (a hold, a pause, an order); and agreed work that no longer serves why the board wanted it:
+   read an agreement as the board said it, not as a later brief narrowed it. Flagged and acted on this hour, never
+   on track:
+   - A pause still on with what it waited for met, or a job it waits for ended. Nothing lifts a pause but a resume:
+     what it waits for wakes its owner with a job to judge it. Its owner hasn't decided yet (no job woke them, it
+     ended without a resume or a new condition, or the work ended without the result the hold was for): decide now,
+     as the pause's reason says: lift it, take the results to the board, or queue what's missing and pause it again
+     on that (\`hq project pause\` with the same why and \`--until\` the new job keeps it on).
+   - A result the board asked for first (its priority, an experiment, a comparison) promised and not in its hands: no
+     work running that brings it, or the work that should have ended without it. Queue what's missing now, and tell
+     the board on the desk phone where it stands when its time is at risk.
+   Work still running on a pause started before it: stop it (\`hq stop\`) or let it finish, as the pause's reason says.
+   A hold the board agreed on a project or thread that isn't a pause yet goes in as the pause (\`hq project pause\` or
+   \`hq thread pause\`, \`--until\` the jobs whose end wakes you to judge it, \`--until-time\` a time, or \`--by-hand\`,
+   then \`hq item link <item> pause:<project or thread>\`), not as waits or a line in a brief.
+4. On track only when everything the board waits for is with it and accepted, or on its way to it in time on real
+   state, and nothing in the summary needs you since the last check: \`hq followthrough ok\`, and stop. No report, no
+   message, no card.
+5. Off track: find the cause on real state and fix it now, never one job moved by hand. The plan orders the work by
    its threads' windows and the scheduler (the play and the claim) makes room for it, taking seats and run places from
    lower work: never hand-pick work to cut, pause or move ahead to win time back. The summary, \`hq report\` and \`hq
    thread\` say what a slip, or a window under threat, comes from:

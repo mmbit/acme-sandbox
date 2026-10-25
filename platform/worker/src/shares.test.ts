@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { closeSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { alive, procStat } from './detached.ts';
 import {
@@ -34,6 +34,8 @@ const proc = (pid: number, uid: number, mb: number, ticks = 0, o: Partial<Proces
 const group = (id: string, nice = 0, writable = true) => ({ group: { id, nice, writable } });
 const opts = { mostMb: 2560, shareMb: 1536, cores: 4, processes: 400, starved: false, workerSessionId: 1 };
 const launch = { pid: 10, start: '100' };
+// the tests that slow real sessions need the kernel's session groups, which a lent tests helper's kernel lacks
+const noSessionGroups = !existsSync('/proc/self/autogroup') && 'needs session groups (sched_autogroup) in the kernel';
 
 test("a uid's processes count together: its memory now, and its cores since the last look", () => {
   const before = [proc(10, 1501, 200, 1000), proc(11, 1501, 900, 500)];
@@ -295,7 +297,8 @@ test('a process that hides its memory map still counts, by what it holds, and ke
   }
 });
 
-test("each of a busy job's sessions gets its group slowed, a refused one at the next look", async () => {
+test("each of a busy job's sessions gets its group slowed, a refused one at the next look", async t => {
+  if (noSessionGroups) return t.skip(noSessionGroups);
   const sessions = [0, 1, 2].map(() => spawn('sleep', ['30'], { detached: true }));
   await new Promise(r => setTimeout(r, 500));
   const me = { uid: process.getuid!(), gid: process.getgid!() };
@@ -324,7 +327,8 @@ test("each of a busy job's sessions gets its group slowed, a refused one at the 
   }
 });
 
-test("a session's group is slowed through its leader when the last of it is nondumpable", async () => {
+test("a session's group is slowed through its leader when the last of it is nondumpable", async t => {
+  if (noSessionGroups) return t.skip(noSessionGroups);
   const session = spawn(
     'python3',
     ['-c', 'import ctypes, os, time\nif os.fork() == 0: ctypes.CDLL(None).prctl(4, 0)\ntime.sleep(30)'],
@@ -358,7 +362,8 @@ test("a session's group is slowed through its leader when the last of it is nond
   }
 });
 
-test('a group refused while its job was busy is slowed at the next look, the job idle by then', async () => {
+test('a group refused while its job was busy is slowed at the next look, the job idle by then', async t => {
+  if (noSessionGroups) return t.skip(noSessionGroups);
   const [busy, other] = [0, 1].map(() => spawn('sleep', ['30'], { detached: true }));
   await new Promise(r => setTimeout(r, 500));
   const me = { uid: process.getuid!(), gid: process.getgid!() };
@@ -391,7 +396,8 @@ test('a group refused while its job was busy is slowed at the next look, the job
   }
 });
 
-test('a group refused, then nondumpable for a look while its job is idle, is slowed once it may be written again', async () => {
+test('a group refused, then nondumpable for a look while its job is idle, is slowed once it may be written again', async t => {
+  if (noSessionGroups) return t.skip(noSessionGroups);
   // a session of one process that hides its /proc files on SIGUSR1 (nondumpable: they're root's) and shows them on SIGUSR2
   const hider = spawn(
     'python3',

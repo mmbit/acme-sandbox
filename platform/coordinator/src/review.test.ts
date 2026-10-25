@@ -3252,6 +3252,7 @@ test('owner redraw keeps closed work dependents held and moves after, merge wait
   const owner = await h.start({agent:'juno', title:'Resolve closed work'});
   assert.equal((await h.agent('waits', owner.token, {id:waited, to:work.id})).status, 200);
   const pauses = await import('./pauses.ts');
+  const pausewake = await import('./pausewake.ts');
   assert.equal(typeof pauses.pause({thread:paused, why:'It needs the work', until:[work.id]}, 'juno'), 'object');
   await withThreadPlanning(async () => {
     await submit(n, {}, work);
@@ -3273,10 +3274,10 @@ test('owner redraw keeps closed work dependents held and moves after, merge wait
     assert.equal(replacement?.id, id);
     await end(replacement!, {pr:replacementPr, branch:`job/${id}`, files:FILES, sha:newSha()});
     await decide(replacementPr, 'merge');
-    pauses.sweep();
+    pausewake.sweep();
     assert.equal(h.job(after).ready, 1);
     assert.equal(h.job(waited).ready, 1);
-    assert.equal(pauses.open().find(pause => pause.target === paused), undefined);
+    assert.ok(pauses.open().find(pause => pause.target === paused)!.woken, 'its redraw merged: the owner judges the pause, still on');
   });
   await h.finish(owner);
 });

@@ -59,12 +59,19 @@ Steps:
 
 ---
 Only what the board might want before choosing (what's blocked, a deadline, a risk), at most about 60 words.
+
+Later:
+1. How to stop or undo what the steps set up, if it ever should be.
 ```
 
 - **Title**: at most eight words. **A decision is a choice** under `Choose:`, the recommended one marked, at most
   six, in one list: its first blank line ends it.
   **Recommend:** one line when there's no list; **Options:** short answers separated by `|`.
-- **Steps:** at most eight, one action each; values in backticks (they get a copy button), pages as full links.
+- **Steps:** at most eight, one action each; values in backticks (they get a copy button), pages as full links. Steps
+  are only what the board does now: how to stop or undo it later goes at the card's end, after a line `Later:` below
+  the `---`. Any other link or list under the `---`, and a link or numbered list in text long enough to fold under
+  More, is refused: make it a step.
+- **Figures go in a table** (a Markdown table): the desk phone shows it as a table on the card's first screen.
 - **Claude: yes** for web tasks the board can do with Claude in Chrome. Claude never handles keys.
 - **Questions are fields.** Anything the board must answer beyond the one choice goes in `--questions <file.json>`
   on `hq ask` or `hq request`: a yes or no, a number with its unit, a short text, or a choice (the shape `hq` shows).

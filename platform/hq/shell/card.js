@@ -57,11 +57,13 @@ const pictured = c => ({
 // Agents write a request as a short card (company/playbooks/board-requests.md): a line or two on what and why,
 // then optionally "Options: A | B" (tap to answer), "Choose:" (a list of choices, one bullet each), "Recommend:" (only with either),
 // "Steps:" (a numbered list: a checklist, with a copy button for every `value`), "Claude: yes" (a web task Claude in
-// Chrome can do with the board), and after a line of --- the details, folded away. A fenced block (``` lines) is text to
-// paste, kept exactly. A step goes on with its wrapped lines, a list and a fenced block, and the steps end at an empty
-// line followed by anything else, which shows below them.
+// Chrome can do with the board), and after a line of --- the details, folded away, ending in "Later:" (how to stop or
+// undo it later, laterOf) on a card with steps. A fenced block (``` lines) is text to paste, kept exactly. A step goes on
+// with its wrapped lines, a list and a fenced block, and the steps end at an empty line followed by anything else, which
+// shows below them.
 export function parseCard(body) {
-  const [main, details] = partsOf(body);
+  const [main, rest] = partsOf(body),
+    [details, later] = laterOf(rest);
   const c = {
     summary: [],
     steps: [],
@@ -72,6 +74,7 @@ export function parseCard(body) {
     recommend: '',
     claude: false,
     details,
+    later,
   };
   const after = [],
     afterSteps = [],
@@ -132,11 +135,24 @@ export function parseCard(body) {
   c.afterSteps = afterSteps.join('\n').trim();
   const rec = c.recommend.toLowerCase();
   for (const ch of c.choices) if (rec && rec.startsWith(ch.label.toLowerCase())) ch.rec = true;
-  c.card = !!(c.steps.length || c.options.length || c.choices.length || c.recommend || c.claude || details);
+  c.card = !!(c.steps.length || c.options.length || c.choices.length || c.recommend || c.claude || rest);
   return c;
 }
 const STEP = /^\d+[.)]\s+(.+)/;
 const BREAK = /( {2}|\\)$/;
+
+// The details and their part from a line "Later:" to the end: how to stop, undo or remove later what the steps set up
+// (company/playbooks/board-requests.md), under More with a heading of its own
+function laterOf(details) {
+  const lines = fencedLines(details),
+    at = lines.findIndex(({ line, fence, fenced }) => !fence && !fenced && /^later:$/i.test(line.trim())),
+    text = part =>
+      part
+        .map(({ line }) => line)
+        .join('\n')
+        .trim();
+  return at < 0 ? [details, ''] : [text(lines.slice(0, at)), text(lines.slice(at + 1))];
+}
 
 // The card's Recommend: line where the phone shows it: only beside options to tap or choices, and only when no choice
 // is marked (recommended) instead. A card without them says what to do in its steps.
@@ -192,7 +208,7 @@ function choiceOf(l) {
 
 // What the phone folds under More, ahead of the details, so its first screen is the ask, the choices and the steps: a
 // request in plain prose past its opening, and a card's own text past FOLD_CHARS characters (its steps and choices
-// always show). Text whose folded part would hold what the board does (instructionIn) or a table shows whole.
+// always show). Text whose folded part would hold what the board does (instructionIn), a list or a table shows whole.
 export const FOLD_CHARS = 600;
 const PROSE_FOLD_CHARS = 320;
 function folded(c) {
@@ -224,7 +240,13 @@ export const instructionIn = text =>
     .find(l => NUMBERED.test(l) || WEB.test(l));
 const NUMBERED = /^\s*\d+[.)]\s+\S/;
 export const WEB = /https?:\/\/\S/;
-const keptShown = text => instructionIn(text) !== undefined || tableParts(text.split('\n')).some(Boolean);
+// A list's first line, numbered or bulleted, outside fenced blocks
+export const listIn = text =>
+  unfenced(text)
+    .split('\n')
+    .find(l => ITEM.test(l));
+const keptShown = text =>
+  instructionIn(text) !== undefined || listIn(text) !== undefined || tableParts(text.split('\n')).some(Boolean);
 
 // Text cut near `at` characters, at the last empty line (past the first 80 characters) or else the last sentence's end
 // (past the first 200), never inside a fenced block or a table. A table's characters don't count: it's the card's

@@ -118,8 +118,10 @@ COMPOSE = ['docker', 'compose', '-f', f'{ROOT}/infra/compose.yaml', '-f', f'{ROO
 COPY_JS = r"""
 import { DatabaseSync } from 'node:sqlite';
 import { createReadStream, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
-const out = `/tmp/hq-backup-${process.pid}-${Date.now()}.db`;
+// (the container's /tmp; the tests' machine's TMPDIR.)
+const out = `${tmpdir()}/hq-backup-${process.pid}-${Date.now()}.db`;
 try {
   const db = new DatabaseSync(process.argv[1]);
   db.exec('pragma busy_timeout = 30000');

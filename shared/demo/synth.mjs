@@ -345,7 +345,7 @@ export const SFX = {
     const n = sec(dur), L = new Float32Array(n), R = new Float32Array(n), fl = SVF(), fr = SVF();
     for (let i = 0; i < n; i++) {
       const x = i / n, e = x < 0.75 ? Math.pow(x / 0.75, 2.2) : Math.pow(1 - (x - 0.75) / 0.25, 1.5);
-      if ((i & 15) === 0) { const fc = 300 * Math.pow(18, Math.sin(Math.PI * Math.min(1, x / 0.9))); fl.set(fc, 0.55); fr.set(fc * 1.1, 0.55); }
+      if ((i & 15) === 0) { const fc = 300 * Math.pow(9, Math.sin(Math.PI * Math.min(1, x / 0.9))); fl.set(fc, 0.55); fr.set(fc * 1.1, 0.55); } // to 2.7 kHz: a bright whoosh sounds like a breath at a microphone
       const p = -0.7 + 1.4 * x; L[i] = fl.bp(noise()) * e * panL(p) * 1.8; R[i] = fr.bp(noise()) * e * panR(p) * 1.8;
     }
     return { L, R, hit: dur * 0.75 };
@@ -568,7 +568,8 @@ export function render(songIn, { solo = [], mute = [], log = () => {} } = {}) {
 }
 
 // the effects that move, at foley.js's MOVES like its own
-const MOVING = new Set(['whoosh']), playLevel = type => (MOVING.has(type) ? MOVES : playedAt(type));
+const MOVING = new Set(['whoosh']);
+export const playLevel = type => (MOVING.has(type) ? MOVES : playedAt(type));
 export const scaled = (o, g) => (g === 1 ? o : { ...o, L: o.L.map(x => x * g), R: o.R.map(x => x * g) });
 function sfxOf(type, opts) { // a synth.mjs SFX, else a foley.js sound (its seed and pan the caller's), at the kit's level
   if (SFX[type]) return scaled(SFX[type](opts), playLevel(type));

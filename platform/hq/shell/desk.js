@@ -1268,7 +1268,7 @@ const pastCardHtml = (c, pick) => `${textHtml(c.summary[0])}
   ${c.steps.length ? `<ol class="was steps-was">${c.steps.map(s => `<li><div class="step prose">${prose(s, inline)}</div></li>`).join('')}</ol>` : ''}
   ${textHtml(c.afterSteps)}
   ${c.options.length ? `<p class="body">Options: ${c.options.map(esc).join(' · ')}</p>` : ''}
-  ${c.details ? `<div class="body prose">${prose(c.details, inline)}</div>` : ''}`;
+  ${textHtml(c.details)}${laterHtml(c)}`;
 
 // Pictures a card refers to (card.js's PIC), and in the archive the photos the board added to it. A tap shows one big,
 // over the phone.
@@ -1324,8 +1324,10 @@ function cardHtml(r, c, clips = '') {
     ${textHtml(c.afterSteps)}
     ${c.claude ? '<button type="button" class="claude-task" data-claude>Copy task for Claude</button>' : ''}
     ${c.options.length ? `<div class="opts">${c.options.map(o => `<button type="button" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
-    ${c.details ? `<details class="more"><summary>More</summary><div class="body prose">${prose(c.details, inline)}</div></details>` : ''}`;
+    ${c.details || c.later ? `<details class="more"><summary>More</summary>${textHtml(c.details)}${laterHtml(c)}</details>` : ''}`;
 }
+// How to stop or undo it later (card.js laterOf), under More: never part of what the board does now
+const laterHtml = c => c.later ? `<p class="body later"><b>To stop or undo it later</b></p>${textHtml(c.later)}` : '';
 // A card's own text and its details are prose: lists, and fenced blocks to paste (copy.js gives them a Copy button)
 const textHtml = text => text ? `<div class="body prose">${prose(text, inline)}</div>` : '';
 // What Claude in Chrome gets: the task, the steps, and when to hand over to the board. Keys never go through it.

@@ -1,15 +1,22 @@
 // hq thread pause | resume and hq project pause | resume: a paused project or thread, whose queued work HQ's claim holds
 // (the coordinator's pauses.ts); hq decision: pauses that wait for a decision of the board's (its decisions.ts).
 import * as api from './api.ts';
-import { plural, print, stop, text } from './output.ts';
+import { minute, plural, print, stop, text } from './output.ts';
 
 type Kind = 'thread' | 'project';
 type Paused = {
   target: string;
   why: string;
+  untilTime: string | null;
   until: { id: number; agent: string; state: string }[];
   held: number;
   running: { id: number; status: string }[];
+};
+// What lifts a pause (the coordinator's pauses.ts): its time, the jobs it waits for, the board's decision
+export type Lift = {
+  untilTime: string | null;
+  until: { id: number; agent?: string; state?: string }[];
+  decision?: { name: string; card: number | null } | null;
 };
 
 // (the work in no thread: the coordinator's jobs.ts DESK.)
@@ -20,37 +27,56 @@ const DESK = `
 const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<project>');
 
 export const help = (kind: Kind) => `
-   hq ${kind} pause ${named(kind)} "why" [--until <job>]...
+   hq ${kind} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
                                                      pause the ${kind === 'thread' ? 'thread' : 'project, every thread of it'}: nothing queued on it starts
-                                                     (work, reviews, fixes) until it's resumed, or with --until, until
-                                                     those jobs are all done and merged. Work already running goes on
-                                                     (stop it, or let it finish: hq stop pauses a review or ruling). The
-                                                     CEO or the project's owner. A hold the board agreed goes in as a
-                                                     pause, then hq item link <item> pause:<${kind}>${kind === 'project' ? DESK : ''}
+                                                     (work, reviews, fixes) until it's resumed. What it waits for wakes
+                                                     you, never lifts it: --until jobs once they're all merged or ended,
+                                                     --until-time a time (2h, 14:30, 2026-10-26T08:00Z), both once both
+                                                     are met; HQ queues you a job to judge: resume, tell the board, or
+                                                     pause it again on what's still missing (paused already, the same
+                                                     command keeps it on with new conditions). --by-hand: nothing wakes
+                                                     you. Work already running goes on (stop it, or let it finish: hq
+                                                     stop pauses a review or ruling). The CEO or the project's owner. A
+                                                     hold the board agreed goes in as a pause, then hq item link <item>
+                                                     pause:<${kind}>${kind === 'project' ? DESK : ''}
    ${`hq ${kind} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
                                                      the board's item: the CEO only)`;
 
 export async function pause(kind: Kind, given: string[]) {
   const until: number[] = [],
     args: string[] = [];
+  let untilTime: string | undefined,
+    byHand = false;
   for (let i = 0; i < given.length; i++) {
-    if (given[i] !== '--until') {
-      args.push(given[i]);
-      continue;
+    if (given[i] === '--until-time') {
+      untilTime = given[++i];
+      if (!untilTime) stop('Nothing was paused: --until-time takes a time (2h, 14:30, 2026-10-26T08:00Z)');
+    } else if (given[i] === '--by-hand') byHand = true;
+    else if (given[i] !== '--until') args.push(given[i]);
+    else {
+      const job = /^#?([0-9]+)$/.exec(given[++i] ?? '')?.[1];
+      if (!job) stop('Nothing was paused: --until takes a job number');
+      until.push(Number(job));
     }
-    const job = /^#?([0-9]+)$/.exec(given[++i] ?? '')?.[1];
-    if (!job) stop('Nothing was paused: --until takes a job number');
-    until.push(Number(job));
   }
   const [id, why, ...rest] = args;
-  if (!id || !why?.trim() || rest.length) stop(`usage: hq ${kind} pause ${named(kind)} "why" [--until <job>]...`);
-  const answer = await api.change('pauses', { body: api.withSpeaker({ [kind]: id, why, until }) });
+  if (!id || !why?.trim() || rest.length)
+    stop(`usage: hq ${kind} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)`);
+  const answer = await api.change('pauses', { body: api.withSpeaker({ [kind]: id, why, until, untilTime, byHand }) });
   const paused = api.parseOrNull(answer.body) as Paused | null;
   if (!api.isSuccess(answer.status) || !paused?.target)
     stop(`Nothing was paused: ${api.errorIn(answer.body, 'no answer')} (hq followthrough lists the pauses)`);
-  const resumes = paused.until.length
-    ? `It resumes by itself once ${paused.until.map(u => `#${u.id} (${text(u.agent)}, ${text(u.state)})`).join(' and ')} ${paused.until.length > 1 ? 'are' : 'is'} done and merged, or by hq ${kind} resume.`
-    : `It holds until hq ${kind} resume ${text(paused.target)}.`;
+  const waits = [
+    ...(paused.until.length
+      ? [
+          `${paused.until.map(u => `#${u.id} (${text(u.agent)}, ${text(u.state)})`).join(' and ')} ${paused.until.length > 1 ? 'have' : 'has'} merged or ended`,
+        ]
+      : []),
+    ...(paused.untilTime ? [`${text(paused.untilTime).slice(0, 16).replace('T', ' ')} UTC has come`] : []),
+  ];
+  const resumes = waits.length
+    ? `Once ${waits.join(' and ')}, HQ queues you a job to judge it; only hq ${kind} resume ${text(paused.target)} lifts it.`
+    : `It holds until hq ${kind} resume ${text(paused.target)}: nothing wakes you about it.`;
   const running = paused.running.map(r => `#${r.id}${r.status === 'queued' ? ' (held mid-run)' : ''}`);
   print(
     `Paused ${text(paused.target)}: ${text(paused.why)}`,
@@ -59,6 +85,21 @@ export async function pause(kind: Kind, given: string[]) {
       ? [`Started before the pause: ${running.join(', ')}. Stop each (hq stop) or let it finish, as the reason says.`]
       : []),
   );
+}
+
+// What a pause waits for, in words: "it's resumed: its owner judges it once 2026-10-26 08:00 UTC has come and #12 (kit,
+// queued) has merged or ended"; a decision's, the board's answer; one by hand, nothing wakes its owner
+export function liftWords(p: Lift) {
+  if (p.decision)
+    return `the board decides "${text(p.decision.name)}"${p.decision.card ? ` (card #${p.decision.card})` : ''}`;
+  const jobs = p.until.map(u => `#${u.id}${u.agent ? ` (${text(u.agent)}, ${text(u.state ?? '')})` : ''}`);
+  const parts = [
+    ...(p.untilTime ? [`${minute(p.untilTime)} UTC has come`] : []),
+    ...(jobs.length ? [`${jobs.join(' and ')} ${jobs.length > 1 ? 'have' : 'has'} merged or ended`] : []),
+  ];
+  return parts.length
+    ? `it's resumed: its owner judges it once ${parts.join(' and ')}`
+    : "it's resumed by hand: nothing wakes its owner";
 }
 
 export async function resume(kind: Kind, [id, ...rest]: string[]) {
