@@ -17,22 +17,35 @@ export type Listed = {
   models?: Record<string, string>;
   paused: boolean;
   stop?: number | null; // the board's stop level, in percent (null: the seat's own).
+  use_credits?: boolean; // the board lets it spend its account's credits past its plan.
   week?: number; // the week's use HQ last heard, and when it resets (ms), till a run reads it again
   weekResets?: number;
 };
 // A change the board made that the worker hasn't taken up yet
 export type SeatAction = { id: number; seat: string | null; what: string };
-// (drainAt: its stop level, a share of its windows)
+// (drainAt: its stop level, a share of its windows; hasCredits: its account's latest reading says it has credits past its
+// plan; useCredits: the board lets it spend them; credits: it does, which pacing and draining go by: pace.ts)
 type BoardSeat = SeatProvider & {
   id: string;
   state: string;
   paused?: boolean;
   gone?: boolean;
   drainAt?: number;
+  hasCredits?: boolean;
+  useCredits?: boolean;
+  credits?: boolean;
 };
 
 // A seat the board paused takes no new work.
 export const off = (s: BoardSeat) => !!s.paused;
+
+// A seat runs on credits past its plan's limits only while its account has them and the board lets it: an account with
+// credits alone keeps to its plan, paced over its week and stopping at its level like any seat. Spending past the plan
+// is the board's choice (Settings › Seats), never a default.
+export function spendCredits(s: { hasCredits?: boolean; useCredits?: boolean; credits?: boolean }) {
+  s.credits = !!s.hasCredits && !!s.useCredits;
+  return s.credits;
+}
 
 // The seat ids that are the worker's own (a lowercase name, a dash, then digits or a word): an id that isn't names no folder.
 const SEAT_ID = /^[a-z]+-([0-9]+|[a-z]+)$/;
@@ -80,6 +93,8 @@ export function applyList<S extends BoardSeat>(seats: S[], list: Listed[], hooks
       paused: l.paused,
     });
     if (typeof l.stop === 'number') seat.drainAt = l.stop / 100;
+    seat.useCredits = l.use_credits === true;
+    spendCredits(seat);
     if (!started.has(seat)) {
       started.add(seat);
       hooks.start(seat);
@@ -117,6 +132,14 @@ export async function carryOut<S extends BoardSeat>(a: SeatAction, seats: S[], d
   if (!seat) return d.settle(a.id, 'failed', "The worker doesn't have this seat. Try again in a minute.");
   if (a.what === 'stop')
     return d.settle(a.id, 'done', `Stops at ${Math.round((seat.drainAt ?? DRAIN_AT) * 100)}% of its limits now.`);
+  if (a.what === 'credits')
+    return d.settle(
+      a.id,
+      'done',
+      seat.useCredits
+        ? 'It may spend credits past its plan now, while its account has them.'
+        : 'It keeps to its plan now: paced over its week, it stops at its level.',
+    );
   if (a.what === 'pause') return d.settle(a.id, 'done', `Paused: it takes no new work.${after}`);
   if (a.what === 'resume') return d.settle(a.id, 'done', 'Back at work.');
   if (a.what === 'sign-in' || (a.what === 'add' && seat.signIn === 'login')) {

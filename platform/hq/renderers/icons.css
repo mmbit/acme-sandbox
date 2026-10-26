@@ -1,5 +1,5 @@
-/* The HUD for a look that isn't pixel art (holo, wire): eased motion, its icons' sizes (each look draws its own icons:
-   shell/icons.js), and the count badge's number as text. A look's skin.css imports it. */
+/* The HUD for a look of a smooth style (any or line: holo, wire, lineart): eased motion, smooth icons (each look draws
+   its own: shell/icons.js), and the count badge's number as text. A look's skin.css imports it. */
 body {
   --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
   --icons: geometricPrecision;

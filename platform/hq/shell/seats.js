@@ -1,12 +1,13 @@
 // Settings › Seats: the board's seats, kept by the board itself (HQ-OS › Seats shows how they're doing: seatstatus.js).
 // One list: each seat a row (its engine's mark, its name, and what it needs from the board or else its
-// provider), Add a seat, and pacing. A seat opens its own page: its sign-in, Pause, the level it stops at, a new sign-in
-// or key, and Remove. Every change says how it went: waiting for the worker, under way, then done or why not. desk.js's
+// provider), Add a seat, and pacing. A seat opens its own page: its sign-in, Pause, the level it stops at, whether a
+// Codex subscription seat may spend credits past its plan, a new sign-in or key,
+// and Remove. Every change says how it went: waiting for the worker, under way, then done or why not. desk.js's
 // Settings draws it, and its back button steps back a page here first (seatsBack). Which model each agent runs on is the
 // agent's own page's (panel.js).
 import { esc } from '../util.js';
 import { engineMark } from './engine.js';
-import { loadSeats, loadSeatProviders, addSeat, removeSeat, pauseSeat, signInSeat, sendSeatCode, sendSeatKey, setSeatStop, setPacing } from './data.js';
+import { loadSeats, loadSeatProviders, addSeat, removeSeat, pauseSeat, signInSeat, sendSeatCode, sendSeatKey, setSeatStop, setPacing, setSeatCredits } from './data.js';
 import { sfx } from './audio.js';
 
 const STALE_MS = 60_000;        // a 'waiting' action older than this: the worker isn't there to take it up
@@ -15,21 +16,21 @@ const POLL_MS = 2000;           // the read while something moves
 const IDLE_MS = 15_000;         // and otherwise, while Seats is open
 const SIGNING_IN = ['starting', 'open', 'checking'];
 const STOPS = [80, 85, 90, 95, 99];   // the levels a seat can stop at, in percent of its limits (the coordinator takes 50 to 99)
-// An action under way, in words (action.what: add, remove, pause, resume, sign-in, key, stop, pacing)
-const DOING = { add: 'Setting it up', remove: 'Removing it', pause: 'Pausing', resume: 'Resuming', 'sign-in': 'Signing in', key: 'Testing the key', stop: 'Changing it', pacing: 'Changing it' };
+// An action under way, in words (action.what: add, remove, pause, resume, sign-in, key, stop, pacing, credits)
+const DOING = { add: 'Setting it up', remove: 'Removing it', pause: 'Pausing', resume: 'Resuming', 'sign-in': 'Signing in', key: 'Testing the key', stop: 'Changing it', pacing: 'Changing it', credits: 'Changing it' };
 // Where an action's outcome shows on a seat's page: under the control it came from, the rest at the top
-const AT = { pause: 'pause', resume: 'pause', stop: 'stop' };
+const AT = { pause: 'pause', resume: 'pause', stop: 'stop', credits: 'credits' };
 
 // What the board has open or under way, kept through every redraw
 const ui = {
   page: null,           // null: the list; { seat } or 'add'
   asking: new Map(),    // seat → 'remove' (its confirm) or 'key' (a field for its key)
   form: null,           // the Add a seat form: { provider, id, named, name, cli, url, model }
-  sending: new Set(),   // what has a request on its way: a seat, '<seat>:pause', '<seat>:stop', 'add', 'pacing'
+  sending: new Set(),   // what has a request on its way: a seat, '<seat>:pause', '<seat>:stop', '<seat>:credits', 'add', 'pacing'
   refused: new Map(),   // the same → why it didn't go through, in words
   removed: new Map(),   // a seat removed here → { at: when it left the list (null: not yet), what: 'sign-in' | 'key' }
   pacing: null,         // { on, at }: the switch just flipped, till the coordinator's list has it
-  set: new Map(),       // '<seat>:pause' or '<seat>:stop' → { value, at }: a seat's setting just changed, the same way
+  set: new Map(),       // '<seat>:pause', '<seat>:stop' or '<seat>:credits' → { value, at }: a seat's setting just changed, the same way
 };
 let shown = null;   // the last read, { el, h, list, setup }, so a tap redraws at once
 let drawn = '';     // its markup: an unchanged read leaves the screen, and its focus, alone
@@ -65,7 +66,7 @@ async function read(el, h) {
   if (current !== el) return;
   shown = { el, h, list, setup };
   for (const [key, want] of ui.set) {
-    const [id, what] = key.split(':'), s = list.find(x => x.id === id), value = what === 'pause' ? !!s?.paused : s?.stop;
+    const [id, what] = key.split(':'), s = list.find(x => x.id === id), value = what === 'pause' ? !!s?.paused : what === 'credits' ? !!s?.use_credits : s?.stop;
     if (!s || value === want.value || (s.action?.status === 'failed' && s.action.at >= want.at)) ui.set.delete(key);
   }
   if (ui.pacing && (setup.pacing?.on === ui.pacing.on || (setup.pacing?.action?.status === 'failed' && setup.pacing.action.at >= ui.pacing.at))) ui.pacing = null;
@@ -146,11 +147,12 @@ function seatPage(s) {
     <p class="dim">${esc(s.provider_name ?? s.provider ?? '')}</p>`;
   return `${head}${signIn(s)}${outcome(top, s.id)}${main(s)}${s.removing ? '' : settingsOf(s)}`;
 }
-// a seat's settings, as Settings' rows: Pause, Stop at, a new sign-in or key, Remove (which asks first, in place)
+// a seat's settings, as Settings' rows: Pause, Stop at, Use credits (a Codex subscription seat's), a new sign-in or key, Remove (which
+// asks first, in place)
 function settingsOf(s) {
   const id = esc(s.id), asking = ui.asking.get(s.id), off = ui.sending.has(s.id) ? ' disabled' : '';
   const mine = what => (AT[s.action?.what] === what ? s.action : null);
-  const paused = wanted(s, 'pause', !!s.paused), stop = wanted(s, 'stop', s.stop);
+  const paused = wanted(s, 'pause', !!s.paused), stop = wanted(s, 'stop', s.stop), credits = wanted(s, 'credits', !!s.use_credits);
   const stops = [...new Set([...STOPS, stop])].sort((a, b) => a - b);
   const again = s.sign_in === 'login' ? ['sign-in', 'Sign in again'] : ['key', 'Change key'];
   const key = asking === 'key' ? settingsKey(s) : '';
@@ -159,6 +161,7 @@ function settingsOf(s) {
   return `<ul class="rows settings seat-settings">
     <li class="switch-row"><b id="pause-${id}">Pause</b>${toggle('pause', paused, `pause-${id}`, ui.sending.has(`${s.id}:pause`))}${outcome(mine('pause'), `${s.id}:pause`)}</li>
     <li class="switch-row"><b id="stop-${id}">Stop at</b><span class="seg" role="group" aria-labelledby="stop-${id}">${stops.map(n => `<button type="button" data-stop="${n}" aria-pressed="${n === stop}"${ui.sending.has(`${s.id}:stop`) ? ' disabled' : ''}>${n}%</button>`).join('')}</span>${outcome(mine('stop'), `${s.id}:stop`)}</li>
+    ${(s.cli ?? s.engine) === 'codex' && s.sign_in === 'login' ? `<li class="switch-row"><b id="credits-${id}">Use credits past the plan</b>${toggle('credits', credits, `credits-${id}`, ui.sending.has(`${s.id}:credits`))}${outcome(mine('credits'), `${s.id}:credits`)}</li>` : ''}
     ${needs(s)?.[0] === again[0] ? '' : `<li><button data-do="${again[0]}"${off}><b>${again[1]}</b><span class="to">›</span></button>${key}</li>`}
     <li><button data-do="remove" class="danger-row"${off}><b>Remove seat</b></button>${remove}</li></ul>`;
 }
@@ -256,6 +259,7 @@ function wire(el) {
     b.setAttribute('aria-checked', on);   // (it moves at once; the outcome under it says when it's done)
     sfx.toggle(on);
     if (b.dataset.toggle === 'pacing') { ui.pacing = { on, at: Date.now() }; act('pacing', () => setPacing(h.dev, on), null, () => { ui.pacing = null; }); }
+    else if (b.dataset.toggle === 'credits') hold(`${seat}:credits`, on, () => setSeatCredits(h.dev, seat, on));
     else hold(`${seat}:pause`, on, () => pauseSeat(h.dev, seat, on));
   });
   el.querySelectorAll('[data-stop]').forEach(b => b.onclick = () => {

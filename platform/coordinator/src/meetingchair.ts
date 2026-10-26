@@ -2,7 +2,7 @@
 // by, the tally it reviews once every seat has handed in, and its summary of the meeting in HQ's news feed.
 import { readFileSync } from 'node:fs';
 import { Marked } from 'marked';
-import { columnsOf, db, meetingChanges, once } from './db.ts';
+import { columnsOf, db, meetingChanges, meetingProjects, once } from './db.ts';
 import { REPO_DIR } from './config.ts';
 import { ceo, companyFormats, feedFrom, projects } from './company.ts';
 import { ownerOf } from './projects.ts';
@@ -12,6 +12,7 @@ import { seats, type Meeting } from './meetings.ts';
 
 // The chair's part of its seat's briefing (the post's headline and shape at the close)
 const HEADLINE = 8;
+// ("Is it split for speed?")
 export const CHAIR = `You chair this meeting: you keep the whole in shape, and only you close it.
 - Keep it moving towards what it was set for. Watch the clock and the progress: \`hq meeting listen\` shows you how long
   it has run and how many lines have been said since the last plan change made in it. When it stops getting anywhere
@@ -24,7 +25,10 @@ export const CHAIR = `You chair this meeting: you keep the whole in shape, and o
 - Then review the whole: is it headed in the right direction and in line with our strategy, is the scope right, are the
   threads real threads (one deliverable, done in hours) and the projects real projects (a finished product), do the
   owners' conventions match? Stop sprawl: needless substructures, threads nobody needs, over-engineering, each owner
-  with its own conventions. Send what needs changing back with \`hq meeting reopen <agent>... "what to change"\`: their
+  with its own conventions. Is it split for speed? Parts that don't need each other go in threads of their own, so they
+  run side by side; steps that build on each other go in one thread, where its agents take turns on one branch and one
+  review reads them at the end; a wait for another thread's merge only where the work truly needs it merged. Send
+  what needs changing back with \`hq meeting reopen <agent>... "what to change"\`: their
   hand-ins reopen, and the tally runs again once they hand in again.
 - Close it with \`hq meeting close\` once the review is done (with \`--stalled\` when it has stalled before everyone
   handed in). It gives the meeting's post in HQ's news feed for the board and the company, read on a phone. The
@@ -163,25 +167,37 @@ export function post(given: Record<string, unknown>) {
 }
 
 // Every meeting its chair closed, as a post in HQ's news feed (company.ts gazette): its headline (the topic for a
-// meeting closed before headlines) and the chair's summary as Markdown, raw HTML in it shown as text.
+// meeting closed before headlines) and the chair's summary as Markdown, raw HTML in it shown as text. It's the board's
+// (its feed, not the company's), and carries what HQ draws its cover from (postcover.js): who sat in it, the chair
+// first, and the pictures of the projects whose plans it changed, each its own cover else its business's (company.ts
+// projects).
 const markdown = new Marked({ renderer: { html: ({ text }) => escapeHtml(text) } });
 feedFrom(() => summaries());
 export function summaries() {
-  const formats = companyFormats();
+  const formats = companyFormats(),
+    { covers, businesses } = projects(),
+    businessOf = db.prepare('select business from projects where id = ?');
   return (
     db.prepare("select * from meetings where status = 'done' and summary is not null order by id").all() as Meeting[]
   ).map(x => {
     const ended = Date.parse(x.ended!);
     const date = formats.dayAt(ended);
+    const people = [...new Set([ceo(), ...seats(x.id).map(s => s.agent)])];
+    const pictures = meetingProjects(x.id).flatMap(p => {
+      const business = (businessOf.get(p.id) as { business: string | null } | undefined)?.business; // (done ones too)
+      const cover = covers[p.id] ?? businesses.find(b => b.id === business)?.cover;
+      return cover ? [cover] : [];
+    });
     return {
       slug: `meeting-${x.id}`,
       title: x.headline ?? `Meeting: ${x.topic}`,
       author: ceo(),
       date,
       tags: ['meeting'],
-      board: false,
+      board: true,
       links: [],
       cover: null,
+      meeting: { people, pictures: [...new Set(pictures)] },
       sound: null,
       html: markdown.parse(x.summary!) as string,
       t: `${date}T${formats.time(ended, 'en')}`,

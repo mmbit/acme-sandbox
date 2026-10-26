@@ -27,13 +27,14 @@ HQ stores each decision in `review_triage`, keyed by its triage job, with PR, ro
 The job rows returned to the projects view include `triage: {job, base, selection}`. The selection contains its
 reason, consolidator and `reviewers: [{agent, reason, files, domain, security}]`. Older rows have `triage: null`.
 
-With thread planning on, a `changes` or `close` ruling creates one item in the project owner's inbox. Each finding
-carries its domain and files. The owner draws fix tasks on the thread, naming the finding IDs they address. HQ does
-not create an author's fix job, unless the company sets `review.drawWindowedChanges: true`: then a `changes` ruling on
-a thread with a window is accepted at once for the pull request's author, with every blocking finding (or the
-touch-ups' check) on the reviewed thread, and the owner's running session hears of the task and may cancel and redraw
-it (`projects.md`). The last fix task's push starts the next round and its fix check. A `close`
-item (the change shouldn't land at all) lets the owner drop the work, or redraw it only if it's still wanted in another
-form. A `board` ruling waits for the board's decision. Work that isn't right yet stays on its pull request for as many
-rounds as it takes: nothing closes it for that. With thread planning off, `changes` makes the author's fix job on the
-same branch, and a close queues no re-land.
+A `changes` or `close` ruling on a thread's work creates one item in the project owner's inbox. Each finding carries
+its domain and files. The owner draws fix tasks on the thread, naming the finding IDs they address. HQ does not create
+an author's fix job, unless the company sets `review.drawWindowedChanges: true`: then a `changes` ruling on a thread
+with a window is accepted at once for the pull request's author, with every blocking finding (or the touch-ups' check)
+on the reviewed thread, and the owner's running session hears of the task and may cancel and redraw it
+(`projects.md`). The last fix task's push starts the next round and its fix check. A `close` item (the change
+shouldn't land at all) lets the owner drop the work, or redraw it only if it's still wanted in another form. Work in
+no thread (an HQ-made or call job) gets its author's fix job on the same branch for a `changes`, which retries for the
+pull request's current author, and its `close` goes to the CEO's inbox. A `board` ruling waits for the board's
+decision. Work that isn't right yet stays on its pull request for as many rounds as it takes: nothing closes it for
+that.

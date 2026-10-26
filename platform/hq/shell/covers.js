@@ -1,4 +1,5 @@
-// The projects view's covers, decoded once so every repaint has them
+// The projects view's covers and those a meeting's notes are drawn from (postcover.js), decoded once so every repaint
+// has them
 
 // by its file: its image, kept so it stays decoded, and the decode
 const covers = new Map();
@@ -42,4 +43,14 @@ export function coversIn(html) {
   const level = document.createElement('template');
   level.innerHTML = html;
   return [...level.content.querySelectorAll('.pj-cover img')].map(img => img.getAttribute('src'));
+}
+// The pictures `named` (their files), loaded and decoded the same way: settles once they are, or WAIT_MS on
+export function keepPictures(named) {
+  const wait = new Promise(done => setTimeout(done, WAIT_MS));
+  return Promise.race([Promise.all(named.map(src => kept(src, 'high'))), wait]);
+}
+// A kept picture by its file, once it has loaded (else null)
+export function keptPicture(src) {
+  const img = covers.get(src)?.img;
+  return img?.complete && img.naturalWidth ? img : null;
 }

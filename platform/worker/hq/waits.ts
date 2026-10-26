@@ -1,15 +1,15 @@
 // What holds work, in words: hq estimate, hq when and hq thread say it, and the coordinator's summary (threats.ts) reads
 // it from here too, each with its own clock. Nothing imported.
 // The board (a card, answered about `at`, or the company paused), the seats out until a time, work queued ahead for the
-// same slots, a job it waits for, a deploy, nothing that will come by itself (stalled), or past the horizon. The
-// coordinator's play writes these (playtypes.ts).
+// same slots, a job it waits for, a deploy, nothing that will come by itself (stalled: with the thread or project whose
+// pause holds it, when one does), or past the horizon. The coordinator's play writes these (playtypes.ts).
 export type Wait =
   | { on: 'board'; request?: number; at?: number; paused?: true }
   | { on: 'seats'; engine: string; until: number }
   | { on: 'queue'; engine: string; minutes: number; pausing?: true }
   | { on: 'job'; job: number }
   | { on: 'deploy' }
-  | { on: 'stalled'; why: string }
+  | { on: 'stalled'; why: string; pause?: string } // (pause)
   | { on: 'horizon'; days: number };
 
 export function waitWords(w: Wait, at: (ms: number) => string) {

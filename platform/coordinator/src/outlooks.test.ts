@@ -50,10 +50,13 @@ beforeEach(async () => {
   db.exec(
     'delete from jobs; delete from threads; delete from runs; delete from predictions; delete from seats; delete from waits; delete from prs; delete from wakes',
   );
-  T = Date.now();
   for (const engine of ['claude', 'codex'])
-    assert.equal((await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready' })).status, 200);
+    assert.equal(
+      (await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready', util: 0.1, week: 0.1 })).status,
+      200,
+    );
   await reportRoom();
+  T = Date.now();
 });
 
 test("a thread's two numbers: the agent time its open work has left, and its last job merged; the chain sets it", () => {

@@ -20,9 +20,9 @@ export function findFile(dir: string, path: string) {
   return found && type ? { ...found, type } : null;
 }
 
-// The real path and size of the file `name` names in `dir`, or null when it isn't a file there (audit N3, and NI1
-// for the guest page's look). The repo decides what's in these folders, so a symlink (say to the database) must not
-// lead out of them. `base`: the folder whose own place is trusted (a checkout may sit behind a symlink): from there
+// The real path, size and modified time of the file `name` names in `dir`, or null when it isn't a file there (audit
+// N3, and NI1 for the guest page's look). The repo decides what's in these folders, so a symlink (say to the database)
+// must not lead out of them. `base`: the folder whose own place is trusted (a checkout may sit behind a symlink): from there
 // down to the file, a link out of the way (`dir` itself a link elsewhere, say) finds nothing. Nor does a folder that
 // isn't there.
 export function inside(dir: string, name: string, base = dir) {
@@ -32,7 +32,7 @@ export function inside(dir: string, name: string, base = dir) {
   const trusted = real(anchor), top = trusted && trusted + root.slice(anchor.length), path = real(file);
   if (!top || !path.startsWith(top + '/')) return null;
   const fileStat = statSync(path, { throwIfNoEntry: false });
-  return fileStat?.isFile() ? { real: path, size: fileStat.size } : null;
+  return fileStat?.isFile() ? { real: path, size: fileStat.size, modifiedMs: fileStat.mtimeMs } : null;
 }
 
 // The Content-Disposition of a download by its file's name (RFC 6266): a plain ASCII name for old browsers, and the whole

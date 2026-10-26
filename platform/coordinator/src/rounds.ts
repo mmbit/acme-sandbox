@@ -3,6 +3,7 @@ import { unloop } from './plancycles.ts';
 import type { OrderingSnapshot, QueuedJob, Size } from './eta.ts';
 
 export type ReviewStage = {
+  memoryMb?: number | null;
   key: string;
   job?: number;
   kind: 'review' | 'consolidate' | 'work';
@@ -109,6 +110,7 @@ function synthetic(
 ): QueuedJob & { dependencies: NonNullable<QueuedJob['dependencies']> } {
   return {
     ...owner,
+    memoryMb: stage.memoryMb ?? null,
     id,
     agent: stage.agent,
     engine: stage.engine,

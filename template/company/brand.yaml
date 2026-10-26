@@ -22,6 +22,10 @@ names:
 # other (an app's id: its kit's name, or HQ's own, as in platform/hq/shell/desk.js's APPS). The apps it doesn't name come
 # after them, and Settings is always last. Left out, HQ groups them by what they're for (theme/hq.yaml's apps).
 # computer: { apps: [[projects, notes, artifacts], [calls, mail]] }
+# The brand's one colour, its logo's (#rrggbb): theme/hq.yaml's Wire colourways that set no accent wear it (their lip a
+# shade darker, their letters black or white), and it is app.themeColour and the guest page's accent unless they say
+# otherwise. Onboarding takes it from the logo it draws (company/playbooks/intake.md).
+colour: '#4f7cff'
 # HQ's colours, when the brand book has them: colours: { ink, cream, paper, muted, red, gold, blue, green, purple,
 # orange } (#hex), over style.css's, which the looks are drawn for. A font: font: { family: "...", href: <Google Fonts URL> }
 # The logo: svg and svgDark, alt, and pixels for the renderer. Left out: the renderer writes the name. The files go in
@@ -51,7 +55,6 @@ calendar: { founded: 'MM-DD', holidays: [] }
 app:
   title: New Company HQ
   description: 'The New Company office, live: see what every agent is up to.'
-  themeColour: '#1f2328'
 # The inbox's domain, and its addresses for the board alone (boardOnly, the part before the @): mail to them shows in
 # HQ's Mail, never to an agent (the sign-ins of the company's accounts and its AI seats). also (optional): more domains
 # whose mail reaches the same inbox (Email Routing on each, to the same Worker); every address rule here holds at each of

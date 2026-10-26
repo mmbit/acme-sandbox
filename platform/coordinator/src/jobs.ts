@@ -23,6 +23,7 @@ import {
   infra,
   roles,
   reads,
+  timeZone,
   yamlFile,
   titleOf,
   voiceOf,
@@ -30,6 +31,7 @@ import {
 } from './company.ts';
 import { unshelvedProblem } from './library.ts';
 import { languageName } from './language.ts';
+import { stylePrompt } from './style.ts';
 import { REPO_DIR } from './config.ts';
 import {
   startReview,
@@ -39,8 +41,9 @@ import {
   touchedUp,
   archiving,
   withdrawn,
+  threadTaskEnded,
   type Check,
-} from './review.ts'; // (fixFailed; Check; archiving; withdrawn)
+} from './review.ts'; // (fixFailed; Check; archiving; withdrawn; threadTaskEnded)
 import type { ChangedLines } from './findings.ts';
 import { announceRequest } from './push.ts';
 import { saveSecrets, stored, secret, addressKeys } from './secrets.ts';
@@ -50,7 +53,7 @@ import * as photos from './photos.ts';
 import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts'; // the board's pictures with a card's answer
-import { answered, hear, parked } from './chat.ts';
+import { ended as chatEnded, hear, intercom, parked } from './chat.ts';
 import { jobEnded } from './messages.ts';
 import { finished, cancelled, mine } from './ledger.ts';
 import { recordUsage } from './usage.ts';
@@ -66,6 +69,7 @@ import { shownCard } from './shown.ts';
 import * as decisions from './decisions.ts';
 import * as wakes from './wakes.ts';
 import * as meetingseats from './meetingseats.ts';
+import * as meetingroom from './meetingroom.ts';
 import * as threadorder from './threadorder.ts';
 import * as threadends from './threadends.ts';
 import { cardProblem } from '../../hq/shell/cardcheck.js';
@@ -684,9 +688,10 @@ const CARRIERS = `select i.job from call_items i where i.status = 'open' and i.j
     and exists (select 1 from jobs w indexed by jobs_work_branch where coalesce(w.branch, 'job/' || w.id) = +p.branch
       and w.kind = 'work' and (w.item in (select i.id from call_items i where i.status in ${LIVE_ITEMS})
         or exists (select 1 from call_items i where i.status in ${LIVE_ITEMS} and i.job in (${lineageTo('w.id')}))))`;
+// And a sheet the board sent from its book to its page's owner (booknotes.ts), as a note route's check is.
 export const BOARD_CALL = (job: string) =>
   `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id)
-    or ${job}.id in (${CARRIERS}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
+    or exists (select 1 from book_sheets b where b.job = ${job}.id) or ${job}.id in (${CARRIERS}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
       join meeting_seats o on o.meeting = s.meeting join jobs w on w.id in (${CARRIERS}) where s.job = ${job}.id
       and (w.after = o.job or exists (select 1 from waits x where x.job = w.id and x.on_job = o.job))))`;
 // The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
@@ -753,15 +758,14 @@ export function prerequisites(from: number[], { includeFrom = true, ordered = fa
     .all({
       from: JSON.stringify(from),
       includeFrom: Number(includeFrom),
-      ordered: Number(ordered && threadorder.ordered()),
+      ordered: Number(ordered),
     }) as { id: number; thread: string | null; kind: string; expedite: number }[];
 }
 // The edges prerequisites walks, all at once: each node's needs ('job/<id>' or 'thread/<id>'), ordered as above.
 export function needsGraph() {
   const graph = new Map<string, string[]>();
-  const rows = db
-    .prepare(`${dependencyEdges(mergePending('j'))} select job, needs from edges`)
-    .all({ ordered: Number(threadorder.ordered()) }) as { job: string; needs: string }[];
+  const edges = db.prepare(`${dependencyEdges(mergePending('j'))} select job, needs from edges`);
+  const rows = edges.all({ ordered: 1 }) as { job: string; needs: string }[];
   for (const { job, needs } of rows) graph.set(job, [...(graph.get(job) ?? []), needs]);
   return graph;
 }
@@ -950,11 +954,13 @@ export function strandedWaits(prior: Named & { id: number; agent: string }, how:
 // moved since the review) and waiting for the board's call are still in review, and the work may yet land as it is
 // (#1046). A closed one releases it, and so does a job that was cancelled (ledger.ts cancelJob()): the job starts and
 // checks main for itself. Its further waits must all be met (outstanding), and the cards it waits for have left the desk
-// phone (openCards), and the events it waits for have happened (wakes.ts).
+// phone (openCards), and the events it waits for have happened (wakes.ts). A push held for its thread's next task
+// (review.ts heldForThread) is in review too: its pull request opens with the thread's last push.
 // Wrap statements using this predicate in redraws.query().
 const READY = `j.status = 'queued' and j.not_before <= $now
   and (j.after is null or exists (select 1 from jobs a where a.id = j.after and a.status in ('done', 'failed', 'cancelled')
-    and not exists (select 1 from prs where branch = a.branch and status in ('open', 'stuck', 'board'))))
+    and not exists (select 1 from prs where branch = a.branch and status in ('open', 'stuck', 'board'))
+    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id))))
   and not exists (${outstanding('j.id')}) and not exists (${openCards('j.id')})
   and not exists (select 1 from wakes w where w.job = j.id and w.met is null)`; // (wakes.ts)
 
@@ -1029,11 +1035,13 @@ export function pausedWith(thread: string) {
 export function heldWith(j: string) {
   return `(case when ${pauseLets(j)} then null else ${pausedWith(`${j}.thread`)} end)`;
 }
-// Work no pause holds: the intercom, what the desk's pause lets go, and the job a pause woke its owner with to judge
-// it (pauses.ts wake).
+// Work no pause holds: the intercom, what the desk's pause lets go, the job a pause woke its owner with to judge
+// it (pauses.ts wake), the job a thread's merge woke its owner with (threadjudge.ts wake), and the CEO's hourly
+// follow-through check, which judges the holds themselves, whichever project made() puts it in.
 export function pauseLets(j: string) {
   return `(${j}.kind = 'chat' or ${j}.thread is null and ${deskLets(j)}
-    or exists (select 1 from pauses woke where woke.woken = ${j}.id))`;
+    or exists (select 1 from pauses woke where woke.woken = ${j}.id)
+    or exists (select 1 from threads judged where judged.judge = ${j}.id) or ${FOLLOW_THROUGH(j)})`;
 }
 export const pausedOn = (job: number) =>
   (
@@ -1328,8 +1336,11 @@ export function claim(
     meetingseats.pick(fits, slot, seat);
     return null;
   }
-  // A meeting keeps its seat's reservation around the shared claim order.
-  const first = meetingseats.pick(inClaimOrder(fits, seat, engine, kind, pacedUntil), slot, seat);
+  const reserved = meetingroom.first(fits, kind, slot);
+  const sorted = reserved.jobs.length
+    ? inClaimOrder(reserved.jobs, seat, engine, kind, pacedUntil, room, reserved.gathering)
+    : [];
+  const first = meetingseats.pick(sorted, slot, seat);
   if (!first) return null;
   const job = db.prepare('select * from jobs where id = ?').get(first.id) as Job;
   // A board-named job (only a hand-edited database could hold one) never runs, gets a token or speaks.
@@ -1423,8 +1434,7 @@ function claimable(
       readyRunners: JSON.stringify(ready.map(r => r.runner)),
       readySeats: JSON.stringify(ready.map(r => r.id)),
     }) as (Claimable & { spare: number; yielding: number })[];
-  // (below the room line, a job not measured yet doesn't fit; an expedited one starts anyway, and runs make room for it)
-  return room === undefined ? candidates : candidates.filter(j => j.expedite || (measuredMb(j.id) ?? Infinity) <= room);
+  return candidates;
 }
 
 // Spare downtime work only on a seat with spare room, and only when nothing else can start.
@@ -1434,13 +1444,29 @@ function inClaimOrder(
   engine: string,
   kind?: string,
   pacedUntil?: number,
+  room?: number,
+  gathering = false,
 ) {
   // An expedited job starts before anything else, whatever the plan, pacing or room freed for another says (the board,
   // call 118).
   const expedited = fits.filter(j => j.expedite).sort((a, b) => a.id - b.id);
   if (expedited.length) return expedited;
   const plan = ordering.current();
-  return claimOrderOn(seat, engine, pacedUntil, plan, kind === 'chat' ? [] : freedRoom(plan))(fits);
+  const ordered = claimOrderOn(
+    seat,
+    engine,
+    pacedUntil,
+    plan,
+    kind === 'chat' || gathering ? [] : freedRoom(plan),
+  )(fits);
+  if (room === undefined) return ordered;
+  // Memory admission follows eligibility and order, so smaller undated runs cannot keep taking a window's room.
+  const admitted: typeof ordered = [];
+  for (const job of ordered) {
+    if ((measuredMb(job.id) ?? Infinity) <= room) admitted.push(job);
+    else if (ordering.key(job.id, job.board, plan.timings).latestStart !== null) break;
+  }
+  return admitted;
 }
 
 // Room a pause freed goes to its waiter while it can start, on whichever engine, before anything after it in the base
@@ -1544,6 +1570,8 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
     agentEmailDomain: mail.AGENT_EMAIL_DOMAIN,
     agentsEmail: mail.AGENTS_EMAIL,
     language: languageName(), // what the board reads and hears in (language.ts.)
+    timeZone: timeZone(), // and the clock its times are on
+    stylePrompt: stylePrompt(),
   };
   // (title: as agents read it, a review step's with its step and round: nameOf.)
   // (archiving: the agent's open pull request that already moves its older profile lines, for the worker's oversized())
@@ -1762,10 +1790,11 @@ function roomFor(room: InTheWay, t: number): Map<number, number> {
   const expedited = expeditedRoom(room, t);
   if (expedited) return expedited;
   if (!room.short && !room.capped.length) return new Map();
+  // Meeting dates admit paced seats but never ask running work to yield.
   const queued = db
     .prepare(
       redraws.query(
-        `select j.id, j.kind, j.engine, j.created, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}`,
+        `select j.id, j.kind, j.engine, j.created, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER} and j.kind != 'meeting'`,
       ),
     )
     .all({ now: t, ...letsParams() }) as (Claimable & { engine: string; created: string })[];
@@ -2175,7 +2204,7 @@ function finishJob(id: number, r: RunEnd) {
     settle(
       job,
       'sleeping',
-      `The worker's own step failed: tried again at ${new Date(at).toISOString().slice(11, 16)} UTC`,
+      `The worker's own step failed: tried again at ${companyTime(at)}`, // (on the board's clock)
     );
   } else if (r.status === 'limited' || r.status === 'interrupted' || r.status === 'yielded' || retryChat)
     handBack(job, r, retryChat);
@@ -2337,8 +2366,11 @@ function handOn(job: Job, r: RunEnd) {
       r.gates,
       r.tests,
       r.lines,
+      job.id,
     ); // (settings; gates; lines)
-  if (job.kind === 'chat') answered(job, r.status, r.result);
+  // (a thread task that ended without a push lets go of a push held for it: review.ts heldForThread)
+  if (threadorder.isTask(job) && !(r.status === 'done' && r.pr)) threadTaskEnded(job.thread);
+  if (job.kind === 'chat') chatEnded(job, r.status, r.result);
   finished(job, r.status); // the call ledger: its items, and a call it follows up
   if (r.status === 'failed') failedAfter(job, r.result);
   if (r.status === 'failed' && job.kind === 'work') fixFailed(job); // an author's job on a pull request runs again
@@ -2435,6 +2467,8 @@ export const failedNote = (note: string | null) =>
 // A reading without a window's reset keeps the last one known. HQ drops a past
 // 5-hour reset and rolls a past weekly one forward (seats.js).
 type Windows = {
+  fiveHourObservedAt?: number | null;
+  weekObservedAt?: number | null;
   util?: number;
   resets?: number;
   week?: number;
@@ -2466,7 +2500,7 @@ export function setSeat(id: string, engine: string, state: string, until?: numbe
     w.pace === true ? 1 : null,
     w.credits === true ? 1 : null,
   );
-  recordSeatReading(id);
+  recordSeatReading(id, w);
   checkSeatWarning(id);
   // A ready seat with a reading is one the worker gives jobs to, so the jobs a limit holds, on any seat of its engine,
   // may go on now: a job paused while every seat was full starts on the first to get room (a 5-hour window resetting, a
@@ -3118,8 +3152,8 @@ function tell(
         .prepare(`select status, kind, request, coalesce(branch, 'job/' || id) branch from jobs where id = ?`)
         .get(req.job) as { status: string; kind: string; request: number | null; branch: string } | undefined)
     : undefined;
-  if (job?.kind === 'chat') {
-    // (an intercom turn's reply does go to the board: no AUDIENCE line there)
+  if (job?.kind === 'chat' && intercom(req.job!)) {
+    // (an intercom turn's reply goes to the board: no AUDIENCE line; a quick run's not)
     return hear(
       note,
       o.call

@@ -87,8 +87,8 @@ const KEY_MAX = 1000,
 // The board's changes kept, for each seat's last one and the status report
 const ACTIONS_KEPT = 500;
 
-// (stop: a seat's stop level; pacing: on or off, for all seats)
-type ActionWhat = 'add' | 'remove' | 'pause' | 'resume' | 'sign-in' | 'key' | 'stop' | 'pacing';
+// (stop: a seat's stop level; pacing: on or off, for all seats; credits: whether a seat may spend its account's credits)
+type ActionWhat = 'add' | 'remove' | 'pause' | 'resume' | 'sign-in' | 'key' | 'stop' | 'pacing' | 'credits';
 type ActionStatus = 'waiting' | 'working' | 'done' | 'failed';
 type Action = {
   id: number;
@@ -115,12 +115,15 @@ type ListedSeat = {
   removing: number;
   added: string;
   stop: number | null;
+  use_credits: number;
 };
 
 // A seat's stop level: the share of its windows it runs to before it takes no new work, in percent. A seat the board
 // hasn't set runs to the worker's own level, DRAIN_AT (downtime.ts), which this mirrors for HQ's rows. Pacing (the
 // worker's pacedUntil: a week running ahead of its pace takes only the board's word and work that must start before its
-// reset) is on for all seats unless the board turned it off.
+// reset) is on for all seats unless the board turned it off. A seat whose account has credits keeps to its plan all the
+// same, paced and stopping at its level, unless the board lets it spend them (use_credits): spending past the plan is
+// the board's choice, never a default.
 export const STOP_DEFAULT = 90;
 const STOP_MIN = 50,
   STOP_MAX = 99;
@@ -249,6 +252,7 @@ export function listSeats() {
       paused: !!seat.paused,
       removing: !!seat.removing,
       stop: seat.stop ?? STOP_DEFAULT,
+      use_credits: !!seat.use_credits,
       action: lastAction('seat', seat.id),
       signin: signins.get(seat.id) ?? null,
     };
@@ -385,6 +389,14 @@ export function stopSeat(id: string, stop: unknown) {
   return { ok: true, action: recordAction({ seat: id, what: 'stop' }) };
 }
 
+// Whether a seat may spend its account's credits past its plan's limits (off: it's paced and stops like any seat).
+export function creditsSeat(id: string, on: unknown) {
+  if (!seatOf(id)) return "There's no such seat.";
+  if (typeof on !== 'boolean') return 'Say whether it may spend credits.';
+  db.prepare('update seat_list set use_credits = ? where id = ?').run(on ? 1 : 0, id);
+  return { ok: true, action: recordAction({ seat: id, what: 'credits' }) };
+}
+
 export function setPacing(on: unknown) {
   if (typeof on !== 'boolean') return 'Say whether pacing is on or off.';
   remember(PACING_KEY, on ? null : 'off');
@@ -463,7 +475,7 @@ export function seedSeats(seats: unknown) {
 }
 
 // What the worker runs: each seat with its provider's address and models, whether it's paused, its stop level (null: the
-// worker's own), whether pacing is on, and the board's changes it hasn't taken up yet. Seats it no longer has leave HQ's
+// worker's own), whether it may spend credits past its plan, whether pacing is on, and the board's changes it hasn't taken up yet. Seats it no longer has leave HQ's
 // report.
 // The week a seat last reported, so a worker that starts again paces it from its first claim instead of waiting for its
 // next run's reading.
@@ -494,6 +506,7 @@ export function workerSeats() {
             models: p.models,
             paused: !!seat.paused,
             stop: seat.stop ?? null,
+            use_credits: !!seat.use_credits,
             ...lastWeek(seat.id),
           },
         ];

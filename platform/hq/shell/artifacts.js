@@ -62,10 +62,16 @@ export async function artifactList(el, h) {
     rest = all.filter(a => !heroes.includes(a));
   box.artifacts = [...heroes, ...rest];
   const [shelf, list] = box.querySelectorAll('.applist');
-  shelf.innerHTML = heroes.map(tile).join('');
-  list.innerHTML = rest.map(tile).join('');
+  draw(shelf, heroes.map(tile).join(''));
+  draw(list, rest.map(tile).join(''));
   inkPictures(box);
   narrow(box, box.artifacts);
+}
+
+// A list is drawn again only when a tile in it changes, so its pictures stay in place on a refresh
+function draw(list, html) {
+  if (list.drawn === html) return;
+  list.innerHTML = list.drawn = html;
 }
 
 function tile(a) {

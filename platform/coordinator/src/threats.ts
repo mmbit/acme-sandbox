@@ -122,7 +122,10 @@ function seatsNear(f: Forecast) {
     const windows = [
       { name: 'five-hour window', used: s.fiveHour, resets: s.fiveHourResets },
       { name: 'week', used: s.week, resets: s.weekResets },
-    ].filter(w => w.used >= s.stop - SEAT_NEAR && w.used < s.stop);
+    ].filter(
+      (w): w is { name: string; used: number; resets: number | null } =>
+        w.used !== null && w.used >= s.stop - SEAT_NEAR && w.used < s.stop,
+    );
     if (s.state !== 'ready' || !windows.length) return [];
     const near = windows.map(
       w => `${percent(w.used)} of its ${w.name}${w.resets ? ` (resets ${clock(w.resets, f.now)})` : ''}`,

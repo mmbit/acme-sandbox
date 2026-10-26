@@ -60,7 +60,13 @@ test('a call that leaves nothing behind takes its watch-along with it', async ()
 test("the sweep ends a lost line's watch-along with its call, and takes it with a silent one", async () => {
   const noted = await h.liveCall('kit'),
     silent = await h.liveCall('dex');
-  await agent('item', noted.token, { kind: 'promise', owner: 'kit', what: 'Send the note', quote: 'I will send it' });
+  await agent('item', noted.token, {
+    kind: 'promise',
+    owner: 'kit',
+    goal: 'g',
+    what: 'Send the note',
+    quote: 'I will send it',
+  });
   const keeps = await startWatching(noted),
     goes = await startWatching(silent);
   for (const watching of [keeps, goes]) assert.equal(await post(watching.body.events, batch(4, 2)), 200);
@@ -168,6 +174,17 @@ test(
     await endCall('wren', ctx, ['Board: look']);
   },
 );
+
+test("a session of a purpose without its own briefing is never watched for an agent (never told it's the board's screen)", async () => {
+  const session = store.start(kept, 'customer', '7', 'hidden', ['https://shop.example']);
+  assert.equal(store.add(kept, session.id, session.key, Buffer.from(JSON.stringify({ events: WALK[0] }))), 200);
+  assert.deepEqual((await voice('screen-turn', { purpose: 'customer', ref: '7', after: 0, seen: 0 })).body, {
+    on: false,
+  });
+  const tool = await voice('screen', { purpose: 'customer', ref: '7' });
+  assert.equal(tool.status, 404);
+  store.forget(kept, 'customer', '7');
+});
 
 test('the screen routes take the voice line alone', async () => {
   const res = await fetch(`${base}/api/voice/screen-turn`, { method: 'POST', body: '{}', headers: BOARD });

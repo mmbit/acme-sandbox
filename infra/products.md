@@ -90,11 +90,14 @@ watch:                          # optional: HQ's watch on the live app (the coor
   cookie at the first `=` and call `context.addCookies([{ name, value, url: process.env.HQ_PREVIEW_URL, httpOnly: true,
   secure: true, sameSite: 'Lax' }])`.
   It's view-only on that host (no review mode, chat, hand-off, other host or HQ), ends with the job's run or after an
-  hour, and the job's log in HQ says who had one for which host; product code never sees it either. On a product with
-  plans, `hq preview <slug> --player <name> -- <command>` makes the same pass the run's own test player of that name:
-  the product gets an `X-Viewer` of its own (never the board's or a tester's, the same on every pass this run with that
-  name, another for another name or run), and `HQ_PREVIEW_VOUCHER` is its tester's voucher, one plan once in test mode,
-  up to €50, never a shop basket.
+  hour, and the job's log in HQ says who had one for which host; product code never sees it either. On any product,
+  `hq preview <slug> --player <name> -- <command>` makes the same pass the run's own test player of that name: the
+  product gets an `X-Viewer` of its own (never the board's or a tester's, the same on every pass this run with that
+  name, another for another name or run). On a product with plans `HQ_PREVIEW_VOUCHER` is its tester's voucher too,
+  one plan once in test mode, up to €50, never a shop basket; elsewhere there is none. In test mode a product asks
+  `GET /api/pay/viewer?id=<its X-Viewer>` (its payments token) whether a viewer is the company's own, the board or a
+  running job's test player, so it may open what only the company tries there (a test purchase while its sales are
+  closed); the answer is `{company}`, never who it is.
 - Who is looking, on the preview: every request there carries `X-Viewer`, an opaque id for the board, for one tester
   on a share or for an agent job's test player (above), the same on every visit and different for every product. It's never an email, and Caddy takes a
   client's own copy off every request, so a product can keep what a viewer holds (a plan, a save) against it. Off the

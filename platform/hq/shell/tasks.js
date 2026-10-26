@@ -23,6 +23,7 @@ import {
   size,
   sizeShare,
   foundWords,
+  queuedWords,
 } from './threads.js';
 
 // A thread's tasks, the list where the estimate lives: the board's cards first, then each task in the order it runs
@@ -81,7 +82,7 @@ function rowWords(j, s, t) {
   const why =
     s === 'board' ? (j.status === 'blocked' ? 'Waits for you' : 'After your answer') : s === 'after' ? null : '';
   const times = [start, done].filter(Boolean);
-  return [why ?? waitOf(j, heldOf([j])), ...(times.length ? times : why !== '' ? [] : [cap(word(j))])];
+  return [why ?? waitOf(j, heldOf([j])), ...(times.length ? times : why !== '' ? [] : [queuedWords(j)])];
 }
 // Each row state's mark over its face's corner: done a tick, the board's its desk phone, after other work an hourglass;
 // planned has its hollow look and working its bars instead

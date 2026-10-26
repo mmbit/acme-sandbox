@@ -29,7 +29,6 @@ h.finish = async (job, report = { status: 'done' }) => {
 };
 
 const projects = await import('./projects.ts');
-const threadends = await import('./threadends.ts');
 const PROJECTS = readFileSync(`${h.repo}/company/projects.yaml`, 'utf8').replace(
   'projects:\n',
   'projects:\n  - { id: hq, name: HQ, owner: bolt }\n',
@@ -140,26 +139,36 @@ test("work declared as pixel work runs on Opus from the start, and queued work o
 });
 
 test('a task in a thread whose branch holds pixel work runs on Opus, with no branch of its own', async () => {
-  writeFileSync(`${h.repo}/company/projects.yaml`, `${PROJECTS}planning: threads\n`);
-  threadends.watch();
-  try {
-    assert.equal(
-      typeof projects.createThread({ project: 'hq', name: 'Rooms', goal: 'Rooms look right', slug: 'rooms' }),
-      'object',
-    );
-    const first = await h.start({ agent: 'bolt', thread: 'hq/rooms' });
-    const branch = `job/${first.id}`;
-    await h.finish(first, { pr: 505, branch, files: [PIXEL, `qa/${branch.replace('/', '-')}.md`], sha: sha('g') });
-    const next = h.jobs.createJob({
-      agent: 'nib',
-      title: 'The lobby',
-      prompt: 'x',
-      thread: 'hq/rooms',
-      queuedBy: 'bolt',
-    });
-    assert.equal(h.job(next.id).engine, 'claude');
-  } finally {
-    writeFileSync(`${h.repo}/company/projects.yaml`, PROJECTS);
-    threadends.watch();
-  }
+  assert.equal(
+    typeof projects.createThread({ project: 'hq', name: 'Rooms', goal: 'Rooms look right', slug: 'rooms' }),
+    'object',
+  );
+  const first = await h.start({ agent: 'bolt', thread: 'hq/rooms' });
+  const branch = `job/${first.id}`;
+  await h.finish(first, { pr: 505, branch, files: [PIXEL, `qa/${branch.replace('/', '-')}.md`], sha: sha('g') });
+  const next = h.jobs.createJob({
+    agent: 'nib',
+    title: 'The lobby',
+    prompt: 'x',
+    thread: 'hq/rooms',
+    queuedBy: 'bolt',
+  });
+  assert.equal(h.job(next.id).engine, 'claude');
+});
+
+test("a thread task's push owing a redo goes back to its author, never held for the thread's next task", async () => {
+  assert.equal(
+    typeof projects.createThread({ project: 'hq', name: 'Walls', goal: 'Walls look right', slug: 'walls' }),
+    'object',
+  );
+  const first = await h.start({ agent: 'nib', engine: 'codex', thread: 'hq/walls' });
+  h.jobs.createJob({ agent: 'bolt', title: 'The hall', prompt: 'x', thread: 'hq/walls', queuedBy: 'bolt' });
+  const branch = `job/${first.id}`;
+  await h.finish(first, { pr: 506, branch, files: [PIXEL], sha: sha('h') });
+  assert.equal(db.prepare('select 1 from review_waiting_pushes where pr = 506').get(), undefined, 'not held');
+  assert.deepEqual(
+    onPr(506).map(row => [row.agent, row.kind]),
+    [['nib', 'work']],
+    'the redo, back to its author',
+  );
 });

@@ -94,7 +94,7 @@ export function liftWords(p: Lift) {
     return `the board decides "${text(p.decision.name)}"${p.decision.card ? ` (card #${p.decision.card})` : ''}`;
   const jobs = p.until.map(u => `#${u.id}${u.agent ? ` (${text(u.agent)}, ${text(u.state ?? '')})` : ''}`);
   const parts = [
-    ...(p.untilTime ? [`${minute(p.untilTime)} UTC has come`] : []),
+    ...(p.untilTime ? [`${minute(p.untilTime)} has come`] : []),
     ...(jobs.length ? [`${jobs.join(' and ')} ${jobs.length > 1 ? 'have' : 'has'} merged or ended`] : []),
   ];
   return parts.length

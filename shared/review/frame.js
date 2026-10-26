@@ -1,5 +1,5 @@
 // A note's screenshot, framed on what the board marked: review mode's polaroid (review.js) and HQ's note thumbnails
-// (desk.js) both show it this way. The coordinator serves this file at /__review/frame.js on every host.
+// (reviews.js) both show it this way. The coordinator serves this file at /__review/frame.js on every host.
 
 const STROKE = 5; // the circle's ink and the pin's outline reach this far past the mark
 const PIN_ABOVE = 32; // the pin's head stands up to 32 px above the pinned element...
@@ -8,15 +8,17 @@ const MOST_OVERFLOW = 1.5; // a frame beyond 1.5 times the screenshot would show
 
 // The frame holds the circle, or the pinned element and the pin's head, with a margin, in the preview's shape (`aspect`,
 // width / height), and stays inside the screenshot where it fits. A mark bigger than the preview is shown whole, scaled
-// down. The screenshot is the viewport, so the mark's client coordinates are also its coordinates in the picture.
+// down. The screenshot is the viewport as the mark was drawn (note: its anchor, anchor.js, with its kind and area), so
+// the mark's document px less the view's scroll are its coordinates in the picture.
 // Returns the img's width, height, left and top as percentages of the preview, or null when the mark can't be placed
 // or a pin is on something about as big as the page (a section): the preview then keeps its stylesheet's crop.
-export function frameMark(element, viewport, aspect) {
-  const mark = element?.area ?? element?.rect;
-  const viewportWidth = +viewport?.w;
-  const viewportHeight = +viewport?.h;
-  if (!mark || !(viewportWidth > 0 && viewportHeight > 0)) return null;
-  const isPin = element.kind !== 'circle';
+export function frameMark(note, aspect) {
+  const drawn = note?.area ?? note?.el?.box;
+  const viewportWidth = +note?.view?.w;
+  const viewportHeight = +note?.view?.h;
+  if (!drawn || !(viewportWidth > 0 && viewportHeight > 0)) return null;
+  const mark = { x: drawn.x - (+note.view.x || 0), y: drawn.y - (+note.view.y || 0), w: drawn.w, h: drawn.h };
+  const isPin = note.kind !== 'circle';
   const left = Math.max(0, mark.x - STROKE);
   const right = Math.min(viewportWidth, mark.x + mark.w + (isPin ? PIN_RIGHT : STROKE));
   const top = Math.max(0, mark.y - (isPin ? PIN_ABOVE : STROKE));

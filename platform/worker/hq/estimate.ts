@@ -4,7 +4,7 @@
 import * as api from './api.ts';
 import { printJobs, printQuality, type Job, type Typical, type Quality } from './comparisons.ts';
 import { changeLines } from './deadlines.ts';
-import { minute, plural, print, stop } from './output.ts';
+import { minute, plural, print, stop, TIME_ZONE } from './output.ts';
 import * as scoring from './scoring.ts';
 import { duration, waitWords as wordsOf, type Wait } from './waits.ts';
 
@@ -146,7 +146,7 @@ function sizedLine(s: Sized, earlier: number) {
   const on = s.refs.length ? `, on ${s.refs.map(id => `#${id}`).join(', ')}` : '';
   const why = s.why ? `: ${s.why}` : '';
   const before = earlier ? ` (${plural(earlier, 'earlier size')} kept)` : '';
-  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)} UTC${on}${why}. The ETA plays on it${before}.`;
+  return `Saved estimate: ${duration(s.agent_minutes)} of agent time${range} by ${s.by}, ${minute(s.at)}${on}${why}. The ETA plays on it${before}.`;
 }
 
 // What the mean stood on: done jobs like it, or a scheduled job's earlier runs.
@@ -227,6 +227,8 @@ function engineLine(e: Engine) {
   return `${e.engine}: ${left}${reset}.`;
 }
 
+// A time as hq says it, its zone named: "Sat 24 Oct, 17:30 UTC", or on a run that speaks to the board, on its clock
+// (output.ts TIME_ZONE): "Sat 24 Oct, 19:30 CEST". Times given to hq stay UTC.
 export const at = (ms: number) =>
   new Date(ms).toLocaleString('en-GB', {
     weekday: 'short',
@@ -234,8 +236,9 @@ export const at = (ms: number) =>
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
-    timeZone: 'UTC',
-  }) + ' UTC';
+    timeZone: TIME_ZONE,
+    timeZoneName: 'short',
+  });
 
 // ---- queue changes
 

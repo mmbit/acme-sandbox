@@ -166,24 +166,27 @@ then `old.dispose()`, swap the node, re-attach input, `resize`, `focus(home, ins
 bubbles, stop the tour, re-bind the HUD's scene buttons (`controls`). `dispose` removes world listeners, cancels
 `shell.later` work, clears inline canvas styles; module caches may survive but hold no scene state. The look picker
 (computer › Settings › Look) swaps with `stage.pick(name)`, which also stores it per viewer (`null`: none picked); boot
-takes `?renderer=` (this load only), else the stored look, else `theme.renderer`, falling back to it, then brownstone.
+takes `?renderer=` (this load only), else the stored look, else `theme.renderer`, falling back to it, then wire. The
+looks are the folders in `renderers/` with a `scene.js` (`looks.mjs`, which both servers answer `renderers/looks.json`
+with and the checks loop over), and each says its style in it (`export const style`: `pixel`, `line` or `any`), which
+picks its icons.
 
-Skins: style.css is the brownstone's pixel-art UI, written in variables (`--line --bw --r* --shadow* --press --ease
---on-accent --deep --scr* --tint-*`, the brand's colours under them). A look in `stage.js` DRESSED ships
+Skins: style.css is the shell's own UI, in the system font, written in variables (`--line --bw --r* --shadow* --press --ease
+--on-accent --deep --scr* --tint-*`, the brand's colours under them). A dressed look ships
 `renderers/<name>/skin.css`: `mount` loads it beside the one worn, and drops the old one as the scene swaps. A skin
 sets the variables on `body`, so its surfaces, lines and font win over the brand's `:root` while the brand's accents
 (red, gold, …) stay; a few targeted rules do what variables can't (a frosted backdrop, eased motion, smooth HUD icons,
-the count as text). HQ ships two looks, brownstone and holo; soft, glass, paper and ring are archived at the branch
-`archive/looks-six`.
+the count as text). HQ ships its looks from `renderers/` (brownstone, holo, wire); soft, glass, paper and ring are
+archived at the branch `archive/looks-six`.
 
-Sound packs: `shell/audio.js` is the engine (`tone`, `noise`, `strike`, `note`, all WebAudio synthesis, no files) and the
-brownstone's chiptune, the default pack. A look in DRESSED also ships `renderers/<name>/sounds.js`:
-`export const sfx = { name: (...a) => … }` (its version of a sound, made with the engine) and `export const music =
-{ bass, arp, lead, hat, snare }` (each part's `tone`/`noise` settings over the chiptune's, `gain` on its level); a sound
-or part it leaves out is the chiptune's. `mount` imports it with the scene and `audio.wear(pack)` puts it on as the scene
-swaps in (brownstone: `{}`); `sfx.<name>` and `shell.sound.play` always play the pack worn. A pack's sounds go through a
-bus of its own that the next swap fades and drops, so nothing of the last look rings on; the music changes voice at its
-next note. The rain and its drops on the glass stay the same in every look: they are the weather, not the UI.
+Sound packs: `shell/audio.js` is the engine (`tone`, `noise`, `strike`, `note`, all WebAudio synthesis, no files). A
+dressed look also ships `renderers/<name>/sounds.js`: `export const sfx = { name: (...a) => … }` (its sounds, made with
+the engine) and `export const score = { step, play }` (its music: `step` s a step, or a function of the rain, and
+`play(step, at, mood)`); a sound it leaves out is the platform's click from the sound kit (`/foley.js`), and the brownstone's
+chiptune is its own pack (`renderers/brownstone/sounds.js`). `mount` imports it with the scene and `audio.wear(pack)` puts
+it on as the scene swaps in; `sfx.<name>` and `shell.sound.play` always play the pack worn. A pack's sounds go through a
+bus of its own that the next swap fades and drops, so nothing of the last look rings on; the new look's music starts from
+its top. The rain and its drops on the glass stay the same in every look: they are the weather, not the UI.
 
 ## brand.yaml
 `GET /api/brand` → `{ brand: company/brand.yaml, theme: theme/hq.yaml }` (`{}` for a missing file); dev: `mock/brand.json`.
@@ -225,7 +228,7 @@ Flagged, not moved: desk.js:68,99–104 postMessage key `onlyonery` (shared with
 (→ infra.env); data.js mock event script (→ mock/events.json).
 
 ## Steps
-**The check: `platform/hq/pixel-check.mjs --ref origin/main [--only …] [--brand file]`.** Serves the ref's tree (via
+**The check: `platform/hq/renderers/brownstone/pixel-check.mjs --ref origin/main [--only …] [--brand file]`.** Serves the ref's tree (via
 `git show ref:path`) and the working tree from two `node:http` servers, both in dev mode with mock data.
 Playwright renders each scenario and captures screenshots of the visible page, covering DOM, 2D and WebGL renderers.
 `check()` compares the PNG Buffers in Node with `Buffer.equals()`. Only on a mismatch does `report()` call `diff()`,

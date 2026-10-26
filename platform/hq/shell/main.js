@@ -6,7 +6,7 @@ import * as world from '../world/world.js';
 import * as clock from '../world/clock.js';
 import * as weather from '../world/weather.js';
 import * as mascots from '../world/mascots.js';
-import { mount, loop, look, lookName, RENDERERS } from './stage.js';
+import { mount, loop, look, lookName, looks } from './stage.js';
 import { bindInput } from './input.js';
 import { bindHud, updateStatus, toast, countBadge } from './hud.js';
 import { onEvent } from './events.js';
@@ -17,9 +17,11 @@ import { initDesk, openPhone, openIntercom, openComputer, onRequests, refreshReq
 import { refreshSeen, seen, onSeen } from './seen.js';   // (seen, onSeen: job #7083)
 import { registerWorker, syncPush } from './push.js';
 import { names, brand, theme } from './brand.js';
-import { initProjects, openProjects } from './projects.js';
+import { initProjects, openProjects, readAhead } from './projects.js';   // (readAhead)
 import { initTalk } from './talk.js';
 import { initFinder } from './finder.js';
+import { initBook } from './book.js';
+import { refreshRail } from './bookrail.js';
 
 const $ = s => document.querySelector(s);
 const REQUEST_POLL_MS = 20000;  // open board requests
@@ -35,7 +37,11 @@ async function boot() {
   const { org, dev } = await loadOrg();
   known = org; world.setOrg(org, dev);
   $('#dev').hidden = !dev;
+  // the book beside the page, before the stage, so the building is framed in the room it leaves (a book that can't start
+  // stops HQ's start, as the stage does), and its rail's faces drawn again once the look can draw them.
+  await initBook();
   await stage(q.get('intro') !== '0');
+  refreshRail();
   initFinder(); initPanel(); initDesk(); initProjects(); initTalk();   // (initFinder first: its Escape)
   onRequests(showRequests); onSeen(paintDeskCount); onSeen(paintIntercomCount);   // (onSeen)
   await Promise.all([reloadGazette(dev), refreshSeen()]);   // (seen)
@@ -52,6 +58,7 @@ async function boot() {
   });
   $('#loading').classList.add('gone');
   refreshMeetings().then(pollMeetings); // (once HQ is up: who's in a meeting walks there)
+  readAhead();   // (the projects view's first open paints at once)
   setTimeout(() => $('#hint').classList.add('gone'), 7000);
   // Notifications: the service worker, and what a tapped notification asks for. /?open=phone starts HQ with
   // the phone open (/?open=phone&card=<id>: at that card, a ping's); /?open=jobs&job=<id>, the projects view at that job, its report in it (a link to it, as the CEO gives when work is ready). An HQ that's already running gets a message instead.
@@ -74,9 +81,10 @@ async function boot() {
 
 // The look: ?renderer=<name> for this page load only, else the one this viewer picked, else the company's. One that
 // won't start here (no WebGL2, say) falls back to the company's, then the plain wire, with a word: never a dead HQ.
-// (wire, not a style of its own)
+// (wire, not a style of its own; the looks read from their folders)
 async function stage(intro) {
-  const tries = [...new Set([q.get('renderer') ?? store.get('renderer'), theme.renderer, 'wire'])].filter(n => RENDERERS.includes(n));
+  const shipped = (await looks).map(l => l.name);
+  const tries = [...new Set([q.get('renderer') ?? store.get('renderer'), theme.renderer, 'wire'])].filter(n => shipped.includes(n));
   for (const [i, name] of tries.entries()) {
     try { await mount(name, intro); } catch (e) { console.error(`HQ could not start the ${name} view:`, e); continue; }
     if (i) toast(`<b>${esc(await lookName(tries[0]))} didn't load on this device.</b> Showing ${esc(await lookName(look))} instead.`);
@@ -96,7 +104,12 @@ function brandApp() {
   if (app.themeColour) $('meta[name="theme-color"]').content = app.themeColour;
   if (logo.svg && img.getAttribute('src') !== logo.svg) img.src = logo.svg; // (the same src again would fetch it again)
   img.alt = logo.alt;
-  if (font.href) $('link[href*="fonts.googleapis.com/css"]').href = font.href; // (HQ's CSP takes fonts from Google only)
+  // (HQ's CSP takes fonts from Google only; the coordinator puts the same link in index.html, so it's there before boot.
+  if (font.href && !$('link[data-brand-font]')) {
+    const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: font.href });
+    l.dataset.brandFont = '';
+    $('link[rel=stylesheet]').before(l);
+  }
   const sheet = new CSSStyleSheet(), root = sheet.cssRules[sheet.insertRule(':root {}')].style;
   for (const [k, v] of Object.entries(colours)) {
     if (/^#[\da-f]{3,8}$/i.test(v)) root.setProperty(`--${k}`, v);

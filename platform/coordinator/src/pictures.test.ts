@@ -200,7 +200,7 @@ test('a call\'s pictures: the voice line gets them only for that live call; afte
 test('a call whose line dropped before the hand-over: its follow-up lists its pictures, and doesn\'t say which reached the call agent', async () => {
   const ctx = await startCall('wren');
   const id = (await upload(PNG, 'image/png', onCall(ctx))).body.id;
-  assert.equal((await agent('item', ctx.token, { kind: 'promise', owner: 'wren', what: 'Look at the sketch', quote: 'I will look at it' })).status, 200);
+  assert.equal((await agent('item', ctx.token, { kind: 'promise', owner: 'wren', goal: 'g', what: 'Look at the sketch', quote: 'I will look at it' })).status, 200);
   ledger.sweep(Date.now() + 3 * 3600_000 + 60_000);   // (three hours on, with no hand-over: no route moves the clock)
   const followUp = (await h.claim())!;
   assert.equal(followUp.call, ctx.call);

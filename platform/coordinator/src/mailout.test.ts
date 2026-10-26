@@ -141,6 +141,7 @@ test("an email the service took and couldn't deliver: its signed webhook names i
 
   // its own spam filter, for an email sent without an about; and one HQ never kept an id for
   await mailout.send('live', { to: 'ann@example.com', subject: 'Hi', text: 'Hi' });
+  h.db.prepare("update mail_sent set ts = '2026-10-26T09:12:00.000Z' where id = ?").run(lastId()); // (on the board's clock: 10:12 in Amsterdam)
   assert.equal(
     await hook({
       id: 'ev-2',
@@ -153,9 +154,9 @@ test("an email the service took and couldn't deliver: its signed webhook names i
     await hook({ id: 'ev-3', event: 'message.suppressed', data: { message_id: 'm-before', reason: 'hard_bounce' } }),
     200,
   );
-  assert.match(
+  assert.equal(
     told()[1],
-    /^Email: NEEDS A PERSON: an email HQ sent at \d{4}-\d\d-\d\dT\d\d:\d\d UTC didn't reach its reader: the email service held it back as spam \(its own filter, before sending\) \(Spam score threshold exceeded\)\.$/,
+    "Email: NEEDS A PERSON: an email HQ sent at 26 Oct, 10:12 didn't reach its reader: the email service held it back as spam (its own filter, before sending) (Spam score threshold exceeded).",
   );
   assert.equal(
     told()[2],

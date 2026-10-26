@@ -1,8 +1,9 @@
 // Downtime jobs, the worker's side (the coordinator's rule is in its jobs.ts): reading a Codex seat's windows, when a
 // seat drains, and which downtime jobs stop when their heartbeats say yield.
 import { spawn } from 'node:child_process';
-import { full, windowUsed, type Windows } from './pace.ts';
+import { full, reserveElsewhere, windowUsed, type Windows } from './pace.ts';
 import { cliOf, type SeatProvider } from './providers.ts';
+import { spendCredits } from './seatlist.ts';
 
 // A reading from a Codex session log's last rate_limits line (token_count entries: used_percent of each window, the
 // 5-hour one of 300 minutes and the weekly one of 10080). A plan may report only one of them: on 2026-09-30 a seat's
@@ -14,20 +15,28 @@ import { cliOf, type SeatProvider } from './providers.ts';
 // ignored (it would hold off every real reading after it), and so is a reset further ahead than its window is long (a
 // planted resets_at in 2100 would drain the seat until then): that window's reset counts as unknown (DRAIN_RECHECK).
 // util undefined: the reading has no 5-hour window. credits: the account pays for use past its limits (the board's
-// Codex credits; the reading's `credits`, when it has one), so a full window doesn't drain the seat (drainUntil).
+// Codex credits; the reading's `credits`, when it has one), so a full window doesn't drain the seat (drainUntil) while
+// the board lets it spend them (seatlist.ts spendCredits). creditsLeft: their balance, when the reading gives it as a
+// number.
 export function codexReading(line: string, since: number, measured = 0, now = Date.now()) {
   let e: any; try { e = JSON.parse(line); } catch { return; }
-  const rl = e?.payload?.rate_limits, ws = [rl?.primary, rl?.secondary].filter(x => Number.isFinite(x?.used_percent));
+  const at = typeof e?.timestamp === 'string' ? Date.parse(e.timestamp) : NaN;
+  if (!(at >= since && at > measured && at <= now + 60_000)) return;
+  return readingOf(e?.payload?.rate_limits, at, now);
+}
+// (a rate_limits object's windows and credits, as of `at`: the log's line, or the worker's own read: limitsReading)
+function readingOf(rl: any, at: number, now: number) {
+  const ws = [rl?.primary, rl?.secondary].filter(x => Number.isFinite(x?.used_percent));
   const w = ws.find(x => x.window_minutes === 300) ?? ws.find(x => x.window_minutes === undefined);
   const wk = ws.find(x => x.window_minutes === 10080);
-  const at = typeof e?.timestamp === 'string' ? Date.parse(e.timestamp) : NaN;
-  if (!(at >= since && at > measured && at <= now + 60_000) || !w && !wk) return;
+  if (!w && !wk) return;
   const share = (x: { used_percent: number }) => Math.min(100, Math.max(0, x.used_percent)) / 100;
   const reset = (x: { resets_at?: number }, minutes: number) =>
     Number.isFinite(x.resets_at) && x.resets_at! * 1000 <= now + minutes * 60_000 ? x.resets_at! * 1000 : undefined;
   const credits = rl.credits && (rl.credits.unlimited === true || rl.credits.has_credits === true);
+  const left = typeof rl.credits?.balance === 'string' && /^\d+(\.\d+)?$/.test(rl.credits.balance) ? Number(rl.credits.balance) : NaN;
   return { at, ...(w ? { util: share(w), resets: reset(w, 300) } : {}), ...(wk ? { week: share(wk), weekResets: reset(wk, 10080) } : {}),
-    ...(rl.credits ? { credits } : {}) };
+    ...(rl.credits ? { credits } : {}), ...(Number.isFinite(left) ? { creditsLeft: left } : {}) };
 }
 // The tokens a Codex session has written so far, from the same line (its token_count's total), for HQ's chart of the
 // work; undefined when it doesn't say.
@@ -35,6 +44,65 @@ export function codexTokens(line: string) {
   let e: any; try { e = JSON.parse(line); } catch { return; }
   const output: unknown = e?.payload?.info?.total_token_usage?.output_tokens;
   return Number.isInteger(output) && (output as number) >= 0 ? output as number : undefined;
+}
+
+// A Codex seat's limits and credits as its account reports them (the app server's account/rateLimits/read), read by the
+// worker as the keeper with the seat's own folder as the home (`who`'s CODEX_HOME): no job's home, so nothing a job writes
+// reaches it, and no turn, so it spends nothing (a sign-in it refreshes lands in the seat's own auth.json). The answer's
+// result (limitsReading reads it); undefined: an error, or no answer within `ms`.
+export function codexLimits(who: { uid?: number; gid?: number; env: Record<string, string> }, ms = 30_000) {
+  return new Promise<unknown>(resolve => {
+    let out = '', done = false;
+    const end = (v?: unknown) => {
+      if (done) return;
+      done = true; clearTimeout(t);
+      try { process.kill(-c.pid!, 'SIGKILL'); } catch { /* (it ended by itself) */ }   // (its whole group: the app server stays up until it's ended)
+      resolve(v);
+    };
+    const c = spawn('codex', ['app-server'], { env: who.env, uid: who.uid, gid: who.gid, detached: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    const t = setTimeout(() => end(), ms);
+    c.on('error', () => end());
+    c.on('close', () => end());
+    c.stdin!.on('error', () => {});
+    c.stdout!.on('data', d => {
+      out += d;
+      for (let i; (i = out.indexOf('\n')) >= 0; out = out.slice(i + 1)) {
+        let m: any; try { m = JSON.parse(out.slice(0, i)); } catch { continue; }
+        if (m?.id === 2) end(m.result);
+      }
+    });
+    c.stdin!.write([{ id: 1, method: 'initialize', params: { clientInfo: { name: 'worker', version: '1' } } }, { method: 'initialized' },
+      { id: 2, method: 'account/rateLimits/read' }].map(m => `${JSON.stringify(m)}\n`).join(''));
+  });
+}
+// codexLimits's result as a reading (codexReading's), as of now: its single-bucket view, which the session log's lines
+// mirror.
+export function limitsReading(result: any, now = Date.now()) {
+  const rl = result?.rateLimits, win = (w: any) => w && { used_percent: w.usedPercent, window_minutes: w.windowDurationMins ?? undefined, resets_at: w.resetsAt ?? undefined };
+  return readingOf(rl && { primary: win(rl.primary), secondary: win(rl.secondary),
+    credits: rl.credits && { has_credits: rl.credits.hasCredits, unlimited: rl.credits.unlimited, balance: rl.credits.balance } }, now, now);
+}
+
+// A Codex reading's windows and credits on its seat (the worker's codexWindow and readLimits), and whether it runs on
+// those credits (spendCredits). confirmed: the reading is the worker's own read of the account (codexLimits), not a job's
+// log (held). A job's line may give one window and leave the seat's other as it was; the worker's read replaces both, so
+// it never confirms a week only a job's log gave.
+type Reading = NonNullable<ReturnType<typeof codexReading>>;
+type Taking = Windows & { measured?: number; hasCredits?: boolean; useCredits?: boolean; creditsLeft?: number; confirmed?: boolean };
+export function takeReading(seat: Taking, r: Reading, confirmed: boolean) {
+  seat.util = r.util; seat.resets = r.resets ?? 0; seat.measured = r.at; seat.hasCredits = r.credits;
+  seat.creditsLeft = r.creditsLeft; seat.confirmed = confirmed; spendCredits(seat);
+  if (confirmed || r.week !== undefined) { seat.week = r.week; seat.weekResets = r.weekResets ?? 0; }
+}
+// The worker's own read on a held seat (readLimits, limitsReading's reading): it replaces the jobs', and a seat asleep at
+// its limit wakes, for its drain to hold it again by that reading or not. With no reading (readFailed), the seat keeps
+// what it had: a seat that keepsToPlan stays held, unconfirmed, and lets no job through; its account is read again the
+// next hour (readDue).
+export function takeRead(seat: Taking & { state: string; until: number; readFailed?: boolean }, r: Reading | undefined) {
+  seat.readFailed = !r;
+  if (!r) { seat.confirmed = false; return; }
+  takeReading(seat, r, true);
+  if (seat.state === 'sleeping') { seat.state = 'ready'; seat.until = 0; }
 }
 
 // The last rate_limits line of a Codex session's log, read as the job's uid (the home is the job's) from its sessions
@@ -77,20 +145,45 @@ export function drainUntil(s: Windows, now = Date.now()) {
   return over.length ? Math.max(...over.map(([, reset]) => reset || now + DRAIN_RECHECK)) : 0;
 }
 
+// An account with credits the board hasn't let it spend (seatlist.ts spendCredits): its provider bills them for use past
+// its plan's limits, so no run may take it there. It keeps its own reserve (reserveFor), its running jobs stop when it
+// drains (drainPauses), and its hold lets no job through to check it (checkDue): the worker reads its account itself
+// instead (readDue), and once that read holds it, the hold lasts till its window's reset, at most the window's length.
+export const keepsToPlan = (s: { hasCredits?: boolean; credits?: boolean }) => !!s.hasCredits && !s.credits;
+// Whether a seat runs on past its drain level, to its limit, while another of its engine keeps the reserve (pace.ts
+// reserveElsewhere): never one that keepsToPlan. seats: those it may leave the reserve to.
+export const reserveFor = <S extends Windows & { engine: string; state: string; hasCredits?: boolean }>(seat: S, seats: S[], now = Date.now()) =>
+  !keepsToPlan(seat) && reserveElsewhere(seat, seats, now);
+// How a seat drains now (the worker's drain): until when it takes no new jobs (0: it doesn't), and the jobs running on it
+// that stop at their next step: a ready seat's as it starts draining, and those of a seat that keepsToPlan whenever it's
+// held (a run already going when its credits reading came in, or when the board took its leave back).
+type Draining = Windows & { id: string; engine: string; state: string; hasCredits?: boolean };
+export function drainOf<S extends Draining>(seat: S, seats: S[], running: Iterable<[string, { seat: string; job: number }]>, keep: string, now = Date.now()) {
+  const until = reserveFor(seat, seats, now) ? 0 : drainUntil(seat, now);
+  return { until, pause: until && (seat.state === 'ready' || keepsToPlan(seat)) ? drainPauses(seat, running, keep) : [] };
+}
+
 // Whether a held Codex seat lets a job through now (the worker's checkSeat). Its readings come from a log its jobs can
 // write, so a hold they set (a drain, or a sleep past the limit's own time: sleepUntil) can't be the last word: a held
 // Codex seat takes one job every DRAIN_RECHECK, whose own run's reading keeps the hold or lifts it, and whose limit puts
 // the seat back to sleep. (Claude seats have the worker's recheckLoop: their readings come from the CLI's own events.)
-// checked: when the hold began or a job last went through.
-type Held = { engine: string; state: string; until: number; checked?: number };
-const held = (s: Held, now: number) => s.engine === 'codex' && (s.state === 'draining' || s.state === 'sleeping') && s.until > now;
-export const checkDue = (s: Held, now = Date.now()) => held(s, now) && (s.checked ?? 0) + DRAIN_RECHECK <= now;
+// checked: when the hold began, a job last went through, or the worker last read the account.
+// A seat that keepsToPlan takes no job, which could run into its credits: the worker reads its account itself on the
+// hour instead (readDue: codexLimits), and that read's windows and credits replace the log's. confirmed: the seat's
+// reading is that read's, which alone makes its hold the last word (a job's reading of credits and a full window
+// counts for one DRAIN_RECHECK at most).
+type Held = { engine: string; state: string; until: number; checked?: number; hasCredits?: boolean; credits?: boolean; confirmed?: boolean };
+const held = (s: Held, now: number) =>
+  s.engine === 'codex' && (s.state === 'draining' || s.state === 'sleeping') && s.until > now && !(keepsToPlan(s) && s.confirmed);
+const due = (s: Held, now: number) => held(s, now) && (s.checked ?? 0) + DRAIN_RECHECK <= now;
+export const checkDue = (s: Held, now = Date.now()) => due(s, now) && !keepsToPlan(s);
+export const readDue = (s: Held, now = Date.now()) => due(s, now) && keepsToPlan(s);
 
 // The `until` the coordinator gets for a seat: a held Codex seat's next check, not the end of its hold (that goes in the
 // seat's note). The panel counts a Codex seat as out until its `until` (codexSeatOut in review.ts) and starts a normal
 // round without a Codex reviewer meanwhile, so with the hold's end there a check would only ever come from Codex work or
 // a high-risk review, and one planted line could keep the panel short of Codex for days. Once the check is due, rounds
-// get their Codex reviewer again, and the first such job is the check.
+// get their Codex reviewer again, and the first such job is the check (for a seat that keepsToPlan, the worker's read).
 export const reportedUntil = (s: Held, now = Date.now()) => held(s, now) ? Math.min(s.until, (s.checked ?? 0) + DRAIN_RECHECK) : s.until;
 
 // When a job that hit the limit on a seat may be claimed again (its not_before): at once if another seat is free, else
@@ -143,9 +236,10 @@ export const lineSeat = <S extends Pickable & { until: number }>(seats: S[], now
 
 // The jobs a Claude seat stops at their next step when it starts draining, so they don't spend the board's reserve: every
 // one running on it but the board's own (keep: the intercom's slot). A Codex seat's run on: a held Codex seat takes one
-// job an hour anyway (checkDue).
-export const drainPauses = (seat: { id: string; engine: string }, running: Iterable<[string, { seat: string; job: number }]>, keep: string) =>
-  seat.engine === 'claude' ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
+// job an hour anyway (checkDue). But not on a seat that keepsToPlan, whose runs would go on into its credits (for a
+// reading a job planted, until the worker's read lifts its hold: readDue).
+export const drainPauses = (seat: { id: string; engine: string; hasCredits?: boolean; credits?: boolean }, running: Iterable<[string, { seat: string; job: number }]>, keep: string) =>
+  seat.engine === 'claude' || keepsToPlan(seat) ? [...running].filter(([slot, r]) => r.seat === seat.id && slot !== keep).map(([, r]) => r.job) : [];
 
 // Until when a seat that hit its limit sleeps: the limit's own reset (limitReset: often only a backoff of 30 minutes
 // and up, when the CLI's message names no time), but never before a drain its windows already call for. A run that

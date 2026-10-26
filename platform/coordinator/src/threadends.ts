@@ -1,16 +1,16 @@
-// A thread's end, and the switch's (../docs/projects.md, "Threads in order"): a merge clears the thread's branch and
-// closes each thread whose work is all in, switch on or off; switching threads in order off drains them, each thread
-// branch's work opening its pull request (the revert).
-import { db, once, planChange, remember } from './db.ts';
+// A thread's end (../docs/projects.md, "Threads in order"): a merge clears the thread's branch and wakes the owner of
+// each thread with nothing left open to judge it (threadjudge.ts).
+import { db, once, planChange } from './db.ts';
 import * as reviewclosure from './reviewclosure.ts';
-import { projects } from './company.ts';
 import * as jobs from './jobs.ts';
-import { MODE, mode, openPr, tasksOf, type Task } from './threadorder.ts';
+import { tasksOf, type Task } from './threadorder.ts';
 import { findThread, type Thread } from './projects.ts';
 import { oneTask } from './made.ts';
+import * as threadjudge from './threadjudge.ts';
 
 // A pull request merged (review.ts pullRequestMerged): the thread starts its next task on a new branch. Each thread
-// whose work it held is done once every task in it is done and merged (or done with nothing to merge).
+// whose work it held stays open with nothing in it open or still to merge, and its owner judges it (threadjudge.ts
+// wake): they close it (hq plan done) or draw its next task. A judge's own thread closes once all of it is in.
 export function merged(pr: number) {
   const row = db.prepare('select branch from prs where number = ?').get(pr) as { branch: string } | undefined;
   if (!row) return;
@@ -25,7 +25,14 @@ export function settled(branch: string) {
       and coalesce(branch, 'job/' || id) = ?`,
       )
       .all(original) as { thread: string }[];
-    for (const { thread } of threads) closeIfDone(thread);
+    for (const { thread } of threads)
+      if (threadjudge.judges(thread)) closeIfDone(thread);
+      else
+        try {
+          threadjudge.wake(thread);
+        } catch (err) {
+          console.error(`${thread}'s owner not woken to judge it:`, err);
+        }
   }
 }
 
@@ -73,76 +80,3 @@ export function endedEmpty(id: string) {
 // Whether a thread is a routine's run: its job is one the schedule recorded (schedule.ts run)
 const routineRun = (thread: string) =>
   !!db.prepare('select 1 from schedule_runs r join jobs j on j.id = r.job where j.thread = ?').get(thread);
-
-// ---- the switch
-
-// Every minute (server.ts): projects.yaml's `planning:` moves the switch HQ holds (threadorder.ts mode), which the claim
-// reads. On, it is on at once. Off, it drains first: each thread whose branch holds pushed work and whose tasks are idle
-// opens that work's pull request, and the thread's queued tasks wait for it to merge; meanwhile the order still holds,
-// and a task that hasn't started waits for its thread's pull request (threadorder.ts waits). It is off once every thread
-// is through. A file that doesn't parse throws here, and the switch stays as it was.
-export function watch() {
-  if (projects().planning === 'threads') {
-    if (mode() !== 'threads') remember(MODE, 'threads');
-    return;
-  }
-  if (mode() === 'off') return;
-  remember(MODE, 'draining');
-  const open = () => db.prepare("select * from threads where status = 'open' order by id").all() as Thread[];
-  for (const t of open().filter(t => t.branch && !busy(t.id)))
-    try {
-      reopen(t);
-    } catch (err) {
-      console.error(`Planning off: ${t.id}'s pull request not opened:`, err);
-    }
-  if (!open().some(t => t.branch || busy(t.id))) remember(MODE, 'off');
-}
-// A thread with a task running, waiting for the board, or back in the queue to go on in its session (its gates)
-const busy = (thread: string) =>
-  tasksOf(thread).some(t => t.status === 'running' || t.status === 'blocked' || (t.status === 'queued' && t.session));
-// A thread's branch, drained: its work opens its pull request, reviewed by today's panel (one already open stays), and
-// the thread's queued tasks wait for it to merge, so nothing runs on work it can't see. Opening it is a job of the agent
-// of the last task that pushed to it, on the branch: bring it up to date and stop, the worker opens it. The thread is
-// left without a branch.
-function reopen(t: Thread) {
-  const last = db
-    .prepare(
-      `select id, agent from jobs where kind = 'work' and status in ('done', 'failed') and coalesce(branch, 'job/' || id) = ?
-      order by id desc limit 1`,
-    )
-    .get(t.branch) as { id: number; agent: string } | undefined;
-  const pr = openPr(t.branch!);
-  const waitOn = !last
-    ? undefined
-    : pr
-      ? last.id
-      : jobs.createJob({
-          agent: last.agent,
-          title: `Opening the pull request of the thread "${t.name}"`,
-          prompt:
-            `The company plans its work today's way again, so the thread "${t.name}" (${t.id}) opens its pull request now ` +
-            `with the work its tasks pushed to ${t.branch}, which you are on. Merge origin/main into it (keep both sides), ` +
-            `run \`npm run gates\` and fix what they report, and stop: the worker opens the pull request for the review. ` +
-            `Change nothing else; the thread's queued tasks wait for it to merge.`,
-          branch: t.branch!,
-          thread: t.id,
-        }).id;
-  const queued = tasksOf(t.id).filter(q => q.status === 'queued' && q.id !== waitOn);
-  // (before them in the thread's order, should the company plan by threads again while it's queued)
-  if (waitOn && !pr && queued.length)
-    db.prepare('update jobs set seq = (select coalesce(seq, id) from jobs where id = ?) - 0.5 where id = ?').run(
-      queued[0].id,
-      waitOn,
-    );
-  const wait = db.prepare('insert or ignore into waits (job, on_job) values (?, ?)');
-  if (waitOn) for (const q of queued) wait.run(q.id, waitOn);
-  db.prepare('update threads set branch = null where id = ?').run(t.id);
-  planChange({
-    project: t.project,
-    thread: t.id,
-    what: !waitOn
-      ? `planning off: ${t.branch} had no finished task to open its pull request`
-      : `planning off: ${pr ? `pull request #${pr.number}` : `job #${waitOn} opens the pull request`} of ${t.branch}, which ${queued.length} queued task(s) wait for`,
-    by: 'hq',
-  });
-}

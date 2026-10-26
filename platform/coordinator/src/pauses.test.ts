@@ -98,7 +98,8 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   const [levels, view] = [thread('levels'), thread('view', 'shop')];
   const held = h.queue({ agent: 'kit', thread: levels });
   const first = await h.start({ agent: 'moss', thread: view });
-  const second = await h.start({ agent: 'moss', thread: view });
+  // (a thread of its own: one thread's tasks run one at a time)
+  const second = await h.start({ agent: 'moss', thread: thread('desk', 'shop') });
   const p = pause(
     { thread: levels, why: 'Until the view and the desktop are done', until: [first.id, second.id] },
     'wren',
@@ -237,7 +238,8 @@ test('a pause is refused where it could never resume, or by anyone but the CEO a
   assert.match(String(pauses.pause({ thread: levels, why, until: [own] }, 'wren')), /which the pause would hold/);
   assert.match(String(pauses.pause({ project: 'game', why, until: [own] }, 'wren')), /which the pause would hold/);
   assert.match(String(pauses.pause({ thread: levels, why, until: [done.id] }, 'wren')), /merged already/);
-  const ended = await h.start({ agent: 'moss', thread: view });
+  // (a thread of its own, so it ends with nothing to merge rather than on the merged branch of view)
+  const ended = await h.start({ agent: 'moss', thread: thread('desk', 'shop') });
   await h.finish(ended);
   assert.match(
     String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')),
@@ -274,7 +276,8 @@ test('a pause or a wait that would hold its own way out is refused, across proje
     String(pauses.pause({ project: 'game', why: 'Hold it', until: [shop] }, 'wren')),
     new RegExp(`#${shop} needs #${held} first, on ${levels}, which the pause would hold`),
   );
-  const free = h.queue({ agent: 'moss', thread: till, queuedBy: 'moss' });
+  // (a thread of its own: in till it would follow the task that needs held)
+  const free = h.queue({ agent: 'moss', thread: thread('desk', 'shop'), queuedBy: 'moss' });
   pause({ project: 'game', why: 'Hold it', until: [free] }, 'wren');
   assert.match(String(h.jobs.addWait(free, held, 'moss')), /neither would ever start/);
 });
@@ -399,7 +402,8 @@ test('a pause of the work in no thread waits only for work that can run and merg
   h.storedCall(1, 'bolt', followUp);
   const expedited = h.queue({ agent: 'moss', expedite: true });
   const afterFollowUp = h.queue({ agent: 'moss', thread: gates, after: followUp });
-  const afterExpedited = h.queue({ agent: 'moss', thread: gates, after: expedited });
+  // (a thread of its own: in gates it would follow the task after the follow-up)
+  const afterExpedited = h.queue({ agent: 'moss', thread: thread('desk', 'shop'), after: expedited });
   const why = 'No new start without a deadline';
   assert.match(
     String(pauses.pause({ project: 'unsorted', why, until: [followUp] }, ceo())),

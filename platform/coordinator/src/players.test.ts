@@ -2,7 +2,6 @@
 // product with plans, and its voucher; the harness's server, whose imitation plays Stripe).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 import { productHeaders } from './fixture.ts';
@@ -24,7 +23,7 @@ const h = await harness('players', {
 });
 const as = await productHeaders();
 const feedback = await import('./feedback.ts');
-const guests = await import('./guests.ts');
+const shares = await import('./shares.ts');
 
 const HQ = 'hq.company.test',
   ROCKET = 'rocket.preview.company.test';
@@ -45,14 +44,21 @@ const check = async (cookie: string, query = '', host = ROCKET) => {
   });
   return { status: r.status, viewer: r.headers['x-viewer'] as string | undefined };
 };
+// an invited tester's session on the preview, as the guest desk's hand-off leaves it (shares.ts onward, accept)
+const testerSession = (guest: string) => {
+  const code = new URL(shares.onward(guest, `https://${ROCKET}/`)!).searchParams.get('s')!;
+  return shares.accept(code, ROCKET)!.session;
+};
 // the game asking HQ's payments tool, as its preview's test connection does
 const product = as('rocket');
 const pay = (path: string, body?: Record<string, unknown>) => h.send(`/api/pay/plans/${path}`, product, body);
 
-test('a test player is asked for by name on a product with plans only, and a pass without one stays view-only', async () => {
+test('a test player is asked for by name, with a voucher on a product with plans only, and a pass without one stays view-only', async () => {
   const run = await h.start({ agent: 'wren', title: 'QA' });
-  assert.equal((await ask(run, 'hello', 'qa')).status, 409, 'hello has no plans');
-  assert.equal((await ask(run, 'front', 'qa')).status, 409, "the shop's door has none either");
+  const buyer = await ask(run, 'hello', 'qa');
+  assert.equal(buyer.status, 200, 'hello has no plans, but takes a test player');
+  assert.equal(buyer.body.voucher, undefined, 'without a voucher');
+  assert.match((await check(buyer.body.cookie, '', 'hello.preview.company.test')).viewer!, /^vw_[a-f0-9]{32}$/);
   for (const name of ['', 'QA', '-qa', 'q a', 'x'.repeat(33), 7])
     assert.equal((await ask(run, 'rocket', name as string)).status, 400);
   const plain = await passOf(run);
@@ -87,10 +93,7 @@ test("a test player is its own on that product and run: never the board's or a t
     days: 3,
     tester: true,
   }) as any;
-  const session = `session-${share.id}`;
-  h.db
-    .prepare('insert into review_share_sessions (hash, share, guest, seal, host) values (?, ?, ?, ?, ?)')
-    .run(createHash('sha256').update(session).digest('hex'), share.id, 'Tess', guests.seal('Tess'), ROCKET);
+  const session = testerSession('Tess');
   const others = [(await check(board)).viewer, (await check(`ps=${session}`)).viewer];
   assert.equal(new Set([id, ...others]).size, 3);
 
@@ -112,6 +115,42 @@ test("a test player is its own on that product and run: never the board's or a t
   );
   feedback.endShare({ id: share.id });
   await h.finish(run);
+});
+
+test("a product asks whether its preview's viewer is the company's own: the board's or a running job's test player, in test mode", async () => {
+  const run = await h.start({ agent: 'wren', title: 'Test purchase' });
+  const buyer = (await check((await passOf(run, 'buyer')).cookie)).viewer!;
+  const plain = (await check((await passOf(run)).cookie)).viewer;
+  assert.equal(plain, undefined, 'a view-only pass is nobody the product knows');
+  const link = await h.board('/api/preview/link', { url: `https://${ROCKET}/` });
+  const code = new URL(link.body.url).searchParams.get('c')!;
+  const cookie = String((await h.send(`/__preview?c=${code}&to=/`, { host: ROCKET })).headers['set-cookie']).split(
+    ';',
+  )[0];
+  const board = (await check(cookie)).viewer!;
+  const share = feedback.inviteToShare({
+    page: `https://${ROCKET}/`,
+    name: 'Tess',
+    email: 'tess@example.com',
+    days: 3,
+    tester: true,
+  }) as any;
+  const session = testerSession('Tess');
+  const tester = (await check(`ps=${session}`)).viewer!;
+  const company = async (id: string, headers = product) => {
+    const r = await h.send(`/api/pay/viewer?id=${encodeURIComponent(id)}`, headers);
+    return r.status === 200 ? r.json.company : r.status;
+  };
+  assert.equal(await company(buyer), true, "the job's test player");
+  assert.equal(await company(board), true, 'the board');
+  assert.equal(await company(tester), false, 'an outside tester is not the company');
+  assert.equal(await company('vw_' + '0'.repeat(32)), false);
+  assert.equal(await company(buyer, as('hello')), false, "another product's id for that player differs");
+  assert.equal(await company(buyer, as('rocket', 'live')), 403, 'never in live mode');
+  assert.equal((await h.send('/api/pay/viewer', product, { id: buyer })).status, 405);
+  feedback.endShare({ id: share.id });
+  await h.finish(run);
+  assert.equal(await company(buyer), false, 'the run ended');
 });
 
 test('a test player plays the plans: reads its own, starts and stops a test plan, and its voucher pays one plan for it once, within its amount', async () => {

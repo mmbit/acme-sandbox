@@ -15,8 +15,10 @@ export function admission<Seat>(now = Date.now, kernel = '/sys/fs/cgroup', memin
   };
   return {
     ...reserve,
+    availableMb,
     freeMb: (young = true) => reserve.freeMb(availableMb(), young),
     claimMb: (young = true) => reserve.claimMb(availableMb(), young),
+    gathering: () => reserve.gathering(availableMb()),
     starts: (young = true) => reserve.starts(availableMb(), young),
     room: (young = true) => reserve.room(availableMb(), young),
   };

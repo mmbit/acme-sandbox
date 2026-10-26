@@ -23,7 +23,8 @@ export function elapsedTime(
   };
 }
 
-function covered(spans: Span[], now: number, merged: number) {
+// (also threadtime.ts: a thread's work and review time)
+export function covered(spans: Span[], now: number, merged: number) {
   let end = now,
     elapsed = 0;
   for (const span of [...spans].sort((a, b) => a.start - b.start)) {

@@ -1,0 +1,45 @@
+{
+  "open": [
+    {
+      "id": 41,
+      "owner": "wren",
+      "name": "Wren",
+      "status": "open",
+      "notes": [
+        { "id": 301, "n": 1, "status": "open", "words": "This photo is too dark next to the others", "slips": [] },
+        { "id": 302, "n": 2, "status": "open", "words": "Make the price bigger", "slips": [] }
+      ]
+    },
+    {
+      "id": 42,
+      "owner": "kit",
+      "name": "Kit",
+      "status": "open",
+      "notes": [{ "id": 305, "n": 1, "status": "open", "words": "Same font as the shop's front?", "slips": [] }]
+    },
+    {
+      "id": 43,
+      "owner": null,
+      "name": null,
+      "status": "open",
+      "notes": [{ "id": 307, "n": 1, "status": "open", "words": "Settings: this switch says nothing", "slips": [] }]
+    }
+  ],
+  "sent": [
+    {
+      "id": 38,
+      "owner": "moss",
+      "name": "Moss",
+      "status": "sent",
+      "notes": [
+        {
+          "id": 280,
+          "n": 1,
+          "status": "sent",
+          "words": "The tear line is too dark",
+          "slips": [{ "id": 12, "by": "moss", "text": "Lighter now, half the old ink", "ticked": null }]
+        }
+      ]
+    }
+  ]
+}

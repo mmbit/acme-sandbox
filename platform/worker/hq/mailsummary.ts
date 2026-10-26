@@ -82,8 +82,8 @@ const receiptLine = (receipt: ReportReceipt) =>
   [
     `${text(receipt.month)} ${text(receipt.kind)}: ${text(receipt.state)}`,
     ...(receipt.records ? [`records as of ${text(receipt.records)}`] : []),
-    ...(receipt.tried ? [`asked ${minute(text(receipt.tried))} UTC`] : []),
+    ...(receipt.tried ? [`asked ${minute(text(receipt.tried))}`] : []),
     ...(receipt.receipt ? [`receipt ${oneLine(text(receipt.receipt))}`] : []),
     ...(receipt.failure ? [`(${oneLine(text(receipt.failure))})`] : []),
-    ...(receipt.confirmed ? [`arrival confirmed ${minute(text(receipt.confirmed))} UTC`] : []),
+    ...(receipt.confirmed ? [`arrival confirmed ${minute(text(receipt.confirmed))}`] : []),
   ].join(', ');

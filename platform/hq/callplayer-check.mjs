@@ -17,10 +17,11 @@ import { join } from 'node:path';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until, tap } from '../../shared/browser/browser.mjs';
 import { Moments } from '../../shared/watchalong/moments.ts';
+import { lookNames } from './looks.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
-const LOOKS = process.env.LOOK ? [process.env.LOOK] : ['brownstone', 'wire', 'holo'];
+const LOOKS = process.env.LOOK ? [process.env.LOOK] : lookNames();
 const VIEWS = {
   ipad: { viewport: { width: 744, height: 1133 }, isMobile: true, hasTouch: true, deviceScaleFactor: 2 },
   laptop: { viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 },

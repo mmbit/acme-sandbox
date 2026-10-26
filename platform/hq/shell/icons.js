@@ -1,12 +1,13 @@
-// HQ's icons: one folder per style (icons/<style>/<name>.svg), each look drawing only from its own style's folder. An
-// icon a folder lacks shows nothing and says so in the console, never another style's drawing. icons.test.js fails
+// HQ's icons: one folder per icon style (icons/<style>/<name>.svg), each look drawing only from its own style's folder.
+// An icon a folder lacks shows nothing and says so in the console, never another style's drawing. icons.test.js fails
 // any folder that lacks one.
 // A look the company dresses in a kit (theme/hq.yaml <look>.kit) draws from the kit's set instead: its hq/icons/<name>.svg,
 // served at /kits/<kit>/icons/, under HQ's names, with hq/icons/names.json pointing HQ names that share one drawing to
 // it ({ "mobile": "phone" }).
 
-// Each look's style: a new look adds its line here and a complete folder (icons.test.js checks both).
-export const STYLES = { brownstone: 'pixel', holo: 'smooth', wire: 'smooth' };
+// The icon style a look of this style wears (its scene.js `style`): the pixel style its own, every other the smooth
+// set.
+export const iconStyle = style => (style === 'pixel' ? 'pixel' : 'smooth');
 
 let worn = null; // where the look on stage draws from: { from: its folder, kit: the kit it's dressed in, or null }
 const drawings = new Map(); // `${folder}/${file}` → a promise of the file's <svg>
@@ -20,11 +21,13 @@ export function icon(name, cls = '', label = '') {
   return `<svg class="icon i-${name}${cls ? ` ${cls}` : ''}" data-icon="${name}" ${role}></svg>`;
 }
 
-// The look on stage wears its style's icons, or the set of the kit it's dressed in: every icon on the page redrawn, and
-// every one added later drawn as it comes.
-export function wearIcons(look, kit = null) {
+// The look on stage wears its style's icons (style: its scene.js `style`), or the set of the kit it's dressed in: every
+// icon on the page redrawn, and every one added later drawn as it comes. The page says which style (data-icons), for a
+// picture only one style draws (Numbers' grid pictures, pixel art).
+export function wearIcons(style, kit = null) {
   if (!worn) watch();
-  worn = { from: kit ? `/kits/${kit}/icons` : `icons/${STYLES[look]}`, kit };
+  worn = { from: kit ? `/kits/${kit}/icons` : `icons/${iconStyle(style)}`, kit };
+  document.documentElement.dataset.icons = iconStyle(style);
   for (const svg of document.querySelectorAll('svg[data-icon]')) draw(svg);
 }
 

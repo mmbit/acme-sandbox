@@ -1,0 +1,393 @@
+/* The book beside HQ's page (book.js): its rail, its cloth spine and its paper. The book's own look, the same on every
+   HQ look: nothing here reads a look's variables, and no look's stylesheet styles it. */
+#book {
+  --bk-paper: #fffaf0;
+  --bk-paper2: #f7efdf;
+  --bk-night: #2a2352;
+  --bk-muted: #5a5478;
+  --bk-line: #e8dcc4;
+  --bk-lamp: #ffd966;
+  --bk-red: #ff5a5f;
+  --bk-rail: #f3e6d0;
+  --bk-table: #3a3148;
+  --bk-dots: radial-gradient(circle, rgba(42, 35, 82, 0.16) 1.1px, transparent 1.4px);
+  --bk-font: 'Atkinson Hyperlegible', 'Atkinson', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 16px/1.4 var(--bk-font);
+  color: var(--bk-night);
+  -webkit-tap-highlight-color: transparent;
+  /* the book's words are its controls': a drag of the spine or a page never selects them */
+  -webkit-user-select: none;
+  user-select: none;
+}
+#book > * {
+  position: fixed;
+  top: 0;
+  height: var(--app-h, 100dvh);
+  box-sizing: border-box;
+}
+/* the table under the book, where the page has given up its room */
+#book .bk-table {
+  right: 0;
+  background: var(--bk-table);
+  z-index: 40;
+}
+/* the book's paper: what the pages lie on (bookpages.js fills .bk-paper) */
+#book .bk-leaf {
+  z-index: 41;
+  overflow: hidden;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  box-shadow: -10px 0 26px rgba(29, 26, 47, 0.18);
+}
+#book .bk-leaf::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 26px;
+  background: linear-gradient(90deg, rgba(29, 26, 47, 0.16), rgba(29, 26, 47, 0));
+  z-index: 5;
+  pointer-events: none;
+}
+/* the spread's gutter: two pages meeting in the middle */
+#book[data-mode='spread'] .bk-leaf::after {
+  content: '';
+  position: absolute;
+  left: calc(50% - 18px);
+  width: 36px;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(29, 26, 47, 0),
+    rgba(29, 26, 47, 0.12) 46%,
+    rgba(29, 26, 47, 0.2) 50%,
+    rgba(29, 26, 47, 0.12) 54%,
+    rgba(29, 26, 47, 0)
+  );
+  z-index: 5;
+  pointer-events: none;
+}
+#book .bk-paper {
+  position: absolute;
+  inset: 0;
+}
+/* the spine: dark cloth, a row of stitches, the elastic band across it (a sketchbook, not a hinge). Wider to the
+   touch than it looks, so a finger finds it. */
+#book .bk-spine {
+  width: 10px;
+  z-index: 42;
+  background: linear-gradient(90deg, #1f1b33, #3a3358 45%, #262140);
+  box-shadow: -4px 0 10px rgba(29, 26, 47, 0.22);
+  touch-action: none;
+  cursor: ew-resize;
+}
+#book .bk-spine::before {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 10px;
+  bottom: 10px;
+  border-left: 2px dashed rgba(243, 230, 208, 0.5);
+}
+#book .bk-spine::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  right: -14px;
+  top: 0;
+  bottom: 0;
+}
+#book .bk-spine i {
+  position: absolute;
+  left: -1px;
+  top: 50%;
+  width: 12px;
+  height: 18px;
+  margin-top: -9px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, #b8333a, #e4554f 50%, #a92d34);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+/* the rail: the open sheets as faces, and at its foot Search, Undo and the book's arrow. It never moves. */
+#book .bk-rail {
+  right: 0;
+  width: 48px;
+  z-index: 43;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: max(14px, env(safe-area-inset-top)) 0 max(14px, env(safe-area-inset-bottom));
+  background: var(--bk-rail);
+  box-shadow:
+    inset 1px 0 0 rgba(42, 35, 82, 0.1),
+    -3px 0 8px rgba(29, 26, 47, 0.12);
+  touch-action: none;
+}
+#book .bk-faces {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  overflow: hidden auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  scrollbar-width: none;
+}
+#book .bk-rail button {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  min-height: 44px;
+  color: var(--bk-muted);
+  cursor: pointer;
+}
+#book .bk-rail button:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: -2px;
+  border-radius: 8px;
+}
+#book .bk-face {
+  height: 60px;
+  align-content: start;
+  padding-top: 4px;
+}
+#book .bk-face .bk-av {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--bk-paper2) center / cover no-repeat;
+  box-shadow: 0 0 0 2px #fff;
+  font: 700 16px/34px var(--bk-font);
+  text-align: center;
+  color: var(--bk-night);
+  image-rendering: pixelated;
+}
+#book .bk-face b {
+  font: 700 13px/1 var(--bk-font);
+  color: var(--bk-night);
+  margin-top: 4px;
+}
+#book .bk-face .bk-dot {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  background: var(--bk-lamp);
+  box-shadow: 0 0 0 2px var(--bk-rail);
+}
+#book .bk-foot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+#book .bk-foot svg {
+  width: 22px;
+  height: 22px;
+}
+#book .bk-arrow svg {
+  transition: transform 0.25s;
+}
+#book[data-mode='folded'] .bk-arrow svg {
+  transform: scaleX(-1);
+}
+#book .sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-arrow svg {
+    transition: none;
+  }
+}
+
+/* ---- the pages (bookpages.js) */
+/* the head: the day before, this day, the day after, and New page; under it the table the day's row of pages lies on */
+#book .bk-pages {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+#book .bk-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 44px;
+  padding: 0 10px 0 18px;
+  background: var(--bk-paper);
+  border-bottom: 1px solid var(--bk-line);
+  font-size: 14px;
+  color: var(--bk-muted);
+  position: relative;
+  z-index: 2;
+  overflow: hidden;
+}
+#book .bk-head button {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 34px;
+  padding: 0 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+}
+#book .bk-head button:focus-visible {
+  outline: 2px solid var(--bk-night);
+}
+#book .bk-head button[hidden] {
+  display: none;
+}
+#book .bk-when {
+  font-weight: 700;
+  color: var(--bk-night);
+}
+/* (New page keeps its whole label in a narrow book; the days give way) */
+#book .bk-head .bk-new {
+  flex: none;
+  margin-left: auto;
+  padding: 0 12px 0 9px;
+  border: 1.5px solid var(--bk-night);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--bk-night);
+  font-weight: 700;
+  box-shadow: 0 2px 0 var(--bk-night);
+}
+#book .bk-head .bk-new:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+#book .bk-new svg {
+  width: 18px;
+  height: 18px;
+}
+/* the table: a warm dark desk under the pages. The Pencil and a mouse write, a finger moves it (bookpan.js). */
+#book .bk-desk {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 30% 20%, rgba(255, 220, 170, 0.07), transparent 70%),
+    repeating-linear-gradient(94deg, rgba(0, 0, 0, 0.05) 0 2px, transparent 2px 9px), var(--bk-table);
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: grab;
+}
+#book .bk-desk.bk-moving {
+  cursor: grabbing;
+}
+#book .bk-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  will-change: transform;
+}
+#book .bk-wet {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+#book .bk-lost {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: 80%;
+  color: var(--bk-line);
+  text-align: center;
+  cursor: pointer;
+}
+#book .bk-lost[hidden] {
+  display: none;
+}
+/* a page: paper with a faint dot grid, its ink in strips over it */
+#book .bk-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  box-shadow:
+    0 1px 0 rgba(29, 26, 47, 0.2),
+    0 10px 30px rgba(10, 6, 20, 0.35);
+  cursor: crosshair;
+}
+#book .bk-ink {
+  position: absolute;
+  left: 0;
+  pointer-events: none;
+}
+#book .bk-title {
+  position: absolute;
+  left: 18px;
+  top: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--bk-muted);
+  pointer-events: none;
+}
+#book .bk-page[data-kind='sheet'] .bk-title,
+#book .bk-page[data-kind='call'] .bk-title {
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--bk-paper2);
+  box-shadow: inset 0 0 0 1px var(--bk-line);
+}
+/* where it grew: a faint torn edge, the paper below it a touch newer */
+#book .bk-tear {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 6px;
+  margin-top: -3px;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='6'%3E%3Cpath d='M0 3l3-2 3 3 3-3 3 2' fill='none' stroke='%23d8c7a6' stroke-width='1'/%3E%3C/svg%3E")
+    repeat-x;
+  opacity: 0.9;
+  pointer-events: none;
+}
+/* a refusal from the store, said on the page where it shows */
+#book .bk-refusal {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 36px);
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--bk-paper2);
+  box-shadow: inset 0 0 0 1px var(--bk-line);
+  font-size: 13px;
+  color: var(--bk-muted);
+  pointer-events: none;
+}
+#book .bk-refusal[hidden] {
+  display: none;
+}

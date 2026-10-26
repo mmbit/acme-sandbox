@@ -211,7 +211,7 @@ test("two Codex seats share a security-critical round's Codex reviews, and one t
   }
 });
 
-test('a pull request closed unmerged is redone by nobody: the job after it starts, and its further waits go to whoever queued them', async () => {
+test("a pull request closed unmerged is redone by nobody: the job after it and its further waits stay held, and the closing goes to the work's owner", async () => {
   const n = 9105;
   const work = await h.start({ agent: 'bolt', title: 'the work', branch: `review/${n}` });
   const waiting = h.queue({ agent: 'juno', title: 'after the work', after: work.id });
@@ -230,14 +230,20 @@ test('a pull request closed unmerged is redone by nobody: the job after it start
   assert.deepEqual([github.pr(n).state, github.pr(n).merged], ['closed', false]);
   assert.deepEqual(queued(n), [], 'no re-land job');
   const listed = (id: number) => (h.jobs.listJobs() as unknown as Listed[]).find(j => j.id === id)!;
-  assert.equal(listed(waiting).ready, 1, 'the job after it starts and checks main');
+  assert.equal(listed(waiting).ready, 0, 'the job after it stays held (reviewclosure.ts hold)');
+  // (work with no project is the CEO's: the closing reaches its inbox with what it holds, for it to drop or redraw)
+  const { ceo } = await import('./company.ts');
+  const proposals = await import('./proposals.ts');
+  const closing = proposals.list(ceo()).find(p => p.id === `findings:${n}`);
+  assert.match(closing?.brief ?? '', new RegExp(`Dependent jobs held [^\\n]*: #${waiting}, #${also}\\.`));
+  proposals.sweep();
   const told = (h.jobs.listJobs() as unknown as Listed[])
     .filter(j => !existing.has(j.id) && j.kind === 'work');
-  assert.deepEqual(told.map(j => j.agent), ['juno'], 'who queued the further wait moves or drops it');
+  assert.deepEqual(told.map(j => j.agent), [], 'no job for it: the CEO reads its inbox itself (proposals.ts tell)');
   assert.equal(listed(also).ready, 0, 'and it holds until then');
 });
 
-test('an exhausted consolidator roster still closes work, reopens call items and hands on waits and follow-ups', async () => {
+test("an exhausted consolidator roster still closes work, reopens call items, holds its waits for the owner's call and hands on follow-ups", async () => {
   const n = 9198;
   const { job: work, item } = await itemJob(n);
   const after = h.queue({ agent: 'bolt', title: 'Use the work', after: work.id });
@@ -261,18 +267,16 @@ test('an exhausted consolidator roster still closes work, reopens call items and
     assert.deepEqual(prs(n), { round: 1, status: 'closed' });
     assert.equal(github.pr(n).state, 'closed');
     assert.deepEqual(itemStatus(item), { status: 'open', closed_at: null });
-    assert.equal(h.job(after).ready, 1);
+    assert.equal(h.job(after).ready, 0, 'held with the work (reviewclosure.ts hold)');
     assert.equal(h.job(waiting).ready, 0);
+    // (the work has no project: its closing and what it holds go to the CEO's inbox, which it reads itself)
+    const { ceo } = await import('./company.ts');
+    const proposals = await import('./proposals.ts');
+    const closing = proposals.list(ceo()).find(p => p.id === `findings:${n}`);
+    assert.match(closing?.brief ?? '', new RegExp(`Dependent jobs held [^\\n]*: #${after}, #${waiting}\\.`));
+    proposals.sweep();
     const handoffs = h.jobs.listJobs().filter(j => !existing.has(j.id) && j.kind === 'work');
-    assert.ok(
-      handoffs.some(
-        j =>
-          j.agent === 'bolt' &&
-          (db.prepare('select prompt from jobs where id = ?').get(j.id) as { prompt: string }).prompt.includes(
-            `hq waits ${waiting} move ${work.id}`,
-          ),
-      ),
-    );
+    assert.deepEqual(handoffs, [], 'no hand-off job: the waits stay with the work until the CEO decides');
     const bundled = () =>
       db
         .prepare(
@@ -304,7 +308,7 @@ test('withdrawal and a GitHub close before any ruling finish with an exhausted r
   h.storedPr(withdrawn, author, 'open', FILES);
   h.storedPr(closed, author, 'stuck', FILES);
   github.pr(closed).state = 'closed';
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await withExhaustedRoster(async () => {
       const panel = await import('./panel.ts');
       assert.throws(() => panel.consolidator(withdrawn));
@@ -1473,7 +1477,7 @@ test("the board's word from a call reaches a pull request's review as it stands:
   const first = queued(n).find(j => j.kind === 'review' && j.engine === 'claude')!;
   const [started] = await claim(n, j => j.id === first.id);
   const call = (await h.voice('call-context', { agent: 'kit', lang: 'en' })).body;
-  const reach = (job: number, agent: string) => h.agent('message', call.token, { to: agent, job, what: 'Only an insecure change blocks the site', text: words });
+  const reach = (job: number, agent: string) => h.agent('message', call.token, { to: agent, job, goal: 'g', what: 'Only an insecure change blocks the site', text: words });
   assert.equal((await reach(started.id, 'nobody')).status, 409, "a number that isn't that colleague's is refused");
   const sent = await reach(started.id, started.agent);
   assert.equal(sent.status, 200);
@@ -1493,11 +1497,11 @@ test("the board's word from a call reaches a pull request's review as it stands:
   const follow = (await h.claim('engine-follow-up'))!;
   assert.equal(follow.id, followUp);
   assert.match(follow.prompt, /check them against the transcript[\s\S]*hq item replace <item>` with the board's own words/);
-  const fixed = await h.agent('item', follow.token, { replaces: sent.body.item, what: 'Only an insecure change or a broken page blocks the site', quote: said });
+  const fixed = await h.agent('item', follow.token, { replaces: sent.body.item, goal: 'Let visitors use the site safely', what: 'Only an insecure change or a broken page blocks the site', quote: said });
   assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
   assert.deepEqual([fixed.body.kind, fixed.body.status, fixed.body.cancelled], ['message', 'handled', []], 'a correction of guidance cancels no work');
   assert.equal((db.prepare('select job from call_items where id = ?').get(fixed.body.id) as { job: number }).job, work, 'it goes onto the branch in its place');
-  const current = (run: { prompt: string }, quote: string) => run.prompt.includes(JSON.stringify(quote)) && run.prompt.includes("the board's words, from the call's transcript");
+  const current = (run: { prompt: string }, quote: string) => run.prompt.includes(JSON.stringify(quote)) && run.prompt.includes('"goal": "Let visitors use the site safely"') && run.prompt.includes("the board's words, from the call's transcript");
 
   const rest = await claim(n, j => j.kind === 'review');
   assert.ok(rest.length > 0 && rest.every(run => current(run, said)), 'the reviews queued before the correction read it');
@@ -1511,15 +1515,15 @@ test("the board's word from a call reaches a pull request's review as it stands:
   const privacy = 'Check customer privacy in the fix too.';
   const laterCall = (await h.voice('call-context', { agent: 'kit', lang: 'en' })).body;
   assert.equal((db.prepare('select session from jobs where id = ?').get(quill.id) as { session: string | null }).session, null);
-  const receipt = await h.agent('message', laterCall.token, { to: quill.agent, job: quill.id, what: 'Check privacy', text: privacy });
+  const receipt = await h.agent('message', laterCall.token, { to: quill.agent, job: quill.id, goal: 'Keep customer details private', what: 'Check privacy', text: privacy });
   assert.equal(receipt.body.ruling, 'started', 'a claimed first run already took its prompt');
   await end(quill, verdict('changes'));
   const [fix] = await claim(n, j => j.kind === 'work');
   assert.ok(fix.prompt.includes(JSON.stringify(privacy)) && current(fix, said), 'the author fix gets what was sent during the ruling, and the correction');
-  assert.match(fix.prompt, /Item #\d+ \(call #\d+, to [a-z]+, the call agent's wording\): \{"what": "Check privacy"/, 'whose wording it is');
+  assert.match(fix.prompt, /Item #\d+ \(call #\d+, to [a-z]+, the call agent's wording\): \{"what": "Check privacy", "goal": "Keep customer details private"/, 'whose wording it is');
 
   const revised = `${said} Check the settings page too.`;
-  const corrected = await h.agent('item', follow.token, { replaces: fixed.body.id, what: 'Check the settings page too', quote: revised });
+  const corrected = await h.agent('item', follow.token, { replaces: fixed.body.id, goal: 'Let visitors use the site safely', what: 'Check the settings page too', quote: revised });
   assert.equal(corrected.status, 200, JSON.stringify(corrected.body));
   assert.deepEqual(corrected.body.told.map((t: { job: number }) => t.job), [fix.id], 'a fix already running hears a further correction');
   const switched = review.withTold({ ...fix, branch: `review/${n}`, session: 'another-cli:saved', prompt: '' });
@@ -1547,7 +1551,7 @@ test("a ruling whose board's word from a call is corrected or withdrawn before i
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const call = (await h.voice('call-context', { agent: 'kit', lang: 'en' })).body;
   const [queuedRuling] = queued(n).filter(j => j.kind === 'consolidate');
-  const sent = await h.agent('message', call.token, { to: queuedRuling.agent, job: queuedRuling.id, what: 'Only an insecure change blocks the site', text: words });
+  const sent = await h.agent('message', call.token, { to: queuedRuling.agent, job: queuedRuling.id, goal: 'g', what: 'Only an insecure change blocks the site', text: words });
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   const [first] = await claim(n, j => j.kind === 'consolidate');
   assert.ok(first.prompt.includes(JSON.stringify(words)), 'the ruling takes the word at its claim');
@@ -1558,7 +1562,7 @@ test("a ruling whose board's word from a call is corrected or withdrawn before i
   const followUp = (db.prepare('select job from calls where id = ?').get(call.call) as { job: number }).job;
   db.prepare("update jobs set engine = 'engine-follow-up', not_before = 0 where id = ?").run(followUp);
   const follow = (await h.claim('engine-follow-up'))!;
-  const fixed = await h.agent('item', follow.token, { replaces: sent.body.item, what: 'Only an insecure change or a broken page blocks the site', quote: said });
+  const fixed = await h.agent('item', follow.token, { replaces: sent.body.item, goal: 'g', what: 'Only an insecure change or a broken page blocks the site', quote: said });
   assert.equal(fixed.status, 200, JSON.stringify(fixed.body));
   await end(first, verdict('merge'));
   assert.deepEqual(prs(n), { round: 1, status: 'open' }, 'its merge is withheld');
@@ -1588,7 +1592,7 @@ test("a ruling whose board's word from a call is corrected or withdrawn before i
 // On a call the call agent passes the board's word on to `to`'s work; the call's follow-up can withdraw it (`withdraw`)
 async function tell(to: { id: number; agent: string }, words: string) {
   const call = (await h.voice('call-context', { agent: 'kit', lang: 'en' })).body;
-  const sent = await h.agent('message', call.token, { to: to.agent, job: to.id, what: 'Only an insecure change blocks the site', text: words });
+  const sent = await h.agent('message', call.token, { to: to.agent, job: to.id, goal: 'g', what: 'Only an insecure change blocks the site', text: words });
   assert.equal(sent.status, 200, JSON.stringify(sent.body));
   await h.voice('call-end', { agent: 'kit', lines: ['Board: only something insecure blocks the site now.'], token: call.token });
   const followUp = (db.prepare('select job from calls where id = ?').get(call.call) as { job: number }).job;
@@ -2403,26 +2407,31 @@ test('a round whose hand-off was lost comes back: stuck, its author pushes again
   assert.deepEqual(prs(busy), { round: 1, status: 'open' });
 });
 
-test('a close keeps the jobs waiting on the work waiting while GitHub is asked whether it landed, then lets them start', async () => {
-  const n = 988;
-  const work = await h.start({ agent: 'bolt', title: 'the work', branch: `review/${n}` });
-  const waiting = h.queue({ agent: 'juno', title: 'after the work', after: work.id });
-  await submit(n, {}, work);
-  for (const run of await claim(n)) await end(run);
-  const [quill] = await claim(n);
-  let release!: () => void, asked = false;
-  const answered = new Promise<void>(r => { release = r; });
-  hold = (method, k) => { if (method === 'GET' && k === n) { asked = true; return answered; } };
-  await worker('finish', { job: quill.id, seat: quill.seat, status: 'done', ...verdict('close') });
-  await until(() => asked, 'GitHub asked about the pull request');
-  // jobs.ts READY releases a job waiting on a closed pull request's branch: not yet
-  assert.equal(prs(n).status, 'open');
-  assert.equal(h.job(waiting).after, work.id);
-  release();
-  await settled();
-  assert.deepEqual(prs(n), { round: 1, status: 'closed' });
-  assert.deepEqual(queued(n), [], 'no re-land');
-  assert.equal((h.jobs.listJobs() as unknown as Listed[]).find(j => j.id === waiting)!.ready, 1, 'it starts and checks main');
+test('a close keeps the jobs waiting on the work waiting while GitHub is asked whether it landed, then holds them, or lets them start if it did', async () => {
+  // (not on main: held for the owner's call (reviewclosure.ts hold); every commit on main: nothing to hold)
+  for (const [n, onMain] of [[988, false], [1988, true]] as const) {
+    if (onMain) github.pr(n).aheadBy = 0;
+    const work = await h.start({ agent: 'bolt', title: 'the work', branch: `review/${n}` });
+    const waiting = h.queue({ agent: 'juno', title: 'after the work', after: work.id });
+    await submit(n, {}, work);
+    for (const run of await claim(n)) await end(run);
+    const [quill] = await claim(n);
+    let release!: () => void, asked = false;
+    const answered = new Promise<void>(r => { release = r; });
+    hold = (method, k) => { if (method === 'GET' && k === n) { asked = true; return answered; } };
+    await worker('finish', { job: quill.id, seat: quill.seat, status: 'done', ...verdict('close') });
+    await until(() => asked, 'GitHub asked about the pull request');
+    // jobs.ts READY releases a job waiting on a closed pull request's branch: not yet
+    assert.equal(prs(n).status, 'open');
+    assert.equal(h.job(waiting).after, work.id);
+    release();
+    await settled();
+    assert.deepEqual(prs(n), { round: 1, status: 'closed' });
+    assert.deepEqual(queued(n), [], 'no re-land');
+    assert.equal((h.jobs.listJobs() as unknown as Listed[]).find(j => j.id === waiting)!.ready, Number(onMain), onMain ? 'it starts' : 'it stays held');
+    const proposals = await import('./proposals.ts'), { ceo } = await import('./company.ts');
+    assert.equal(proposals.list(ceo()).some(p => p.id === `findings:${n}`), !onMain, "the closing reaches the CEO's inbox, the owner of work with no project");
+  }
 });
 
 test("an author's fix job from an earlier round that fails after a newer push started the next round runs no more", async () => {
@@ -2679,7 +2688,7 @@ const ONE_DECK = /one reviewer: board presentation/;
 
 
 
-test('a stuck pass settles a merge or close on GitHub and releases the job after it', async () => {
+test('a stuck pass settles a merge or close on GitHub and releases the job after a merge, holding it after a close', async () => {
   const [landed, dropped] = [1264, 1265];
   const waiting: number[] = [];
   for (const n of [landed, dropped]) {
@@ -2700,7 +2709,11 @@ test('a stuck pass settles a merge or close on GitHub and releases the job after
   await review.settleStuck();
   assert.deepEqual(prs(landed), { round: 1, status: 'merged' });
   assert.deepEqual(prs(dropped), { round: 1, status: 'closed' });
-  assert.deepEqual(waiting.map(id => h.job(id).ready), [1, 1]);
+  // (closed unmerged and not on main: the job after it is held for the owner's call, reviewclosure.ts hold, the CEO's
+  // here: the work has no project)
+  assert.deepEqual(waiting.map(id => h.job(id).ready), [1, 0]);
+  const proposals = await import('./proposals.ts'), { ceo } = await import('./company.ts');
+  assert.deepEqual([landed, dropped].map(n => proposals.list(ceo()).some(p => p.id === `findings:${n}`)), [false, true]);
   assert.deepEqual([...queued(landed), ...queued(dropped)], [], 'no re-land job for either');
 });
 
@@ -2996,16 +3009,9 @@ test("touch-ups kept after the board's word their ruling went by was withdrawn g
   assert.match(quill.prompt, /Withdrawn since/, 'the check reads the word as it stands');
 });
 
-async function withThreadPlanning(run: () => Promise<void>) {
-  const path = `${h.repo}/company/projects.yaml`, before = readFileSync(path, 'utf8');
-  const document = parseDocument(before);
-  document.set('planning', 'threads');
-  writeFileSync(path, String(document));
-  const ends = await import('./threadends.ts');
-  try {
-    ends.watch();
-    await withSetting(JSON.stringify({ roles: { ...parse(readFileSync(`${h.repo}/company/org.yaml`, 'utf8')).roles, consolidator: ['quill', 'lark', 'pylon', 'juno'] } }), run);
-  } finally { writeFileSync(path, before); ends.watch(); }
+// (four consolidators, so a ruling has someone besides its author)
+async function withConsolidators(run: () => Promise<void>) {
+  await withSetting(JSON.stringify({ roles: { ...parse(readFileSync(`${h.repo}/company/org.yaml`, 'utf8')).roles, consolidator: ['quill', 'lark', 'pylon', 'juno'] } }), run);
 }
 
 async function _contributed(n: number, agent: string, members: string[] = []) {
@@ -3033,7 +3039,7 @@ test('a changes ruling reaches the project owner once and only the last named fi
   const projects = await import('./projects.ts');
   projects.createThread({ project: 'office', name: 'Move and draw a world', goal: 'A move draws the new world', slug: 'move-draw' });
   const task = await h.start({ agent: 'bolt', branch: 'review/8007', thread: 'office/move-draw' });
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     const files = ['products/game/world.ts', 'kits/art/draw.ts'];
     await submit(8007, { files }, task);
     for (const run of await claim(8007)) await end(run);
@@ -3091,7 +3097,7 @@ test('a "changes" ruling whose blocking finding is a string runs its consolidato
   projects.createThread({ project: 'office', name: 'Rule in findings', goal: 'A ruling names its findings', slug: 'rule-findings' });
   const n = 8092, files = ['products/game/world.ts'];
   const task = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: 'office/rule-findings' });
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, { files }, task);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
@@ -3122,7 +3128,7 @@ test('a "changes" ruling already delivered with a blocking finding that is a str
   projects.createThread({ project: 'office', name: 'Rule in findings again', goal: 'A delivered ruling names its findings', slug: 'rule-findings-again' });
   const n = 8094, files = ['products/game/world.ts'];
   const task = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: 'office/rule-findings-again' });
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, { files }, task);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
@@ -3147,20 +3153,71 @@ test('a "changes" ruling already delivered with a blocking finding that is a str
 
 // A thread's "changes" that names nothing to fix leaves its owner nothing to draw: its consolidator runs again. Touch-ups
 // alone are something to fix, once the worker pushed them.
+test('a touch-up-only ruling passes its Stop check before publication and merges after the author keeps its pushed edits', async () => {
+  const inbox = await import('./reviewinbox.ts');
+  await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
+    for (const windowed of [false, true]) {
+      const n = windowed ? 8097 : 8096, file = 'platform/web/src/x.ts', head = newSha();
+      const thread = h.dueThread(windowed ? { deadline: Date.now() + 86_400_000 } : {});
+      const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread });
+      await withConsolidators(async () => {
+        await submit(n, { files: [file] }, work);
+        for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+        const [ruler] = await claim(n, j => j.kind === 'consolidate');
+        assert.ok(writes(ruler).includes(file));
+        const verdict = {
+          decision: windowed ? 'merge' : 'changes', blocking: [], nonblocking: [],
+          touchups: [{ file, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name',
+        };
+        const check = (candidate: object) => h.agent('review-output', ruler.token, { output: JSON.stringify(candidate) });
+        assert.ok((await check({ decision: 'changes', blocking: [], nonblocking: [] })).body.error,
+          'a changes ruling with nothing to fix is still refused');
+        assert.equal((await check(verdict)).body.error, null, 'the Stop hook cannot require the post-exit commit');
+        if (windowed) {
+          assert.match((await check({ ...verdict, touchups_task: undefined })).body.error, /touchups_task/);
+          assert.match((await check({ ...verdict, touchups_task: 'x'.repeat(141) })).body.error, /touchups_task/);
+        }
+        assert.equal(inbox.get(n), undefined, 'the Stop check accepts no ruling');
+        assert.equal(h.job(ruler.id).status, 'running');
+        await end(ruler, { output: JSON.stringify(verdict), touchup: { sha: head, files: [file] } });
+        await until(() => !!inbox.get(n), 'the published touch-ups reach the owner');
+        assert.equal(github.pr(n).merged, false, 'the author checks them before any merge');
+        if (!windowed) {
+          const owner = await h.start({ agent: 'juno', title: 'Assign the touch-up check' });
+          const accepted = await h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt' });
+          assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+          await h.finish(owner);
+        }
+        const [task] = inbox.tasks(n, 1);
+        const authorCheck = await h.claimJob(task.id);
+        assert.equal(authorCheck.title, verdict.touchups_task);
+        assert.ok(authorCheck.prompt.includes(head));
+        await submit(n, { files: [file], sha: head, pushedSince: { sha: head, files: [] } }, authorCheck);
+        await decide(n, 'merge');
+        assert.deepEqual(prs(n), { round: 1, status: 'merged' });
+        assert.equal(github.pr(n).mergedSha, head);
+      });
+    }
+  });
+});
+
 test('a thread\'s "changes" ruling with no blocking finding and no touch-ups pushed runs its consolidator again', async () => {
   const projects = await import('./projects.ts'), inbox = await import('./reviewinbox.ts');
-  projects.createThread({ project: 'office', name: 'Rule something', goal: 'A ruling names what to fix', slug: 'rule-something' });
   const rulings = [
     { n: 8093, verdict: { decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [] }, touchup: undefined },
     { n: 8095, verdict: { decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [], touchups: [{ file: 'products/game/world.ts', line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' },
       touchup: { refused: "review/8095 isn't at abc1234 any more" } },
   ];
   for (const { n, verdict, touchup } of rulings) {
-    const task = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: 'office/rule-something' });
-    await withThreadPlanning(async () => {
+    // (a thread each: a thread's next task waits for the one before it)
+    projects.createThread({ project: 'office', name: `Rule something ${n}`, goal: 'A ruling names what to fix', slug: `rule-something-${n}` });
+    const task = await h.start({ agent: 'bolt', branch: `review/${n}`, thread: `office/rule-something-${n}` });
+    await withConsolidators(async () => {
       await submit(n, { files: ['products/game/world.ts'] }, task);
       for (const run of await claim(n)) await end(run);
       const [ruler] = await claim(n);
+      const checked = await h.agent('review-output', ruler.token, { output: JSON.stringify(verdict) });
+      assert.equal(!!checked.body.error, !touchup, 'declared touch-ups may still await the worker at the Stop check');
       await end(ruler, { output: JSON.stringify(verdict), ...(touchup && { touchup }) });
       assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], `PR #${n}: its consolidator rules again`);
       assert.equal(inbox.get(n), undefined, `PR #${n}: nothing reaches the owner`);
@@ -3170,7 +3227,7 @@ test('a thread\'s "changes" ruling with no blocking finding and no touch-ups pus
 
 test("the sweep holds records-only work for its owner's blocking ruling, including an inbox migrated across restarts", async () => {
   const work = await h.start({ agent: 'bolt', branch: 'review/8084', thread: h.dueThread() });
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     const n = 8084, file = 'products/game/world.ts', records = ['company/DECISIONS.md'];
     await submit(n, { files: [file, ...records] }, work);
     for (const run of await claim(n)) await end(run);
@@ -3204,7 +3261,7 @@ test("the sweep holds records-only work for its owner's blocking ruling, includi
 });
 
 test('a changes ruling on work with no thread queues its author\'s fix at once, with no inbox step', async () => {
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     const n = 8085, files = ['products/game/world.ts'];
     await submit(n, { files });
     for (const run of await claim(n)) await end(run);
@@ -3226,7 +3283,7 @@ test('a changes ruling on work with no thread queues its author\'s fix at once, 
 });
 
 test('a close ruling sends its findings to the project owner without an author reland job', async () => {
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(8008, { files: ['products/game/world.ts'] });
     for (const run of await claim(8008)) await end(run);
     const [ruler] = await claim(8008);
@@ -3254,7 +3311,7 @@ test('owner redraw keeps closed work dependents held and moves after, merge wait
   const pauses = await import('./pauses.ts');
   const pausewake = await import('./pausewake.ts');
   assert.equal(typeof pauses.pause({thread:paused, why:'It needs the work', until:[work.id]}, 'juno'), 'object');
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
     await decide(n, 'close');
     assert.equal(h.job(after).ready, 0);
@@ -3292,7 +3349,7 @@ test('an owner drops closed work only after explicitly dropping its dependent jo
   const owner = await h.start({agent:'juno', title:'Drop the closed work'});
   const pauses = await import('./pauses.ts');
   assert.equal(typeof pauses.pause({thread:paused, why:'Waiting for work', until:[work.id]}, 'juno'), 'object');
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
     await decide(n, 'close');
     assert.equal((await h.agent('proposals/drop', owner.token, {id:`findings:${n}`, why:'It is no longer needed'})).status, 400);
@@ -3302,7 +3359,8 @@ test('an owner drops closed work only after explicitly dropping its dependent jo
     assert.equal(typeof plan.unneed(dependentThread, thread, 'juno'), 'object');
     assert.equal((await h.agent('proposals/drop', owner.token, {id:`findings:${n}`, why:'Dropped with its dependent work'})).status, 200);
     assert.equal(h.job(dependent).status, 'cancelled');
-    assert.equal(projects.findThread(thread)?.status, 'done');
+    assert.equal(projects.findThread(thread)?.status, 'open', 'its owner judges it');
+    assert.notEqual(projects.findThread(thread)?.judge, null);
     assert.equal(projects.findThread(thread)?.branch, null);
     assert.equal(queued(n).filter(job => job.kind === 'work').length, 0);
   });
@@ -3313,7 +3371,7 @@ test('an owner reassigns a twice-failed automatic fix and its final push starts 
   const n = 8014, thread = h.dueThread();
   const work = await h.start({agent:'bolt', title:'A world that moves', branch:`review/${n}`, thread});
   const owner = await h.start({agent:'juno', title:'Reassign the failed finding'});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     const files = ['products/game/world.ts'];
     await submit(n, {files}, work);
     for (const run of await claim(n)) await end(run);
@@ -3352,7 +3410,7 @@ test('an owner reassigns a twice-failed automatic fix and its final push starts 
   const dependent = h.queue({agent:'lark', title:'Use the merged work', thread, queuedBy:'juno', engine:'claude'});
   const owner = await h.start({agent:'juno', title:'Redraw within the thread'});
   assert.equal((await h.agent('waits', owner.token, {id:dependent, to:work.id})).status, 200);
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
     await decide(n, 'close');
     const made = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt', thread});
@@ -3374,15 +3432,16 @@ for (const remaining of [false, true])
  test(`redraw satisfies thread needs through replacement merge${remaining ? ' before the original thread continues' : ''}`, async () => {
   const n = remaining ? 8024 : 8022, thread = h.dueThread(), dependentThread = h.dueThread(), replacementThread = h.dueThread();
   const work = await h.start({agent:'bolt', title:'Needed work', thread, branch:`review/${n}`});
-  const following = remaining ? h.queue({agent:'lark', title:'Finish the original slice', thread}) : null;
   const unrelated = remaining ? h.queue({agent:'lark', title:'Other destination work', thread:replacementThread}) : null;
   const owner = await h.start({agent:'juno', title:'Redraw the needed work'});
   const plan = await import('./plan.ts');
   const projects = await import('./projects.ts');
   assert.equal(typeof plan.need(dependentThread, thread, 'juno'), 'object');
   const dependent = h.queue({agent:'lark', title:'Use the completed thread', thread:dependentThread});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
+    // (drawn after the push, which no ready next task held)
+    const following = remaining ? h.queue({agent:'lark', title:'Finish the original slice', thread}) : null;
     await decide(n, 'close');
     const inbox = await import('./reviewinbox.ts');
     assert.ok(inbox.get(n)!.brief!.includes(dependentThread));
@@ -3406,7 +3465,8 @@ for (const remaining of [false, true])
     await end(replacement!, {pr:n + 1, branch:`job/${replacement!.id}`, files:FILES, sha:newSha()});
     assert.equal(h.job(dependent).ready, 0);
     await decide(n + 1, 'merge');
-    assert.equal(projects.findThread(replacementThread)?.status, remaining ? 'open' : 'done');
+    assert.equal(projects.findThread(replacementThread)?.status, 'open');
+    assert.equal(projects.findThread(replacementThread)?.judge !== null, !remaining, 'its owner judges it once nothing is open');
     if (unrelated !== null) assert.equal(h.job(unrelated).status, 'queued');
     if (following !== null) {
       assert.equal(projects.findThread(thread)?.status, 'open');
@@ -3416,7 +3476,8 @@ for (const remaining of [false, true])
       await end(next!, {pr:8026, branch:`job/${following}`, files:FILES, sha:newSha()});
       await decide(8026, 'merge');
     }
-    assert.equal(projects.findThread(thread)?.status, 'done');
+    assert.equal(projects.findThread(thread)?.status, 'open');
+    assert.notEqual(projects.findThread(thread)?.judge, null);
     assert.equal(h.job(dependent).ready, 1);
   });
   await h.finish(owner);
@@ -3432,7 +3493,7 @@ test('redraw rejects a cycle through a redirected merge wait and thread need wit
   const proposals = await import('./proposals.ts');
   assert.equal((await h.agent('waits', owner.token, {id:dependent, to:work.id})).status, 200);
   assert.equal(typeof plan.need(destination, waitingThread, 'juno'), 'object');
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
     await decide(n, 'close');
     const threads = projects.listThreads().map(t => t.id);
@@ -3454,7 +3515,7 @@ test('successive touch-up checks each retry once and their later same-round ruli
   const n = 8080, file = 'platform/web/src/x.ts';
   const work = await h.start({agent:'bolt', branch:`review/${n}`, thread:h.dueThread()});
   const owner = await h.start({agent:'juno', title:'Assign successive touch-up checks'});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {files:[file]}, work);
     for (let i = 0; i < 2; i++) {
       const head = newSha();
@@ -3494,7 +3555,7 @@ test('a chained redraw rejects a destination needing the original thread and ret
   const work = await h.start({agent:'bolt', title:'Original work', thread, branch:`review/${n}`});
   const owner = await h.start({agent:'juno', title:'Choose the second redraw'});
   const plan = await import('./plan.ts'), proposals = await import('./proposals.ts');
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
     await decide(n, 'close');
     const first = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt', thread:destination});
@@ -3516,8 +3577,8 @@ test('a chained redraw rejects a destination needing the original thread and ret
     await submit(n + 2, {branch:`job/${last!.id}`}, last!);
     await decide(n + 2, 'merge');
     const projects = await import('./projects.ts');
-    assert.equal(projects.findThread(thread)?.status, 'done');
-    assert.equal(projects.findThread(destination)?.status, 'done');
+    assert.notEqual(projects.findThread(thread)?.judge, null);
+    assert.notEqual(projects.findThread(destination)?.judge, null);
   });
   await h.finish(owner);
 });
@@ -3527,7 +3588,7 @@ test('a redraw refuses a destination with a pending review fix without holding t
   const owner = await h.start({agent:'juno', title:'Place a redraw beside a review'});
   const existing = await h.start({agent:'lark', title:'Destination work', thread:destination, branch:`review/${n}`});
   const work = await h.start({agent:'bolt', title:'Work to redraw', thread, branch:`review/${n + 1}`});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n + 1, {}, work);
     await decide(n + 1, 'close');
     await submit(n, {}, existing);
@@ -3559,11 +3620,12 @@ test('a redraw refuses a destination with a pending review fix without holding t
 test('cancellation, reordering and new tasks keep the original thread behind its redraw until merge', async () => {
   const n = 8075, thread = h.dueThread(), destination = h.dueThread();
   const work = await h.start({agent:'bolt', title:'Original work', thread, branch:`review/${n}`});
-  const first = h.queue({agent:'lark', title:'First original task', thread, queuedBy:'juno'});
-  const second = h.queue({agent:'lark', title:'Second original task', thread, queuedBy:'juno'});
   const owner = await h.start({agent:'juno', title:'Revise the remaining tasks'});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
+    // (drawn after the push, which no ready next task held)
+    const first = h.queue({agent:'lark', title:'First original task', thread, queuedBy:'juno'});
+    const second = h.queue({agent:'lark', title:'Second original task', thread, queuedBy:'juno'});
     await decide(n, 'close');
     const made = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt', thread:destination});
     assert.equal(made.status, 200, JSON.stringify(made.body));
@@ -3580,6 +3642,9 @@ test('cancellation, reordering and new tasks keep the original thread behind its
     await submit(n + 1, {branch:`job/${replacement!.id}`}, replacement!);
     assert.equal(h.job(added.body.id).ready, 0);
     await decide(n + 1, 'merge');
+    const projects = await import('./projects.ts');
+    // (the destination's owner judged it)
+    db.prepare("update jobs set status = 'done' where id = ?").run(projects.findThread(destination)!.judge);
     assert.equal(h.job(added.body.id).ready, 1, JSON.stringify(h.job(added.body.id)));
     const next = await h.claim('claude');
     assert.equal(next?.id, added.body.id);
@@ -3593,10 +3658,11 @@ for (const sameThread of [false, true])
   test(`later owner ${sameThread ? 'reordering' : 'thread needs'} cannot turn an accepted redraw into a cycle`, async () => {
     const n = sameThread ? 8078 : 8077, thread = h.dueThread(), destination = sameThread ? thread : h.dueThread();
     const work = await h.start({agent:'bolt', title:'Original slice', thread, branch:`review/${n}`});
-    const waiter = h.queue({agent:'lark', title:'Original continuation', thread, queuedBy:'juno'});
     const owner = await h.start({agent:'juno', title:'Amend a redraw plan'});
-    await withThreadPlanning(async () => {
+    await withConsolidators(async () => {
       await submit(n, {}, work);
+      // (drawn after the push, which no ready next task held)
+      const waiter = h.queue({agent:'lark', title:'Original continuation', thread, queuedBy:'juno'});
       await decide(n, 'close');
       const made = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt', thread:destination});
       assert.equal(made.status, 200, JSON.stringify(made.body));
@@ -3617,11 +3683,12 @@ for (const assignment of ['inbox', 'job'])
   const n = assignment === 'inbox' ? 8080 : 8082, replacementPr = n + 1;
   const thread = h.dueThread(), destination = h.dueThread();
   const work = await h.start({agent:'bolt', thread, branch:`review/${n}`});
-  const sourceContinuation = h.queue({agent:'kit', thread});
   const destinationContinuation = h.queue({agent:'moss', thread:destination});
   const owner = await h.start({agent:'juno'});
-  await withThreadPlanning(async () => {
+  await withConsolidators(async () => {
     await submit(n, {}, work);
+    // (drawn after the push, which no ready next task held)
+    const sourceContinuation = h.queue({agent:'kit', thread});
     await decide(n, 'close');
     const made = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt', thread:destination});
     assert.equal(made.status, 200, JSON.stringify(made.body));

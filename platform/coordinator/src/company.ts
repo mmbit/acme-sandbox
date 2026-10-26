@@ -10,6 +10,7 @@ import { sendToBoard } from './push.ts';
 import { teamMembers, lastStep } from './team.ts';
 import { TYPES, typeOf } from './types.ts';
 import { formats } from '../../../shared/format/format.js';
+import { contrastChannels } from '../../../shared/contrast/contrast.js';
 import { zoneOf } from './clock.ts';
 
 export function org() {
@@ -55,6 +56,21 @@ function optional(path: string, shape = (v: any) => v) {
 // A mascot is a map with its id: mascots that aren't a list of them read as none
 export const brand = () => optional('company/brand.yaml', b => b.mascots === undefined ? b
   : { ...b, mascots: Array.isArray(b.mascots) ? b.mascots.filter((m: unknown) => m && typeof m === 'object') : [] });
+// The brand as HQ and the guest page wear it: its one colour (brand.yaml colour, its logo's) is the title bar's
+// (app.themeColour) and the guest page's accent, with black or white letters on it, whichever reads, where they name
+// none of their own (Wire's colourways take it in scene.js, which trusts it's #rrggbb). One that isn't throws, so what
+// wears the look fails with it (GET /api/brand's 500), while brand() stays the file for mail, jobs, care and calls; the
+// gates refuse it before it's deployed (shared/gates/brand.ts).
+export function brandLook() {
+  const b = brand(), colour = b.colour;
+  if (colour === undefined) return b;
+  if (typeof colour !== 'string' || !/^#[0-9a-f]{6}$/i.test(colour)) throw new Error(`company/brand.yaml's colour ${JSON.stringify(colour)} isn't #rrggbb`);
+  const channels = [1, 3, 5].map(i => parseInt(colour.slice(i, i + 2), 16));
+  const onAccent = contrastChannels(channels, [0, 0, 0]) > contrastChannels(channels, [255, 255, 255]) ? '#000000' : '#ffffff';
+  const guest = b.guest ?? {}, own = guest.colours ?? {};
+  return { ...b, app: { themeColour: colour, ...b.app },
+    guest: { ...guest, colours: own.accent === undefined ? { ...own, accent: colour, onAccent: own.onAccent ?? onAccent } : own } };
+}
 // Words the speech engines say wrong, respelt as they should sound, by language (brand.yaml speech.respell): the voice
 // line gets them with a call's context and a care ticket, and says the respelling (platform/voice/aloud.py respelt).
 export const respellings = (): Record<string, Record<string, string>> => brand().speech?.respell ?? {};
@@ -85,8 +101,7 @@ export const theme = () => optional('theme/hq.yaml');
 // and then leaves the file.
 // The file's settings: requireThread: a job queued by hand must name a thread when it has none to inherit (server.ts),
 // which a company turns on once its open work is in threads. A missing or empty file means none. YAML that cannot be
-// parsed throws. planning: `threads` once the company plans by threads in order (../docs/projects.md),
-// else off.
+// parsed throws.
 // made: the project each kind of job HQ makes goes to, by its app (made.ts): errors, the error scan's triage (the app's
 // slug, care: the chat); checks, the hourly check and its repair, alarms, the CEO's (hq): those two carry a window, so a
 // company needs their project (a new one has the template's file: template/company/projects.yaml). The board's notes
@@ -111,7 +126,7 @@ export type ProjectSettings = {
   groups: Partial<Record<GroupKind, { cover?: string; style?: string; name?: string; code?: string }>>; // (code: its tasks' prefix, as a project's: jobcodes.ts.)
   covers: Record<string, string>;
   made: Partial<Record<MadeKind, Record<string, string>>>;
-  requireThread: boolean; planning: 'threads' | 'off';
+  requireThread: boolean;
 };
 export function projects(): ProjectSettings {
   let file;
@@ -124,7 +139,7 @@ export function projects(): ProjectSettings {
   const list = db.prepare("select id, name, owner, product, business from projects where status = 'open' order by rowid").all()
     .map(p => Object.fromEntries(Object.entries(p).filter(([, v]) => v !== null)) as Project);
   return { list, businesses: file.businesses ?? [], groups: file.groups ?? {}, covers: file.covers ?? {}, made: file.made ?? {},
-    requireThread: file.requireThread === true, planning: file.planning === 'threads' ? 'threads' : 'off' };
+    requireThread: file.requireThread === true };
 }
 // A project's cover where projects.yaml names one, and the style its business gives its covers.
 export const coverOf = (project: Project) => ({
@@ -167,7 +182,7 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 // - asks: who sees that every ended call's items have work and close, except customer or keys calls (server.ts keepsAsks)
 //   Left out, only the jobs working for a call
 //   Left out, only the jobs working for a call
-// - foundation: the foundation keeper, one more reader on a first round that touches the foundation's paths (reviewtriage.ts
+// - foundation: the foundation keeper, one more reader on a first round that touches the foundation's paths (reviewkeeper.ts
 //   keeperSeat). Left out, there is no keeper
 export function roles() {
   const r = optional('company/org.yaml').roles ?? {}, id = (v: unknown) => typeof v === 'string' && v ? v : ceo();
@@ -329,7 +344,7 @@ export function missing(path: string, text: string, files: Set<string>) {
 
 // Newest first, by `published` (date and time), else the date in the slug.
 // Covers are still pixel art (shared/covers); a post can carry a sound (`sound:`), played only when tapped.
-export function gazette() {
+export function gazette(): Post[] {
   const dir = `${REPO_DIR}/knowledge/posts`;
   return (existsSync(dir) ? readdirSync(dir) : []).filter(slug => existsSync(`${dir}/${slug}/index.md`)).map(slug => readOnce(`${dir}/${slug}/index.md`, text => {
     const { meta, body } = frontmatter(text);
@@ -340,8 +355,11 @@ export function gazette() {
     };
   })).concat(feeds.flatMap(feed => feed())).sort((a, b) => b.t.localeCompare(a.t));
 }
-// Posts from HQ's own records beside those in files, as gazette gives them (a meeting's summary).
-const feeds: (() => (Record<'slug' | 'title' | 'author' | 'date' | 'html' | 't', string> & { tags: string[]; board: boolean; links: string[]; cover: string | null; sound: string | null })[])[] = [];
+// Posts from HQ's own records beside those in files, as gazette gives them (a meeting's summary, with what its cover is
+// drawn from: meetingchair.ts.).
+type Post = Record<'slug' | 'title' | 'author' | 'date' | 'html' | 't', string> & { tags: string[]; board: boolean; links: string[]; cover: string | null; sound: string | null;
+  meeting?: { people: string[]; pictures: string[] } };
+const feeds: (() => Post[])[] = [];
 export const feedFrom = (feed: (typeof feeds)[number]) => void feeds.push(feed);
 
 // A file as HQ reads it, made again only when its text changes: rendering every note's Markdown takes most of a second,

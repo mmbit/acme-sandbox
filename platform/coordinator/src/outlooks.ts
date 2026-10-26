@@ -10,6 +10,7 @@ import type { QueuedJob, Wait } from './eta.ts';
 import { DAY_MS, HORIZON_DAYS } from './simulation.ts';
 import { companyTime } from './company.ts';
 import { alike, scores, wordsOf } from './matching.ts';
+import { readyOf } from './threadjudge.ts';
 
 // A thread's outlook: its two numbers, its planned finish against its window and the slack that leaves, where it stands
 // (forecast.ts standing), what it waits on, the chain that sets its finish, and why it has none (stall), with the time
@@ -99,15 +100,17 @@ const estimateOf = (job: number, f: Forecast) => {
 };
 
 // hq projects: every open thread, by project, with its owner (its project's), its
-// outlook and the job that goes on next.
+// outlook, the job that goes on next, and whether it's ready to judge (threadjudge.ts).
 export function lines(f: Forecast) {
   const threads = db
-    .prepare("select id, project, name, goal from threads where status = 'open' order by project, created")
-    .all() as Pick<Thread, 'id' | 'project' | 'name' | 'goal'>[];
+    .prepare(
+      "select id, project, name, goal, status, judge from threads where status = 'open' order by project, created",
+    )
+    .all() as Pick<Thread, 'id' | 'project' | 'name' | 'goal' | 'status' | 'judge'>[];
   return threads.map(t => {
     const outlook = outlookOf(t.id, f);
     const next = outlook?.next == null ? null : jobLine(outlook.next, f);
-    return { ...t, owner: ownerOf(t), outlook, next };
+    return { ...t, owner: ownerOf(t), outlook, next, ready: readyOf(t) };
   });
 }
 
@@ -118,7 +121,8 @@ export function detail(id: string, f: Forecast) {
   if (!t) return undefined;
   // (a moved thread found by its old id: its new one)
   const outlook = outlookOf(t.id, f);
-  return { ...t, owner: ownerOf(t), outlook, jobs: (outlook?.jobs ?? []).map(job => jobLine(job, f)) };
+  const jobs = (outlook?.jobs ?? []).map(job => jobLine(job, f));
+  return { ...t, owner: ownerOf(t), outlook, jobs, ready: readyOf(t) };
 }
 
 function jobLine(id: number, f: Forecast) {

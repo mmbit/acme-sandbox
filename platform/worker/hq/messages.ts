@@ -1,7 +1,7 @@
 // What an agent shows and says: its status above its head in HQ, messages to colleagues (hq say, hq sent), and the hook
 // that brings a job its own messages (hq inbox --hook).
 import * as api from './api.ts';
-import { readWords } from './files.ts';
+import { readGoalAndWords, readWords } from './files.ts';
 import { minute, present, print, printWritten, shown, stop, text } from './output.ts';
 
 export const status = {
@@ -38,8 +38,10 @@ export const say = {
                                                      Up to 8000 characters; longer work goes by hq job. A chain of
                                                      messages may start 3 jobs; past that, only a running job gets one.
                                                      "Not confirmed" (exit 3): it may have gone; check hq sent, don't resend.
-                                                     On a call: hq say <agent> - --job <n> --what "line", the board's word to
-                                                     a job or review under way (the reach tool).`,
+                                                     On a call: hq say <agent> - --job <n> --what "line" --goal -, the
+                                                     board's word to a job or review under way (the reach tool), and why
+                                                     the board wants it: both on stdin, as JSON {"goal": "...",
+                                                     "words": "..."}.`,
 
   async run(args: string[]) {
     if (process.env.HQ_CALL) return sayOnCall(args);
@@ -68,16 +70,20 @@ export const say = {
 };
 
 // On a live call (the voice line sets HQ_CALL), the board's word to a job under way (call.ts reach): hq say <agent> -
-// --job <n> --what "line", the words on stdin, never a file. The agent and the number must match, so a misheard number is refused. Only a refusal or no connection at all proves nothing was sent;
-// anything else may have gone (exit 3).
+// --job <n> --what "line" --goal -, the words and the goal on stdin (files.ts readGoalAndWords), never a file or argv
+// (--goal). The agent and the number must match, so a misheard number is refused.
+// Only a refusal or no connection at all proves nothing was sent; anything else may have gone (exit 3).
 async function sayOnCall(args: string[]) {
-  const [to, dash, jobFlag, job, whatFlag, what] = args;
-  if (args.length !== 6 || dash !== '-' || jobFlag !== '--job' || !/^[0-9]+$/.test(job) || whatFlag !== '--what') {
+  const [to, dash, jobFlag, job, whatFlag, what, goalFlag, goalDash] = args;
+  const flagged = jobFlag === '--job' && whatFlag === '--what' && goalFlag === '--goal' && goalDash === '-';
+  if (args.length !== 8 || dash !== '-' || !flagged || !/^[0-9]+$/.test(job)) {
     stop(
-      'usage on a call: hq say <agent> - --job <number> --what "one line for the call\'s list" (the words on stdin)',
+      'usage on a call: hq say <agent> - --job <number> --what "one line for the call\'s list" --goal - (the goal and the words on stdin, as JSON {"goal": "...", "words": "..."})',
     );
   }
-  const body = { to, job: Number(job), what, text: readWords('-') };
+  const given =
+    readGoalAndWords() ?? stop('Nothing was sent: hq say on a call takes {"goal": "...", "words": "..."} on stdin.');
+  const body = { to, job: Number(job), what, goal: given.goal, text: given.words.replace(/\n+$/, '') };
   const creation = await api.createOnce('message', body, answer => present(answer.item));
   if (!creation.made) {
     const { refused, status, error, failure } = creation;
@@ -200,13 +206,11 @@ type SentMessage = {
   needsAnswer?: boolean;
 };
 
-const utc = (time: string) => `${minute(time)} UTC`;
-
 function sentLine(message: SentMessage) {
   const content = present(message.text) ? `\n\n${text(message.text)}` : `\n    ${text(message.first)}`;
   const onCall = present(message.call) ? ` (on call #${message.call})` : '';
   const needed = message.needsAnswer ? " (answer needed during the caller's run)" : '';
-  return `#${message.id} to ${message.to}, ${utc(message.created)}${onCall}${needed}: ${whatBecameOf(message)}${content}`;
+  return `#${message.id} to ${message.to}, ${minute(message.created)}${onCall}${needed}: ${whatBecameOf(message)}${content}`;
 }
 
 function whatBecameOf(message: SentMessage) {
@@ -216,12 +220,12 @@ function whatBecameOf(message: SentMessage) {
     return `added to job #${message.became} (${jobStatus}), which your message #${message.joined} became, before it started`;
   }
   if (present(message.became)) return `became job #${message.became} (${jobStatus})`;
-  if (present(message.delivered)) return `delivered to job #${job} at ${utc(message.delivered)}`;
+  if (present(message.delivered)) return `delivered to job #${job} at ${minute(message.delivered)}`;
   if (present(message.lapsed)) {
     return `never read: job #${job} ended first, and its chain of messages had started 3 jobs already, so it didn't start another`;
   }
   if (present(message.offered) && message.job_status === 'running') {
-    return `offered to job #${job}'s session at ${utc(message.offered)}, not confirmed yet: if it didn't arrive, a later step gets it again`;
+    return `offered to job #${job}'s session at ${minute(message.offered)}, not confirmed yet: if it didn't arrive, a later step gets it again`;
   }
   if (message.job_status === 'running') {
     return `waiting for job #${job}, which is running: its session gets it at its next step`;
@@ -231,10 +235,10 @@ function whatBecameOf(message: SentMessage) {
 
 export const inbox = {
   help: `
-   hq inbox --hook                                   (Claude Code runs this for you: it brings your messages into the session)`,
+   hq inbox --hook                                   (your CLI runs this for you: it brings your messages into the session)`,
 
   // Claude Code runs this after each tool call and before the session stops (the worker's --settings), with the hook's
-  // JSON on stdin. Only the job's own thread takes its mail (a team member's tool call carries agent_id).
+  // JSON on stdin; a Codex work run after each tool call only (its hooks.json: inbox.ts). Only the job's own thread takes its mail (a team member's tool call carries agent_id).
   // Two steps, at least once: HQ offers the waiting messages; this prints them and, once the session's pipe has them,
   // acknowledges their ids. Only that ack marks them delivered. A failure before the print is written sends no ack: the
   // messages wait. A lost ack: the session has them, and HQ offers them again at a later step (or makes them a job if

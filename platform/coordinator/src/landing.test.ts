@@ -1,14 +1,18 @@
-// node --test src/landing.test.ts   (uses a throwaway DATA_DIR): hq job --lands, a job landing the saved work of one that
-// failed before it opened a pull request, which replaces it (takeover.ts landing).
+// node --test src/landing.test.ts   (uses a throwaway DATA_DIR): failed jobs replaced through hq job --lands.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { harness } from './harness.ts';
 import { followthroughFixture } from './followthrough.fixture.ts';
 
 const h = await harness('landing', {
-  before: repo =>
-    writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: wren }\n'),
+  before: repo => {
+    // (bolt's: its call's follow-up hands work into the game's threads, which only their owner draws)
+    writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: bolt }\n');
+    process.env.WORK_MIRROR_DIR = `${repo}/mirror.git`;
+    execFileSync('git', ['init', '--bare', '-q', process.env.WORK_MIRROR_DIR]);
+  },
 });
 const { db } = h;
 const windows = await import('./windows.ts');
@@ -69,8 +73,10 @@ test("hq job --lands: only the failed job's own agent's, by someone responsible 
   ] as const)
     assert.equal((await lands(by, failed, o)).status, 409);
   assert.equal(db.prepare('select count(*) n from jobs where instead_of is not null').get()!.n, 0);
-  assert.equal((await lands(chime, failed)).status, 200);
-  const again = await lands(chime, failed);
+  // (by bolt, who queued it and owns its thread: a task goes into a thread by its owner's hq job)
+  const bolt = await h.start({ agent: 'bolt', title: 'y' });
+  assert.equal((await lands(bolt, failed)).status, 200);
+  const again = await lands(bolt, failed);
   assert.equal(again.status, 409);
   assert.equal(db.prepare('select count(*) n from jobs where instead_of = ?').get(failed)!.n, 1);
 });
@@ -79,8 +85,9 @@ test("hq job --lands: the landing job takes over the failed job's item and threa
   const { call, item, thread, failed } = await failedPush();
   assert.deepEqual(lateLines(), [], 'a failed job is no open work: the summary lists it as failed');
 
-  const chime = await h.start({ agent: 'chime', title: 'Something else' });
-  const landing = await lands(chime, failed);
+  // (by bolt, who queued it and owns its thread)
+  const bolt = await h.start({ agent: 'bolt', title: 'Something else' });
+  const landing = await lands(bolt, failed);
   assert.equal(landing.status, 200, JSON.stringify(landing.body));
   const row = db
     .prepare('select instead_of, call, item, thread, prompt from jobs where id = ?')
@@ -98,7 +105,7 @@ test("hq job --lands: the landing job takes over the failed job's item and threa
   assert.match(lines[0], new RegExp(`^thread ${thread} \\(`));
 
   // done and merged, the item is handled and the clock stops
-  await h.finish(chime);
+  await h.finish(bolt);
   const run = (await h.claim(jobEngine(landing.body.id)))!;
   assert.equal(run.id, landing.body.id);
   await h.finish(run, { status: 'done', pr: 63, branch: `job/${run.id}` });
@@ -116,7 +123,105 @@ test('hq job --lands takes no failed job that opened a pull request: its work go
   db.prepare("update jobs set status = 'failed' where id = ?").run(fix.id);
   const r = await lands(chime, fix.id);
   assert.equal(r.status, 409);
-  assert.match(r.body.error, /opened pull request #64/);
+  assert.match(r.body.error, /pull request #64/);
+});
+
+const mirror = (...args: string[]) =>
+  execFileSync('git', ['--git-dir', process.env.WORK_MIRROR_DIR!, ...args], { encoding: 'utf8' }).trim();
+const commit = (parent?: string, at?: string) => {
+  const tree = mirror('mktree');
+  return execFileSync(
+    'git',
+    ['--git-dir', process.env.WORK_MIRROR_DIR!, 'commit-tree', tree, ...(parent ? ['-p', parent] : [])],
+    {
+      input: 'Thread work\n',
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Chime',
+        GIT_AUTHOR_EMAIL: 'chime@example.invalid',
+        GIT_COMMITTER_NAME: 'Chime',
+        GIT_COMMITTER_EMAIL: 'chime@example.invalid',
+        ...(at && { GIT_AUTHOR_DATE: at, GIT_COMMITTER_DATE: at }),
+      },
+    },
+  ).trim();
+};
+
+async function failedThreadTask(saved: 'nothing' | 'later' | 'pushed' | 'outgoing') {
+  reset();
+  const made = projects.createThread({ project: 'game', name: 'The shop', goal: 'The shop works' });
+  if (typeof made === 'string') throw new Error(made);
+  const first = await h.start({ agent: 'chime', title: 'Build the shop', thread: made.id });
+  const branch = `job/${first.id}`,
+    head = commit();
+  mirror('update-ref', `refs/heads/${branch}`, head);
+  mirror('update-ref', `refs/outgoing/${branch}`, head);
+  await h.finish(first, { pr: 65, branch, sha: head, files: ['platform/shop.ts'] });
+  h.cancelQueued();
+  const { call, item, wire } = await handedOut({ kind: 'task', what: 'Fix the care route' }, made.id);
+  const original = db.prepare('select prompt from jobs where id = ?').get(wire.id) as { prompt: string };
+  const later = h.queue({ agent: 'chime', title: 'Check the shop', thread: made.id });
+  if (saved === 'pushed' || saved === 'outgoing') {
+    const own = commit(head);
+    const ref = saved === 'pushed' ? `refs/heads/${branch}` : `refs/outgoing/${branch}`;
+    mirror('update-ref', ref, own);
+  }
+  await h.finish(wire, { status: 'failed', branch });
+  if (saved === 'later') {
+    const next = commit(head, new Date(Date.now() + MIN).toISOString());
+    mirror('update-ref', `refs/heads/${branch}`, next);
+    mirror('update-ref', `refs/outgoing/${branch}`, next);
+  }
+  const owner = await h.start({ agent: 'bolt', title: 'Recover the failed task' });
+  return { failed: wire.id, original, later, owner, branch, call, item, thread: made.id };
+}
+
+test('hq job --lands restores an empty failed task on an open thread PR with its own brief and place', async () => {
+  const { failed, original, later, owner, branch, call, item, thread } = await failedThreadTask('nothing');
+  const reply = await h.hq(owner, 'job', '--new', '--lands', String(failed), 'chime', 'Finish the care fix');
+  assert.equal(reply.code, 0, reply.out);
+  const replacement = h.jobs.replacementOf(failed)!;
+  assert.ok(replacement);
+  const queued = { ...h.job(replacement), ...db.prepare('select prompt from jobs where id = ?').get(replacement) };
+  assert.equal(queued.thread, thread);
+  assert.equal(queued.call, call);
+  assert.equal(queued.item, item);
+  const { codeOf } = await import('./jobcodes.ts');
+  assert.equal(codeOf(replacement), codeOf(failed));
+  assert.ok(queued.prompt.startsWith(original.prompt), 'the failed task supplies its whole stored brief');
+  assert.doesNotMatch(queued.prompt, /git fetch origin refs\/outgoing/);
+  const threadorder = await import('./threadorder.ts');
+  const order = threadorder.tasksOf(thread).map(task => task.id);
+  assert.equal(order.includes(failed), false);
+  assert.ok(order.indexOf(replacement) < order.indexOf(later));
+  const run = await h.claimJob(replacement);
+  assert.equal(run?.id, replacement);
+  assert.equal(run?.branch, branch);
+  assert.equal((await lands(owner, failed)).status, 409);
+});
+
+test('hq job --lands can restore an empty failed task after later work reached the thread branch', async () => {
+  const { failed, owner } = await failedThreadTask('later');
+  const reply = await lands(owner, failed, { prompt: undefined });
+  assert.equal(reply.status, 200, JSON.stringify(reply.body));
+  assert.equal(h.jobs.replacementOf(failed), reply.body.id);
+});
+
+for (const saved of ['pushed', 'outgoing'] as const) {
+  test(`hq job --lands refuses a failed thread task with its own ${saved} work`, async () => {
+    const { failed, owner } = await failedThreadTask(saved);
+    assert.equal((await lands(owner, failed)).status, 409);
+    assert.equal(h.jobs.replacementOf(failed), null);
+  });
+}
+
+test("hq job --lands stops when the mirror can't show a failed thread task's work", async () => {
+  const { failed, owner, branch } = await failedThreadTask('nothing');
+  for (const ref of [`refs/heads/${branch}`, `refs/outgoing/${branch}`]) mirror('update-ref', '-d', ref);
+  const reply = await lands(owner, failed);
+  assert.equal(reply.status, 500, JSON.stringify(reply.body));
+  assert.equal(h.jobs.replacementOf(failed), null);
 });
 
 for (const status of ['dropped', 'replaced']) {
@@ -136,16 +241,16 @@ test("hq job --lands keeps the failed job's paused project until it resumes", as
   assert.equal(typeof thread, 'object');
   if (typeof thread === 'string') throw new Error(thread);
   db.prepare('update jobs set thread = ? where id = ?').run(thread.id, failed);
-  const chime = await h.start({ agent: 'chime', title: 'Something else' });
+  const bolt = await h.start({ agent: 'bolt', title: 'Something else' }); // (who queued it and owns its thread)
   const { ceo } = await import('./company.ts');
   const chief = await h.start({ agent: ceo(), title: 'Pause the game' });
   assert.equal(
     (await h.agent('pauses', chief.token, { project: 'game', why: 'Wait for the board', byHand: true })).status,
     200,
   );
-  const reply = await lands(chime, failed);
+  const reply = await lands(bolt, failed);
   assert.equal(reply.status, 200, JSON.stringify(reply.body));
-  await h.finish(chime);
+  await h.finish(bolt);
   assert.equal((await h.claim(jobEngine(reply.body.id)))?.id, undefined, 'the project pause holds the landing job');
   assert.equal(reply.body.thread, thread.id);
   assert.equal(reply.body.paused.target, 'game');

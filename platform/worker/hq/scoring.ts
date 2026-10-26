@@ -14,10 +14,41 @@ type Lead = {
   held_share: number | null;
 };
 type Group = Spread & { key: string };
+type Minutes = { total: number; median: number | null };
+type Threads = {
+  count: number;
+  one_agent: number;
+  tasks: number;
+  pull_requests: number;
+  rounds: number;
+  review_runs: number;
+  work: Minutes;
+  review: Minutes;
+  waiting: Minutes;
+  review_share: number | null;
+  waiting_share: number | null;
+  handoffs: { count: number; review: Minutes; start: Minutes };
+};
 type Calibration = {
   days: number;
-  sizes: { count: number; by_agent: Group[]; by_area: Group[]; by_sizer: Group[] };
+  sizes: {
+    count: number;
+    by_agent: Group[];
+    by_area: Group[];
+    by_sizer: Group[];
+    by_queue: Group[];
+    given_sizes: Spread;
+    given_sizes_corrected: Spread;
+  };
   eta: Lead[];
+  threads: Threads;
+};
+const QUEUED_HOW: Record<string, string> = {
+  call: 'a board call',
+  meeting: 'a meeting',
+  inbox: 'an accepted proposal',
+  hq: "HQ's own",
+  agent: "an agent's hq job",
 };
 type RoundScore = {
   size: string;
@@ -46,14 +77,44 @@ export async function calibration(days: URLSearchParams) {
     ['By agent', c.sizes.by_agent],
     ['By area (the folder its pull request changed most)', c.sizes.by_area],
     ['By sizer (haiku, the estimate tool, or the agent who set it)', c.sizes.by_sizer],
+    ['By how it was queued', c.sizes.by_queue.map(g => ({ ...g, key: QUEUED_HOW[g.key] }))],
   ];
   for (const [title, list] of groups) {
     print(`  ${title}:`);
     for (const g of list) print(`    ${g.key}, ${plural(g.count, 'job')}: ${spreadWords(g)}`);
   }
+  const { given_sizes: given, given_sizes_corrected: corrected } = c.sizes;
+  print(
+    `  Sizes given by agents and models, as given: ${given.count ? `${plural(given.count, 'job')}, ${spreadWords(given)}` : 'none.'}`,
+    `    the same, as the play now counts them: ${corrected.count ? spreadWords(corrected) : 'none.'}`,
+  );
   print('', "ETAs against the landings: the prediction log's row standing that long before each landing.");
   for (const lead of c.eta) print(leadLine(lead));
+  threads(c.threads);
 }
+
+function threads(t: Threads) {
+  print('', 'Threads: the pull requests merged in the window, by their thread.');
+  if (!t.count) return print('  none merged.');
+  const each = (n: number, of: number) => Math.round((n / of) * 10) / 10;
+  print(
+    `  ${plural(t.count, 'thread')}: ${t.one_agent} with one agent, ${t.count - t.one_agent} with two or more; ` +
+      `${plural(each(t.tasks, t.count), 'task')} and ${plural(each(t.pull_requests, t.count), 'pull request')} a thread, ` +
+      `${plural(each(t.rounds, t.pull_requests), 'review round')} a pull request (${plural(t.review_runs, 'review run')}).`,
+    `  From the first task queued to the last merge: work ${minutesWords(t.work, 'thread')}, review ${minutesWords(t.review, 'thread')}, ` +
+      `waiting ${minutesWords(t.waiting, 'thread')}; review ${percent(t.review_share ?? 0)} and waiting ` +
+      `${percent(t.waiting_share ?? 0)} of all thread time.`,
+  );
+  const h = t.handoffs;
+  if (!h.count) return print("  Hand-offs (a task queued --after another branch's job): none.");
+  print(
+    `  Hand-offs (a task queued --after another branch's job): ${h.count}, waiting for that job's review and merge ` +
+      `${minutesWords(h.review, 'hand-off')}, then for their start ${minutesWords(h.start, 'hand-off')}.`,
+  );
+}
+
+const minutesWords = (m: Minutes, each: string) =>
+  `${duration(m.total)} in all${m.median === null ? '' : ` (the median ${each} ${duration(m.median)})`}`;
 
 export async function backtest(days: URLSearchParams, save: string | undefined) {
   if (save !== undefined) {

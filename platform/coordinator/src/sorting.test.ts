@@ -119,8 +119,10 @@ test("a message no session took waits for its sort by its thread's project owner
   const item = held(job)!;
   assert.equal(item.project, 'game');
   assert.match(item.brief, /bolt's message[\s\S]*The second level needs a door/);
-  assert.equal(await claimable(job), false, 'nothing runs before its sort');
   assert.match((await h.hq(bolt, 'jobs', 'kit')).out, /once its project's owner sorts it into the plan/);
+  // (bolt's job, the thread's task before it, ends first: in a thread a task starts only after the one before it)
+  await h.finish(bolt);
+  assert.equal(await claimable(job), false, 'nothing runs before its sort');
   // the owner hears of it at the minute's sweep: its planning job, the one sort step
   proposals.sweep();
   const planning = h.jobs.listJobs().find(j => j.agent === 'wren' && j.status === 'queued')!;
@@ -167,6 +169,7 @@ test("a message from a job on a windowed thread no pause holds gets its sort and
     proposals.accept(held(job)!.id, 'wren', { title: 'Judge the bigger scope', code: 'SCOPE' });
     play = orderingSnapshot(Date.now()).jobs;
     assert.equal(play.find(j => j.id === job)!.dependencies, undefined);
+    await h.finish(bolt); // (the task before it in its thread)
     assert.equal(await claimable(job), true);
   } finally {
     for (const target of desks) pauses.resume(target, ceo());
@@ -184,6 +187,7 @@ test('a later message joining a sorted job that has not started holds it for its
   const second = held(job)!;
   assert.notEqual(second.id, first.id);
   assert.match(second.brief, /And a window beside it/);
+  await h.finish(bolt); // (the thread's task before it ends first)
   assert.equal(await claimable(job), false);
   proposals.accept(second.id, 'wren', { title: 'Draw the door and the window beside it' });
   assert.equal(h.job(job).code, 'DOOR', 'it keeps the code it was given');

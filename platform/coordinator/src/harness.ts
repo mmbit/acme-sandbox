@@ -19,6 +19,7 @@ import { fixtureRepo } from './fixture.ts';
 import { recordedReviews, type JobFields } from './reviewfixture.ts';
 import { recordedPastJobs } from './pastjobs.fixture.ts';
 import { recordedCalls } from './calls.fixture.ts';
+import { storedPlans } from './plan.fixture.ts';
 import { codedArgs, codedBody, word } from './testwords.ts';
 
 export const WORKER_TOKEN = 'worker-secret',
@@ -227,8 +228,8 @@ export async function harness(
       `insert or ignore into projects (id, name, owner, created, by) values ('due', 'Due', 'juno', ?, 'juno')`,
     ).run(new Date().toISOString());
     db.prepare(
-      `insert into threads (id, project, name, owner, goal, created, deadline, aim, deadline_by)
-      values (?, 'due', ?, 'juno', 'It ships', ?, ?, ?, ?)`,
+      `insert into threads (id, project, name, goal, created, deadline, aim, deadline_by)
+      values (?, 'due', ?, 'It ships', ?, ?, ?, ?)`,
     ).run(
       id,
       `Thread ${threads}`,
@@ -313,6 +314,7 @@ export async function harness(
     storedCall,
     liveCall,
     pastJob,
+    ...storedPlans(db), // (plan states no route makes)
   };
 }
 

@@ -2,7 +2,7 @@
 // (the foundation keeper's seat)
 import { matchesGlob } from 'node:path';
 import { db, redacted } from './db.ts';
-import { org, roles } from './company.ts';
+import { org } from './company.ts';
 import { findAgent } from './jobs.ts';
 import { withPicks } from './models.ts';
 import * as panel from './panel.ts';
@@ -11,7 +11,7 @@ import * as reviewinbox from './reviewinbox.ts';
 import * as engineOnly from './engineonly.ts';
 import * as visual from './visual.ts';
 import { TRUST_RULE } from './trust.ts';
-import { inFoundation } from './coming.ts';
+import { keeperSeat } from './reviewkeeper.ts';
 
 export type Read = { agent: string; reason: string; files: string[]; domain: string; security: boolean };
 export type Selection = {
@@ -20,6 +20,7 @@ export type Selection = {
   consolidator: string;
   reviewers: Read[];
   looker: string | null;
+  throwaway?: boolean;
   exceptions?: { agent: string; reason: string }[];
 };
 
@@ -45,6 +46,7 @@ need only one domain read. Security joins for a concrete risk in how HTML is bui
 external data or other dangerous behavior. Keep Codex for security and general independent reads where needed.
 Prefer Claude for visual and domain reads and low-risk rulings when an eligible Claude consolidator can do them.
 ${LENSES}
+${THROWAWAY}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below${finderList(pr, files)}.
 You may explicitly replace that list, but name a reason in "exceptions" for each finder omitted, except a finder
@@ -63,7 +65,7 @@ read), then end with exactly the same JSON and stop:
 {"decision":"review" | "escalate", "reason":"why this scope and panel, or the owner decision needed",
 "consolidator":"suggested eligible consolidator id, optional", "reviewers":[{"agent":"eligible staff id", "reason":"why needed",
 "files":["assigned paths, folders ending in / or globs"], "domain":"discipline", "security":false}],
-"looker":"the one reader who renders and opens the previews" | null,
+"looker":"the one reader who renders and opens the previews" | null, "throwaway":false,
 "exceptions":[{"agent":"omitted finder id", "reason":"why this finder cannot or need not recheck"}]}.
 A nonempty reviewers list must collectively cover every file reported above. Name a folder ("platform/hq/shell/") or a
 glob ("platform/hq/**/*.css") for many files rather than copying each path: it reads as the reported files it matches.
@@ -80,6 +82,12 @@ and nobody renders anything. Configured preview commands cover only their own pa
 If engine constraints move all of the chosen reader's visual files away, the look follows those files to their reader.
 If the consolidator has no separate reader seat, its look passes to a reader holding the shown files, or stays with
 the consolidator when it reads alone.`;
+
+// Whether the change is throwaway, judged from what it is (CODE_STYLE.md): its readers then hold it to the low bar
+const THROWAWAY = `Set "throwaway" when the change is work that runs once or twice and goes to the archive: a prototype, a
+demo reel, a concept film, a presentation. Its readers then look only at whether it misses the board's vision in an
+important way and at real breakage or safety, so one reader, or the consolidator alone, is usually enough. Code that
+customers use, that other code builds on, or that keeps running is never throwaway, whatever its folder.`;
 
 function candidatesFor(pr: number) {
   const excluded = panel.excludedAuthors(pr);
@@ -175,6 +183,7 @@ export function read(job: number, output?: string): Selection | string {
     consolidator,
     reviewers: assigned,
     looker,
+    throwaway: report.throwaway === true,
     exceptions: report.exceptions ?? [],
   };
 }
@@ -193,22 +202,6 @@ function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], cons
   if (retained?.files.some(file => files.includes(file))) return retained.agent;
   return assigned.find(reader => reader.files.some(file => files.includes(file)))?.agent;
 }
-
-// The foundation keeper (org.yaml's roles.foundation) reads every first round that touches the foundation's paths, on
-// those files and its one question, whoever else triage chose. The sole-author exclusion applies to this seat too.
-function keeperSeat(pr: number, files: string[], eligible: (agent: unknown) => boolean): Read | undefined {
-  const keeper = roles().foundation,
-    paths = files.filter(inFoundation),
-    { fixes_from } = db.prepare('select fixes_from from prs where number = ?').get(pr) as { fixes_from: string | null };
-  if (!keeper || fixes_from || !paths.length || !eligible(keeper)) return undefined;
-  return { agent: keeper, files: paths, domain: 'the foundation', security: false, reason: KEEPER_QUESTION };
-}
-const KEEPER_QUESTION = `the foundation keeper's one question, of each change to these files: is it a setting, a list
-entry or a plug-in point any company could use, or a branch for one company or one need? The second kind is a blocking
-finding: an if-else on a brand, a company's name, data or one-off in a foundation file, a fixed list of one company's
-things, or a one-of-each assumption built into the code instead of read from the company's own files. Name the line and
-the generic form it would take (docs/foundation.md). A plug-in point nobody needs yet is no finding. Leave correctness,
-security and style to the other readers`;
 
 function eligibleFor(pr: number) {
   const excluded = panel.excludedAuthors(pr);

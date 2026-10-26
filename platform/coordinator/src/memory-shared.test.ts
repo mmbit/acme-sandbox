@@ -48,7 +48,7 @@ test("A board call is every agent's: search finds its words and its summary, and
   // Juno couldn't find the call where the board explained the support chat's human contact
   const c = await call('kit', ['Board: the support chat hands over to a human through the kakapodesk.', 'Kit: got it, the kakapodesk it is.']);
   const follow = await run(c.job);
-  assert.equal((await agent('item', follow.token, { kind: 'briefing', owner: 'kit', what: 'How the support chat reaches a human', quote: 'Board: the support chat hands over to a human through the kakapodesk.' })).status, 200);
+  assert.equal((await agent('item', follow.token, { kind: 'briefing', owner: 'kit', goal: 'g', what: 'How the support chat reaches a human', quote: 'Board: the support chat hands over to a human through the kakapodesk.' })).status, 200);
   assert.equal((await done(follow, 'The board explained the kakapodesk hand-over; I wrote the tuatarahandover note.')).status, 200);
   await memory.refresh();
   const juno = await at('juno');
@@ -120,7 +120,7 @@ test("A call about a card for keys is its own agent's, transcript and report; on
   // (a follow-up that records an item: the call is followed up, and the next call's follow-up runs)
   const followUp = async (c: { id: number; job: number }, quote: string, result: string) => {
     const f = await run(c.job);
-    assert.equal((await agent('item', f.token, { kind: 'briefing', owner: 'penny', what: quote, quote, call: c.id })).status, 200);
+    assert.equal((await agent('item', f.token, { kind: 'briefing', owner: 'penny', goal: 'g', what: quote, quote, call: c.id })).status, 200);
     assert.equal((await agent('reply', f.token, { text: result })).status, 200); // (its reply)
     await done(f, result);
   };
@@ -254,7 +254,7 @@ test("A job handed a customer call's item holds their details from the start: th
     ['Board: refund the moaparcel.', card.id, true]] as const) {
     const heard = await call('kit', [line], request);
     const follow = await run(heard.job);
-    const it = (await agent('item', follow.token, { kind: 'task', owner: 'dex', what: 'Pack the parcel', quote: line })).body.id;
+    const it = (await agent('item', follow.token, { kind: 'task', owner: 'dex', goal: 'g', what: 'Pack the parcel', quote: line })).body.id;
     const handed = await agent('job', follow.token, { agent: 'dex', title: 'Pack the parcel', prompt: 'Pack it.', item: it });
     assert.equal(handed.status, 200);
     assert.equal(await holds(handed.body), customers, `call #${heard.id}`);
@@ -302,7 +302,7 @@ test("A customer card is the job's that filed it: its text, photos and history e
   // a colleague's job handed out for an item of a call about the card, and org.yaml's roles.customerData, get its photos
   const c = await call('lark', ['Board: ask Dex to weigh the tuiparcel.'], card.id);
   const follow = await run(c.job);
-  const item = (await agent('item', follow.token, { kind: 'task', owner: 'dex', what: 'Weigh the tuiparcel', quote: 'Board: ask Dex to weigh the tuiparcel.' })).body.id;
+  const item = (await agent('item', follow.token, { kind: 'task', owner: 'dex', goal: 'g', what: 'Weigh the tuiparcel', quote: 'Board: ask Dex to weigh the tuiparcel.' })).body.id;
   const handed = await run((await agent('job', follow.token, { agent: 'dex', title: 'Weigh the tuiparcel', prompt: 'x', item })).body.id);
   await done(follow);
   const vera = await at('vera');

@@ -404,13 +404,16 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
     ['mail', undefined], ['note?id=1', undefined], ['phone', undefined]] as const)
     assert.equal((await agent(route, t, body)).status, 403, route);
   assert.match((await agent('mail', t)).body.error, /^a call can't do this, as none of the call's tools reaches it/, 'it says why');
+  // the reads a job has, its call's too: the status report, the Overseer's notes
+  assert.notEqual((await agent('report', t)).status, 403);
+  assert.equal((await agent('overseer', t)).status, 200);
   // (closing a card that is not the call agent's is HQ's own refusal)
   assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
   // a promise on its own call's list, nothing else: not another call's item or job
   const kit = await callToken('kit');
-  const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', what: 'Coming-soon page', quote: 'Build it' })).body.id;
+  const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Coming-soon page', quote: 'Build it' })).body.id;
   const kitsJob = (await agent('job', kit, { agent: 'kit', title: 'Coming-soon page', prompt: 'x', item: kitsItem })).body.id;
-  assert.equal((await agent('item', t, { kind: 'task', owner: 'wren', what: 'Something else', quote: 'y' })).status, 403);
+  assert.equal((await agent('item', t, { kind: 'task', owner: 'wren', goal: 'g', what: 'Something else', quote: 'y' })).status, 403);
   assert.equal((await agent('item-drop', t, { id: kitsItem, why: 'x' })).status, 403);
   // (cancel: open to a call as hq cancel is to its agent's jobs, and wren may cancel neither kit's job nor one kit queued)
   assert.equal((await agent('cancel', t, { id: kitsJob })).status, 404);
@@ -431,7 +434,7 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
 
 test("Call ledger: a job handed out for one item can't drop or close a colleague's item on the same call, nor cancel a job the coordinator made", async () => {
   const kit = await callToken('kit');
-  const it = async (what: string) => (await agent('item', kit, { kind: 'promise', owner: 'kit', what, quote: 'Build it' })).body.id as number;
+  const it = async (what: string) => (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what, quote: 'Build it' })).body.id as number;
   const a = await it('Coming-soon page'), b = await it('Mission note');
   // (now: started on the call, which hasn't ended. A call's job waits for its end otherwise)
   const own = (await agent('job', kit, { agent: 'kit', title: 'Coming-soon page', prompt: 'x', item: a, now: true })).body.id;
@@ -950,8 +953,8 @@ test('N3: a symlink in a served folder does not lead out of it', async () => {
 test('hq note: a sent review note is readable on the agent API only by the agent it was sent to', async () => {
   const mine = await running('bolt'), theirs = await running('wren');
   const note = (status: string) => (db.prepare(`insert into review_notes (created, slug, page, element, note, status, job)
-    values (?, 'hello', '/', '{}', 'Too pale', ?, ?)`).run(new Date().toISOString(), status, mine.id)).lastInsertRowid;
-  const sent = note('sent'), pending = note('pending');
+    values (?, 'hello', '/', '{"v":1,"url":"https://hello.preview.company.test/","el":null,"view":{"w":0,"h":0,"x":0,"y":0,"dpr":1},"ink":[],"kind":"general","area":null,"html":""}', 'Too pale', ?, ?)`).run(new Date().toISOString(), status, mine.id)).lastInsertRowid;
+  const sent = note('sent'), pending = note('pending'); // (a v1 general mark)
   const r = await agent(`note?id=${sent}`, mine.token);
   assert.equal(r.status, 200);
   assert.equal(r.body.note, 'Too pale');

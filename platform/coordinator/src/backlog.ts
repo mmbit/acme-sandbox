@@ -16,7 +16,9 @@ import { wholeSeconds } from './arithmetic.ts';
 import { answerTimes } from './answertime.ts';
 import { deployLag } from './deploytime.ts';
 import { heldWindows } from './inbox.ts';
-import type { OrderingSnapshot, Planned, QueuedJob, SeatNow, Snapshot } from './eta.ts';
+import { observedSeats } from './seatobservations.ts';
+import { measuredMemories } from './room.ts';
+import type { Memory, OrderingSnapshot, Planned, QueuedJob, Snapshot } from './eta.ts';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 
@@ -57,11 +59,21 @@ export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = []): Sn
   const queue = orderingSnapshot(now, planned),
     capacity = plannerCapacity(now),
     measured = fillRates(now);
+  const stages = queue.jobs.flatMap(row => row.reviewPlan?.stages.filter(stage => stage.job === undefined) ?? []);
+  const future = stages.map((stage, index) => ({ id: -index - 1, agent: stage.agent, kind: stage.kind }));
+  const memory = measuredMemories([...queue.jobs.filter(row => row.id > 0), ...future]);
+  queue.jobs.forEach(row => {
+    row.memoryMb = row.id > 0 ? (memory.get(row.id) ?? null) : null;
+  });
+  stages.forEach((stage, index) => {
+    stage.memoryMb = memory.get(-index - 1) ?? null;
+  });
   return {
     ...queue,
-    seats: seats(),
+    seats: observedSeats(now, STOP_DEFAULT),
     seatPlans: configuredPlans(),
     seatMeasurements: Object.fromEntries([...measured.values()].flatMap(r => [...r.measurements])),
+    seatMix: Object.fromEntries([...measured.values()].flatMap(r => [...r.mix])),
     pacing: pacingOn(),
     rates: Object.fromEntries(
       [...measured].map(([engine, r]) => [
@@ -70,7 +82,13 @@ export function snapshot(now: number, planned: Omit<Planned, 'size'>[] = []): Sn
       ]),
     ),
     slots: capacity?.slots ?? {},
-    ...(capacity ? { room: capacity.room, seatRuns: capacity.seatRuns } : {}),
+    ...(capacity
+      ? {
+          room: capacity.room,
+          seatRuns: capacity.seatRuns,
+          memory: capacity.memory ? currentMemory(capacity.memory) : undefined,
+        }
+      : {}),
   };
 }
 
@@ -86,13 +104,11 @@ export function orderingSnapshot(
   const open = new Map(rows.map(r => [r.id, r]));
   const lastId = Math.max(0, ...rows.map(row => row.id));
   rows.push(...planned.map(p => plannedRow(p, now)));
-  const placement = threadorder.ordered()
-    ? threadorder.placing(
-        planned.filter(p => p.placeholder),
-        rows,
-      )
-    : undefined;
-  const waits = placement?.waits ?? jobs.outstandingWaitsByJob([...open.keys()]);
+  const placement = threadorder.placing(
+    planned.filter(p => p.placeholder),
+    rows,
+  );
+  const waits = placement.waits;
   const answers = answerTimes(now),
     lag = deployLag(now);
   const reviewing = rows.filter(row => row.kind === 'work' && row.status === 'done').map(row => row.thread);
@@ -115,7 +131,7 @@ export function orderingSnapshot(
     job.placeholder = planned.find(p => p.id === row.id)?.placeholder;
     return job;
   });
-  if (placement) inThreads(rows, queued, placement.place, rounds, keepLoops);
+  inThreads(rows, queued, placement.place, rounds, keepLoops, now);
   return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 
@@ -154,6 +170,7 @@ function inThreads(
   place: ReturnType<typeof threadorder.placing>['place'],
   rounds: ReturnType<typeof reviewPlans>,
   keepLoops: boolean,
+  now: number,
 ) {
   rows.forEach((row, i) => {
     const placed = place(row),
@@ -165,6 +182,17 @@ function inThreads(
     if (placed.needs) job.needs = placed.needs;
     job.reasons.push(...placed.stalls.map(why => ({ on: 'stalled' as const, why })));
   });
+  // A task whose thread's next task follows it with nothing else to wait for opens no round: its push waits for that
+  // task's (review.ts heldForThread, threadorder.ts nextReady), so the thread plays one review, after its last task. A
+  // follower waiting for a time, a card, a deploy or other work lets the push go to review at once.
+  const onCue = (job: QueuedJob) =>
+    !job.wakes.length && !job.cards.length && !job.waitsFor.length && !job.needs?.length && job.notBefore <= now;
+  const followed = new Set(queued.flatMap(job => (job.follows !== undefined && onCue(job) ? [job.follows] : [])));
+  for (const job of queued)
+    if (followed.has(job.id)) {
+      job.reviewPlan = undefined;
+      job.opensReview = false;
+    }
   if (!keepLoops) unloop(queued);
 }
 
@@ -287,14 +315,16 @@ function holdForPauses(job: QueuedJob, row: Row, c: Context) {
     if (row.status !== 'queued') continue;
     if (p.untilTime !== null) job.wakes.push({ at: Math.max(p.untilTime, c.now) });
     const open = p.until.filter(id => c.open.has(id));
-    if (p.untilTime === null && !open.length && p.card === null) stall(job, `${p.target} is paused until it's resumed`);
+    if (p.untilTime === null && !open.length && p.card === null)
+      stall(job, `${p.target} is paused until it's resumed`, p.target);
     for (const id of open) waitFor(job, id);
   }
 }
 
-const stall = (job: QueuedJob, why: string) => {
+// (pause: the thread or project whose pause stalls it, which routing reads)
+const stall = (job: QueuedJob, why: string, pause?: string) => {
   job.after = 'never';
-  job.reasons.push({ on: 'stalled', why });
+  job.reasons.push({ on: 'stalled', why, ...(pause && { pause }) });
 };
 const waitFor = (job: QueuedJob, id: number) => {
   if (!job.waitsFor.includes(id)) job.waitsFor.push(id);
@@ -340,30 +370,15 @@ function wakeOf(wake: Wake, c: Context): QueuedJob['wakes'][number] {
   return job !== undefined && c.open.has(job) ? { deployOf: job } : { at: c.now + c.lag, deploy: true };
 }
 
-// Each seat as it reports itself now. A seat the board gave no stop level runs to the worker's own (seats.ts
-// STOP_DEFAULT). With whether it runs on credits, which the play paces it by as the worker does (playseats.ts).
-function seats(): SeatNow[] {
-  const rows = db
-    .prepare(
-      `select s.id, s.engine, s.state, s.until, s.util five_hour, s.resets five_hour_resets, s.week, s.week_resets,
-      s.credits, l.stop from seats s left join seat_list l on l.id = s.id order by s.id`,
-    )
-    .all() as {
-    id: string;
-    engine: string;
-    state: string;
-    until: number | null;
-    five_hour: number | null;
-    five_hour_resets: number | null;
-    week: number | null;
-    week_resets: number | null;
-    credits: number | null;
-    stop: number | null;
-  }[];
-  return rows.map(s => ({
-    ...{ id: s.id, engine: s.engine, state: s.state, until: s.until },
-    ...{ fiveHour: s.five_hour ?? 0, fiveHourResets: s.five_hour_resets },
-    ...{ week: s.week ?? 0, weekResets: s.week_resets, stop: (s.stop ?? STOP_DEFAULT) / 100 },
-    credits: s.credits === 1,
-  }));
+function currentMemory(memory: Memory): Memory {
+  let availableMb = memory.availableMb;
+  const runningMb = Object.fromEntries(
+    Object.entries(memory.runningMb).filter(([id, mb]) => {
+      const job = prepared('select status from jobs where id = ?').get(Number(id)) as { status: string } | undefined;
+      if (!job || job.status === 'running') return true;
+      availableMb += mb ?? memory.defaultRunMb;
+      return false;
+    }),
+  );
+  return { ...memory, availableMb, runningMb };
 }

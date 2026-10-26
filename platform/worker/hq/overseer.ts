@@ -33,6 +33,6 @@ async function listNotes() {
   if (notes.length === 0) return print('No notes to the Overseer yet.');
   for (const note of notes)
     print(
-      `#${note.id}, ${minute(note.at)} UTC, job #${note.job}${note.held ? ' (held till its run ends)' : ''}: ${note.text.split('\n')[0]}`,
+      `#${note.id}, ${minute(note.at)}, job #${note.job}${note.held ? ' (held till its run ends)' : ''}: ${note.text.split('\n')[0]}`,
     );
 }

@@ -9,11 +9,13 @@ export type ItemFlags = {
   deadline?: string;
   lands?: string;
   job?: string;
+  goal?: string;
 };
 
 // --item, --replaces and --call <number> (hq items), --lands <job> (hq job: the failed job whose saved work it lands),
 // --job <job> (hq item add on a live call: the work under way a promise is about),
-// --deadline <when> (hq item add, replace: the item's time; hq job refuses it).
+// --deadline <when> (hq item add, replace: the item's time; hq job refuses it), and --goal - (hq item add and replace:
+// why the board wants it, on stdin with the words).
 export function takeItemFlags(given: string[], command: 'job' | 'item') {
   const flags: ItemFlags = {};
   const args: string[] = [];
@@ -32,6 +34,14 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
       // (hq_tools.py reads "Nothing recorded" as a refusal)
       if (!value) stop('Nothing recorded: --deadline needs a time (2h, 90m, 14:30 UTC)');
       flags.deadline = value;
+      i++;
+    } else if (flag === '--goal' && command === 'item') {
+      if (value !== '-') {
+        stop(
+          'Nothing recorded: --goal takes -, the goal on stdin with the words as JSON {"goal": "...", "words": "..."}',
+        );
+      }
+      flags.goal = value;
       i++;
     } else {
       args.push(flag);

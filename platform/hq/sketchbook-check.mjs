@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -335,7 +336,7 @@ assert.deepEqual(errors, []);
 await context.close();
 
 // ---- each look, for the eye
-for (const look of ['brownstone', 'wire', 'holo']) {
+for (const look of lookNames()) {
   const opened = await open(look);
   await shot(`sketchbook-${look}`, opened.page);
   await opened.page.locator('.sk-card:has-text("Shop header") [data-open]').tap();

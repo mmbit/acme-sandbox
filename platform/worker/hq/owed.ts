@@ -1,7 +1,7 @@
 // What products owe the board: a return after its feedback (review notes, a card's answer), with the owner's job that
 // brings it back (the coordinator's owed.ts).
 import * as api from './api.ts';
-import { plural, print, present, stop, text } from './output.ts';
+import { minute, plural, print, present, stop, text } from './output.ts';
 
 export const owed = {
   help: `
@@ -40,12 +40,12 @@ type Owed = {
 };
 
 function owedLine(product: Owed) {
-  const since = `${text(product.slug)} (${text(product.name)}), ${text(product.agent)}'s, since ${product.opened.slice(0, 16)} UTC`;
+  const since = `${text(product.slug)} (${text(product.name)}), ${text(product.agent)}'s, since ${minute(product.opened)}`;
   return `${since}, ${plural(product.pieces, 'piece')} of feedback: ${whereItStands(product)}`;
 }
 
 function whereItStands({ closed, outcome, stalled, job, job_status, follow_ups }: Owed) {
-  if (present(closed)) return `closed ${closed.slice(0, 16)} UTC, ${text(outcome)}`;
+  if (present(closed)) return `closed ${minute(closed)}, ${text(outcome)}`;
   if (present(stalled)) return `nobody on it since job #${job} (${text(job_status)}), after ${follow_ups} follow-ups`;
   return `job #${job} (${text(job_status ?? 'none')})`;
 }

@@ -76,7 +76,8 @@ body.keys .calls .cp-watch:active {
   --cp-r: var(--r);
   position: fixed;
   inset: 0;
-  width: 100vw;
+  /* the page's width: the top layer is placed by the window, beside the book. */
+  width: calc(100vw - var(--book-room, 0px));
   max-width: none;
   height: var(--app-h, 100dvh);
   max-height: none;
@@ -187,11 +188,13 @@ body.keys .calls .cp-watch:active {
     'transport' auto
     'side' minmax(0, 34%) / minmax(0, 1fr);
 }
-@media (min-width: 900px) and (min-aspect-ratio: 1/1) {
-  .cp .wp {
-    grid-template:
-      'stage side' minmax(0, 1fr)
-      'transport side' auto / minmax(0, 1fr) clamp(300px, 30%, 420px);
+@media (min-aspect-ratio: 1/1) {
+  @container page (min-width: 900px) {
+    .cp .wp {
+      grid-template:
+        'stage side' minmax(0, 1fr)
+        'transport side' auto / minmax(0, 1fr) clamp(300px, 30%, 420px);
+    }
   }
 }
 .cp .wp-stage {
@@ -386,9 +389,11 @@ body.keys .calls .cp-watch:active {
   border-radius: var(--cp-r);
   text-shadow: var(--scr-glow);
 }
-@media (min-width: 900px) and (min-aspect-ratio: 1/1) {
-  .cp .wp-side {
-    margin: 6px 16px calc(16px + var(--sab)) 0;
+@media (min-aspect-ratio: 1/1) {
+  @container page (min-width: 900px) {
+    .cp .wp-side {
+      margin: 6px 16px calc(16px + var(--sab)) 0;
+    }
   }
 }
 .cp .wp-cap {

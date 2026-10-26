@@ -6,20 +6,35 @@
 // The CEO decides whether the board needs to know. A spell the worker's shares can't end goes outside HQ (jam.ts).
 import { db, remember, setting } from './db.ts';
 import { publish } from './events.ts';
-import { readyOn, findAgent, type ReadySeat } from './jobs.ts';
+import { readyOn, findAgent, seatReadyFor, type ReadySeat } from './jobs.ts';
 import { ceo } from './company.ts';
 import * as jam from './jam.ts';
+import type { Memory } from './eta.ts';
 import * as lowmemory from './lowmemory.ts';
+import * as meetingroom from './meetingroom.ts';
 
 export const STARVED_MS = 5 * 60_000;
 const STALE_MS = 3 * 60_000; // a report older than this says nothing: the worker is restarting, or gone
 type Share = { job: number; mb: number; cores: number };
-type Room = { at: number; short: boolean; since?: number; free: number; jobs: Share[]; waiting: number };
+type Room = {
+  at: number;
+  short: boolean;
+  since?: number;
+  free: number;
+  jobs: Share[];
+  waiting: number;
+  gathering: number | null;
+};
 // A free slot's claim as the worker would make it (its claimOn): the seat, its engine, and the weekly reset a paced seat
 // takes only work due to start before (pacedUntil).
 type Claim = { seat: string; engine: string; pacedUntil?: number };
 let lastReport: Room | undefined;
-export type PlannerCapacity = { slots: Record<string, number>; seatRuns: Record<string, number>; room: number };
+export type PlannerCapacity = {
+  slots: Record<string, number>;
+  seatRuns: Record<string, number>;
+  room: number;
+  memory?: Memory;
+};
 let capacity: { at: number; reading: PlannerCapacity } | undefined;
 export const plannerCapacity = (at = Date.now()) =>
   capacity && at - capacity.at <= STALE_MS ? capacity.reading : null;
@@ -35,7 +50,41 @@ function recordCapacity(report: unknown, at: number) {
     slots = capacities(given.slots),
     seatRuns = capacities(given.seatRuns);
   if (!slots || !seatRuns || !Number.isInteger(given.room) || Number(given.room) < 0) return;
-  capacity = { at, reading: { slots, seatRuns, room: Number(given.room) } };
+  const memory = memoryReading(given.memory);
+  capacity = { at, reading: { slots, seatRuns, room: Number(given.room), ...(memory ? { memory } : {}) } };
+}
+
+function memoryReading(value: unknown): Memory | null {
+  if (!value || typeof value !== 'object') return null;
+  const memory = value as Memory;
+  const numbers = [
+    memory.at,
+    memory.freeReserveMb,
+    memory.defaultRunMb,
+    memory.totalSlots,
+    memory.heldSlots,
+    memory.heldMb,
+  ];
+  if (!numbers.every(number => typeof number === 'number' && Number.isFinite(number) && number >= 0)) return null;
+  if (typeof memory.availableMb !== 'number' || !Number.isFinite(memory.availableMb)) return null;
+  if (!Number.isInteger(memory.totalSlots) || !Number.isInteger(memory.heldSlots)) return null;
+  if (
+    !Array.isArray(memory.starting) ||
+    memory.starting.some(
+      reservation =>
+        !reservation || !Number.isFinite(reservation.until) || !Number.isFinite(reservation.mb) || reservation.mb < 0,
+    )
+  )
+    return null;
+  if (!memory.runningMb || typeof memory.runningMb !== 'object' || Array.isArray(memory.runningMb)) return null;
+  if (
+    Object.entries(memory.runningMb).some(
+      ([job, mb]) =>
+        !Number.isInteger(Number(job)) || (mb !== null && (typeof mb !== 'number' || !Number.isFinite(mb) || mb < 0)),
+    )
+  )
+    return null;
+  return memory;
 }
 
 const nonnegativeNumber = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0);
@@ -50,6 +99,7 @@ export function reportRoom(
     claims?: unknown;
     capacity?: unknown;
     memory?: unknown;
+    gathering?: unknown;
   },
   now = Date.now(),
 ) {
@@ -79,13 +129,17 @@ export function reportRoom(
     free: Math.round(nonnegativeNumber(workerReport.free)),
     jobs: jobs.sort((x, y) => y.mb - x.mb),
     waiting,
+    gathering: gatheringCount(workerReport.gathering),
   };
   lowmemory.report(workerReport.memory, lastReport.free, now);
   const s = starved(now);
   if (s && setting('room.told') !== String(s.since)) tell(s, now);
   jam.watch(s && { since: s.since, free: s.free, waiting: s.waiting, jobs: lastReport.jobs }, now);
-  return { waiting };
+  return { waiting, ...meetingStatus(now) };
 }
+
+const gatheringCount = (value: unknown) =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 
 // The most memory each job's minute reports ever gave it (jobs.peak_mb), and what a job is measured to need: its own peak,
 // else the median of its agent's last MEASURED_FROM done jobs of its kind that have one; null when neither has been
@@ -100,9 +154,27 @@ const agentPeaks = db.prepare(
 export function measuredMb(job: number): number | null {
   const own = ownPeak.get(job) as { peak_mb: number | null; agent: string; kind: string };
   if (own.peak_mb !== null) return own.peak_mb;
-  const peaks = (agentPeaks.all(own.agent, own.kind) as { peak_mb: number }[])
-    .map(r => r.peak_mb)
-    .sort((a, b) => a - b);
+  return typicalMemory(own.agent, own.kind);
+}
+
+export function measuredMemories(rows: { id: number; agent: string; kind: string }[]) {
+  const peaks = db
+    .prepare('select id, peak_mb from jobs where id in (select value from json_each(?))')
+    .all(JSON.stringify(rows.map(row => row.id))) as { id: number; peak_mb: number | null }[];
+  const own = new Map(peaks.map(row => [row.id, row.peak_mb]));
+  const typical = new Map<string, number | null>();
+  return new Map(
+    rows.map(row => {
+      const key = `${row.agent}:${row.kind}`;
+      if (own.get(row.id) != null) return [row.id, own.get(row.id)!];
+      if (!typical.has(key)) typical.set(key, typicalMemory(row.agent, row.kind));
+      return [row.id, typical.get(key)!];
+    }),
+  );
+}
+
+function typicalMemory(agent: string, kind: string): number | null {
+  const peaks = (agentPeaks.all(agent, kind) as { peak_mb: number }[]).map(r => r.peak_mb).sort((a, b) => a - b);
   if (!peaks.length) return null;
   const mid = peaks.length >> 1;
   return peaks.length % 2 ? peaks[mid] : Math.round((peaks[mid - 1] + peaks[mid]) / 2);
@@ -159,7 +231,43 @@ function starvedLine(now = Date.now(), { ids = true } = {}) {
   return `No new jobs can start: the worker has been short of memory for ${mins} min${mostly}. ${s.waiting} job${s.waiting === 1 ? '' : 's'} could start if memory allowed.`;
 }
 
-export const getRoom = ({ board = false } = {}) => ({ line: starvedLine(Date.now(), { ids: !board }) ?? null });
+export const getRoom = ({ board = false } = {}) => {
+  const status = meetingStatus();
+  const line = [starvedLine(Date.now(), { ids: !board }), status.line].filter(Boolean).join(' ');
+  return { ...status, line: line || null };
+};
+
+function meetingStatus(now = Date.now()) {
+  const planned = meetingroom.current(now);
+  const m = planned.find(m => m.at <= now && (m.rests ?? 0) <= now) ?? planned[0];
+  if (!m) return { meeting: null, line: null };
+  const queued = meetingroom.queuedSeats(m.id);
+  const runnersReady = queued.every(s => seatReadyFor(s.job, now));
+  const held = queued.filter(s => s.slot && seatReadyFor(s.job, now, s.runner)).length;
+  const remaining = queued.length - held;
+  const fresh = lastReport && now - lastReport.at <= STALE_MS && lastReport.gathering !== null;
+  const ready = fresh ? lastReport!.gathering! >= remaining && runnersReady : null;
+  const state = m.at > now ? 'scheduled' : (m.rests ?? 0) > now ? 'resting' : 'waiting';
+  const meeting = {
+    id: m.id,
+    at: m.at,
+    state,
+    runnersReady,
+    held,
+    seats: queued.length,
+    ready,
+    until: state === 'resting' ? m.rests! : meetingroom.until(m),
+  };
+  const line =
+    state === 'scheduled'
+      ? `Next meeting: room ${ready === null ? 'unknown' : ready ? 'ready now' : 'not ready yet'} for ${queued.length} seats.`
+      : state === 'resting'
+        ? `A meeting could not gather within ${meetingroom.HOLD_MS / 60_000} min. New work may start during its ${meetingroom.REST_MS / 60_000} min rest.`
+        : !runnersReady
+          ? 'A due meeting is waiting for ready runners. Other work may start while its runners are unavailable.'
+          : `A meeting is waiting for room: ${held} of ${queued.length} seats held. Freed room goes to it before new ordinary work, for up to ${Math.ceil((meeting.until - now) / 60_000)} min.`;
+  return { meeting, line };
+}
 
 // HQ's feed says so once a spell.
 function tell(s: NonNullable<ReturnType<typeof starved>>, now: number) {

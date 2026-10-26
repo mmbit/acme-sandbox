@@ -29,8 +29,9 @@ Settle these, roughly in this order:
    art is the `line` style and its kit for the company's pictures (`shared/lineart/`, `shared/craft/line-art.md`), with
    HQ on the plain `wire` look. Something else gets a word of its own for its style (`paper`, say): HQ wears the plain
    `wire` look for now, and the company's own designers build a kit in that style from scratch as their first job.
-2. **The name and the accent colour:** the brand's name and its one colour (in line art, the one shape in each picture
-   filled with it).
+2. **The name, and any wishes for the branding:** the brand's name, and whatever the board wants of its logo and
+   colour, if anything (a colour it likes, a feel). The branding itself is yours to work out (below): don't ask it to
+   pick a colour.
 3. **The business:** what the company makes, for whom, why they'd want it, and what success looks like soon.
 4. **The board's limits:** what may be spent without asking, and what goes public only with its yes
    (`company/AUTHORITY.md`).
@@ -61,11 +62,21 @@ Settle these, roughly in this order:
 --code FOUND`.
 4. **The founding job hires, then hands out the work** (the Founding playbook), with any change the board asked for on
    the card. In its pull request, beside the team: the company's name in `org.yaml`, the mission in `CHARTER.md`, the
-   style, look and accent in `theme/hq.yaml` (`style:`, `renderer:`, the look's colours) and `company/brand.yaml`, the
+   style and look in `theme/hq.yaml` (`style:`, `renderer:`), the company's own drawing rules (what the board wants
+   of the look, and where the brand's colour goes) in `knowledge/notes/design/drawing.md`, named in `theme/hq.yaml`'s
+   `styleNote:` so every agent reads it beside the style's craft note, the branding below in `company/brand.yaml`, the
    routines picked in `company/schedule.yaml`, care's plug-in in `products/care/` with its first instructions if the
    board wants care (its accounts are cards like any other access), and the
    founding decisions in `DECISIONS.md`. The first work (a website, say) goes to the new people as jobs. Each access
    the company needs is its own card, its instructions in the card's steps, one click or field at a time.
+5. **The founding job works out the branding** in the chosen style, from the board's wishes if it gave some
+   (`shared/craft/brand-guides.md`, and the style's craft note): it draws the logo, `wordmark.svg` and
+   `wordmark-dark.svg` in `theme/hq/`, named in `company/brand.yaml`'s `logo` (`svg`, `svgDark`, `alt`), and takes
+   `colour:` in `company/brand.yaml` from it (`#rrggbb`): the logo's one colour (in line art, the one shape in each
+   picture filled with it), which HQ's colourways, its title bar and the guest page wear. On the `brownstone` look it
+   also pixels the wordmark into `logo.pixels` (rows of `#` for its letters, `o` for the colour, `.` for none,
+   `lines` to stack one wider than the billboard's 36 pixels) with `logo.colours` (`ink`, `accent` the colour,
+   `shadow`), which the billboard and the rooftop sign draw. HQ wears it once the founding is deployed.
 
 ## A short tour, while the plan is made
 

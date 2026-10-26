@@ -49,7 +49,7 @@ const VIEW = { width: 1280, height: 800 },
   POOL = 2; // pages at once: the machine is shared
 const FRAME = { walk: WALK_S, step: STEP_S, zoom: ZOOM, at: AT_S };
 
-// The looks HQ ships (shell/stage.js RENDERERS) that draw rooms, each with one palette for a kind of room. Slate (wire)
+// The looks HQ ships (looks.mjs) that draw rooms, each with one palette for a kind of room. Slate (wire)
 // draws a key for each person, no rooms
 const LOOKS = [
   { id: 'brownstone', name: 'Brownstone', places: true },

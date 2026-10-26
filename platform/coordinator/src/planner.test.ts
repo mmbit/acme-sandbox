@@ -1,8 +1,9 @@
 // node --test src/planner.test.ts   (uses a throwaway DATA_DIR)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { play, type QueuedJob, type Snapshot } from './eta.ts';
+import { inspect, play, type QueuedJob, type Snapshot } from './eta.ts';
 import { DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
+import { extraClaude } from './seatcapacity.ts';
 import { paceChange, pacingLifts } from '../../worker/src/pace.ts';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -544,7 +545,8 @@ test("a paced seat takes the board's word and work due to start before its weekl
   input.pacing = false;
   assert.equal(play(input, sized).get(1)!.start, 20 * MINUTE, 'pacing off, it starts after the others');
   Object.assign(input, { pacing: true, seats: [{ ...seat, credits: true }] });
-  assert.equal(play(input, sized).get(1)!.start, 20 * MINUTE, 'nor does a seat on credits pace');
+  // (a seat on credits is paced all the same: the board, 22 Oct.)
+  assert.ok(Math.abs(play(input, sized).get(1)!.start! - lifts) <= 1000, 'a seat on credits paces too');
 });
 
 test('an idle paced seat lets undated work go once its week evens out, a day before its reset, not at it', () => {
@@ -664,4 +666,348 @@ test('putting a thirty-minute task first cannot strand a slipping thread behind 
     assert.ok(after.merged! <= 45 * MINUTE, JSON.stringify({ before, after }));
     assert.ok(after.merged! - before.merged! <= 30 * MINUTE + DEADLINE_PAUSE_MS);
   }
+});
+
+test('a running job releases its measured memory so the queue can use the worker slots', () => {
+  const input = snapshot(
+    [
+      work(1, { engine: 'claude', status: 'running', seat: 'claude', memoryMb: 2400 }),
+      work(2, { engine: 'claude', memoryMb: 700 }),
+      work(3, { engine: 'claude', memoryMb: 700 }),
+    ],
+    {
+      room: 1,
+      slots: { claude: 4 },
+      seatRuns: { claude: 4 },
+      memory: {
+        at: 0,
+        availableMb: 1900,
+        freeReserveMb: 1500,
+        defaultRunMb: 700,
+        totalSlots: 4,
+        heldSlots: 0,
+        heldMb: 0,
+        starting: [],
+        runningMb: { 1: 2400 },
+      },
+    },
+  );
+  const played = play(
+    input,
+    sizes([
+      [1, 10],
+      [2, 10],
+      [3, 10],
+    ]),
+  );
+  assert.equal(played.get(2)!.start, 10 * MINUTE);
+  assert.equal(played.get(3)!.start, 10 * MINUTE);
+});
+
+test('startup memory reservations expire at their recorded time while holds and shared slots remain', () => {
+  const input = snapshot([work(1), work(2)], {
+    room: 0,
+    slots: { codex: 2 },
+    seatRuns: { codex: 2 },
+    memory: {
+      at: 0,
+      availableMb: 2600,
+      freeReserveMb: 1500,
+      defaultRunMb: 700,
+      totalSlots: 2,
+      heldSlots: 1,
+      heldMb: 400,
+      starting: [{ until: MINUTE, mb: 700 }],
+      runningMb: {},
+    },
+  });
+  const played = play(
+    input,
+    sizes([
+      [1, 10],
+      [2, 10],
+    ]),
+  );
+  assert.equal(played.get(1)!.start, MINUTE);
+  assert.equal(played.get(2)!.start, 11 * MINUTE);
+});
+
+test('unmeasured future demand spends the real worker startup allowance', () => {
+  const input = snapshot([work(1), work(2)], {
+    room: 8,
+    slots: { codex: 8 },
+    seatRuns: { codex: 8 },
+    memory: {
+      at: 0,
+      availableMb: 2200,
+      freeReserveMb: 1500,
+      defaultRunMb: 700,
+      totalSlots: 8,
+      heldSlots: 0,
+      heldMb: 0,
+      starting: [],
+      runningMb: {},
+    },
+  });
+  const played = play(
+    input,
+    sizes([
+      [1, 10],
+      [2, 10],
+    ]),
+  );
+  assert.equal(played.get(1)!.start, 0);
+  assert.equal(played.get(2)!.start, 10 * MINUTE);
+});
+
+test('the seat account names exhausted work, the binding window, reset gap and resuming seat', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
+  Object.assign(input.seats[1], { fiveHour: 0.8, stop: 0.9, fiveHourResets: 3 * HOUR, weekResets: 7 * 24 * HOUR });
+  input.rates = { claude: { five: { claude: 0.1 }, week: { claude: 0 } } };
+  const durations = sizes([[1, 180]]);
+  const account = inspect(input, durations);
+  assert.deepEqual(account.outlooks, play(input, durations), 'inspection observes the shared play');
+  const events = account.seats.find(s => s.seat === 'claude')!.events;
+  const stop = events.find(e => e.type === 'exhaustion')!;
+  assert.equal(stop.quota, 'fiveHour');
+  assert.ok(Math.abs(stop.at - HOUR) < 2);
+  assert.ok(Math.abs(stop.running![0].remaining_ms - 2 * HOUR) < 2);
+  assert.equal(stop.running![0].bound_seat, 'claude');
+  assert.ok(Math.abs(stop.idle_ms! - 2 * HOUR) < 2);
+  assert.equal(events.find(e => e.type === 'resume')!.at, 3 * HOUR);
+  assert.ok(Math.abs(account.outlooks.get(1)!.done! - 5 * HOUR) < 2);
+});
+
+test('exhausted unbound work can resume on another eligible seat while its original window waits', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { engine: 'claude' })]);
+  const original = input.seats[1];
+  Object.assign(original, { fiveHour: 0.8, stop: 0.9, fiveHourResets: 4 * HOUR, weekResets: 7 * 24 * HOUR });
+  input.seats.push({ ...original, id: 'returning', fiveHour: 0, state: 'sleeping', until: 2 * HOUR });
+  input.rates = { claude: { five: { claude: 0.1, returning: 0.01 }, week: { claude: 0, returning: 0 } } };
+  const account = inspect(input, sizes([[1, 180]]));
+  const resume = account.seats.find(s => s.seat === 'returning')!.events.find(e => e.type === 'resume')!;
+  assert.equal(resume.from, 'claude');
+  assert.equal(resume.at, 2 * HOUR);
+  assert.ok(Math.abs(resume.idle_ms! - HOUR) < 2);
+  assert.ok(Math.abs(account.outlooks.get(1)!.done! - 4 * HOUR) < 2);
+});
+
+test('an added subscription advances seat-bound finishes and exposes shared-room losses without adding worker slots', () => {
+  const input = snapshot(
+    [
+      work(1, { engine: 'claude', thread: 'first' }),
+      work(2, { engine: 'claude', thread: 'second' }),
+      work(3, { notBefore: 5 * MINUTE, thread: 'codex' }),
+      work(4, { after: 3, thread: 'board', cards: [{ request: 1, at: 200 * MINUTE }] }),
+    ],
+    {
+      seatPlans: { claude: 20 },
+      slots: { claude: 2, codex: 1 },
+      room: 2,
+      rates: { claude: { five: { claude: 0.001 }, week: { claude: 0.001 } } },
+    },
+  );
+  const durations = sizes([
+    [1, 100],
+    [2, 100],
+    [3, 10],
+    [4, 10],
+  ]);
+  const before = play(input, durations);
+  for (const plan of [5, 20] as const) {
+    const added = extraClaude(input, plan);
+    assert.ok(added.available);
+    assert.deepEqual(added.snapshot.slots, input.slots);
+    assert.equal(added.snapshot.room, input.room);
+    const after = play(added.snapshot, durations);
+    assert.ok(after.get(2)!.merged! < before.get(2)!.merged!);
+    assert.ok(after.get(3)!.merged! > before.get(3)!.merged!);
+    assert.equal(after.get(4)!.cards.length, 1, 'the board-held finish remains conditional');
+    const constrained = { ...input, room: 1 };
+    const more = extraClaude(constrained, plan);
+    assert.ok(more.available);
+    const fixedBefore = play(constrained, durations),
+      fixedAfter = play(more.snapshot, durations);
+    for (const [id, outcome] of fixedBefore) {
+      assert.equal(fixedAfter.get(id)!.merged, outcome.merged, 'a real one-run worker bottleneck has no gain');
+    }
+  }
+});
+
+test('projected review exhaustion names its stage and retains review queue constraints', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([
+    work(1, {
+      engine: 'claude',
+      reviewPlan: {
+        panel: 'measured',
+        count: 1,
+        terminal: 'ruling',
+        stages: [
+          {
+            key: 'first-review',
+            kind: 'review',
+            agent: 'reader',
+            engine: 'claude',
+            usualMs: 2 * HOUR,
+            slowMs: 2 * HOUR,
+            after: [],
+          },
+          {
+            key: 'ruling',
+            kind: 'consolidate',
+            agent: 'ruler',
+            engine: 'claude',
+            usualMs: MINUTE,
+            slowMs: MINUTE,
+            after: ['first-review'],
+          },
+        ],
+      },
+    }),
+  ]);
+  Object.assign(input.seats[1], { fiveHour: 0.8, stop: 0.9, fiveHourResets: 3 * HOUR, weekResets: 7 * 24 * HOUR });
+  input.rates = { claude: { five: { claude: 0.1 }, week: { claude: 0 } } };
+  const account = inspect(input, sizes([[1, 1]]));
+  const stop = account.seats.find(seat => seat.seat === 'claude')!.events.find(event => event.type === 'exhaustion')!;
+  assert.equal(stop.running![0].stage, 'first-review');
+  assert.equal(stop.running![0].kind, 'review');
+  assert.ok(stop.running![0].remaining_ms > HOUR);
+  const review = account.review_queue.find(run => run.stage === 'first-review')!;
+  assert.ok(review.done! > 3 * HOUR);
+  assert.ok(account.review_queue.some(run => run.stage === 'ruling' && run.start! >= review.done!));
+});
+
+test('holds already active at the cutoff account for remaining idle time even without running work', () => {
+  const HOUR = 60 * MINUTE;
+  for (const state of ['sleeping', 'draining', 'ready']) {
+    const input = snapshot([work(1, { engine: 'claude' })], { now: HOUR });
+    Object.assign(input.seats[1], {
+      state,
+      until: state === 'ready' ? null : 3 * HOUR,
+      fiveHour: state === 'ready' ? 1 : 0,
+      stop: 1,
+      fiveHourResets: 3 * HOUR,
+    });
+    const seen = inspect(input, sizes([[1, 10]]));
+    const events = seen.seats.find(seat => seat.seat === 'claude')!.events;
+    const hold = events.find(event => event.type === 'exhaustion')!;
+    assert.equal(hold.at, HOUR);
+    assert.equal(hold.started_at, null);
+    assert.equal(hold.until, 3 * HOUR);
+    assert.deepEqual(hold.running, []);
+    assert.equal(hold.idle_ms, 2 * HOUR);
+    assert.equal(events.find(event => event.type === 'release')!.at, 3 * HOUR);
+    assert.equal(seen.outlooks.get(1)!.start, 3 * HOUR);
+  }
+});
+
+test('overlapping quota and provider holds return only after the last known release', () => {
+  const HOUR = 60 * MINUTE;
+  for (const reported of [false, true]) {
+    const input = snapshot([work(1, { engine: 'claude' })]);
+    Object.assign(input.seats[1], {
+      fiveHour: 0.9,
+      week: 0.9,
+      stop: 1,
+      fiveHourResets: 4 * HOUR,
+      weekResets: 3 * HOUR,
+    });
+    input.rates = { claude: { five: { claude: 0.1 }, week: { claude: 0.1 } } };
+    if (reported) Object.assign(input.seats[1], { state: 'sleeping', until: 5 * HOUR, fiveHour: 1, week: 1 });
+    const seen = inspect(input, sizes([[1, 120]]));
+    const events = seen.seats.find(seat => seat.seat === 'claude')!.events;
+    const hold = events.find(event => event.type === 'exhaustion')!;
+    const until = (reported ? 5 : 4) * HOUR;
+    assert.equal(hold.quota, reported ? 'reported' : 'fiveHour');
+    assert.equal(hold.until, until);
+    assert.ok(Math.abs(hold.idle_ms! - (until - hold.at)) < 2);
+    assert.equal(events.find(event => event.type === 'release')!.at, until);
+    if (!reported) assert.ok(Math.abs(events.find(event => event.type === 'resume')!.idle_ms! - hold.idle_ms!) < 2);
+  }
+});
+
+test('an empty sleeping Codex seat records its hold as idle time', () => {
+  const HOUR = 60 * MINUTE;
+  const empty = snapshot([work(1)]);
+  Object.assign(empty.seats[0], { state: 'sleeping', until: 3 * HOUR, fiveHour: 1, stop: 0.9 });
+  empty.seats[0].fiveHourResets = 3 * HOUR;
+  const idle = inspect(empty, sizes([[1, 60]])).seats.find(seat => seat.seat === 'codex')!.events[0];
+  assert.equal(idle.running_continues, false);
+  assert.equal(idle.idle_ms, 3 * HOUR);
+});
+
+test('a Codex hold moves its return to a window that binds while work continues', () => {
+  const HOUR = 60 * MINUTE;
+  const busy = snapshot([work(1), work(2)]);
+  Object.assign(busy.seats[0], { fiveHour: 0.9, week: 0.8, stop: 1, fiveHourResets: 4 * HOUR, weekResets: 6 * HOUR });
+  busy.rates = { codex: { five: { codex: 0.1 }, week: { codex: 0.1 } } };
+  const seen = inspect(
+    busy,
+    sizes([
+      [1, 300],
+      [2, 60],
+    ]),
+  );
+  const events = seen.seats.find(seat => seat.seat === 'codex')!.events;
+  const hold = events.find(event => event.type === 'exhaustion')!;
+  assert.ok(Math.abs(hold.at - HOUR) < 2);
+  assert.equal(hold.started_at, hold.at);
+  assert.deepEqual(
+    hold.running?.map(run => run.job),
+    [1],
+  );
+  assert.ok(Math.abs(hold.running![0].remaining_ms - 4 * HOUR) < 2);
+  assert.equal(hold.quota, 'week');
+  assert.equal(hold.until, 6 * HOUR);
+  assert.equal(hold.running_continues, true);
+  assert.equal(events.find(event => event.type === 'release')!.at, 6 * HOUR);
+  assert.equal(seen.outlooks.get(2)!.start, 6 * HOUR);
+});
+
+test('an overlapping hold with no known return leaves exhaustion and idle open', () => {
+  const HOUR = 60 * MINUTE;
+  const input = snapshot([work(1, { engine: 'claude' })]);
+  Object.assign(input.seats[1], { state: 'sleeping', until: null, fiveHour: 1, stop: 1, fiveHourResets: HOUR });
+  const seen = inspect(input, sizes([[1, 10]]));
+  const events = seen.seats.find(seat => seat.seat === 'claude')!.events;
+  const hold = events.find(event => event.type === 'exhaustion')!;
+  assert.equal(hold.quota, 'reported');
+  assert.equal(hold.until, null);
+  assert.equal(hold.idle_ms, undefined);
+  assert.ok(!events.some(event => event.type === 'release'));
+  assert.equal(seen.outlooks.get(1)!.start, null);
+});
+
+test('seats without subscription windows run while an existing window with no reading holds work', () => {
+  const input = snapshot([work(1)]);
+  Object.assign(input.seats[0], { fiveHour: null, week: null });
+  assert.equal(play(input, sizes([[1, 10]])).get(1)!.start, 0);
+  input.seats[0].fiveHourResets = 30 * MINUTE;
+  assert.equal(play(input, sizes([[1, 10]])).get(1)!.start, 30 * MINUTE);
+});
+
+test('known finished occupants return memory and slots while unknown occupants remain reserved', () => {
+  const input = snapshot([work(1, { status: 'done', finished: 0 }), work(2)], {
+    memory: {
+      at: 0,
+      availableMb: 1500,
+      freeReserveMb: 1500,
+      defaultRunMb: 700,
+      totalSlots: 1,
+      heldSlots: 0,
+      heldMb: 0,
+      starting: [],
+      runningMb: { 1: 700 },
+    },
+  });
+  const durations = sizes([
+    [1, 1],
+    [2, 10],
+  ]);
+  assert.equal(play(input, durations).get(2)!.start, 0);
+  input.memory!.runningMb = { 999: 700 };
+  assert.equal(play(input, durations).get(2)!.start, null);
 });

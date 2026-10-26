@@ -13,8 +13,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, errorsOf, tap, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
-const RENDERERS = process.argv[2]?.split(',') ?? ['brownstone', 'holo', 'wire'];
+const RENDERERS = process.argv[2]?.split(',') ?? lookNames();
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
 // (WebGL on SwiftShader, as screens-check.mjs has it: without it the holo look takes minutes a page)

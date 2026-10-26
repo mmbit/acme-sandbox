@@ -8,10 +8,14 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 
 - the note itself (typed, or spoken: its words appear as the reviewer speaks, from the voice line's recogniser through
   the coordinator's WebSocket at `<base>/__review/dictate`, platform/voice/README.md's "Dictation");
-- the element: its selector, tag, text, HTML (form values stripped) and position, plus the area around all the lines and
-  the lines themselves (`ink`: inside an open shadow root too, like a chat's panel: its selector starts with the host's
-  path, then a space). Only review mode reads the lines back, to draw them again; HQ and the owner get the area and the
-  screenshot with the lines on it. An older note's closed circle (`path`) is drawn again as one line;
+- the mark, as an anchor (`anchor.js`, v1): the page, the element (its selector, tag, text and box: inside an open
+  shadow root too, like a chat's panel, its selector starting with the host's path, then a space; no text inside
+  `[data-private]`, and no field's value ever), the screen it was seen on and the lines themselves (`ink`), all in the
+  page's CSS px (the screen's plus its scroll). Drawn again, each point moves and scales with its element where that's
+  still found and has a size, else stays where it was on the page. Review mode adds the kind, the area around all the
+  lines and the element's HTML (form values stripped). Only review mode reads the lines back, to draw them again; HQ
+  and the owner get the area and the screenshot with the lines on it. Notes kept before v1 were moved to it once
+  (their screen px plus the scroll; an older circle's closed `path` became one line);
 - a screenshot of the screen as it was, with the pin or circle drawn on it;
 - pictures of the reviewer's own, pasted (Ctrl or Cmd+V) or dropped on the open note: thumbnails under its words, each
   with a × to take it off, drawn again on the device at most 2,000 px a side (a PNG stays one while it fits, the rest
@@ -20,10 +24,10 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 - the trail: the last 50 clicks, scrolls, page loads and route changes in that tab;
 - the page path and the viewport (size, scroll position, pixel ratio, browser).
 
-**On HQ itself** the board summons the same tool from Settings (Pin a note on HQ), on any of HQ's screens. The
-coordinator serves it there only behind the board's sign-in. Its notes wait in Reviews under HQ, and a send goes to
-the CEO's routing check like any other (step 3 below). A page that summons the tool (its script tag has `data-summoned`) gets Put the pin away
-in its menu, a `review:summon` event brings it back, and Send my notes is the page's `review:send` event (the notes' ids).
+**On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
+behind the board's sign-in. Its notes wait in Reviews under HQ, and a send goes to the CEO's routing check like any
+other (step 3 below). A page that loads the tool itself (its script tag has `data-summoned`) hears Send my notes as
+its `review:send` event (the notes' ids).
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
 pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes.
 
@@ -65,10 +69,18 @@ an item's sub-line says only what its title doesn't:
   viewer it asks HQ for the send step (Reviews over the preview, nothing ticked), in a tab of its own it opens HQ's
   Reviews at those notes (`/?open=notes&notes=<ids>`).
 
-`review.js` is the whole tool, in one file with no dependencies. Its UI lives in a closed shadow root, so product
-styles can't touch it, and it never logs or photographs itself. Beside it, `frame.js` frames a note's screenshot on its
-mark (the circle, or the pinned element and the pin's head): the coordinator serves it at `/__review/frame.js` on every
-host, for review mode's polaroid and HQ's note thumbnails alike (`node --test shared/review/frame.test.js`).
+`review.js` is the tool's door: a small classic script that says hello to HQ's frame and loads the tool. The tool is
+modules beside it with no dependencies, one concern each: `tool.js` puts them together (the shared state, Escape and
+Cmd+Z), `dock.js` the pin, `menu.js` its menu, `notes.js` My notes, `change.js` changing a note, `surface.js` the page
+while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper, ribbon and indigo, on every page),
+`pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js` and `faces.js`) the
+screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js` and `marks.js` the Pencil on HQ and its numbered
+marks (below), `base.js` what they share. The coordinator serves
+each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js` and `ink.js`
+are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
+photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
+head), for review mode's polaroid and HQ's note thumbnails alike; `anchor.js` finds a mark's element again on any width
+(`node --test shared/review/frame.test.js shared/review/anchor.test.js`).
 
 ## The pen
 
@@ -77,9 +89,16 @@ and HQ's Sketchbook. A stroke is plain data, `{ color, size, alpha, points: [[x,
 anything can draw it again or replay it as it was drawn (`draw(g, strokes, { until })`, `svg()`), and the document hears
 an `ink:stroke` event as a line starts, grows and ends (a walk-through call's recording follows the ink that way).
 
-- **Pressure-sensitive and live:** a pen's own pressure (an Apple Pencil's, through Safari's Pointer Events), a mouse's or
-  a finger's from its speed; each new bit drawn on its own canvas as it comes, so a long line costs no more than a short
-  one. Review mode's ink has a white edge, so it shows on any page.
+- **Pressure-sensitive and live:** a pen's own pressure (an Apple Pencil's, through Safari's Pointer Events; its lift,
+  which Safari reports at no pressure, keeps the last), a mouse's or a finger's from its speed; each new bit drawn on its
+  own canvas as it comes, so only a few shapes a point are filled, however long the line. Review mode's ink has a white
+  edge, so it shows on any page.
+- **Nothing moves as the pen lifts:** the line drawn live is the very line drawn dry. Each new point's box (whole device
+  px) is filled once with every disc and band of the stroke that reaches it, as `draw()` fills the whole stroke, so soft
+  edges don't add up where pieces meet; the live white edge goes on its own canvas under the dry ink (`under`, at 0.9),
+  as `draw()` puts every edge under every line. `ink.test.js` compares the live pieces with the whole stroke for a pen,
+  a mouse, a flick, a tremble and a loop; `inkcheck.mjs` compares the screen just before and after each lift in a
+  browser (at most `STILL` pixels off: soft-edge rounding; a line that moved changes hundreds).
 - **A pen starts it:** drawn across a page while review mode rests, a pen opens it right there, the line from where it
   touched, and the page doesn't scroll under it. A pen's tap stays the page's own. Once a pen has drawn on a note, only
   the pen draws (a palm resting on the screen doesn't); a finger still taps and scrolls.
@@ -89,16 +108,59 @@ an `ink:stroke` event as a line starts, grows and ends (a walk-through call's re
 - **The strip**, over the page while it's marked: five inks (red, black, blue, green and a see-through highlighter,
   remembered on the device) and undo (Cmd or Ctrl+Z too). Undoing the first mark goes back to tapping or drawing, the
   words kept.
-- **Listen as I draw**, a switch in the pin's menu, off until the reviewer turns it on (on that device): then the first
-  mark starts the mic, on a computer and a tablet alike. A web page can't hear a Pencil's double-tap or squeeze (only
-  apps can), so the mark itself is the trigger: the hand that draws needs no second gesture.
+- **The first mark starts the mic**, where the browser records, on a computer and a tablet alike. A web page can't
+  hear a Pencil's double-tap or squeeze (only apps can), so the mark itself is the trigger: the hand that draws needs
+  no second gesture.
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
 
 `pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
-lines and the screenshot with them on the note, the pin dragged by its menu's handle, Listen as I draw with live words
+lines and the screenshot with them on the note, the pin dragged by its menu's handle, the first mark's mic with live words
 from a stand-in line and the clip when it's down, a mouse's lines; `--shots dir` adds HQ in each look.
+
+## The Pencil on HQ
+
+On HQ's own pages (desk.js loads the tool with `data-book`) the Pencil writes and a finger works the page: no button,
+no mode (`pencil.js`). A pen drawn across any of HQ's screens draws there and the page doesn't scroll under it; a finger
+still scrolls and taps under the ink, a pen's tap stays the page's, and a pen in a text field is Apple's
+handwriting-to-text. A mouse draws with the pin, as everywhere. HQ's page is `<body>`, beside the book on `<html>`
+(platform/hq/shell/book.js): the tool lives in `<body>`, so it's the page's width and the book's spread covers it with
+the page; over a dialog it leaves the book's room (`--book-room`); a pen or two fingers on the book are the book's.
+
+- **A mark** is the lines drawn while its post-it is open. Its first line pops up the post-it (the polaroid developing
+  as more lines come) and starts the mic, whose words go in its note; they can be typed instead. **Send** puts the note
+  on its sheet in the board's book (`marks.js`: `POST /api/book/note` with the anchor, the words and how they came,
+  `spoken` or `typed`, and a snip of the page around the mark with its lines, 24 px of margin); **Cancel** drops it.
+  A note whose screenshot failed or was still developing after 9 s goes without its snip, and the post-it says so. The
+  book's notes take no pictures: the post-it takes none pasted, dropped or from a film's frame.
+  HQ's page is a sheet's page in today's book for its address (made at its first note, `page/new`), for the CEO until
+  the sheets thread gives each screen its owner.
+- **Numbered:** the mark's number on its sheet sits in a red disc at its top left on the page, from its first line (the
+  one it will have) to the sheet's send. The page's open notes are drawn again on every visit, each on its element where
+  that is now (anchor.js), so they follow the page as it scrolls or reflows, and their numbers follow the sheet.
+- **Hold the pen still** on one spot for half a second and talk: a red pulse at its tip, the words landing there as a
+  note (a pin on what's under it) as the pen lifts. Nothing heard, no note.
+- **Scribble over a mark** to wipe it (from its sheet too); **ring something** and the mark is on what's inside the
+  ring. **A two-finger tap** (or Cmd/Ctrl+Z off a text field) takes back the last thing: a line, a note sent to the
+  sheet, a wipe (the note back with its words and snip). Nothing asks "are you sure?". A wipe or undo the book refuses
+  changes nothing, and the step stays to take back.
+- The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
+
+**On a call** (`callnotes.js`; HQ's `shell/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and
+`call:ink`): a mark goes on the call's page in the book (`kind: 'call'`, made at the call's first mark by either side,
+its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`), not on a sheet. No post-it and
+no mic of its own: the words the call heard while it was drawn are its words, and it goes in once the Pencil has stayed
+up 1.5 s (a circle and its arrow are one note); HQ's call then sends it to the agent. The agent's ring (its `draw`
+tool) is drawn round what it names on the board's screen, or round one of the call's notes, in its own ink with its
+words beside it, kept as its note on the call's page (`by`). A held-still voice note isn't needed on a call: the call is
+listening. Its snip goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`)
+painted over (`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book
+doesn't take stays, the pin's tip says so, and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
+
+`platform/hq/book-check.mjs` plays it in WebKit held like an iPad mini, with the book's store and the voice line played,
+and the ring, its number and Send again in Wire (in Chromium: Linux's headless WebKit has no en-CA dates, so Wire can't
+start there).
 
 ## On a phone, and inside HQ
 
@@ -191,7 +253,7 @@ and the Notes tab tells the board to send only what it recognises as its own.
   collapsed to one line, so nothing but the note can add lines to the owner's job.
 - Reading, sending and discarding (`/api/review/*`) sit behind the HQ session only.
 
-Code: `platform/coordinator/src/feedback.ts` (+ `feedback.test.ts`), the HQ tab in `platform/hq/shell/desk.js`.
+Code: `platform/coordinator/src/feedback.ts` (+ `feedback.test.ts`), the HQ tab in `platform/hq/shell/reviews.js`.
 
 ## What products must do
 
@@ -297,8 +359,8 @@ Shoot the before and the after with the same arguments, so the two frames match.
 
 - **HQ's Notes tab:** serve HQ (`node platform/hq/serve.mjs`) and open it on `localhost`. Dev mode kicks
   in and the tab reads `mock/review.json`. Sending and discarding work in memory.
-- **The tool on a page:** serve a product's `app/public/` and, in Playwright, route `**/__review/review.js` to
-  this file and `**/__review/notes` to a stub that records the POST body. The UI's shadow root is closed:
+- **The tool on a page:** serve a product's `app/public/` and, in Playwright, route `**/__review/*.js` to this
+  folder (`parts.mjs` does it) and `**/__review/notes` to a stub that records the POST body. The UI's shadow root is closed:
   force it open with an init script that wraps `Element.prototype.attachShadow`. The pin button bobs, so click
   it with `{ force: true }`.
 - **The short way to sending:** `node platform/hq/notes-check.mjs [--shots dir]`. HQ with a stand-in coordinator and a

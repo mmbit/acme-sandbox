@@ -8,8 +8,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
-const RENDERERS = ['brownstone', 'holo', 'wire'];
+const RENDERERS = lookNames();
 const artifacts = JSON.parse(await readFile(`${ROOT}/platform/hq/mock/artifacts.json`, 'utf8'));
 // the same company without businesses: each artifact in its project alone
 const flat = artifacts.map(a => ({ ...a, place: a.place.filter(p => p.level === 'project') }));
@@ -83,17 +84,29 @@ for (const look of RENDERERS)
     );
 
     // a line of business: its artifacts alone, its heroes still first; one pick at a time
-    await page.evaluate(() => {
-      window.clicks = 0;
-      import('/shell/audio.js').then(m => {
-        const blip = m.sfx.blip;
-        m.sfx.blip = (...a) => (window.clicks++, blip(...a));
-      });
+    // (a pill's click counted where the sound starts: a source the engine starts in the tap's own task, or its next,
+    // where the kit's click starts; the context and its rain bed up before)
+    await page.evaluate(() => import('/shell/audio.js').then(m => m.unlock()));
+    const started = await page.evaluate(async () => {
+      let n = 0;
+      // (a buffer's source has a start of its own)
+      const kinds = [AudioScheduledSourceNode, AudioBufferSourceNode].map(({ prototype }) => [
+        prototype,
+        prototype.start,
+      ]);
+      for (const [prototype, start] of kinds)
+        prototype.start = function (...a) {
+          n++;
+          return start.apply(this, a);
+        };
+      [...document.querySelectorAll('.artifacts .pills button')].find(b => b.textContent === 'Sticker Co').click();
+      await new Promise(done => setTimeout(done));
+      for (const [prototype, start] of kinds) prototype.start = start;
+      return n;
     });
-    await press('Sticker Co');
     assert.deepEqual(await shown(), named(current.filter(a => a.place[0]?.id === 'stickers')), where);
     assert.deepEqual(await tiles('.heroes'), ['Front Door', 'Tiny Atlas'], `${where}: its heroes`);
-    assert.equal(await page.evaluate(() => window.clicks), 1, `${where}: a pill clicks`);
+    assert.ok(started > 0, `${where}: a pill clicks`);
     await press('In house');
     assert.deepEqual(await pills(), ['All', '*In house', 'Sticker Co', 'Archive'], `${where}: one pick`);
     assert.deepEqual(await shown(), named(current.filter(a => a.place[0]?.id === 'house')), where);

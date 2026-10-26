@@ -1,7 +1,8 @@
 # The watch-along
 
 A page of ours records itself so an agent can see along, live, and anyone can watch it back: a walk-through call
-(the caller minimises the call and goes on using HQ or a demo), later the support chat with a customer who agreed.
+(the caller chooses to show the screen and goes on using HQ or a demo), later the support chat with a customer who
+agreed.
 It records the page's DOM as it changes ([rrweb](https://github.com/rrweb-io/rrweb), MIT, `@rrweb/record` and
 `@rrweb/replay` in the coordinator's dependencies), never pixels from the device: a server renders any moment from it.
 
@@ -58,8 +59,9 @@ title (masked, as a private part's text), its query string and fragment, and any
 (`/join/<token>`), in the page's address and in its links' and frames' addresses (a picture keeps its whole address:
 the replay loads it by it); a link of another kind keeps only its kind (`mailto:`, `tel:`); other sites' frames.
 
-In HQ, a call minimised into its bubble starts one (`platform/hq/shell/callscreen.js`: `typed: 'shown'`,
-`canvasFps: 0.5`); the bubble's Pause pauses it and the call's end stops it. The bubble itself (`callbubble.js`) is
+In HQ, the call screen's Show my screen starts one, never minimising (`platform/hq/shell/callscreen.js`:
+`typed: 'shown'`, `canvasFps: 0.5`); its Stop showing and the bubble's Pause
+pause it, and the call's end stops it. The bubble itself (`callbubble.js`) is
 marked `data-watchalong-hide`, as is the call's own layer.
 
 ## In a frame
@@ -117,7 +119,9 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   line: `POST /api/voice/screen-turn` (with a caller's turn: the moments since the agent's last, at most 20, and a
   picture at 1024 px when the screen changed, the last tap ringed; while paused, lines only; the briefing's paragraph
   for a session that hasn't had it) and `POST /api/voice/screen` (the agent's screen tool: now or a past moment at 1568
-  px, a region, or the moments since a time). Both by the session's purpose and the thing it belongs to.
+  px, a region, or the moments since a time). Both by the session's purpose and the thing it belongs to, and only for a
+  purpose with its own briefing (`BRIEFS`: the board's call, a guest's walk-through), so no other is ever told it sees
+  the board's screen.
 
 **For agents, after the call.** A job steps back through an ended walk-through call with `hq call <id> moments` (the
 call's moments and its transcript's lines in one timeline by the server's clock, each with its time on the company's

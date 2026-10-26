@@ -1,7 +1,7 @@
 // The live plan replayed on one snapshot with one hypothetical Claude subscription.
 import { db } from './db.ts';
 import * as predictions from './predictions.ts';
-import { play, type Snapshot, type Size } from './eta.ts';
+import { inspect, type Snapshot, type Size } from './eta.ts';
 import { threadOutlooks, standing, undrawnWords, type ThreadOutlook } from './forecast.ts';
 import { extraClaude } from './seatcapacity.ts';
 import { HORIZON_DAYS } from './simulation.ts';
@@ -24,13 +24,14 @@ export function replay(given: unknown, now = Date.now()) {
     .all() as NamedThread[];
   const projects = [...Map.groupBy(threads, t => t.project)].map(([, own]) => ({
     name: own[0].project_name,
-    before: projectTime(own, before),
-    after: projectTime(own, after),
+    before: projectTime(own, before.threads),
+    after: projectTime(own, after.threads),
     threads: own.map(t => ({
       name: t.name,
       window: snapshot.windows?.[t.id] ?? { deadline: null, aim: null },
-      before: threadTime(before.get(t.id)),
-      after: threadTime(after.get(t.id)),
+      before: threadTime(before.threads.get(t.id)),
+      after: threadTime(after.threads.get(t.id)),
+      change_ms: change(before.threads.get(t.id)?.finish, after.threads.get(t.id)?.finish),
     })),
   }));
   const unpriced = snapshot.seats
@@ -47,19 +48,28 @@ export function replay(given: unknown, now = Date.now()) {
     capacity: added.capacity,
     projects,
     unpriced,
+    account: { before: before.account, after: after.account },
+    resources: before.resources,
+    changes: changes(projects.flatMap(p => p.threads)),
     horizon_days: HORIZON_DAYS,
     played_ms: Math.round(performance.now() - started),
   };
 }
 
 function played(snapshot: Snapshot, sizes: { usual: Map<number, Size>; slow: Map<number, Size> }) {
-  const usual = play(snapshot, sizes.usual);
-  const slow = play(snapshot, sizes.slow, { pace: 'slow' });
-  return threadOutlooks(snapshot, usual, slow, sizes.usual);
+  const usual = inspect(snapshot, sizes.usual);
+  const slow = inspect(snapshot, sizes.slow, { pace: 'slow' });
+  return {
+    threads: threadOutlooks(snapshot, usual.outlooks, slow.outlooks, sizes.usual),
+    account: { usual: usual.seats, slow: slow.seats, review_queue: usual.review_queue },
+    resources: usual.resources,
+  };
 }
 
 function threadTime(outlook: ThreadOutlook | undefined) {
   return {
+    conditional: !!outlook?.cards.length || !!outlook?.capacityConditions?.length,
+    capacity_conditions: outlook?.capacityConditions ?? [],
     eta: outlook?.eta ?? null,
     finish: outlook?.finish ?? null,
     held: outlook?.held ?? null,
@@ -78,4 +88,16 @@ function projectTime(threads: NamedThread[], outlooks: Map<string, ThreadOutlook
   const latest = (field: 'eta' | 'finish' | 'held') =>
     times.some(t => t[field] === null) ? null : Math.max(...times.map(t => t[field]!));
   return { eta: latest('eta'), finish: latest('finish'), held: latest('held') };
+}
+
+const change = (before: number | null | undefined, after: number | null | undefined) =>
+  before == null || after == null ? null : before - after;
+
+function changes(threads: { change_ms: number | null }[]) {
+  return {
+    earlier: threads.filter(t => t.change_ms !== null && t.change_ms > 0).length,
+    later: threads.filter(t => t.change_ms !== null && t.change_ms < 0).length,
+    unchanged: threads.filter(t => t.change_ms === 0).length,
+    unresolved: threads.filter(t => t.change_ms === null).length,
+  };
 }

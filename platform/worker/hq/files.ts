@@ -27,6 +27,8 @@ export const isReadable = (path: string) => {
 export const isFile = (path: string) => statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 
 export const readText = (path: string) => readFileSync(path, 'utf8');
+// A file's bytes, or null when it isn't a file that can be read (hq answer --picture)
+export const readBytes = (path: string) => (isFile(path) && isReadable(path) ? readFileSync(path) : null);
 
 // The company's repo hq runs in: a job's clone, or the one HQ_REPO names. None outside one.
 export function repoRoot() {
@@ -61,6 +63,19 @@ export const readTextOrStdin = (path: string) => (path === '-' ? readStdin() : r
 
 // A file's text or stdin's ("-"), without its trailing newlines
 export const readWords = (path: string) => readTextOrStdin(path).replace(/\n+$/, '');
+
+// --goal -: the goal and the words together on stdin, as JSON {"goal": "...", "words": "..."}. The goal holds what was
+// said on a call, so it stays out of argv (any uid can read /proc/<pid>/cmdline), as the words do. Undefined if stdin
+// isn't that.
+export function readGoalAndWords() {
+  const given = readStdin();
+  try {
+    const { goal, words } = JSON.parse(given) as Record<string, unknown>;
+    return typeof goal === 'string' && typeof words === 'string' ? { goal, words } : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 // Files from outside (mail attachments, the board's photos, a note's screenshot) go into a folder or file made new each
 // time, with a name nobody can guess, in the job's own temp folder (TMPDIR, 0700). A fixed /tmp/<name>-<id> could be

@@ -3,7 +3,8 @@
 // goes, isn't. The first round may block on code the next person can't live with and leaves the rest for the author to
 // fix if they like; from a later round on (or once the thread's deadline is near) only security, real bugs and what a
 // customer could meet block, and the rest goes to the project's follow-ups (followups.ts); from the upstream round on, the
-// pull request shows its project owner that something before review went wrong. No round closes anything.
+// pull request shows its project owner that something before review went wrong. No round closes anything. Work triage
+// judged throwaway blocks only on what blocks every round, and reports nothing else.
 import { reviewSettings } from './reviewsettings.ts';
 
 export type Stage = 'first' | 'later' | 'upstream';
@@ -26,6 +27,16 @@ and a change that doesn't do what the board asked (its own section below, where 
 const FOLLOW_UPS = `Refactoring, conventions, readability, documentation and hardening that isn't security, in the fixes' own code
 too, are nonblocking: they don't go back to the author, but into the project's follow-ups, a thread of their own that the
 project's owner prioritises and assigns.`;
+// What else blocks in the first look, for the reviewers and for the ruling
+const FIRST_LOOK = {
+  reviewer: `In the first look, code the next person can't live with blocks too (below). Refactoring, conventions,
+documentation and hardening that isn't security are otherwise nonblocking notes, which the author may fix now.`,
+  ruling: `In the first look, so does code the next person can't live with (CODE_STYLE.md: hard to
+read or change, history in comments, general code copied into an app instead of a kit). "nonblocking" is the rest
+worth doing: the author may fix it now, and what's left when it merges goes to the project's follow-ups.`,
+};
+const THROWAWAY_REST = `Triage judged this throwaway work, which runs once or twice and goes to the archive: refactoring,
+conventions, readability, documentation and hardening that isn't security are no findings on it, blocking or not.`;
 
 export type Briefing = {
   // the reviewers' section, after the change's bar
@@ -40,17 +51,14 @@ export type Briefing = {
   field: string;
 };
 
-// Round `round`'s briefing at `stage`
-export function briefing(stage: Stage, round: number): Briefing {
+// Round `round`'s briefing at `stage`, for work triage judged throwaway or not
+export function briefing(stage: Stage, round: number, throwaway = false): Briefing {
   const { upstream } = reviewSettings().rounds;
   const first: Briefing = {
     reviewer: `
 ## Round ${round}: the first look
-${ALWAYS} In the first look, code the next person can't live with blocks too (below). Refactoring, conventions,
-documentation and hardening that isn't security are otherwise nonblocking notes, which the author may fix now.`,
-    ruling: `${ALWAYS} In the first look, so does code the next person can't live with (CODE_STYLE.md: hard to
-read or change, history in comments, general code copied into an app instead of a kit). "nonblocking" is the rest
-worth doing: the author may fix it now, and what's left when it merges goes to the project's follow-ups.`,
+${ALWAYS} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.reviewer}`,
+    ruling: `${ALWAYS} ${throwaway ? THROWAWAY_REST : FIRST_LOOK.ruling}`,
     touchups: `- Only when it saves the author a round: at least one blocking finding can be fixed this way. Then make the safe
   nonblocking fixes too.`,
     author: `Fix the blocking findings. The nonblocking ones are yours to fix too where that's quick and safe; what you leave
@@ -60,8 +68,8 @@ goes to the project's follow-ups when the pull request merges.`,
   const later = (why: string): Briefing => ({
     reviewer: `
 ## Round ${round}: ${why}
-${ALWAYS} Only those block now. ${FOLLOW_UPS} Report one only when it's worth that thread.`,
-    ruling: `${ALWAYS} Only those block now. ${FOLLOW_UPS} Put those in "nonblocking".`,
+${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Report one only when it's worth that thread.`}`,
+    ruling: `${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Put those in "nonblocking".`}`,
     touchups: `- Only when it saves the author a round: at least one blocking finding can be fixed this way. Make only the
   blocking fixes: the nonblocking findings go to the project's follow-ups.`,
     author: `Fix only the blocking findings, and keep each fix small: most blocking findings on a later round sit in the code

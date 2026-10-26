@@ -3,7 +3,7 @@
 import { writeFileSync } from 'node:fs';
 import * as api from './api.ts';
 import { savePicture } from './files.ts';
-import { present, print, stop, text } from './output.ts';
+import { minute, present, print, stop, text } from './output.ts';
 
 // (in any of the platform's languages)
 export const search = {
@@ -113,7 +113,7 @@ const aboutAndHeard = ({ request, job }: { request?: number; job?: number }) =>
   (present(request) ? `, about request #${request}` : '') + (present(job) ? `, heard by job #${job}` : '');
 
 const callLine = (past: PastCall) =>
-  `Call ${past.id}, ${past.ts.slice(0, 16)}${aboutAndHeard(past)}: ${text(past.pointer)}\n`;
+  `Call ${past.id}, ${minute(past.ts)}${aboutAndHeard(past)}: ${text(past.pointer)}\n`;
 
 type PastMeeting = {
   id: number;
@@ -160,7 +160,7 @@ export const call = {
     const found = JSON.parse(answer.body);
     if (present(found.text)) return print(text(found.text).replace(/\n+$/, ''));
     print(
-      `Call ${found.id}, ${text(found.agent)} with the board, ${found.ts.slice(0, 16)}${aboutAndHeard(found)}\n\n${found.lines.join('\n')}${summaryOf(found)}`,
+      `Call ${found.id}, ${text(found.agent)} with the board, ${minute(found.ts)}${aboutAndHeard(found)}\n\n${found.lines.join('\n')}${summaryOf(found)}`,
     );
   },
 };

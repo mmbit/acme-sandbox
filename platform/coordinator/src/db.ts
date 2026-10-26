@@ -19,25 +19,32 @@ db.exec('pragma secure_delete = on');
 // every write, and the server waits for each. One inside another is a savepoint of it, so
 // it nests where a plain begin can't. A trial (keep: false) rolls back after reading its answer too.
 // What a step does outside the database (afterStep: the events it publishes) waits for the outermost step to be kept,
-// and is dropped with a step rolled back.
+// and is dropped with a step rolled back. What it took out of memory to write (onUndo: the prediction log's kept rows)
+// goes back when a step it's in is rolled back, the outermost's failed commit too.
 // The outermost step is undone with a plain rollback, which no lock turns away. Its release is a commit, which another
 // process's read can turn away ("database is locked"), and a failed one would leave the connection in a transaction no
 // later step commits, every write after it lost when the process ends.
-const afterSteps: (() => void)[][] = [];
+const afterSteps: { kept: (() => void)[]; undone: (() => void)[] }[] = [];
 export function inOneStep<T>(run: () => T, { keep = true } = {}): T {
   const undo = db.isTransaction ? 'rollback to step; release step' : 'rollback';
   db.exec('savepoint step');
-  afterSteps.push([]);
+  const step = { kept: [] as (() => void)[], undone: [] as (() => void)[] };
+  afterSteps.push(step);
   try {
     const done = run();
-    const after = afterSteps.pop()!;
     db.exec(keep ? 'release step' : undo);
-    if (keep && afterSteps.length) afterSteps.at(-1)!.push(...after);
-    else if (keep) for (const then of after) then();
+    afterSteps.pop();
+    const outer = afterSteps.at(-1);
+    if (!keep) for (const then of step.undone) then();
+    else if (outer) {
+      outer.kept.push(...step.kept);
+      outer.undone.push(...step.undone);
+    } else for (const then of step.kept) then();
     return done;
   } catch (err) {
     afterSteps.pop();
     db.exec(undo);
+    for (const then of step.undone) then();
     throw err;
   }
 }
@@ -51,7 +58,9 @@ export function prepared(sql: string) {
   return statement;
 }
 // Something outside the database: now, or once the step it's in is kept.
-export const afterStep = (then: () => void) => (afterSteps.length ? afterSteps.at(-1)!.push(then) : then());
+export const afterStep = (then: () => void) => (afterSteps.length ? afterSteps.at(-1)!.kept.push(then) : then());
+// Something put back outside the database if the step it's in is rolled back; outside a step, nothing to undo.
+export const onUndo = (then: () => void) => void afterSteps.at(-1)?.undone.push(then);
 // A job (`job`, its row's alias) that can still merge: open work, or done with its latest pull request still in review.
 // Shared by wait and pause validation and their cycle check.
 export function mergePending(job: string) {
@@ -409,10 +418,11 @@ db.exec(`create table if not exists call_tokens (hash text primary key, agent te
 // the board: board, it added the item after the call in HQ-OS → Calls). acted_at: when the call's follow-up last
 // recorded, handed out, linked, dropped or acknowledged it (processed_at needs one since lines_at: ledger.ts recorded()).
 // due: the time the board was given for it (ms), which the thread of the job that carries it, or is linked to it, takes
-// as its window (ledger.ts link, server.ts hq job).
+// as its window (ledger.ts link, server.ts hq job). goal: why the board wants it (its goal, or the problem it solves),
+// which the work is judged against; null on an item the board added itself, and on one recorded before it was asked for
 db.exec(`create table if not exists call_items (id integer primary key, call integer not null, kind text not null, owner text not null,
   what text not null, quote text not null, lines text, status text not null default 'open', job integer, request integer, ref text,
-  why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer)`);
+  why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer, goal text)`);
 // (the open ones and their jobs, which the queue's every read asks for: jobs.ts BOARD_CALL)
 db.exec('create index if not exists call_items_open on call_items (status, job)');
 // The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL): a few rows, not every pull request's
@@ -439,9 +449,19 @@ db.exec('create index if not exists followthrough_checks_job on followthrough_ch
 // first (jobs.ts BOARD_CALL).
 db.exec(`create table if not exists note_routes (note integer primary key, job integer not null, slug text not null,
   owner text not null, name text not null, place text not null, returns integer not null, text text not null, created text not null,
-  routed text, to_job integer, how text);
+  routed text, to_job integer, how text, back text, board_why text);
   create index if not exists note_routes_job on note_routes (job)`);
 redacted('note_routes', 'text');
+// The book's sheets (booknotes.ts): one a page owner while open, in whose book (who), and once sent the job it went to.
+// Here rather than in that module, as note_routes: claim() reads it, since a sent sheet is the board's word (jobs.ts
+// BOARD_CALL). owner null: pages nobody owns, which go to the CEO's routing check. status: open, sending (its ten
+// seconds to undo, until send_at, in ms) or sent; or call: a call's page's notes, numbered there and never sent (the
+// agent on the call heard them: bookcalls.ts), one such sheet a call's page beside its owner's open one.
+db.exec(`create table if not exists book_sheets (id integer primary key autoincrement, who text not null default 'board',
+  owner text, status text not null default 'open', created text not null, send_at integer, sent text, job integer);
+  drop index if exists book_sheets_open;
+  create unique index if not exists book_sheets_owner on book_sheets (who, coalesce(owner, '')) where status in ('open', 'sending');
+  create index if not exists book_sheets_job on book_sheets (job) where job is not null`);
 // The jobs carrying a call item and their replacements, which the follow-through check reads every minute
 // (agreements.ts), and a thread's jobs: without these each read every job.
 db.exec(`create index if not exists jobs_item on jobs (item) where item is not null;
@@ -461,6 +481,16 @@ db.exec(`create index if not exists jobs_work_titles on jobs (coalesce(branch, '
 // a row's prompt and output (each a walk through its overflow pages on a cold file).
 db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
   where kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')`);
+// The covering index keeps claim-time history reads (matching.ts pastJobs, named by `indexed by`) off the jobs table's
+// prompt and output overflow pages.
+db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
+  round, queued_by, pr) where kind = 'work' and status = 'done'`);
+// goal_told: jobs that heard an item's goal when linked while queued or running (ledger.ts goalTo). They hear it only
+// once. They hear when the item is dropped or replaced (ledger.ts stop).
+db.exec('create table if not exists goal_told (job integer not null, item integer not null, primary key (job, item))');
+// goal_owed: jobs linked to an item whose goal HQ refused to send them (the sender's messages an hour, a full chain).
+// Linking the item to the job again tries again, though the job carries it by then (ledger.ts goalTo).
+db.exec('create table if not exists goal_owed (job integer not null, item integer not null, primary key (job, item))');
 // The tasks whose titles the board reads (boardnames.ts namedTask), newest first: the names' claim (plainnames.ts, every
 // 15 s, named by `indexed by`) reads each title without its row's prompt and output.
 db.exec(`create index if not exists jobs_named on jobs (id, title, thread, status) where kind = 'work' and customers = 0`);
@@ -484,10 +514,11 @@ db.exec('create index if not exists usage_session on usage (session) where sessi
 // The board's seats (seats.ts), kept here and changed in HQ's Settings › Seats: the worker runs jobs on these, each served by a
 // provider (the platform's, the company's company/providers.yaml, or one the board added: seat_providers, with the CLI it
 // speaks to beside its engine's, none: that engine's own). A removed seat keeps its row until the worker has removed it.
-// stop: its stop level in percent of its windows (null: the worker's default). seat_actions: each change the board made,
+// stop: its stop level in percent of its windows (null: the worker's default). use_credits: 1 once the board lets it spend
+// its account's credits past its plan. seat_actions: each change the board made,
 // until the worker says how it went.
 db.exec(`create table if not exists seat_list (id text primary key, provider text not null, paused integer not null default 0,
-    removing integer not null default 0, added text not null, stop integer);
+    removing integer not null default 0, added text not null, stop integer, use_credits integer not null default 0);
   create table if not exists seat_providers (id text primary key, name text not null, engine text not null, url text not null,
     model text not null, added text not null, cli text);
   create table if not exists seat_actions (id integer primary key, seat text, engine text, what text not null,
@@ -496,10 +527,11 @@ db.exec(`create table if not exists seat_list (id text primary key, provider tex
 // id: "<project>/<slug>", the name jobs.thread holds. by: the job that started it. done: when it was closed. deadline and
 // aim: the thread's window (windows.ts), the time the board was given for its work and the earlier time it's aimed at
 // (aim <= deadline, both ms), with who gave the board the time (deadline_by). branch: the thread's branch, once its first
-// task starts.
-db.exec(`create table if not exists threads (id text primary key, project text not null, name text not null, owner text not null,
+// task starts. Its owner is its project's (projects.ts ownerOf). judge: the job HQ queued its owner to judge it once its
+// work merged with nothing left open (threadjudge.ts).
+db.exec(`create table if not exists threads (id text primary key, project text not null, name text not null,
   goal text not null, status text not null default 'open', created text not null, by integer, done text, deadline integer,
-  deadline_by text, aim integer, branch text)`);
+  deadline_by text, aim integer, branch text, judge integer)`);
 // A company's plans (plan.ts), here rather than in that module: company.ts reads the projects, and the claim will read
 // the needs and the order. projects: each a line of work with one owner, in the order made (by: the agent who made it,
 // or projects.yaml for one lifted from its old `projects:` list). done: when hq project done closed it. thread_needs: a
@@ -612,6 +644,12 @@ once('review-forecast-class', () => {
   db.exec("update prs set review_class = case panel when 'fix' then 'full' else panel end");
 });
 
+// A thread's owner comes from its project (projects.ts ownerOf), and planning has no stored mode.
+once('2026-10-22-threads-in-order-only', () => {
+  if (columnsOf('threads').includes('owner')) db.exec('alter table threads drop column owner');
+  db.prepare("delete from settings where key = 'planning.mode'").run();
+});
+
 once('historical-review-sizes', () => {
   for (const [table, columns] of [
     ['predictions', ['review_ms', 'slow_review_ms']],
@@ -659,6 +697,19 @@ once('2026-10-23-pushes-at', () => {
   db.exec(`alter table pushes add column at text;
     update pushes set at = (select min(created) from jobs where jobs.pr = pushes.pr and jobs.sha = pushes.sha)`);
 });
+// Why a note came back to routing from the work it went to, in agents' words and the board's (note_routes.back,
+// board_why: routing.ts).
+once('2026-10-24-note-routes-back', () => {
+  if (lacks('note_routes', 'back')) db.exec('alter table note_routes add column back text');
+  if (lacks('note_routes', 'board_why')) db.exec('alter table note_routes add column board_why text');
+});
+redacted('note_routes', 'back');   // (a job's report in it)
+// A seat already running on credits when the board's switch came keeps them: it was the board's to choose, and stays so.
+once('2026-10-22-seat-list-credits', () => {
+  if (!lacks('seat_list', 'use_credits')) return;
+  db.exec('alter table seat_list add column use_credits integer not null default 0');
+  db.exec('update seat_list set use_credits = 1 where id in (select id from seats where credits = 1)');
+});
 // engine_only: the rule of work only one engine does (engineonly.ts) that keeps its job there; judges: the files a review
 // judges.
 once('2026-10-21-jobs-engine-only', () => {
@@ -688,6 +739,9 @@ once('2026-10-21-calls-reply', () => {
   db.exec(`insert or ignore into reply_asks (job) select id from jobs where kind = 'work' and status in ('queued', 'running', 'blocked')
     and id in (select job from calls where status = 'ended' and processed_at is null)`);
 });
+// call_items.goal, redacted once it's there.
+once('2026-10-24-call-items-goal', () => lacks('call_items', 'goal') && db.exec('alter table call_items add column goal text'));
+redacted('call_items', 'goal');
 // A live call handed a customer's details by a look-up (jobs.ts readerHanded).
 // A pause's condition wakes its owner rather than lifting it (pauses.ts wake)
 once('2026-10-25-pauses-wake', () => {
@@ -695,6 +749,33 @@ once('2026-10-25-pauses-wake', () => {
   if (lacks('pauses', 'woken')) db.exec('alter table pauses add column woken integer');
   if (lacks('pause_until', 'on_main')) db.exec('alter table pause_until add column on_main integer not null default 0');
 });
+// A thread's last merge wakes its owner to judge it (threadjudge.ts)
+once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alter table threads add column judge integer'));
+db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
 once('2026-10-24-calls-customers', () => {
   if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
+});
+
+// A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.
+db.exec(`create table if not exists seat_readings (seat text not null, minute integer not null,
+  at integer not null, util real, resets integer, week real, week_resets integer, primary key (seat, minute))`);
+db.exec('create index if not exists seat_readings_at on seat_readings (seat, at)');
+db.exec(`insert or ignore into seat_readings (seat, minute, at, util, resets, week, week_resets)
+  select id, updated / 60000, updated, util, resets, week, week_resets from seats
+  where updated is not null and (util is not null or week is not null)`);
+
+// Observation tables exist before any request can roll back its first read.
+const observedWindowsExist = db.prepare("select 1 from sqlite_master where name = 'seat_window_observations'").get();
+db.exec(`create table if not exists seat_window_observations (seat text not null, quota text not null,
+  at integer not null, reported_at integer not null, used real not null, resets integer)`);
+db.exec('create index if not exists seat_window_observations_at on seat_window_observations (seat, quota, at, reported_at)');
+once('2026-10-26-seat-window-observations', () => {
+  if (observedWindowsExist) return;
+  for (const [quota, usage, reset] of [
+    ['five', 'util', 'resets'],
+    ['week', 'week', 'week_resets'],
+  ]) {
+    db.exec(`insert or ignore into seat_window_observations (seat, quota, at, reported_at, used, resets)
+      select seat, '${quota}', at, at, ${usage}, ${reset} from seat_readings where ${usage} is not null`);
+  }
 });

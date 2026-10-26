@@ -64,9 +64,6 @@ test("the file's projects are lifted into HQ once, and stay HQ's: the file can l
       ['game', 'wren'],
       ['shop', 'moss'],
     ]);
-    assert.equal(company.projects().planning, 'off', "the platform's default");
-    writeFileSync(file, 'planning: threads\n');
-    assert.equal(company.projects().planning, 'threads');
   } finally {
     writeFileSync(file, FILE);
   }
@@ -147,7 +144,7 @@ test("a thread's tasks in order: moved by the owner, a later task still last; a 
   assert.equal(h.job(two).status, 'cancelled');
   assert.deepEqual(order(), [three, four, one]);
   const shown = await h.hq(wren, 'plan', 'game');
-  assert.match(shown.out, /^The game \(game\), wren's plan \(threads in order: off\)$/m);
+  assert.match(shown.out, /^The game \(game\), wren's plan$/m);
   assert.match(
     shown.out,
     new RegExp(

@@ -17,7 +17,6 @@ const { db, jobs } = h;
 const projects = await import('./projects.ts');
 const windows = await import('./windows.ts');
 const forecast = await import('./forecast.ts');
-const { remember } = await import('./db.ts');
 
 const HOUR = 3600_000;
 const thread = (project: string, slug: string) =>
@@ -122,7 +121,10 @@ test("a call hears who's at work as HQ counts them, why each runs through the ho
       text,
       /- A budget for the trial, asked by Kit: holds up #\d+ "Ask for the budget" \(kit's, parked on it\)\./,
     );
-    assert.match(text, /- Pick the art style, asked by Wren: keeps game\/art paused until it's answered\./);
+    assert.match(
+      text,
+      /- Pick the art style, asked by Wren: keeps game\/art paused until it's answered; the plan of "The art" counts on its answer\./,
+    );
     assert.match(text, /- Approve the logo: nothing in HQ waits on it: no job is queued after it/);
   }
   assert.ok(prompt.indexOf('Going on right now') < prompt.indexOf('Queued or waiting for the board'));
@@ -152,8 +154,6 @@ test('with no hold on, the call hears so, and no run gives a reason to be let th
 
 test('a card a pause waits for names the threads that need the paused one, though none of their work waits on it', async () => {
   db.exec('delete from pauses; delete from pause_until; delete from requests; delete from request_waits');
-  const order = await import('./threadorder.ts');
-  remember(order.MODE, 'threads');
   const decisions = await import('./decisions.ts');
   const plan = await import('./plan.ts');
   const murals = thread('game', 'murals'),
@@ -195,5 +195,4 @@ test('a card a pause waits for names the threads that need the paused one, thoug
   );
   const stillNamed = (await h.hq({ token, agent: 'juno' }, 'projects', 'the', 'tills')).out;
   assert.match(stillNamed, /- The tills: .*the board: "Pick the mural look"/);
-  remember(order.MODE, null);
 });

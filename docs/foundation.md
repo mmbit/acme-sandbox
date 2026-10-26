@@ -26,6 +26,8 @@ where it suffices.
   `accent`, `side` and `onAccent`: a company's `theme/hq.yaml` still saying `knop` and `onKnop` renames them at the
   carry, or Wire falls back to its own Day and Night.
 - **Shows**: `company/shows.yaml`.
+- **Covers**: each artifact's `picture` (artifact.yaml, product.yaml or a company/artifacts.yaml entry), shot from the
+  company's own list by `node platform/hq/covers.mjs <list.json>`.
 
 ## Settled
 
@@ -34,6 +36,12 @@ where it suffices.
   deployed once per product whose `product.yaml` says `engine: care`, the one with `chat: true` serving the shops' chat
   and owning the line to HQ. Both companies are on it. The old single `phoneLine` is still read as one line
   (`phonelines.ts` `lines()`, `platform/voice/phone_timing.py`); the next carry takes that read out.
+
+- **The board's book replaces the first Sketchbook, and HQ's own review notes go into it** (26 October): HQ's first
+  Sketchbook screens are gone for every company, and a note pinned on one of HQ's own screens goes to the board's book
+  (`/api/book`) rather than Reviews, with no setting: one way for both companies. Knop doesn't use the first
+  Sketchbook (the board moved the pencil work to Onlyonery on 24 October). The guest room's Sketchbook stays, off where
+  brand.yaml says `computer: { sketchbook: false }`.
 
 ## Open
 

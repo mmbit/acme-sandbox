@@ -26,7 +26,7 @@ type Outlook = {
 };
 type Job = {
   id: number;
-  code: string | null; //
+  code: string | null;
   agent: string;
   title: string;
   status: string;
@@ -37,7 +37,16 @@ type Job = {
   merged: number | null;
   waits: Wait[];
 };
-type Line = { id: string; name: string; owner: string; outlook: Outlook | null; next: Job | null };
+// (ready: its work is in with nothing open, for its owner to judge: the coordinator's threadjudge.ts)
+type Ready = { since: number | null; judge: number | null };
+type Line = {
+  id: string;
+  name: string;
+  owner: string;
+  outlook: Outlook | null;
+  next: Job | null;
+  ready?: Ready | null;
+};
 type Detail = Line & {
   goal: string;
   status: string;
@@ -101,8 +110,14 @@ function projectLine(t: Line) {
   const next = t.next
     ? `; next ${jobWords(t.next.id, t.next.code)} ${text(t.next.agent)} (${t.next.status}): ${text(t.next.title)}`
     : '';
-  return `${text(t.id)}  ${text(t.name)} (${text(t.owner)}): ${estimateWords(t.outlook, t.id)}${next}`;
+  return `${text(t.id)}  ${text(t.name)} (${text(t.owner)}): ${t.ready ? readyWords(t, t.ready) : estimateWords(t.outlook, t.id)}${next}`;
 }
+
+const readyWords = (t: Line, ready: Ready) => {
+  const since = ready.since === null ? '' : ` since ${at(ready.since)}`;
+  const judge = ready.judge === null ? '' : ` (#${ready.judge})`;
+  return `ready to judge${since}, nothing in it open: ${text(t.owner)} closes it (hq plan done ${text(t.id)}) or draws its next task${judge}`;
+};
 
 function estimateWords(o: Outlook | null, thread: string, said = threadWait) {
   if (!o) return 'no open work';
@@ -136,7 +151,7 @@ export async function thread(id: string) {
   if (!api.isSuccess(answer.status) || !t) stop(`Couldn't read ${id}: ${api.errorIn(answer.body, 'no answer')}`);
   const o = t.outlook;
   print(`${text(t.id)}  ${text(t.name)} (${text(t.owner)}, ${text(t.status)}), done when ${text(t.goal)}`);
-  print(estimateWords(o, t.id));
+  print(t.ready ? readyWords(t, t.ready) : estimateWords(o, t.id));
   print(...missLines(o?.standing === 'misses' ? [t.id] : []));
   if (t.pause)
     print(

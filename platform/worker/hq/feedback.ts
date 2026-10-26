@@ -15,10 +15,15 @@ export const note = {
    hq note <id> fixed [job:<n>] "..."                a note hq notes lists for you: you fixed it (what didn't work and
                                                      what changed, in a line), by this job's pull request or job <n>'s
                                                      (the job it went to, or one this job queued); once that's deployed
-                                                     HQ's Notes shows it fixed, and an outside reviewer is thanked`,
+                                                     HQ's Notes shows it fixed, and an outside reviewer is thanked
+   hq note <id> answered "..."                       a note sent to your work that needs none (a remark, a question):
+                                                     your answer in a line, which HQ's Notes shows the board. A note
+                                                     left neither fixed nor answered goes back to routing when your job
+                                                     ends, with your report`,
 
   async run([id, action, ...rest]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '')) stop(NOTE_USAGE);
+    if (action === 'answered') return answered(id, rest);
     if (action !== undefined) return fixed(id, action, rest);
     const { shot, pictures, ...reviewNote } = JSON.parse(await api.get(`note?id=${id}`));
     const screenshot = shown(shot);
@@ -133,7 +138,8 @@ function pinnedTo(n: ListedNote) {
   return n.text ? `${on}, text ${JSON.stringify(n.text)}` : on;
 }
 
-const NOTE_USAGE = 'usage: hq note <id> | hq note <id> fixed [job:<n>] "what didn\'t work and what changed"';
+const NOTE_USAGE =
+  'usage: hq note <id> | hq note <id> fixed [job:<n>] "what didn\'t work and what changed" | hq note <id> answered "the answer"';
 
 // A fix for a note hq notes lists. A refusal (4xx) changed nothing (exit 1); anything else
 // may have (exit 3).
@@ -149,6 +155,16 @@ async function fixed(id: string, action: string, [first, second, ...more]: strin
       `Note #${id} is marked fixed by job #${text(marked.job)}: it shows as fixed once that's merged and deployed.`,
     );
   }
+  if (api.isRefusal(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'refused')}`);
+  stop(`Not confirmed: the note may or may not be marked (HTTP ${api.httpCode(answer.status)}).`, 3);
+}
+
+// An answer to a note that needs no work. A refusal (4xx) changed nothing (exit 1); anything else may have (exit 3).
+async function answered(id: string, [how, ...more]: string[]) {
+  if (!how || more.length) stop(NOTE_USAGE);
+  const answer = await api.orNoAnswer(api.call('note-answered', { body: { id: Number(id), how }, timeoutMs: 30_000 }));
+  if (api.isSuccess(answer.status))
+    return print(`Note #${id} is marked answered: HQ's Notes shows the board your answer.`);
   if (api.isRefusal(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'refused')}`);
   stop(`Not confirmed: the note may or may not be marked (HTTP ${api.httpCode(answer.status)}).`, 3);
 }

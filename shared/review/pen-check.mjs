@@ -2,17 +2,18 @@
 // The pen in review mode, held like an iPad mini (touch, 744 × 1133): a pen's tap stays the page's, a pen drawn across
 // the page starts a note right there, its lines stay open and keep coming until the note goes, a resting palm draws
 // nothing once a pen has, the strip's inks and undo, and the note carries the lines (pressure and time) and a screenshot
-// with them on it. The pin drags from its menu's handle too, and a tap on the handle still opens the menu. Listen as I
-// draw starts the mic at the first mark, and the words come in live from a stand-in voice line as they're said, the
-// clip taking over where the line can't be reached. Then the same on HQ itself in each of its looks, for the eye. Then
+// with them on it, and the post-it shows one Send and Cancel. The pin drags from its menu's handle too, and a tap on
+// the handle still opens the menu. The first mark starts the mic, and the words come in live from a stand-in voice line
+// as they're said, the clip taking over where the line can't be reached. Then the same on HQ itself in each of its looks, for the eye. Then
 // an invited reviewer's (review mode as the coordinator serves it on a share's session) gets the same pen: pressure,
 // open lines, inks, undo (the strip's and Cmd+Z), the note carrying its lines, and live words, with no language asked
-// for by the page; only To the Sketchbook stays the board's.
+// for by the page.
 //   node shared/review/pen-check.mjs [--shots dir]
 import assert from 'node:assert/strict';
 import { readFile, mkdir } from 'node:fs/promises';
 import { playwright, errorsOf, until } from '../browser/browser.mjs';
 import { serve, ROOT } from '../../platform/hq/serve.mjs';
+import { fulfilPart } from './parts.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -26,10 +27,6 @@ const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).rep
 // an invited reviewer's, as feedback.ts product() serves it to a share's session: the company's name in (here the
 // product's), notes not sent yet.
 const outsiderJs = reviewJs.replace('{{OUTSIDE}}', 'Hello').replace('{{SENT}}', '');
-const files = {
-  'ink.js': await readFile(`${ROOT}/shared/review/ink.js`, 'utf8'),
-  'frame.js': await readFile(`${ROOT}/shared/review/frame.js`, 'utf8'),
-};
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hello</title>
   <style>body { font: 20px system-ui; margin: 32px; background: #fdfaf3; } h1 { margin-top: 90px; font-size: 44px; } main { height: 2400px; }
     button { font: inherit; padding: 14px 24px; border-radius: 12px; border: 0; background: #2b2230; color: #fff; }</style>
@@ -41,7 +38,6 @@ const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, 
 // address each was opened at)
 const posted = [],
   clips = [],
-  sketched = [],
   dictations = [];
 let line = 'live',
   frames = 0,
@@ -107,19 +103,13 @@ function coordinator(ws) {
 }
 function product(r, tool) {
   const path = new URL(r.request().url()).pathname;
-  if (path === '/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: tool });
-  if (path.startsWith('/__review/') && files[path.slice(10)])
-    return r.fulfill({ contentType: 'text/javascript', body: files[path.slice(10)] });
+  if (fulfilPart(r, path, tool)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
   if (path === '/__review/mine')
     return r.fulfill({ json: { notes: posted.length, list: [], sent: false, more: false } });
   if (path === '/__review/notes') {
     posted.push(r.request().postDataJSON());
     return r.fulfill({ json: { ok: true, id: posted.length } });
-  }
-  if (path === '/__review/sketch') {
-    sketched.push(r.request().postDataJSON());
-    return r.fulfill({ json: { id: 7, fresh: sketched.at(-1).to === 'new' } });
   }
   if (path === '/__review/voice') {
     clips.push(r.request().postDataBuffer()?.length ?? 0);
@@ -196,8 +186,8 @@ const red = ([r, g, b, a]) => a > 200 && r > 200 && g < 140 && b < 140,
 const context = await device(reviewJs);
 await penNote({ board: true });
 
-// ---- a note drawn with the pen, sent (board: the board's, with To the Sketchbook; else an invited reviewer's, told
-// once what goes with a note).
+// ---- a note drawn with the pen, sent (board: the board's; else an invited reviewer's, told once what goes with a
+// note).
 async function penNote({ board }) {
   // a pen's tap is the page's own: the button takes it, and review mode stays out of the way
   await pen([
@@ -247,8 +237,11 @@ async function penNote({ board }) {
   await page.locator(inUi('.strip .undo')).tap();
   assert.equal((await inkAt(h1.x + 160, h1.y + 200))[3], 0, 'undo takes the last line back');
   assert.ok(red(await inkAt(h1.x + 160, h1.y + 120)), 'and leaves the others');
-  if (board) await toTheSketchbook();
-  else assert.equal(await page.locator(inUi('.tosk')).isVisible(), false, "the Sketchbook is the board's alone");
+  assert.deepEqual(
+    await page.locator(inUi('.sheet .row button:visible')).allInnerTexts(),
+    ['', 'Cancel', 'Pin it'],
+    'the post-it: the mic, Cancel and one Send',
+  );
   await page.locator(inUi('textarea')).fill('Bigger, and lose the second line');
   await page.locator(inUi('.send')).tap();
   await page.waitForFunction(
@@ -286,36 +279,6 @@ async function penNote({ board }) {
   assert.equal((await inkAt(h1.x + 160, h1.y + 120))[3], 0, 'and the ink is gone with the note');
 }
 
-// ---- To the Sketchbook: the circled bit of the photo, its lines on it, to a new sketch or the last one
-async function toTheSketchbook() {
-  await page.locator(inUi('.tosk-go')).tap();
-  await page.locator(inUi('.tosk [data-to=new]')).tap();
-  await page.locator(inUi('.tosk-go'), { hasText: 'In a new sketch' }).waitFor({ timeout: 10_000 });
-  const scrap = sketched.at(-1);
-  assert.equal(scrap.to, 'new');
-  const cut = await page.evaluate(async url => {
-    const img = new Image();
-    img.src = url;
-    await img.decode();
-    const c = Object.assign(document.createElement('canvas'), { width: img.width, height: img.height }),
-      g = c.getContext('2d');
-    g.drawImage(img, 0, 0);
-    const d = g.getImageData(0, 0, c.width, c.height).data;
-    let reds = 0;
-    for (let i = 0; i < d.length; i += 4) if (d[i] > 200 && d[i + 1] < 140 && d[i + 2] < 140) reds++;
-    return { w: img.width, h: img.height, reds, type: url.slice(5, 15) };
-  }, scrap.picture);
-  assert.equal(cut.type, 'image/jpeg');
-  // the loop is 400 × 100 and the cross-out under it, a margin around both, at the screenshot's scale (1.76×)
-  assert.ok(
-    cut.w > 1.5 * 400 && cut.w < 2 * 520 && cut.h > 1.5 * 150 && cut.h < 2 * 300,
-    `just the circled bit (${cut.w} × ${cut.h})`,
-  );
-  assert.ok(cut.reds > 2000, `with the note's lines on it (${cut.reds} red px)`);
-  await shot('pen-to-sketchbook-ipad', page);
-  await page.locator(inUi('.tosk-go')).waitFor({ state: 'visible' });
-}
-
 // ---- the pin drags from its menu's handle, with a mouse and a finger, and a tap on the handle still opens the menu
 const dockAt = () =>
   page.evaluate(() => {
@@ -349,20 +312,14 @@ assert.ok(Math.abs(ty - (my + 200)) < 4, `a finger drags it too (${my} → ${ty}
 await page.locator(inUi('.more')).tap();
 assert.equal(await page.locator(inUi('.menu')).isVisible(), true, 'a tap on the handle opens the menu');
 
-await listenAsIDraw();
+await page.locator(inUi('.more')).tap(); // (shut)
+await dictated();
 
-// ---- Listen as I draw: off at first; on, the first mark starts the mic, and the words come in as they're said
-// (from the menu, opened if it isn't).
-async function listenAsIDraw() {
+// ---- the first mark starts the mic, and the words come in as they're said
+async function dictated() {
   frames = 0;
   ended = 0;
   clips.length = 0;
-  if (!(await page.locator(inUi('.menu')).isVisible())) await page.locator(inUi('.more')).tap();
-  const listen = page.locator(inUi('[data-listen]'));
-  assert.equal(await listen.getAttribute('aria-checked'), 'false', 'off unless turned on');
-  await listen.tap();
-  assert.equal(await listen.getAttribute('aria-checked'), 'true');
-  await page.locator(inUi('.more')).tap(); // (shut)
   await pen(loop(h1.x + 160, h1.y + h1.height / 2, 180, 45));
   await page.waitForFunction(() =>
     document.querySelector('review-mode').shadowRoot.querySelector('.mic').classList.contains('on'),
@@ -462,9 +419,7 @@ if (shots) {
   const hqPage = await context.newPage();
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
-    if (path === '/__review/review.js')
-      return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
-    if (files[path.slice(10)]) return r.fulfill({ contentType: 'text/javascript', body: files[path.slice(10)] });
+    if (fulfilPart(r, path, reviewJs)) return;
     if (path === '/__review/mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } });
     return r.fulfill({ json: { show: false } });
   });
@@ -472,9 +427,6 @@ if (shots) {
   for (const look of ['brownstone', 'wire', 'holo']) {
     await hqPage.goto(`${base}/?intro=0&renderer=${look}`);
     await until(hqPage, '#loading.gone');
-    await hqPage.click('#btn-computer');
-    await hqPage.click('[data-app=settings]');
-    await hqPage.click('[data-run="sys:pin"]');
     await hqPage.waitForSelector('review-mode .fab');
     await hqPage.waitForFunction(
       () => document.querySelector('review-mode').shadowRoot.querySelectorAll('.strip .pot').length === 5,
@@ -522,7 +474,7 @@ if (shots) {
 await device(outsiderJs);
 dictations.length = 0;
 await penNote({ board: false });
-await listenAsIDraw();
+await dictated();
 assert.ok(
   dictations.every(url => new URL(url).search === ''),
   `the page asks for no language: the coordinator decides it, none for an outsider (${dictations})`,
@@ -538,5 +490,5 @@ assert.deepEqual(errors, []);
 await browser.close();
 server.close();
 console.log(
-  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, Listen as I draw with live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z and pin${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no Sketchbook, no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the first mark starting the mic, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z and pin${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
 );

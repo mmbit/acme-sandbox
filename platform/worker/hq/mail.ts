@@ -122,7 +122,7 @@ type Mail = {
 // A mail that answers an email HQ sent says so: HQ handed it to the agent who drafted it.
 function listingLine({ id, received, sender, recipient, subject, answers }: Mail) {
   const handed = answers ? `  (answers email #${answers}: with its drafter)` : '';
-  return `#${id}  ${received.slice(0, 16)}  ${oneLine(sender ?? '')}  →  ${oneLine(recipient ?? '')}  ${oneLine(subject ?? '')}${handed}`;
+  return `#${id}  ${minute(received)}  ${oneLine(sender ?? '')}  →  ${oneLine(recipient ?? '')}  ${oneLine(subject ?? '')}${handed}`;
 }
 
 // HQ picks the mail to that exact address before its limit (listMailTo in platform/coordinator/src/mail.ts); --after pages on, oldest first.
@@ -244,7 +244,7 @@ async function saveRaw(id: string) {
 async function showDraft(id: string) {
   const asMember = api.speaker() ? `&as=${api.uri(api.speaker())}` : '';
   const draft = JSON.parse(await api.orStop(api.get(`outbox?id=${id}${asMember}`), `No email draft #${id} of yours.`));
-  const decided = present(draft.decided) ? ` (${minute(draft.decided)} UTC)` : '';
+  const decided = present(draft.decided) ? ` (${minute(draft.decided)})` : '';
   const attachments: { name: string; size: number }[] = draft.attachments ?? [];
   const attachmentLines = attachments.length
     ? ['', 'Attachments:', ...attachments.map(f => `${text(f.name)} (${Math.ceil(f.size / 1024)} KB)`)]

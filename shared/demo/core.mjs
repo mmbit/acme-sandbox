@@ -103,7 +103,7 @@ async function answer(url) {
       const f = Math.max(0, Math.min(c.frames - 1, Number(u.searchParams.get('f')) || 0));
       return { status: 200, type: 'image/jpeg', body: readFileSync(join(c.dir, String(f + 1).padStart(6, '0') + '.jpg')) };
     }
-    const file = u.pathname === '/__demo/runtime.js' ? join(HERE, 'runtime.js') : drawn.requireSent(inRepo(u.pathname));
+    const file = u.pathname === '/__demo/runtime.js' ? join(HERE, 'runtime.js') : drawn.requireSent(inRepo(u.pathname.endsWith('/') ? `${u.pathname}index.html` : u.pathname)); // (a folder: its index.html.)
     return { status: 200, type: TYPES[extname(file)] || 'application/octet-stream', body: readFileSync(file) };
   } catch (e) { return { status: 404, type: 'text/plain', body: String(e.message) }; }
 }

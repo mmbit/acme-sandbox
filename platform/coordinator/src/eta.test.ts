@@ -33,7 +33,7 @@ past('Paint the harbour map at night', 50, 60);
 // Work kit queues now (a hand-off).
 const queued = (title: string) => h.queue({ agent: 'kit', title, engine: 'claude', queuedBy: 'juno' });
 const seat = (windows: Record<string, unknown> = {}) =>
-  h.worker('seat', { seat: 'claude-a', engine: 'claude', state: 'ready', util: 0.1, ...windows });
+  h.worker('seat', { seat: 'claude-a', engine: 'claude', state: 'ready', util: 0.1, week: 0.1, ...windows });
 let sizingReader: ReturnType<typeof h.start> | undefined;
 const reader = () => (sizingReader ??= h.start({ agent: 'bolt', title: 'Sizing', kind: 'chat' }));
 const ask = async (query: Record<string, string>) => {
@@ -177,12 +177,13 @@ test('the play is a function of its snapshot and sizes: played again, or from th
 test('the play and claim put windowed work before older unwindowed work', async () => {
   await seat();
   const older = queued('Paint the harbour map for the ferry');
+  const fair = h.dueThread({ deadline: T0 + 5 * HOUR });
   const due = h.queue({
     agent: 'kit',
     title: 'Paint the harbour map for the fair',
     engine: 'claude',
     queuedBy: 'juno',
-    thread: h.dueThread({ deadline: T0 + 5 * HOUR }),
+    thread: fair,
   });
   await reportCapacity();
   const [dueAt, olderAt] = [due, older].map(id => predictions.outlook(T0).get(id)!.start);
@@ -190,6 +191,8 @@ test('the play and claim put windowed work before older unwindowed work', async 
   const claimed = (await h.claim('claude', { seat: 'claude-a' }))!;
   assert.equal(claimed.id, due, 'as the claim hands it out');
   h.db.prepare("update jobs set status = 'cancelled' where id = ?").run(claimed.id);
+  // (closed: an open thread with no task plays as its owner's placeholder)
+  h.closedThreads(fair);
   clear();
 });
 

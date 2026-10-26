@@ -8,6 +8,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) mkdirSync(shots, { recursive: true });
@@ -17,7 +18,7 @@ const server = await serve(),
 const browser = await playwright().chromium.launch();
 const ceo = (await (await fetch(`${base}/mock/org.json`)).json()).company.ceo;
 
-for (const look of ['wire', 'holo', 'brownstone'])
+for (const look of lookNames())
   for (const [width, height] of [
     [390, 844],
     [1180, 820],

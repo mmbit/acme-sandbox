@@ -1,13 +1,16 @@
 # The company's HQ: the renderer that draws it, and that renderer's settings under its name. The board can switch
 # to any other renderer from Settings; this is the default. The renderers: brownstone (isometric pixel art), holo (a
 # hologram) and wire (Slate: keys on a board).
-# A new company starts with no style (no style: key yet), on wire in neutral colours; its onboarding writes the style, the
-# look and its accent (company/playbooks/intake.md).
+# A new company starts with no style (no style: key yet), on wire in neutral colours that wear the brand's colour
+# (company/brand.yaml colour); its onboarding writes the style and the look (company/playbooks/intake.md).
+# Agents are told the style and its craft note, and styleNote's note of the company's own drawing rules, which the
+# founding writes (company/playbooks/intake.md).
+# styleNote: knowledge/notes/design/drawing.md
 renderer: wire
 wire:
   colourways:
-    - { id: day, name: Day, ground: '#eceef1', ink: '#1b1e24', muted: '#5a606b', panel: '#f8f9fb', accent: '#4f7cff', side: '#2f56c8', onAccent: '#ffffff' }
-    - { id: night, name: Night, ground: '#16181d', ink: '#e8eaee', muted: '#9aa0aa', panel: '#21242b', accent: '#4f7cff', side: '#2f4fb0', onAccent: '#ffffff' }
+    - { id: day, name: Day, ground: '#eceef1', ink: '#1b1e24', muted: '#5a606b', panel: '#f8f9fb' }
+    - { id: night, name: Night, ground: '#16181d', ink: '#e8eaee', muted: '#9aa0aa', panel: '#21242b' }
 # The company's own apps on the computer's home screen, each a kit's HQ app, kits/<name>/hq/app.js
 # (template/kits/README.md): each at the end of the group its app.group names (work, talk, business or team, with
 # Settings always last), in this order, and one that names none with the others like it, before the team's.
@@ -24,8 +27,9 @@ apps: []
 #   kit: <kit>
 # Wire in the company's own colours: its colourways, each { id, name, ground, ink, muted, panel, accent, side, onAccent }
 # in #hex (the grounds and letters, and the one thing lit at a time: its colour, the lip under it and the letters on
-# it), and its font from Google Fonts. Settings › Look offers each, and Auto: the first light one, or the first dark one
-# on a dark device. Left out: Wire's own Day and Night.
+# it, left out for the brand's colour: company/brand.yaml colour), and its font from Google Fonts. Settings › Look
+# offers each, and Auto: the first light one, or the first dark one on a dark device. Left out: Wire's own Day and
+# Night.
 # wire:
 #   font: { family: Bricolage Grotesque, href: 'https://fonts.googleapis.com/css2?family=...' }
 #   colourways:

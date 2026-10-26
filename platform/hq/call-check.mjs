@@ -198,7 +198,7 @@ async function pictures() {
   }, drawn[1]);
   await page.waitForSelector('#call-pics li.failed');
   const strip = await page.evaluate(() => [...document.querySelectorAll('#call-pics li')].map(li => ({ state: li.className, img: !!li.querySelector('img')?.naturalWidth })));
-  const rows = await page.evaluate(() => [...document.querySelectorAll('#call-screen .row button')].map(b => { const r = b.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right }; }));
+  const rows = await page.evaluate(() => [...document.querySelectorAll('#call-screen .row:not(.share) button')].map(b => { const r = b.getBoundingClientRect(); return { top: r.top, left: r.left, right: r.right }; }));
   if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
   // a third picture is on its way when the board hangs up: the upload stops
   await page.evaluate(() => {
@@ -405,6 +405,62 @@ async function callScreen() {
   console.log('ok: a new call clears the last status; ON AIR lights for the board\'s voice and the agent\'s, not the tick or quiet');
 }
 await callScreen();
+
+// The board's screen is shared only when it says so: minimising the call (its
+// key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call
+// screen's Show my screen starts one, the bubble's eye shows it, and Stop showing pauses it (Show my screen again).
+// A start that fails says so on the call screen until the next try.
+async function shareScreen() {
+  const { context, page, errors } = await callPage();
+  let starts = 0, line = null, pickUp = null;
+  await context.route(`${base}/api/watchalong/start`, r => ++starts === 1 ? r.fulfill({ status: 503, json: { error: 'down' } }) : r.fulfill({ json: { id: 1, events: null } }));
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
+    line = ws;
+    pickUp = () => { ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' })); };
+  }));
+  const eye = () => page.evaluate(() => { const e = document.querySelector('.callbubble .cb-eye'); return !!e && !e.hidden; });
+  const key = () => page.$$eval('#call-screenshare', ([b]) => b && [b.textContent.trim(), b.getAttribute('aria-pressed'), b.disabled]);
+  const unshown = () => page.$eval('#call-unshown', n => !n.hidden && n.textContent.trim());
+  const open = async () => { await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(400); };
+  const seen = {};
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  seen.ringing = await key();
+  await page.click('#call-min'); await page.waitForTimeout(500); // (minimised before the line picks up)
+  pickUp(); await page.waitForTimeout(500);
+  seen.small = [starts, await eye()];
+  await open();
+  seen.ready = await key();
+  await page.mouse.click(5, 5); await page.waitForTimeout(500); // (the backdrop)
+  await open();
+  await page.keyboard.press('Escape'); await page.waitForTimeout(500);
+  seen.minimised = [starts, await eye()];
+  assert.deepEqual([seen.small, seen.minimised], [[0, false], [0, false]], `minimising the call shared the screen: ${JSON.stringify(seen)}`);
+  await open();
+  await page.click('#call-screenshare'); await page.waitForTimeout(300); // (the first start fails)
+  seen.failed = [starts, await key(), await unshown()];
+  await page.click('#call-screenshare'); await page.waitForTimeout(300);
+  seen.shown = [starts, await key(), await unshown()];
+  await page.click('#call-min'); await page.waitForTimeout(500);
+  seen.watched = await eye();
+  await open();
+  await page.click('#call-screenshare'); await page.waitForTimeout(300);
+  seen.stopped = [starts, await key()];
+  await page.click('#call-min'); await page.waitForTimeout(500);
+  seen.stoppedEye = await eye();
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(seen.ringing, ['Show my screen', 'false', true], `before pick-up the key waits: ${JSON.stringify(seen)}`);
+  assert.deepEqual(seen.ready, ['Show my screen', 'false', false], JSON.stringify(seen));
+  assert.deepEqual(seen.failed, [1, ['Show my screen', 'false', false], 'Your screen couldn’t be shown. Try Show my screen again.'], `a failed start wasn't said: ${JSON.stringify(seen)}`);
+  assert.deepEqual(seen.shown, [2, ['Stop showing', 'true', false], false], `Show my screen didn't start the watch-along: ${JSON.stringify(seen)}`);
+  assert.equal(seen.watched, true, 'the bubble shows no eye while the screen is shown');
+  assert.deepEqual([seen.stopped, seen.stoppedEye], [[2, ['Show my screen', 'false', false]], false], `Stop showing didn't stop it: ${JSON.stringify(seen)}`);
+  console.log('ok: minimising shares nothing; Show my screen starts the watch-along (the eye shows), Stop showing pauses it');
+}
+await shareScreen();
 
 // The screen going off on a call (iOS mutes the microphone until the page is back, and lets go of the screen's wake lock):
 // back in view, the lock is asked for again, even if a pending request was refused as the page hid.

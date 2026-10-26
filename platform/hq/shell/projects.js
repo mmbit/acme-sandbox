@@ -19,28 +19,17 @@ import { keepCovers, coversIn } from './covers.js'; // (coversIn)
 
 const $ = s => document.querySelector(s);
 const REFRESH_MS = 20000;
-const TAPPABLE = [
-  'data-business',
-  'data-project',
-  'data-group',
-  'data-thread',
-  'data-job',
-  'data-up',
-  'data-done',
-  'data-close',
-  'data-card',
-  'data-leave',
-  'data-turn',
-  'data-side',
-];
+// what a tap opens, by its data- attribute
+const TAPPABLE = 'business project group thread job up done close card leave turn side'
+  .split(' ')
+  .map(n => `data-${n}`);
 
 let board = null,
   // while no job can start for memory, the coordinator's line saying so (room.ts), else null
   room = null,
   // where the board is: a business, a project and a thread in it, or a group (recurring, unsorted); jobId: the job open
   // over it (lookedUp: one asked for by a link that the board no longer holds); back: whether it's turned over (its
-  // steps show there); notice: what came of a work link's job, if it isn't there
-  // (gone, unopened)
+  // steps show there); notice: what came of a work link's job, if it isn't there (gone, unopened)
   view = {
     business: null,
     project: null,
@@ -138,6 +127,9 @@ export async function openProjects(at = {}) {
   clearInterval(timer);
   timer = setInterval(refresh, REFRESH_MS);
 }
+// Once HQ is up, the board's work and its level's covers, read ahead (painting nothing: an open meanwhile paints once,
+// from its own read). The first open then paints at once, as a later one does.
+export const readAhead = () => refresh('', false);
 export async function closeProjects() {
   if (!projectsOpen() || shutting()) return;
   sfx.close();
@@ -162,7 +154,7 @@ function measureInset() {
   if (projectsOpen())
     $('#projects').style.setProperty('--pj-top', `${Math.round($('#hud').getBoundingClientRect().bottom)}px`);
 }
-async function refresh(motion = '') {
+async function refresh(motion = '', paints = true) {
   try {
     [board, { line: room }] = await Promise.all([loadBoard(world.dev), loadRoom(world.dev)]);
     for (const t of projects().flatMap(p => p.threads)) closed.delete(t.id);
@@ -185,7 +177,7 @@ async function refresh(motion = '') {
   }
   await arriving;
   // (a key pressed to sort keeps its grid until the gesture ends)
-  if (projectsOpen() && !sortGesture()) paint(motion);
+  if (paints && projectsOpen() && !sortGesture()) paint(motion);
 }
 
 // ---------------------------------------------------------------- the board's work, read
@@ -278,7 +270,8 @@ function openJob(id, row) {
   if (j && rowState(j) === 'working' && world.agents.has(j.agent)) {
     if (!scene.cards) return flyTo(j.agent);
     sfx.press();
-    return scene.focus({ kind: 'agent', id: j.agent }, { from: row });
+    scene.focus({ kind: 'agent', id: j.agent }, { from: row, onLeave: sided });
+    return sided();
   }
   sfx.press();
   origin = row.getBoundingClientRect();
@@ -294,6 +287,10 @@ async function closeJob() {
   if (card) await levels.fly(card, row?.getBoundingClientRect(), true);
   if (move === mine) go({ jobId: null, back: false });
 }
+// The level's sides while a swipe would step, as the swipe's mayDrag: none behind an open job or behind an agent's card
+// out of a task
+const sided = () =>
+  ($('#projects .pj-sides').hidden = Boolean(view.jobId) || Boolean(scene?.carded?.()) || here().beside.length < 2);
 // The open job's card, turned over (where it has a back)
 function turnJob() {
   const card = $('#projects .pj-card');
@@ -383,8 +380,7 @@ function paint(motion = '') {
     facts = factsOf(job, reads.facts, paint, board);
   el.insertAdjacentHTML('beforeend', jobSheet(job, jobsOnBoard(), { back: view.back, findings: listed, facts }));
   el.dataset.level = l.at;
-  // (the level's sides while a swipe would step, as the swipe's mayDrag)
-  el.querySelector('.pj-sides').hidden = Boolean(view.jobId) || l.beside.length < 2;
+  sided();
   if (!motion) el.querySelector('.pj-board').scrollTop = kept.board;
   el.querySelectorAll('.pj-eta').forEach(d => (d.open = kept.sums.includes(d.dataset.eta)));
   const sheet = el.querySelector('.pj-card');

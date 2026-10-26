@@ -40,7 +40,7 @@ Live calls with the team, streamed both ways (`server.py`). One call is one WebS
   coordinator trades for the call out (`join-ticket`). One room per call out, up to 6 people, below.
 
 The loop: Silero VAD cuts the board's words at pauses, Parakeet v3 transcribes them, a warm Claude session per
-call answers (streamed; it may read the company's files, search the web and use its own tools, nothing else (a call out: its partner tools only, below); its prompt from the coordinator: who the agent is, the team, what's going on,
+call answers (streamed; it reads what a job reads but has no shell: the company's files, every branch and the status report, the web, and its own tools (Trust, below) (a call out: its partner tools only, below); its prompt from the coordinator: who the agent is, the team, what's going on,
 and the desk phone request the call is about, if any), and each sentence is spoken as it arrives: Pocket TTS 3.3.0
 in the agent's own voice in English, Dutch and German (`pockets`, all three preloaded and pinned by sha256).
 The coordinator's `voiceOf` uses org.yaml's `voice` when set, otherwise jane for she/her and alba for he/him.
@@ -146,6 +146,17 @@ the coordinator's `sketch` (`{call, sketch}`: a live call's only) and counts the
 screen's 40. The coordinator sends a PNG at most 1568 px on its long side, with a line saying which sketch it is and
 when it was drawn and last changed; a label that matches several gives the latest with something drawn and names the
 rest, and one that matches none lists the latest sketches.
+
+The board drawing on its call (`drawing.py`, the board's own HQ calls only): each note the board draws with the Pencil
+comes as a `note` event on the call's WebSocket; the line fetches it (`GET note?id=&call=`: its number on the call's
+page, the board's words, the page, the page around it as a picture) and gives it to the agent as a shared picture,
+with the board's next words or alone after the quiet, its words in a line in front of theirs and its picture counted
+against the 20 MB (one that doesn't fit goes without it, and the agent hears so). HQ hears `received` or `failed`
+(`unreadable`, `too many`), again on a resume. The agent's `ask_to_see` sends HQ an `ask` (its card, Show and Not now,
+blocking nothing) and answers at once; the board's tap (`asked`) reaches the agent with its next turn, or alone after
+the quiet. Its `draw` sends an `ink` (a ring round words on the board's page, or round its note N) and waits up to 5 s
+for HQ's `inked`. Both go through the screen socket and are refused on a call out (rule 9), on the phone and while
+HQ's connection is down; an ask also while the screen is shown or another ask waits.
 The transcript is written to the line's volume as the call goes, the board's words as each piece is heard, even ones
 not answered yet: while the board talks on, a pause that sounds finished sends the message so far and its next words take it back, so a
 long message may exist nowhere else until the board stops. If the line restarts mid-call, it hands that transcript over
@@ -228,13 +239,19 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
 - `estimate(query, agent?)`: clean past jobs, their actual agent time, briefs, reports and changed files. Search only
   finds candidates. The queuer judges scope from those candidates and supplies the estimate when queuing.
 - `when(what, size, agent?, after?, by?)`: plays the chosen agent time into the plan and returns its live finish.
-- `waiting()`: every tool above waits for the coordinator's real answer however long it takes, never a fixed cutoff
-  (board, call 127: a slow coordinator is still there, and a cutoff left hand-offs unconfirmed that had gone through);
-  `hq` itself waits too (`api.ts` request: no time-out unless a command gives one). Only a failure ends the wait: a
-  refused connection says for certain nothing was handed on, a reset or a server error that it may have been. So the
-  call isn't silent for long, a tool that hasn't heard back in `STILL` (20 s) answers that it's still on its way and
-  carries on in the background (what's under way at hang-up still lands); `waiting` waits up to `STILL` again and
-  gives each one's own answer, or says it's still waiting.
+- `waiting()`: every tool above waits for the coordinator's real answer while the coordinator is alive, never a fixed
+  cutoff (board, call 127: a slow coordinator is still there, and a cutoff left hand-offs unconfirmed that had gone
+  through); `hq` itself waits too (`api.ts` request: no time-out unless a command gives one). While `hq` waits,
+  `hq_tools.py` looks at the coordinator's `/health` every `PROBE` (5 s), on its own `ALIVE` (5 s) time-out. A
+  coordinator that answers neither is down: `hq` is stopped and the agent hears plainly that the coordinator is down
+  and the hand-off is unconfirmed (it may have gone through before it stopped answering: checked after the call). One
+  that stays alive but never answers meets `CEILING` (3 minutes, a few times the slowest real hand-off in the call
+  logs): "Not confirmed", check before doing it again (board, call 128). A refused connection still says at once, for
+  certain, that nothing was handed on, a reset or a server error that it may have been. So the call isn't silent for
+  long, a tool that hasn't heard back in `STILL` (20 s) answers that it's still on its way and carries on in the
+  background (what's under way at hang-up still lands); `waiting` waits up to `STILL` again and gives each one's own
+  answer, or says it's still waiting. It says "slow, not down" only when `/health` answered in the last `STILL`.
+
 - `hang_up()`: ends the call, only once the board has clearly wrapped up (a goodbye, asking to end it, or a thank-you that
   closes the business, not one mid-business), with a short goodbye of the agent's own that fits the call ("Thank you, talk
   soon." is one example, not a set line): no recap unless the board asks for one, no slip line (its description
@@ -497,7 +514,7 @@ Trust (`guard.py`, tested by `test_guard.py`): the line holds `VOICE_TOKEN`, whi
 `/api/voice/*` (call-context, call-end, call-ticket). Each call gets its own call token from call-context, good as that agent
 until call-end revokes it for `hq job` (and the look-ups below), hq's management commands (`manage`) and for putting a
 promise or a correction of an open item on its own call's list (`POST /api/agent/item`), nothing else of a job's (what
-speaks as the job a call doesn't have: status, cards filed or waited for, a follow-up's items and reply): it reads no items, and earlier calls as its agent
+speaks as the job a call doesn't have: status, cards filed or waited for, a follow-up's items and reply): it reads no call's items (every call's open items, one line each, as its briefing has them), and earlier calls as its agent
 does (`memory.ts`): any ended call, but one about a card for keys only if it is its own agent's and one about a customer
 only for org.yaml's `roles.customerData`. The call agent runs as the same uid as the line, so
 the line makes itself non-dumpable (its environment and memory in /proc become root's) and hands the agent an
@@ -512,8 +529,30 @@ that runs hq from an argument list with only the call's `HQ_*` in its environmen
 call hq takes the brief and the words on stdin and no file (`HQ_CALL`). A call's job is a short title (140 characters) and the
 whole brief (8,000); longer is refused with the reason, never cut (`hq_tools.py` and the coordinator both check), and
 the tool answers with the job's number. A promise's or a correction's line is the same: one line of 200 at most.
-Its one other built-in tool, WebSearch (the board's call only, never a call out), runs at Anthropic: the line opens no
-connection for it, and the agent gets the results' text.
+Its other built-in tools, the board's call only, never a call out: WebSearch, which runs at Anthropic (the line opens no
+connection for it, and the agent gets the results' text), and WebFetch, from this container, as a job's from the worker.
+
+The board's call agent has what a job's agent has, but a shell, so it answers on the line instead of "I can't check that". Two tools read what a job reads (`reads.py`), each
+from an argument list it builds itself:
+- `report`: the server's status report (`hq report`), live, at or since a time: with no section, the list of its
+  sections; then the sections whose heading has the words asked, or only the lines with some words (a job, a pull
+  request). Jobs, pull requests and findings, deploys, seats and usage, errors and each service's last log lines.
+- `git`: the company's code, every branch, from the worker's mirror (`/work/mirror.git`, mounted read-only at `/mirror`
+  by a volume subpath, never the jobs' folders beside it): `log`, `show` (a commit, or a file or folder at a
+  revision), `diff` (a range), `grep` (a fixed string) and `branches`, a job's unmerged work (`job/<n>`, `origin/` taken
+  off) and its unpushed commits (`outgoing/job/<n>`) included. A revision or a path that could read as an option, a
+  pathspec's magic or a way out of the repository is refused before git runs; every path comes after `--`, diffs run
+  with `--no-ext-diff --no-textconv`, and git reads no system or global config (`test_reads.py`).
+A long answer comes in pages, each under the CLI's limit for an MCP tool's answer (25,000 tokens), saying where the
+rest starts (`from`), never cut. `manage` also takes the reads a job has: `hq overseer` (the notes sent), `hq route log`,
+`hq items` and `hq estimate --audit|--accuracy|--calibration`, the coordinator opening their routes to a call's token
+(`server.ts` CALL_READS).
+
+What stays shut, each for a named risk: the shell, since the uid reads `/seat` and a command steered by any text the
+agent reads could send the seat's sign-in anywhere (below); a customer's details (mail, care cases, orders, photos:
+charter rule 7), since a call's transcript and summary are read by every agent and a call can't be marked as holding
+them, as a job reading them is; everything of the company's on a call out (rule 9, below); the line's own folders and
+`/proc` to Read, Grep and Glob.
 A chat bubble reaches nobody: on a call, `hq say` only reaches one job under way by its number (`reach`).
 A call out's token opens no coordinator route (`server.ts` `PARTNER_ROUTES` is empty): its agent has only the partner
 tools (note, no_transcript and hang_up) and looks nothing up.

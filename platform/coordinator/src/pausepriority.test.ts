@@ -8,7 +8,7 @@ const h = await harness('pausepriority', {
   before: repo =>
     writeFileSync(
       `${repo}/company/projects.yaml`,
-      'planning: threads\nprojects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: The shop, owner: moss }\n',
+      'projects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: The shop, owner: moss }\n',
     ),
 });
 const projects = await import('./projects.ts');
@@ -16,7 +16,6 @@ const plan = await import('./plan.ts');
 const pauses = await import('./pauses.ts');
 const forecast = await import('./forecast.ts');
 const wakes = await import('./wakes.ts');
-(await import('./threadends.ts')).watch();
 const HOUR = 3_600_000;
 let count = 0;
 const pendingPrs: number[] = [];

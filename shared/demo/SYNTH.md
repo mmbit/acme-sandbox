@@ -145,13 +145,17 @@ What keeps the kit soft, and what a sound of your own should do too:
 - **A movement is a soft breath, well under the hits:** light but bright noise still grated next to the dings
   (blasting, a chalkboard), so slides, swishes and flutters are `air(c, o, at, secs, hz, env)`: noise low-passed to a
   warm band (1 to 2 kHz), cut under 600 Hz, a separate breath on each side, no tooth or fibre clicks, and about 10 dB
-  under a glass ding.
+  under a glass ding. The swish inside a sound that lands (a flip's lift and flutter, a deal's flight, a
+  lock's lead-in) sits `SWISH` (10 dB) further under its landing, every breath eases in over a third of it (60 ms at
+  most), and a sound that moves rolls off from 6 kHz (not 9) and eases in over 40 ms: a bright, sudden one sounds like
+  someone blowing into a microphone.
 - **A movement plays well under the hits** <!-- -->: a pencil across paper or a
   row of brush strokes at the level of a bell grates at full volume. Wherever the kit plays a sound (the player,
-  mix.mjs, synth.mjs), one that moves plays at `MOVES` (0.5, 6 dB) of its level: the kit's own marked `moves` (`slide`,
+  mix.mjs, synth.mjs), one that moves plays at `MOVES` (0.125, 18 dB) of its level: the kit's own marked `moves` (`slide`,
   `scribble`, `scratch`, `ruffle`) and synth.mjs's `whoosh`, a product's own by its `kind` or `also` `'glide'`.
   `render()` leaves the level whole, so a sound built from the kit's (a slide inside a payment's chime) keeps its
-  balance. A whole film turned down this way gets louder hits from its master: master it a little lower too.
+  balance. A level is a peak, and a breath held at a ding's peak is far louder than the ding: mark a sound of your own
+  that is mostly a breath (a paper plane's flight) `moves` too, or it plays at full level.
 - **A texture fluctuates slowly:** `grain(c)(rate)` under about 20; fast grain is judder. A tooth that must be
   fast goes above the band and follows the speed: the pencil's is `grain(c)(500 + 700 * v)` (a fixed 260 read judder 40
   to 73 by stroke length). Narrow noise judders by itself (a resonant squelch), and so do short grains with gaps
@@ -235,16 +239,18 @@ export default {
   `lock` starts before it); `align: 'start'` starts it there instead. Times come from `t` (s), `at` (a
   marker, a bed marker or an earlier cue's `name`), `bar` or `beat` (the bed's grid), plus `offset`.
   Repeats of a sound get a new seed each time, so nothing sounds copy-pasted.
-- **The bed** is any music, a synth.mjs song or a WAV: `level` sets it that many LU from the effects (-12, under them,
-  by default; 0 or more when the score carries the film), then it's ducked by every hit (`duck` 8 dB, 0 for none,
+- **The bed** is any music, a synth.mjs song or a WAV: `level` sets it that many LU from the effects that don't move
+  (all of them when only movements play; -12, under them, by default; 0 or more when the score carries the film), then it's ducked by every hit (`duck` 8 dB, 0 for none,
   `release` 0.3 s). Also `from`/`to`/`start` (s), `fadeIn`/`fadeOut`, `hp`/`lp` (Hz) and `loop` (automatic for
   synth.mjs beds). A quiet beat with no melody under the effects is one choice (`products/hello/demo/beat.mjs`), a
   score with a tune is another.
 - **Mastering** is for TikTok/Reels: -14 LUFS integrated and a -2 dBTP ceiling, which the MP4's AAC
   (192 kbps) lifts to about -1. The effects bus gets a small room (the reverb send: `send` per cue or
   `master.send`, 0.12; every other cue param goes to the sound, so squish's `wet` is squish's) and
-  parallel compression (`master.glue` 0.4) for the close-up feel; the master is cut at 16 kHz before the limiter so
-  the encoder can't push clicks over. `master: { loudness, ceiling, glue, send, reverb: { size }, hp, lp }`.
+  parallel compression (`master.glue` 0.4, on the effects that don't move: it lifts what sits under the hits) for the
+  close-up feel; the master is cut at 16 kHz before the limiter so the encoder can't push clicks over. A sparse track
+  pushed to its loudness flattens its hits in the limiter and not its movements, so they gain on the hits: when
+  `--levels` shows the hits limited 4 dB or more (median), master the film lower. `master: { loudness, ceiling, glue, send, reverb: { size }, hp, lp }`.
 - **The app's own sounds on the recording.** record.mjs writes `<recording>.events.json` next to the MP4:
   when each tap, key, scroll and drag shows in it. Read it in the cue list and add the time the scene
   starts the clip (`data-at`), and play the same sounds with the same params as the app does:

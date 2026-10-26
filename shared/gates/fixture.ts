@@ -94,6 +94,8 @@ const answer = async (req, res) => {
     }
     return res.end(JSON.stringify({ ok: true }));
   }
+  // (the work Stop hook asks first, hq complete)
+  if (req.url === '/api/agent/followthrough-owed') return res.end(JSON.stringify({ owed: false }));
   if (req.method === 'GET' && disconnects-- > 0) return res.destroy();
   if (req.url === '/api/agent/runs/helper') return res.end(JSON.stringify({
     browser: process.env.HELPER_BROWSER ?? 'render',
@@ -117,6 +119,8 @@ const answer = async (req, res) => {
     if (process.env.DROP_SUBMIT && runs.length === 1) return res.destroy();
     return res.end(JSON.stringify({ id: runs.length }));
   }
+  // the work Stop hook's check for the board's notes left untold (worker/hq/completion.ts untold): none here.
+  if (req.url === '/api/agent/notes-untold') return res.end(JSON.stringify({ notes: [] }));
   const run = runs[Number(req.url.split('/')[4]) - 1];
   if (req.url.endsWith('/files')) return res.end(readFileSync(join(run.tree, 'files.tar.gz')));
   if (req.url.endsWith('/output')) return res.end(run.output);

@@ -20,10 +20,17 @@ export function reservations<Seat>(now = Date.now) {
   const claimMb = (availableMb: number, young = true) => Math.max(0, Math.floor(freeMb(availableMb, young) - FREE_MB));
   return {
     holding,
+    startupReservations: () =>
+      starts.filter(start => now() - start < STARTING_MS).map(start => ({ until: start + STARTING_MS, mb: JOB_MB })),
     starting,
     reservedMb,
     freeMb,
     claimMb,
+    // Each new claim first needs JOB_MB, then converts to a held seat's SEAT_MB.
+    gathering: (availableMb: number) => {
+      const free = claimMb(availableMb);
+      return free < JOB_MB ? 0 : 1 + Math.floor((free - JOB_MB) / SEAT_MB);
+    },
     starts: (availableMb: number, young = true) => Math.floor(claimMb(availableMb, young) / JOB_MB),
     room: (availableMb: number, young = true) => claimMb(availableMb, young) >= JOB_MB,
     // A claim takes its room before it's asked (its start, given back if it finds nothing), so idle slots can't all

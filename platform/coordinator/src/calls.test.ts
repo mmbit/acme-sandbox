@@ -325,7 +325,7 @@ test("a call about a customer card and the intercom's lines reach the board and 
   const ctx = await context('kit', { request: req.id });
   await hangUp('kit', ['Board: yes, refund the koala mug in full.'], { request: req.id, token: ctx.token });
   const follow = await run((await calls())[0].job);
-  const item = { call: ctx.call, kind: 'decision', owner: 'kit', what: 'Refund the koala mug in full', quote: 'Board: yes, refund the koala mug in full.' };
+  const item = { call: ctx.call, kind: 'decision', owner: 'kit', goal: 'g', what: 'Refund the koala mug in full', quote: 'Board: yes, refund the koala mug in full.' };
   assert.equal((await h.agent('item', follow.token, item)).status, 200);
   assert.deepEqual((await calls()).find(c => c.id === ctx.call)?.items.map(i => i.what), ['Refund the koala mug in full'], 'the board sees the item');
   await say('Did Kit refund the koala mug?');
@@ -344,7 +344,7 @@ test("the notes of a call about a customer card, and the CEO's replies after hea
   const ctx = await context('juno', { request: card.id });
   await hangUp('juno', ['Board: refund Jan Jansen.'], { request: card.id, token: ctx.token });
   const follow = await run((await calls())[0].job);
-  await h.agent('item', follow.token, { call: ctx.call, kind: 'decision', owner: 'juno', what: 'Refund Jan in full', quote: 'Board: refund Jan Jansen.' });
+  await h.agent('item', follow.token, { call: ctx.call, kind: 'decision', owner: 'juno', goal: 'g', what: 'Refund Jan in full', quote: 'Board: refund Jan Jansen.' });
   await h.agent('reply', follow.token, { text: 'Refunded Jan Jansen in full.' }); // (its reply)
   await h.finish(follow, { status: 'done', result: 'Refunded Jan Jansen in full.' });
   await say('Thanks. Anything else?');
@@ -397,7 +397,7 @@ test('a call agent restarted mid-call stays on the same call: one row, one token
   const req = (await h.agent('request', asker.token, { kind: 'decision', title: 'Refund Jan?', body: 'Yes or no?' })).body.id;
   const rows = () => (db.prepare('select count(*) n from calls').get() as { n: number }).n;
   const first = await context('kit', { request: req }), n = rows();
-  const noted = { kind: 'promise', owner: 'kit', what: 'Send Jan the refund today', quote: 'Kit: I will send it today.' };
+  const noted = { kind: 'promise', owner: 'kit', goal: 'g', what: 'Send Jan the refund today', quote: 'Kit: I will send it today.' };
   assert.equal((await h.agent('item', first.token, noted)).status, 200);
   const again = await context('kit', { request: req, token: first.token });
   assert.equal(rows(), n, 'no second call row');
@@ -554,7 +554,7 @@ test('the call reaches a running job, as often as it needs, by its number and it
   assert.match(ctx.prompt, /When the board's settled word matters to work already under way before the call ends[\s\S]*pass it on with reach, as often as the board's word needs; anything still\s+being worked out goes to the follow-up\./);
   const own = (await h.agent('job', ctx.token, { agent: 'moss', title: 'Queued here', prompt: 'x' })).body.id as number;
   const reach = (job: number, to: string, text = 'Only something insecure blocks it now.') =>
-    h.agent('message', ctx.token, { to, job, what: 'Only an insecure change blocks the site', text });
+    h.agent('message', ctx.token, { to, job, goal: 'The site goes out tonight', what: 'Only an insecure change blocks the site', text });
   const refused = async (job: number, to: string, why: RegExp) => {
     const r = await reach(job, to);
     assert.equal(r.status, 409, `#${job} for ${to}`);
@@ -569,9 +569,9 @@ test('the call reaches a running job, as often as it needs, by its number and it
   const sent = (await reach(running.id, 'moss')).body;
   const m = db.prepare('select job, call, text from messages where id = ?').get(sent.message) as { job: number; call: number; text: string };
   assert.deepEqual({ job: m.job, call: m.call }, { job: running.id, call: ctx.call });
-  assert.match(m.text, new RegExp(`^From juno's call with the board \\(call #${ctx.call}\\), for your job #${running.id} \\(The site\\) while it runs[\\s\\S]*\\n\\nOnly something insecure blocks it now\\.$`));
-  const item = db.prepare('select kind, owner, what, status, job, ref from call_items where id = ?').get(sent.item) as Record<string, unknown>;
-  assert.deepEqual({ ...item }, { kind: 'message', owner: 'moss', what: 'Only an insecure change blocks the site', status: 'handled', job: running.id,
+  assert.match(m.text, new RegExp(`^From juno's call with the board \\(call #${ctx.call}\\), for your job #${running.id} \\(The site\\) while it runs[\\s\\S]*\\n\\nWhy the board wants this: The site goes out tonight\\n\\nOnly something insecure blocks it now\\.$`));
+  const item = db.prepare('select kind, owner, what, goal, status, job, ref from call_items where id = ?').get(sent.item) as Record<string, unknown>;
+  assert.deepEqual({ ...item }, { kind: 'message', owner: 'moss', what: 'Only an insecure change blocks the site', goal: 'The site goes out tonight', status: 'handled', job: running.id,
     ref: `sent on call #${ctx.call} as message #${sent.message}` });
   const more = (await reach(running.id, 'moss', 'And keep the footer as it is.')).body;
   assert.ok(more.message > sent.message && more.item > sent.item, 'a second word on the same call goes through');
@@ -591,13 +591,13 @@ test('the call reaches a running job, as often as it needs, by its number and it
   const follow = await run(followUp);
   const before = (db.prepare('select coalesce(max(id), 0) id from events').get() as { id: number }).id;
   for (const quote of ['x'.repeat(9600), '\\'.repeat(4000)]) {
-    const refused = await h.agent('item', follow.token, { replaces: sent.item, what: 'Correct the guidance', quote });
+    const refused = await h.agent('item', follow.token, { replaces: sent.item, goal: 'g', what: 'Correct the guidance', quote });
     assert.equal(refused.status, 400, 'a correction that cannot be delivered is refused before recording it');
     assert.equal(h.job(running.id).status, 'running');
     assert.equal((db.prepare('select status from call_items where id = ?').get(sent.item) as { status: string }).status, 'handled');
     assert.equal((db.prepare('select count(*) n from call_items where replaces = ?').get(sent.item) as { n: number }).n, 0);
   }
-  const fixed = (await h.agent('item', follow.token, { replaces: sent.item, what: 'Only an insecure change blocks the site', quote: said })).body;
+  const fixed = (await h.agent('item', follow.token, { replaces: sent.item, goal: 'Let visitors use the site safely', what: 'Only an insecure change blocks the site', quote: said })).body;
   assert.deepEqual([fixed.kind, fixed.status, fixed.cancelled, h.job(running.id).status], ['message', 'handled', [], 'running'], 'guidance cancels no work');
   const told = (r: { told: { job: number; message: number }[] }) => {
     assert.deepEqual(r.told.map(t => t.job), [running.id]);
@@ -605,6 +605,7 @@ test('the call reaches a running job, as often as it needs, by its number and it
   };
   assert.match(told(fixed), /was misheard: the board's words, from the call's transcript/);
   assert.ok(told(fixed).includes(JSON.stringify(said)), 'an accepted long correction reaches the recipient whole');
+  assert.ok(told(fixed).includes('Let visitors use the site safely'), 'the corrected goal reaches it too');
   assert.equal((db.prepare('select count(*) n from events where id > ? and instr(text, ?) > 0').get(before, said) as { n: number }).n, 0, 'the transcript stays out of HQ events');
   const dropped = (await h.agent('item-drop', follow.token, { id: fixed.id, why: 'The board took it back' })).body;
   assert.match(told(dropped), /is withdrawn: The board took it back\. Don't go by it any more\./);
@@ -619,7 +620,7 @@ test("a customer's call reaches no running job: their details stay with its foll
   const req = jobs.createRequest({ kind: 'decision', title: 'Refund the koala mug?', body: 'It arrived cracked.', agent: 'kit', job: asker.id, customers: true }) as { id: number };
   db.prepare("update jobs set status = 'done' where id = ?").run(asker.id);
   const ctx = await context('kit', { request: req.id });
-  const r = await h.agent('message', ctx.token, { to: 'moss', job: running.id, what: 'x', text: 'The customer is Ann.' });
+  const r = await h.agent('message', ctx.token, { to: 'moss', job: running.id, goal: 'g', what: 'x', text: 'The customer is Ann.' });
   assert.equal(r.status, 409);
   assert.match(r.body.error, /passes nothing on mid-call/);
 });

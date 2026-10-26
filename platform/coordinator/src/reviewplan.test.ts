@@ -238,16 +238,13 @@ test('office records and completed merge rulings resolve on the sweep without a 
 test('owner-assigned discipline fixes stay in task order before review and retain their PR measurements', async () => {
   const file = `${h.repo}/company/projects.yaml`,
     previous = readFileSync(file, 'utf8');
-  writeFileSync(file, 'planning: threads\nprojects:\n  - { id: game, name: The game, owner: wren }\n');
+  writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
   const projects = await import('./projects.ts'),
     plan = await import('./plan.ts'),
-    order = await import('./threadorder.ts'),
     proposals = await import('./proposals.ts'),
-    inbox = await import('./reviewinbox.ts'),
-    { remember } = await import('./db.ts');
+    inbox = await import('./reviewinbox.ts');
   try {
     resetReviewInbox(h.db);
-    remember(order.MODE, 'threads');
     plan.setOwner('game', 'wren', { agent: 'juno', job: 0 }, agent => !!jobs.findAgent(agent));
     projects.createThread({
       project: 'game',

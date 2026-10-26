@@ -97,9 +97,6 @@ export function context(b: any) {
   };
 }
 // The agent on a call out, by its token, which reaches no route (server.ts PARTNER_ROUTES)
-// What the agent is told once the person on the call shows it our pages (a walk-through on a join link: watchalong.ts
-// screenTurn, with their next turn).
-export const WATCHING = watchalong.briefing('they', 'their');
 export const tokenAgent = (token: string) =>
   token
     ? (db.prepare("select id, agent from callouts where token_hash = ? and status = 'live'").get(sha256(token)) as

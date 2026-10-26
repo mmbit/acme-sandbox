@@ -6,6 +6,7 @@ import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { join, extname, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { looks } from './looks.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
@@ -25,12 +26,14 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     // formats the clock imports; the pen)
     const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
       'shared/holidays/holidays.js': 'shared/holidays/holidays.js', 'shared/format/format.js': 'shared/format/format.js' }[path];
-    const body = path.includes('..') ? null : files[path] ?? await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
-      : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null);
+    // (and the looks HQ ships, read from their folders.)
+    const listed = path === 'renderers/looks.json' && JSON.stringify(looks());
+    const body = path.includes('..') ? null : files[path] ?? (listed || await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
+      : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null));
     res.writeHead(body ? 200 : 404, { 'content-type': TYPES[extname(path)] || 'application/octet-stream' }).end(body);
   });
-  await new Promise(r => server.listen(port, r));
+  await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
   return server;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) console.log(`HQ in dev mode: http://localhost:${(await serve(undefined, Number(process.argv[2] ?? 8000))).address().port}/`);
+if (process.argv[1] === fileURLToPath(import.meta.url)) console.log(`HQ in dev mode: http://127.0.0.1:${(await serve(undefined, Number(process.argv[2] ?? 8000))).address().port}/`);

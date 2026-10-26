@@ -1,9 +1,15 @@
 // The paired added-seat replay, in names for the CEO's call tools.
+import type { SeatAccount } from '../../coordinator/src/playledger.ts';
 import { at, duration } from './estimate.ts';
 import { print, text } from './output.ts';
 
 type Time = { eta: number | null; finish: number | null; held: number | null };
-type ThreadTime = Time & { slack_ms: number | null; standing: string | null; reason: string | null };
+type ThreadTime = Time & {
+  conditional?: boolean;
+  slack_ms: number | null;
+  standing: string | null;
+  reason: string | null;
+};
 export type Replay = {
   scenario: 'added_claude_seat';
   available: boolean;
@@ -32,6 +38,11 @@ export type Replay = {
       after: ThreadTime;
     }[];
   }[];
+  account: {
+    before: { usual: SeatAccount[]; slow: SeatAccount[] };
+    after: { usual: SeatAccount[]; slow: SeatAccount[] };
+  };
+  changes: { earlier: number; later: number; unchanged: number; unresolved: number };
   unpriced: string[];
   horizon_days: number;
   played_ms: number;
@@ -55,7 +66,19 @@ export function show(replay: Replay) {
     );
   print(...c.assumptions);
   if (replay.unpriced.length)
-    print(`${replay.unpriced.length} existing seats have unmeasured fill rates. Their capacity may be overstated.`);
+    print(
+      `${replay.unpriced.length} existing seats have unmeasured fill rates. Quota exhaustion is uncertain where quotas constrain service. Credit-enabled seats retain credit admission.`,
+    );
+  showAccounts(replay);
+  showProjects(replay);
+  const changes = replay.changes;
+  print(
+    `Thread finishes: ${changes.earlier} earlier, ${changes.later} later, ${changes.unchanged} unchanged, ${changes.unresolved} unresolved.`,
+  );
+  print(`Played both usual and slow sizes in ${(replay.played_ms / 1000).toFixed(1)} s.`);
+}
+
+function showProjects(replay: Replay) {
   print(`Before → with added seat. ETA means merged. Live means deployed. Reach: ${replay.horizon_days} days.`);
   for (const project of replay.projects) {
     print('', `${text(project.name)}: ${pair(project.before, project.after)}`);
@@ -70,7 +93,34 @@ export function show(replay: Replay) {
       );
     }
   }
-  print(`Played both usual and slow sizes in ${(replay.played_ms / 1000).toFixed(1)} s.`);
+}
+
+function showAccounts(replay: Replay) {
+  for (const [name, account] of [
+    ['Before', replay.account.before],
+    ['With added seat', replay.account.after],
+  ] as const) {
+    print(`${name}, usual pace seat predictions:`);
+    for (const seat of account.usual) {
+      const exhaustions = seat.events.filter(event => event.type === 'exhaustion');
+      if (!exhaustions.length) print(`  ${seat.seat}: no predicted exhaustion`);
+      for (const event of exhaustions) {
+        const started = event.started_at === null ? 'hold active at cutoff, original start unknown' : 'runs dry';
+        const idle = event.running_continues
+          ? 'work continues'
+          : event.idle_ms == null
+            ? 'idle unknown'
+            : `idle ${duration(event.idle_ms / 60_000)}`;
+        print(
+          `  ${seat.seat}: ${time(event.at)}, ${event.quota}, ${started}, return ${time(event.until ?? null)}, ${idle}`,
+        );
+        for (const run of event.running ?? [])
+          print(
+            `    Job ${run.job}${run.stage ? ` (${run.stage})` : ''}: ${duration(run.remaining_ms / 60_000)} remaining`,
+          );
+      }
+    }
+  }
 }
 
 const time = (ms: number | null) => (ms === null ? 'unknown' : at(ms));
@@ -79,6 +129,7 @@ const pair = (before: Time, after: Time) =>
   `slow merge ${time(before.held)} → ${time(after.held)}`;
 function standing(outlook: ThreadTime) {
   if (outlook.reason) return text(outlook.reason);
+  if (outlook.conditional) return 'conditional prediction, subject to board answers or unmeasured capacity';
   if (outlook.slack_ms === null) return 'no window';
   const margin = duration(Math.abs(outlook.slack_ms) / 60_000);
   return `${outlook.standing}, ${margin} ${outlook.slack_ms < 0 ? 'late' : 'slack'}`;

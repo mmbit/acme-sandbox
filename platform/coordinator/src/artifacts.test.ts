@@ -1,7 +1,7 @@
 // node --test src/artifacts.test.ts   (HQ-OS › Artifacts: the test company's made-up products and cycles, HQ's real server)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
 // a business may share its id with a project
@@ -162,7 +162,7 @@ test('folder cards belong to roots, child artifacts keep their own cards and exp
 test('each opens where its host serves it, with its cover from HQ', async () => {
   const pitches = await one('The pitches');
   assert.equal(pitches.open, 'https://cycles.preview.example.test/2026-10-01-pitch/presentation/');
-  assert.equal(pitches.picture, '/cycles/2026-10-01-pitch/presentation/cover.jpg');
+  assert.match(pitches.picture, /^\/cycles\/2026-10-01-pitch\/presentation\/cover\.jpg\?v=[0-9a-z]+$/);
   assert.equal(pitches.about, 'Five apps, one each.');
   assert.equal((await one('Directions')).open, 'https://cycles.preview.example.test/2026-10-01-pitch/index.html');
   assert.equal((await one('Tide trailer')).open, 'https://tide.preview.example.test/films/trailer/');
@@ -181,7 +181,7 @@ test('each opens where its host serves it, with its cover from HQ', async () => 
 
 test("a cover in a product's folder comes from HQ, behind the board's login, never an SVG", async () => {
   const trailer = await one('Tide trailer');
-  assert.equal(trailer.picture, '/api/artifacts/picture?id=tide%2Ffilms%2Ftrailer');
+  assert.match(trailer.picture, /^\/api\/artifacts\/picture\?id=tide%2Ffilms%2Ftrailer&v=[0-9a-z]+$/);
   const got = await fetch(`${base}${trailer.picture}`, { headers: { cookie: h.boardCookie } });
   assert.deepEqual([got.status, await got.text()], [200, 'a still']);
   assert.equal((await fetch(`${base}${trailer.picture}`)).status, 401);
@@ -195,6 +195,44 @@ test("a cover in a product's folder comes from HQ, behind the board's login, nev
       404,
       id,
     );
+});
+
+test('a product and company/artifacts.yaml name covers too, kept by the browser until the file changes', async () => {
+  file('products/quiet/product.yaml', 'name: Quiet\nstatus: preview\nowner: moss\npicture: cover.jpg\n');
+  file('products/quiet/cover.jpg', 'quiet');
+  file(
+    'company/artifacts.yaml',
+    'artifacts:\n  - { name: The office, kind: app, open: "https://hq.example.test/", project: shop, picture: covers/office.jpg }\n',
+  );
+  file('company/covers/office.jpg', 'the office');
+  for (const [name, id, body] of [
+    ['Quiet', 'quiet', 'quiet'],
+    ['The office', 'https://hq.example.test/', 'the office'],
+  ]) {
+    const { picture } = await one(name);
+    assert.equal(new URL(picture, base).searchParams.get('id'), id);
+    const got = await fetch(`${base}${picture}`, { headers: { cookie: h.boardCookie } });
+    assert.deepEqual([got.status, await got.text()], [200, body], name);
+    assert.match(String(got.headers.get('cache-control')), /immutable/, name);
+  }
+  // the same file keeps its address; a new shot gets a new one, which serves it
+  const kept = (await one('Quiet')).picture;
+  assert.equal((await one('Quiet')).picture, kept);
+  file('products/quiet/cover.jpg', 'quiet again');
+  const later = new Date(statSync(`${repo}/products/quiet/cover.jpg`).mtimeMs + 60_000);
+  utimesSync(`${repo}/products/quiet/cover.jpg`, later, later);
+  const shot = (await one('Quiet')).picture;
+  assert.notEqual(shot, kept);
+  const fresh = await fetch(`${base}${shot}`, { headers: { cookie: h.boardCookie } });
+  assert.deepEqual([fresh.status, await fresh.text()], [200, 'quiet again']);
+  // a picture named but not there fails the list
+  rmSync(`${repo}/products/quiet/cover.jpg`);
+  assert.equal((await board('/api/artifacts')).status, 500);
+  file('products/quiet/product.yaml', 'name: Quiet\nstatus: preview\nowner: moss\n');
+  file(
+    'company/artifacts.yaml',
+    'artifacts:\n  - { name: The office, kind: app, open: "https://hq.example.test/", project: shop, shown: 2026-10-01 }\n',
+  );
 });
 
 test("a file that doesn't parse, a project HQ doesn't have, or a thread, even a real one, fails the list", async () => {

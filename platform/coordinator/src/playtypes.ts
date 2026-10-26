@@ -12,6 +12,8 @@ export type Snapshot = {
   pauseUntil?: number[];
   windows?: Record<string, { deadline: number | null; aim: number | null }>;
   room?: number;
+  memory?: Memory;
+  seatMix?: Record<string, Record<string, import('./workmix.ts').MixRate>>;
   seatRuns?: Record<string, number>;
   jobs: QueuedJob[];
   seats: SeatNow[];
@@ -26,10 +28,23 @@ export type Snapshot = {
 };
 export type OrderingSnapshot = Pick<Snapshot, 'now' | 'planner' | 'windows' | 'pauseUntil' | 'jobs' | 'deployLagMs'>;
 
+export type Memory = {
+  at: number;
+  availableMb: number;
+  freeReserveMb: number;
+  defaultRunMb: number;
+  totalSlots: number;
+  heldSlots: number;
+  heldMb: number;
+  starting: { until: number; mb: number }[];
+  runningMb: Record<string, number | null>;
+};
+
 // An open job (queued, running, waiting for the board, or done with its pull request in review), by its id: what it
 // starts after and waits for (other jobs in the snapshot by id, or gone: released, or never), the cards it waits on
 // with the time the board is expected to answer, and what holds it that the play doesn't move.
 export type QueuedJob = {
+  memoryMb?: number | null;
   id: number;
   orderId?: number;
   placeholder?: boolean;
@@ -38,8 +53,8 @@ export type QueuedJob = {
   reviewPlan?: import('./rounds.ts').ReviewPlan;
   opensReview?: boolean;
   dependencies?: import('./planner.ts').Dependency[];
-  // its thread's order, while the company plans by threads (threadorder.ts placing): the task before it, which it follows
-  // once that's done, and the last tasks of the threads it needs, which it follows once they merge.
+  // its thread's order (threadorder.ts placing): the task before it, which it follows once that's done, and the last
+  // tasks of the threads it needs, which it follows once they merge.
   follows?: number;
   needs?: number[];
   // a review loop job's step and round, its name in agents' lines with the title (jobs.ts nameOf).
@@ -78,17 +93,22 @@ export type SeatNow = {
   engine: string;
   state: string;
   until: number | null;
-  fiveHour: number;
+  fiveHour: number | null;
+  fiveHourObservedAt?: number | null;
+  fiveHourSource?: UsageSource;
   fiveHourResets: number | null;
-  week: number;
+  week: number | null;
+  weekObservedAt?: number | null;
+  weekSource?: UsageSource;
+  latestReportedAt?: number | null;
   weekResets: number | null;
   // the share of a window it stops at
   stop: number;
-  // runs on credits past its limits, so pacing leaves it alone (worker/src/pace.ts paceTo); absent from snapshots
-  // stored before pacing was played.
+  // runs on credits past its limits in the worker (worker/src/downtime.ts). The play does not use this flag.
   credits?: boolean;
 };
 export type Size = { agent_ms: number };
+export type UsageSource = 'reported' | 'prior' | 'unknown' | 'reset';
 
 // ---- the play's output
 
@@ -104,6 +124,7 @@ export type PlayTime = {
   total_ms: number;
 };
 export type Outlook = {
+  capacityConditions?: string[];
   time?: PlayTime | null;
   unpricedSeats?: string[];
   start: number | null;

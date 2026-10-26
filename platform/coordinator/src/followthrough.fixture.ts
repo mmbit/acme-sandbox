@@ -45,7 +45,7 @@ export async function followthroughFixture(h: Awaited<ReturnType<typeof harness>
   // The engine a queued job runs on, for a claim that takes it
   const jobEngine = (id: number) =>
     (db.prepare('select engine from jobs where id = ?').get(id) as { engine: string }).engine;
-  const handedOut = callHandedOut.bind(null, h, what => agreed(what, t0, 'bolt'), jobEngine);
+  const handedOut = callHandedOut.bind(null, h, what => agreed(what, t0, 'bolt'));
   const startCheck = async () => {
     const job = await h.claim('claude');
     assert.equal(job?.id, checks().at(-1)!.job);
@@ -60,7 +60,6 @@ export async function followthroughFixture(h: Awaited<ReturnType<typeof harness>
 async function callHandedOut(
   h: Awaited<ReturnType<typeof harness>>,
   agreed: (item: Item) => { call: number; item: number },
-  jobEngine: (id: number) => string,
   what: Item,
   thread?: string,
 ) {
@@ -77,8 +76,8 @@ async function callHandedOut(
   });
   assert.equal(handed.status, 200, JSON.stringify(handed.body));
   await h.finish(followUp);
-  const wire = (await h.claim(jobEngine(handed.body.id)))!;
-  assert.equal(wire?.id, handed.body.id);
+  // By id, so a thread PR's queued review isn't claimed in its place.
+  const wire = await h.claimJob(handed.body.id);
   return { call, item, followUp: followUp.id, handed: handed.body, wire };
 }
 

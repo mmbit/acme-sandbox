@@ -1,5 +1,6 @@
 // The latest push while a round's panel is out or its board card awaits an answer (review.ts startReview). It waits
-// for the ruling and board answer before review continues on the newer head.
+// for the ruling and board answer before review continues on the newer head. A thread task's push waits here too while
+// the thread's next task starts (review.ts heldForThread).
 import { db } from './db.ts';
 import type { Check } from './review.ts';
 import type { ChangedLines } from './findings.ts';
@@ -18,6 +19,8 @@ export type Push = {
   gates?: Check;
   tests?: Check;
   lines?: ChangedLines;
+  job?: number; // (the job whose run pushed it: jobs.ts handOn)
+  heldFor?: number; // (the thread's next task it waits for: review.ts heldForThread)
 };
 
 export const keep = (push: Push) =>
@@ -28,6 +31,17 @@ export const keep = (push: Push) =>
 export const waits = (pr: number) => !!db.prepare('select 1 from review_waiting_pushes where pr = ?').get(pr);
 
 export const drop = (pr: number) => db.prepare('delete from review_waiting_pushes where pr = ?').run(pr);
+
+export function find(pr: number) {
+  const row = db.prepare('select push from review_waiting_pushes where pr = ?').get(pr) as { push: string } | undefined;
+  return row && (JSON.parse(row.push) as Push);
+}
+export const onBranch = (branch: string) =>
+  (
+    db.prepare("select pr from review_waiting_pushes where push ->> 'branch' = ? order by pr").all(branch) as {
+      pr: number;
+    }[]
+  ).map(row => row.pr);
 
 export function take(pr: number) {
   const row = db.prepare('delete from review_waiting_pushes where pr = ? returning push').get(pr) as

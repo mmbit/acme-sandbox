@@ -47,9 +47,6 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // What the line itself says when the agent can't answer: whether a Claude seat has room now (callSeat), and the company's
 // clock for the time a limit ends. respell: the company's words as the speech engines should say them (company.ts).
 const line = () => ({ seat: callSeat(), timeZone: timeZone(), respell: respellings() });
-// What the agent is told once the board shows it its screen on the call (a walk-through: watchalong.ts screenTurn, with
-// the board's next turn).
-export const WATCHING = watchalong.briefing('the board', 'its');
 // pins: the review notes the board ticked when it rang from HQ's Reviews (feedback.ts pinsFor): the call is about them,
 // for good (a restart reads them from the call, not the line), and the voice line gets their screenshots (pins in the
 // answer). Ones sent or discarded since HQ showed them don't come; if none are left, it's a call like any other.
@@ -203,10 +200,7 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
   const sent = messages.send({ agent: me.agent, job: null, call, customers }, job.agent, message, id);
   if (sent === 429) return [429, `this call has added ${messages.PER_HOUR} times in the past hour: put the rest in one addition, or leave it to the call's follow-up`];
   if (typeof sent === 'number') return sent;
-  if (sent.state === 'queued') {
-    if (customers) handedCustomerData(id);   // its session reads the customer's words at its next step
-    return { job: id, agent: job.agent, added: 'message', message: sent.id };
-  }
+  if (sent.state === 'queued') return { job: id, agent: job.agent, added: 'message', message: sent.id };
   return { job: id, agent: job.agent, added: 'job', message: sent.id, became: sent.job };
 }
 
@@ -215,12 +209,14 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
 // checks against the transcript (ledger.ts reached).
 type ReachedJob = { id: number; agent: string; title: string; step: string | null; status: string; kind: string; engine: string | null; session: string | null; pr: number | null; round: number | null; branch: string | null };
 type Reached = { job: number; agent: string; item: number; message?: number; pr?: number; round?: number; ruling?: 'started' | 'later' };
-export function reach(me: { agent: string; callId?: number }, to: string, id: number, what: string, text: string): Reached | [number, string] {
+// goal: why the board wants it, which the job reads with the words.
+export function reach(me: { agent: string; callId?: number }, to: string, id: number, what: string, goal: string, text: string): Reached | [number, string] {
   const call = me.callId;
-  text = text.trim(); what = what.trim();
+  text = text.trim(); what = what.trim(); goal = goal.trim();
   if (!call) return [403, 'only a call reaches work under way'];
   if (!text) return [400, 'say what the job needs to know'];
   if (!ledger.oneLine(what, ledger.WHAT)) return [400, `what needs one plain line of at most ${ledger.WHAT} characters: the board reads it`];
+  if (!ledger.oneLine(goal, ledger.GOAL)) return [400, `goal needs one plain line of at most ${ledger.GOAL} characters: why the board wants it, in its own terms`];
   if (customerCall(call)) return [409, "a call about a customer's details passes nothing on mid-call: the follow-up does, from the call"];
   if (queuedHere(call, id)) return [409, `job #${id} was queued on this call: put the board's word into it with add`];
   const job = db.prepare('select id, agent, title, step, status, kind, engine, session, pr, round, branch from jobs where id = ?').get(id) as
@@ -234,18 +230,18 @@ export function reach(me: { agent: string; callId?: number }, to: string, id: nu
     const work = job.branch ? db.prepare("select id from jobs where branch = ? and kind = 'work' order by id desc limit 1").get(job.branch) as { id: number } | undefined : undefined;
     if (!['running', 'queued'].includes(job.status) || pr?.status !== 'open' || !work)
       return [409, `job #${id}, ${nameOf(job)}, isn't under way any more: the follow-up passes it on`];
-    const item = ledger.reached(call, { owner: to, what, words: text, job: work.id, ref: `sent on call #${call} to PR #${job.pr}'s review` });
+    const item = ledger.reached(call, { owner: to, what, goal, words: text, job: work.id, ref: `sent on call #${call} to PR #${job.pr}'s review` });
     return { job: id, agent: to, item, pr: job.pr!, round: job.round ?? 0, ruling: review.rulingBegun(job.pr!, job.round ?? 0) };
   }
   if (!going) return [409, `job #${id}, ${nameOf(job)}, isn't running (${job.status === 'blocked' ? 'it waits for the board' : job.status}): the follow-up passes it on`];
   if (job.engine !== 'claude') return [409, `job #${id} runs on ${job.engine === 'codex' ? 'Codex' : job.engine}, which can't take a message mid-job: the follow-up passes it on`];
   const message = `From ${me.agent}'s call with the board (call #${call}), for your job #${id} (${nameOf(job)}) while it runs: the board's word on `
     + `this work as it stands now, in ${me.agent}'s words. Weigh it with your brief, as the board's. The call's follow-up checks it against `
-    + `the call's transcript, and tells you if it was misheard.\n\n${text}`;
+    + `the call's transcript, and tells you if it was misheard.\n\nWhy the board wants this: ${goal}\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long (${text.length.toLocaleString('en')} characters, and the note around it counts): keep it to what the job needs now`];
   const sent = messages.send({ agent: me.agent, job: null, call, customers: false }, to, message, id);
   if (typeof sent === 'number') return [sent, sent === 429 ? `this call has sent ${messages.PER_HOUR} messages in the past hour` : 'HQ refused it'];
-  const item = ledger.reached(call, { owner: to, what, words: text, job: id, ref: `sent on call #${call} as message #${sent.id}` });
+  const item = ledger.reached(call, { owner: to, what, goal, words: text, job: id, ref: `sent on call #${call} as message #${sent.id}` });
   return { job: id, agent: to, item, message: sent.id };
 }
 
@@ -346,6 +342,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // Every tool answer says it again (voice hq_tools.py ALOUD). (the answer first, an example, plain times)
   // WebSearch is enabled by guard.TOOLS. Its reply ends in a Sources list a call would read aloud (voice server.py
   // spoken() drops only the links), so the prompt says never.
+  // report, git and WebFetch: the agent reads what a job reads, but no shell (voice reads.py, guard.TOOLS).
   // Shifted work: the job and when tools give each agreed deadline's facts (deadlines.ts); the board hears of shifts
   // only when an agreed deadline moves or it asks; whether one is safe or tight and where new work goes is the agent's
   // judgment, never a rule in the tool, and nothing records what was said: earlier calls and the intercom show it.
@@ -353,8 +350,8 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   return `You are ${name}${pron}, ${role} at ${names().name}, an AI-run company. You're on a live voice call with the board (the human owner).
 Your words are spoken aloud: reply in one to three short spoken sentences, in plain words, the answer first. No
 lists, markdown, emoji or links. Be warm and direct, and ask one question when you need to. Speak ${LANGUAGES[lang].name}.
-When you give a time, say it plainly ("this evening", "in about an hour"). For example: "I've queued that for Ada; you'll see it this
-evening."
+When you give a time, say it plainly ("this evening", "in about an hour"), in the board's own time: ${boardClock()}
+For example: "I've queued that for Ada; you'll see it this evening."
 Never say a number for work aloud (a job, card, pull request, call, item or pin), not even once: the board can't see
 them on a call, and hearing them makes the call run long. Say what the work is and whose it is. The numbers in this
 briefing and in your tools' answers are for your tools, and your written follow-up carries them.
@@ -366,11 +363,14 @@ the board's earlier calls with everyone, the intercom and your own past work by 
 eta reads where planned work stands now (a project's or thread's ETA, its window and slack, what it waits on, the board's
 cards by name) and, with no query, what's going on right now: who's at work on what, why each runs while a hold is on, and
 what each open card holds up, fresh each time (the briefing's list is from the call's start), and
-the company's files (main) are your working directory for Grep, Glob and Read, and WebSearch searches the web for what's
-outside the company (a fact, a price, the news). Your answer is spoken, so never say or list its sources or links: say
+report reads the server's status report as your jobs do (jobs, pull requests and their findings, deploys, seats, errors and
+each service's logs: its sections first, then one by words of its heading, or the lines with a job's number), git reads
+the company's code on every branch, a job's unmerged work too (log, show, diff, grep), the company's files (main) are your
+working directory for Grep, Glob and Read, and WebSearch and WebFetch search and read the web for what's outside the
+company (a fact, a price, the news, a live page). Your answer is spoken, so never say or list its sources or links: say
 what you found, and if the board asks where from, name the source in a few words.
 When these can answer the board's question, look it up now and answer on the call, never "I'll check after the call": only
-live state they can't see (logs, the servers, ad platforms) or work too long for a call waits for the follow-up.
+what they can't reach (ad platforms, a customer's details) or work too long for a call waits for the follow-up.
 You manage the company's work on the call as you do off it, with the manage tool (hq's cancel, stop, pauses, the plan,
 threads, windows, waits, the inbox, meetings, the desk phone's cards): when the board decides it, do it then and there
 and say what you did, never leave it to your follow-up.
@@ -433,6 +433,40 @@ team first and gives the work to the new people (company/playbooks/founding.md).
 ` : ''}
 ${read('AGENTS.md').trim()}
 `;
+}
+
+// The board's clock (org.yaml's company.timeZone): what the call says is on it, as the tools' answers are (the voice line
+// gives their hq the zone: guard.py agent_env); what the agent gives the tools stays UTC.
+function boardClock(now = Date.now()) {
+  const zone = timeZone();
+  const clock = (options: Intl.DateTimeFormatOptions, at = now) =>
+    new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short', ...options }).format(at);
+  const there = clock({ weekday: 'short', day: 'numeric', month: 'short', timeZone: zone });
+  const change = clockChange(zone, now);
+  const next = change
+    ? ` Its clocks change at ${clock({ weekday: 'short', day: 'numeric', month: 'short', timeZone: zone }, change)}: a time after that converts at its new offset.`
+    : '';
+  return `it lives on ${zone} time, where it's ${there} now (${clock({ timeZone: 'UTC' })}).${next} Your tools'
+answers name each time's zone, on the board's clock where they can: one marked UTC is UTC, so convert it before you say it. A
+time you give a tool (by, deadline) is UTC: convert the board's own to it.`;
+}
+// The first moment the zone's offset from UTC changes (summer or winter time) within the next half year, or none
+const HALF_YEAR_MS = 183 * 86_400_000;
+function clockChange(zone: string, now: number) {
+  const offsets = new Intl.DateTimeFormat('en-GB', { timeZone: zone, timeZoneName: 'longOffset' });
+  const offsetAt = (at: number) => offsets.formatToParts(at).find(p => p.type === 'timeZoneName')?.value;
+  const before = offsetAt(now);
+  let day = now;
+  while (day - now < HALF_YEAR_MS && offsetAt(day + 86_400_000) === before) day += 86_400_000;
+  if (day - now >= HALF_YEAR_MS) return undefined;
+  // (to the minute between the last day on the old offset and the first on the new)
+  let lo = day, hi = day + 86_400_000;
+  while (hi - lo > 60_000) {
+    const mid = lo + Math.floor((hi - lo) / 120_000) * 60_000;
+    if (offsetAt(mid) === before) lo = mid;
+    else hi = mid;
+  }
+  return hi;
 }
 
 // Their own recent work, so a call about something they did finds it: jobs finished, the rest of the last day by title,

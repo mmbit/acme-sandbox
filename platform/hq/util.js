@@ -36,13 +36,14 @@ export function canvas(w, h) {
   return c;
 }
 
-// (pixelArt, stylesheet, picture, MONTHS and DAYS)
-// Pixel art as an SVG, one unit per character of `rows` ('#' inked, anything else clear). With a label it's an image
-// for screen readers, without one it's decoration.
-export function pixelArt(rows, cls = 'px', label = '') {
+// (gridArt, stylesheet, picture, MONTHS and DAYS)
+// A picture on a grid as an SVG (a sigil, a kit's tile), one unit per character of `rows` ('#' inked, anything else
+// clear): pixel art, so a look that wears pixel icons alone shows it, sharp (svg.grid: shell/numbers.css). With a label
+// it's an image for screen readers, without one it's decoration.
+export function gridArt(rows, cls = 'small', label = '') {
   const path = rows.map((r, y) => [...r].map((c, x) => c === '#' ? `M${x} ${y}h1v1h-1z` : '').join('')).join('');
   const role = label ? `role="img" aria-label="${label}"` : 'aria-hidden="true"';
-  return `<svg class="${cls}" viewBox="0 0 ${rows[0].length} ${rows.length}" ${role}><path d="${path}"/></svg>`;
+  return `<svg class="grid ${cls}" viewBox="0 0 ${rows[0].length} ${rows.length}" ${role}><path d="${path}"/></svg>`;
 }
 // A stylesheet, linked once: resolves when it has loaded or failed (3 s at most), so a screen never paints unstyled
 const sheets = {};

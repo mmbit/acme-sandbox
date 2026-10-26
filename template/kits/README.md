@@ -51,7 +51,7 @@ every one but `id` and `name` optional:
   id: 'things',                        // lowercase, digits and -; one per id across the kits
   name: 'Things',                      // the tile's name and the printout's title
   about: 'What it counts, in a line',  // under the title (and the tile's tooltip)
-  icon: ['..##..', '.####.'],          // the tile's picture: rows of # and . (else a sigil from its id)
+  icon: 'things',                      // the tile's picture: an icon's name (as an app's), or rows of # and . (else a sigil from its id): pixel art, drawn in a pixel look alone, its name's initial in any other
   tile: '3 today',                     // the line under the tile's name: short, plain
   figures: [{ label: 'Things', value: 3, unit: 'EUR' | '%' | 'kg', sub: 'a short line under it' }],   // the first is the big one; value null: a dash
   daily: { title: 'Per day', sub: '…', columns: [{ key: 'n', label: 'Things', unit }], rows: [{ day: 'YYYY-MM-DD', n: 3 }] },  // every day of r: a chart of the first column, the table of all

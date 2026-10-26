@@ -25,8 +25,8 @@ import { see as account, relaunched, report, spentOn, type Spent } from './spent
 import { giveBack, handOut, masked, plainName, type Files, type Folders, type Snap } from './copyback.ts';
 import { roomTurns } from './roomturns.ts';
 import { capacityCapture, capacitySample } from './capacity.ts';
-import { pacedUntil, paceTo, reserveElsewhere, windowUsed } from './pace.ts';
-import { checkDue, claimAnswered, codexLogLine, codexReading, codexTokens, drainPauses, drainUntil, healthiest, heard, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
+import { pacedUntil, paceTo, windowUsed } from './pace.ts';
+import { checkDue, claimAnswered, codexLimits, codexLogLine, codexReading, codexTokens, drainOf, healthiest, keepsToPlan, limitsReading, readDue, reserveFor, heard, takeRead, takeReading, inTurn, lineSeat, reportedUntil, retryAt, sleepUntil, unpacedFirst, type Asked } from './downtime.ts';
 import { FREE_MB, JOB_MB, SEAT_MB, STARTING_MS } from './reserve.ts';
 import { admission, cgroup, hostAvailableBytes } from './admission.ts';
 import { CHAT_SLOT, KEEPER, SLOT_IDS, WORK_SLOTS, askHome, jobDirs, killAll, makeDir, own, rootDir, sweep, type Ids } from './slots.ts';
@@ -75,14 +75,18 @@ export type SeatState = 'login' | 'ready' | 'draining' | 'sleeping' | 'closed'; 
 // measured: when a Codex seat's latest reading was written (codexWindow); probing: a Codex seat's one claim that may
 // start downtime work to measure an unknown window, kept after a run that found no reading (slotLoop). limits: its runs
 // in a row that hit a usage limit, for the backoff when the CLI names no reset time (a job's attempts restart at each).
-// checked: when a held Codex seat last let a job through to measure it (checkSeat). credits: a Codex seat's account
-// pays for use past its limits (codexReading). refusals: its runs in a row whose first request the API refused, for the
-// backoff, and refused: the latest one's error, for its note. closed: when its provider closed its account, and what it
+// checked: when a held Codex seat last let a job through to measure it (checkSeat), or had its account read (readLimits). hasCredits: a Codex seat's account
+// pays for use past its limits (codexReading); credits: it runs on them, only while the board lets it (useCredits,
+// seatlist.ts spendCredits). confirmed: its reading is the worker's own read of
+// its account (readLimits), not a job's log, and readFailed: the latest such read failed. refusals: its runs in a row whose first request the
+// API refused, for the backoff, and refused: the latest one's error, for its note. closed: when its provider closed its account, and what it
 // said (close). The rest is the board's, from HQ's Seats (syncSeats): its provider (providers.ts), paused, and gone once
 // the board removed it. signInRead: its sign-in has been looked at since this process started (loginLoop): until then
 // its state is only the 'login' it starts with.
 type Seat = SeatProvider & { id: string; state: SeatState; until: number; util?: number; resets: number;
+  fiveHourObservedAt?: number; weekObservedAt?: number;
   week?: number; weekResets: number; measured?: number; probing?: boolean; limits?: number; checked?: number; credits?: boolean;
+  hasCredits?: boolean; useCredits?: boolean; creditsLeft?: number; confirmed?: boolean; readFailed?: boolean;
   refusals?: number; refused?: string; closed?: string; paused?: boolean; gone?: boolean; drainAt?: number;
   signInRead?: boolean };
 // A seat's id names its folder under /seats: a lowercase name, a dash, then digits or a lowercase word (codex-board), as
@@ -174,7 +178,7 @@ const reload = new Reload();
 type SlotJob = { job: Job; me: Me; uid: number; gid: number; launch?: Launched };
 // The room as the watch last saw it: since when it's been short, and the work HQ counts as waiting only for memory
 // and the memory verdict last sent (lowmemory.ts)
-type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; answeredAt: number; reporting: boolean; memory?: MemoryVerdict };
+type RoomWatch = { shortSince?: number; waiting: number; reportedAt: number; answeredAt: number; reporting: boolean; memory?: MemoryVerdict; meetingRoom?: string };
 type Memory = { verdict: MemoryVerdict; cause?: MemoryCause };
 
 async function watchShares() {
@@ -247,18 +251,31 @@ async function reportRoom(watch: RoomWatch, jobs: SlotJob[], uses: Map<number, J
     return use ? [{ job: j.job.id, mb: Math.round(use.memoryMb), cores: use.cores }] : [];
   });
   try {
-    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(), memory }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const answer = await hq.api('room', { short, since: watch.shortSince, free: Math.round(freeMb(false)), jobs: shares, claims: memoryClaims(), capacity: plannerCapacity(shares, t), memory, gathering: gatheringRoom() }, AbortSignal.timeout(ROOM_REQUEST_MS));
+    const meeting = answer?.meeting;
+    const meetingRoom = meeting ? `Meeting room: ${meeting.state}, ${meeting.held}/${meeting.seats} held, ready ${meeting.ready}` : '';
+    if (meetingRoom !== watch.meetingRoom) { if (meetingRoom) log(meetingRoom); watch.meetingRoom = meetingRoom; }
     watch.waiting = Number(answer?.waiting) || 0;
     watch.answeredAt = t;
   } catch (err) { log('room:', err); }
   finally { watch.reporting = false; }
 }
-function plannerCapacity() {
+function gatheringRoom() {
+  const occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
+  return Math.max(0, Math.min(reserve.gathering(), WORK_SLOTS.length - occupied - holding.size));
+}
+function plannerCapacity(shares: { job: number; mb: number }[], at: number) {
   const starts = reserve.starts(),
     occupied = [...inSlot.keys()].filter(slot => slot !== CHAT_SLOT).length;
   const slots = Object.fromEntries(ENGINES.map(engine => [engine, WORK_SLOTS.length]));
   const room = Math.min(WORK_SLOTS.length - holding.size, occupied + starts);
-  return { slots, seatRuns: SEAT_RUNS, room };
+  const measured = new Map(shares.map(share => [share.job, share.mb]));
+  const runningMb = Object.fromEntries([...inSlot].filter(([slot]) => slot !== CHAT_SLOT)
+    .map(([, occupant]) => [occupant.job.id, measured.get(occupant.job.id) ?? null]));
+  const memory = { at, availableMb: reserve.availableMb(), freeReserveMb: FREE_MB, defaultRunMb: JOB_MB,
+    totalSlots: WORK_SLOTS.length, heldSlots: holding.size, heldMb: holding.size * SEAT_MB,
+    starting: reserve.startupReservations(), runningMb };
+  return { slots, seatRuns: SEAT_RUNS, room, memory };
 }
 const memoryClaims = () => allSlotsTaken([...inSlot.keys()]) ? [] : ENGINES.flatMap(engine => {
   const seat = pickSeat(engine);
@@ -454,7 +471,7 @@ const pacedEmpty = new Set<Seat>();   // (slotLoop: claimAnswered)
 function wakeSeats() {
   const now = Date.now();
   for (const s of SEATS) if ((s.state === 'sleeping' || s.state === 'draining') && s.until <= now) {
-    s.state = 'ready'; if (s.util !== undefined) s.util = 0; if (!s.weekResets) s.week = undefined;
+    s.state = 'ready'; if (s.util !== undefined) { s.util = 0; s.fiveHourObservedAt = now; } if (!s.weekResets) s.week = undefined;
     s.measured = now; reportSeat(s);
   }
 }
@@ -462,6 +479,8 @@ function wakeSeats() {
 // Seat health from a Claude rate-limit event: the seat's windows as it reports them, then whether it drains.
 function windows(seat: Seat, e: any) {
   const w = e.rate_limit_info?.unifiedWindows ?? {};
+  if (w.five_hour?.utilization !== undefined) seat.fiveHourObservedAt = Date.now();
+  if (w.seven_day?.utilization !== undefined) seat.weekObservedAt = Date.now();
   seat.util = w.five_hour?.utilization ?? seat.util;
   if (w.five_hour?.resetsAt) seat.resets = w.five_hour.resetsAt * 1000;
   seat.week = w.seven_day?.utilization ?? seat.week;
@@ -473,13 +492,13 @@ function windows(seat: Seat, e: any) {
 // back as soon as a reading shows room again (a reset, or a bigger plan). Claude's readings come from its rate-limit
 // events, Codex's from its session log (codexWindow). A sleeping seat (it hit the limit) is left to its own wake-up.
 function drain(seat: Seat) {
-  const until = reserveElsewhere(seat, SEATS.filter(s => !off(s))) ? 0 : drainUntil(seat);
+  const { until, pause: jobs } = drainOf(seat, SEATS.filter(s => !off(s)), running, CHAT_SLOT);
   if (until && (seat.state === 'ready' || seat.state === 'draining')) {
+    // A Claude seat's running jobs stop at their next step and resume in their sessions on a seat with room, or after the
+    // reset (runJobIn): the rest of the window is the board's (pickSeat). The intercom's own run goes on. A Codex seat's
+    // stop the same way while it keepsToPlan (drainOf), so they don't run on into credits the board hasn't allowed.
+    for (const id of jobs) if (!drained.has(id)) drained.set(id, Date.now());
     if (seat.state === 'ready') {
-      // A Claude seat's running jobs stop at their next step and resume in their sessions on a seat with room, or after the
-      // reset (runJobIn): the rest of the window is the board's (pickSeat). The intercom's own run goes on.
-      const jobs = drainPauses(seat, running, CHAT_SLOT);
-      for (const id of jobs) if (!drained.has(id)) drained.set(id, Date.now());
       log(`${seat.id}: draining at ${seatNote(seat)}, until ${new Date(until).toISOString()}${jobs.length ? `; jobs ${jobs.map(j => `#${j}`).join(', ')} pause at their next step` : ''}`);
       seat.checked = Date.now();
     }
@@ -496,7 +515,8 @@ const checkSeat = (engine: string) => SEATS.find(s => s.engine === engine && roo
 
 // A draining or sleeping Claude seat is re-checked every 10 minutes with a one-line call, so a plan
 // upgrade (or an early reset) puts it back to work without waiting for the old reset time. A ready seat whose window
-// isn't measured yet (after a restart, before any job has run on it) is checked the same way, for downtime work.
+// isn't measured yet (after a restart, before any job has run on it) is checked the same way, for downtime work. A held
+// Codex seat that keepsToPlan has its account read on the hour (readLimits).
 async function recheckLoop() {
   const checked = new Map<string, number>();
   while (!shuttingDown) {
@@ -520,6 +540,7 @@ async function recheckLoop() {
       rl ? windows(seat, rl) : reportSeat(seat);
       log(`${seat.id}: rechecked, now ${seat.state} at ${pct(seat)}`);
     }
+    for (const seat of SEATS.filter(s => readDue(s))) await readLimits(seat);
   }
 }
 
@@ -577,17 +598,19 @@ async function smallCall(kind: 'gists' | 'names', keys: string[]) {
 const seatNote = (s: Seat) => (s.util !== undefined ? `${pct(s)} of the 5-hour window`
   : s.week === undefined ? '5-hour window not measured yet' : 'no 5-hour window') +
   (s.week === undefined ? '' : `, ${Math.round(s.week * 100)}% of the week`) +   // a full week drains a seat too
-  (s.credits ? ', credits available' : '');
+  (s.credits ? `, ${onCredits(s)}` : '');
+// (with the balance its account's reading gave, when it gave one.)
+const onCredits = (s: Seat) =>
+  `on credits past its limits${s.creditsLeft === undefined ? '' : ` (${s.creditsLeft.toLocaleString('en-US')} left)`}`;
 // (each seat's pacing as last reported, whether paced and on credits: keepSeats reports a change)
 const reportedPace = new Map<string, string>();
 const paceKey = (s: Seat) => `${pacedOf(s)}:${!!s.credits}`;
 const reported = new Map<string, SeatState>();   // (each seat's state as last reported, for the voice line's)
 // Pacing (pace.ts pacedUntil): on unless the board turned it off in HQ's Settings › Seats (keepSeats). A paced seat
-// says so to HQ, which draws it, and its claims carry its weekly reset. Each seat reports whether it runs on credits,
-// which with the switch and the seats' windows gives HQ's play the level its pacing aims for (the coordinator's
-// playseats.ts).
+// says so to HQ, which draws it, and its claims carry its weekly reset. HQ's play uses the switch and the seats'
+// windows for its pacing level (the coordinator's playseats.ts). Each seat also reports whether it runs on credits.
 let pacing = true;
-const paceToOf = (s: Seat) => paceTo(s, pacing, reserveElsewhere(s, SEATS));
+const paceToOf = (s: Seat) => paceTo(s, pacing, reserveFor(s, SEATS));
 const pacedOf = (s: Seat) => pacedUntil(s, paceToOf(s));
 // (a held Codex seat reports its next check as `until`, and the hold's own end in its note: reportedUntil)
 // The windows go as numbers (HQ draws them as bars, the status report prints them), the note says the rest.
@@ -597,15 +620,16 @@ function reportSeat(s: Seat) {
   // seat's loginLoop, and its 'login' would put a "needs signing in again" card on the desk phone. The loop's first
   // look reports everything.
   if (!s.signInRead) return;
-  const until = reportedUntil(s), held = until !== s.until ? `held until ${new Date(s.until).toISOString()}, one job an hour` : '';
+  const until = reportedUntil(s), held = until !== s.until ? `held until ${new Date(s.until).toISOString()}, ${!keepsToPlan(s) ? 'one job an hour' : s.readFailed ? 'account read failed, read again in an hour' : 'its account read an hour'}` : '';
   const paced = pacedOf(s), pace = paced === undefined ? undefined : true;
   reportedPace.set(s.id, paceKey(s));
-  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? 'credits available' : '', held];
+  const rest = [s.util === undefined && s.week === undefined ? '5-hour window not measured yet' : '', s.credits ? onCredits(s) : s.hasCredits ? 'keeps to its plan: its credits wait for the board' : '', held];
   const note = s.paused ? 'Paused: it takes no new work'
     : s.state === 'login' ? s.signIn === 'key' ? 'Needs a key' : 'Needs signing in'
     : s.state === 'closed' ? `closed by its provider (${s.closed ?? 'no reason given'}): its share of the work waits, and no other account takes it over until the board decides`
     : s.state === 'sleeping' && s.refused ? [`its runs are refused: ${s.refused}`, held].filter(Boolean).join('; ') : rest.filter(Boolean).join('; ');
-  const windows = { util: s.util, resets: s.util === undefined ? undefined : s.resets || undefined, week: s.week, weekResets: s.week === undefined ? undefined : s.weekResets || undefined, pace, credits: s.credits || undefined };
+  const windows = { util: s.util, resets: s.util === undefined ? undefined : s.resets || undefined, week: s.week, weekResets: s.week === undefined ? undefined : s.weekResets || undefined, pace, credits: s.credits || undefined,
+    fiveHourObservedAt: s.fiveHourObservedAt ?? null, weekObservedAt: s.weekObservedAt ?? null };
   hq.api('seat', { seat: s.id, engine: s.engine, state: off(s) ? 'paused' : s.state, until: until || undefined, note, ...windows }).catch(() => {});
   // a Claude seat that changed state may change the voice line's: at once, not at the next minute (voiceLoop). (Only on a
   // change: a reading comes with every model request of every job.)
@@ -626,11 +650,23 @@ async function codexWindow(seat: Seat, me: Me, home: string, session: string | u
     if (!line) return;   // no log, or no figures in it yet
     const r = codexReading(line, since, seat.measured);
     if (!r) return;
-    seat.util = r.util; seat.resets = r.resets ?? 0; seat.measured = r.at; seat.credits = r.credits;
-    if (r.week !== undefined) { seat.week = r.week; seat.weekResets = r.weekResets ?? 0; }
+    takeReading(seat, r, false);
+    if (r.util !== undefined) seat.fiveHourObservedAt = r.at;
+    if (r.week !== undefined) seat.weekObservedAt = r.at;
     drain(seat);
     return codexTokens(line);
   } catch (err) { log(`${seat.id}: unreadable Codex window reading:`, err); }
+}
+
+// A held Codex seat that keepsToPlan, on the hour (readDue): its account read by the worker (codexLimits), whose reading
+// keeps its hold or lifts it (takeRead).
+async function readLimits(seat: Seat) {
+  seat.checked = Date.now();
+  const r = limitsReading(await codexLimits({ ...keeperIds, env: keeperEnv({ CODEX_HOME: seatDir(seat.id) }) }));
+  if (seat.gone) return;
+  takeRead(seat, r);
+  log(`${seat.id}: account read ${r ? `at ${seatNote(seat)}` : 'failed: held, no job through, read again in an hour'}`);
+  drain(seat);
 }
 
 const loggedIn = (seat: Seat) => existsSync(`${seatDir(seat.id)}/${credentialFile(seat)}`);
@@ -900,13 +936,14 @@ function keeperRun(cmd: string, args: string[], vars: Record<string, string>, cw
 }
 
 // HQ's list, taken by the worker's seats (seatlist.ts), and kept for the worker's next start (SEAT_LIST)
-// A seat whose stop level the board changed drains, or goes back to work, by its windows at once (drain).
+// A seat whose stop level the board changed, or whether it spends credits, drains, or goes back to work, by its windows at
+// once (drain).
 function syncSeats(list: Listed[]) {
-  const levels = new Map(SEATS.map(s => [s, s.drainAt]));
+  const levels = new Map(SEATS.map(s => [s, `${s.drainAt}:${!!s.credits}`]));
   applyList(SEATS, list, { held: heldOff, make: newListed, start: loginLoop, drop: dropSeat,
     changed: seat => { log(`${seat.id}: ${off(seat) ? 'takes no new work now' : 'takes work again'}`); reportSeat(seat); } });
-  for (const [seat, was] of levels) if (!seat.gone && seat.drainAt !== was && (seat.state === 'ready' || seat.state === 'draining')) {
-    log(`${seat.id}: stops at ${Math.round(seat.drainAt! * 100)}% now`);
+  for (const [seat, was] of levels) if (!seat.gone && `${seat.drainAt}:${!!seat.credits}` !== was && (seat.state === 'ready' || seat.state === 'draining')) {
+    log(`${seat.id}: ${seat.credits ? 'spends credits past its limits' : `stops at ${seat.drainAt === undefined ? 'its level' : `${Math.round(seat.drainAt * 100)}%`}`} now`);
     drain(seat);
   }
   // (a seat not read since this process started is paced by the week HQ last heard)
@@ -975,16 +1012,16 @@ type Job = { id: number; agent: string; title: string; prompt: string; engine: s
   cut?: string;   // what a stop of the worker's container cut in its last run (jobs.ts finish).
   resumes?: Resumes;   // its author's last session on its branch (jobs.ts claim)
   ownsProject?: OwnedProject;   // the project its agent owns through its thread (closing.ts).
-  inThread?: InThread;   // a task in a thread, when the company plans by threads (threads.ts)
+  inThread?: InThread;   // a task in a thread (threads.ts).
   resize?: { size: string | null };   // its saved size and author (sizes.ts withSize)
   stopping?: string | null;   // hq stop: who stopped it, and why (jobs.ts stopJob)
   landing?: string | null;   // JSON: its last run ended well, but its push or pull request snagged; this run only lands it (land).
   agentInfo?: { name: string; role: string; department: string; charter: string; model?: string | null; effort?: string | null;
     autocompact?: number | string | null };
-  company?: Partial<Company> };
+  company: Partial<Company> & Pick<Company, 'stylePrompt'> };
 // The company the job works for, as the coordinator reads it (brand.yaml's names, infra.env's addresses: jobs.ts claim)
 type Company = { name: string; phone: string; newsletter: string; intercom: string; agentEmailDomain: string; agentsEmail: string;
-  language?: string };
+  language?: string; timeZone?: string; stylePrompt: string };
 const company = (job: Job): Company => ({ name: 'the company', phone: 'desk phone', newsletter: 'the newsletter', intercom: 'intercom',
   agentEmailDomain: 'agents.invalid', agentsEmail: 'agents@agents.invalid', ...job.company });
 
@@ -1063,6 +1100,15 @@ const boardLanguage = (c: Company) => !c.language || c.language === 'English' ? 
   is the board's too: name work in ${c.language} (job and proposal titles, codes' words in plain capitals, threads' names
   and done-when lines, projects' names). Code and the company's own documents (briefs, notes, profiles, DECISIONS.md,
   commit messages) stay English.`;
+// The board's clock (the coordinator's company.ts timeZone): every time it reads or hears is on it. The intercom's run
+// has hq's times on it too, as a call has (HQ_TIME_ZONE: hq's estimate.ts at); other jobs keep UTC.
+const boardClock = (c: Company, intercom: boolean) => !c.timeZone || c.timeZone === 'UTC' ? '' : `
+- The board lives on ${c.timeZone} time: every time that reaches it (${c.phone} cards, ${c.newsletter}, the board report,
+  the ${c.intercom}'s answers, a call's notes) is its own, never UTC. ${intercom ? `hq's answers here name each time's
+  zone, on the board's clock where they can: one marked UTC is UTC, so convert it` : "hq's times are UTC: convert them for the board"}; a time you give hq (--by,
+  --deadline, --when) is UTC, so convert the board's own to it. Its offset from UTC changes with summer and winter time:
+  convert a time at the offset of its own date.`;
+const boardTimes = (job: Job) => job.kind === 'chat' && job.company?.timeZone ? { HQ_TIME_ZONE: job.company.timeZone } : {};
 
 // A profile past what its template keeps: every job of the agent reads it, and each turn reads it again. A busy agent's is
 // never swept by others, and a union merge of an old branch can bring archived lines back, so its owner hears of it here.
@@ -1160,7 +1206,7 @@ How work happens here:
   Omit --refs only when no comparable job fits, and say why. HQ saves this estimate once, when queued.
   ${DEFAULT_ESTIMATE_SCALE}
   For new work, get the time for the board with \`hq when "..." --size <90m>\`,
-  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq thread <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${job.kind === 'chat' ? '' : `
+  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq thread <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
   log. Write them as a report on the work, never as a reply to the board, even when you're acting on its answer.
   The board sees only the ${c.phone}, ${c.newsletter} and the ${c.intercom} (and a call's notes, when your job says so).
@@ -1519,7 +1565,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
       // A lead's session waits for its background team members instead of exiting after its own turn.
       CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS: String(3 * 3600e3), CLAUDE_CODE_DISABLE_AUTO_MEMORY: reviewing ? '1' : undefined };
     return { signIn, env: envFor({ ...me.env, HOME: h, TMPDIR: `${h}/tmp`, ...seatVars, HQ_URL: HQ, HQ_TOKEN: job.token, HQ_AGENT: job.agent,
-      HQ_JOB: String(job.id), HQ_JOB_DIR: hqDir, HQ_RENDERS: RENDERS }, keys, Object.keys(seatVars)) };
+      HQ_JOB: String(job.id), HQ_JOB_DIR: hqDir, HQ_RENDERS: RENDERS, ...boardTimes(job) }, keys, Object.keys(seatVars)) };
   };
   // Both read the prompt from stdin, so a long one (a long message from the board) is never cut short, and it's on
   // no command line (any uid can read /proc/<pid>/cmdline). A launch of its own, so a reviewer can be asked about its
@@ -1590,12 +1636,14 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     runAs(me, 'chmod', ['700', hqDir]);
     await prepareHome(seat, job, me, reviewing);
     const gatesRoots = { checkout: dir, readable: [`${WORK}/mirror.git`] };   // what a work job's gates may touch (completion.ts)
-    if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, gatesRoots) }));
+    // (a Codex work run hears HQ's word on memory after each tool call: inbox.ts)
+    if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, { messages: job.kind === 'work' && 'steps', ...gatesRoots }) }));
     // a resumed session (the intercom's every turn, work back from the board) gets what's in flight now, after its note,
     // and what a stop of the worker's container cut (the coordinator's cut).
-    const prompt = ownSession ? (job.note ?? 'Continue where you left off.') + (job.cut ? `\n\n${job.cut}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
+    let prompt = ownSession ? (job.note ?? 'Continue where you left off.') + (job.cut ? `\n\n${job.cut}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
       : carried ? `${carriedNote(job, dir)}\n\n${inThreadLines(job, conflicts)}${job.prompt}` + (job.note ? `\n\n${job.note}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
       : (reviewing ? reviewBriefing(job) : meeting ? meetingBriefing(job) : briefing(job, dir, conflicts)) + (switched && !reviewing && !fresh ? `\n\n${SWITCHED}${job.cut ? `\n\n${job.cut}` : ''}` : '') + (job.note ? `\n\n${job.note}` : '');
+    prompt += `\n\n${job.company.stylePrompt}`;
     const args = other ? other.run({ home, model, effort: effort ?? undefined, session, reviewing })
       : cli === 'codex'
       // Codex: automatic review of each action, sandboxed to the worktree (network allowed for installs and APIs).

@@ -22,7 +22,7 @@ import { StopError, print, stop } from './output.ts';
 import { phone } from './phone.ts';
 import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
-import { sketch, sketches } from './sketches.ts';
+import { answer, sketch, sketches } from './book.ts';
 import { preview } from './preview.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
@@ -73,6 +73,7 @@ const COMMANDS: Record<string, Command> = {
   picture,
   sketches,
   sketch,
+  answer,
   studio,
   'seat-warning': seatWarning,
   wait: cards.wait,

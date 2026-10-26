@@ -46,10 +46,13 @@ export function extraClaude(snapshot: Snapshot, plan: 5 | 20) {
         ? []
         : ['Capacity scales by the plan labels. This ratio is an assumption, not a measured provider limit.']),
       'Work mix and provider limits can change. This estimate has not been calibrated against an added seat.',
-      'Worker room stays fixed. An added subscription does not add memory or cores.',
+      'An added subscription shares the same worker slots, memory budget and admission rules.',
+      ...(snapshot.memory
+        ? []
+        : ['This retained input has no per-run memory. Fixed room is a sensitivity, not a release forecast.']),
     ],
   };
-  const more = copiedSeat(snapshot, source, five, week, runs, true);
+  const more = copiedSeat(snapshot, source, five, week, true);
   return { available: true as const, capacity, snapshot: more };
 }
 
@@ -74,8 +77,8 @@ function measuredSource(snapshot: Snapshot) {
 }
 
 // The queue as it is with one more seat of the engine: a copy of one of its seats as HQ reads it, its windows fresh,
-// at that seat's measured fill rates (both windows'), and the slots one seat runs as the worker reports them. Null
-// without all of those: a seat with no measured rate would play as never filling.
+// at that seat's measured fill rates in both windows, sharing the existing worker resources.
+// Missing prices cannot establish a hypothetical allowance.
 export function oneMoreSeat(snapshot: Snapshot, engine: string): Snapshot | null {
   const rate = snapshot.rates[engine];
   const runs = snapshot.seatRuns?.[engine];
@@ -86,7 +89,7 @@ export function oneMoreSeat(snapshot: Snapshot, engine: string): Snapshot | null
   const measured = (seat: string) => typeof rate.five[seat] === 'number' && typeof weekOf(seat) === 'number';
   const like = snapshot.seats.find(s => s.engine === engine && measured(s.id));
   if (!like) return null;
-  return copiedSeat(snapshot, like, rate.five[like.id]!, weekOf(like.id)!, runs, false);
+  return copiedSeat(snapshot, like, rate.five[like.id]!, weekOf(like.id)!, false);
 }
 
 function copiedSeat(
@@ -94,7 +97,6 @@ function copiedSeat(
   source: Snapshot['seats'][number],
   five: number,
   week: number,
-  runs: number | null,
   timed: boolean,
 ): Snapshot {
   let id = `${source.engine}-${timed ? 'hypothetical' : 'more'}`;
@@ -106,9 +108,14 @@ function copiedSeat(
     until: null,
     fiveHour: 0,
     week: 0,
+    fiveHourObservedAt: null,
+    weekObservedAt: null,
+    latestReportedAt: null,
+    fiveHourSource: undefined,
+    weekSource: undefined,
     credits: timed ? false : source.credits,
-    fiveHourResets: timed ? snapshot.now + 5 * 3_600_000 : null,
-    weekResets: timed ? snapshot.now + 7 * 24 * 3_600_000 : null,
+    fiveHourResets: snapshot.now + 5 * 3_600_000,
+    weekResets: snapshot.now + 7 * 24 * 3_600_000,
   };
   return {
     ...snapshot,
@@ -120,6 +127,27 @@ function copiedSeat(
         five: { ...rate.five, [id]: five },
       },
     },
-    slots: { ...snapshot.slots, [source.engine]: snapshot.slots[source.engine] + (runs ?? 0) },
+    slots: { ...snapshot.slots },
+    seatMix: copiedMix(snapshot, source.id, id, five, week),
+  };
+}
+
+function copiedMix(snapshot: Snapshot, source: string, id: string, five: number, week: number) {
+  const mix = snapshot.seatMix?.[source];
+  if (!mix) return snapshot.seatMix;
+  const rates = snapshot.rates[snapshot.seats.find(s => s.id === source)!.engine];
+  const sourceWeek = typeof rates.week === 'object' ? rates.week![source]! : rates.week!;
+  return {
+    ...snapshot.seatMix,
+    [id]: Object.fromEntries(
+      Object.entries(mix).map(([kind, rate]) => [
+        kind,
+        {
+          ...rate,
+          five: rate.five === null || !rates.five[source] ? null : (rate.five * five) / rates.five[source]!,
+          week: rate.week === null || !sourceWeek ? null : (rate.week * week) / sourceWeek,
+        },
+      ]),
+    ),
   };
 }

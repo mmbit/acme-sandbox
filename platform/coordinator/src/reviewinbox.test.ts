@@ -10,7 +10,7 @@ const h = await harness('reviewinbox', {
   before: repo =>
     writeFileSync(
       `${repo}/company/projects.yaml`,
-      'planning: threads\nprojects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: The shop, owner: moss }\n',
+      'projects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: The shop, owner: moss }\n',
     ),
 });
 const { db } = h;
@@ -19,7 +19,6 @@ const inbox = await import('./reviewinbox.ts');
 const projects = await import('./projects.ts');
 const order = await import('./threadorder.ts');
 const plan = await import('./plan.ts');
-const { remember } = await import('./db.ts');
 const findings = [
   {
     id: 12,
@@ -34,7 +33,6 @@ const findings = [
 beforeEach(() => {
   resetReviewInbox(db);
   plan.setOwner('game', 'wren', { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
-  remember(order.MODE, 'threads');
   projects.createThread({
     project: 'game',
     name: 'The first world plays',
@@ -83,7 +81,7 @@ const fixTasks = () =>
     title: string;
   }[];
 
-test('a thread stays open while any finished task still has a pull request in review', async () => {
+test('a thread is ready to judge only once no finished task still has a pull request in review', async () => {
   const closure = await import('./reviewclosure.ts');
   const ends = await import('./threadends.ts');
   const pending = h.ended({ agent: 'bolt', thread: 'game/world' });
@@ -94,11 +92,12 @@ test('a thread stays open while any finished task still has a pull request in re
     h.storedPr(71, pending, state);
     assert.equal(closure.status(`job/${pending}`), state);
     ends.merged(72);
-    assert.equal(projects.findThread('game/world')!.status, 'open');
+    assert.equal(projects.findThread('game/world')!.judge, null);
   }
   h.mergedPr(71);
   ends.merged(71);
-  assert.equal(projects.findThread('game/world')!.status, 'done');
+  assert.equal(projects.findThread('game/world')!.status, 'open', 'its owner closes it');
+  assert.notEqual(projects.findThread('game/world')!.judge, null);
 });
 
 test('one review inbox item reaches the project owner with domains and files, and shares its planning job', async () => {

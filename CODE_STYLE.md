@@ -6,6 +6,10 @@ comfortably and confidently, and find the right file by its name.
 
 This covers code that lasts: `platform/`, `infra/`, `shared/`, `kits/`, `products/<slug>/`, `template/` and `theme/`.
 Throwaway work (decks, ads, demos, films, research, one-off scripts: `.prettierignore` lists them) keeps its leeway.
+Its review asks only whether it misses the board's vision in an important way, and whether it really breaks or is
+unsafe: no findings on style, conventions or documentation, and no rounds of fixes for them. Review triage judges what
+is throwaway (a prototype, a demo reel, a concept film, a presentation: whatever runs once or twice and goes to the
+archive).
 Where code and a rule disagree, the code comes up to the rule: new code from the start, old code in its area's
 refactoring pass (the Maintenance playbook).
 
@@ -115,6 +119,17 @@ For comments, docs, commit messages and UI text alike.
   worker's loops, fire-and-forget work. An empty `catch` says why: `catch { /* already there */ }`.
 - A recoverable error with no built-in type is an `Error` subclass named `<Failure>Error`. A refusal says why and
   what to do instead: an agent reads it. An HTTP handler that denies returns the status as a number.
+
+## Judgment
+
+- **The model decides what needs judgment.** How many versions to make, whether something needs a preview, who
+  answers, which model size, what's worth flagging: a prompt decides it, with direction and a few good examples. Never
+  a fixed count, an if-rule, a keyword list or a cap. A rule fits the cases its author pictured and fails the next one.
+  Not every annotation needs a preview, and not every preview needs four versions.
+- **A hard limit earns its place.** It names the real risk it guards (safety, money, the law), weighed against the
+  capability it costs, and its code says why. A limit that guards a real risk (keys, a customer's details, money, the
+  law, the review's gates) stays hard: judgment works inside it, never lifts it. Over-restriction is a failure too: an
+  agent sandboxed from checks it could run makes more mistakes, not fewer. Never add a limit by reflex.
 
 ## Limits
 

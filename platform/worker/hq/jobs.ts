@@ -5,7 +5,7 @@ import { changeLines, moveWords, threadWords, type Deadline, type Move } from '.
 import { at } from './estimate.ts';
 import { isReadable, readText, readTextOrStdin } from './files.ts';
 import { takeItemFlags, takeThread, takeValues, takeWhen } from './flags.ts';
-import { stopped } from './ledger.ts';
+import { stopped } from './corrections.ts';
 import { minute, present, print, shown, stop, text, warn } from './output.ts';
 import { liftWords } from './pauses.ts';
 
@@ -77,9 +77,11 @@ export const job = {
                                                      fold in the projects view. --item <item>: the job
                                                      carries an item from a call (hq items), with the words from the call;
                                                      the item is handled when the job ends done. One open job per item.
-                                                     --lands <job>: the job lands the saved work of that failed job,
-                                                     which never opened a pull request (refs/outgoing/job/<n>), for its
-                                                     own agent. --findings names the review findings a fix task answers.
+                                                     --lands <job>: replace that failed job for its own agent, landing
+                                                     its saved work or retrying a thread task that saved nothing.
+                                                     It keeps its place, code, call and item. No brief file is needed:
+                                                     HQ reuses the failed job's brief. Work on a PR continues there.
+                                                     --findings names the review findings a fix task answers.
                                                      It carries any call item, handled when it ends done.
                                                      A time for the work is its thread's window (hq window): a call
                                                      item's time goes there by itself, and a job with one that would
@@ -154,7 +156,7 @@ export const job = {
       ...(review.notes && { notes: review.notes.split(',').map(id => Number(id.replace('#', ''))) }),
       ...(review.by && { by: review.by }),
       ...(afterRequest !== null && { afterRequest }),
-      prompt: brief === '' ? title : brief,
+      ...(brief !== '' ? { prompt: brief } : flags.lands === undefined ? { prompt: title } : {}),
       ...(downtime && { downtime: true }),
       ...(thread !== undefined && { thread }),
       ...(newThread !== undefined && { newThread }),
@@ -260,10 +262,11 @@ function printQueued(
   if (when.length > 0) print(`It starts once these have happened: ${when.join(', ')}.`);
   if (present(queued.untilCall))
     print("It starts once this call ends: what's added to it before then goes into its brief.");
-  // (the time given, or its item's, on its thread now; or the window of the deliverable it serves, or none: askwindow.ts.
-  if (present(queued.deadline)) print(`Its thread's deadline: ${minute(String(queued.deadline))} UTC.`);
+  // (the time given, or its item's, on its thread now; or the window of the deliverable it serves, or none: askwindow.ts;
+  // on the board's clock on a call: estimate.ts at)
+  if (present(queued.deadline)) print(`Its thread's deadline: ${at(Date.parse(String(queued.deadline)))}.`);
   const serves = queued.serves as { thread: string; deadline: string } | undefined;
-  if (serves) print(`It serves ${text(serves.thread)}'s window: ${minute(serves.deadline)} UTC.`);
+  if (serves) print(`It serves ${text(serves.thread)}'s window: ${at(Date.parse(serves.deadline))}.`);
   if (present(queued.untimed)) print(text(queued.untimed));
   if (present(queued.askedCeo))
     print(`It's the board's ask with no window: ${text(queued.askedCeo)}, the CEO, is asked for its time.`);
@@ -504,7 +507,7 @@ export const window = {
     if (!present(set.deadline)) print(tried ? `Tried: ${thread} with no window.` : `${thread} has no window now.`);
     else
       print(
-        `${tried ? 'Tried' : 'Window of'} ${thread}: deadline ${minute(String(set.deadline))} UTC, aim ${minute(String(set.aim))} UTC.`,
+        `${tried ? 'Tried' : 'Window of'} ${thread}: deadline ${minute(String(set.deadline))}, aim ${minute(String(set.aim))}.`,
       );
     if (tried) print('Nothing was saved.');
     if (Array.isArray(set.moves)) {

@@ -214,12 +214,12 @@ const tag = (t, cls = '') => `<span class="cr-tag ${cls}">${t}</span>`;
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
 // a list row's kind at a glance
 const KIND_IC = {
-  person: icon('person', 'px'),
-  question: icon('question', 'px'),
-  claim: icon('claim', 'px'),
-  outage: icon('outage', 'px'),
-  bug: icon('bug', 'px'),
-  email: icon('mail', 'px'),
+  person: icon('person', 'small'),
+  question: icon('question', 'small'),
+  claim: icon('claim', 'small'),
+  outage: icon('outage', 'small'),
+  bug: icon('bug', 'small'),
+  email: icon('mail', 'small'),
 };
 // a data request's row shows an email
 const kindIcon = c => KIND_IC[c.kind === 'rights' ? 'email' : c.kind] ?? KIND_IC.question;
@@ -245,7 +245,7 @@ function listHtml(d) {
     .map(([k, words, n, late]) => `<button class="cr-count${late ? ' late' : ''}" data-jump="${k}"${n ? '' : ' disabled'}><b>${n}</b><span>${words}${late ? ` · ${late} late` : ''}</span></button>`).join('');
   return `<div class="cr">
     <p class="cap"><i class="prompt">&gt; </i>CARE · ${Number(q.waiting ?? replies.length)} WAITING${q.oldest ? ` · OLDEST SINCE ${esc(ago(q.oldest).toUpperCase())}` : ''} ${signal}</p>
-    <div class="cr-top"><form class="cr-find" data-find role="search"><label for="cr-find">${icon('find', 'px')}<span>Find a case</span></label><input id="cr-find" maxlength="14" autocomplete="off" spellcheck="false" placeholder="H-1042"><button>Open</button></form>${msgOf('find')}
+    <div class="cr-top"><form class="cr-find" data-find role="search"><label for="cr-find">${icon('find', 'small')}<span>Find a case</span></label><input id="cr-find" maxlength="14" autocomplete="off" spellcheck="false" placeholder="H-1042"><button>Open</button></form>${msgOf('find')}
       <button class="cr-go" data-cr-numbers>Numbers ›</button></div>
     <div class="cr-glance">${glance}</div>
     ${busyHtml(d.busy)}
@@ -294,7 +294,7 @@ const remedyHtml = r => `<div class="cr-remedy" data-remedy="${Number(r.request)
     <p class="t" data-private><b>${esc(r.title)}</b>${r.case ? `<span class="cs">${esc(r.case)}</span>` : ''}</p>
     <p class="grant" data-private>${esc(r.grant)}</p>
     ${r.body ? `<details data-private><summary>The details</summary><div class="txt prose">${prose(r.body)}</div></details>` : ''}
-    <div class="cr-two"><button class="cta" data-approve>${icon('tick', 'px')}Approve</button><button data-decline>Not now</button></div>${msgOf(`r${r.request}`)}</div>`;
+    <div class="cr-two"><button class="cta" data-approve>${icon('tick', 'small')}Approve</button><button data-decline>Not now</button></div>${msgOf(`r${r.request}`)}</div>`;
 const owedHtml = o => `<div class="cr-owed" data-voucher="${Number(o.voucher)}" data-request="${o.request == null ? '' : Number(o.request)}">
     <p class="t" data-private><b>${esc(o.amount)}</b><span>${esc(o.appName ?? o.app)} · order ${esc(o.order)}</span>${o.mode === 'test' ? tag('test mode') : ''}</p>
     <p class="why" data-private>${esc(o.reason)}</p><p class="sm">Owed since ${esc(ago(o.since))}</p>
@@ -304,7 +304,7 @@ const owedHtml = o => `<div class="cr-owed" data-voucher="${Number(o.voucher)}" 
 // with Undo until its app has read it (at its next check), and a line when its app hasn't checked in for a while
 const heldHtml = h => {
   const app = esc(h.appName ?? h.app), done = h.answer === 'release' ? 'Released: it goes on to the printer' : 'Refused: it’s to be cancelled and refunded in full';
-  const state = !h.answer ? `<div class="cr-two"><button class="cta" data-release>${icon('tick', 'px')}Release: print it</button><button data-refuse>Refuse: refund it</button></div>`
+  const state = !h.answer ? `<div class="cr-two"><button class="cta" data-release>${icon('tick', 'small')}Release: print it</button><button data-refuse>Refuse: refund it</button></div>`
     : h.taken ? `<p class="grant">${h.answer === 'release' ? done : `Refused: ${app} is cancelling it and refunding it in full`}.</p>` : `<p class="grant">${done} at ${app}’s next check, usually within a minute.</p><div class="cr-two"><button data-undo>Undo</button></div>`;
   return `<div class="cr-held" data-line="${esc(h.line)}" data-revision="${esc(h.revision ?? '')}">
     <p class="t" data-private><b${h.words?.length > 120 ? ' class="long"' : ''}>${h.words ? `“${esc(h.words)}”` : 'No words given'}</b><span>${app} · ${esc(h.description)} · order ${esc(h.order)}</span>${h.mode === 'test' ? tag('test mode') : ''}</p>
@@ -474,7 +474,7 @@ function lineHtml(l, c) {
   // the partner's domain, not a checked sender (nothing reaches HQ to prove who sent it): the card says only that much
   const who = email && l.from ? `Email from ${l.from}${l.partner && c.claim ? `, at ${c.claim.name}’s address` : ''}` : l.who === 'board' && l.to ? `You, to ${l.to}` : WHO[l.who] ?? 'The chat’s AI';
   return `<li class="ln ${esc(l.who)}"><p class="meta"><b>${esc(who)}</b> · ${esc(when(l.at))}${email && l.matches === false ? ' <span class="warn">from another address than this card’s</span>' : ''}${l.health ? ' <span class="health">sent to a person from the health card: for you only, no AI reads it</span>' : ''}</p>
-    <p class="txt">${email ? emailHtml(l.text) : esc(l.text)}</p>${email && c.kind === 'email' && l === firstOf(c, 'email') ? translated(c) : ''}${email && l.mail ? `<button class="cr-mail" data-mail="${Number(l.mail)}">${icon('mail', 'px')}Open in Mail</button>` : ''}</li>`;   // an email's text as Mail shows it
+    <p class="txt">${email ? emailHtml(l.text) : esc(l.text)}</p>${email && c.kind === 'email' && l === firstOf(c, 'email') ? translated(c) : ''}${email && l.mail ? `<button class="cr-mail" data-mail="${Number(l.mail)}">${icon('mail', 'small')}Open in Mail</button>` : ''}</li>`;   // an email's text as Mail shows it
 }
 // ---------------------------------------------------------------- an email to the company (job #3318)
 // The customer's words in the board's language (care's machine translation, of the first email: card.words) folded under
@@ -505,7 +505,7 @@ function photosHtml(c) {
 function answerHtml(c) {
   const name = esc(c.supplier ?? 'the supplier');
   return `<section class="cr-answer"><h4>${name}’s answer<em>once you’ve read their reply</em></h4>
-    <div class="cr-two">${c.claim?.sent ? `<button data-claim-answer="supplier">${icon('tick', 'px')}${name} makes a new one</button>` : ''}<button data-claim-answer="ours">We make it ourselves</button></div>
+    <div class="cr-two">${c.claim?.sent ? `<button data-claim-answer="supplier">${icon('tick', 'small')}${name} makes a new one</button>` : ''}<button data-claim-answer="ours">We make it ourselves</button></div>
     <p class="sm">The customer’s new one waits on their answer. “We make it ourselves” places it as our own order, if they said no or it can’t wait${c.claim?.sent ? `: tell ${name} to stop, or they may make one too` : ''}.</p></section>`;
 }
 // The company's own buttons on the case (its kits', each on the address the case replies to, named in the heading, open card
@@ -514,13 +514,13 @@ function answerHtml(c) {
 // refusal shows here, in its own words
 function actionsHtml(c) {
   return `<section class="cr-actions"><h4>For ${esc(c.to ?? 'this customer')}<em>when they ask</em></h4>
-    ${c.actions.map(a => a.done ? `<p class="done">${icon('tick', 'px')}<span>${esc(a.label)}</span><span class="sm">done</span></p>`
+    ${c.actions.map(a => a.done ? `<p class="done">${icon('tick', 'small')}<span>${esc(a.label)}</span><span class="sm">done</span></p>`
       : `<div class="act"><div class="cr-two"><button data-case-action="${esc(a.id)}">${esc(a.label)}</button></div><p class="sm">${esc(a.hint)}</p></div>`).join('')}
     ${ui.actionMsg ? `<p class="cr-msg" role="status">${esc(ui.actionMsg)}</p>` : ''}</section>`;
 }
 function bugActs(c) {
   if (c.status !== 'waiting' && c.status !== 'team') return '';
-  return `<div class="cr-acts bug"><button class="cta" data-fixed>${icon('tick', 'px')}Fixed</button>${c.owner ? `<button data-handoff>Hand to ${esc(c.owner)}</button>` : ''}</div>
+  return `<div class="cr-acts bug"><button class="cta" data-fixed>${icon('tick', 'small')}Fixed</button>${c.owner ? `<button data-handoff>Hand to ${esc(c.owner)}</button>` : ''}</div>
     <p class="sm">Fixed deletes the page’s picture and log.${c.owner ? ` Hand to ${esc(c.owner)} makes it a job for the app’s owner.` : ''}</p>${ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : ''}`;
 }
 // The reply: the draft to edit in place (or, once sent, what went), the sign-off under it, and the three buttons. A claim's
@@ -556,18 +556,18 @@ function replyHtml(c, d) {
     ${c.translation && !partner && (editing || c.asking) ? `<details class="cr-tr"><summary>Translated</summary><p class="txt">${esc(c.translation)}</p>
       <p class="sm">Machine-made, of the draft as the team wrote it${c.edited ? ': your edits aren’t in it' : ''}. Only the ${esc(String(c.lang).toUpperCase())} text above goes out.</p></details>` : ''}</section>`;
   if (c.status === 'sending' || c.status === 'mailing') return draft + sentHtml(c); // (mailing: past its Undo, with the email service now)
-  if (c.asking) return draft + `<p class="cr-asked">${icon('redo', 'px')}<span>You asked for: <q>${esc(c.asking.ask)}</q></span><button data-unask>Take it back</button></p>
+  if (c.asking) return draft + `<p class="cr-asked">${icon('redo', 'small')}<span>You asked for: <q>${esc(c.asking.ask)}</q></span><button data-unask>Take it back</button></p>
     <div class="cr-acts one"><button data-later>Not now</button></div>${ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : ''}`;
   if (!editing) return draft;
   const ask = ui.asking ? `<div class="cr-ask"><h4>Ask for changes<em>the team redrafts it, then it’s back here · nothing is sent</em></h4>
       <label class="sr" for="cr-ask">What to change</label><textarea id="cr-ask" rows="3" placeholder="What to change, or what to find out first">${esc(ui.ask ?? '')}</textarea>
-      <div class="cr-two"><button class="cta" data-ask-go>${icon('redo', 'px')}Ask the team</button><button data-ask-cancel>Cancel</button></div></div>` : '';
+      <div class="cr-two"><button class="cta" data-ask-go>${icon('redo', 'small')}Ask the team</button><button data-ask-cancel>Cancel</button></div></div>` : '';
   const naming = ui.naming ? `<div class="cr-naming"><p><b>Your name for the sign-off is missing.</b> Every reply ends with it. Set it here (or in Settings), then it sends.</p>
       <div class="cr-name"><label class="sr" for="cr-name">Your name on replies</label><input id="cr-name" maxlength="60" autocomplete="name" placeholder="Your name"><button class="cta" data-name-send>Save and send</button></div></div>` : '';
   // the team redrafts person and question cards; a claim card's emails (to the partner or the customer) and an email's
   // reply are the board's own to edit (and no AI writes a health case's or a data request's)
   const own = c.kind === 'claim' || c.kind === 'rights' || ours(c) || !!c.health;
-  const acts = `<div class="cr-acts${own ? ' two' : ''}"><button data-later>Not now</button>${own ? '' : `<button data-ask${ui.asking ? ' aria-pressed="true"' : ''}>${icon('redo', 'px')}Ask for changes</button>`}<button class="send" data-send>${icon('mail', 'px')}${partner ? `Send to ${esc(name)}` : 'Send by email'}</button></div>`;
+  const acts = `<div class="cr-acts${own ? ' two' : ''}"><button data-later>Not now</button>${own ? '' : `<button data-ask${ui.asking ? ' aria-pressed="true"' : ''}>${icon('redo', 'small')}Ask for changes</button>`}<button class="send" data-send>${icon('mail', 'small')}${partner ? `Send to ${esc(name)}` : 'Send by email'}</button></div>`;
   const without = editing && due.length ? `<p class="cr-without"><button data-send-without>Send without the missing ${due.length === 1 ? 'photo' : 'photos'}</button> <span class="sm">If ${due.length === 1 ? 'it comes' : 'they come'} later, ${due.length === 1 ? 'it goes' : 'they go'} with your next email to ${esc(name)}.</span></p>` : '';
   return draft + ask + naming + acts + without + (ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : '') + (d.email === false ? '<p class="sm">The email key isn’t on the server yet, so Send can’t send anything.</p>' : '');
 }
@@ -584,7 +584,7 @@ const healthBy = c => c.aiDrafted && c.claim
 function sentHtml(c) {
   const left = undoLeft(c);
   const to = toPartner(c) ? c.claim?.to : c.to;
-  return `<div class="cr-sent">${icon('tick', 'px')}<span><b>Sent</b>${to ? ` to ${esc(to)}` : ''}</span>${left > 0 ? `<button data-undo>Undo (<i data-undo-n>${Math.ceil(left / 1000)}</i> s)</button>` : '<span class="sm">On its way.</span>'}</div>${ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : ''}`;
+  return `<div class="cr-sent">${icon('tick', 'small')}<span><b>Sent</b>${to ? ` to ${esc(to)}` : ''}</span>${left > 0 ? `<button data-undo>Undo (<i data-undo-n>${Math.ceil(left / 1000)}</i> s)</button>` : '<span class="sm">On its way.</span>'}</div>${ui.msg ? `<p class="cr-msg" role="status">${esc(ui.msg)}</p>` : ''}`;
 }
 const undoLeft = c => c.status !== 'sending' ? 0 : ui.undoEnd ? ui.undoEnd - Date.now() : Math.min(10_000, Date.parse(c.undoUntil) - Date.now()) || 0;
 
@@ -836,7 +836,7 @@ function wordsPart(d, t) {
         ? `<i class="b${i}" style="flex-grow:${Number(x)}" title="${BANDS[i]}: ${fmt(x)} of ${fmt(n)} replies"></i>` : '').join('')}</div>
       <ul class="cn-legend">${b.map((x, i) => `<li><i class="b${i}" aria-hidden="true"></i>${BANDS[i]} <b>${pctOf(x ?? 0, n)}%</b></li>`).join('')}</ul>`;
     const goals = (d.targets ?? []).filter(g => g.kind === kind).map(g => {
-      const [cls, words] = g.met === true ? ['ok', `${icon('tick', 'px')}met`] : g.met === false ? ['no', 'missed'] : g.replies ? ['mid', 'the bands can’t tell'] : ['mid', 'no replies yet'];
+      const [cls, words] = g.met === true ? ['ok', `${icon('tick', 'small')}met`] : g.met === false ? ['no', 'missed'] : g.replies ? ['mid', 'the bands can’t tell'] : ['mid', 'no replies yet'];
       return `<li><span class="g">${esc(g.p)} ≤ ${esc(secs(g.ms))}</span><span class="m ${cls}">${words}</span><span class="sm">${Number(g.days) ? `met on ${cnt(g.daysMet)} of ${plural(Number(g.days), 'day', 'days')}` : 'no day’s own figure yet'}</span></li>`;
     }).join('');
     return `<div class="cn-kind"><p class="hd"><b>${esc(WORDS_KIND[kind])}</b><span>${replies == null ? 'not counted yet' : plural(Number(replies), 'reply', 'replies')}</span></p>${bar}${goals ? `<ul class="cn-goals">${goals}</ul>` : ''}</div>`;

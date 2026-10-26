@@ -1,9 +1,12 @@
 // The call ledger: a call's follow-up records what was said on it (hq item) and hands it out, and hq items shows where
 // each item stands. A correction's answer also tells which jobs it cancelled or told (stopped()).
 import * as api from './api.ts';
-import { isReadable, readTextOrStdin } from './files.ts';
-import { minute, present, print, shown, stop, text } from './output.ts';
-import { takeItemFlags, takeValues } from './flags.ts';
+// (at: an item's time on the board's clock on a call, estimate.ts)
+import { at } from './estimate.ts';
+import { readGoalAndWords, readTextOrStdin } from './files.ts';
+import { present, print, shown, stop, text } from './output.ts';
+import { takeItemFlags, takeValues, type ItemFlags } from './flags.ts';
+import { stopped, stoppedOnCall } from './corrections.ts';
 
 // roles.asks in the help below
 export const items = {
@@ -31,23 +34,26 @@ async function listOpenItems() {
   for (const item of list) {
     const job = present(item.job) ? ` · job #${item.job}` : '';
     print(`#${item.id} (call #${item.call}, ${text(item.kind)} for ${text(item.owner)}): ${text(item.what)}${job}`);
+    if (present(item.goal)) print(`   goal: ${text(item.goal)}`);
   }
 }
 
 function itemInFull(item: Record<string, unknown>) {
   const facts = [
     present(item.lines) && `lines ${text(item.lines)}`,
-    present(item.due) && `due ${minute(new Date(Number(item.due)).toISOString())} UTC`,
+    present(item.due) && `due ${at(Number(item.due))}`,
     present(item.job) && `job #${item.job}`,
     present(item.request) && `request #${item.request}`,
     present(item.ref) && `ref ${text(item.ref)}`,
     present(item.replaces) && `replaces #${item.replaces}`,
     present(item.why) && `dropped: ${text(item.why)}`,
   ].filter(fact => fact !== false);
+  const goal = present(item.goal) ? [`   goal: ${text(item.goal)}`] : [];
   const quoted = text(item.quote);
   const quote = (quoted === '' ? [] : quoted.split('\n')).map(line => `   > ${line}`).join('\n');
   return [
     `#${item.id} ${text(item.kind)} for ${text(item.owner)}, ${text(item.status)}: ${text(item.what)}`,
+    ...goal,
     `   ${facts.join(' · ')}`,
     quote,
     '',
@@ -55,8 +61,8 @@ function itemInFull(item: Record<string, unknown>) {
 }
 
 const ADD_USAGE =
-  'usage: hq item add <kind> <owner> "what" <quote-file | -> [a-b] [--call <id>] [--replaces <item>] [--deadline <when> [--job <id> [--thread <project>/<slug>]]]';
-const REPLACE_USAGE = 'usage: hq item replace <item> "what" <quote-file | -> [a-b] [--call <id>] [--deadline <when>]';
+  'usage: hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id> [--thread <project>/<slug>]]]';
+const REPLACE_USAGE = 'usage: hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]';
 const LINK_USAGE =
   'usage: hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"';
 const DROP_USAGE = 'usage: hq item drop <item> "why"';
@@ -64,14 +70,20 @@ const DROP_USAGE = 'usage: hq item drop <item> "why"';
 // (an item's time becomes its work's thread's window)
 export const item = {
   help: `
-   hq item add <kind> <owner> "what" <quote-file | -> [a-b] [--call <id>] [--replaces <item>] [--deadline <when>]
+   hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id>
+                                                     [--thread <project>/<slug>]]]
                                                      record one item (kind: task, decision, briefing, promise or question)
                                                      on the call you follow up (--call: which one, if you follow up more
-                                                     than one): "what" is one plain line the board reads; the quote file
-                                                     holds the words from the call verbatim (- : on stdin); a-b its
-                                                     transcript lines. --replaces (a call's follow-up only): the board
-                                                     changed an earlier item; that one is replaced, its jobs that never
-                                                     ran are cancelled, and a running one is told at its next step.
+                                                     than one): "what" is one plain line the board reads; a-b its
+                                                     transcript lines. Stdin holds JSON {"goal": "...", "words": "..."}
+                                                     (< a file in $TMPDIR): the words from the call verbatim, and the
+                                                     goal, why the board wants it (its goal or the problem it solves, in
+                                                     its own terms, one line). The jobs that carry the item get the goal,
+                                                     and judge the work by it. Both hold what was said on the call, so
+                                                     neither goes in argv, where other jobs can read it.
+                                                     --replaces (a call's follow-up only): the board changed an earlier
+                                                     item; that one is replaced, its jobs that never ran are cancelled,
+                                                     and a running one is told at its next step.
                                                      --deadline: the time the board was given for it on the call (a UTC
                                                      time, 14:30 or 2026-10-06T14:30Z; 2h counts from now): the thread of
                                                      the job that carries it (hq job --item) or of the job it's linked to
@@ -80,7 +92,7 @@ export const item = {
                                                      its owner's work under way, linked to it as it's recorded (handled
                                                      when it ends done), whose thread takes the time at once;
                                                      --thread puts a job the call queued in no thread on that one
-   hq item replace <item> "what" <quote-file | -> [a-b] [--call <id>] [--deadline <when>]
+   hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is
                                                      on the line. "Not confirmed" (exit 3, for add too): it may be
@@ -96,6 +108,7 @@ export const item = {
                                                      The call's follow-up, the job that carries the item, or a job of
                                                      roles.asks; a job of yours carries one item, so it takes no second
                                                      (hand that one out).
+                                                     A job linked while it's queued or running hears the item's goal.
                                                      An item already handled (or dropped, replaced): the call's follow-up
                                                      links it to note it went through it; nothing about it changes.
                                                      The item's time goes on the job's thread: --thread puts work still
@@ -126,6 +139,7 @@ export const item = {
         callId,
         deadline: flags.deadline,
         work: flags.job === undefined ? undefined : { job: flags.job, thread: values.thread },
+        goal: flags.goal,
       });
     }
     if (action === 'replace') {
@@ -141,17 +155,26 @@ export const item = {
         replaces: Number(earlier),
         callId,
         deadline: flags.deadline,
+        goal: flags.goal,
       });
     }
-    if (flags.job !== undefined) stop('--job goes with hq item add, on a live call');
-    if (flags.deadline !== undefined) {
-      stop("--deadline goes with hq item add or replace: a linked item's time goes to the job it's linked to");
-    }
+    refuseRecordingFlags(flags);
     if (action === 'link') return linkItem(rest);
     if (action === 'drop') return dropItem(rest);
     stop('usage: hq item add | replace | link | drop (run hq for details)');
   },
 };
+
+// The flags only hq item add or replace takes, refused on link and drop.
+function refuseRecordingFlags(flags: ItemFlags) {
+  if (flags.job !== undefined) stop('--job goes with hq item add, on a live call');
+  if (flags.deadline !== undefined) {
+    stop("--deadline goes with hq item add or replace: a linked item's time goes to the job it's linked to");
+  }
+  if (flags.goal !== undefined) {
+    stop('--goal goes with hq item add or replace: an item keeps the goal it was recorded with');
+  }
+}
 
 export const reply = {
   help: `
@@ -182,16 +205,28 @@ type NewItem = {
   callId: number | null;
   deadline?: string;
   work?: { job: string; thread?: string };
+  goal?: string;
 };
 
-async function recordItem({ action, kind, owner, what, quote, lines, replaces, callId, deadline, work }: NewItem) {
+async function recordItem({
+  action,
+  kind,
+  owner,
+  what,
+  quote,
+  lines,
+  replaces,
+  callId,
+  deadline,
+  work,
+  goal,
+}: NewItem) {
   const onCall = Boolean(process.env.HQ_CALL);
-  // On a live call the words come on stdin (-), never from a file (as for hq job).
-  if (onCall && quote !== '-') stop(`hq item ${action} on a call takes no file: the words come on stdin (-)`);
-  if (quote !== '-' && !isReadable(quote)) stop(`Nothing recorded: can't read the quote (${quote})`);
+  const given = readGoalAndQuote(action, quote, goal);
   const body = {
     what,
-    quote: readTextOrStdin(quote),
+    goal: given.goal,
+    quote: given.words,
     ...(kind !== '' && { kind, owner }),
     ...(lines !== '' && { lines }),
     ...(replaces !== null && { replaces }),
@@ -223,6 +258,15 @@ async function recordItem({ action, kind, owner, what, quote, lines, replaces, c
   }
 }
 
+// The goal and the words, on stdin as JSON (--goal -). Both hold what was said on the call, so they stay out of argv,
+// where any uid can read them (/proc/<pid>/cmdline).
+function readGoalAndQuote(action: string, quote: string, goal: string | undefined) {
+  if (quote !== '-')
+    stop(`Nothing recorded: hq item ${action} takes no file: the words come on stdin with the goal (- --goal -)`);
+  if (goal !== '-') stop(`Nothing recorded: hq item ${action} takes its goal on stdin with the words (--goal -)`);
+  return readGoalAndWords() ?? stop('Nothing recorded: --goal - takes {"goal": "...", "words": "..."} on stdin');
+}
+
 // The call's agent's answer: it's on the list, nobody has it yet, or (a promise about work under way) it's that job's,
 // whose thread has its time already.
 function printNotedOnCall(
@@ -235,7 +279,7 @@ function printNotedOnCall(
   print(
     present(recorded.job)
       ? `It's job #${shown(recorded.job)}'s, done when that ends done, and the deadline of ${text(recorded.thread)} ` +
-          `now: ${minute(String(recorded.deadline))} UTC.`
+          `now: ${at(Date.parse(String(recorded.deadline)))}.`
       : "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out.",
   );
   if (replaces !== null) print(...stoppedOnCall(recorded));
@@ -290,7 +334,17 @@ async function linkItem(given: string[]) {
   }
   // the item's time, on the work's thread now
   if (present(linked.deadline))
-    print(`Its time is the deadline of ${text(linked.thread)} now: ${minute(String(linked.deadline))} UTC.`);
+    print(`Its time is the deadline of ${text(linked.thread)} now: ${at(Date.parse(String(linked.deadline)))}.`);
+  // the item's goal, to work linked while it's under way (the coordinator's ledger.ts goalTo)
+  const goalDelivery: Record<string, string> = {
+    brief: `${target} has the item's goal in its brief.`,
+    message: `${target} hears the item's goal at its next step.`,
+    job: `${target} takes no message in its session, so the item's goal went to its agent as job #${shown(linked.goalJob)}.`,
+    refused: `The item's goal didn't reach ${target} (HQ refused the message: too many this hour, or its chain of messages is full): link it again later, and HQ sends it then.`,
+    withheld: `${target} may not read the item's call, so it didn't hear its goal: tell it why the work matters with hq say, without details from that call.`,
+  };
+  const reachedLine = goalDelivery[shown(linked.goalReached)];
+  if (reachedLine !== undefined) print(reachedLine);
   print(...stopped(linked));
 }
 
@@ -306,43 +360,4 @@ async function dropItem([id, why]: string[]) {
 function refused(body: string, what: string): never {
   const why = api.errorIn(body);
   stop(`${what}: ${(why === 'not found' ? "it isn't on a call this job works for" : why) || 'no answer'}`);
-}
-
-type Stopped = { cancelled?: number[]; told?: { job: number; message: number; became?: number }[]; running?: number[] };
-
-const jobList = (ids: number[]) => ids.map(id => `#${id}`).join(', ');
-
-// A correction's answer (hq item add --replaces, link, drop, hq job --item): the replaced or dropped item's jobs that
-// never ran (cancelled), the running ones told, and those not told yet (the coordinator sends it again: ledger.ts tell()).
-export function stopped({ cancelled = [], told = [], running = [] }: Stopped) {
-  const lines: string[] = [];
-  if ((cancelled ?? []).length > 0) lines.push(`Cancelled (never ran): ${jobList(cancelled)}.`);
-  for (const { job, message, became } of told ?? []) {
-    if (present(became)) {
-      lines.push(
-        `#${job} can't take a message mid-job (it waits for the board, or runs on Codex): the correction is job #${became} for its agent now (message #${message}).`,
-      );
-    } else {
-      lines.push(
-        `Told #${job}: the correction is queued for its session, which reads it at its next step (message #${message}; check: hq sent ${message}).`,
-      );
-    }
-  }
-  if ((running ?? []).length > 0) {
-    lines.push(
-      `Running and not told yet (the message was refused: this job's 30 messages an hour, or a full chain of messages): ${jobList(running)}. It's kept: the coordinator sends it once it can, within minutes of the limit allowing, while that job runs. Nothing to resend.`,
-    );
-  }
-  return lines;
-}
-
-function stoppedOnCall({ cancelled = [], running = [] }: Stopped) {
-  const lines: string[] = [];
-  if ((cancelled ?? []).length > 0) lines.push(`Cancelled (never ran): ${jobList(cancelled)}.`);
-  if ((running ?? []).length > 0) {
-    lines.push(
-      `Already running, so it runs on: ${jobList(running)}. It hears the correction from the call's follow-up, when it goes through this item or ends.`,
-    );
-  }
-  return lines;
 }

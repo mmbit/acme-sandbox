@@ -14,20 +14,14 @@ db.exec(
   'create table if not exists loop_delays (at integer primary key, p50 real not null, p99 real not null, max real not null, worst_at integer)',
 );
 // What held the server half a second or more, by name, kept with the rest: the log goes with each deploy, and the
-// report runs right after one.
+// report runs right after one. Written with the minute's requests (flush): each commit can wait for an outside
+// reader of hq.db (infra/report.sh), up to db.ts's 1.5 s.
 db.exec('create table if not exists slow_holds (at integer not null, ms integer not null, name text not null)');
+let holds: { at: number; ms: number; name: string }[] = [];
 export function held(name: string, ms: number) {
   console.error(`held the server ${Math.round(ms)} ms: ${name}`);
   if (onStall) recent.push({ name, ms });
-  try {
-    db.prepare('insert into slow_holds (at, ms, name) values (?, ?, ?)').run(
-      Date.now(),
-      Math.round(ms),
-      name.slice(0, 300),
-    );
-  } catch (err) {
-    console.error('Latency: the hold was not written:', err);
-  }
+  holds.push({ at: Date.now(), ms: Math.round(ms), name: name.slice(0, 300) });
 }
 
 // A stall: the loop STALL_MS or more late, with the hold that explains it, among those held since the last tick. That's
@@ -103,14 +97,15 @@ export function start(stalled?: (hold: Hold, late: number) => void) {
 // The minute's requests and the loop's delays, and what's older than KEPT_MS goes
 export function flush() {
   const now = Date.now(),
-    requests = timed,
+    [requests, slow] = [timed, holds],
     nsToMs = (ns: number) => Math.max(0, ns / 1e6 - RESOLUTION_MS);
-  timed = [];
   noteMax();
-  const insert = db.prepare('insert into route_times (at, route, ms) values (?, ?, ?)');
+  const insert = db.prepare('insert into route_times (at, route, ms) values (?, ?, ?)'),
+    insertHold = db.prepare('insert into slow_holds (at, ms, name) values (?, ?, ?)');
   db.exec('begin');
   try {
     for (const { at, route, ms } of requests) insert.run(at, route, ms);
+    for (const { at, ms, name } of slow) insertHold.run(at, ms, name);
     if (loop.count)
       db.prepare('insert or replace into loop_delays (at, p50, p99, max, worst_at) values (?, ?, ?, ?, ?)').run(
         now,
@@ -127,6 +122,7 @@ export function flush() {
     db.exec('rollback');
     throw err;
   }
+  [timed, holds] = [[], []];
   loop.reset();
   maxSeenNs = 0;
   maxRoseAt = 0;

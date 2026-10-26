@@ -101,11 +101,11 @@ async function showCall(id: string) {
     call.kind === 'phone'
       ? `a phone call${present(call.ending) ? ` to a number ending ${text(call.ending)}` : ''}`
       : `by a join link${present(call.share) ? `, walking through ${text(call.share.what)}` : ''}`;
-  const when = present(call.at) ? `at ${minute(call.at)} UTC` : 'as soon as approved';
+  const when = present(call.at) ? `at ${minute(call.at)}` : 'as soon as approved';
   print(
     `Call #${text(call.id)} with ${text(call.who)}, about ${text(call.about)} (${how}, in ${text(call.lang)}, ${when}): ${text(call.status)}`,
     ...(present(call.outcome)
-      ? [`How it ended: ${text(call.outcome)}${present(call.ended) ? ` (${minute(call.ended)} UTC)` : ''}`]
+      ? [`How it ended: ${text(call.outcome)}${present(call.ended) ? ` (${minute(call.ended)})` : ''}`]
       : []),
     ...(present(call.followup) ? [`Its follow-up: job #${text(call.followup)}`] : []),
     '',

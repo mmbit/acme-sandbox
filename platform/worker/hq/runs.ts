@@ -12,7 +12,7 @@ import { join, normalize } from 'node:path';
 import * as api from './api.ts';
 import { type Here, noTakerNow, runHere } from './here.ts';
 import { type Presence, SERVER, showHelper } from './machines.ts';
-import { minute, oneLine, print, stop, warn } from './output.ts';
+import { minute, oneLine, present, print, stop, warn } from './output.ts';
 import { unpackInto } from './unpack.ts';
 
 const USAGE =
@@ -234,7 +234,7 @@ function stateLine({ state, helper, taken, why, on, machine, passed }: Run) {
   if (state === 'waiting' && !helper.present) return `${helper.name} isn't asking for work: waiting for ${SERVER}`;
   if (state === 'waiting')
     return `waiting for ${helper.name}${size(helper)}, or ${SERVER} after ${helper.takeMinutes} min`;
-  if (state === 'running') return `running on ${where} since ${minute(taken ?? '')} UTC`;
+  if (state === 'running') return `running on ${where}${present(taken) ? ` since ${minute(taken)}` : ''}`;
   if (state === 'done') return `done on ${on === 'server' ? SERVER : (machine ?? helper.name)}`;
   return `${state}: ${why ?? 'no reason given'}`;
 }

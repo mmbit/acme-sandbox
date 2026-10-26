@@ -1,9 +1,8 @@
 // The newsletter and the library, in the panel: posts and their covers, what's unread, the shelves and their search.
-import { esc, canvas, rng, pick, titleCase, cap } from '../util.js';
+import { esc, titleCase, cap } from '../util.js';
 import * as world from '../world/world.js';
 import { companyFormats } from '../world/clock.js';
 import { loadGazette, loadLibrary } from './data.js';
-import { scene } from './stage.js';
 import { show, body, panelOpen } from './panel.js';
 import { countBadge } from './hud.js';
 import { names } from './brand.js';
@@ -11,27 +10,16 @@ import { seen, markSeen } from './seen.js';
 import { copyBlocks } from './copy.js';
 import { BLOCK, covered, jobLink, linkJobsIn, withJobLinks } from './prose.js';
 import { docOn } from './card.js';
+import { keepPictures } from './covers.js';
+import { coverFor } from './postcover.js';
 
 export let gazette = []; // the posts, newest first
 export async function reloadGazette(dev) {
-  gazette = await loadGazette(dev);
+  const posts = await loadGazette(dev);
+  await keepPictures(posts.flatMap(p => p.meeting?.pictures ?? [])); // (a meeting's: postcover.js)
+  gazette = posts;
 }
 
-function coverFor(p) {
-  if (p.cover) return p.cover;
-  const c = canvas(64, 36),
-    g = c.getContext('2d'),
-    r = rng(p.slug || p.title);
-  g.fillStyle = pick(r, ['#5b8def', '#ff8fab', '#7bd389', '#9b72cf', '#ffb86b']);
-  g.fillRect(0, 0, 64, 36);
-  g.fillStyle = 'rgba(255,255,255,.35)';
-  for (let i = 0; i < 14; i++) g.fillRect((r() * 64) | 0, (r() * 36) | 0, 2, 2);
-  if (world.agents.has(p.author)) {
-    g.imageSmoothingEnabled = false;
-    g.drawImage(scene.portrait({ kind: 'agent', id: p.author }).img, 21, -6, 21, 42);
-  }
-  return (p.cover = c.toDataURL());
-}
 const author = id => esc(world.agents.get(id)?.data.name || titleCase(id || 'Someone'));
 // A post's day, 16 Oct 2026: a YYYY-MM-DD as written, a moment on the company's clock
 const fmtDate = d => {

@@ -3,7 +3,7 @@
 import * as api from './api.ts';
 import { savePrivately } from './files.ts';
 import { takeRepeated, takeValues } from './flags.ts';
-import { print, stop, text } from './output.ts';
+import { minute, print, stop, text } from './output.ts';
 
 const USAGE = 'usage: hq studio [request|add|original|edit|ready|stop|return|placed|get|record] ...: see hq for each';
 
@@ -133,7 +133,7 @@ async function save(what: 'original' | 'get', given: string[]) {
     Buffer.from(text(picture.data), 'base64'),
   );
   const approved = picture.approved
-    ? `, approved by ${text(picture.approved.by)} ${text(picture.approved.at).slice(0, 16).replace('T', ' ')} UTC`
+    ? `, approved by ${text(picture.approved.by)} ${minute(text(picture.approved.at))}`
     : '';
   print(
     `Photo #${n} (${text(picture.product)}${approved}${picture.turn ? `, turned ${text(picture.turn)}° clockwise` : ''}) → ${path}`,
@@ -221,7 +221,7 @@ async function decisions(json: boolean) {
   if (!all.length) return print('No decisions yet.');
   for (const d of all)
     print(
-      `${text(d.at).slice(0, 16).replace('T', ' ')} UTC  #${text(d.photo)}  ${text(d.decision).padEnd(9)}  by ${text(d.by)}  ${text(d.product)}, ${text(d.style)}  ${text(d.model)}  sha256 ${text(d.sha256)}`,
+      `${minute(text(d.at))}  #${text(d.photo)}  ${text(d.decision).padEnd(9)}  by ${text(d.by)}  ${text(d.product)}, ${text(d.style)}  ${text(d.model)}  sha256 ${text(d.sha256)}`,
     );
 }
 

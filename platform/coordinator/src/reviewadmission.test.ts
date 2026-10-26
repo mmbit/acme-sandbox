@@ -230,3 +230,51 @@ for (const engine of ['codex', 'claude'])
       assert.equal(resumed.session, 'kept-review');
       await h.finish(resumed);
     });
+
+for (const kind of ['review', 'consolidate'])
+  for (const measured of [false, true])
+    test(`a windowed ${kind} keeps the next room ahead of undated reviews with ${measured ? 'larger' : 'unknown'} memory`, async () => {
+      await h.capacity({ claude: 2 });
+      const bound = 'capacity-claude';
+      const lower = h.queue({ agent: 'rook', engine: 'claude', kind: 'review', forSeat: bound });
+      const waiting = h.queue({
+        agent: 'quill',
+        engine: 'claude',
+        kind,
+        forSeat: bound,
+        thread: h.dueThread({ deadline: Date.now() + 5 * 3600_000 }),
+      });
+      const jobs = [{ job: lower, mb: 300 }, ...(measured ? [{ job: waiting, mb: 1200 }] : [])];
+      assert.equal((await h.worker('room', { jobs })).status, 200);
+      assert.equal(
+        await h.claim('claude', { seat: bound, room: 900, util: 0 }),
+        null,
+        'a smaller undated review cannot consume room the first windowed run is waiting for',
+      );
+      const next = (await h.claim('claude', { seat: bound, ...(measured ? { room: 1300 } : {}), util: 0 }))!;
+      assert.equal(next.id, waiting, 'the windowed run takes the next sufficient room on the free seat');
+      await h.finish(next);
+      const last = (await h.claim('claude', { seat: bound, room: 900, util: 0 }))!;
+      assert.equal(last.id, lower);
+      await h.finish(last);
+    });
+
+test('a blocked windowed consolidate does not reserve room ahead of ready reviews', async () => {
+  await h.capacity({ claude: 2 });
+  const bound = 'capacity-claude';
+  const dependency = h.queue({ agent: 'kit' });
+  h.queue({
+    agent: 'quill',
+    engine: 'claude',
+    kind: 'consolidate',
+    forSeat: bound,
+    after: dependency,
+    thread: h.dueThread({ deadline: Date.now() + 5 * 3600_000 }),
+  });
+  const lower = h.queue({ agent: 'rook', engine: 'claude', kind: 'review', forSeat: bound });
+  assert.equal((await h.worker('room', { jobs: [{ job: lower, mb: 300 }] })).status, 200);
+  const next = (await h.claim('claude', { seat: bound, room: 900, util: 0 }))!;
+  assert.equal(next.id, lower);
+  await h.finish(next);
+  h.cancelQueued();
+});

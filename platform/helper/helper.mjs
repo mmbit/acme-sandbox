@@ -11,12 +11,10 @@ const HQ_URL = process.env.HQ_URL ?? '';
 const KEY_FILE = process.env.KEY_FILE ?? '/state/key';
 // The kind of run this helper takes (its start command sets it, or for this server's, infra/run_helpers.py).
 const RUN_KIND = process.env.RUN_KIND || undefined;
-// Which of its machine's helpers of the kind this is, whether it sits on the manager's closed network, and whether that
-// network is its own, with no other helper on it (manager.mjs sets them): only then may a kind's runs keep their
-// sockets, as they reach no further than this helper does, and a kind that keeps its helpers alone take a run
+// Which of its machine's helpers of the kind this is, and whether it sits on the manager's closed network (manager.mjs
+// sets both): only then may a kind's runs keep their sockets, as they reach no further than this helper does
 const SLOT = Number(process.env.HELPER_SLOT) || undefined;
 const LOCKED = process.env.HELPER_LOCKED === '1';
-const ALONE = process.env.HELPER_ALONE === '1';
 // A run with sockets reaches the package registries through the manager's proxy, and keeps their downloads here
 const CACHE_DIR = '/cache';
 const WORK_DIR = process.env.WORK_DIR ?? '/work';
@@ -165,14 +163,7 @@ function benchmark() {
 // doesn't know is read again, so a new key command takes without a restart.
 async function takeRun() {
   const answer = await callHq('POST', '/api/helper/take', {
-    json: {
-      ...machine,
-      kind: RUN_KIND,
-      slot: SLOT,
-      locked: LOCKED || undefined,
-      alone: ALONE || undefined,
-      ...(await readings()),
-    },
+    json: { ...machine, kind: RUN_KIND, slot: SLOT, locked: LOCKED || undefined, ...(await readings()) },
   });
   if (answer.status === 401) key = readOr(KEY_FILE, key);
   const refusal =

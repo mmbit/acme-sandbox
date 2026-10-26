@@ -14,14 +14,21 @@ const feedback = await import('./feedback.ts');
 const { routed } = await (await import('./routing.fixture.ts')).routingFixture();
 
 // Each case starts with nothing owed and no job open: no route clears a whole company's work
-beforeEach(() => db.exec("update owed set closed = 'test' where closed is null; update jobs set status = 'done' where status != 'done'"));
+beforeEach(() => db.exec("update owed set closed = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') where closed is null; update jobs set status = 'done' where status != 'done'"));
 
 // A job as HQ lists it, and the brief a job runs with (read in the table: a job waiting its turn has no caller yet)
 const job = (id: number) => h.job(id);
 const brief = (id: number) => (db.prepare('select prompt from jobs where id = ?').get(id) as { prompt: string }).prompt;
 // A job HQ made, claimed by the worker (the harness's own run on engines of their own, so this one is next on its engine)
+// A run ends as a job that did its notes does: each marked fixed first, else they'd go back to routing (feedback.ts
+// ended).
+const finish = async (j: Running, body?: Record<string, unknown>) => {
+  for (const { id } of db.prepare("select id from review_notes where job = ? and status = 'sent'").all(j.id) as { id: number }[])
+    assert.equal((await agent('note-fixed', j.token, { id, how: 'Done' })).status, 200);
+  return h.finish(j, body);
+};
 const run = async (id: number) => { const j = await h.claim(job(id).engine); assert.equal(j?.id, id); return j!; };
-const end = async (id: number, status = 'done') => h.finish(await run(id), { status });
+const end = async (id: number, status = 'done') => finish(await run(id), { status });
 // HQ's own job for a return waits for its sort (sorting.ts): its owner (the CEO: yarn is in no project) names it, and it
 // may start.
 const proposals = await import('./proposals.ts');
@@ -55,11 +62,90 @@ const notes = async (slug: string, to?: string, thread?: string) => {
   return routed((await h.board('/api/review/send', { slug, ids: [id] })).body.job, to, thread).job;
 };
 
+test("a held task of notes gives them back with the product's return: the task they go to next holds it", async () => {
+  const pauses = await import('./pauses.ts');
+  const forecast = await import('./forecast.ts');
+  const first = await notes('yarn');
+  assert.equal((await open('yarn')).job, first);
+  const thread = h.dueThread();
+  db.prepare('update jobs set thread = ? where id = ?').run(thread, first);
+  assert.equal(typeof pauses.pause({ thread, why: 'Not yet', byHand: true }, 'juno'), 'object');
+  forecast.refresh();
+  assert.deepEqual([(await open('yarn')).job, (await open('yarn')).pieces], [null, 0], 'it let the return go');
+  assert.match(brief(first), /went back to the CEO's routing[^\n]*another job takes it, and bringing Yarn back to the board with it, so leave it/);
+  owed.sweep();
+  assert.equal((await open('yarn')).job, null, 'no return queued while the note is being routed');
+  const back = (db.prepare('select job from note_routes where routed is null').get() as { job: number }).job;
+  const next = routed(back).job;
+  assert.notEqual(next, first);
+  assert.equal((await open('yarn')).job, next, 'the task it went to holds the return');
+  assert.match(brief(next), /You own bringing Yarn/);
+});
+
+test("a held colleague's task of notes gives them back: the owner's return waits for the task they go to next, not it", async () => {
+  const pauses = await import('./pauses.ts');
+  const forecast = await import('./forecast.ts');
+  const task = await notes('yarn', 'bolt');
+  const asker = await work('juno');
+  const card = await ask(asker, { products: ['yarn'] });
+  await finish(asker);
+  await answer(card, 'Warmer colours');
+  const back = (await open('yarn')).job;
+  assert.deepEqual(h.jobs.outstandingWaits(back).map(w => w.id), [task]);
+  const thread = h.dueThread();
+  db.prepare('update jobs set thread = ? where id = ?').run(thread, task);
+  assert.equal(typeof pauses.pause({ thread, why: 'Not yet', byHand: true }, 'juno'), 'object');
+  forecast.refresh();
+  assert.equal((await open('yarn')).job, back, "the owner's job keeps the return");
+  db.prepare("update jobs set status = 'done' where id = ?").run(heardBy('juno').id);   // (the asker heard it: the check is claimed next)
+  const routing = (db.prepare('select job from note_routes where routed is null').get() as { job: number }).job;
+  assert.deepEqual(h.jobs.outstandingWaits(back).map(w => w.id), [routing], 'it waits for the routing check, not the held task');
+  sort(back, 'Bring Yarn back', 'YARNHELD');
+  const still = async (why: string) => {
+    assert.equal(await h.claimJob(back), null, `${why}: the owner's return doesn't start`);
+    const card = await ask(await work('wren'), { back: ['yarn'] });
+    assert.equal((await open('yarn'))?.job, back, `${why}: card #${card} doesn't close it`);
+  };
+  await still('the note unrouted');
+  h.jobs.claim(`routing-${routing}`, h.jobs.findAgent(h.jobs.jobAgent(routing)!)!.engine);
+  h.jobs.finish(routing, { status: 'done' });
+  await still('its check ended without routing it');
+  // the next send's check routes it with the new note
+  const next = await notes('yarn', 'bolt');
+  assert.deepEqual(h.jobs.outstandingWaits(back).map(w => w.id), [next]);
+});
+
+test("the owner's held task of notes and a colleague's before it give theirs back in one play: it waits for no routing check", async () => {
+  const pauses = await import('./pauses.ts');
+  const forecast = await import('./forecast.ts');
+  const routing = await import('./routing.ts');
+  const colleague = h.jobs.createJob({ agent: 'bolt', title: 'Other work', prompt: '', queuedBy: 'bolt' }).id;
+  const holder = await notes('yarn');
+  assert.equal((await open('yarn')).job, holder);
+  const id = (feedback.saveNote('yarn', 'yarn.preview.x', { note: `note ${++note}` }) as { id: number }).id;
+  const check = (await h.board('/api/review/send', { slug: 'yarn', ids: [id] })).body.job;
+  const claimed = h.jobs.claim(`routing-${check}`, h.jobs.findAgent(h.jobs.jobAgent(check)!)!.engine);
+  const went = routing.route({ id: check, agent: claimed!.agent }, `#${colleague}`, []);
+  assert.equal(typeof went, 'object', String(went));
+  h.jobs.finish(check, { status: 'done' });
+  assert.deepEqual(h.jobs.outstandingWaits(holder).map(w => w.id), [colleague], 'the holder waits for the colleague');
+  for (const j of [colleague, holder]) {
+    const thread = h.dueThread();
+    db.prepare('update jobs set thread = ? where id = ?').run(thread, j);
+    assert.equal(typeof pauses.pause({ thread, why: 'Not yet', byHand: true }, 'juno'), 'object');
+  }
+  forecast.refresh();
+  const unrouted = db.prepare('select note from note_routes where routed is null').all() as { note: number }[];
+  assert.equal(unrouted.length, 2, 'both notes are back in routing');
+  assert.equal((await open('yarn')).job, null, 'the holder let the return go');
+  assert.deepEqual(h.jobs.outstandingWaits(holder).map(w => w.id), [], 'and waits for no routing check');
+});
+
 test("the owner's task of notes holds the return, and a card answer before it starts joins it", async () => {
   const first = await notes('yarn');
   const asker = await work('juno');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'More changes');
   assert.equal(job(first).agent, 'wren');
   assert.match(brief(first), /note \d+[\s\S]*You own bringing Yarn[\s\S]*--back yarn[\s\S]*More changes/);
@@ -75,7 +161,7 @@ test('later notes are tasks of their own, and the return follows them all: one j
   assert.match(brief(next), /HQ brings Yarn back to the board once this work is done: a job of Wren's/);
   assert.doesNotMatch(brief(next), /You own bringing/);
   assert.equal((await open('yarn')).job, first, 'the first task still holds it');
-  await h.finish(holder);
+  await finish(holder);
   await end(next);
   h.storedPr(8591, next, 'open');
   owed.sweep();
@@ -97,7 +183,7 @@ test("a card answer joins a queued return's brief once", async () => {
   const back = (await open('yarn')).job;
   const asker = await work('juno');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Keep the bookmarks');
   assert.equal((await open('yarn')).job, back);
   assert.equal(brief(back).split('Keep the bookmarks').length - 1, 1);
@@ -108,7 +194,7 @@ test("a card answer while a colleague's task of notes is still open: the owner's
   assert.equal(job(task).agent, 'bolt');
   const asker = await work('juno');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Warmer colours');
   const back = (await open('yarn')).job;
   assert.notEqual(back, task);
@@ -124,7 +210,7 @@ test("a card answer joins the owner's own queued task that holds the return, whi
   const task = await notes('yarn', 'bolt');
   const asker = await work('juno');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Softer edges');
   assert.equal((await open('yarn')).job, first, 'the answer reuses the holder');
   assert.match(brief(first), /More feedback on Yarn[\s\S]*Softer edges/);
@@ -137,7 +223,7 @@ test("a card answer joins the owner's own queued task that holds the return, whi
 test("the asker hears a tagged card's answer and is told whose job brings the product back", async () => {
   const asker = await work('juno');
   const card = await ask(asker, { back: ['yarn', 'hello'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'More changes: see the notes');
   const yarn = (await open('yarn')).job, hello = (await open('hello')).job;
   assert.equal(job(yarn).agent, 'wren');
@@ -149,7 +235,7 @@ test("the asker hears a tagged card's answer and is told whose job brings the pr
 test("when the asker owns the product, the job that hears the answer holds the return: one job, not two", async () => {
   const asker = await work('wren');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Add bookmarks');
   const held = (await open('yarn')).job;
   assert.deepEqual(ownersOpen('wren').map(j => j.id), [held]);
@@ -162,7 +248,7 @@ test("an answer to the owner's other card joins the job that holds the return, a
   await run(holder);
   const asker = await work('wren');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Make it blue');
   const held = (await open('yarn')).job;
   assert.deepEqual([job(held).after, job(held).status], [holder, 'queued']);
@@ -240,7 +326,7 @@ test("an agent's old review card without a pull request is heard by its asker", 
   // (a review card of the old kind: no route files one any more)
   const card = Number(db.prepare("insert into requests (created, agent, job, kind, title, body) values (?, 'wren', ?, 'review', 'Good now?', 'b')")
     .run(new Date().toISOString(), asker.id).lastInsertRowid);
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'More changes');
   assert.match(brief(heardBy('wren').id), /More changes/);
 });
@@ -249,7 +335,7 @@ test("an agent's old review card without a pull request is heard by its asker", 
 test("a follow-up after a holder that never ran still carries the board's words", async () => {
   const asker = await work('juno');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Make the cover teal');
   const held = (await open('yarn')).job;
   db.prepare("update jobs set status = 'cancelled' where id = ?").run(held);   // (a ledger cancel: its call's follow-up drops the item)
@@ -263,7 +349,7 @@ test("a follow-up after a holder that never ran still carries the board's words"
 test("an owner-asker's new job keeps the line about the products that went to other owners", async () => {
   const asker = await work('wren');
   const card = await ask(asker, { products: ['yarn', 'hello'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Both need a darker header');
   const heard = (await open('yarn')).job, hello = (await open('hello')).job;
   assert.equal(job(hello).agent, 'bolt');
@@ -282,7 +368,7 @@ test("an ended owner-asker's card heard by a colleague's job queued after it: on
   const asker = await work('bolt');
   const card = await ask(asker, { products: ['hello'] });
   const kit = (await agent('job', asker.token, { agent: 'kit', title: 'after the card', brief: 'x', afterRequest: card })).body.id;
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Ship it');
   const held = (await open('hello')).job;
   assert.deepEqual(ownersOpen('bolt').map(j => j.id), [held]);
@@ -295,7 +381,7 @@ test("an ended owner-asker's own job queued after its card holds the return, and
   const card = await ask(asker, { products: ['hello'] });
   const after = async (who: string) => (await agent('job', asker.token, { agent: who, title: 'after the card', brief: 'x', afterRequest: card })).body.id;
   const next = await after('bolt'), kit = await after('kit');
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'Ship it');
   assert.equal((await open('hello')).job, next);
   assert.deepEqual(ownersOpen('bolt').map(j => j.id), [next]);
@@ -311,7 +397,7 @@ test("a new product.yaml owner's card while the old owner's return is open: one 
   try {
     const asker = await work('bolt');
     const card = await ask(asker, { products: ['yarn'] });
-    await h.finish(asker);
+    await finish(asker);
     await answer(card, 'Rounder corners');
     const held = (await open('yarn')).job;
     assert.deepEqual([job(held).agent, job(held).after], ['bolt', holder]);
@@ -354,7 +440,7 @@ test("a --back card taken off before the board saw it opens the return again", a
 test("a --back card closed after a call about it: the return stays closed, no sweep job, the call's follow-up has it", async () => {
   const holder = await run(await notes('yarn'));
   const card = await ask(holder, { back: ['yarn'] });
-  await h.finish(holder);
+  await finish(holder);
   assert.equal((await h.voice('call-end', { agent: 'wren', lines: ['Board: the yarn page, a few more changes.'], request: card })).status, 200);
   const { job: followUp } = db.prepare('select job from calls where request = ?').get(card) as { job: number };
   const follower = await run(followUp);
@@ -388,7 +474,7 @@ test("an owner's card answered after its job ended doesn't take the return from 
   await end(holder);   // its fix waits in a pull request; the minute's check hasn't run yet
   const asker = await work('wren');
   const card = await ask(asker, { products: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   await answer(card, 'And a ribbon');
   const held = (await open('yarn')).job;
   assert.deepEqual([job(held).after, job(held).status], [holder, 'queued']);
@@ -417,7 +503,7 @@ test("the intercom's chat asker hears which job brings its product back, and hol
     assert.notEqual(held, chat.id);
     assert.equal(job(held).agent, 'juno');
     // the turn ends, and the next one hears it
-    await h.finish(chat);
+    await finish(chat);
     assert.ok((await run(chat.id)).note.includes(`job #${held}`));
   } finally { writeFileSync(`${repo}/products/yarn/product.yaml`, 'name: Yarn\nstatus: preview\nowner: wren\n'); }
 });
@@ -427,7 +513,7 @@ test("the intercom's chat asker hears which job brings its product back, and hol
 test("a card that brings work back, answered with notes in review mode, closes and queues nothing; Good now is heard", async () => {
   const asker = await work('wren');
   const card = await ask(asker, { back: ['yarn'] });
-  await h.finish(asker);
+  await finish(asker);
   const listed = (await h.board('/api/requests')).body as any[];
   assert.equal(listed.find(r => r.id === card).back, true);
   const jobs = () => (h.jobs.listJobs() as any[]).length;
@@ -445,10 +531,8 @@ test("a card that brings work back, answered with notes in review mode, closes a
 
 test("a return holder before a colleague's notes task in its thread runs first and leaves the return open", async () => {
   const file = `${repo}/company/projects.yaml`, previous = readFileSync(file, 'utf8');
-  const threadends = await import('./threadends.ts');
   try {
-    writeFileSync(file, 'planning: threads\nprojects:\n  - { id: due, name: Due, owner: juno }\n');
-    threadends.watch();
+    writeFileSync(file, 'projects:\n  - { id: due, name: Due, owner: juno }\n');
     const thread = h.dueThread();
     const first = await notes('yarn', 'wren', thread);
     const task = await notes('yarn', 'bolt', thread);
@@ -457,7 +541,7 @@ test("a return holder before a colleague's notes task in its thread runs first a
     const holder = await run(first);
     await ask(holder, { back: ['yarn'] });
     assert.equal((await open('yarn')).job, first, 'the later task still owes its feedback');
-    await h.finish(holder);
+    await finish(holder);
     owed.sweep();
     assert.equal((await open('yarn')).job, first, 'no return while the colleague is still on it');
     await end(task);
@@ -469,6 +553,5 @@ test("a return holder before a colleague's notes task in its thread runs first a
     assert.match(brief(back), /note \d+/);
   } finally {
     writeFileSync(file, previous);
-    threadends.watch();
   }
 });

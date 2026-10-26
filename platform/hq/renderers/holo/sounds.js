@@ -1,5 +1,5 @@
-// The holo deck's sounds: soft digital chirps, filtered sweeps, sub-bass thumps and shimmering confirms (the chiptune
-// plays the rest), and its own music: an ethereal score (see score).
+// The holo deck's sounds: soft digital chirps, filtered sweeps, sub-bass thumps and shimmering confirms (the platform's
+// sound kit clicks the rest), and its own music: an ethereal score (see score).
 import { tone, noise, note, strike } from '../../shell/audio.js';
 
 const chirp = (n, dur, o) => tone(note(n), dur, { type: 'sine', vol: 0.09, slide: 1.25, attack: 0.004, ...o }); // a pure tone gliding up

@@ -630,7 +630,7 @@ test("The intercom lines that came of a call about a card for keys (the CEO's fo
   const spoken = 'Board: the yakbank key is yakzebra42.';
   assert.equal((await voice('call-end', { agent: 'juno', lines: [spoken], token: ctx.token, request: card.id })).status, 200);
   const follow = await run((await h.board('/api/calls')).body.find((c: any) => c.id === ctx.call).job);
-  assert.equal((await agent('item', follow.token, { call: ctx.call, kind: 'task', owner: 'juno', what: 'Check the yakbank keys', quote: spoken })).status, 200);
+  assert.equal((await agent('item', follow.token, { call: ctx.call, kind: 'task', goal: 'The board wants it on time.', owner: 'juno', what: 'Check the yakbank keys', quote: spoken })).status, 200);
   await agent('reply', follow.token, { text: 'Checked the yakbank: the key read out was yakzebra42.' }); // (its reply)
   await h.finish(follow, { result: 'Checked the yakbank: the key read out was yakzebra42.' });
   assert.equal((await h.board('/api/chat', { text: 'Is the yakbank on now?' })).status, 200);

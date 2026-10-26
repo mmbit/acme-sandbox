@@ -168,7 +168,7 @@ const pinNote = (ps: string, host: string, page: string, note = 'The button is h
     host,
     cookie: ps,
     origin: `https://${host}`,
-    body: { note, page, element: { tag: 'button', text: 'Buy' } },
+    body: { note, page, element: { el: { tag: 'button', text: 'Buy' }, kind: 'pin' } },
   });
 // review mode off: only the watch-along's answer to HQ's frame, HQ's origin filled in
 const FRAMED = readFileSync(new URL('../../../shared/watchalong/framed.js', import.meta.url), 'utf8').replace(
@@ -449,7 +449,11 @@ test("an outsider's screenshots in My notes: from HQ's host, for their own sessi
     body: {
       note: 'The basket hides',
       page: `https://${HELLO}/`,
-      element: { tag: 'button', text: 'Buy', rect: { x: 1, y: 2, w: 3, h: 4 } },
+      element: {
+        el: { tag: 'button', text: 'Buy', box: { x: 1, y: 2, w: 3, h: 4 } },
+        view: { w: 390, h: 844, x: 0, y: 0, dpr: 2 },
+        kind: 'pin',
+      },
       viewport: { w: 390, h: 844 },
       shot: PNG,
       pictures: [PNG],
@@ -460,13 +464,12 @@ test("an outsider's screenshots in My notes: from HQ's host, for their own sessi
     call(`/__review/mine${q}`, { host: HELLO, cookie }).then(r => r.json());
   assert.equal((await mine(ps, '')).list[0].shot, undefined, 'the count on every page carries no links');
   const [entry] = (await mine(ps)).list;
-  assert.deepEqual(
-    [entry.shot.element, entry.shot.viewport],
-    [
-      { kind: 'pin', rect: { x: 1, y: 2, w: 3, h: 4 }, area: null },
-      { w: 390, h: 844 },
-    ],
-  );
+  assert.deepEqual(entry.shot.mark, {
+    kind: 'pin',
+    area: null,
+    el: { box: { x: 1, y: 2, w: 3, h: 4 } },
+    view: { w: 390, h: 844, x: 0, y: 0, dpr: 2 },
+  });
   const link = new URL(entry.shot.url);
   assert.equal(link.origin, ORIGIN, "on HQ's host");
   assert.equal(link.pathname, `/guest/review-shot/${pinned.json().id}`);
@@ -954,6 +957,12 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.equal((await board('/api/review/people/sketchbook', { name: 'Fenna', on: true })).json().sketchbook, true);
   assert.equal(feedback.listShares().find((s: any) => s.id === again.id)!.people[0].sketchbook, true);
   assert.match((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/">Your Sketchbook</);
+  // (not where the company turns the Sketchbook off)
+  const brandFile = `${repo}/company/brand.yaml`,
+    brandBefore = readFileSync(brandFile, 'utf8');
+  writeFileSync(brandFile, `${brandBefore}\ncomputer: { sketchbook: false }\n`);
+  assert.doesNotMatch((await call(fenna.path, { cookie: fenna.g })).text, /Your Sketchbook/);
+  writeFileSync(brandFile, brandBefore);
   assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
   const pinned = await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped');
   assert.doesNotMatch((await call('/__review/mine', { host: HELLO, cookie: fenna.ps })).text, /UX specialist/);
@@ -1014,7 +1023,11 @@ test('a tester who sent their notes takes them up again on their door until its 
     host: FRONT,
     cookie: ramona.ps,
     origin: `https://${FRONT}`,
-    body: { note: 'The app’s button is small', page: app, element: { tag: 'button', text: 'Make' } },
+    body: {
+      note: 'The app’s button is small',
+      page: app,
+      element: { el: { tag: 'button', text: 'Make' }, kind: 'pin' },
+    },
   });
   assert.equal(inApp.status, 200, inApp.text);
   const mine = (ps: string, path = '/__review/mine') =>
@@ -1092,7 +1105,7 @@ test('in the tool itself: an outsider reads, changes and deletes their notes unt
   const general = await post(nadia.ps, 'notes', {
     note: 'The pages say thanks two ways',
     page,
-    element: { kind: 'general' },
+    element: { el: null, kind: 'general' },
   });
   assert.equal(general.status, 200);
   const listed = await mine(nadia.ps);
@@ -1320,7 +1333,7 @@ test('notes not yet sent get an early look about hourly; a fix it made thanks th
   const now = new Date().toISOString();
   db.prepare("insert into deploys (file, sha, fetched, finished, ok) values ('d-9471', 'abc', ?, ?, 1)").run(now, now);
   const js = await tool();
-  assert.match(js, /review mode: off|Tap the red pin/);
+  assert.match(js, /review mode: off|const OUTSIDE = 'Testco'/); // (the tool's words live in its parts now: dock.js)
   assert.match(js, /Thanks for spotting it!/);
   const filled = JSON.parse(runInNewContext(`'${/JSON\.parse\('(.*)'\);/.exec(js)![1]}'`)); // as the browser reads it
   assert.deepEqual(filled, { ids: [broken], notes: [PAY], crew: 'Testco' });

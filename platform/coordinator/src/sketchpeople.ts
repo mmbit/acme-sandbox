@@ -1,4 +1,4 @@
-// Invited people's own Sketchbooks (sketches.ts): the board gives one per person (grant), at the address they have; a
+// Invited people's own Sketchbooks (sketchbook.ts): the board gives one per person (grant), at the address they have; a
 // sketch of theirs is who 'guest:<grant>'. They open it from their door's page on the guest desk and see only their
 // own (openRoom).
 import { createHash } from 'node:crypto';
@@ -9,13 +9,13 @@ import * as chat from './chat.ts';
 import * as pictures from './pictures.ts';
 import * as guests from './guests.ts';
 import { REPO_DIR } from './config.ts';
-import { ceo } from './company.ts';
+import { brand, ceo } from './company.ts';
 import { findAgent } from './jobs.ts';
 import { hqDir } from './files.ts';
 import { reply } from './uploads.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
-import { FULL, isRefused, type Refused } from './sketchchecks.ts';
-import { DIR, isScrap } from './sketchscraps.ts';
+import { FULL, isRefused, type Refused } from './pagechecks.ts';
+import { DIR, isScrap } from './pagescraps.ts';
 
 // Invited people's Sketchbooks: one row per person the board gave one, at the
 // address they had then. A sketch of theirs is who 'guest:<id>'. Withdrawn: the board took it back (their sketches stay,
@@ -95,7 +95,7 @@ const sentBytes = (who: string) =>
 // and a few dates, and the table's index entry)
 const ROW_BYTES = 1024;
 export function spaceAfter(s: { id: number; who: string }, ink: number, drawn: { clean: Buffer } | null) {
-  const rows = db.prepare('select id, picture, length(ink) ink from sketches where who = ?').all(s.who) as {
+  const rows = db.prepare('select id, picture, length(ink) ink from book_pages where who = ?').all(s.who) as {
     id: number;
     picture: string | null;
     ink: number;
@@ -111,7 +111,7 @@ export function spaceAfter(s: { id: number; who: string }, ink: number, drawn: {
 }
 // Whether a person's book has no room for anything more: a new page or a picture on one
 export const bookFull = (who: string) => spaceAfter({ id: 0, who }, ROW_BYTES, null) > GUEST_SPACE;
-// A person's Send (sketches.ts sendSketch): once a version (its drawing and its label), its copy for the intercom kept
+// A person's Send (sketchbook.ts sendSketch): once a version (its drawing and its label), its copy for the intercom kept
 // within SEND_SPACE, and on the intercom as their own line, marked as not the board's words (charter rule 9: outside
 // text). The copy's id, or why not.
 export function sendAsGuest(
@@ -148,7 +148,7 @@ export function books() {
   const rows = db
     .prepare(
       `select g.id, g.guest, g.email, g.withdrawn, max(s.updated) at from sketch_guests g
-      join sketches s on s.who = 'guest:' || g.id group by g.id order by at desc`,
+      join book_pages s on s.who = 'guest:' || g.id group by g.id order by at desc`,
     )
     .all() as Grant[];
   return rows.map(g => ({ name: g.guest, who: whoOf(g), on: grantOf(g.guest)?.id === g.id }));
@@ -156,7 +156,7 @@ export function books() {
 
 // ---------------------------------------------------------------- their page on the guest desk
 // A person's own Sketchbook on the guest desk (guests.ts addRoom): /guest/sketchbook, the page and HQ's own files it
-// draws with (FILES), and under /guest/sketchbook/api/ the board's routes (sketches.ts, given to openRoom) for their own
+// draws with (FILES), and under /guest/sketchbook/api/ the board's routes (sketchbook.ts, given to openRoom) for their own
 // book. Their session is the guest desk's; a POST comes from HQ's own origin (server.ts checks it).
 const ROOM = 'sketchbook',
   GUEST_BASE = `/guest/${ROOM}/api`;
@@ -183,7 +183,8 @@ export type Routes = {
 export const openRoom = (routes: Routes) =>
   guests.addRoom({
     path: ROOM,
-    opens: hasBook,
+    // (not where the company's brand.yaml turns the Sketchbook off, computer: { sketchbook: false })
+    opens: name => brand().computer?.sketchbook !== false && hasBook(name),
     label: lang => ({ en: 'Your Sketchbook', nl: 'Je schetsboek', de: 'Dein Skizzenbuch' })[lang] ?? 'Your Sketchbook',
     async serve(req, res, name, rest) {
       const g = grantOf(name)!,
@@ -224,7 +225,7 @@ export const openRoom = (routes: Routes) =>
         return reply(res, 400, { error: 'not JSON' });
       }
       const shut = open();
-      return answer(res, shut ?? act(b, who, GUEST_BASE));
+      return answer(res, shut ?? (await act(b, who, GUEST_BASE)));
     },
   });
 // Whether the person may still change the book, past a body's await (it can be held back for minutes): still signed in

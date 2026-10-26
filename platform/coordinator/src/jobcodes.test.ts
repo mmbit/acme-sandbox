@@ -127,7 +127,9 @@ test("a standing task's word is HQ's: no queuer claims it, before its task first
     `${h.repo}/company/schedule.yaml`,
     '- { id: books, agent: moss, at: "Mon 09:00", title: The books, code: books }\n',
   );
-  const lead = await h.start({ agent: 'wren', thread: 'game/boss' });
+  // (a thread of its own: the earlier tests' tasks in game/boss hold a new one there in the thread's order)
+  projects.createThread({ project: 'game', name: 'Thread words', goal: 'It works', slug: 'words' });
+  const lead = await h.start({ agent: 'wren', thread: 'game/words' });
   const queue = (word: string) => h.hq(lead, 'job', 'moss', 'Something else', '--new', '--code', word);
   // (the disk watch's, which has run in the alarms' project, a studio kind's and the schedule's, which haven't)
   for (const word of ['DISK', 'place', 'BOOKS'])

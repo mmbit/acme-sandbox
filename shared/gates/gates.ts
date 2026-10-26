@@ -1,6 +1,6 @@
 // The gates every change passes before review: Prettier, ESLint and the type check, on what the change adds, and no
 // rendered video or audio in git (a render's recipe and its .render.json go in its place: shared/demo/renders.mjs), nor
-// generated output (a run's raw results: its summary goes in their place).
+// generated output (a run's raw results: its summary goes in their place), nor a brand colour HQ can't wear (brand.ts.
 // npm run gates [-- --base <ref>] [-- --all]   (CODE_STYLE.md, "The gates").
 //
 // Old code isn't held hostage. A file must be formatted if it's new or was formatted at the base. ESLint's findings
@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { join, relative } from 'node:path';
 import type { Diagnostic } from 'typescript';
 import { SIDE } from '../demo/renders.mjs';
+import { brandProblems } from './brand.ts';
 import { HqUnreachable, onLent, UNREACHED_EXIT } from './lent.ts';
 import { dataProblems, outputProblems, renderProblems, type Change, type Problem } from './output.ts';
 import { areaOf, missingPackage, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
@@ -93,6 +94,7 @@ async function checkChange(tools: Tools) {
     ...(typeChecked(changes) ? await newTypeErrors(tools, base, changes) : []),
     ...renderProblems(root, changes),
     ...dataProblems(root, changes),
+    ...brandProblems(root, changes),
     ...outputProblems(root, changes),
   ];
   if (!problems.length) {

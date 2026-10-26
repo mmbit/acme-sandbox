@@ -1,5 +1,5 @@
 // hq preview: a command run with a view-only pass to one product's preview (the coordinator's preview.ts createPass), to check
-// it as a visitor sees it, or (--player) as the job's own test player on a product with plans. The pass and the player's
+// it as a visitor sees it, or (--player) as the job's own test player. The pass and the player's
 // voucher go to the command in its environment alone, never on a command line, in a file or printed (charter rule 8).
 // (--player)
 import { spawnSync } from 'node:child_process';
@@ -18,10 +18,11 @@ export const preview = {
                                                      HQ_PREVIEW_URL, httpOnly: true, secure: true and sameSite: 'Lax'.
                                                      No review mode, chat, other host or HQ. HQ
                                                      keeps who had one, and this job's log says so
-   hq preview <slug> --player <name> -- <command>    on a product with plans: the same pass, as this run's own test
-                                                     player of that name (lowercase, digits, dashes): the product
-                                                     knows it as a player, never the board or a tester, the same on
-                                                     every pass this run with that name. HQ_PREVIEW_VOUCHER is its
+   hq preview <slug> --player <name> -- <command>    the same pass, as this run's own test player of that name
+                                                     (lowercase, digits, dashes): the product knows it as a player,
+                                                     never the board or a tester, the same on every pass this run
+                                                     with that name, and as the company's own (a product's company
+                                                     test purchase). On a product with plans HQ_PREVIEW_VOUCHER is its
                                                      tester's voucher: one plan once in test mode, up to the default
                                                      tester invite amount. A new
                                                      name is a new player with a voucher of its own`,
@@ -37,7 +38,8 @@ export const preview = {
     const pass = api.isSuccess(answer.status) ? api.parseOrNull(answer.body) : null;
     if (typeof pass?.cookie !== 'string' || typeof pass.url !== 'string')
       stop(`No pass: HQ didn't give one (HTTP ${api.httpCode(answer.status)}).`);
-    const access = player ? `test player ${player}'s pass, with its voucher,` : 'view-only pass';
+    const voucher = typeof pass.voucher === 'string' ? ', with its voucher,' : '';
+    const access = player ? `test player ${player}'s pass${voucher}` : 'view-only pass';
     warn(`hq preview: a ${access} to ${pass.url} until ${text(pass.expires)} or this run's end.`);
     const environment: NodeJS.ProcessEnv = { ...process.env, HQ_PREVIEW_URL: pass.url, HQ_PREVIEW_COOKIE: pass.cookie };
     delete environment.HQ_PREVIEW_VOUCHER;

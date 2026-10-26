@@ -24,6 +24,7 @@ const regroup = await import('./regroup.ts');
 const plan = await import('./plan.ts');
 const forecast = await import('./forecast.ts');
 const messages = await import('./messages.ts');
+const predictionlog = await import('./predictionlog.ts');
 
 const reset = () =>
   db.exec(`delete from jobs; delete from prs; delete from threads; delete from thread_aliases; delete from pauses;
@@ -50,7 +51,11 @@ test('a moved thread takes its jobs and pause along, and its old id keeps findin
     'object',
   );
   forecast.refresh();
-  const logged = () => db.prepare('select distinct thread from prediction_log where thread is not null').all();
+  // (the rows the plays kept, written first)
+  const logged = () => (
+    predictionlog.write(),
+    db.prepare('select distinct thread from prediction_log where thread is not null').all()
+  );
   assert.deepEqual(
     logged().map(r => r.thread),
     [levels],
@@ -72,7 +77,8 @@ test('a moved thread takes its jobs and pause along, and its old id keeps findin
   assert.equal(await h.claim(engineOf(held)), null, 'still paused');
   assert.deepEqual(h.job(held).wakes, ['paused with shop/levels']);
   assert.equal(projects.findThread(levels)?.id, 'shop/levels');
-  const lead = await h.start({ agent: 'wren' });
+  // (moss's: a thread takes tasks from its project's owner)
+  const lead = await h.start({ agent: 'moss' });
   const handed = await h.agent('job', lead.token, { agent: 'moss', title: 'Next', prompt: 'Do it.', thread: levels });
   assert.equal(handed.status, 200, JSON.stringify(handed.body));
   assert.equal(threadOf(handed.body.id), 'shop/levels', 'a brief naming the old id lands on the moved thread');
@@ -338,9 +344,6 @@ test('a refused owner message leaves the work in its old thread', async () => {
 
 test("the CEO's expedite, from a call too, takes a thread's task that never started out of its thread, and the thread's next task stops waiting for it", async () => {
   reset();
-  const { remember } = await import('./db.ts');
-  const { MODE } = await import('./threadorder.ts');
-  remember(MODE, 'threads'); // (a thread's tasks in turn)
   const levels = started('levels');
   const fix = h.queue({ agent: 'kit', thread: levels, title: 'Fix the claim', prompt: 'The whole brief' });
   const next = h.queue({ agent: 'kit', thread: levels });
@@ -359,7 +362,6 @@ test("the CEO's expedite, from a call too, takes a thread's task that never star
   assert.equal(h.job(next).ready, 1, 'the next task waits for it no longer');
   for (const token of [ceo, wren])
     await h.voice('call-end', { agent: token === ceo ? 'juno' : 'wren', lines: [], request: 0, token });
-  remember(MODE, null);
 });
 
 test("a thread's task that ran stays in its thread, and expedite's refusal says what to do instead", async () => {

@@ -17,11 +17,13 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { playwright } from '../browser/browser.mjs';
+import { fulfilPart } from './parts.mjs';
 
 const REPO = new URL('../..', import.meta.url).pathname;
 const at = process.argv.indexOf('--shots'), SHOTS = at > 0 ? process.argv[at + 1] : null;
 if (SHOTS) mkdirSync(SHOTS, { recursive: true });
 const { chromium } = playwright();
+const REVIEW_JS = readFileSync(join(REPO, 'shared/review/review.js'), 'utf8');
 
 const C = {
   strip: '#94a3b8', header: '#1d4ed8', awning: '#dc2626', row: '#16a34a', page: '#fde68a', panel: '#9333ea', box: '#0891b2',
@@ -226,7 +228,6 @@ const FILES = {
   '/slim.css': ['text/css', '@font-face { font-family: Slim; src: local("Liberation Sans Narrow"), local("DejaVu Sans Condensed"), local("Arial Narrow"); }'],
   '/awning.svg': ['image/svg+xml', `<svg xmlns="http://www.w3.org/2000/svg" width="20" height="12"><rect width="20" height="12" fill="${C.awning}"/></svg>`],
   '/chat.css': ['text/css', `:host { all: initial; position: fixed; z-index: 1000; } .panel { position: fixed; right: 10px; top: 20px; width: 150px; height: 200px; background: ${C.panel}; }`],
-  '/__review/review.js': ['text/javascript', readFileSync(join(REPO, 'shared/review/review.js'), 'utf8')],
 };
 // [x, y, colour]: the header, the awning and the panel over it; the row under the header (at the top) or the page
 // (scrolled); then the same at both: no faded-out dialog, the sibling over the high box, the sticky box cut at its
@@ -301,6 +302,7 @@ for (const [name, { path = '/', y, scroll = {}, tap, pinned, open, spots }] of O
   await ctx.route('http://shot.test/**', r => {
     const path = new URL(r.request().url()).pathname;
     if (path === '/__review/notes') { ({ shot, element } = JSON.parse(r.request().postData())); return r.fulfill({ contentType: 'application/json', body: '{"id":1}' }); }
+    if (fulfilPart(r, path, REVIEW_JS)) return;   // (review mode and its parts)
     const file = FILES[path]; return file ? r.fulfill({ contentType: file[0], body: file[1] }) : r.fulfill({ status: 404 });
   });
   await ctx.addInitScript(() => { // the tool's own root is closed: open it to drive the note
@@ -332,7 +334,7 @@ for (const [name, { path = '/', y, scroll = {}, tap, pinned, open, spots }] of O
   await page.evaluate(`{ const r = (${ui})(); r.querySelector('textarea').value = 'a note'; r.querySelector('.send').click(); }`);
   for (let t = 0; t < 50 && !shot; t++) await page.waitForTimeout(200);
   if (!shot) { failures.push(`${name}: no screenshot came with the note`); await ctx.close(); continue; }
-  if (pinned && element?.selector !== pinned) failures.push(`${name}: the note is pinned on ${element?.selector}, not ${pinned}`);
+  if (pinned && element?.el?.selector !== pinned) failures.push(`${name}: the note is pinned on ${element?.el?.selector}, not ${pinned}`);
   if (open && !(await page.evaluate(s => document.querySelector(s).open, open))) failures.push(`${name}: the popup closed`);
   if (SHOTS) { writeFileSync(join(SHOTS, `${name}-browser.png`), seen); writeFileSync(join(SHOTS, `${name}-review.jpg`), Buffer.from(shot.split(',')[1], 'base64')); }
   const read = src => page.evaluate(async ([src, spots]) => {

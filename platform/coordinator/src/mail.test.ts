@@ -2,7 +2,7 @@
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { harness } from './harness.ts';
 import { commitFile, git } from './fixture.ts';
@@ -470,6 +470,16 @@ test('a body past the runaway guard says where it was cut, stored and read back'
   const m = await one(id);
   assert.match(m.body, /^A very long complaint\./);
   assert.match(m.body, /\n\n… \(cut here: the message has 115,0\d\d characters\)$/);
+});
+
+test("a brand colour that isn't #rrggbb keeps the board's mail its own, as it comes in and as HQ starts again", async () => {
+  withBrandMail('boardOnly: [board]');
+  appendFileSync(BRAND, "colour: '#47f'\n");
+  try {
+    const id = await to('board@testco.example');
+    await restart();
+    assert.equal((await read(`mail?id=${id}`)).status, 404); assert.equal((await one(id)).id, id);
+  } finally { writeFileSync(BRAND, BRAND_TEXT); }
 });
 
 test('mail to a board-only address (mail.boardOnly) is in HQ\'s Mail, and no agent reads it: not its words, files or address', async () => {

@@ -21,7 +21,15 @@ type Trial = {
 type Give = { thread: string; project: string; name: string; deadline: number; past_ms: number | null };
 type Answer = {
   work: { title: string; agent: string; engine: string };
-  size: { agent_minutes: number; given: boolean; compared: number; basis: Basis; guessed: boolean };
+  size: {
+    agent_minutes: number;
+    given: boolean;
+    compared: number;
+    basis: Basis;
+    guessed: boolean;
+    given_minutes?: number;
+    bias?: { by: string; usual: number; jobs: number; own: boolean };
+  };
   free: Trial;
   earliest?: Trial & { found: boolean; due: number | null };
   by?: Trial & {
@@ -111,11 +119,20 @@ export function lateLines(late: string) {
 
 function sizeLine({ work, size }: Answer) {
   const on = size.given
-    ? 'as given'
+    ? givenWords(size)
     : size.guessed
       ? 'a first guess: too few done jobs to compare against'
       : `the mean of ${comparedWords(size.compared, size.basis)}`;
   return `${text(work.title)}, as ${text(work.agent)}'s work: ${duration(size.agent_minutes)} of agent time (${on}).`;
+}
+
+// A given size plays at what its sizer's sizes have lately come to (the coordinator's sizerbias.ts).
+function givenWords({ given_minutes, bias }: Answer['size']) {
+  if (!bias || given_minutes === undefined) return 'as given';
+  const whose = bias.own
+    ? `${text(bias.by)}'s last ${bias.jobs} sized jobs`
+    : `the last ${bias.jobs} jobs sized by agents`;
+  return `${duration(given_minutes)} as given, at ${bias.usual.toFixed(2)} of it: what ${whose} took for the time given`;
 }
 
 // The earliest without a window missing for it and the window that gives it, beside the time it's done with no window;
@@ -221,10 +238,12 @@ function agreedLines({ free, earliest, by }: Answer) {
   return deadlineLines(answer.deadlines, 'the work');
 }
 
-// The seats the plays counted as never filling, their fill rates not measured yet (as hq estimate says it).
+// Unknown prices make the replay conditional. They do not establish unlimited service.
 function unpricedLines({ free, earliest, by }: Answer) {
   const seats = new Set([free, earliest, by, by?.seat].flatMap(t => t?.unpriced ?? []));
   return seats.size
-    ? [`Seat fill rates are not measured yet for ${[...seats].join(', ')}: the play counts them as never filling.`]
+    ? [
+        `Seat fill rates are not measured yet for ${[...seats].join(', ')}: exhaustion times are unknown and these finishes are conditional.`,
+      ]
     : [];
 }

@@ -1,18 +1,16 @@
-// node --test platform/hq/shell/icons.test.js   (every look's icon style, and every style's folder complete)
+// node --test platform/hq/shell/icons.test.js   (every look style's icon style has a folder, and every folder is complete)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { STYLES } from './icons.js';
+import { iconStyle } from './icons.js';
 
 const HQ = join(dirname(fileURLToPath(import.meta.url)), '..');
 // a style's folder: the platform's, and the company's own drawings beside them (theme/hq/icons/<style>/, served first)
 const FOLDERS = [join(HQ, 'icons'), join(HQ, '../../theme/hq/icons')];
-const looks = readdirSync(join(HQ, 'renderers'), { withFileTypes: true })
-  .filter(d => d.isDirectory() && existsSync(join(HQ, 'renderers', d.name, 'scene.js')))
-  .map(d => d.name);
-const styles = [...new Set(Object.values(STYLES))];
+// the icon styles the looks wear: a look's style is pixel, line or any (its scene.js `style`)
+const styles = [...new Set(['pixel', 'line', 'any'].map(iconStyle))];
 const filesIn = style =>
   FOLDERS.map(f => join(f, style))
     .filter(existsSync)
@@ -25,17 +23,7 @@ const nameOf = file => file.split('/').pop().slice(0, -4);
 const namesIn = style => [...new Set(filesIn(style).map(nameOf))];
 const every = [...new Set(styles.flatMap(namesIn))].sort();
 
-test('every look has an icon style, and every style a folder', () => {
-  assert.deepEqual(
-    looks.filter(l => !STYLES[l]),
-    [],
-    'a look without a line in STYLES',
-  );
-  assert.deepEqual(
-    Object.keys(STYLES).filter(l => !looks.includes(l)),
-    [],
-    'a line in STYLES for a look HQ no longer has',
-  );
+test('every icon style a look wears has a folder', () => {
   assert.deepEqual(
     styles.filter(s => !existsSync(join(FOLDERS[0], s))),
     [],

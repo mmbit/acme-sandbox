@@ -25,7 +25,8 @@ test('the brand is the board\'s to read: {} without brand.yaml or theme/hq.yaml,
   assert.equal(brand.name, 'Testco');
   assert.equal(brand.names.newsletter, 'the Gazette');
   assert.equal(brand.logo.pixels.length, 3);
-  assert.equal(theme.renderer, 'brownstone');
+  assert.equal(theme.renderer, 'wire');
+  assert.equal(theme.style, 'pixel');
   // the company runs the care service once its plug-in is there (products/care, infra/products.py's CARE): HQ shows Care
   mkdirSync(`${repo}/products/care`, { recursive: true });
   writeFileSync(`${repo}/products/care/product.yaml`, 'name: Care\n');
@@ -34,6 +35,53 @@ test('the brand is the board\'s to read: {} without brand.yaml or theme/hq.yaml,
   assert.equal((await get()).body.studio, false);
   appendFileSync(`${repo}/company/brand.yaml`, '\nstudio: { keeper: bolt }\n');
   assert.equal((await get()).body.studio, true);
+});
+
+test("the company's style is theme/hq.yaml's word, none without one, and anything else an error", async () => {
+  const { style } = await import('./style.ts');
+  writeFileSync(`${repo}/theme/hq.yaml`, 'renderer: wire\n');
+  assert.equal(style(), undefined);
+  writeFileSync(`${repo}/theme/hq.yaml`, 'style: line\nrenderer: wire\n');
+  assert.equal(style(), 'line');
+  writeFileSync(`${repo}/theme/hq.yaml`, 'style: [pixel, line]\nrenderer: wire\n');
+  assert.throws(() => style());
+  copyFileSync(fixture('theme/hq.yaml'), `${repo}/theme/hq.yaml`);
+});
+
+test("each claimed job names the company's style and its craft note", async () => {
+  const cases = [
+    { theme: 'style: pixel', style: 'pixel', note: 'shared/craft/pixel-art.md' },
+    { theme: 'style: line\nstyleNote: knowledge/notes/design/drawing-look.md', style: 'line', note: 'shared/craft/line-art.md' },
+    { theme: 'style: paper\nstyleNote: knowledge/notes/design/paper.md', style: 'paper', note: 'knowledge/notes/design/paper.md' },
+    { theme: '', style: 'none', note: 'shared/craft/pictures.md' },
+  ];
+  try {
+    for (const sample of cases) {
+      writeFileSync(`${repo}/theme/hq.yaml`, `renderer: wire\n${sample.theme}\n`);
+      const job = await h.start({ agent: 'bolt' });
+      const prompt = job.company.stylePrompt;
+      assert.ok(prompt?.includes(`Company style: ${sample.style}`), sample.style);
+      assert.ok(prompt.includes(sample.note), sample.note);
+      assert.equal(prompt.split('\n').length, 1);
+      if (sample.style === 'line') assert.ok(prompt.includes('knowledge/notes/design/drawing-look.md'));
+      if (sample.style !== 'pixel') assert.doesNotMatch(prompt, /pixel|shared\/covers/);
+      await h.finish(job);
+    }
+  } finally {
+    copyFileSync(fixture('theme/hq.yaml'), `${repo}/theme/hq.yaml`);
+  }
+});
+
+test("HQ's looks are its renderers' folders with a scene, dressed when they bring a skin, for the board only", async () => {
+  const renderers = `${repo}/platform/hq/renderers`;
+  mkdirSync(`${renderers}/plain`, { recursive: true });
+  mkdirSync(`${renderers}/keys`);
+  mkdirSync(`${renderers}/sketches`);
+  for (const file of ['plain/scene.js', 'keys/scene.js', 'keys/skin.css', 'keys/sounds.js']) writeFileSync(`${renderers}/${file}`, '');
+  const looks = (cookie = h.boardCookie) => fetch(`${h.base}/renderers/looks.json`, { headers: { cookie }, redirect: 'manual' });
+  assert.deepEqual(await (await looks()).json(), [{ name: 'keys', dressed: true }, { name: 'plain', dressed: false }]);
+  assert.notEqual((await looks('')).status, 200);
+  rmSync(renderers, { recursive: true });
 });
 
 test('HQ\'s pages name the company before any script runs: index.html, the manifest, the login page and its logo', async () => {
@@ -57,6 +105,32 @@ logo: { svg: acme.svg, svgDark: acme-dark.svg, alt: Acme }
   assert.equal((await page('/api/org')).status, 401);          // and only a logo is
   writeFileSync(`${repo}/company/brand.yaml`, 'name: [\n');
   assert.equal((await page('/login')).status, 200);            // a brand.yaml that doesn't parse can't lock the board out
+});
+
+test("the brand's colour is the title bar's and the guest page's accent, with readable letters, unless they name their own", async () => {
+  writeFileSync(`${repo}/company/brand.yaml`, "colour: '#d6ea3c'\n");
+  assert.match(await (await page('/', h.boardCookie)).text(), /<meta name="theme-color" content="#d6ea3c">/);
+  assert.deepEqual((await get()).body.brand.guest.colours, { accent: '#d6ea3c', onAccent: '#000000' });
+  writeFileSync(`${repo}/company/brand.yaml`, "colour: '#2f3a8f'\n");
+  assert.deepEqual((await get()).body.brand.guest.colours, { accent: '#2f3a8f', onAccent: '#ffffff' });
+  writeFileSync(`${repo}/company/brand.yaml`, "colour: '#d6ea3c'\napp: { themeColour: '#15171c' }\nguest: { colours: { accent: '#0969da' } }\n");
+  const { brand } = (await get()).body;
+  assert.equal(brand.app.themeColour, '#15171c');
+  assert.deepEqual(brand.guest.colours, { accent: '#0969da' });
+  rmSync(`${repo}/company/brand.yaml`);
+});
+
+test("a brand colour that isn't #rrggbb fails HQ's look loudly, naming it, and empties nothing else of brand.yaml", async t => {
+  const said = t.mock.method(console, 'error', () => {});
+  writeFileSync(`${repo}/company/brand.yaml`, "name: Acme\ncolour: '#47f'\nmail: { domain: example.com, boardOnly: [board] }\n");
+  assert.equal((await get()).status, 500);
+  assert.match(said.mock.calls.map(c => String(c.arguments[0]?.message ?? c.arguments[0])).join('\n'), /company\/brand\.yaml's colour "#47f" isn't #rrggbb/);
+  assert.equal((await page('/login')).status, 200);
+  // mail, jobs, care and calls read the file as it is (the board's own mail stays its own: mail.test.ts)
+  const { brand, mailDomains } = await import('./company.ts');
+  assert.deepEqual(brand().mail.boardOnly, ['board']);
+  assert.deepEqual(mailDomains(), ['example.com']);
+  rmSync(`${repo}/company/brand.yaml`);
 });
 
 test('a brand.yaml that doesn\'t parse, or whose mascots aren\'t a list of maps, can\'t stop the job queue or the brand', async () => {

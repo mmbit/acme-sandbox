@@ -22,11 +22,14 @@ export const complete = {
         error = JSON.parse(answer.body).error ?? undefined;
       } else {
         const [checkout, ...readable] = args.slice(1);
-        const helper = await gates(checkout, readable, true);
-        const checked = helper.code === 2 ? await gates(checkout, readable, false) : helper;
-        if (checked.code !== 0) {
-          const output = checked.output || `npm run gates exited ${checked.code}`;
-          error = checked === helper ? output : `Helper attempt:\n${helper.output}\nLocal attempt:\n${output}`;
+        error = await owedAtEnd();
+        if (!error) {
+          const helper = await gates(checkout, readable, true);
+          const checked = helper.code === 2 ? await gates(checkout, readable, false) : helper;
+          if (checked.code !== 0) {
+            const output = checked.output || `npm run gates exited ${checked.code}`;
+            error = checked === helper ? output : `Helper attempt:\n${helper.output}\nLocal attempt:\n${output}`;
+          } else error = await untold();
         }
       }
     } catch (failure) {
@@ -44,6 +47,30 @@ export const complete = {
     );
   },
 };
+
+// A follow-through check's session ends only once its verdict is in (the coordinator's followthrough.ts). A lookup
+// that fails holds the session too, as a failed gate does.
+async function owedAtEnd() {
+  const answer = await api.call('followthrough-owed', { timeoutMs: 10_000 });
+  if (!api.isSuccess(answer.status)) throw new Error(api.errorIn(answer.body) || `HTTP ${answer.status}`);
+  if (!JSON.parse(answer.body).owed) return undefined;
+  return (
+    "this is HQ's follow-through check and it has recorded no verdict: `hq followthrough ok` when all is on track, " +
+    'else `hq followthrough acted "what was off and what you did, in one line"`, then end'
+  );
+}
+
+// The board's notes sent to this job that it neither fixed nor answered, each told once (the coordinator's feedback.ts
+// untold): a run that still ends leaves them to go back to routing with its report. A check that fails blocks with its
+// error, as any other.
+async function untold() {
+  const answer = await api.call('notes-untold', { body: {}, timeoutMs: 10_000 });
+  if (!api.isSuccess(answer.status)) throw new Error(api.errorIn(answer.body) || `HTTP ${answer.status}`);
+  const notes: number[] = JSON.parse(answer.body).notes;
+  if (!notes.length) return undefined;
+  const ids = notes.map(n => `#${n}`).join(', ');
+  return `the board's ${notes.length === 1 ? 'note' : 'notes'} ${ids} sent to this job ${notes.length === 1 ? 'is' : 'are'} neither marked fixed nor answered: mark each you fixed (hq note <id> fixed "..."), answer each that needs no work (hq note <id> answered "..."), and do the rest. One left open goes back to routing with your report when this job ends`;
+}
 
 // The answer the worker submits (verdictOf, verdict.ts): the final message's JSON object, bare or in one ```json fence.
 // The file on disk isn't the stream's (a Codex edit carries no contents, a command may rewrite it), so a final message

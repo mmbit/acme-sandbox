@@ -143,3 +143,91 @@ test("a lost run's hours end at its last heartbeat in readings already read", as
   // (the hour to 11:00 had half an hour of the run, the hours after none)
   assert.ok(Math.abs(fillRates().get('claude')!.five.get('claude-lost')! - 0.2) < 1e-10);
 });
+
+test('different observed overlap mixtures identify stage burn in both windows without future readings', async () => {
+  const start = T0 + 14 * HOUR;
+  mock.timers.setTime(start);
+  await report('claude-mix', 0.1, 0.1, start + 5 * HOUR);
+  const work = await h.start({ agent: 'bolt' }, { seat: 'claude-mix' });
+  mock.timers.setTime(start + HOUR);
+  await h.heartbeat(work);
+  await report('claude-mix', 0.2, 0.11, start + 5 * HOUR);
+  const review = await h.start({ agent: 'kit', kind: 'review' }, { seat: 'claude-mix' });
+  mock.timers.setTime(start + 2 * HOUR);
+  await h.heartbeat(work);
+  await h.heartbeat(review);
+  await report('claude-mix', 0.5, 0.15, start + 5 * HOUR);
+  const mix = fillRates().get('claude')!.mix.get('claude-mix')!;
+  assert.ok(Math.abs(mix.work.five! - 0.1) < 1e-10);
+  assert.ok(Math.abs(mix.review.five! - 0.2) < 1e-10);
+  assert.ok(Math.abs(mix.work.week! - 0.01) < 1e-10);
+  assert.ok(Math.abs(mix.review.week! - 0.03) < 1e-10);
+  const projected = seatProjection('claude-mix');
+  assert.ok(Math.abs(projected.five_hour! - (start + (2 + 0.5 / 0.3) * HOUR)) < 1);
+  assert.ok(Math.abs(projected.week! - (start + (2 + 0.85 / 0.04) * HOUR)) < 1);
+  assert.ok(mix.work.fiveFit!.residualPerHour < 1e-10);
+  assert.equal(mix.work.fiveFit!.observations, 2);
+  const cutoff = fillRates(start + HOUR)
+    .get('claude')!
+    .mix.get('claude-mix')!;
+  assert.equal(cutoff.review, undefined, 'a future overlap and reading cannot price a cutoff');
+  assert.ok(Math.abs(cutoff.work.five! - 0.1) < 1e-10);
+  await h.finish(work);
+  await h.finish(review);
+});
+
+test('a fixed concurrent stage mixture preserves unknown component prices', async () => {
+  const start = T0 + 17 * HOUR;
+  mock.timers.setTime(start);
+  await report('claude-unidentified', 0.1, 0.1, start + 5 * HOUR);
+  const work = await h.start({ agent: 'bolt' }, { seat: 'claude-unidentified' });
+  const review = await h.start({ agent: 'kit', kind: 'review' }, { seat: 'claude-unidentified' });
+  mock.timers.setTime(start + HOUR);
+  await report('claude-unidentified', 0.4, 0.15, start + 5 * HOUR);
+  const rates = fillRates().get('claude')!;
+  assert.ok(Math.abs(rates.five.get('claude-unidentified')! - 0.15) < 1e-10);
+  const mix = rates.mix.get('claude-unidentified')!;
+  assert.equal(mix.work.five, null);
+  assert.equal(mix.review.five, null);
+  assert.equal(mix.work.week, null);
+  assert.equal(mix.review.week, null);
+  await h.finish(work);
+  await h.finish(review);
+});
+
+test('state reports do not manufacture zero-burn intervals or move provider observations before their report cutoff', async () => {
+  const start = T0 + 20 * HOUR;
+  const reading = (used: number, observedAt: number) =>
+    h.worker('seat', {
+      seat: 'claude-aged',
+      engine: 'claude',
+      state: 'ready',
+      util: used,
+      week: used,
+      resets: start + 5 * HOUR,
+      weekResets: start + 7 * 24 * HOUR,
+      fiveHourObservedAt: observedAt,
+      weekObservedAt: observedAt,
+    });
+  mock.timers.setTime(start);
+  await reading(0.1, start);
+  const work = await h.start({ agent: 'bolt' }, { seat: 'claude-aged' });
+  mock.timers.setTime(start + HOUR);
+  await h.heartbeat(work);
+  await reading(0.2, start + HOUR);
+  mock.timers.setTime(start + 2 * HOUR);
+  await h.heartbeat(work);
+  await reading(0.2, start + HOUR);
+  assert.equal(fillRates().get('claude')!.measurements.get('claude-aged')!.fiveHours, 1);
+  mock.timers.setTime(start + 3 * HOUR);
+  await h.heartbeat(work);
+  await reading(0.3, start + 2 * HOUR);
+  assert.equal(fillRates().get('claude')!.measurements.get('claude-aged')!.fiveHours, 2);
+  assert.equal(
+    fillRates(start + 2 * HOUR)
+      .get('claude')!
+      .measurements.get('claude-aged')!.fiveHours,
+    1,
+  );
+  await h.finish(work);
+});

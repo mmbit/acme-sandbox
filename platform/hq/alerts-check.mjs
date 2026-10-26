@@ -8,12 +8,13 @@
 import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const { chromium, devices } = playwright();
 const args = process.argv.slice(2),
   out = args.includes('--out') ? args[args.indexOf('--out') + 1] : null;
 const looks = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out');
-const LOOKS = looks.length ? looks : ['wire', 'brownstone', 'holo'];
+const LOOKS = looks.length ? looks : lookNames();
 const SIZES = { phone: devices['Pixel 7'], laptop: { viewport: { width: 1280, height: 860 } } };
 
 const server = await serve(),

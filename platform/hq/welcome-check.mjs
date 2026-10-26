@@ -5,8 +5,8 @@
 // intercom opening again. A company with a team opens as it always does.
 //   node platform/hq/welcome-check.mjs [--shots dir]
 // HQ on its own files with a fake /api (so it isn't in dev mode), at a phone's size, in the new company's theme
-// (template/theme/hq.yaml): Wire in its Day and Night by the device. Chromium's fake microphone (its beeps) is the board
-// talking.
+// (template/theme/hq.yaml): Wire in its Day and Night by the device, lit in its brand's colour (template brand.yaml).
+// Chromium's fake microphone (its beeps) is the board talking.
 import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ const shots = process.argv.includes('--shots') ? process.argv[process.argv.index
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const theme = parse(readFileSync(join(ROOT, 'template/theme/hq.yaml'), 'utf8'));
+const { colour } = parse(readFileSync(join(ROOT, 'template/company/brand.yaml'), 'utf8'));
 const languages = [
   { code: 'en', name: 'English', own: 'English' },
   { code: 'nl', name: 'Dutch', own: 'Nederlands' },
@@ -42,7 +43,7 @@ await context.route(`${base}/api/**`, async r => {
     get = r.request().method() === 'GET';
   if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
   if (path === '/api/gazette') return r.fulfill({ json: [] });
-  if (path === '/api/brand') return r.fulfill({ json: { brand: {}, theme } });
+  if (path === '/api/brand') return r.fulfill({ json: { brand: { colour }, theme } });
   if (path === '/api/language' && get) return r.fulfill({ json: { lang: 'en', languages } });
   if (path === '/api/language') {
     if (saveDown) return r.fulfill({ status: 503, body: '' });
@@ -76,7 +77,8 @@ assert.deepEqual(
   ['English', 'Nederlands', 'Deutsch'],
   'the intercom opens by itself on the languages, each in itself',
 );
-// the template's colourways, Day on a light device and Night on a dark one (scene.js colourway())
+// the template's colourways, Day on a light device and Night on a dark one (scene.js colourway()), each lit in the
+// brand's colour (scene.js branded().)
 const worn = () => page.evaluate(() => ['--k-ground', '--k-accent'].map(k => document.body.style.getPropertyValue(k)));
 if (shots) mkdirSync(shots, { recursive: true });
 for (const [scheme, way] of [
@@ -86,8 +88,8 @@ for (const [scheme, way] of [
   await page.emulateMedia({ colorScheme: scheme });
   await page.reload();
   await page.waitForSelector('#chat .hint .langs button');
-  const { ground, accent } = theme.wire.colourways.find(w => w.id === way);
-  assert.deepEqual(await worn(), [ground, accent], `a ${scheme} device wears the template's ${way}`);
+  const { ground } = theme.wire.colourways.find(w => w.id === way);
+  assert.deepEqual(await worn(), [ground, colour], `a ${scheme} device wears the template's ${way}`);
   if (shots) await page.screenshot({ path: `${shots}/welcome-${scheme}.png` });
 }
 
@@ -126,6 +128,25 @@ await page.goto(hq);
 await page.waitForSelector('#btn-intercom');
 await page.waitForTimeout(1000);
 assert.equal(await page.$('#chat'), null, 'a company with a team opens on HQ, not the intercom');
+
+// a logo with a part in the brand's colour: its accent part turns the look on to the next colourway and back (scene.js
+// recolour(), each found by its id.)
+await page.route(`${base}/wordmark.svg`, r =>
+  r.fulfill({
+    contentType: 'image/svg+xml',
+    body: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 30"><rect width="40" height="30" fill="${colour}"/></svg>`,
+  }),
+);
+await page.emulateMedia({ colorScheme: 'light' });
+await page.reload();
+await page.waitForSelector('#hud svg.logo .logo-accent');
+const picked = () => page.evaluate(() => JSON.parse(localStorage.getItem('hq.wire.colourway')));
+const turned = [];
+for (let i = 0; i < 2; i++) {
+  await page.click('#hud svg.logo .logo-accent');
+  turned.push(await picked());
+}
+assert.deepEqual(turned, ['night', 'day'], "the logo's accent turns Day to Night and Night to Day");
 
 assert.deepEqual(errors, []);
 await context.unrouteAll({ behavior: 'ignoreErrors' }); // (HQ's polls still under way)

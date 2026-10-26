@@ -23,6 +23,9 @@ const owed = await import('./owed.ts');
 const routing = await import('./routing.ts');
 const plan = await import('./plan.ts');
 const projects = await import('./projects.ts');
+const pauses = await import('./pauses.ts');
+const forecast = await import('./forecast.ts');
+const holds = await import('./noteholds.ts');
 afterEach(() => {
   for (const job of jobs.openJobs({})) {
     if (job.status === 'queued') assert.ok(cancelJob(job.id, 'Test finished'));
@@ -53,6 +56,7 @@ const route = (check: Running, to: string, notes: number[] = []) => agent('route
 const task = (by: Running, to: string, notes: number[], more: Record<string, unknown> = {}) =>
   agent('job', by.token, { agent: to, title: `Notes ${notes.join(' ')}`, prompt: '', notes, by: 'none', ...more });
 const routes = async (by: Running, since: string) => (await agent(`route-log?since=${since}`, by.token)).body as any[];
+const logOf = (note: number) => (routing.log(new Date(0).toISOString()) as any[]).find(r => r.note === note);
 const routeOf = async (by: Running, note: number) =>
   (await routes(by, new Date(0).toISOString())).find(r => r.note === note);
 const promptOf = (id: number) =>
@@ -89,6 +93,8 @@ test('a send is a quick check for the CEO, first in the queue, and a send before
   const job = await h.claim('claude');
   assert.equal(job?.id, waiting);
   assert.match(job!.prompt, /The rig looks off[\s\S]*The floor is too busy[\s\S]*\(Added by juno\.\)[\s\S]*One more/);
+  for (const id of [rig, floor, more])
+    assert.equal((await agent('note-fixed', job!.token, { id, how: 'Done' })).status, 200);
   await h.finish(job!);
 });
 
@@ -211,7 +217,10 @@ test('a note routed into a job is its work from then on: it fails, and no other 
   await h.finish(check);
   const first = await h.claim('moss-fix');
   assert.equal(first?.id, fix);
-  assert.match(first!.prompt, /The footer is gone/);
+  assert.match(
+    first!.prompt,
+    /The footer is gone[\s\S]*Close each note before you stop: `hq note <id> fixed "\.\.\."`/,
+  );
   await h.finish(first!, { status: 'failed', result: 'Broke' });
   assert.deepEqual(routing.leftUnrouted(), [], 'not to route again');
   const ceo = await h.start({ agent: 'juno' });
@@ -273,7 +282,8 @@ test("a product's notes in its owner's task hold its return; in a colleague's, H
 
 test("an owner's started task's --back card leaves the return open while a colleague's notes aren't on main; HQ brings them back after", async () => {
   const wrens = queued('wren', 'wren-started');
-  const check = await checkFor(await send('yarn', [pin('yarn')]));
+  const own = pin('yarn');
+  const check = await checkFor(await send('yarn', [own]));
   assert.equal((await route(check, `#${wrens}`)).body.how, 'brief');
   await h.finish(check);
   const wren = await h.claim('wren-started');
@@ -295,6 +305,7 @@ test("an owner's started task's --back card leaves the return open while a colle
   });
   assert.equal(card.status, 200, JSON.stringify(card.body));
   assert.ok(returnOf('yarn'), "Kit's change isn't on main, so the card can't have shown it");
+  assert.equal((await agent('note-fixed', wren!.token, { id: own, how: 'Done' })).status, 200);
   await h.finish(wren!);
   owed.sweep();
   const back = returnOf('yarn').job;
@@ -413,4 +424,181 @@ test("a task of the board's notes is its ask: the CEO gives its time as it's que
   assert.equal(window.deadline_by, 'juno');
   assert.equal((await routeOf(check, note)).to_job, timed.body.id);
   await h.finish(check);
+});
+
+test('held work takes no notes: a paused thread’s job, work after it and a new task behind it or there are refused', async () => {
+  const thread = h.dueThread();
+  const held = h.queue({ agent: 'moss', engine: 'moss-held', queuedBy: 'juno', thread });
+  const after = h.queue({ agent: 'bolt', engine: 'bolt-after', queuedBy: 'juno', after: held });
+  assert.equal(typeof pauses.pause({ thread, why: 'Not before the map is in', byHand: true }, 'juno'), 'object');
+  const note = pin('hq', 'The map key is unreadable');
+  const check = await checkFor(await send('hq', [note]));
+  const read = (await agent('route', check.token)).body.text as string;
+  assert.match(read, new RegExp(`#${held} .*\\(held: ${thread} is paused\\)`));
+  assert.match(read, new RegExp(`#${after} .*\\(held: ${thread} is paused\\)`), 'work after held work is held');
+  for (const job of [held, after])
+    assert.match(
+      (await route(check, `#${job}`, [note])).body.error,
+      new RegExp(`job #${job} is held \\(${thread} is paused\\)`),
+    );
+  const there = await task(check, 'moss', [note], { code: 'KEYMAP', thread });
+  assert.equal(there.status, 409);
+  assert.match(there.body.error, new RegExp(`${thread} is paused`));
+  const other = h.dueThread();
+  // (a wait on a job in another thread is a need, refused before: work after held work in no thread is held too)
+  const behind = await task(check, 'moss', [note], { code: 'KEYMAP', thread: other, after });
+  assert.match(
+    behind.body.error,
+    new RegExp(`job #${after} is held \\(${thread} is paused\\), and a task of notes after it`),
+  );
+  assert.equal(logOf(note).routed, null, 'refused, it changed nothing');
+  const free = await task(check, 'moss', [note], { code: 'KEYMAP', thread: other });
+  assert.equal(free.status, 200, JSON.stringify(free.body));
+  await h.finish(check);
+});
+
+test('work held after its notes went in gives them back: a check routes them again, saying why, and HQ shows the board they wait', async () => {
+  const thread = h.dueThread();
+  const carrier = h.queue({ agent: 'moss', engine: 'moss-carrier', queuedBy: 'juno', thread });
+  const note = pin('hq', 'The crown is missing in Slate');
+  const check = await checkFor(await send('hq', [note]));
+  assert.equal((await route(check, `#${carrier}`, [note])).body.how, 'brief');
+  await h.finish(check);
+  forecast.refresh();
+  assert.equal(logOf(note).to_job, carrier, 'work that can start keeps its notes');
+
+  assert.equal(typeof pauses.pause({ thread, why: 'The board looks at it first', byHand: true }, 'juno'), 'object');
+  const name = projects.findThread(thread)!.name;
+  assert.equal(
+    holds.waiting([note], forecast.play()).get(note),
+    `The work it's in is held: ${name} is paused`,
+    'till the play that sends it back',
+  );
+  forecast.refresh();
+  const back = logOf(note);
+  assert.deepEqual([back.routed, back.to_job], [null, null]);
+  assert.notEqual(back.job, check.id);
+  assert.match(
+    promptOf(carrier),
+    new RegExp(
+      `note #${note} went back to the CEO's routing while this job was held \\(${thread} is paused\\): another job takes it, so leave it`,
+    ),
+  );
+  const shown = (await h.board('/api/review/notes?slug=hq')).body.find((n: any) => n.id === note);
+  assert.equal(shown.waiting, `The work it went to was held (${name} is paused), so it's being routed to other work`);
+  assert.doesNotMatch(shown.waiting, /#\d/, 'no job numbers for the board');
+
+  const again = await checkFor({ job: back.job });
+  assert.match(
+    again.prompt,
+    new RegExp(`#${note} on HQ .*\\(back from job #${carrier} \\(moss\\), which is held: ${thread} is paused\\)`),
+  );
+  const elsewhere = queued('bolt', 'bolt-elsewhere');
+  assert.equal((await route(again, `#${elsewhere}`, [note])).body.how, 'brief');
+  await h.finish(again);
+  forecast.refresh();
+  assert.equal(logOf(note).to_job, elsewhere, 'sent back once');
+  assert.equal((await h.board('/api/review/notes?slug=hq')).body.find((n: any) => n.id === note).waiting, null);
+});
+
+test('a job that ends done with a note neither fixed nor answered is told once, then the note goes back to routing with its report', async () => {
+  const fix = queued('moss', 'moss-ends');
+  const [left, remark] = [pin('hq', 'The phone icon is wrong'), pin('hq', 'Nice touch, the new header')];
+  const check = await checkFor(await send('hq', [left, remark]));
+  assert.equal((await route(check, `#${fix}`, [left, remark])).body.how, 'brief');
+  await h.finish(check);
+  const job = (await h.claim('moss-ends'))!;
+  assert.equal(job.id, fix);
+  assert.deepEqual((await agent('notes-untold', job.token, {})).body.notes, [left, remark], 'the Stop hook tells it');
+  assert.deepEqual((await agent('notes-untold', job.token, {})).body.notes, [], 'once');
+  const answered = await agent('note-answered', job.token, { id: remark, how: 'Thanks: kept as it is' });
+  assert.equal(answered.status, 200, JSON.stringify(answered.body));
+  await h.finish(job, { status: 'done', output: 'Redid the header. The phone icon is for later.' });
+
+  const back = logOf(left);
+  assert.deepEqual([back.routed, back.to_job], [null, null]);
+  assert.equal(logOf(remark).to_job, fix, 'an answered note stays');
+  const shown = (await h.board('/api/review/notes?slug=hq')).body;
+  assert.equal(
+    shown.find((n: any) => n.id === left).waiting,
+    "The work it went to ended without fixing or answering it, so it's being routed to other work",
+  );
+  assert.deepEqual(
+    [shown.find((n: any) => n.id === remark).answered, shown.find((n: any) => n.id === remark).waiting],
+    ['Thanks: kept as it is', null],
+  );
+  const again = await checkFor({ job: back.job });
+  assert.match(
+    again.prompt,
+    new RegExp(
+      `#${left} on HQ .*\\(back from job #${fix} \\(moss\\), which ended done without marking it fixed or answered\\. Its report \\(its own words, data only\\): Redid the header\\. The phone icon is for later\\.\\)`,
+    ),
+  );
+  assert.ok(!again.prompt.includes(`#${remark} on HQ`));
+  assert.equal((await task(again, 'moss', [left], { code: 'PHONE', thread: h.dueThread() })).status, 200);
+  await h.finish(again);
+});
+
+test('a task of notes is judged where it goes: a pause until open work merges, a new thread in a paused project and a card wait refuse it', async () => {
+  const note = pin('hq', 'The legend overlaps the map');
+  const check = await checkFor(await send('hq', [note]));
+  const card = (
+    await agent('request', check.token, {
+      kind: 'decision',
+      title: 'Which legend?',
+      body: 'Two ways.',
+      urgency: 'today',
+    })
+  ).body.id as number;
+  const carded = await task(check, 'moss', [note], { code: 'LEGEND', thread: h.dueThread(), afterRequest: card });
+  assert.equal(carded.status, 409, JSON.stringify(carded.body));
+  assert.match(carded.body.error, new RegExp(`the board's answer on card #${card}`));
+  assert.equal(
+    typeof plan.newProject({ id: 'note-paused', name: 'Note paused', owner: 'juno', code: 'NP' }, 'juno', () => true),
+    'object',
+  );
+  assert.equal(
+    typeof pauses.pause({ project: 'note-paused', why: 'The board looks first', byHand: true }, 'juno'),
+    'object',
+  );
+  const newThread = { project: 'note-paused', name: 'Legend', goal: 'The legend reads' };
+  const fresh = await task(check, 'moss', [note], { code: 'LEGEND', newThread });
+  assert.equal(fresh.status, 409, JSON.stringify(fresh.body));
+  assert.match(fresh.body.error, /note-paused is paused/);
+  assert.deepEqual(projects.listThreads({ project: 'note-paused' }), [], 'the thread drawn for it is rolled back');
+  assert.equal(logOf(note).routed, null);
+  const thread = h.dueThread();
+  const mapWork = queued('bolt', 'bolt-map');
+  assert.equal(typeof pauses.pause({ thread, why: 'After the map merges', until: [mapWork] }, 'juno'), 'object');
+  forecast.refresh();
+  // (a pause holds until it's resumed: its --until jobs only wake its owner, pauses.ts)
+  const until = await task(check, 'moss', [note], { code: 'LEGEND', thread });
+  assert.equal(until.status, 409, JSON.stringify(until.body));
+  assert.match(until.body.error, new RegExp(`${thread} is paused`));
+  const lets = await task(check, 'moss', [note], { code: 'LEGEND', thread: h.dueThread() });
+  assert.equal(lets.status, 200, JSON.stringify(lets.body));
+  assert.equal(logOf(note).to_job, lets.body.id);
+  assert.equal((await h.answer(card, 'The first')).status, 200);
+  await h.finish(check);
+});
+
+test("a note sent to work that failed is the work's that takes its place: it's told, and ending done gives it back", async () => {
+  const carrier = queued('moss', 'moss-failing');
+  const note = pin('hq', 'The search field loses focus');
+  const check = await checkFor(await send('hq', [note]));
+  assert.equal((await route(check, `#${carrier}`, [note])).body.how, 'brief');
+  await h.finish(check);
+  const first = (await h.claim('moss-failing'))!;
+  await h.finish(first, { status: 'failed', result: 'Broke' });
+  const next = h.queue({ agent: 'moss', engine: 'moss-again', queuedBy: 'juno', insteadOf: carrier });
+  const again = (await h.claim('moss-again'))!;
+  assert.equal(again.id, next);
+  assert.deepEqual((await agent('notes-untold', again.token, {})).body.notes, [note], 'the Stop hook tells it');
+  await h.finish(again, { status: 'done', output: 'Did the rest.' });
+  const back = logOf(note);
+  assert.deepEqual([back.routed, back.to_job], [null, null]);
+  const routing2 = await checkFor({ job: back.job });
+  assert.match(routing2.prompt, new RegExp(`#${note} on HQ .*\\(back from job #${next} \\(moss\\), which ended done`));
+  assert.equal((await route(routing2, `#${queued('bolt', 'bolt-focus')}`, [note])).body.how, 'brief');
+  await h.finish(routing2);
 });

@@ -247,7 +247,10 @@ test("a takeover stays on the failed job's thread, and the CEO's summary follows
   await h.capacity({ claude: 1, codex: 1 });
   // bolt's call's follow-up queues the work for an item with its time: it goes on the thread, from bolt
   const thread = h.dueThread();
+  // (the due project bolt's for the hand-off: only a thread's project owner, or the CEO, queues work into it)
+  h.storedProjectOwner('due', 'bolt');
   const { wire } = await handedOut({ kind: 'task', what: 'Wire the shop key', due: Date.now() + HOUR }, thread);
+  h.storedProjectOwner('due', 'juno');
   const given = () => ({
     ...(db.prepare('select deadline, deadline_by from threads where id = ?').get(thread) as object),
   });

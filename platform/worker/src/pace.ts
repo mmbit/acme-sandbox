@@ -67,11 +67,12 @@ export const reserveElsewhere = <S extends Seated>(seat: S, seats: S[], now = Da
       !full(o, now).length,
   );
 
-// The level a seat's pacing aims for (pacedUntil), while the board has pacing on and the seat isn't on credits: its
-// drain level, or 1 for a seat that runs to its limit while another keeps the reserve (reserveElsewhere). Undefined: not
-// paced.
+// The level a seat's pacing aims for (pacedUntil), while the board has pacing on: its drain level, or 1 for a seat that
+// runs to its limit while another keeps the reserve (reserveElsewhere). Undefined: not paced. A seat on credits is paced
+// over its plan's week all the same: credits carry it past its limits (drainUntil), never ahead of its pace (the board,
+// 22 Oct).
 export const paceTo = (s: Windows, pacing: boolean, reserve: boolean) =>
-  pacing && !s.credits ? (reserve ? 1 : (s.drainAt ?? DRAIN_AT)) : undefined;
+  pacing ? (reserve ? 1 : (s.drainAt ?? DRAIN_AT)) : undefined;
 
 // The week's pace, while the board has pacing on: at the average pace of the week so far, would the seat reach the
 // level its pacing aims for (`to`) more than PACE_EARLY before the weekly reset? Then it's paced until that reset: it

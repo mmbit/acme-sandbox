@@ -35,7 +35,6 @@ type Plan = {
   id: string;
   name: string;
   owner: string;
-  planning: string;
   product: { name: string; others: { id: string; name: string }[] } | null;
   ahead: string | null;
   split: { task_ms: number | null; thread_ms: number | null };
@@ -123,9 +122,7 @@ async function show(project: string, rest: string[]) {
   if (!api.isSuccess(answer.status) || !found)
     stop(`Couldn't read ${project}'s plan: ${api.errorIn(answer.body, 'no answer')}`);
   if (json) return print(JSON.stringify(found, null, 2));
-  print(
-    `${text(found.name)} (${text(found.id)}), ${text(found.owner)}'s plan${found.planning === 'threads' ? '' : ' (threads in order: off)'}`,
-  );
+  print(`${text(found.name)} (${text(found.id)}), ${text(found.owner)}'s plan`);
   if (found.ahead && found.product && !found.product.others.length)
     print(
       `It's ${text(found.product.name)}'s only open project: nothing is planned beyond it. ${text(found.ahead)} The CEO makes projects (hq project new).`,

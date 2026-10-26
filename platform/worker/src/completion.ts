@@ -1,5 +1,6 @@
 // The worker's trusted completion hooks, shared by Claude Code and Codex. A work job's hook names its checkout and the
 // folders beside it the gates may read (the git mirror): the hook confines the checkout's gates to those (hq complete).
+// messages: the inbox hooks (inbox.ts), or 'steps' for the after-each-tool-call one alone (Codex).
 import { HQ_BIN, inboxHooks } from './inbox.ts';
 
 export function completionHooks(
@@ -9,9 +10,9 @@ export function completionHooks(
     messages = false,
     checkout,
     readable = [],
-  }: { hq?: string; messages?: boolean; checkout?: string; readable?: string[] } = {},
+  }: { hq?: string; messages?: boolean | 'steps'; checkout?: string; readable?: string[] } = {},
 ) {
-  const inbox = messages && (kind === 'work' || kind === 'meeting') ? inboxHooks(hq) : undefined;
+  const inbox = messages && (kind === 'work' || kind === 'meeting') ? inboxHooks(hq, messages === 'steps') : undefined;
   const check =
     kind === 'work'
       ? ['work', checkout, ...readable].join(' ')

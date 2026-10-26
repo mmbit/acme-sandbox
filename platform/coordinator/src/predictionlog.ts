@@ -3,7 +3,7 @@
 // a prediction moves by MOVE_MS or more from its last row, or the play's version changes, so the log holds each
 // prediction's history and little else. What happened is read from HQ's own records (landings.ts), never copied here.
 // hq estimate --calibration sets the rows against it.
-import { db, inOneStep, prepared } from './db.ts';
+import { db, inOneStep, onUndo, prepared } from './db.ts';
 import * as forecast from './forecast.ts';
 import { heldTo } from './predictions.ts';
 import type { Forecast } from './forecast.ts';
@@ -36,22 +36,36 @@ export const MOVE_MS = 5 * 60_000;
 // null: the log has none.
 const last = new Map<string, LogRow | null>();
 
+// The rows the plays logged since the last write.
+let unwritten: LogRow[] = [];
+
 forecast.afterEach(record);
 
-// A play's predictions, each written where it moved from its last row (or has none yet).
+// A play's predictions, each kept where it moved from its last row (or has none yet), for the next write.
 export function record(f: Forecast) {
   const rows = [...jobRows(f), ...threadRows(f)].filter(row => {
     const before = lastOf(row);
     return !before || moved(before, row);
   });
-  if (!rows.length) return;
+  unwritten.push(...rows);
+  for (const row of rows) last.set(keyOf(row), row);
+}
+
+// The rows kept since the last write, written together: every minute and at the server's stop (server.ts), and before
+// anything reads the log. Not after each play: its commit waits for any outside reader of hq.db (infra/report.sh), up
+// to db.ts's 1.5 s. They leave the kept ones as they're written, so a second write in the same transaction (regroup.ts,
+// then a read) doesn't insert them again, and come back if it's rolled back, its failed commit too, for the next.
+export function write() {
+  if (!unwritten.length) return;
+  const rows = unwritten;
+  unwritten = [];
   const insert = db.prepare(`insert into prediction_log (at, job, thread, start, merged, held, agent_ms,
     sized_by, version) values (?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   inOneStep(() => {
+    onUndo(() => (unwritten = [...rows, ...unwritten]));
     for (const r of rows)
       insert.run(r.at, r.job, r.thread, r.start, r.merged, r.held, r.agent_ms, r.sized_by, r.version);
   });
-  for (const row of rows) last.set(keyOf(row), row);
 }
 
 // A job's start counts only while it waits: once running or done its start is a fact, not a prediction.
@@ -108,15 +122,19 @@ function lastOf(row: LogRow) {
 }
 
 // Every row of these jobs, each job's oldest first (hq estimate --calibration).
-export const ofJobs = (jobs: number[]) =>
-  db
+export function ofJobs(jobs: number[]) {
+  write();
+  return db
     .prepare('select * from prediction_log where job in (select value from json_each(?)) order by job, at, id')
     .all(JSON.stringify(jobs)) as LogRow[];
+}
 
 // A thread's ETA as the log had it at `at`: its latest row by then (merged null: no merge in sight then), or undefined
 // when the log has nothing that old (deadlines.ts).
 // One seek on prediction_log_thread_at: hq when reads it per window and trial.
-export const threadAt = (thread: string, at: number) =>
-  db
+export function threadAt(thread: string, at: number) {
+  write();
+  return db
     .prepare('select merged from prediction_log where thread = ? and at <= ? order by at desc, id desc limit 1')
     .get(thread, at) as { merged: number | null } | undefined;
+}
