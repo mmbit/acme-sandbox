@@ -3,6 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { connect } from 'node:net';
+import { DatabaseSync } from 'node:sqlite';
 import { harness } from './harness.ts';
 
 const h = await harness('latency');
@@ -26,6 +27,29 @@ test("each /api request's time is in route_times for the report, by its route, t
     ['GET /api/me', 'GET /api/jobs/log', 'GET /api/review/notes'],
   );
   assert.ok(kept.every(r => r.ms >= 0));
+});
+
+test("a hold never waits for an outside reader of hq.db and survives a failed minute's write", () => {
+  const reader = new DatabaseSync(`${h.dataDir}/hq.db`, { readOnly: true });
+  reader.exec('begin');
+  reader.prepare('select count(*) from jobs').get(); // (its read lock, kept until the commit)
+  const t = performance.now();
+  latency.held('a slow step', 600);
+  const ms = performance.now() - t;
+  assert.ok(ms < 200, `held() took ${Math.round(ms)} ms`);
+  try {
+    assert.throws(() => latency.flush(), /database is locked/);
+  } finally {
+    reader.exec('commit');
+    reader.close();
+  }
+  const holds = () =>
+    (h.db.prepare("select ms from slow_holds where name = 'a slow step'").all() as { ms: number }[]).map(r => r.ms);
+  assert.deepEqual(holds(), []);
+  latency.flush();
+  assert.deepEqual(holds(), [600]);
+  latency.flush();
+  assert.deepEqual(holds(), [600], 'the recovered hold is written once');
 });
 
 test('a request target the URL parser rejects is answered with a 500 and HQ stays up; a path nobody signed in for is not kept', async () => {

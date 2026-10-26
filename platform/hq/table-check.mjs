@@ -8,10 +8,11 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const args = process.argv.slice(2),
   shots = args.includes('--shots') ? args[args.indexOf('--shots') + 1] : null,
-  looks = args[0] && args[0] !== '--shots' ? args[0].split(',') : ['brownstone', 'holo', 'wire'];
+  looks = args[0] && args[0] !== '--shots' ? args[0].split(',') : lookNames();
 const VIEWPORTS = { phone: { width: 390, height: 844 }, tablet: { width: 820, height: 1180 } };
 
 const ROWS = [

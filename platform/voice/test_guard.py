@@ -30,6 +30,7 @@ class Coordinator(BaseHTTPRequestHandler):
     model says a hold line and makes the tool call in `script`, once it has a tool result it says it's done)."""
     script, seen, refuse, lose, signed_in = None, [], None, None, set()  # (refuse: the coordinator's reason for a 400, as server.ts gives it)
     slow = 0  # s the coordinator takes over each answer (a slow moment: it's still there)
+    hung = None  # an Event: the coordinator takes each request and answers none of them until it's set, /health still
     # the first turn makes its tool call with no hold line before it
     tool_first = False
     # lose: the job is taken (seen), then the answer goes astray: 'drop' closes the connection without one, a number is
@@ -43,6 +44,10 @@ class Coordinator(BaseHTTPRequestHandler):
         if self.path.startswith('/api/agent/'):
             self.seen.append(('hq', self.path, self.headers.get('authorization'), body))
             time.sleep(self.slow)
+            if self.hung:
+                self.hung.wait()
+                self.close_connection = True
+                return
             if self.lose == 'drop':
                 self.close_connection = True
                 return
@@ -78,6 +83,10 @@ class Coordinator(BaseHTTPRequestHandler):
 
 
     def do_GET(self):  # hq search, history and call (memory.ts): one hit, no history, call 12 (13 isn't this agent's: 404)
+        if self.path == '/health':  # (hq_tools' look at whether it's alive)
+            self.send_response(200); self.send_header('content-type', 'application/json'); self.end_headers()
+            self.wfile.write(b'{"ok":true}')
+            return
         self.seen.append(('hq', self.path, self.headers.get('authorization'), None))
         call = re.fullmatch(r'/api/agent/call\?id=(\d+)', self.path)
         if call and call[1] not in CALLS:
@@ -135,10 +144,12 @@ class Guard(unittest.TestCase):
     def test_the_agent_gets_only_its_own_environment(self):
         server = {'PATH': '/usr/bin', 'HOME': '/home/caller', 'VOICE_TOKEN': 'v', 'WORKER_TOKEN': 'w', 'GITHUB_TOKEN': 'g',
                   'NODE_OPTIONS': '--require /data/x.js', 'HQ_URL': 'http://coordinator:8080', 'ORIGIN': 'https://hq'}
-        env = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno')
+        env = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', time_zone='Europe/Amsterdam')
         self.assertEqual(set(env), {'PATH', 'HOME', 'LANG', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CONFIG_DIR',
-                                    'DISABLE_AUTOUPDATER', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL', 'CLAUDE_CODE_DISABLE_CLAUDE_MDS'})
+                                    'DISABLE_AUTOUPDATER', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL', 'HQ_TIME_ZONE',
+                                    'CLAUDE_CODE_DISABLE_CLAUDE_MDS'})
         self.assertEqual((env['HQ_TOKEN'], env['HQ_AGENT'], env['HQ_CALL']), ('call-token', 'juno', '1'))
+        self.assertEqual(env['HQ_TIME_ZONE'], 'Europe/Amsterdam')  # (hq's answers, read out, on the board's clock)
         self.assertEqual(env['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'], '7')  # (the sign-in itself on that pipe, never here)
         self.assertFalse({'v', 'w', 'g'} & set(env.values()))
         # a call with a screen: the line's screen socket and the session's key, for the screen tool
@@ -147,10 +158,11 @@ class Guard(unittest.TestCase):
 
     def test_tools_read_search_and_hand_on_only(self):
         args = dict(zip(TOOLS[1::2], TOOLS[2::2]))
-        self.assertEqual(args['--tools'], 'Read,Grep,Glob,WebSearch')  # no Bash: no shell at all, no WebFetch
+        # no Bash: no shell at all (the uid reads /seat); WebFetch as a job has it
+        self.assertEqual(args['--tools'], 'Read,Grep,Glob,WebSearch,WebFetch')
         self.assertEqual(args['--permission-mode'], 'dontAsk')
         rules = lambda s: re.findall(r'\w+(?:\([^)]*\))?', s)  # (the CLI splits on spaces outside parentheses)
-        self.assertEqual(rules(args['--allowedTools']), ['Read', 'Grep', 'Glob', 'WebSearch', *MCP])  # (no say, no forward)
+        self.assertEqual(rules(args['--allowedTools']), ['Read', 'Grep', 'Glob', 'WebSearch', 'WebFetch', *MCP])  # (no say, no forward)
         self.assertEqual(json.loads(args['--mcp-config']), {'mcpServers': {'hq': {'command': sys.executable, 'args': [f'{HERE}/hq_tools.py']}}})
         self.assertIn('--strict-mcp-config', TOOLS)
         for p in ('//proc/**', '//seat/**', '//data/**'):
@@ -244,7 +256,7 @@ class HqTools(unittest.TestCase):
     def test_a_call_queuer_supplies_its_scope_estimate_and_missing_or_bad_sizes_run_nothing(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            base = {'agent': 'bolt', 'code': 'LOGS', 'title': 'Logs', 'brief': 'Check the logs.'}
+            base = {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', 'title': 'Logs', 'brief': 'Check the logs.'}
             out = self.call(('job', {**base, 'size': '45m', 'refs': [11, 29], 'why': 'Between a small read and a full transport fix'}),
                             ('job', base), ('job', {**base, **ESTIMATE, 'refs': ['11']}),
                             ('when', {'what': 'Logs'}), env=self.env(d, url))
@@ -265,7 +277,8 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'manage', 'waiting', 'hang_up', 'screen', 'sketch'])
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
+                                                                                'ask_to_see', 'draw'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -275,7 +288,7 @@ class HqTools(unittest.TestCase):
             msgs = [{'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}]
             msgs += [{'jsonrpc': '2.0', 'id': i + 2, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}} for i, (n, a) in enumerate(
                 (('note', {'what': 'Reprint ships Tuesday'}), ('no_transcript', {}), ('note', {'what': 'two\nlines'}),
-                 ('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}), ('promise', {'owner': 'juno', 'what': 'x'}),
+                 ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}), ('promise', {'goal': 'g', 'owner': 'juno', 'what': 'x'}),
                  ('call', {'id': 12}), ('hang_up', {}), ('search', {'query': 'parcel'}), ('history', {})))]
             r = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
                                capture_output=True, text=True, timeout=60)
@@ -343,6 +356,43 @@ class HqTools(unittest.TestCase):
         self.assertTrue(json.loads(partner.stdout)['result']['isError'], 'no sketches for a partner')
         self.assertIn("can't be shown on this call", none[1]['result']['content'][0]['text'])
 
+    def test_ask_to_see_and_draw_ask_the_voice_line_in_words_only_on_the_boards_call(self):
+        """ On the board's call: the line's answer in words (what it did, or its
+        refusal); arguments of another shape never reach the line; a partner's call has neither tool, and a call
+        without the line's socket (the phone) says so; hq never gets the key."""
+        import hq_tools
+        path, asked = line_socket(self, [{'ok': 'Asked: ...'}, {'error': 'Their screen is shown already.'},
+                                         {'ok': 'Drawn: ...'}, {'error': 'No “Basket” on their page.'}, {'ok': 'Drawn: ...'}])
+        with tempfile.TemporaryDirectory() as d:
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            out = self.call(('ask_to_see', {'what': 'the pricing  page'}), ('ask_to_see', {'what': 'the basket'}),
+                            ('draw', {'ring': 'Add to basket', 'words': 'this one'}), ('draw', {'ring': 'Basket'}),
+                            ('draw', {'note': 2, 'words': None}),
+                            ('ask_to_see', {}), ('ask_to_see', {'what': ' '}), ('ask_to_see', {'what': 'x' * 121}),
+                            ('draw', {}), ('draw', {'ring': 'Add', 'note': 2}), ('draw', {'note': 0}), ('draw', {'note': True}),
+                            ('draw', {'note': '2'}), ('draw', {'ring': ''}), ('draw', {'ring': 'Add', 'words': 'w' * 81}),
+                            ('draw', {'ring': 'Add', 'colour': 'red'}), env=env)
+            msgs = [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}}
+                    for i, (n, a) in enumerate((('ask_to_see', {'what': 'the shop'}), ('draw', {'ring': 'Add'})))]
+            partner = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
+                                     capture_output=True, text=True, timeout=60)
+            phone = self.call(('ask_to_see', {'what': 'the shop'}), ('draw', {'ring': 'Add'}), env=self.env(d, 'http://127.0.0.1:9'))
+            self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
+        replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
+        self.assertEqual(replies[:5], [(False, [{'type': 'text', 'text': 'Asked: ...'}]),
+                                       (True, [{'type': 'text', 'text': 'Their screen is shown already.'}]),
+                                       (False, [{'type': 'text', 'text': 'Drawn: ...'}]),
+                                       (True, [{'type': 'text', 'text': 'No “Basket” on their page.'}]),
+                                       (False, [{'type': 'text', 'text': 'Drawn: ...'}])])
+        self.assertEqual([error for error, _ in replies[5:]], [True] * 11)
+        self.assertEqual(asked, [{'ask_to_see': 'the pricing page', 'key': 'key-1'}, {'ask_to_see': 'the basket', 'key': 'key-1'},
+                                 {'draw': {'ring': 'Add to basket', 'note': None, 'words': 'this one'}, 'key': 'key-1'},
+                                 {'draw': {'ring': 'Basket', 'note': None, 'words': ''}, 'key': 'key-1'},
+                                 {'draw': {'ring': None, 'note': 2, 'words': ''}, 'key': 'key-1'}])
+        self.assertTrue(all(json.loads(line)['result']['isError'] for line in partner.stdout.splitlines()), 'neither for a partner')
+        self.assertEqual([reply['result']['content'][0]['text'] for reply in phone[1:]],
+                         [hq_tools.ASK_WORDS['none'], hq_tools.INK_WORDS['none']])
+
     def test_a_call_with_no_screen_has_a_screen_tool_that_says_so(self):
         with tempfile.TemporaryDirectory() as d:
             out = self.call(('screen', {}), env=self.env(d, 'http://127.0.0.1:9'))
@@ -353,7 +403,7 @@ class HqTools(unittest.TestCase):
         """Done, refused or looked up, the agent speaks next: each answer carries the rule, except hang_up's.
 """
         with tempfile.TemporaryDirectory() as d:
-            out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.'}), ('promise', {'owner': 'Bolt!', 'what': 'x'}),
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.'}), ('promise', {'goal': 'g', 'owner': 'Bolt!', 'what': 'x'}),
                             ('history', {}), ('pin_sent', {'pin': 0}), ('hang_up', {}), env=self.env(d, coordinator(self)))
         self.assertEqual([r['result']['isError'] for r in out[1:]], [False, True, False, True, False])
         for reply in out[1:5]:
@@ -367,12 +417,12 @@ class HqTools(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             brief = 'the logs, please: $(cat /seat/token) `id` ${CLAUDE_CODE_OAUTH_TOKEN}'
-            out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': brief}), env=self.env(d, url))
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': brief}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual(out[0]['result']['serverInfo']['name'], 'hq')
         self.assertIn('ARG job\nARG bolt\nARG x\nARG -\n', log)
         self.assertNotIn('the logs', log)  # (the brief goes on stdin, not in argv)
-        self.assertEqual(Coordinator.seen[0][3]['prompt'], brief)  # (as typed: nothing expanded)
+        self.assertEqual(Coordinator.seen[0][3]['prompt'], f'Why the board wants this: g\n\n{brief}')  # (as typed: nothing expanded)
         self.assertIn('HQ_TOKEN=call-token', log)
         self.assertNotIn(SEAT, log)
         self.assertNotIn('CLAUDE_CODE_OAUTH_TOKEN=', log)
@@ -381,10 +431,10 @@ class HqTools(unittest.TestCase):
         brief = ('The board wants the phone logs from Monday checked for dropped calls. ' * 10)[:600]
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': brief}), env=self.env(d, url))
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': brief}), env=self.env(d, url))
         self.assertEqual(len(brief), 600)
         self.assertEqual([s[1:3] for s in Coordinator.seen], [('/api/agent/job', 'Bearer call-token')])
-        self.assertEqual(Coordinator.seen[0][3], {'agent': 'bolt', 'title': 'Check the phone logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': brief})
+        self.assertEqual(Coordinator.seen[0][3], {'agent': 'bolt', 'title': 'Check the phone logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}'})
         self.assertFalse(out[1]['result']['isError'])
         words = '\n'.join(part['text'] for part in out[1]['result']['content'])
         self.assertIn('Queued job #1234 HQ-LOGS for bolt: Check the phone logs', words)
@@ -395,7 +445,7 @@ class HqTools(unittest.TestCase):
         of its own: a promise's time becomes its thread's window (windows.ts)."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            deck = {'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
+            deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
             out = self.call(('job', {**deck, 'deadline': '1h30m', 'thread': 'shop/launch-deck'}),
                             ('job', {**deck, 'thread': '--after 3'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
@@ -411,7 +461,7 @@ class HqTools(unittest.TestCase):
         it at once, and only true sends it."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            deck = {'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
+            deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
             out = self.call(('job', deck), ('job', {**deck, 'now': False}), ('job', {**deck, 'now': True}),
                             *(('job', {**deck, 'now': value}) for value in ('true', 1, None)), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
@@ -424,7 +474,7 @@ class HqTools(unittest.TestCase):
 """
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            deck = {'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
+            deck = {'goal': 'g', 'agent': 'bolt', 'code': 'DECK', **ESTIMATE, 'title': 'Deck', 'brief': 'Make it.'}
             out = self.call(('job', {**deck, 'after': 42}), *(('job', {**deck, 'after': value}) for value in ('42', 0)),
                             env=self.env(d, url))
         self.assertEqual([s[3].get('after') for s in Coordinator.seen], [42])
@@ -433,19 +483,19 @@ class HqTools(unittest.TestCase):
     def test_too_long_is_refused_never_cut(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'b' * 9000}),
-                            ('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 't' * 200, 'brief': 'Check the logs.'}), env=self.env(d, url))
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'b' * 9000}),
+                            ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 't' * 200, 'brief': 'Check the logs.'}), env=self.env(d, url))
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual(Coordinator.seen, [])  # (no job)
         self.assertEqual([(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]], [
-            (True, 'brief too long (9,000 > 8,000): split it into two jobs'),
+            (True, 'brief too long (9,029 > 8,000, the goal counted): split it into two jobs'),
             (True, 'title too long (200 > 140): keep it to one short line and put the rest in the brief')])
 
     def test_the_coordinators_refusal_reaches_the_agent(self):
         """Whatever it refuses (it checks the same limits), the agent hears why, and that nothing was handed on."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self, refuse='brief too long (8,001 > 8,000): split it into two jobs')
-            out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'}), env=self.env(d, url))
+            out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'}), env=self.env(d, url))
         self.assertEqual(len(Coordinator.seen), 1)
         self.assertEqual((out[1]['result']['isError'], out[1]['result']['content'][0]['text']),
                          (True, 'No job was queued: brief too long (8,001 > 8,000): split it into two jobs'))
@@ -456,7 +506,7 @@ class HqTools(unittest.TestCase):
         for lose, why in (('drop', 'Empty reply from server'), (500, 'HTTP 500: internal'), ('no id', 'HTTP 200: no job number')):
             with self.subTest(lose=lose), tempfile.TemporaryDirectory() as d:
                 url = coordinator(self, lose=lose)
-                out = self.call(('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'}), env=self.env(d, url))
+                out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'}), env=self.env(d, url))
                 self.assertEqual(len(Coordinator.seen), 1)
                 self.assertEqual((out[1]['result']['isError'], out[1]['result']['content'][0]['text']), (True,
                     f"Not confirmed: the job for bolt may or may not be queued ({why}). Don't send it again: it may be there already. "
@@ -477,9 +527,10 @@ class HqTools(unittest.TestCase):
             Coordinator.slow = 32
             self.addCleanup(setattr, Coordinator, 'slow', 0)
             with mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), mock.patch.object(hq_tools, 'STILL', 4), \
+                    mock.patch.object(hq_tools, 'PROBE', 1), mock.patch.object(hq_tools, 'UP', [None]), \
                     mock.patch.object(hq_tools, 'PENDING', []):
                 started = time.monotonic()
-                first = self.tool(hq_tools, 'job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                first = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
                 self.assertLess(time.monotonic() - started, 6)
                 answers = [self.tool(hq_tools, 'waiting', {})]
                 while 'Still waiting' in answers[-1][1]:
@@ -504,12 +555,68 @@ class HqTools(unittest.TestCase):
             late.done() or late.set_result((False, 'No job was queued: refused'))
             return read(future)
         with mock.patch.object(hq_tools, 'STILL', 0.1), mock.patch.object(hq_tools, 'outcome', outcome), \
+                mock.patch.object(hq_tools, 'UP', [None]), \
                 mock.patch.object(hq_tools, 'PENDING', [('job (Late)', late), ('job (Logs)', came)]):
             answers = [self.tool(hq_tools, 'waiting', {}) for _ in range(3)]
-        self.assertEqual(answers, [
-            (False, 'job (Logs): Queued job #1 HQ-LOGS for bolt: Logs\n\n' + hq_tools.STILL_WAITING.format('job (Late)')),
+        self.assertEqual(answers, [  # (no look at /health has answered here: never "not down")
+            (False, 'job (Logs): Queued job #1 HQ-LOGS for bolt: Logs\n\n' + hq_tools.STILL_CHECKING.format('job (Late)')),
             (True, 'job (Late): No job was queued: refused'),
             (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.')])
+
+    def test_a_hung_coordinator_meets_the_ceiling(self):
+        """Alive (its /health answers) but it never answers the job: waiting says it's slow, not down, until CEILING,
+        then that it's not confirmed, with hq stopped. One job sent, never two."""
+        import hq_tools
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            Coordinator.hung = threading.Event()
+            self.addCleanup(lambda: (Coordinator.hung.set(), setattr(Coordinator, 'hung', None)))
+            with mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), mock.patch.object(hq_tools, 'STILL', 2), \
+                    mock.patch.object(hq_tools, 'PROBE', 0.5), mock.patch.object(hq_tools, 'CEILING', 5), \
+                    mock.patch.object(hq_tools, 'UP', [None]), mock.patch.object(hq_tools, 'PENDING', []):
+                started = time.monotonic()
+                answers = [self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})]
+                while 'Still waiting' in answers[-1][1]:
+                    answers.append(self.tool(hq_tools, 'waiting', {}))
+                took = time.monotonic() - started
+        self.assertEqual(answers[0], (False, hq_tools.STILL_WAITING.format('job (Logs)')))
+        self.assertEqual(answers[-1], (True, 'job (Logs): ' + hq_tools.UNSURE.format(
+            f'Not confirmed: {hq_tools.NO_ANSWER} It may or may not have gone through: check it before you do it again.')))
+        self.assertTrue(5 <= took < 8, took)
+        self.assertEqual(len(Coordinator.seen), 1)
+
+    def test_a_coordinator_that_answers_nothing_is_down_within_seconds(self):
+        """It takes the connection (a full listen queue's worth) and answers nothing, /health neither: the tool gives up
+        long before STILL and says plainly that the coordinator is down and the hand-off is unconfirmed."""
+        import hq_tools
+        from unittest import mock
+        with socket.socket() as s:
+            s.bind(('127.0.0.1', 0))
+            s.listen()  # (never accepted: the connection is made, no answer ever comes)
+            url = f'http://127.0.0.1:{s.getsockname()[1]}'
+            with tempfile.TemporaryDirectory() as d, mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), \
+                    mock.patch.object(hq_tools, 'PROBE', 1), mock.patch.object(hq_tools, 'ALIVE', 1), \
+                    mock.patch.object(hq_tools, 'PENDING', []):
+                started = time.monotonic()
+                down = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                took = time.monotonic() - started
+                self.assertEqual(hq_tools.PENDING, [])
+        self.assertEqual(down, (True, hq_tools.DOWN + hq_tools.DOWN_HANDED))
+        self.assertLess(took, 4)
+
+    def test_an_answer_during_the_last_look_still_counts(self):
+        """hq answers while a slow look at /health carries the wait past CEILING: its answer, not a wait that never ends."""
+        import hq_tools
+        from unittest import mock
+        got = []
+        with mock.patch.object(hq_tools, 'PROBE', 0.1), mock.patch.object(hq_tools, 'CEILING', 0.3), \
+                mock.patch.object(hq_tools, 'alive', lambda: time.sleep(0.4) or True):
+            waits = threading.Thread(target=lambda: got.append(hq_tools.ran(
+                [sys.executable, '-c', 'import time; time.sleep(0.15); print("done")'])), daemon=True)
+            waits.start()
+            waits.join(5)
+        self.assertEqual(got, [(0, 'done', '')])
 
     def test_a_dead_coordinator_fails_clearly(self):
         """Nobody listening: the agent hears at once, for certain, that no job was queued, nothing waits on it."""
@@ -520,7 +627,7 @@ class HqTools(unittest.TestCase):
             url = f'http://127.0.0.1:{s.getsockname()[1]}'  # (bound, never listening: refused)
             with tempfile.TemporaryDirectory() as d, mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), \
                     mock.patch.object(hq_tools, 'PENDING', []):
-                failed = self.tool(hq_tools, 'job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                failed = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
                 self.assertEqual(hq_tools.PENDING, [])
         self.assertTrue(failed[0])
         self.assertTrue(failed[1].startswith('No job was queued: Failed to connect to 127.0.0.1'), failed[1])
@@ -571,12 +678,12 @@ class HqTools(unittest.TestCase):
         what = 'Bolt checks Monday\'s phone logs for dropped calls: $(id) `id`'
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'owner': 'bolt', 'what': what}), ('job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.', 'item': 1234}),
+            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': what}), ('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.', 'item': 1234}),
                             env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
-        self.assertEqual([s[1:4] for s in Coordinator.seen], [('/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': what, 'quote': what}),
+        self.assertEqual([s[1:4] for s in Coordinator.seen], [('/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': what, 'goal': 'g', 'quote': what}),
                                                               ('/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Logs', 'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': 'Check them.', 'item': 1234})])
-        self.assertIn(f'ARG item\nARG add\nARG promise\nARG bolt\nARG {what}\nARG -\n', log)
+        self.assertIn(f'ARG item\nARG add\nARG promise\nARG bolt\nARG {what}\nARG -\nARG --goal\nARG -\n', log)
         self.assertFalse(out[1]['result']['isError'])
         promise_words = '\n'.join(part['text'] for part in out[1]['result']['content'])
         self.assertIn('Noted as promise #1234 on this call, for bolt.', promise_words)
@@ -590,14 +697,29 @@ class HqTools(unittest.TestCase):
         """ a promise's time (and a correction's) goes to hq as --deadline; a bad one goes nowhere."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'owner': 'bolt', 'what': 'The share link is live', 'deadline': '3h'}),
-                            ('replace', {'item': 7, 'what': 'Live by 18:00', 'deadline': '16:00'}),
-                            ('promise', {'owner': 'bolt', 'what': 'x', 'deadline': 'tonight'}), env=self.env(d, url))
+            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'The share link is live', 'deadline': '3h'}),
+                            ('replace', {'goal': 'g', 'item': 7, 'what': 'Live by 18:00', 'deadline': '16:00'}),
+                            ('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'x', 'deadline': 'tonight'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([s[3].get('deadline') for s in Coordinator.seen], ['3h', '16:00'])
-        self.assertIn('ARG -\nARG --deadline\nARG 3h\n', log)
+        self.assertIn('ARG -\nARG --goal\nARG -\nARG --deadline\nARG 3h\n', log)
         self.assertTrue(out[3]['result']['isError'])
         self.assertIn('deadline must be', out[3]['result']['content'][0]['text'])
+
+    def test_a_goal_goes_to_hq_on_stdin_never_in_argv(self):
+        """ promise, replace and reach: a goal can hold what was said on the call, and any uid reads argv."""
+        goal = "Make it right for Jan Jansen before the weekend"
+        with tempfile.TemporaryDirectory() as d:
+            url = coordinator(self)
+            self.call(('promise', {'goal': goal, 'owner': 'bolt', 'what': 'Refund the mug'}),
+                      ('replace', {'goal': goal, 'item': 7, 'what': 'Refund the mug today'}),
+                      ('reach', {'goal': goal, 'agent': 'bolt', 'job': 9, 'words': 'Refund first.', 'what': 'Refund first'}), env=self.env(d, url))
+            log = Path(d, 'hq.log').read_text()
+        seen = [(s[1], s[3].get('goal')) for s in Coordinator.seen if s[0] == 'hq']
+        self.assertEqual([p for p, _ in seen if p == '/api/agent/item'], ['/api/agent/item'] * 2)
+        self.assertIn('/api/agent/message', [p for p, _ in seen])
+        self.assertEqual({g for _, g in seen}, {goal})
+        self.assertNotIn('Jansen', log)
 
     def test_a_promise_about_work_under_way_names_its_job(self):
         """A promise's job (the work under way it's about) goes to hq as --job with its time, whose thread takes it at
@@ -605,14 +727,14 @@ class HqTools(unittest.TestCase):
         it goes nowhere."""
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'owner': 'wren', 'what': 'The fallback is live', 'deadline': '40m', 'job': 9222}),
-                            ('promise', {'owner': 'wren', 'what': 'x', 'job': 9222}),
-                            ('promise', {'owner': 'wren', 'what': 'Names', 'deadline': '2h', 'job': 9223, 'thread': 'shop/names'}),
-                            ('promise', {'owner': 'wren', 'what': 'x', 'deadline': '2h', 'thread': 'shop/names'}), env=self.env(d, url))
+            out = self.call(('promise', {'goal': 'g', 'owner': 'wren', 'what': 'The fallback is live', 'deadline': '40m', 'job': 9222}),
+                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'job': 9222}),
+                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'Names', 'deadline': '2h', 'job': 9223, 'thread': 'shop/names'}),
+                            ('promise', {'goal': 'g', 'owner': 'wren', 'what': 'x', 'deadline': '2h', 'thread': 'shop/names'}), env=self.env(d, url))
             log = Path(d, 'hq.log').read_text()
         self.assertEqual([(s[3].get('deadline'), s[3].get('job'), s[3].get('thread')) for s in Coordinator.seen],
                          [('40m', 9222, None), ('2h', 9223, 'shop/names')])
-        self.assertIn('ARG -\nARG --deadline\nARG 40m\nARG --job\nARG 9222\n', log)
+        self.assertIn('ARG -\nARG --goal\nARG -\nARG --deadline\nARG 40m\nARG --job\nARG 9222\n', log)
         self.assertIn('ARG --job\nARG 9223\nARG --thread\nARG shop/names\n', log)
         self.assertTrue(out[2]['result']['isError'])
         self.assertIn('goes with deadline', out[2]['result']['content'][0]['text'])
@@ -622,8 +744,8 @@ class HqTools(unittest.TestCase):
     def test_limits_are_refused_with_a_message_never_cut(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('promise', {'owner': 'bolt', 'what': 'w' * 201}), ('promise', {'owner': 'bolt', 'what': 'Two\nlines'}),
-                            ('replace', {'item': 7, 'what': 'w' * 250}), ('promise', {'owner': 'Bolt Smith', 'what': 'x'}), env=self.env(d, url))
+            out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'w' * 201}), ('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'Two\nlines'}),
+                            ('replace', {'goal': 'g', 'item': 7, 'what': 'w' * 250}), ('promise', {'goal': 'g', 'owner': 'Bolt Smith', 'what': 'x'}), env=self.env(d, url))
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual(Coordinator.seen, [])
         self.assertEqual([(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]], [
@@ -637,7 +759,7 @@ class HqTools(unittest.TestCase):
         for lose, why in (('drop', 'Empty reply from server'), (500, 'HTTP 500: internal')):
             with self.subTest(lose=lose), tempfile.TemporaryDirectory() as d:
                 url = coordinator(self, lose=lose)
-                out = self.call(('promise', {'owner': 'bolt', 'what': 'Check the logs'}), env=self.env(d, url))
+                out = self.call(('promise', {'goal': 'g', 'owner': 'bolt', 'what': 'Check the logs'}), env=self.env(d, url))
                 self.assertEqual((out[1]['result']['isError'], out[1]['result']['content'][0]['text']), (True,
                     f"Not confirmed: the item may or may not be recorded ({why}). Don't record it again: it may be there already. "
                     "Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."))
@@ -662,13 +784,16 @@ class HqTools(unittest.TestCase):
 
     def test_bad_arguments_never_reach_hq(self):
         with tempfile.TemporaryDirectory() as d:
-            ok = {'agent': 'bolt', 'title': 'x', 'brief': 'y'}
+            ok = {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y', 'goal': 'g'}
             bad = [('job', {**ok, 'agent': '--after'}),
                    ('job', {**ok, 'title': ' '}), ('job', {**ok, 'brief': ' '}), ('job', {k: v for k, v in ok.items() if k != 'brief'}),
                    ('job', {**ok, 'agent': 'Bolt Smith'}), ('job', {**ok, 'item': '7'}), ('job', {**ok, 'item': 0}),
                    ('say', {'agent': 'bolt', 'text': 'x'}), ('status', {'agent': 'bolt', 'text': 'x'}), ('forward', {'agent': 'bolt', 'text': 'x'}),
-                   ('promise', {'owner': '--call', 'what': 'x'}), ('promise', {'owner': 'bolt', 'what': ' '}), ('replace', {'item': '7', 'what': 'x'}),
-                   ('replace', {'item': True, 'what': 'x'}), ('replace', {'item': 7}),
+                   ('promise', {'goal': 'g', 'owner': '--call', 'what': 'x'}), ('promise', {'goal': 'g', 'owner': 'bolt', 'what': ' '}), ('replace', {'goal': 'g', 'item': '7', 'what': 'x'}),
+                   ('replace', {'goal': 'g', 'item': True, 'what': 'x'}), ('replace', {'goal': 'g', 'item': 7}),
+                   ('job', {k: v for k, v in ok.items() if k != 'goal'}), ('promise', {'owner': 'bolt', 'what': 'x'}),
+                   ('promise', {'goal': 'Two\nlines', 'owner': 'bolt', 'what': 'x'}), ('replace', {'goal': 'g' * 301, 'item': 7, 'what': 'x'}),
+                   ('add', {'job': 7, 'words': 'x'}), ('reach', {'agent': 'bolt', 'job': 7, 'words': 'x', 'what': 'x'}),
                    # (manage: only hq's management commands, one line a word)
                    ('manage', {'command': ['status', 'x']}), ('manage', {'command': ['job', 'bolt', 'x', '-']}), ('manage', {'command': ['job']}),
                    ('manage', {'command': ['followthrough', 'ok']}), ('manage', {'command': ['inbox', '--hook']}),
@@ -723,13 +848,15 @@ class HqTools(unittest.TestCase):
     def test_a_call_is_read_in_full_by_its_number(self):
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
-            out = self.call(('call', {'id': 12}), ('call', {'id': 13}), ('call', {'id': 14}), env=self.env(d, url))
+            # (on the board's clock: the call's hq says its times there, the zone named)
+            env = {**self.env(d, url), 'HQ_TIME_ZONE': 'Europe/Amsterdam'}
+            out = self.call(('call', {'id': 12}), ('call', {'id': 13}), ('call', {'id': 14}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertIn('ARG call\nARG 12\n', log)
         self.assertNotIn(SEAT, log)
         self.assertEqual([s[1:3] for s in Coordinator.seen], [(f'/api/agent/call?id={n}', 'Bearer call-token') for n in (12, 13, 14)])
         self.assertEqual((out[1]['result']['isError'], out[1]['result']['content'][0]['text']), (False,
-            'Call 12, kit with the board, 2026-09-27T10:00, heard by job #700\n\n'
+            'Call 12, kit with the board, 2026-09-27 12:00 CEST, heard by job #700\n\n'
             'board: What is our mission?\nkit: A slightly warmer, more whimsical digital world.\n\n'
             "Summary (job #700's report):\nThe board asked for the mission; Kit read it out from the charter."))
         # (a call the coordinator won't show: hq's refusal, as it words it)
@@ -811,7 +938,7 @@ class CallsList(unittest.TestCase):
         for lines in ([], ['Board: Kit, the coming-soon page.', 'Kit: I will send Juno the mission note.']):
             with self.subTest(lines=len(lines)):
                 token, call = self.start('kit')
-                out = self.tools(token, 'kit', ('promise', {'owner': 'kit', 'what': 'Kit sends Juno the mission note'}))
+                out = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'kit', 'what': 'Kit sends Juno the mission note'}))
                 item = self.db('select id, call, kind, owner, what, quote, by, status from call_items order by id desc limit 1')[0]
                 self.assertEqual(item[1:], (call, 'promise', 'kit', 'Kit sends Juno the mission note', 'Kit sends Juno the mission note', None, 'open'))
                 self.assertEqual(out, [(False, f"Noted as promise #{item[0]} on this call, for kit.\n"
@@ -820,7 +947,7 @@ class CallsList(unittest.TestCase):
                 self.assertEqual(self.db('select call, status from call_items where id = ?', item[0]), [(call, 'open')])
                 status, job = self.db('select status, job from calls where id = ?', call)[0]
                 self.assertEqual((status, bool(job)), ('ended', True), 'its follow-up hands it out')
-                again = self.tools(token, 'kit', ('promise', {'owner': 'kit', 'what': 'After the call'}))
+                again = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'kit', 'what': 'After the call'}))
                 self.assertTrue(again[0][0] and again[0][1].startswith('Nothing recorded'), again)  # (the token ended with the call)
 
     def test_on_a_call_about_pins_the_agent_rewords_and_marks_them_sent_and_is_told_to_say_which(self):
@@ -830,7 +957,7 @@ class CallsList(unittest.TestCase):
         ctx = self.voice('call-context', {'agent': 'bolt', 'pins': [pale, price, faq]})
         token = ctx['token']
         self.assertIn(f'### Pin #{pale} on https://hello.preview.', ctx['prompt'])
-        queued = self.tools(token, 'bolt', ('job', {'agent': 'moss', 'code': 'FAQ', **ESTIMATE, 'title': 'A FAQ', 'brief': 'Add a FAQ to hello.'}))[0][1]
+        queued = self.tools(token, 'bolt', ('job', {'goal': 'g', 'agent': 'moss', 'code': 'FAQ', **ESTIMATE, 'title': 'A FAQ', 'brief': 'Add a FAQ to hello.'}))[0][1]
         job = int(re.search(r'Queued job #(\d+)', queued)[1])
         out = self.tools(token, 'bolt', ('pin_words', {'pin': pale, 'words': 'Make the button the brand green'}),
                          ('pin_sent', {'pin': faq, 'job': job}), ('pin_sent', {'pin': price, 'answered': True}),
@@ -852,7 +979,7 @@ class CallsList(unittest.TestCase):
 
     def test_the_ceos_call_expedites_and_a_refusal_says_why(self):
         token, _ = self.start('juno')
-        queued = self.tools(token, 'juno', ('job', {'agent': 'kit', 'code': 'CLAIM', **ESTIMATE, 'title': 'Fix the claim', 'brief': 'The claim stalls.'}))[0][1]
+        queued = self.tools(token, 'juno', ('job', {'goal': 'g', 'agent': 'kit', 'code': 'CLAIM', **ESTIMATE, 'title': 'Fix the claim', 'brief': 'The claim stalls.'}))[0][1]
         job = int(re.search(r'Queued job #(\d+)', queued)[1])
         out = self.tools(token, 'juno', ('expedite', {'job': job}), ('expedite', {'job': 999999}))
         self.assertEqual(out[0], (False, f'#{job} is expedited: it starts next, and merges once a push passes its gates and tests.'))
@@ -863,18 +990,23 @@ class CallsList(unittest.TestCase):
         self.assertEqual(self.tools(token, 'kit', ('expedite', {'job': job})), [(True, 'Nothing expedited: only the CEO expedites a job: ask juno')])
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
 
-    def test_a_call_token_adds_to_no_other_call_and_reads_no_items_nor_its_own_transcript(self):
+    def test_a_call_token_adds_to_no_other_call_and_reads_no_calls_items_nor_its_own_transcript(self):
         said = 'Board: the secret plan for the brand film.'
         other, theirs = self.start('moss')
         self.voice('call-end', {'agent': 'moss', 'lines': [said], 'token': other})
         token, mine = self.start('kit')
-        r = self.hq(token, 'kit', 'item', 'add', 'promise', 'kit', 'Onto the other call?', '-', '--call', str(theirs), words='x')
+        r = self.hq(token, 'kit', 'item', 'add', 'promise', 'kit', 'Onto the other call?', '-', '--goal', '-', '--call', str(theirs),
+                    words=json.dumps({'goal': 'g', 'words': 'x'}))
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(self.db('select call from call_items order by id desc limit 1'), [(mine,)], 'on its own call, whatever it asks')
-        for args in (['call', str(mine)], ['items', str(theirs)], ['items', str(mine)], ['items']):
+        for args in (['call', str(mine)], ['items', str(theirs)], ['items', str(mine)]):
             r = self.hq(token, 'kit', *args)
             self.assertNotEqual(r.returncode, 0, args)
             self.assertNotIn('secret plan', r.stdout + r.stderr)
+        # every call's open items, one line each as its briefing has them, no words of a call
+        r = self.hq(token, 'kit', 'items')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn('secret plan', r.stdout)
         # An ended call is every agent's to read, unnumbered, as its agent reads it
         r = self.hq(token, 'kit', 'call', str(theirs))
         self.assertEqual(r.returncode, 0, r.stderr)
@@ -889,7 +1021,7 @@ class CallsList(unittest.TestCase):
         """manage runs hq's management commands under the call token, with HQ's own rules on who may."""
         other, _ = self.start('kit')
         queued = lambda token, agent, code: int(re.search(r'Queued job #(\d+)', self.tools(token, agent, ('job', {
-            'agent': 'moss', 'code': code, **ESTIMATE, 'title': code.title(), 'brief': 'x'}))[0][1])[1])
+            'goal': 'g', 'agent': 'moss', 'code': code, **ESTIMATE, 'title': code.title(), 'brief': 'x'}))[0][1])[1])
         kits = queued(other, 'kit', 'KITS')
         token, _ = self.start('juno')  # (the fixture's CEO)
         drop, keep = queued(token, 'juno', 'DROP'), queued(token, 'juno', 'KEEP')
@@ -917,13 +1049,13 @@ class CallsList(unittest.TestCase):
 
     def test_the_boards_correction_replaces_an_open_item_on_the_line(self):
         first, call1 = self.start('moss')
-        self.tools(first, 'moss', ('promise', {'owner': 'moss', 'what': 'Brand films A2 and D'}))
+        self.tools(first, 'moss', ('promise', {'goal': 'g', 'owner': 'moss', 'what': 'Brand films A2 and D'}))
         old = self.db('select max(id) from call_items')[0][0]
         self.voice('call-end', {'agent': 'moss', 'lines': ['Moss: I will make A2 and D.'], 'token': first})
         token, call2 = self.start('moss')
         prompt = self.voice('call-context', {'agent': 'wren'})['prompt']
         self.assertIn(f'- #{old}: Brand films A2 and D (moss)', prompt)  # (what replace takes)
-        out = self.tools(token, 'moss', ('replace', {'item': old, 'what': 'Only film D, no A2'}), ('replace', {'item': old, 'what': 'Again'}))
+        out = self.tools(token, 'moss', ('replace', {'goal': 'g', 'item': old, 'what': 'Only film D, no A2'}), ('replace', {'goal': 'g', 'item': old, 'what': 'Again'}))
         new = self.db('select max(id) from call_items')[0][0]
         self.assertEqual(out, [(False, f"Noted as promise #{new} on this call, for moss: it replaces #{old} (Brand films A2 and D), which the board changed.\n"
                                 "It's on the call's list, not handed to anyone yet: after the call, the follow-up hands it out."),
@@ -934,16 +1066,16 @@ class CallsList(unittest.TestCase):
     def test_what_the_board_adds_reaches_the_job_queued_on_the_call(self):
         """add puts what the board adds in the brief while the job waits, else in its running session; only the call's own jobs."""
         other, _ = self.start('kit')
-        theirs = int(re.search(r'#(\d+)', self.tools(other, 'kit', ('job', {'agent': 'moss', 'code': 'THEIRS', **ESTIMATE, 'title': 'Theirs', 'brief': 'x'}))[0][1])[1])
+        theirs = int(re.search(r'#(\d+)', self.tools(other, 'kit', ('job', {'goal': 'g', 'agent': 'moss', 'code': 'THEIRS', **ESTIMATE, 'title': 'Theirs', 'brief': 'x'}))[0][1])[1])
         token, call = self.start('vera')
         queued = lambda title: int(re.search(r'Queued job #(\d+)', self.tools(token, 'vera', ('job', {
-            'agent': 'moss', 'code': title.upper(), **ESTIMATE, 'title': title, 'brief': 'Lower the Codex load.'}))[0][1])[1])
+            'goal': 'g', 'agent': 'moss', 'code': title.upper(), **ESTIMATE, 'title': title, 'brief': 'Lower the Codex load.'}))[0][1])[1])
         waits, runs, ended = queued('Waits'), queued('Runs'), queued('Ended')
         self.db("update jobs set status = 'running', session = 's' where id = ?", runs)
         self.db("update jobs set status = 'done' where id = ?", ended)
-        out = self.tools(token, 'vera', ('add', {'job': waits, 'words': "Don't move the work over to Anthropic."}),
-                         ('add', {'job': runs, 'words': 'Keep the high-risk reviews on Codex.'}),
-                         ('add', {'job': ended, 'words': 'Too late.'}), ('add', {'job': theirs, 'words': 'Not mine.'}))
+        out = self.tools(token, 'vera', ('add', {'goal': 'g', 'job': waits, 'words': "Don't move the work over to Anthropic."}),
+                         ('add', {'goal': 'g', 'job': runs, 'words': 'Keep the high-risk reviews on Codex.'}),
+                         ('add', {'goal': 'g', 'job': ended, 'words': 'Too late.'}), ('add', {'goal': 'g', 'job': theirs, 'words': 'Not mine.'}))
         self.assertEqual(out[0], (False, f"Added to job #{waits}'s brief: it hasn't started yet, so moss gets it with the rest."))
         message = self.db('select id, job, text from messages order by id desc limit 1')[0]
         self.assertEqual(out[1], (False, f"Job #{runs} has started: moss's session reads the addition at its next step (message #{message[0]}). "
@@ -955,14 +1087,15 @@ class CallsList(unittest.TestCase):
                                   'queue it as a new job with the whole brief.'))
         self.assertEqual(out[3], (True, f"Nothing was added: job #{theirs} wasn't queued on this call: only a job you queued on it takes an "
                                   "addition now. The call's follow-up adds to any other from the transcript."))
-        self.assertEqual(self.db('select prompt from jobs where id = ?', waits)[0][0], 'Lower the Codex load.\n\n(Assigned by vera, on a call with the '
-                         "board.)\n\nDon't move the work over to Anthropic.\n(Added by vera, on a call with the board.)")
-        self.assertEqual(self.db('select prompt from jobs where id = ?', theirs)[0][0], 'x\n\n(Assigned by kit, on a call with the board.)')
+        self.assertEqual(self.db('select prompt from jobs where id = ?', waits)[0][0], 'Why the board wants this: g\n\nLower the Codex load.\n\n'
+                         "(Assigned by vera, on a call with the board.)\n\nWhy the board wants this: g\n\nDon't move the work over to Anthropic.\n"
+                         '(Added by vera, on a call with the board.)')
+        self.assertEqual(self.db('select prompt from jobs where id = ?', theirs)[0][0], 'Why the board wants this: g\n\nx\n\n(Assigned by kit, on a call with the board.)')
         r = self.hq(token, 'vera', 'extend', str(waits), '/etc/hostname')
         self.assertIn('takes no file', r.stderr)
         self.voice('call-end', {'agent': 'vera', 'lines': ['Board: lower the Codex load.'], 'token': token})
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': other})
-        after = self.tools(token, 'vera', ('add', {'job': waits, 'words': 'After the call.'}))
+        after = self.tools(token, 'vera', ('add', {'goal': 'g', 'job': waits, 'words': 'After the call.'}))
         self.assertTrue(after[0][0], after)  # (the token ended with the call)
         self.assertNotIn('After the call', self.db('select prompt from jobs where id = ?', waits)[0][0])
 
@@ -973,7 +1106,7 @@ class CallsList(unittest.TestCase):
         job = self.db("insert into jobs (agent, title, prompt, status, engine, kind, session, created) values "
                       "('moss', 'The site', 'x', 'running', 'claude', 'work', 's', '2026-10-15') returning id")[0][0]
         words = 'Only something insecure blocks the site now; fix the rest once it is up.'
-        reach = lambda agent, what='Only an insecure change blocks the site': ('reach', {'agent': agent, 'job': job, 'words': words, 'what': what})
+        reach = lambda agent, what='Only an insecure change blocks the site': ('reach', {'goal': 'g', 'agent': agent, 'job': job, 'words': words, 'what': what})
         out = self.tools(token, 'vera', reach('kit'), reach('moss', 'two\nlines'), reach('moss'), reach('moss'))
         self.assertEqual(out[0], (True, f"Nothing was sent: job #{job} is moss's (The site), not kit's: check the number."))
         self.assertEqual(out[1], (True, "what needs one plain line: the board reads it"))
@@ -993,7 +1126,7 @@ class CallsList(unittest.TestCase):
 
     def test_the_coordinators_limits_reach_the_agent(self):
         token, call = self.start('kit')
-        out = self.tools(token, 'kit', ('promise', {'owner': 'nobody-here', 'what': 'x'}), ('replace', {'item': 999999, 'what': 'x'}))
+        out = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'nobody-here', 'what': 'x'}), ('replace', {'goal': 'g', 'item': 999999, 'what': 'x'}))
         self.assertEqual(out, [(True, "Nothing recorded: nobody-here isn't a colleague who takes work"),
                                (True, "Nothing recorded: item #999999 isn't there to replace")])
         self.assertEqual(self.db('select count(*) from call_items where call = ?', call), [(0,)])
@@ -1030,12 +1163,12 @@ class CallAgent(unittest.TestCase):
 
     def test_it_starts_answers_and_hands_on_the_whole_brief(self):
         brief = ('The board wants the phone logs from Monday checked for dropped calls, and a note on why. ' * 10)[:600]
-        init, seen, log = self.turn('mcp__hq__job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': brief})
+        init, seen, log = self.turn('mcp__hq__job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': brief})
         self.assertEqual(init['mcp_servers'], [{'name': 'hq', 'status': 'connected', 'source': 'dynamic'}])
-        self.assertEqual(sorted(init['tools']), ['Glob', 'Grep', 'Read', 'WebSearch', *MCP])
-        self.assertEqual(sorted(seen[0][1]), ['Glob', 'Grep', 'Read', 'WebSearch', *MCP])  # (what the model is offered: the call's tools, no say, no forward, no shell)
+        self.assertEqual(sorted(init['tools']), ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch', *MCP])
+        self.assertEqual(sorted(seen[0][1]), ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch', *MCP])  # (what the model is offered: the call's tools, no say, no forward, no shell)
         self.assertIn(('hq', '/api/agent/job', 'Bearer call-token', {'agent': 'bolt', 'title': 'Check the phone logs',
-                                                                    'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': brief}), seen)
+                                                                    'after': None, 'code': 'LOGS', **ESTIMATE, 'prompt': f'Why the board wants this: g\n\n{brief}'}), seen)
         self.assertIn("Queued job #1234 HQ-LOGS for bolt: Check the phone logs\\nNot started yet: it's on bolt's list", seen[-1][2])  # (a number, and that it's queued)
         self.assertIn('HQ_CALL=1', log)
         self.assertNotIn(SEAT, log)
@@ -1057,9 +1190,9 @@ class CallAgent(unittest.TestCase):
             self.assertFalse(Path(out, 'ran').exists())
 
     def test_a_promise_goes_on_the_list(self):
-        init, seen, log = self.turn('mcp__hq__promise', {'owner': 'bolt', 'what': 'Bolt checks the phone logs'})
+        init, seen, log = self.turn('mcp__hq__promise', {'owner': 'bolt', 'what': 'Bolt checks the phone logs', 'goal': 'Calls stop dropping'})
         self.assertIn(('hq', '/api/agent/item', 'Bearer call-token', {'kind': 'promise', 'owner': 'bolt', 'what': 'Bolt checks the phone logs',
-                                                                     'quote': 'Bolt checks the phone logs'}), seen)
+                                                                     'goal': 'Calls stop dropping', 'quote': 'Bolt checks the phone logs'}), seen)
         self.assertIn("Noted as promise #1234 on this call, for bolt.\\nIt's on the call's list, not handed to anyone yet", seen[-1][2])
 
     def test_a_tool_step_before_any_words_shows_in_the_stream(self):
@@ -1067,7 +1200,7 @@ class CallAgent(unittest.TestCase):
         is a stream_event content_block_start of type tool_use, before the tool runs and before any words."""
         Coordinator.tool_first = True
         self.addCleanup(setattr, Coordinator, 'tool_first', False)
-        _, seen, _ = self.turn('mcp__hq__job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': 'The logs.'},
+        _, seen, _ = self.turn('mcp__hq__job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Check the phone logs', 'brief': 'The logs.'},
                                partial=('--include-partial-messages',))
         stream = [e['event'] for e in self.events if e.get('type') == 'stream_event']
         start = next(i for i, e in enumerate(stream) if e.get('type') == 'content_block_start'
@@ -1122,9 +1255,9 @@ class CallAgent(unittest.TestCase):
 
     def test_calls_work_when_the_tools_do_not_start(self):
         broken = [a.replace('hq_tools.py', 'missing_hq_tools.py') for a in TOOLS]
-        init, seen, log = self.turn('mcp__hq__job', {'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}, tools=broken)
+        init, seen, log = self.turn('mcp__hq__job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'x', 'brief': 'y'}, tools=broken)
         self.assertEqual(init['mcp_servers'][0]['status'], 'failed')
-        self.assertEqual(sorted(init['tools']), ['Glob', 'Grep', 'Read', 'WebSearch'])
+        self.assertEqual(sorted(init['tools']), ['Glob', 'Grep', 'Read', 'WebFetch', 'WebSearch'])
         self.assertEqual(log, '')
 
 

@@ -156,7 +156,7 @@ body.wire-dark .brand img {
 .logo-ink {
   fill: var(--k-ink);
 }
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   .brand svg.logo {
     height: 15px;
   }
@@ -397,7 +397,7 @@ body.touring #card {
 #btn-more {
   display: none;
 }
-@media (max-width: 600px) {
+@container page (max-width: 600px) {
   #btn-more {
     display: grid;
     order: 3;
@@ -441,7 +441,7 @@ body.touring #card {
     left: 50%;
     top: calc(var(--app-h, 100dvh) - max(8px, var(--sab) - 16px)); /* (low, beside the home bar) */
     transform: translate(-50%, -100%);
-    max-width: calc(100vw - 24px);
+    max-width: calc(100cqw - 24px);
     flex-wrap: nowrap;
     gap: 5px;
   }
@@ -452,7 +452,7 @@ body.touring #card {
   }
 }
 /* (on the narrowest phones, 360 px, the six keys a little smaller, so the row still fits beside the logo.) */
-@media (max-width: 380px) {
+@container page (max-width: 380px) {
   .tools,
   .tools:has(#btn-find) {
     gap: 3px;
@@ -1245,7 +1245,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   justify-self: stretch;
   position: relative;
   height: 0;
-  --side-w: min(44px, max(var(--pad), (100vw - 520px) / 2)); /* (the gutter beside it, up to a tap's width) */
+  --side-w: min(44px, max(var(--pad), (100cqw - 520px) / 2)); /* (the gutter beside it, up to a tap's width) */
   --side-ink: var(--k-muted); /* (light as the turn mark) */
   animation: wire-dim-in 0.3s;
 }
@@ -1654,7 +1654,7 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   height: 96px;
 }
 /* a phone: the keys a little smaller inside (scene.js fit sizes them), the big key's words too */
-@media (max-width: 600px) {
+@container page (max-width: 600px) {
   .wire {
     --pad: max(12px, var(--sal));
   }
@@ -1776,9 +1776,6 @@ body.wire-dark #projects {
   font: 650 12.5px/1.2 var(--font);
   letter-spacing: 0;
 }
-:is(.pj-business, [data-project])::before {
-  content: none;
-}
 /* (a cover's fallback initial in the muted ink, opaque, so it keeps 3:1 against the cover like big type must.
   ) */
 .pj-cover > .pj-initial {
@@ -1844,7 +1841,7 @@ body.projects .wire:has(> .solo:not([hidden])) {
 body.projects .wire:has(> .solo:not([hidden])) > :not(.solo) {
   visibility: hidden;
 }
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   .pj-where h1 {
     font-size: 24px;
   }

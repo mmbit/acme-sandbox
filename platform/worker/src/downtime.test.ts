@@ -1,7 +1,7 @@
 // node --test src/downtime.test.ts
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { checkDue, codexLogLine, codexReading, codexTokens, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, lineSeat, reportedUntil, sleepUntil, DRAIN_RECHECK, type Asked } from './downtime.ts';
+import { checkDue, codexLimits, codexLogLine, codexReading, codexTokens, drainPauses, drainUntil, firstToWake, healthiest, heard, inTurn, limitsReading, lineSeat, reportedUntil, sleepUntil, DRAIN_RECHECK, type Asked } from './downtime.ts';
 import { drainLevel, drainLifts, paceChange, pacedUntil, paceTo, reserveElsewhere, windowUsed } from './pace.ts';
 import { limitReset } from './outcome.ts';
 
@@ -99,10 +99,10 @@ test("a seat ahead of its week's pace is paced until its weekly reset, once it w
   assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 0.9, NOW), NOW + 24.5 * H);
   assert.equal(pacedUntil({ week: 0.85, weekResets: NOW + 24.5 * H }, 1, NOW), undefined);
   assert.equal(pacedUntil({ weekResets: NOW + 3 * D }, 0.9, NOW), undefined, 'the week not measured');
-  // what it aims for: its drain level, its limit while another seat keeps the reserve, and nothing on credits or off
+  // what it aims for: its drain level, its limit while another seat keeps the reserve, the same on credits, nothing off
   const seat = { resets: 0, week: 0.7, weekResets: NOW + 3 * D, drainAt: 0.95 };
   assert.deepEqual([paceTo(seat, true, false), paceTo(seat, true, true), paceTo({ ...seat, credits: true }, true, false), paceTo(seat, false, false)],
-    [0.95, 1, undefined, undefined]);
+    [0.95, 1, 0.95, undefined]);
 });
 
 test("a paced seat's pacing lifts as an idle week goes on, before its reset, when the time left meets the stop its pace leads to", () => {
@@ -147,6 +147,8 @@ test("a Codex seat with credits doesn't drain: past its limits it runs on them, 
   assert.equal(full({ has_credits: false, unlimited: true, balance: null }).credits, true);
   assert.equal(full({ has_credits: false, unlimited: false, balance: '0' }).credits, false);
   assert.equal(full().credits, undefined);
+  assert.deepEqual([full({ has_credits: true, balance: '57000' }).creditsLeft, full({ unlimited: true, balance: null }).creditsLeft,
+    full({ has_credits: true, balance: '1e9' }).creditsLeft], [57000, undefined, undefined]);
   assert.equal(drainUntil(full({ has_credits: true }), NOW), 0);
   assert.equal(drainUntil(full({ has_credits: false }), NOW), NOW + 3600e3);
   assert.equal(windowUsed(full({ has_credits: true }), NOW), 1);
@@ -305,6 +307,46 @@ test("a planted session log can't hang the worker: a newline-named file next to 
     assert.equal(await timed(d), undefined);
     assert.equal(await timed(`${root}/none`), undefined);
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the worker reads a Codex account itself through the app server, outside any job's home", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const root = mkdtempSync(`${tmpdir()}/codexlimits-`);
+  try {
+    // a fake codex: answers initialize and the read as the app server does, then stays up until it's ended
+    const answer = '{"id":2,"result":{"rateLimits":{"primary":{"usedPercent":30,"windowDurationMins":10080,"resetsAt":1790000000},"secondary":null,"credits":{"hasCredits":false,"unlimited":false,"balance":"0"}}}}';
+    const fake = (reply: string) => writeFileSync(`${root}/codex`, `#!/bin/sh
+[ "$1" = app-server ] || exit 1
+echo "$CODEX_HOME" > "${root}/home"
+while read -r line; do
+  case "$line" in *'"id":1'*) echo '{"id":1,"result":{}}' ;; *'"id":2'*) ${reply} ;; esac
+done
+sleep 60
+`, { mode: 0o755 });
+    const who = { env: { PATH: `${root}:${process.env.PATH}`, CODEX_HOME: `${root}/seat` } };
+    fake(`echo '{"method":"configWarning","params":{}}'; printf '%s\\n' '${answer}'`);
+    const t = Date.now();
+    assert.deepEqual(await codexLimits(who, 5000), JSON.parse(answer).result);
+    assert.ok(Date.now() - t < 4000, 'ended once it answered, not at the timeout');
+    assert.equal(readFileSync(`${root}/home`, 'utf8').trim(), `${root}/seat`, "the seat's own folder is its home");
+    fake(`echo '{"id":2,"error":{"code":-32600,"message":"codex account authentication required to read rate limits"}}'`);
+    assert.equal(await codexLimits(who, 5000), undefined, 'an error is no reading');
+    fake('true');
+    assert.equal(await codexLimits(who, 500), undefined, 'nor is no answer in time');
+    assert.equal(await codexLimits({ env: { PATH: '/nonexistent' } }, 500), undefined, 'nor no codex');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test("the account's read as a reading: its windows and credits as of now, as a session log's line gives them", () => {
+  const H = 3600e3, read = (credits: object | null, secondary: object | null = null) => limitsReading({ rateLimits: {
+    primary: { usedPercent: 100, windowDurationMins: 10080, resetsAt: (NOW + 50 * H) / 1000 }, secondary, credits } }, NOW);
+  assert.deepEqual(read({ hasCredits: true, unlimited: false, balance: '500' }),
+    { at: NOW, week: 1, weekResets: NOW + 50 * H, credits: true, creditsLeft: 500 });
+  assert.deepEqual(read(null, { usedPercent: 40, windowDurationMins: 300, resetsAt: null }),
+    { at: NOW, util: 0.4, resets: undefined, week: 1, weekResets: NOW + 50 * H }, 'no credits said, a reset unknown');
+  assert.equal(limitsReading({ rateLimits: { primary: null, secondary: null } }, NOW), undefined);
+  assert.equal(limitsReading(undefined, NOW), undefined);
 });
 
 test("with no seat to pick, the voice line's is the one that wakes first, not the first on the list", () => {

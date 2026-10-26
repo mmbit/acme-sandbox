@@ -1,4 +1,3 @@
-// Queue-time estimate contract fixtures.
 // node --test src/noseat.test.ts   (work for an agent no seat runs, the test company's Poppy on `engine: api`, is refused
 // where it's made, in words the caller acts on)
 import { test } from 'node:test';
@@ -32,7 +31,9 @@ test('hq job for an agent no seat runs queues nothing and says why', async () =>
 });
 
 test("a call agent's job tool hears the refusal while the board is on the line", async () => {
-  const ctx = (await voice('call-context', { agent: 'juno', lang: 'en' })).body as { token: string };
+  const opened = await voice('call-context', { agent: 'juno', lang: 'en' });
+  assert.equal(opened.status, 200);
+  const ctx = opened.body as { token: string };
   // the real hq as the voice line runs it for the job tool (hq_tools.py job): on a call, the brief on stdin
   const hq = new URL('../../worker/bin/hq', import.meta.url).pathname;
   const r = await new Promise<{ code: number; err: string }>(resolve => {
@@ -73,7 +74,9 @@ test('hq say that would become a job for one sends nothing', async () => {
 });
 
 test("a call with one isn't followed up: the board hears so at once", async () => {
-  const ctx = (await voice('call-context', { agent: 'poppy', lang: 'en' })).body as { call: number; token: string };
+  const opened = await voice('call-context', { agent: 'poppy', lang: 'en' });
+  assert.equal(opened.status, 200);
+  const ctx = opened.body as { call: number; token: string };
   const ended = await voice('call-end', {
     agent: 'poppy',
     lines: ['Board: Check the refunds page.'],

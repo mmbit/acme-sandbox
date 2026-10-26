@@ -120,9 +120,30 @@ test('the worker reports through its own route; agents and the board read the li
 test('the planner uses reported slots and memory room, and an old report becomes unknown', async () => {
   const { plannerCapacity } = await import('./room.ts');
   const at = Date.now(),
-    capacity = { slots: { claude: 10, codex: 4 }, seatRuns: { codex: 2 }, room: 7 };
+    capacity = {
+      slots: { claude: 10, codex: 4 },
+      seatRuns: { codex: 2 },
+      room: 7,
+      memory: {
+        at,
+        availableMb: 3000,
+        freeReserveMb: 1500,
+        defaultRunMb: 700,
+        totalSlots: 10,
+        heldSlots: 0,
+        heldMb: 0,
+        starting: [{ until: at + 30_000, mb: 700 }],
+        runningMb: { 999999: 2400, 999998: null },
+      },
+    };
   assert.equal((await h.worker('room', { short: false, free: 3000, capacity })).status, 200);
   assert.deepEqual(plannerCapacity(at + 1000), capacity);
+  const { snapshot } = await import('./backlog.ts');
+  assert.deepEqual(
+    snapshot(at + 1000).memory,
+    capacity.memory,
+    'the plan retains timed reservations and per-run demand',
+  );
   assert.equal(plannerCapacity(at + 4 * 60_000), null);
   reportRoom({ capacity: { ...capacity, room: 0 } }, at);
   assert.equal(plannerCapacity(at)?.room, 0, 'no memory room remains a measured zero');
@@ -197,4 +218,34 @@ test('memory really low: each running job hears it once, the job that caused it 
     [[], []],
     'a spell over before their next step: only its cause hears of it',
   );
+});
+
+test('a finish between room reports releases the stale occupant in a fresh plan without changing the report', async () => {
+  const { snapshot } = await import('./backlog.ts');
+  const { play } = await import('./eta.ts');
+  const run = await h.start({ agent: 'kit', engine: 'reconcile' });
+  const waiting = h.queue({ agent: 'kit', engine: 'reconcile' });
+  await h.worker('seat', { seat: run.seat, engine: 'reconcile', state: 'ready', util: 0, week: 0 });
+  const at = Date.now();
+  const memory = {
+    at,
+    availableMb: 1500,
+    freeReserveMb: 1500,
+    defaultRunMb: 700,
+    totalSlots: 1,
+    heldSlots: 0,
+    heldMb: 0,
+    starting: [],
+    runningMb: { [run.id]: 700 },
+  };
+  reportRoom({ capacity: { slots: { [h.job(waiting).engine]: 1 }, seatRuns: {}, room: 0, memory } }, at);
+  await h.finish(run);
+  const input = snapshot(at + 1000);
+  assert.equal(input.memory!.availableMb, 2200);
+  assert.deepEqual(input.memory!.runningMb, {});
+  assert.deepEqual(memory.runningMb, { [run.id]: 700 }, 'the worker observation stays intact');
+  input.jobs = input.jobs.filter(job => job.id === waiting);
+  const sizes = new Map(input.jobs.map(job => [job.id, { agent_ms: 60_000 }]));
+  const outcome = play(input, sizes).get(waiting)!;
+  assert.equal(outcome.start, input.now);
 });

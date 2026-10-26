@@ -3,8 +3,9 @@
 // open desk phone card with the work that waits on it.
 import { db } from './db.ts';
 import { org, companyTime } from './company.ts';
-import { boardId, findAgent, nameOf, paused, held, pauseAllowed } from './jobs.ts';
+import { boardId, findAgent, nameOf, paused, held, pauseAllowed, pauseLets, FOLLOW_THROUGH } from './jobs.ts';
 import * as pauses from './pauses.ts';
+import * as redraws from './redraws.ts';
 import { teamMembers } from './team.ts';
 import { heldFor, isHidden } from './later.ts';
 import type { Forecast } from './forecast.ts';
@@ -26,6 +27,9 @@ type Run = {
   thread_name: string | null;
   project: string | null;
   deadline: number | null;
+  // no pause holds it (jobs.ts pauseLets): the hourly follow-through check, or a pause's wake for its owner
+  lets: number;
+  follow_through: number;
 };
 type Holds = {
   company: ReturnType<typeof paused>;
@@ -52,9 +56,10 @@ function atWork(holds: Holds) {
     .filter((a: any) => a.status?.state === 'working' && !boardId(a.id));
   const runs = db
     .prepare(
-      `select j.id, j.agent, j.title, j.step, j.round, j.kind, j.seat, j.started, j.expedite, j.call, j.answers, j.pr,
-        j.thread, t.name thread_name, p.name project, t.deadline from jobs j left join threads t on t.id = j.thread
-        left join projects p on p.id = t.project where j.status = 'running' order by j.started, j.id`,
+      redraws.query(`select j.id, j.agent, j.title, j.step, j.round, j.kind, j.seat, j.started, j.expedite, j.call,
+        j.answers, j.pr, j.thread, t.name thread_name, p.name project, t.deadline, ${pauseLets('j')} lets,
+        ${FOLLOW_THROUGH('j')} follow_through from jobs j left join threads t on t.id = j.thread
+        left join projects p on p.id = t.project where j.status = 'running' order by j.started, j.id`),
     )
     .all() as Run[];
   const working = new Set(people.map((a: any) => a.id as string));
@@ -131,7 +136,11 @@ function through(r: Run, h: Holds) {
   if (h.runs?.agents.includes(r.agent) && r.kind === 'work')
     reasons.push(`${h.runs.line} holds ${r.agent}'s work, and this run is going all the same`);
   const p = r.thread ? h.pauses.find(o => o.target === r.thread || o.target === r.thread!.split('/')[0]) : undefined;
-  if (p)
+  if (p && r.lets)
+    reasons.push(
+      `${p.target} is paused, but no pause holds ${r.follow_through ? "HQ's hourly follow-through check" : 'the job that wakes its owner to judge one'}`,
+    );
+  else if (p)
     reasons.push(
       r.started && r.started < p.at
         ? `it started before ${p.target} was paused (${at(p.at)}), and a pause doesn't stop a run under way`

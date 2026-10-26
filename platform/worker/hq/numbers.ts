@@ -74,8 +74,7 @@ const percent = (rate: number | null | undefined) =>
 
 const rateOf = (n: number, of: number) => (of > 0 ? percent(n / of) : '–');
 
-const utc = (time: string | null | undefined) =>
-  time === null || time === undefined ? 'never' : `${minute(time)} UTC`;
+const utc = (time: string | null | undefined) => (time === null || time === undefined ? 'never' : `${minute(time)}`);
 
 type Money = { kept: number; paid: number; orders: number; eur: number };
 

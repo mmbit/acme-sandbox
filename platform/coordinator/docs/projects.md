@@ -136,7 +136,7 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
   and `hq plan unneed <thread> <thread>` add or take back a need (a loop is refused at any depth, across projects);
   `hq plan move <job> <place>` puts a task still to start in its place (1: next; tasks added later still come last);
   `hq plan drop <job> "why"` cancels a task that never started; `hq plan done <thread>` closes a thread whose goal is
-  met with nothing to merge. Its tasks are queued with `hq job --thread`, as before; `hq job --thread new:<project>
+  met with nothing to merge, or whose work merged. Its tasks are queued with `hq job --thread`, as before; `hq job --thread new:<project>
   "name" "done when"` draws the thread the same way first, refused before anything is written for anyone but the
   project's owner and the CEO (`newthread.ts`). A drawn thread is read back as
   the board reads it: its product, project, name and "done when", then the names of the project's other open threads.
@@ -182,20 +182,15 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
   their own (`hq job`) and the rest is accepted, or it's dropped, which cancels it; a return to the board is only ever
   named. A review's follow-up bundle is accepted only under the accepter's title. A review's fix tasks are named by
   their consolidator: each blocking finding's `task`, and `touchups_task` for its touch-ups' check. `hq inbox accept
-  findings:<pr>` takes that title when the findings it names share one, else needs `--title`; without threads in
-  order, the fix round takes them together. A closed review's redrawn work keeps its work's own title. HQ's other
+  findings:<pr>` takes that title when the findings it names share one, else needs `--title`; a pull request in
+  no thread gets its author's fix round, which takes them together. A closed review's redrawn work keeps its work's own title. HQ's other
   jobs (alarms, checks, errors, watch, backups, a care bug report, an email's answer) are each one thing titled by
   what it is, and retries keep their job's title.
 
-`planning: threads` in `projects.yaml` switches on threads in order (each thread's tasks one at a time on one branch,
-one pull request at its end). Without it, the platform's default, the claim, the worker and the review panel work as
-before; the plan, proposals to owners and the commands above work either way.
-
 ### Threads in order
 
-With the switch on (`threadorder.ts`). HQ holds the switch (`settings`
-`planning.mode`: threads, draining or off), which the claim reads; `threadends.watch` moves it after the file every
-minute and at the start, and a file that doesn't parse leaves it as it was.
+How the platform plans: each thread's tasks one at a time on one branch, one pull request for the thread, read by the
+claim, the worker and the review panel (`threadorder.ts`). There is no setting for it and no other way.
 
 - **The order.** A task (a work job in a thread that isn't a pull request's fix or update) starts once the task before
   it in its thread (`jobs.seq`, else ids) is done: pushed, not merged. The thread's next task to
@@ -219,9 +214,18 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
   task's briefing to resolve first), and the briefing says the task's place, the task before it and the thread's "done
   when" (the claim's `inThread`).
 - **One pull request.** At its push a task asks `POST /api/worker/thread-push` for the thread's title and tasks, and its
-  push opens the thread's one pull request, or starts its next round if it's open: finished work goes to review at once
-  and never waits for a later task (one waiting for a seat or a time, or one that fails) to run. Its gates and tests run
-  in the review, as for any push. A task that pushed nothing has its waits met at the thread's merge, never stranded.
+  push opens the thread's one pull request, or starts its next round if it's open. While the thread's next task starts
+  now (running, or queued with only a seat to wait for: `threadorder.ts nextReady`), the push is held instead
+  (`review.ts heldForThread`, kept as a push waiting for its ruling is): no round opens, and the next task starts at once
+  on the branch. The last such task's push opens the round, its files against main the thread's whole work, so the
+  thread is reviewed once, at its end. Finished work never waits for a task that isn't coming now: when the next task
+  fails or ends with nothing pushed, the held push goes to review at once (`jobs.ts handOn`), and when it comes to wait
+  for a time, a card or another thread's merge, at the next ruling sweep (`actOnRulings`, every 5 minutes). A pull
+  request's fixes and the board's notes are never held, and a push is held only once it owes nothing: one that owes a
+  redo, previews or its documents, or fails its gates or tests, goes back to its author first. While held it counts as in
+  review: a job `--after` its task waits for the thread's pull request, and the task's call items tied to its work by a
+  request or ref are judged once that pull request opens (`ledger.ts prOpened`). Its gates and tests run in the review,
+  as for any push. A task that pushed nothing has its waits met at the thread's merge, never stranded.
   The thread's next task waits while a job of that pull request that pushes to the branch is open (a fix, or a ruling
   that may touch it up), and a ruling touches nothing up while a task works on the branch, so two sessions never push
   to one branch. A merge before the thread's last task runs settles the branch, and the next task starts a fresh one
@@ -240,16 +244,14 @@ minute and at the start, and a file that doesn't parse leaves it as it was.
   pushes its repair the same way; a repair that leaves nothing for main deletes the branch and closes the pull request.
   Each push or deletion holds only while the branch is still at the publication its writer started from (none, for a
   new branch): of a run again and a repair at once, the later is refused rather than undo the other's lines.
-- **A merge** clears the thread's branch (its next task starts a new one), and closes each thread whose every task is
-  done and merged, or done with nothing to merge, logged in `plan_changes` by `hq`, switch on or off.
+- **A merge** clears the thread's branch (its next task starts a new one). A thread it leaves with nothing open or
+  still to merge stays open, ready to judge (`threadjudge.ts`): HQ queues its owner a job with the thread's "done when"
+  and each task's report (`threads.judge`; one that hasn't started takes the owner's next such thread in too), never
+  held by a pause. The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq thread` and the
+  CEO's summary say "ready to judge" until then, with the open threads that need it. A judge's own thread closes at its
+  merge.
 - **Refusals.** A running job's `hq job` into a thread is its project's owner's or the CEO's (anyone else: `hq
   propose`), and `--after` a job in another thread is refused for `hq plan need`, in its own for the order it has.
-- **Switching off** (the revert) drains the threads first: the order still holds, a task that hasn't started waits for
-  its thread's pull request, and a task's push opens it. Each thread branch whose tasks are idle (none running, waiting
-  for the board or going on in its session) then opens its work: one with no open pull request gets a job for the agent
-  of the last task that pushed to it, on the branch, to bring it up to date and stop, which opens it for today's panel;
-  the thread's queued tasks wait for that work to merge (`waits`). Once every thread is through, the switch is off. The
-  plan data stays.
 
 
 ## The steps
@@ -345,7 +347,8 @@ item), `pausewake.ts`: the pause's why, what was met, and each job's report and 
 is never held by a pause or the company's pause, and runs as soon as it can, which pacing lets through. The owner
 lifts it (`hq project resume` or `hq thread resume`), takes the results to the board, or keeps it on for what's still
 missing: the same `hq ... pause` on a paused target, by whoever may resume it, keeps that pause with the new why and
-conditions, and they wake the owner afresh. The CEO's hourly check flags a pause whose waited-on work ended, or whose
+conditions, and they wake the owner afresh. No pause holds the CEO's hourly check either, though `projects.yaml`'s
+`made.checks` draws it in a project a hold may pause: it is what judges the holds. The CEO's hourly check flags a pause whose waited-on work ended, or whose
 woken owner left it on with nothing to wake them again, as off track that hour. Only the CEO resumes a pause the CEO
 made or one carrying the board's item; a pause for the board's decision ends with the board's answer on its card. A pause can't wait for a job on what it pauses, or for one that needs work there first (its after,
 its waits, another pause's `--until`, at any depth), which it would hold for good. A later `hq waits` change that would

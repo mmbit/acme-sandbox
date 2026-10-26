@@ -24,8 +24,8 @@ import {
   type Seat,
 } from './meetings.ts';
 
-export const HOLD_MS = 10 * 60_000;
-export const REST_MS = 5 * 60_000;
+import { until, letGo, restUntil } from './meetingroom.ts';
+export { HOLD_MS, REST_MS } from './meetingroom.ts';
 
 // ---- starting together
 
@@ -54,7 +54,7 @@ export function pick<T extends { id: number }>(
       own = sorted.find(c => c.id === mine.job);
     if (!own) release(mine.job);
     else if (m.status === 'live') return started(own);
-    else if (now - (m.gathering ?? now) >= HOLD_MS || !runnable(m.id, now)) letGo(m.id, now);
+    else if (now >= until(m) || !runnable(m.id, now)) letGo(now);
     else return complete(m.id, now) ? started(own) : null;
   }
   for (const c of sorted) {
@@ -62,9 +62,9 @@ export function pick<T extends { id: number }>(
     if (!s) return c;
     const m = meeting(s.meeting)!;
     if (m.status === 'live') return started(c);
-    if (s.slot || !slot || (m.rests ?? 0) > now || !seatReadyFor(c.id, now, seat)) continue;
+    if (s.slot || !slot || restUntil() > now || !seatReadyFor(c.id, now, seat)) continue;
     if (!runnable(m.id, now)) {
-      letGo(m.id, now);
+      letGo(now);
       continue;
     }
     db.prepare('update meeting_seats set slot = ?, runner = ? where job = ?').run(slot, seat, c.id);
@@ -124,11 +124,6 @@ const started = <T extends { id: number }>(c: T) => {
   db.prepare('update jobs set prompt = ? where id = ?').run(briefing(c.id), c.id);
   return c;
 };
-
-function letGo(id: number, now: number) {
-  db.prepare('update meeting_seats set slot = null, runner = null where meeting = ?').run(id);
-  db.prepare('update meetings set gathering = null, rests = ? where id = ?').run(now + REST_MS, id);
-}
 
 // ---- the seat's briefing
 
@@ -381,6 +376,6 @@ export function sweep(now = Date.now()) {
       const done = m.tally && 'at' in (JSON.parse(m.tally) as Tally);
       if (due && !done)
         db.prepare('update meetings set tally = ? where id = ?').run(JSON.stringify(tally(m, now)), m.id);
-    } else if (m.gathering !== null && now - m.gathering >= HOLD_MS) letGo(m.id, now);
+    } else if (now >= until(m)) letGo(now);
   }
 }

@@ -59,7 +59,7 @@ test("a new company's CEO is told to hire first, and only while the company has 
     let job;
     while ((job = (await h.claim('claude'))!).id !== id) await h.finish(job, { result: 'Done.' });
     assert.match(job.title, /call/i);
-    const noted = { kind: 'briefing', owner: 'juno', what: 'We sell mugs', quote: 'Board: We sell mugs.', call: ctx.body.call };
+    const noted = { kind: 'briefing', owner: 'juno', goal: 'g', what: 'We sell mugs', quote: 'Board: We sell mugs.', call: ctx.body.call };
     assert.equal((await h.agent('item', job.token, noted)).status, 200);
     assert.equal((await h.agent('reply', job.token, { text: 'Noted: we sell mugs.' })).status, 200); // (its reply)
     await h.finish(job, { result: 'Noted.' });

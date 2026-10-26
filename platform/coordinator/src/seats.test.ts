@@ -95,6 +95,7 @@ test('a key seat: added with its key, which the worker takes once and HQ never s
       sign_in: 'key',
       paused: false,
       stop: null,
+      use_credits: false,
     },
   );
   assert.deepEqual(
@@ -148,6 +149,7 @@ test("a service of the board's own: its address and model reach the worker", asy
     model: 'coder-2',
     paused: false,
     stop: null,
+    use_credits: false,
   });
   assert.equal((await seat('other-1')).provider_name, 'Other Place');
   assert.ok(
@@ -362,6 +364,26 @@ test('pacing: on until the board turns it off, for every seat, and a waiting cha
   await board('/api/seats/pacing', { on: true });
   for (const a of (await list()).actions.filter(a => a.what === 'pacing')) await settle(a.id, 'done', 'Pacing is on.');
   assert.deepEqual([(await shown()).on, (await shown()).action.words], [true, 'Pacing is on.']);
+});
+
+test("credits past the plan: off for every seat until the board lets one spend them, and the worker hears it", async () => {
+  assert.equal((await seat('codex-1')).use_credits, false);
+  assert.equal((await list()).seats.find(s => s.id === 'codex-1').use_credits, false);
+  assert.equal((await board('/api/seats/credits', { seat: 'codex-1', on: 'yes' })).body.error, 'Say whether it may spend credits.');
+  assert.equal((await board('/api/seats/credits', { seat: 'codex-x', on: true })).body.error, "There's no such seat.");
+  const on = (await board('/api/seats/credits', { seat: 'codex-1', on: true })).body;
+  assert.equal((await seat('codex-1')).use_credits, true);
+  const l = await list();
+  assert.equal(l.seats.find(s => s.id === 'codex-1').use_credits, true);
+  assert.equal(l.seats.find(s => s.id === 'claude-1').use_credits, false);
+  assert.deepEqual(
+    l.actions.filter(a => a.what === 'credits').map(a => [a.id, a.seat]),
+    [[on.action, 'codex-1']],
+  );
+  await settle(on.action, 'done', 'It may spend credits past its plan now, while its account has them.');
+  await board('/api/seats/credits', { seat: 'codex-1', on: false });
+  assert.equal((await list()).seats.find(s => s.id === 'codex-1').use_credits, false);
+  for (const a of (await list()).actions.filter(a => a.what === 'credits')) await settle(a.id, 'done');
 });
 
 test('a paced seat reaches HQ as the worker last reported it, and stops being one with the next report without it', async () => {

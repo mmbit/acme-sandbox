@@ -93,8 +93,35 @@ Don't update your profile every turn: only when something worth remembering was 
 const CHAT = 'Intercom chat with the board';
 const AGAIN = `${CHAT} (starting over)`;
 
-const current = () => db.prepare("select * from jobs where kind = 'chat' order by id desc limit 1").get() as
+const current = () => db.prepare("select * from jobs where kind = 'chat' and id not in (select job from quick_runs) order by id desc limit 1").get() as
   { id: number; status: string; engine: string; not_before: number | null } | undefined;
+
+// A quick run: one turn of the chat kind for any agent, outside the intercom, on the worker's chat slot (no queue, no
+// pacing, no hold), for what's answered within seconds (the book's questions: bookslips.ts). The slot is a Claude seat's,
+// so every quick run is on Claude, as its agent with its profile, on Claude's model when the agent's own engine is
+// another. Its final message goes back to the module that started it (its purpose's heard), never to the intercom: none
+// of the intercom's lines, recap or brief.
+db.exec('create table if not exists quick_runs (job integer primary key, purpose text not null)');
+type Heard = (job: number, status: string, result: string) => void;
+const purposes = new Map<string, Heard>();
+// (each purpose once, at its module's load)
+export const onQuickRun = (purpose: string, heard: Heard) => void purposes.set(purpose, heard);
+export function quickRun(agent: string, title: string, prompt: string, purpose: string) {
+  if (!purposes.has(purpose)) throw new Error(`no module hears a quick run for ${purpose}`);
+  const id = createJob({ agent, kind: 'chat', engine: 'claude', title, prompt }).id;
+  db.prepare('insert into quick_runs (job, purpose) values (?, ?)').run(id, purpose);
+  return id;
+}
+const purposeOf = (job: number) =>
+  (db.prepare('select purpose from quick_runs where job = ?').get(job) as { purpose: string } | undefined)?.purpose;
+// Whether a chat job is the intercom's (a quick run's isn't)
+export const intercom = (job: number) => !purposeOf(job);
+// A chat job's run ended (jobs.ts): a quick run's answer to its purpose, an intercom turn's to the board.
+export function ended(job: { id: number; title?: string }, status: string, result?: string) {
+  const purpose = purposeOf(job.id);
+  if (purpose) return purposes.get(purpose)?.(job.id, status, (result ?? '').trim());
+  answered(job, status, result);
+}
 // pictureIds: the board's pictures that go with the line; who: whose line, the board's or a call's (or an invited person's, fromGuest)
 export function say(text: string, call?: string, callId?: number, pictureIds: number[] = [], who = call ? 'call' : 'board') {
   // A very long talk is fine (a two-hour call is about 100,000 characters); this only stops a runaway, and says so.
@@ -206,7 +233,7 @@ const AGAIN_SAYS = " (your last session broke off before it answered, so you're 
 
 // A turn that parked (the CEO asked the board on the desk phone) doesn't hear what came in during it until it's resumed:
 // it's resumed now if anything did. Its request stays open.
-export const parked = (id: number) => deliver(id);
+export const parked = (id: number) => intercom(id) && deliver(id);
 
 // What reaches the CEO's intercom from outside the chat (a call about the CEO's desk phone request, the board's answer to
 // it) goes in as a line of the chat too, shown as one line ('shown'), so it's heard like everything the board types:

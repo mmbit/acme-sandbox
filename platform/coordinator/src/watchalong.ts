@@ -218,7 +218,7 @@ const settled = (watch: Watch) => watch.moments.settle(Date.now() - watch.clockM
 
 // The briefing's paragraph on a walk-through, for whoever shows the screen (who: 'the board', 'they'; their: 'its',
 // 'their'): it comes with the caller's turn once the screen is shown, as the call's briefing was written before
-export const briefing = (who: string, their: string) => {
+const briefing = (who: string, their: string) => {
   const Who = who.charAt(0).toUpperCase() + who.slice(1),
     whose = who === 'they' ? their : `${who}'s`;
   return `(You can now see ${whose} screen: a walk-through of our pages. With each of ${their} turns you get what was \
@@ -230,13 +230,22 @@ looking over ${their} shoulder would ("the blue button at the bottom"), and neve
 times out. While the screen is paused you see nothing of it.)`;
 };
 
+// What each purpose's agent is told once the screen is shown. A purpose without a briefing is never
+// watched for an agent.
+const BRIEFS = new Map([
+  [CALL, briefing('the board', 'its')],
+  [CALLOUT, briefing('they', 'their')],
+]);
+
 // POST /api/voice/screen-turn { purpose, ref, after, seen, briefed, picture }: for a caller's turn, the moments since the agent's
 // last (after: the last moment it had), and a picture of the screen now when it changed since the one it has (seen: that
 // picture's version), the last tap since then ringed. While paused, the lines up to the pause and no picture. brief:
-// what the agent is told of a walk-through, for a session that hasn't had it (briefed false). picture false: none (the
-// call has had all it can hold).
-export async function screenTurn(b: Record<string, unknown>, brief: string) {
-  const watch = live(String(b.purpose ?? ''), String(b.ref ?? ''));
+// what the agent is told of a walk-through (BRIEFS), for a session that hasn't had it (briefed false). picture false:
+// none (the call has had all it can hold).
+export async function screenTurn(b: Record<string, unknown>) {
+  const purpose = String(b.purpose ?? ''),
+    brief = BRIEFS.get(purpose);
+  const watch = brief ? live(purpose, String(b.ref ?? '')) : undefined;
   if (!watch) return { on: false };
   settled(watch);
   const after = Number(b.after) || 0,
@@ -268,7 +277,8 @@ function turnLines(moments: Moments['list'], clock: (at: number) => string) {
 // ('-2m', '17:03', '#12'). Otherwise a picture, TOOL_PX on its long side: now, or at ('-20s', '17:03:12', '#12'; a
 // moment's own tap ringed), all of it or region { x, y, width, height } in fractions of the screen.
 export async function screen(b: Record<string, unknown>) {
-  const watch = live(String(b.purpose ?? ''), String(b.ref ?? ''));
+  const purpose = String(b.purpose ?? '');
+  const watch = BRIEFS.has(purpose) ? live(purpose, String(b.ref ?? '')) : undefined;
   if (!watch) return [404, 'No screen is being shown on this call.'];
   settled(watch);
   if (watch.moments.paused)

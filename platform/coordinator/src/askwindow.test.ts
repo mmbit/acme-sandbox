@@ -9,7 +9,6 @@ const h = await harness('askwindow', { before: repo => writeFileSync(`${repo}/co
 const { db } = h;
 const projects = await import('./projects.ts');
 const plan = await import('./plan.ts');
-const threadends = await import('./threadends.ts');
 const ordering = await import('./ordering.ts');
 
 const MINUTE = 60_000,
@@ -91,7 +90,8 @@ test("the CEO's ask from the intercom takes its window as it's queued, or is ref
 
 test("on a live call its agent judges the time, never asking the board; another agent's follow-up handing out its item asks the CEO", async () => {
   const plain = opened();
-  const call = await liveCall('kit');
+  // (moss's call, the shop's owner: anyone else's follow-up adds no task to a shop thread)
+  const call = await liveCall('moss');
   const queued = await h.agent('job', call, { agent: 'bolt', title: 'The phone logs', prompt: 'x', thread: plain });
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
   assert.match(
@@ -103,7 +103,13 @@ test("on a live call its agent judges the time, never asking the board; another 
   assert.match(loose.body.untimed, /in no thread.*\(\d+\), with the open thread it serves/);
 
   // a promise with its time, handed out: its thread's window, and nobody asked
-  const promise = await h.agent('item', call, { kind: 'promise', owner: 'bolt', what: 'The logs', deadline: '2h' });
+  const promise = await h.agent('item', call, {
+    kind: 'promise',
+    goal: 'The board wants it on time.',
+    owner: 'bolt',
+    what: 'The logs',
+    deadline: '2h',
+  });
   const handed = await h.agent('job', call, {
     agent: 'bolt',
     title: 'The logs read',
@@ -115,17 +121,18 @@ test("on a live call its agent judges the time, never asking the board; another 
   assert.ok(handed.body.deadline);
   assert.equal(handed.body.untimed, undefined);
 
-  // kit's follow-up hands out an item with no time: the CEO is asked
+  // moss's follow-up hands out an item with no time: the CEO is asked
   assert.equal(
-    (await h.voice('call-end', { agent: 'kit', lines: ['Board: read the logs.'], request: 0, token: call })).status,
+    (await h.voice('call-end', { agent: 'moss', lines: ['Board: read the logs.'], request: 0, token: call })).status,
     200,
   );
   const followUp = (
-    db.prepare("select job from calls where agent = 'kit' order by id desc limit 1").get() as { job: number }
+    db.prepare("select job from calls where agent = 'moss' order by id desc limit 1").get() as { job: number }
   ).job;
   const run = await h.claimJob(followUp);
   const task = await h.agent('item', run.token, {
     kind: 'task',
+    goal: 'The board wants it on time.',
     owner: 'bolt',
     what: 'Read the logs',
     quote: 'Board: read the logs.',
@@ -160,6 +167,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   const call = await liveCall('juno');
   const promise = await h.agent('item', call, {
     kind: 'promise',
+    goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The fallback is live',
     deadline: '40m',
@@ -180,6 +188,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   const list = opened();
   const named = await h.agent('item', call, {
     kind: 'promise',
+    goal: 'The board wants it on time.',
     owner: 'wren',
     what: 'The list is in',
     deadline: '2h',
@@ -194,7 +203,12 @@ test("a promise on a live call about its owner's work under way is linked to it,
   // without one, a thread for work the call didn't queue, and a job that carries another item (its link)
   const bolts = await h.start({ agent: 'bolt', title: 'The phone logs', thread: opened() });
   const loose = await h.start({ agent: 'wren', title: 'Loose', thread: null });
-  const first = await h.agent('item', call, { kind: 'promise', owner: 'wren', what: 'The names' });
+  const first = await h.agent('item', call, {
+    kind: 'promise',
+    goal: 'The board wants it on time.',
+    owner: 'wren',
+    what: 'The names',
+  });
   const carrying = await h.agent('job', call, {
     agent: 'wren',
     title: 'The names',
@@ -211,17 +225,20 @@ test("a promise on a live call about its owner's work under way is linked to it,
     [{ deadline: '40m', job: carrying.body.id }, 409, /carries item #\d+ already/],
   ] as const) {
     const before = items();
-    const refused = await h.agent('item', call, { kind: 'promise', owner: 'wren', what: 'x', ...body });
+    const refused = await h.agent('item', call, {
+      kind: 'promise',
+      goal: 'The board wants it on time.',
+      owner: 'wren',
+      what: 'x',
+      ...body,
+    });
     assert.equal(refused.status, status, JSON.stringify(refused.body));
     assert.match(refused.body.error, error);
     assert.equal(items(), before, 'nothing recorded');
   }
 });
 
-// Last: it switches planning by threads on, which the claim orders needs by.
 test('work a timed thread with no task yet needs takes its window: the claim gives it a latest start', async () => {
-  writeFileSync(`${h.repo}/company/projects.yaml`, `planning: threads\n${PROJECTS}`);
-  threadends.watch();
   const token = await intercom();
   const meeting = h.dueThread({ deadline: Date.now() + 3 * HOUR }),
     serving = opened();

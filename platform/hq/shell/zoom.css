@@ -2,7 +2,8 @@
 dialog.zoom {
   position: fixed;
   inset: 0;
-  width: 100vw;
+  /* the page's width: the top layer is placed by the window, beside the book. */
+  width: calc(100vw - var(--book-room, 0px));
   height: 100dvh;
   max-width: none;
   max-height: none;

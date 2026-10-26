@@ -15,6 +15,8 @@
 # HQ's sign letters, which a company's print pages draw with
 !platform/hq/renderers/brownstone/iso.js
 !platform/hq/util.js
+# the looks HQ ships, which the coordinator answers renderers/looks.json with
+!platform/hq/looks.mjs
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
 !shared/html/escape.ts
 # the route tables' engine (platform/coordinator/src/runs.ts).
@@ -28,6 +30,8 @@
 !shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import
 !shared/format/format.js
+# WCAG's contrast, which the brand's colour picks its letters by (platform/coordinator/src/company.ts.)
+!shared/contrast/contrast.js
 # the rule for what a commit's lines changed count, which HQ's daily lines read (platform/coordinator/src/commitlines.ts)
 !platform/worker/src/countedlines.ts
 # The fallback estimate scale shared by work, intercom and call prompts.
@@ -39,6 +43,8 @@
 # a picture's size and the AI-edit mark, which the photo studio reads and writes (platform/coordinator/src/studio.ts).
 !shared/pictures/size.ts
 !shared/provenance/provenance.ts
+# the ink's one outline, which the book's page picture draws with (platform/coordinator/src/bookrender.ts).
+!shared/review/ink.js
 # the plan levels' text, which hq's help and the coordinator's refusals and planning prompt share (names.ts, proposals.ts).
 !platform/worker/hq/levels.ts
 # what holds work in words, which hq's estimates and the CEO's summary share (threats.ts).
@@ -49,6 +55,8 @@
 !shared/wordcheck/wordcheck.js
 # the rule that places the board's sorted projects, which the projects view's dev mode shares (projectorder.ts).
 !platform/hq/shell/order.js
+# a review mark's anchor, which feedback.ts migrates the stored marks with
+!shared/review/anchor.js
 !kits
 **/node_modules
 **/*.test.ts

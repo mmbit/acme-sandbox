@@ -7,7 +7,8 @@ import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, errorsOf, tap, until } from '../../shared/browser/browser.mjs';
 
-const RENDERERS = ['brownstone', 'holo', 'wire'];
+const RENDERERS = lookNames();
+import { lookNames } from './looks.mjs';
 // an agent's title that looks like markup is shown as text: one more job in the office's care thread
 const own = name => readFileSync(new URL(`./mock/${name}.json`, import.meta.url));
 const board = JSON.parse(own('projects')),
@@ -691,14 +692,47 @@ for (const look of RENDERERS)
     // view as it was
     const agentCard = () =>
       page.evaluate(() => Boolean(document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])')));
+    const sidesShow = () => page.$eval('.pj-sides', e => !e.hidden),
+      sided = await sidesShow();
     await tap(page, '.pj-level [data-job="58"]');
     await page.waitForFunction(() => document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await page.$('#projects .pj-card')), `${at}: no sheet of its own for a job at work`);
     // (and from here it steps to no other agent's: the board's note.)
     assert.equal(await page.$('.wire .solo .sides'), null, `${at}: no sides to agents of other work`);
+    // (nor the view's beside it, until it's gone)
+    if (await page.$('.wire .solo:not([hidden])'))
+      assert.ok(!(await sidesShow()), `${at}: no view's sides by the card`);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await agentCard()), at);
+    assert.equal(await sidesShow(), sided, `${at}: the view's sides back as they were`);
+    // (and as well after a teammate's card from the computer's Team list replaces the task's)
+    if (look === 'wire') {
+      // (the agents with a key on the board, before the card's out: the card's agent alone hangs one after)
+      const keyed = await page.evaluate(async () => {
+        const world = await import('/world/world.js'),
+          { scene } = await import('/shell/stage.js');
+        return [...world.agents.keys()].filter(id => scene.anchor({ kind: 'agent', id }));
+      });
+      await tap(page, '.pj-level [data-job="58"]');
+      await page.waitForSelector('.wire .solo:not([hidden])');
+      const second = await page.evaluate(async keyed => {
+        const { scene } = await import('/shell/stage.js'),
+          id = keyed.find(x => !scene.anchor({ kind: 'agent', id: x }));
+        (await import('/shell/hud.js')).flyTo(id);
+        return Boolean(scene.anchor({ kind: 'agent', id }));
+      }, keyed);
+      assert.ok(second, `${at}: a teammate's card out in the task's agent's place`);
+      assert.ok(!(await sidesShow()), `${at}: no view's sides by the second card`);
+      // (Escape closes the teammate's panel first, where it's out, then the card)
+      if (await page.$('#panel:not([hidden])')) {
+        await page.keyboard.press('Escape');
+        await page.waitForFunction(() => !document.querySelector('#panel:not([hidden])'));
+      }
+      await page.keyboard.press('Escape');
+      await page.waitForFunction(() => !document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
+      assert.equal(await sidesShow(), sided, `${at}: the view's sides back after a second card`);
+    }
     assert.equal(await title(), 'Gift wrap', `${at}: the view where it was`);
 
     // any other opens as a big key over the view, under the HUD: its code, never a number or a breadcrumb, on its front;
@@ -732,6 +766,9 @@ for (const look of RENDERERS)
     assert.ok(under.job >= under.hud - 1, `${at}: the job is under the HUD (${JSON.stringify(under)})`);
     // (its steps there at once, as the agents' big keys' are.)
     await page.waitForSelector('.pj-card .pj-back .steplog li[data-k]');
+    // (and a tap opens an older one)
+    await tap(page, '.pj-card .steplog li[data-k]:nth-child(2) span');
+    assert.ok(await page.$('.pj-card .steplog li[data-k]:nth-child(2).open'), `${at}: a tap opens an older step`);
     assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
     assert.deepEqual(await offScreen(), [], at);
     await shot('job');

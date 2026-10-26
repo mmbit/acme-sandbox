@@ -78,7 +78,7 @@ async function readRequest([id]: string[]) {
       print(`     ${plural(item.files.length, 'file')}: ${item.files.map(text).join(', ')}`);
     for (const step of item.thread) {
       const words = present(step.guest) ? JSON.stringify({ text: step.text ?? null }) : text(step.text);
-      print(`     ${minute(step.ts)} UTC ${text(step.from)}: ${words}`);
+      print(`     ${minute(step.ts)} ${text(step.from)}: ${words}`);
       // (pictures)
       if (Array.isArray(step.pictures))
         print(`       ${plural(step.pictures.length, 'picture')}: ${step.pictures.map(text).join(', ')}`);

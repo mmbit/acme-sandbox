@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) mkdirSync(shots, { recursive: true });
@@ -37,7 +38,7 @@ const measure = page =>
     };
   });
 
-for (const look of ['wire', 'brownstone', 'holo'])
+for (const look of lookNames())
   for (const [width, height] of [
     [390, 844],
     [1280, 800],

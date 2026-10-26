@@ -29,6 +29,8 @@ export type Thread = {
   deadline_by: string | null;
   // its branch once its first task starts (plan.ts).
   branch: string | null;
+  // the job HQ queued its owner to judge it once its work merged (threadjudge.ts).
+  judge: number | null;
 };
 
 const SENTENCE_MAX = 400;
@@ -40,18 +42,15 @@ export const slugRefusal = (slug: string | undefined) =>
 export const findProject = (id: string): Project | undefined => projects().list.find(p => p.id === id);
 // A thread moved to another project (regroup.ts) keeps answering to its old id, which queued briefs name.
 db.exec('create table if not exists thread_aliases (old text primary key, id text not null)');
-// (its own owner column left out: a thread's owner is its project's, ownerOf.)
 export function findThread(id: string) {
   const row = prepared(
     'select * from threads where id = coalesce((select id from thread_aliases where old = $id), $id)',
-  ).get({ id }) as (Thread & { owner: string }) | undefined;
-  if (!row) return undefined;
-  const { owner: _column, ...thread } = row;
-  return thread as Thread;
+  ).get({ id });
+  return row as Thread | undefined;
 }
 export const isOpen = (id: string) => findThread(id)?.status === 'open';
 // A thread or proposal belongs to its project's owner, including a done project's. With no project, it belongs to
-// the CEO. The thread's own owner column is written but never read.
+// the CEO.
 export const ownerOf = (o: { project: string | null }) => (o.project === null ? ceo() : anyProject(o.project)!.owner);
 // hq plan thread and --thread new: (newthread.ts newThread) and HQ's one-task threads
 // (made.ts): a thread in a project, its slug made from its name unless given. The answer is the thread, or why not.
@@ -59,11 +58,10 @@ export function createThread(t: NewThread): Thread | string {
   const checked = checkThread(t);
   if (typeof checked === 'string') return checked;
   const { id, project, name, goal } = checked;
-  db.prepare('insert into threads (id, project, name, owner, goal, created, by) values (?, ?, ?, ?, ?, ?, ?)').run(
+  db.prepare('insert into threads (id, project, name, goal, created, by) values (?, ?, ?, ?, ?, ?)').run(
     id,
     project.id,
     name,
-    project.owner,
     goal,
     new Date().toISOString(),
     t.by ?? null,

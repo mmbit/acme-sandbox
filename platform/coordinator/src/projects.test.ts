@@ -1,7 +1,7 @@
 // node --test src/projects.test.ts   (projects, threads and their inheritance; throwaway DATA_DIR and REPO_DIR)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 
 // The test company's projects, which ask every job for a thread, under their businesses, and a schedule entry in one.
@@ -39,8 +39,6 @@ const schedule = await import('./schedule.ts');
 const ledger = await import('./ledger.ts');
 const meetings = await import('./meetings.ts');
 const routinesFixture = await import('./schedule.fixture.ts');
-const threadorder = await import('./threadorder.ts');
-const { remember } = await import('./db.ts');
 const outlooks = await import('./outlooks.ts');
 const forecast = await import('./forecast.ts');
 
@@ -72,7 +70,7 @@ test('a hand-off stays in its thread, --thread sends it to another or starts one
   assert.equal(h.job(other.body.id).check, 1);
   assert.equal(h.job(same.body.id).check, 0);
   // A thread started for it is drawn in its project's plan, as hq plan thread draws one: by the project's owner (or the
-  // CEO), anyone else refused before anything is written, planning on or off.
+  // CEO), anyone else refused before anything is written.
   const checkout = { name: 'The checkout', goal: 'A buyer pays in one step' };
   const written = () =>
     db
@@ -80,15 +78,11 @@ test('a hand-off stays in its thread, --thread sends it to another or starts one
         'select (select count(*) from threads) + (select count(*) from jobs) + (select count(*) from plan_changes) n',
       )
       .get();
-  for (const planning of ['off', 'threads']) {
-    remember(threadorder.MODE, planning);
-    const before = written();
-    const theirs = await handOff(lead, { newThread: { project: 'shop', ...checkout } });
-    assert.equal(theirs.status, 409, planning);
-    assert.match(theirs.body.error, /The shop's plan is moss's .* hq propose --project shop/);
-    assert.deepEqual(written(), before, `nothing written, planning ${planning}`);
-  }
-  remember(threadorder.MODE, null);
+  const before = written();
+  const theirs = await handOff(lead, { newThread: { project: 'shop', ...checkout } });
+  assert.equal(theirs.status, 409);
+  assert.match(theirs.body.error, /The shop's plan is moss's .* hq propose --project shop/);
+  assert.deepEqual(written(), before, 'nothing written');
   const fresh = await handOff(lead, { newThread: { project: 'game', ...checkout } });
   assert.equal(fresh.status, 200, JSON.stringify(fresh.body));
   const made = projects.findThread(thread(fresh.body.id)!)!;
@@ -115,7 +109,8 @@ test('a job with no open thread to inherit must name one, and the refusal lists 
     'nothing queued',
   );
   assert.equal((await handOff(loose, { thread: levels })).status, 200);
-  // a thread that's done hands nothing on
+  // a thread that's done hands nothing on (the step queued above cancelled: it'd hold the lead in the thread's order)
+  h.cancelQueued();
   const lead = await inThread('wren', levels);
   assert.deepEqual(plan.done(levels, 'wren'), { ok: true });
   assert.match((await handOff(lead)).body.error, /its thread game\/levels is done/);
@@ -186,14 +181,16 @@ test('the review loop, an answer and a message take the thread of the job they c
   assert.equal(thread(fix.id), levels);
   const reLand = jobs.createJob({ agent: 'bolt', title: 'Re-land', prompt: 'x', pr: 41 });
   assert.equal(thread(reLand.id), levels, 'by its pull request alone');
-  // the board's answer to a card whose job has ended
+  // the board's answer to a card whose job has ended (the pull request's open jobs cancelled: they'd hold the asker)
+  h.cancelQueued();
   const asker = await inThread('wren', levels);
   const card = await h.ask(asker);
   await h.finish(asker);
   assert.equal((await h.answer(card, 'Yes')).status, 200);
   const answer = db.prepare("select id from jobs where title like 'The board on:%'").get() as { id: number };
   assert.equal(thread(answer.id), levels);
-  // hq say to an agent with nothing running: the job it becomes
+  // hq say to an agent with nothing running: the job it becomes (the answer's task cancelled, which the sender would follow)
+  h.cancelQueued();
   const sender = await inThread('wren', levels);
   const said = await h.agent('message', sender.token, { to: 'moss', text: 'The level is ready.' });
   assert.equal(said.status, 200, JSON.stringify(said.body));
@@ -482,7 +479,8 @@ test("a project's sentence is its owner's (or the CEO's), and the owner's briefi
   assert.deepEqual(owner.ownsProject, { id: 'game', name: 'The game', sentence: null });
   const said = await h.agent('project-notes', owner.token, { project: 'game', text: 'Levels 1 to 3 play; 4 is next.' });
   assert.equal(said.status, 200, JSON.stringify(said.body));
-  const other = await inThread('bolt', levels);
+  // (each in a thread of its own: one thread's tasks run one at a time)
+  const other = await inThread('bolt', started('art'));
   assert.equal(other.ownsProject, undefined, "bolt doesn't own the game");
   assert.equal((await h.agent('project-notes', other.token, { project: 'game', text: 'Mine now.' })).status, 400);
   assert.equal((await h.agent('project-notes', owner.token, { project: 'game', text: ' ' })).status, 400);
@@ -491,7 +489,7 @@ test("a project's sentence is its owner's (or the CEO's), and the owner's briefi
     (await h.agent('project-notes', ceo.token, { project: 'shop', text: 'The shop opens after the game.' })).status,
     200,
   );
-  const again = await inThread('wren', levels);
+  const again = await inThread('wren', started('sound'));
   assert.equal(again.ownsProject.sentence, 'Levels 1 to 3 play; 4 is next.');
   const { closing } = await import('../../worker/src/closing.ts');
   assert.match(
@@ -620,7 +618,8 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
     [next, working.id],
   );
   const job = shown.jobs[0];
-  assert.deepEqual([job.status, job.check, job.thread, job.ready], ['queued', 1, levels, 1]);
+  // (not ready: it follows the task running in its thread)
+  assert.deepEqual([job.status, job.check, job.thread, job.ready], ['queued', 1, levels, 0]);
   const sized = outlooks.detail(levels, forecast.current())!.jobs;
   type Estimate = {
     size_ms: number;
@@ -672,6 +671,25 @@ test("GET /api/projects: the board's projects, their threads and jobs, and the o
   assert.deepEqual([closed.body.status, closed.body.jobs.map((j: { id: number }) => j.id)], ['done', [finished]]);
   assert.equal(closed.body.jobs[0].status, 'done');
   assert.equal((await h.board('/api/projects/thread?id=game/nowhere')).status, 404);
+});
+
+// (HQ's other files go out the same way: server.ts sendFile.)
+test("a cover the board's browser holds is checked, never sent again, until it's redrawn", async () => {
+  mkdirSync(`${h.repo}/theme/hq/covers`, { recursive: true });
+  writeFileSync(`${h.repo}/theme/hq/covers/game.png`, 'the cover');
+  const get = (held?: string) =>
+    fetch(`${h.base}/covers/game.png`, { headers: { cookie: h.boardCookie, ...(held && { 'if-none-match': held }) } });
+  const first = await get();
+  assert.deepEqual(
+    [first.status, first.headers.get('cache-control'), await first.text()],
+    [200, 'no-cache', 'the cover'],
+  );
+  const tag = first.headers.get('etag')!;
+  const again = await get(tag);
+  assert.deepEqual([again.status, await again.text()], [304, '']);
+  writeFileSync(`${h.repo}/theme/hq/covers/game.png`, 'the cover, redrawn');
+  const redrawn = await get(tag);
+  assert.deepEqual([redrawn.status, await redrawn.text()], [200, 'the cover, redrawn']);
 });
 
 test('hq plan thread, hq job --thread, hq project say and hq plan done, end to end', async () => {

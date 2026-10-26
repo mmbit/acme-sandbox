@@ -224,6 +224,35 @@ test('the looker follows visual files moved by engine constraints, and each read
   assert.ok(brief('tally').includes('node preview.mjs'));
 });
 
+test("triage's throwaway judgment sets the low bar for its readers and the ruling, alone or after a panel", async () => {
+  const prompt = (pr: number, stage: string) =>
+    (
+      db.prepare("select prompt from jobs where pr = ? and stage = ? and status = 'queued'").get(pr, stage) as {
+        prompt: string;
+      }
+    ).prompt;
+  const lowBar = (text: string) =>
+    text.includes('The bar: triage judged this throwaway work') &&
+    !text.includes("can't live with") &&
+    !text.includes('breaks the code style');
+  for (const [pr, reviewers, throwaway] of [
+    [131, [reader('rook')], true],
+    [132, [], true],
+    [133, [reader('rook')], undefined],
+  ] as const) {
+    await push(pr);
+    await finish(pr, 'triage', { ...selection([...reviewers]), ...(throwaway && { throwaway }) });
+    if (reviewers.length) {
+      await until(() => readers(pr).length === 1, 'selected reviewer');
+      assert.equal(lowBar(prompt(pr, 'review')), !!throwaway, `PR ${pr}'s reader`);
+      await finish(pr, 'review', { findings: [] });
+    }
+    await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
+    assert.equal(lowBar(prompt(pr, 'ruling')), !!throwaway, `PR ${pr}'s ruling`);
+    cancelLeftovers();
+  }
+});
+
 test('triage keeps its chosen looker or no looker and refuses a looker outside the panel', async () => {
   for (const [pr, looker] of [
     [118, 'rook'],

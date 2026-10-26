@@ -1,8 +1,7 @@
 // A project's plan: its threads, the threads each needs, and their tasks in order (../docs/projects.md).
 // Only the project's owner and the CEO change it (hq plan, hq project new | owner | rename | business, the CEO's); anyone else
 // proposes (hq propose, proposals.ts). Names show their level and no two levels share one (names.ts threadClash;
-// hq plan rename | title, hq project rename | done). Every change is logged in plan_changes (db.ts planChange). While the company's
-// planning setting is off (projects.yaml `planning:`), the claim, the worker and the review panel don't read any of it.
+// hq plan rename | title, hq project rename | done). Every change is logged in plan_changes (db.ts planChange).
 import { db, planChange } from './db.ts';
 import * as redraws from './redraws.ts';
 import { publish } from './events.ts';
@@ -309,7 +308,6 @@ export function planOf(id: string, f: Forecast) {
   const { ahead, split } = levelsOf();
   return {
     ...project,
-    planning: projects().planning,
     ...{ product: product ?? null, ahead, split },
     threads: inNeedsOrder(threads).map(t => {
       const outlook = outlookOf(t.id, f);

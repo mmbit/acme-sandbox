@@ -1,0 +1,52 @@
+/* The brownstone's UI: pixel art over the shell's look. Pixelify Sans, crisp edges on every icon, and the building and
+   its people at whole pixels. */
+/* (Pixelify Sans comes on a <link> of its own: scene.js loadFont) */
+:root {
+  --font: 'Pixelify Sans', ui-monospace, 'Cascadia Mono', monospace;
+  --icons: crispEdges;
+}
+#world,
+.portrait,
+.mini {
+  image-rendering: pixelated;
+}
+/* a pixel pin on the businesses' and projects' keys (the projects view, shell/projects.js): round, at 2 px a pixel */
+:is(.pj-business, [data-project])::before {
+  content: '';
+  position: absolute;
+  z-index: 1;
+  top: 6px;
+  left: 50%;
+  margin-left: -8px;
+  width: 16px;
+  height: 22px;
+  image-rendering: pixelated;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 11' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M2 0h4v1h1v1h1v4H7v1H6v1H5v3H3V8H2V7H1V6H0V2h1V1h1z'/%3E%3Cpath fill='%235b8def' d='M2 1h4v1h1v4H6v1H2V6H1V2h1z'/%3E%3Cpath fill='%23fffaf0' d='M2 2h2v1H3v1H2z'/%3E%3C/svg%3E")
+    center / 100% no-repeat;
+}
+/* and its keys arrive as notes pinned to a board (levels.js moveIn), its view's icon in its head's ink, the one waiting
+   for the board ringed in ink like the HUD's counts, a face's frame square like the face, and For you a chip in the
+   tile's ink. */
+body.brownstone #projects {
+  --pj-arrival: pin;
+}
+body.brownstone .pj-slot {
+  color: inherit;
+}
+body.brownstone .pj-mark.you {
+  box-shadow: 0 0 0 2px var(--line);
+}
+body.brownstone .pj-person {
+  border-radius: var(--r);
+}
+body.brownstone .pj-deliverables small.pj-you {
+  padding: 0 5px;
+  border-radius: var(--r-sm);
+  background: var(--pj-on-you);
+  color: var(--pj-you);
+}
+/* its head keys stand on a thinner lip: under a pointer they go down by as much, onto the pressed one (style.css
+   --hover-lip) */
+body.brownstone .device header :is(.past-btn, .x, .home) {
+  --hover-lip: var(--shadow-press);
+}

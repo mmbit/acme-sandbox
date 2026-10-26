@@ -32,6 +32,8 @@ import {
   size,
   threadEta,
   projectLit,
+  queuedWords,
+  planned,
 } from './threads.js';
 import { clockWhen, fromNow } from '../world/clock.js';
 
@@ -118,15 +120,18 @@ function jobTile(j, t) {
     j.review ? doingOf(j) : kind !== 'work' ? kind : '',
     steps && kind === 'work' && s !== 'you' ? `${steps === 1 ? 'a review' : `${steps} reviews`} open` : '',
   ].filter(Boolean);
+  // (and when it lands, the play's finish a thread gives too: a line of its own.)
+  const lands = planned(j.lead ?? j).done;
   return tile({
     attrs: `data-job="${Number(j.id)}"`,
-    label: [nameText(j), ...where.map(x => x.text ?? x)].join(', '),
+    label: [nameText(j), ...where.map(x => x.text ?? x), lands].filter(Boolean).join(', '),
     state: { lit: s === 'you', words: 'Waits for you' },
     top: whoTop(j.agent),
     name: nameHtml(j),
-    rows: where.length
-      ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}<span>${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span></span>` // (one line of text, its links in it)
-      : '',
+    rows:
+      (where.length
+        ? `<span class="pj-state">${s === 'working' ? pulse(1) : ''}<span>${where.map(x => x.html ?? withJobLinks(x)).join(' · ')}</span></span>` // (one line of text, its links in it)
+        : '') + (lands ? `<span class="pj-state">${esc(cap(lands))}</span>` : ''),
     foot: (size(j) ? `<span class="pj-size">${esc(size(j))}</span>` : '') + code(j),
   });
 }
@@ -148,7 +153,7 @@ export function waitOf(j, held = []) {
   const on = [...new Set([...jobs.map(w => w.code ?? who(w.agent)), ...held.map(c => `“${c.title}”`)])].join(', ');
   return on
     ? { text: `Waits on ${on}`, html: `<span class="pj-wait">${icon('hourglass', '', 'Waits on')}${esc(on)}</span>` }
-    : { text: cap(word(j)), html: esc(cap(word(j))) };
+    : { text: queuedWords(j), html: esc(queuedWords(j)) };
 }
 // ---------------------------------------------------------------- the heads
 // Where the board is, one strip at the top of the view at every level: a key back up (at home the view's own mark in
@@ -256,7 +261,7 @@ const person = (id, owner = false, on = false) =>
   `<span class="pj-person${owner ? ' pj-owner' : ''}" data-name="${esc(who(id))}${owner ? ', owner' : ''}">${owner ? icon('crown', 'pj-crown') : ''}${face(id, on ? 'on' : '')}</span>`;
 // A project's deliverables, after a routine's interval and next run: those with work running (their bars first), then
 // those up next, each in its page's order (inEtaOrder), with when (the planner's), at least three; or its two latest
-// done ones, the last finished first (projects.ts tally's finished).
+// done ones, the last finished first (projects.ts tally's finished), each with a tick.
 function deliverables(p) {
   const on = projectNow(p),
     rest = p.threads.filter(t => !on.includes(t));

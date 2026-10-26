@@ -63,9 +63,6 @@ export function svg(
   );
 }
 
-// The colour of a shape's line: ink, or onAccent for a line drawn on the accent
-const inkOf = (shape, palette) => (shape.onAccent ? (palette.onAccent ?? palette.ink) : palette.ink);
-
 const ENTITIES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' };
 const escape = text => text.replace(/[&<>"]/g, c => ENTITIES[c]);
 
@@ -124,3 +121,6 @@ function tile(ctx, ink, kind, { pitch, r, weight }) {
   }
   return ctx.createPattern(cell, 'repeat');
 }
+
+// The colour of a shape's line: ink, or onAccent for a line drawn on the accent (moved after paint, its last caller)
+const inkOf = (shape, palette) => (shape.onAccent ? (palette.onAccent ?? palette.ink) : palette.ink);

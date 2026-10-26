@@ -96,8 +96,12 @@ for (const [measure, mode] of [
       );
       assert.equal(new Set(events).size, 1, 'retries preserve the report receipt');
       assert.ok(
-        messages.some(m => m.stopped && m.reasons.length === 1),
-        'push-check attribution survives reload',
+        messages.some(m => m.stopped === 'refused'),
+        'the late block reports its refused admission',
+      );
+      assert.ok(
+        messages.some(m => m.stopped === 'admitted' && m.reasons.length === 1),
+        'the admitted block reports its completed stop with push-check attribution',
       );
       if (mode === 'error-ready' || mode === 'error-keep') assert.ok(messages.some(m => m.failed));
       else assert.ok(messages.some(m => m.finished));

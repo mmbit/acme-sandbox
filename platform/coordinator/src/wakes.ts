@@ -240,7 +240,7 @@ function prOf(arg: string): PullRequestRow | { never: string } | undefined {
   return pr;
 }
 // Whether a branch's pull request is still to come: it's an open thread's branch, whose next push opens it, or a job
-// still at work on it (planning off's drain: threadends.ts reopen).
+// still at work on it.
 const toCome = (branch: string) =>
   !!db
     .prepare(

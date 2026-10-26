@@ -1,7 +1,7 @@
 // A task in a thread as the worker runs it: its branch brought up to date with main as it starts, its briefing's lines,
 // and its own profile lines sent to main apart from the thread's work (and their branch's repair).
 
-// The claim's answer for a task in a thread (the coordinator's claim), when the company plans by threads
+// The claim's answer for a task in a thread (the coordinator's claim).
 export type InThread = {
   id: string;
   name: string;

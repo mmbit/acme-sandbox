@@ -27,7 +27,7 @@ import { readFileSync } from 'node:fs';
 import { db, redacted } from './db.ts';
 import { publish } from './events.ts';
 import { ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
-import { brand, ceo, companyFormats, names } from './company.ts';
+import { brand, brandLook, ceo, companyFormats, names } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { createRequest, closeRequest, findAgent, holdsCustomerData } from './jobs.ts';
 import { clientOf } from './auth.ts';
@@ -805,7 +805,7 @@ export const COPY = {
 // same page.
 const hex = (v: unknown) => typeof v === 'string' && /^#[0-9a-f]{6}$/i.test(v) ? v : null;
 // the page's accent, as look() and brand.yaml's guest colours make it (the first person's colour)
-const accent = () => { const b = brand(); return hex(b.guest?.colours?.accent) ?? hex(b.colours?.blue) ?? '#3a63c8'; };
+const accent = () => { const b = brandLook(); return hex(b.guest?.colours?.accent) ?? hex(b.colours?.blue) ?? '#3a63c8'; };
 
 // The company's look on the guest page: brand.yaml's guest: section (template/company/brand.yaml has its keys, all
 // optional). Its files live in theme/guest/ and are served at /guest/theme/<file>, only those the section names, and only
@@ -818,7 +818,7 @@ const COLOURS = { background: '--bg', card: '--card', ink: '--ink', muted: '--mu
 type Look = ReturnType<typeof look>;
 // (the join link's page wears it too: joinpage.ts)
 export function look() {
-  const b = brand(), g = b.guest ?? {}, file = (v: unknown) => typeof v === 'string' && FILE.test(v) && themeFile(v) ? v : null;
+  const b = brandLook(), g = b.guest ?? {}, file = (v: unknown) => typeof v === 'string' && FILE.test(v) && themeFile(v) ? v : null;
   const fonts = (Array.isArray(g.font?.files) ? g.font.files : []).filter((f: any) => file(f?.file) && f.file.endsWith('.woff2'))
     .map((f: any) => ({ file: f.file, weight: /^[1-9]00$/.test(String(f.weight)) ? f.weight : 400, style: f.style === 'italic' ? 'italic' : 'normal' }));
   const family = fonts.length && typeof g.font?.family === 'string' && /^[\w ]{1,60}$/.test(g.font.family) ? g.font.family : null;

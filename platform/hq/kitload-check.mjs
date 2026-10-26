@@ -88,10 +88,13 @@ async function opened(failing) {
 async function keptBrownstone(page, at) {
   const { look, sheets } = await page.evaluate(async () => ({
     look: (await import('/shell/stage.js')).look,
-    sheets: [...document.querySelectorAll('link:is([data-skin], [data-kit])')].map(l => l.href),
+    // (Brownstone's own skin stays on with it.)
+    sheets: [...document.querySelectorAll('link:is([data-skin]:not([data-skin=brownstone]), [data-kit])')].map(
+      l => l.href,
+    ),
   }));
   assert.equal(look, 'brownstone', `${at}: Brownstone stays on stage`);
-  assert.deepEqual(sheets, [], `${at}: no look's or kit's sheet left linked`);
+  assert.deepEqual(sheets, [], `${at}: no other look's or kit's sheet left linked`);
   assert.ok(await page.getByText("That view didn't load").count(), `${at}: says so`);
 }
 

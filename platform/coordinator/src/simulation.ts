@@ -18,12 +18,16 @@ import * as reviewroom from './reviewroom.ts';
 import { hold, holdFullRoom, makeRoom, releaseHold, reviewOccupants, unreported } from './playroom.ts';
 import type { Span } from './playtime.ts';
 import { outlook } from './playoutlook.ts';
+import * as events from './playevents.ts';
+import * as memory from './playmemory.ts';
+import * as ledger from './playledger.ts';
 
 export const DAY_MS = 86_400_000;
 // How far ahead the play goes (hq when searches no further).
 export const HORIZON_DAYS = 8;
 export type Run = {
   row: QueuedJob;
+  stage: string | null;
   // (its place among the play's runs: the order the play goes through them in)
   index: number;
   needs: ReturnType<typeof precedence>;
@@ -64,6 +68,8 @@ export type Play = {
   seats: capacity.Seat[];
   terminals: Map<number, number>;
   stages: Map<number, number[]>;
+  account?: ledger.Account;
+  conditions: string[];
 };
 
 // The order the play runs work in: each row's latest start (planner.ts backward), with the rows, their review stages
@@ -74,36 +80,66 @@ export function playOrder(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>) 
   return { timings: backward(pass.snapshot, pass.sizes, pass.terminals), rows: pass.snapshot.jobs };
 }
 
-// order: the snapshot's playOrder, when its caller has it already.
 export function playPlan(
   snapshot: Snapshot,
   sizes: ReadonlyMap<number, Size>,
   pace: 'usual' | 'slow',
   order?: PlayOrder,
 ) {
-  return simulate(snapshot, sizes, pace, order);
+  return simulate(snapshot, sizes, pace, undefined, order).outlooks;
 }
 
-function simulate(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>, pace: 'usual' | 'slow', order?: PlayOrder) {
+export function inspectPlan(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>, pace: 'usual' | 'slow') {
+  return simulate(snapshot, sizes, pace, ledger.create(snapshot));
+}
+
+function simulate(
+  snapshot: Snapshot,
+  sizes: ReadonlyMap<number, Size>,
+  pace: 'usual' | 'slow',
+  account?: ledger.Account,
+  order?: PlayOrder,
+) {
+  const play = preparedPlay(snapshot, sizes, pace, account, order);
+  for (let now = snapshot.now; now < snapshot.now + HORIZON_DAYS * DAY_MS;) {
+    events.finish(play, now);
+    resolve(play, now);
+    for (const seat of play.seats) {
+      if (account) ledger.reset(account, seat, now);
+      capacity.reset(seat, now);
+      if (account) ledger.release(account, seat, now);
+    }
+    events.drain(play, now);
+    start(play, now);
+    const next = events.nextEvent(play, now);
+    if (!Number.isFinite(next)) break;
+    events.advance(play, now, next);
+    now = next;
+  }
+  const outlooks = new Map(
+    snapshot.jobs.filter(row => row.kind === 'work').map(row => [row.id, outlook(play, row, HORIZON_DAYS)]),
+  );
+  return {
+    outlooks,
+    seats: account?.seats ?? [],
+    resources: ledger.resources(snapshot),
+    review_queue: account ? ledger.reviewQueue(play) : [],
+  };
+}
+
+function preparedPlay(
+  snapshot: Snapshot,
+  sizes: ReadonlyMap<number, Size>,
+  pace: 'usual' | 'slow',
+  account?: ledger.Account,
+  order?: PlayOrder,
+) {
   for (const row of snapshot.jobs) if (!sizes.has(row.id)) throw new Error(`The play has no size for job #${row.id}`);
   const expanded = expand(snapshot, sizes, pace);
   const { timings } = order ?? playOrder(snapshot, sizes);
-  const runs = new Map(
-    expanded.snapshot.jobs.map(row => [
-      row.id,
-      runOf(row, expanded.sizes.get(row.id)!, timings.get(row.id)!, snapshot.now, snapshot.deployLagMs),
-    ]),
-  );
-  let index = 0;
-  for (const run of runs.values()) {
-    run.index = index++;
-    run.priors = run.needs.jobs.map(edge => ({
-      run: runs.get(dependencyRun(edge, expanded.terminals)),
-      lag: edge.lag ?? 0,
-    }));
-  }
+  const runs = runsOf(snapshot, expanded, timings);
   const unfinished = [...runs.values()].filter(run => run.state !== 'done');
-  const play = {
+  const play: Play = {
     snapshot: expanded.snapshot,
     runs,
     timings,
@@ -116,30 +152,46 @@ function simulate(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>, pace: 'u
     seats: capacity.seatsOf(snapshot),
     terminals: expanded.terminals,
     stages: expanded.stages,
+    account,
+    conditions: ledger.conditions(snapshot),
   };
-  for (const run of play.started) run.seat = play.seats.find(s => s.id === run.row.seat) ?? null;
-  for (let now = snapshot.now; now < snapshot.now + HORIZON_DAYS * DAY_MS;) {
-    finish(play, now);
-    resolve(play, now);
-    for (const seat of play.seats) capacity.reset(seat, now);
-    drain(play, now);
-    start(play, now);
-    const next = nextEvent(play, now);
-    if (!Number.isFinite(next)) break;
-    advance(play, now, next);
-    now = next;
-  }
-  return new Map(
-    snapshot.jobs.filter(row => row.kind === 'work').map(row => [row.id, outlook(play, row, HORIZON_DAYS)]),
-  );
+  for (const run of runs.values())
+    if (run.state === 'running') run.seat = play.seats.find(s => s.id === run.row.seat) ?? null;
+  return play;
 }
 
-function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLagMs: number): Run {
+function runsOf(snapshot: Snapshot, expanded: ReturnType<typeof expand>, timings: ReadonlyMap<number, Timing>) {
+  const runs = new Map(
+    expanded.snapshot.jobs.map(row => [
+      row.id,
+      runOf(
+        row,
+        expanded.sizes.get(row.id)!,
+        timings.get(row.id)!,
+        snapshot.now,
+        snapshot.deployLagMs,
+        expanded.sources.get(row.id)?.stage,
+      ),
+    ]),
+  );
+  let index = 0;
+  for (const run of runs.values()) {
+    run.index = index++;
+    run.priors = run.needs.jobs.map(edge => ({
+      run: runs.get(dependencyRun(edge, expanded.terminals)),
+      lag: edge.lag ?? 0,
+    }));
+  }
+  return runs;
+}
+
+function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLagMs: number, stage?: string): Run {
   const needs = precedence(row, deployLagMs),
     left = remaining(row, size),
     state = row.status === 'running' ? 'running' : row.status === 'done' ? 'done' : 'waiting';
   return {
     row,
+    stage: stage ?? row.step ?? null,
     index: 0,
     needs,
     priors: [],
@@ -176,33 +228,6 @@ function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLag
   };
 }
 
-function advance(play: Play, now: number, next: number) {
-  for (const run of play.started) {
-    if (run.state !== 'running') continue;
-    if (run.seat) capacity.consume(run.seat, next - now);
-    const last = run.active.at(-1);
-    if (last?.end === now) last.end = next;
-    else run.active.push({ start: now, end: next });
-  }
-}
-
-function finish(play: Play, now: number) {
-  for (const run of play.started.filter(r => r.ends <= now)) {
-    play.started.splice(play.started.indexOf(run), 1);
-    if (run.state === 'pausing') {
-      run.state = 'waiting';
-      run.seat = null;
-      run.reviewSeat = null;
-      continue;
-    }
-    run.state = 'done';
-    play.unfinished.delete(run);
-    play.claimants.delete(run);
-    run.done = run.ends;
-    run.seat = null;
-  }
-}
-
 function resolve(play: Play, now: number) {
   for (const run of play.resolutions)
     if (ready(run, now)) {
@@ -211,16 +236,6 @@ function resolve(play: Play, now: number) {
       play.resolutions.delete(run);
       run.done = now;
     }
-}
-
-function drain(play: Play, now: number) {
-  for (const run of [...play.started]) {
-    if (run.state !== 'running' || run.seat?.engine !== 'claude' || !capacity.drained(run.seat, now)) continue;
-    play.started.splice(play.started.indexOf(run), 1);
-    run.left = Math.max(0, run.ends - now);
-    run.state = 'waiting';
-    run.seat = null;
-  }
 }
 
 // (planner.ts readyAfter, on the runs its edges wait for)
@@ -236,6 +251,7 @@ function start(play: Play, now: number) {
   // Started claims join this list. Runs paused by makeRoom stay in it until they stop.
   const running = [...play.started];
   const seats = capacity.at(play.seats, now);
+  if (play.account) ledger.pacing(play.account, seats);
   const claims = playclaims.queue(
     [...waiting.filter(r => !spareOnly(r.row, r.order)), ...waiting.filter(r => spareOnly(r.row, r.order))],
     play.timings,
@@ -254,7 +270,12 @@ function start(play: Play, now: number) {
     }
     const engineFull =
       running.filter(r => r.row.engine === run.row.engine).length >= (play.snapshot.slots[run.row.engine] ?? 0);
-    const memoryFull = running.length >= (play.snapshot.room ?? Infinity);
+    const memoryFull = !memory.canStart(
+      play.snapshot,
+      running.map(r => r.row),
+      run.row,
+      now,
+    );
     const others = waiting.some(
       r => r !== run && r.state === 'waiting' && !spareOnly(r.row, r.order) && r.row.engine === run.row.engine,
     );
@@ -270,35 +291,16 @@ function start(play: Play, now: number) {
       hold(run, now, seat);
       continue;
     }
-    releaseHold(run, now);
-    Object.assign(run, { state: 'running', start: run.start ?? now, ends: now + run.left, seat });
-    running.push(run);
-    play.started.splice(play.started.findLastIndex(r => r.index < run.index) + 1, 0, run);
-    busy.set(seat.id, (busy.get(seat.id) ?? 0) + 1);
+    begin(play, run, seat, now, running, busy);
     choose = capacity.choices(seats, busy, limits);
   }
 }
 
-function nextEvent(play: Play, now: number) {
-  let next = Infinity;
-  const event = (at: number) => {
-    if (at > now && at < next) next = at;
-  };
-  const busy = new Map<capacity.Seat, number>();
-  for (const run of play.started) {
-    if (run.state === 'running') {
-      if (run.ends === now) return now;
-      if (run.seat) busy.set(run.seat, (busy.get(run.seat) ?? 0) + 1);
-    }
-    event(run.ends);
-  }
-  for (const run of play.unfinished) {
-    if (run.state !== 'waiting') continue;
-    event(run.readyAt);
-    while (run.fixedAt < run.fixed.length && run.fixed[run.fixedAt] <= now) run.fixedAt++;
-    if (run.fixedAt < run.fixed.length) event(run.fixed[run.fixedAt]);
-    for (const { run: prior, lag } of run.priors) if (prior && prior.done !== null) event(prior.done + lag);
-  }
-  for (const seat of play.seats) event(capacity.seatEvent(seat, play.seats, now, busy.get(seat) ?? 0));
-  return next;
+function begin(play: Play, run: Run, seat: capacity.Seat, now: number, running: Run[], busy: Map<string, number>) {
+  if (play.account) ledger.resume(play.account, run, seat, now);
+  releaseHold(run, now);
+  Object.assign(run, { state: 'running', start: run.start ?? now, ends: now + run.left, seat });
+  running.push(run);
+  play.started.splice(play.started.findLastIndex(r => r.index < run.index) + 1, 0, run);
+  busy.set(seat.id, (busy.get(seat.id) ?? 0) + 1);
 }

@@ -11,7 +11,7 @@ import { publish } from './events.ts';
 import { shedRefusal } from './pauses.ts';
 import * as redraws from './redraws.ts';
 import * as messages from './messages.ts';
-import './predictionlog.ts'; // (its table, whose thread rows move with the thread)
+import * as predictionlog from './predictionlog.ts'; // (its table, whose thread rows move with the thread)
 
 // hq thread move <project>/<slug> <project>: the thread becomes <project>/<slug> there, and everything that names it
 // follows: its jobs, proposals, pause (a paused thread stays paused, and the call item it carries with it) and prediction
@@ -41,6 +41,7 @@ export function moveThread(id: string, to: string, agent: string): Thread | stri
 export function newId(from: string, to: string, project: string) {
   inOneStep(() => {
     db.prepare('update threads set id = ?, project = ? where id = ?').run(to, project, from);
+    predictionlog.write(); // (the plays' rows not written yet, so they move too)
     for (const table of ['jobs', 'proposals', 'prediction_log', 'review_inbox'])
       db.prepare(`update ${table} set thread = ? where thread = ?`).run(to, from);
     for (const table of ['proposals', 'review_inbox'])

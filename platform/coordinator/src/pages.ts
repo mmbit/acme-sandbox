@@ -43,14 +43,19 @@ const INDEX: [RegExp, (b: any) => unknown][] = [
   [/(?<=<meta name="apple-mobile-web-app-title" content=")[^"]*/, b => b.names?.hq],
   [/(?<=<meta name="description" content=")[^"]*/, b => b.app?.description],
   [/(?<=<title>)[^<]*/, b => b.app?.title],
-  [/(?<=<link href=")[^"]*(?=" rel="stylesheet">)/, b => b.font?.href],
   [/(?<=<div class="brand"><img src=")[^"]*/, b => b.logo?.svg],
   [/(?<=<div class="brand"><img src="[^"]*" alt=")[^"]*/, b => b.logo?.alt],
 ];
-export const hqIndex = (html: string, b: any) => INDEX.reduce((h, [at, value]) => {
-  const w = word(value(b));
-  return w === null ? h : h.replace(at, () => w);
-}, html);
+// The brand's font goes in before HQ's stylesheet, so its words never paint in the fallback face (index.html has none:
+// each look's skin brings its own.)
+export const hqIndex = (html: string, b: any) => {
+  const named = INDEX.reduce((h, [at, value]) => {
+    const w = word(value(b));
+    return w === null ? h : h.replace(at, () => w);
+  }, html);
+  const font = word(b.font?.href);
+  return font === null ? named : named.replace('<link rel="stylesheet" href="style.css">', at => `<link href="${font}" rel="stylesheet" data-brand-font>\n  ${at}`);
+};
 
 // The web app manifest: the home-screen name, and the colours of the splash screen and the title bar
 export function hqManifest(json: string, b: any) {

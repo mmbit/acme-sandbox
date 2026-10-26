@@ -7,7 +7,8 @@
 import assert from 'node:assert/strict';
 import { serve } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
-import { STYLES } from './shell/icons.js';
+import { iconStyle } from './shell/icons.js';
+import { lookNames } from './looks.mjs';
 
 // (the projects view first: the devices open over it)
 const SCREENS = {
@@ -21,7 +22,7 @@ const SCREENS = {
 const browser = await playwright().chromium.launch();
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
-for (const look of Object.keys(STYLES)) await checkLook(look);
+for (const look of lookNames()) await checkLook(look);
 await swapLook();
 await browser.close();
 server.close();
@@ -71,7 +72,9 @@ async function opened(look) {
 // Where a look's icons come from: the kit the theme dresses it in, else its style's folder
 async function sourceOf(page, look) {
   const kit = await page.evaluate(l => import('/shell/brand.js').then(m => m.theme[l]?.kit), look);
-  return kit ? `/kits/${kit}/icons/` : `icons/${STYLES[look]}/`;
+  if (kit) return `/kits/${kit}/icons/`;
+  const style = await page.evaluate(l => import(`/renderers/${l}/scene.js`).then(m => m.style), look);
+  return `icons/${iconStyle(style)}/`;
 }
 
 // Each icon's folder/name once every one on the page is drawn (in `style`, when given)

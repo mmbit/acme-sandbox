@@ -4,7 +4,7 @@
 // order changes, the first that holds narrowed down. That is the earliest it can be done without making any window
 // miss, or there is none in the play's reach. With --by, whether it makes that time, with a sooner deadline if need be;
 // only when it doesn't, what would, as played: the windows ahead of it giving way, each against its deadline then, and
-// one more seat like one HQ has with measured rates, searched the same way. Seats the plays count as never filling are
+// one more seat like one HQ has with measured rates, searched the same way. Unmeasured prices and their conditional finishes are
 // named. Nothing is kept: the plays are no forecast, and the answer is a time and the window to set (hq window).
 import { oneMoreSeat } from './seatcapacity.ts';
 import * as seatreplay from './seatreplay.ts';
@@ -12,6 +12,7 @@ import { db } from './db.ts';
 import { findAgent } from './jobs.ts';
 import * as predictions from './predictions.ts';
 import { readSize } from './sizes.ts';
+import { corrected } from './sizerbias.ts';
 import { agreed, type Deadline } from './deadlines.ts';
 import * as windows from './windows.ts';
 import { threadOutlooks, standing, type ThreadOutlook } from './forecast.ts';
@@ -29,7 +30,7 @@ export type Ask = { q?: unknown; size?: unknown; agent?: unknown; after?: unknow
 type Given = { title: string; agent: string; size: number | null; after?: number; by?: number };
 // A window against the work's play: the thread, how far past its deadline it ends (null: no finish in sight then).
 export type Give = { thread: string; project: string; name: string; deadline: number; past_ms: number | null };
-// unpriced: the seats the play counts as never filling, their fill rates not measured yet (simulation.ts unpricedSeats).
+// unpriced: seats without measured window prices. Their exhaustion times remain unknown.
 // deadlines: each agreed deadline with the work played in, against the play without it (deadlines.ts)
 type Trial = {
   time: Outlook['time'];
@@ -40,6 +41,7 @@ type Trial = {
   waits: Outlook['waits'];
   gives: Give[];
   unpriced: string[];
+  capacity_conditions: string[];
   deadlines: Deadline[];
 };
 // The plays on one queue: the work given a deadline (null: none), and the crossings between two deadlines.
@@ -54,7 +56,7 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
   const given = readAsk(ask, asker, now);
   if (typeof given === 'string') return [400, given] as const;
   const t0 = performance.now();
-  const planned = plannedWork(given);
+  const planned = plannedWork(given, asker, now);
   const { snapshot, trialsFor, relaxedTrial, plays } = trials(planned, now);
   const original = trialsFor(snapshot);
   const free = original.trial(null);
@@ -67,6 +69,9 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
     size: {
       agent_minutes: minutes(planned.size.agent_ms),
       given: given.size !== null,
+      // (the size as given, and the asker's bias it plays at)
+      given_minutes: minutes(given.size!),
+      bias: planned.bias && { by: asker, ...planned.bias },
       compared: 0,
       basis: { kind: 'work', agent: given.agent, words: [] },
       guessed: false,
@@ -77,6 +82,28 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
       : { by: byTime(given.by, free, original, relaxedTrial, seated, now) }),
     horizon_days: HORIZON_DAYS,
     played: { plays: plays(), ms: Math.round(performance.now() - t0) },
+  };
+}
+
+function trialOutcome(
+  snapshot: Snapshot,
+  base: Map<string, ThreadOutlook>,
+  { usual, threads }: { usual: Map<number, Outlook>; threads: Map<string, ThreadOutlook> },
+): Trial {
+  const o = usual.get(PLANNED)!;
+  const finish = o.merged === null ? null : o.merged + snapshot.deployLagMs;
+  const plan = snapshot.jobs.find(j => j.id === PLANNED)!.reviewPlan;
+  return {
+    finish,
+    start: o.start,
+    time: o.time,
+    rounds: plan?.count ?? 0,
+    fixes: plan?.stages.filter(s => s.kind === 'work').length ?? 0,
+    waits: o.waits,
+    gives: gives(base, threads),
+    unpriced: o.unpricedSeats ?? [],
+    capacity_conditions: o.capacityConditions ?? [],
+    deadlines: agreed(threads, base, snapshot.deployLagMs, snapshot.now),
   };
 }
 
@@ -109,13 +136,15 @@ function readAsk(ask: Ask, asker: string, now: number): Given | string {
   return { title, agent, size, after, by };
 }
 
-// The work as a job queued now, sized on done jobs like it, or by the size given (its slow size never below that).
-function plannedWork(given: Given) {
+// The work as a job queued now, by the size given, played at what the asker's sizes have lately come to
+// (sizerbias.ts), its slow size never below that.
+function plannedWork(given: Given, asker: string, now: number) {
   const engine = findAgent(given.agent)!.engine;
-  const size: Size = { agent_ms: given.size! };
-  const slow: Size = size;
+  const played = corrected(given.size!, asker, now);
+  const size: Size = { agent_ms: played.agent_ms };
+  const slow: Size = { agent_ms: played.high_ms };
   const planned = { id: PLANNED, agent: given.agent, title: given.title, engine, after: given.after };
-  return { ...planned, size, slow };
+  return { ...planned, size, slow, bias: played.bias };
 }
 
 // One snapshot with the work in it, and the plays on it or on one changed from it (trialsFor): the queue played with the work
@@ -132,24 +161,8 @@ function trials(planned: ReturnType<typeof plannedWork>, now: number) {
     return { usual, threads: threadOutlooks(queue, usual, usual, sizes.usual) };
   };
   const base = played({ ...snapshot, jobs: snapshot.jobs.filter(j => j.id !== PLANNED) }).threads;
-  const outcome = ({ usual, threads }: ReturnType<typeof played>): Trial => {
-    const o = usual.get(PLANNED)!;
-    const finish = o.merged === null ? null : o.merged + snapshot.deployLagMs;
-    const plan = snapshot.jobs.find(j => j.id === PLANNED)!.reviewPlan;
-    return {
-      finish,
-      start: o.start,
-      time: o.time,
-      rounds: plan?.count ?? 0,
-      fixes: plan?.stages.filter(s => s.kind === 'work').length ?? 0,
-      waits: o.waits,
-      gives: gives(base, threads),
-      unpriced: o.unpricedSeats ?? [],
-      deadlines: agreed(threads, base, snapshot.deployLagMs, now),
-    };
-  };
   const trialsFor = (queue: Snapshot): QueueTrials => ({
-    trial: due => outcome(played(withDue(queue, due))),
+    trial: due => trialOutcome(snapshot, base, played(withDue(queue, due))),
     crossings: (lo, hi) => {
       const { moving, fixed } = orderAt(queue, sizes.usual, lo);
       const dues = moving
@@ -169,7 +182,10 @@ function trials(planned: ReturnType<typeof plannedWork>, now: number) {
       ),
     );
     const relaxedPlay = played(withDue(relaxed(snapshot, by, before), by));
-    return { ...outcome(relaxedPlay), widen: [...before].map(t => giveOf(relaxedPlay.threads.get(t)!)) };
+    return {
+      ...trialOutcome(snapshot, base, relaxedPlay),
+      widen: [...before].map(t => giveOf(relaxedPlay.threads.get(t)!)),
+    };
   };
   return { snapshot, trialsFor, relaxedTrial, plays: () => plays };
 }

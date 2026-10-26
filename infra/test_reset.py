@@ -43,7 +43,7 @@ class Company(unittest.TestCase):
         files = {'platform/server.ts': 'platform\n', 'infra/host': 'hq.testco.test\n', 'CODE_STYLE.md': 'style\n',
                  'template/AGENTS.md': 'template agents\n', 'template/company/CHARTER.md': 'template charter\n',
                  'template/company/org.yaml': 'template org\n', 'template/company/infra.env': 'SERVER_NAME=company\n',
-                 'template/theme/hq.yaml': 'renderer: brownstone\n',
+                 'template/theme/hq.yaml': 'renderer: wire\n',
                  'AGENTS.md': 'our agents\n', 'company/CHARTER.md': 'our mission\n', 'company/org.yaml': 'eleven agents\n',
                  'company/brand.yaml': 'name: Testco\n', 'company/infra.env': INFRA_ENV, 'company/people/lyra.md': 'long memory\n',
                  'theme/hq.yaml': 'renderer: holo\n', 'products/shop/app.js': 'shop\n', 'kits/sound/bed.js': 'bed\n',

@@ -42,6 +42,8 @@ export class CallBubble {
     this.onOpen = onOpen;
     this.wireDrag();
     this.fit = () => this.settle(false);
+    // (the page's own size too: HQ's narrows beside its book.)
+    this.fitting = new ResizeObserver(this.fit);
     addEventListener('resize', this.fit);
     visualViewport?.addEventListener('resize', this.fit);
   }
@@ -51,6 +53,7 @@ export class CallBubble {
     this.leaving?.cancel();
     this.leaving = null;
     document.body.append(this.el);
+    this.fitting.observe(document.body);
     this.el.hidden = false;
     const home = this.home();
     this.place(home.x, home.y);
@@ -89,6 +92,7 @@ export class CallBubble {
 
   close() {
     cancelAnimationFrame(this.frame);
+    this.fitting.disconnect();
     removeEventListener('resize', this.fit);
     visualViewport?.removeEventListener('resize', this.fit);
     this.el.remove();
@@ -213,7 +217,8 @@ export class CallBubble {
     this.frame = requestAnimationFrame(step);
   }
 
-  // Where its corner is now: inside the visible viewport (an on-screen keyboard, a phone's bars), off the safe areas
+  // Where its corner is now: inside the visible viewport (an on-screen keyboard, a phone's bars) and the page (HQ's
+  // narrows beside its book), off the safe areas
   home() {
     const box = this.bounds(),
       { w, h } = this.size();
@@ -231,7 +236,7 @@ export class CallBubble {
     return {
       left: x0 + MARGIN_PX + safe.left,
       top: y0 + MARGIN_PX + safe.top,
-      right: x0 + (vv?.width ?? innerWidth) - MARGIN_PX - safe.right,
+      right: Math.min(x0 + (vv?.width ?? innerWidth), document.body.clientWidth) - MARGIN_PX - safe.right,
       bottom: y0 + (vv?.height ?? innerHeight) - MARGIN_PX - safe.bottom,
     };
   }

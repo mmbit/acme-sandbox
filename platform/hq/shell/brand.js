@@ -10,6 +10,8 @@ export const names = {
 };
 export const brand = { name: 'Company', names };
 export const theme = { renderer: 'wire' }; // (the plain look, without a theme)
+// (and theme.style, the company's style: pixel, line or a word of its own, none when left out. It picks what the
+// platform draws for the company, never the look.)
 // The platform's services the company runs, as the coordinator says (GET /api/brand's care: the care service; studio:
 // the photo studio)
 export const runs = { care: false, studio: false };

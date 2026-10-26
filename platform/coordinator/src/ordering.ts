@@ -87,6 +87,15 @@ export function withRound(run: ProspectiveRun, now: number) {
 function played(now: number) {
   const queue = queueAt(now);
   const { timings, jobs: planned } = latestStarts(queue, now);
+  // A meeting's seats are dated by their set time even outside a timed thread.
+  const meetings = db
+    .prepare(
+      `select j.id, j.not_before from jobs j
+    join meeting_seats s on s.job = j.id where j.status = 'queued'`,
+    )
+    .all() as { id: number; not_before: number }[];
+  for (const seat of meetings)
+    timings.set(seat.id, { id: seat.id, board: false, latestStart: seat.not_before, latestFinish: null, duration: 0 });
   const rows = new Map(planned.map(j => [j.id, j]));
   return { timings, eligibility: () => eligibility(rows, now, queue.deployLagMs) };
 }

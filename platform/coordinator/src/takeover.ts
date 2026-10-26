@@ -1,12 +1,15 @@
 // A failed job's work taken over by a job that replaces it (jobs.ts replacements). hq followthrough requeue: the CEO's
 // follow-through check hands a failed job's work on what the board agreed back to the agent whose call it is. hq job
-// --lands: a job lands the saved work of one that failed before it opened a pull request.
+// --lands: a job lands saved work or retries a thread task that failed without saving work.
+import { execFileSync } from 'node:child_process';
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as memory from './memory.ts';
 import { agreements, oneLine } from './agreements.ts';
 import { checkUnderWay, LONG_LINE, SAID_MAX } from './followthrough.ts';
 import { ceo, roles } from './company.ts';
+
+const WORK_MIRROR_DIR = process.env.WORK_MIRROR_DIR!;
 
 //
 type Failed = {
@@ -70,18 +73,22 @@ export function requeue(checkJob: number, failed: number, said: string) {
 // hq job --lands <job>: the failed job's commits stay on the mirror's refs/outgoing/<branch> (worker git.ts push), and the
 // job landing them replaces it, carrying its call and item. Its agent is the failed job's own, who worked for
 // that call already; only that agent, whoever queued the failed job, the CEO or the process role queues it. Work with a
-// pull request goes on there (review.ts decide). The answer is why not, or what the route needs: the branch and
-// whether the new job holds a customer's details.
+// pull request goes on there (review.ts decide), unless a thread task saved nothing of its own. The answer supplies
+// its original brief, the saved branch if any, and whether the new job holds a customer's details.
 export function landing(failed: number, agent: string, by: string) {
   const job = db
     .prepare(
-      `select agent, queued_by, coalesce(branch, 'job/' || id) branch, call from jobs
+      `select agent, queued_by, coalesce(branch, 'job/' || id) branch, call, prompt, thread, pr, started, finished from jobs
       where id = ? and kind = 'work' and status = 'failed'`,
     )
-    .get(failed) as { agent: string; queued_by: string | null; branch: string; call: number | null } | undefined;
+    .get(failed) as LandingJob | undefined;
   if (!job) return `job #${failed} isn't work that failed: --lands names a failed job whose saved work this one lands`;
-  const pr = db.prepare('select max(number) n from prs where branch = ?').get(job.branch) as { n: number | null };
-  if (pr.n) return `job #${failed} opened pull request #${pr.n}: its work goes on there, not with --lands`;
+  const pr = db
+    .prepare(`select number, status in ${jobs.OPEN_PRS} as open from prs where branch = ? order by number desc limit 1`)
+    .get(job.branch) as { number: number; open: number } | undefined;
+  const empty = pr && job.pr === null && job.thread !== null && pr.open === 1 && emptyThreadTask(job, pr.number);
+  if (pr && !empty)
+    return `job #${failed}'s branch has pull request #${pr.number}: its saved work goes on there, not with --lands. Only a thread task that saved nothing can be requeued in its place`;
   const taken = jobs.replacementOf(failed);
   if (taken) return `job #${taken} has taken over #${failed}'s work already`;
   const ended = itemsOf(failed).find(i => i.status === 'dropped' || i.status === 'replaced');
@@ -92,7 +99,53 @@ export function landing(failed: number, agent: string, by: string) {
   if (![job.agent, job.queued_by, ceo(), roles().process].includes(by))
     return `only ${job.agent}, whoever queued #${failed}, the CEO or the process role lands its work`;
   const customers = jobs.holdsCustomerData(failed) || (job.call != null && memory.customerCall(job.call));
-  return { branch: job.branch, customers };
+  return { branch: empty ? null : job.branch, customers, prompt: job.prompt };
+}
+
+type LandingJob = {
+  agent: string;
+  queued_by: string | null;
+  branch: string;
+  call: number | null;
+  prompt: string;
+  thread: string | null;
+  pr: number | null;
+  started: string | null;
+  finished: string;
+};
+
+// A task that never started saved nothing. The pull request's last push before it started is where earlier tasks'
+// work ends (none: the task started on the branch before any push). First-parent commit times identify work saved
+// during this task, while later tasks and main's merged-in commits stay outside it. Git records commit times to the
+// second. A branch with an open pull request has both refs in the mirror (the worker's push), and git fails on one
+// that's missing, which stops the request.
+function emptyThreadTask(job: LandingJob, pr: number) {
+  if (!job.started) return true;
+  const head = db
+    .prepare('select sha from pushes where pr = ? and at <= ? order by at desc limit 1')
+    .get(pr, job.started) as { sha: string } | undefined;
+  const commits = execFileSync(
+    'git',
+    [
+      '-c',
+      `safe.directory=${WORK_MIRROR_DIR}`,
+      '--git-dir',
+      WORK_MIRROR_DIR,
+      'log',
+      '--first-parent',
+      '--format=%ct',
+      `refs/heads/${job.branch}`,
+      `refs/outgoing/${job.branch}`,
+      ...(head ? ['--not', head.sha] : []),
+    ],
+    { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  const started = Math.floor(Date.parse(job.started) / 1000),
+    finished = Math.floor(Date.parse(job.finished) / 1000);
+  return !commits
+    .split('\n')
+    .filter(Boolean)
+    .some(at => Number(at) >= started && Number(at) <= finished);
 }
 
 // The items the failed job, or a failed job it replaced, carried or was handed.

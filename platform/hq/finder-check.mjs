@@ -11,6 +11,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const KEYWORDS_MS = 100;
 // a stand-in company app whose finds list one kite, which opens it at that kite
@@ -47,10 +48,7 @@ const server = await serve(undefined, 0, {
 const base = `http://localhost:${server.address().port}`;
 const { context, page, errors } = await openPage(browser, { viewport: { width: 1280, height: 800 } });
 try {
-  const looks = await openHq(page, 'brownstone').then(() =>
-    page.evaluate(() => import('/shell/stage.js').then(m => m.RENDERERS)),
-  );
-  for (const look of looks) {
+  for (const look of lookNames()) {
     await openHq(page, look);
     await page.keyboard.press('/');
     await until(page, '#finder:not([hidden])');

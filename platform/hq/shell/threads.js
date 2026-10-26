@@ -1,7 +1,8 @@
 // The projects view's read model: each job's state in a word, the cards a thread's jobs make (a review or fix folds
 // under its job), and one rule for what waits on the board, the same at every level (business, project, thread, job),
 // which lights it in the accent.
-import { state as jobState, CHIP } from './jobs.js';
+import { state as jobState, CHIP, whereNow } from './jobs.js';
+import { who, ago } from './desk.js';
 import { clockWhen, fromNow } from '../world/clock.js';
 import { glance } from '../../../shared/signs/signs.js';
 import { cap } from '../util.js';
@@ -27,6 +28,9 @@ export function stateOf(j) {
 }
 const ORDER = { you: 0, working: 1, next: 2, waits: 3, ended: 4, done: 5 };
 export const word = j => CHIP[jobState(j)] ?? j.status;
+// A task's state in words where nothing it waits on names it: a queued one's the seat it starts at, when it goes on or
+// the event it waits for (jobs.js whereNow), never a bare "Next" or "Paused".
+export const queuedWords = j => cap(j.status === 'queued' ? whereNow(j, { who, ago }) : word(j));
 export const kindOf = j => (j.check ? 'check' : j.review ? 'review' : 'work');
 // A review loop job's step, apart from the work's title it carries (the coordinator's jobs.step and jobs.round)
 export const stepName = j => (j.step ? `${j.step}${j.round ? `, round ${j.round}` : ''}` : '');

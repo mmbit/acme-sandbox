@@ -3,7 +3,6 @@ import { db } from './db.ts';
 import { ceo } from './company.ts';
 import * as messages from './messages.ts';
 import * as windows from './windows.ts';
-import * as threadorder from './threadorder.ts';
 
 export type AskSource = 'call' | 'intercom' | 'notes';
 // What the queuer says of its time (hq job --by, hq route --by): a window, or that it has none.
@@ -41,18 +40,18 @@ export function sourceOf(queuer: { id: number; call?: boolean }, handsOutItem: b
 }
 
 // The window a thread has or serves: its own, else the earliest of the open threads that need it, at any depth, through
-// open threads only (a done one's needs order nothing: threadorder.ts needsOpen). The claim orders by needs only when
-// planning by threads (its placeholders: ordering.ts), so otherwise only its own counts. Null: nothing timed waits on it.
+// open threads only (a done one's needs order nothing: threadorder.ts needsOpen), as the claim orders by needs. Null:
+// nothing timed waits on it.
 export function servedWindow(thread: string | null) {
   if (!thread) return null;
   const served = db
     .prepare(
       `with recursive serving(id) as (select $thread union select n.thread from thread_needs n join serving s on n.needs = s.id
-      join threads o on o.id = n.thread and o.status = 'open' where $byNeeds)
+      join threads o on o.id = n.thread and o.status = 'open')
     select t.id thread, t.deadline from threads t join serving s on s.id = t.id
     where t.status = 'open' and t.deadline is not null order by t.deadline, t.id limit 1`,
     )
-    .get({ thread, byNeeds: threadorder.on() ? 1 : 0 }) as { thread: string; deadline: number } | undefined;
+    .get({ thread }) as { thread: string; deadline: number } | undefined;
   return served ?? null;
 }
 

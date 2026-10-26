@@ -167,6 +167,7 @@ test('credential-call follow-ups and jobs holding keys never expose estimate sco
         await h.agent('item', follow.token, {
           call,
           kind: 'decision',
+          goal: 'The board wants it on time.',
           owner: 'kit',
           what: 'Record test credentials',
           quote: transcript,
@@ -204,7 +205,10 @@ test('credential-call follow-ups and jobs holding keys never expose estimate sco
     await privateComparisons(token, privateJobs, safe, queued);
   }
   assert.equal(h.jobs.holdsKeys(jobReader.id), false);
-  assert.equal((await h.agent('estimate/audit', callReader.token)).status, 403);
+  // (the timing audit is counts only, no scopes: a call reads it as a job does.)
+  const audited = await h.agent('estimate/audit', callReader.token);
+  assert.equal(audited.status, 200);
+  assert.doesNotMatch(JSON.stringify(audited.body), /Credential comparison|otter space zebra|Public scope/);
   // (a call revises a size as its agent does, server.ts MANAGE_ROUTES: only the CEO's, and a size names no scopes)
   const handed = (await h.agent('job', callReader.token, { agent: 'kit', title: 'Again', prompt: 'x' })).body.id;
   assert.equal((await h.agent('sizes', callReader.token, { job: handed, time: '30m', why: 'Slipped' })).status, 403);

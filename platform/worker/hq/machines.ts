@@ -93,5 +93,5 @@ function machineLine({ speed, cpus, memoryGb, gpu, kinds }: Machine['machines'][
 
 function presenceLine({ seen, cpus, memoryGb, running }: Presence) {
   const size = cpus ? `, ${cpus} cores and ${memoryGb} GB` : '';
-  return `, ${seen ? `last asked ${minute(seen)} UTC` : 'never seen'}${size}${running ? `, running #${running}` : ''}`;
+  return `, ${seen ? `last asked ${minute(seen)}` : 'never seen'}${size}${running ? `, running #${running}` : ''}`;
 }

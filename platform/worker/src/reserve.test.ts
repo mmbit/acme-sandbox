@@ -64,3 +64,14 @@ test('measured claims and reported starts use only memory above the free reserve
   assert.equal(reserve.starts(available), 0);
   assert.equal(reserve.claimMb(available, false), JOB_MB + SEAT_MB + 250);
 });
+
+test('gathering readiness charges the first claim and every subsequent held seat', () => {
+  const reserve = reservations<string>(() => 0);
+  assert.equal(reserve.gathering(FREE_MB + JOB_MB - 1), 0);
+  const available = FREE_MB + JOB_MB + 4 * SEAT_MB;
+  assert.equal(reserve.gathering(available), 5);
+  const taken = reserve.take();
+  assert.equal(reserve.gathering(available), 3, 'an in-flight claim keeps its full startup allowance');
+  reserve.keepsHold('one', 'claude-1', taken, { held: true });
+  assert.equal(reserve.gathering(available), 4, 'the held seat has its own reservation');
+});

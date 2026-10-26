@@ -25,6 +25,7 @@ import {
   fateWords,
 } from './threads.js';
 import { face } from './projectkeys.js';
+import { names } from './brand.js'; // (the desk phone's own word)
 import { icon } from './icons.js';
 import { stepLines, fillSteps } from './steplog.js';
 import { glance, lasted } from '../../../shared/signs/signs.js';
@@ -71,7 +72,7 @@ function frontOf(j, row) {
   ];
   // (a job waiting on others names each in its list, not in a sentence)
   const why = asks.length
-    ? `Waits for your ${asks.length > 1 ? 'answers' : 'answer'} on the desk phone.`
+    ? `Waits for your ${asks.length > 1 ? 'answers' : 'answer'} on the ${names.phone}.`
     : jobState(j) === 'waits' && before.length
       ? ''
       : `${cap(whereNow(j, { who, ago }))}.`;
@@ -287,7 +288,7 @@ function followers(j, all, row) {
   const besides = (y, path) => [
     ...holdsOf(y)
       .filter(h => h.card || h.wake || !path.includes(h.id))
-      .map(h => h.wake ?? (h.card ? 'your answer on the desk phone' : `${who(h.agent)}’s “${nameText(h) ?? ''}”`)),
+      .map(h => h.wake ?? (h.card ? `your answer on the ${names.phone}` : `${who(h.agent)}’s “${nameText(h) ?? ''}”`)),
     ...(jobState(y) === 'paused' ? ['its pause'] : []),
   ];
   const line = (y, path, label) => {

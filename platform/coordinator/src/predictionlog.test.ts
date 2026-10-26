@@ -1,5 +1,6 @@
 // node --test src/predictionlog.test.ts   (uses a throwaway DATA_DIR): the prediction log's rows as the forecast plays,
-// and hq estimate --calibration, both layers' misses: the sizes by sizer, the logged ETAs by lead.
+// and hq estimate --calibration, both layers' misses: the sizes by sizer and by how the job was queued, the given sizes
+// as the play counts them, the logged ETAs by lead; and the threads' work, review and waiting time.
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
@@ -11,7 +12,8 @@ const predictionlog = await import('./predictionlog.ts');
 const sizes = await import('./sizes.ts');
 
 const MIN = 60_000,
-  HOUR = 60 * MIN;
+  HOUR = 60 * MIN,
+  DAY = 24 * HOUR;
 const T0 = Math.floor(Date.now() / HOUR) * HOUR;
 mock.timers.enable({ apis: ['Date'], now: T0 });
 test.after(() => mock.timers.reset());
@@ -48,9 +50,15 @@ function played(now: number, job: number, start: number, merged: number, version
     threads: new Map([['hq/estimates', { ...thread, waits: [], cards: [], chain: [], next: job, undrawn: [] }]]),
   };
 }
-const logged = (job: number) =>
-  h.db.prepare('select * from prediction_log where job = ? order by id').all(job) as any[];
-const threadRows = () => h.db.prepare("select * from prediction_log where thread = 'hq/estimates'").all() as any[];
+// (the rows the plays kept, written first: predictionlog.write)
+const logged = (job: number) => (
+  predictionlog.write(),
+  h.db.prepare('select * from prediction_log where job = ? order by id').all(job) as any[]
+);
+const threadRows = () => (
+  predictionlog.write(),
+  h.db.prepare("select * from prediction_log where thread = 'hq/estimates'").all() as any[]
+);
 
 test('a prediction is logged when it moves five minutes or more, or the play changes, and not for less', () => {
   const job = h.queue({ agent: 'kit', title: 'Log me', engine: 'claude' });
@@ -94,6 +102,7 @@ test("after a restart a thread's last row is one seek on the log's index, never 
   // (the server started again: a module with no last rows read yet)
   const restarted = await import(`./predictionlog.ts?restart=${job}`);
   restarted.record(played(T0 + 11 * MIN, job, T0 + 20 * MIN, merged + 4 * MIN));
+  restarted.write();
   assert.equal(threadRows().length, before, 'four minutes from the logged ETA is no move');
   for (const [by, sql] of Object.entries(predictionlog.LAST_ROW)) {
     const plan = h.db.prepare(`explain query plan ${sql}`).all(by === 'job' ? job : 'hq/estimates') as {
@@ -105,6 +114,59 @@ test("after a restart a thread's last row is one seek on the log's index, never 
     );
     assert.ok(!plan.some(p => p.detail.includes('TEMP B-TREE')), `${by}: ${JSON.stringify(plan)}`);
   }
+});
+
+test("a play's rows wait for the minute's write, so an outside reader of hq.db never holds the play; they move with a renamed thread", async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const regroup = await import('./regroup.ts');
+  const job = h.queue({ agent: 'kit', title: 'Log me later', engine: 'claude' });
+  const reader = new DatabaseSync(`${h.dataDir}/hq.db`, { readOnly: true });
+  reader.exec('begin');
+  reader.prepare('select count(*) from prediction_log').get(); // (its read lock, kept until the commit)
+  const t = performance.now();
+  predictionlog.record(played(T0 + 20 * MIN, job, T0 + 30 * MIN, T0 + 3 * HOUR));
+  const ms = performance.now() - t;
+  reader.exec('commit');
+  reader.close();
+  assert.ok(ms < 200, `record() took ${Math.round(ms)} ms`);
+  assert.equal((h.db.prepare('select count(*) n from prediction_log where job = ?').get(job) as { n: number }).n, 0);
+  regroup.newId('hq/estimates', 'hq/estimated', 'hq');
+  const moved = h.db.prepare("select count(*) n from prediction_log where thread = 'hq/estimates'").get() as {
+    n: number;
+  };
+  assert.equal(moved.n, 0, "the thread's kept row was written before the move, and moved");
+  assert.equal(logged(job).length, 1);
+  regroup.newId('hq/estimated', 'hq/estimates', 'hq');
+});
+
+test("a play's rows written in a step whose commit fails come back for the next write, and a step writes them once", async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { inOneStep } = await import('./db.ts');
+  const regroup = await import('./regroup.ts');
+  const job = h.queue({ agent: 'kit', title: 'Log me through a failed rename', engine: 'claude' });
+  const at = T0 + 40 * MIN,
+    play = played(at, job, T0 + 50 * MIN, T0 + 4 * HOUR);
+  predictionlog.record(play);
+  // the rename's commit turned away by an outside reader (report.sh), its writes rolled back
+  const reader = new DatabaseSync(`${h.dataDir}/hq.db`, { readOnly: true });
+  reader.exec('begin');
+  reader.prepare('select count(*) from prediction_log').get(); // (its read lock, kept until the commit)
+  try {
+    assert.throws(() => regroup.newId('hq/estimates', 'hq/estimated', 'hq'), /database is locked/);
+  } finally {
+    reader.exec('commit');
+    reader.close();
+  }
+  predictionlog.record(play); // (unchanged: nothing new to keep)
+  assert.equal(predictionlog.ofJobs([job]).length, 1, "the job's row, written after all");
+  assert.equal(predictionlog.threadAt('hq/estimates', at)?.merged, T0 + 4 * HOUR, "the thread's row, under its own id");
+  // a second write in the same step (a read after regroup's) inserts nothing again
+  predictionlog.record(played(at + MIN, job, T0 + 50 * MIN, T0 + 5 * HOUR));
+  inOneStep(() => {
+    predictionlog.write();
+    predictionlog.write();
+  });
+  assert.equal(logged(job).length, 2);
 });
 
 test("a logged size names who gave it: the sizer's, an agent's, or the estimate tool's", async () => {
@@ -128,8 +190,16 @@ test("a logged size names who gave it: the sizer's, an agent's, or the estimate 
 // ---- hq estimate --calibration
 
 // A done job of `agent`'s that ran `minutes`, its pull request (changing `files`) merged at `merged`, sized at `size`
-// minutes by the tool (its stored prediction) or by `by`.
-function done(agent: string, minutes: number, size: number, merged: number, files: string[], by = 'tool') {
+// minutes by the tool (its stored prediction) or by `by`, with any other `columns` of its row.
+function done(
+  agent: string,
+  minutes: number,
+  size: number,
+  merged: number,
+  files: string[],
+  by = 'tool',
+  columns: Record<string, unknown> = {},
+) {
   const ended = merged - 30 * MIN,
     started = ended - minutes * MIN;
   const id = h.pastJob({
@@ -140,6 +210,7 @@ function done(agent: string, minutes: number, size: number, merged: number, file
     merged,
     files,
     sized: size * MIN,
+    ...columns,
   });
   if (by !== 'tool')
     sizes.record(
@@ -148,6 +219,35 @@ function done(agent: string, minutes: number, size: number, merged: number, file
     );
   return id;
 }
+
+test("hq estimate --calibration splits the sizes by how the job was queued, and counts given sizes at their sizer's bias", async () => {
+  // wren's sizes ran at half of what the work took: ten done the week before, then three this week, each queued another
+  // way (a board call's, HQ's own, an agent's hq job)
+  for (let i = 0; i < 10; i++) done('wren', 60, 30, T0 - 8 * DAY, [], 'wren');
+  for (const columns of [{ call: 1 }, { queued_by: null }, {}])
+    done('wren', 60, 30, T0 - 2 * HOUR, [], 'wren', columns);
+  const reader = await h.start({ agent: 'bolt', title: 'Calibrating by queue' });
+  const r = await h.agent('estimate/calibration', reader.token);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { by_queue, given_sizes, given_sizes_corrected } = r.body.sizes;
+  assert.deepEqual(
+    by_queue.map((g: any) => [g.key, g.count]),
+    [
+      ['agent', 1],
+      ['call', 1],
+      ['hq', 1],
+    ],
+  );
+  assert.deepEqual([given_sizes.count, given_sizes.median_factor, given_sizes.sum_ratio], [3, 2, 0.5]);
+  assert.deepEqual(
+    [given_sizes_corrected.count, given_sizes_corrected.median_factor, given_sizes_corrected.sum_ratio],
+    [3, 1, 1],
+  );
+  const { out } = await h.hq(reader, 'estimate', '--calibration');
+  assert.match(out, /a board call, 1 job: the median miss ×2 either way/);
+  assert.match(out, /Sizes given by agents and models, as given: 3 jobs, the median miss ×2 either way/);
+  assert.match(out, /the same, as the play now counts them: the median miss ×1 either way/);
+});
 
 test('hq estimate --calibration splits the sizes by agent, area and sizer, and the ETAs by lead from the log', async () => {
   const landed = T0 - 2 * HOUR;
@@ -198,6 +298,71 @@ test('hq estimate --calibration splits the sizes by agent, area and sizer, and t
   const { out } = await h.hq(reader, 'estimate', '--calibration');
   assert.match(out, /haiku, 1 job: the median miss ×1 either way/);
   assert.match(out, /a day ahead: 1 job, the median miss 1 h, 100% later than said, 0% by the time a promise holds to/);
+});
+
+test('hq estimate --calibration times the threads merged lately: work, review and waiting, and the hand-offs between them', async () => {
+  h.clearReviewHistory();
+  // hq/a: kit's task and ada's after it on kit's branch, one pull request merged after one round (a review and its
+  // ruling, overlapping a quarter of an hour), 4 hours from the first task queued to the merge
+  const a1 = h.pastJob({
+    agent: 'kit',
+    thread: 'hq/a',
+    created: T0 - 10 * HOUR,
+    run: { started: T0 - 10 * HOUR, ended: T0 - 9 * HOUR },
+    merged: T0 - 6 * HOUR,
+    pr: 9101,
+    byBranch: true,
+  });
+  const a2 = h.pastJob({
+    agent: 'ada',
+    thread: 'hq/a',
+    branch: `job/${a1}`,
+    created: T0 - 9.5 * HOUR,
+    run: { started: T0 - 9 * HOUR, ended: T0 - 8 * HOUR },
+  });
+  h.pastJob({
+    agent: 'quill',
+    kind: 'review',
+    pr: 9101,
+    round: 1,
+    run: { started: T0 - 8 * HOUR, ended: T0 - 7.5 * HOUR },
+  });
+  h.pastJob({
+    agent: 'juno',
+    kind: 'consolidate',
+    pr: 9101,
+    round: 1,
+    run: { started: T0 - 7.75 * HOUR, ended: T0 - 7 * HOUR },
+  });
+  // hq/b: wren's task queued --after ada's, waiting two hours for hq/a's review and merge, then an hour to start
+  h.pastJob({
+    agent: 'wren',
+    thread: 'hq/b',
+    after: a2,
+    created: T0 - 9 * HOUR,
+    run: { started: T0 - 5 * HOUR, ended: T0 - 4 * HOUR },
+    merged: T0 - 2 * HOUR,
+    pr: 9102,
+    byBranch: true,
+  });
+  const reader = await h.start({ agent: 'bolt', title: 'Calibrating the threads' });
+  const r = await h.agent('estimate/calibration', reader.token);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const t = r.body.threads;
+  assert.deepEqual([t.count, t.one_agent, t.tasks, t.pull_requests, t.rounds, t.review_runs], [2, 1, 3, 2, 1, 2]);
+  assert.deepEqual(
+    [t.work, t.review, t.waiting],
+    [
+      { total: 180, median: 60 },
+      { total: 60, median: 0 },
+      { total: 420, median: 60 },
+    ],
+  );
+  assert.deepEqual([t.review_share, t.waiting_share], [0.09, 0.64]);
+  assert.deepEqual(t.handoffs, { count: 1, review: { total: 120, median: 120 }, start: { total: 60, median: 60 } });
+  const { out } = await h.hq(reader, 'estimate', '--calibration');
+  assert.match(out, /2 threads: 1 with one agent, 1 with two or more/);
+  assert.match(out, /review 9% and waiting 64% of all thread time/);
 });
 
 test("the forecast's every play is logged, and its input kept for the backtest", async () => {

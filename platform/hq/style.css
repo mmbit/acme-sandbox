@@ -1,9 +1,10 @@
 :root {
   --ink: #1d1a2f; --cream: #fdf3e1; --paper: #fffaf0; --muted: #6b6580;
   --red: #e8505b; --gold: #ffd966; --blue: #5b8def; --green: #5cc26a; --purple: #9b72cf; --orange: #ff9b4a;
-  --font: 'Pixelify Sans', ui-monospace, 'Cascadia Mono', monospace;
-  /* The look: the brownstone's pixel art, made of the brand's colours. A look's skin (renderers/<name>/skin.css, stage.js)
-     sets these over it: lines, corners, shadows, motion, the computer's screen, and the fills that are no brand colour. */
+  --font: system-ui, -apple-system, 'Segoe UI', sans-serif; /* (the system face: a look's skin sets its own.) */
+  /* The shell's own look, made of the brand's colours: inked lines and hard shadows. A look's skin
+     (renderers/<name>/skin.css, stage.js) sets these over it: lines, corners, shadows, motion, the computer's screen, and
+     the fills that are no brand colour. (and --icons: an icon's edges, the browser's own unless a look says.) */
   --line: var(--ink); --bw: 2px; --bw-lg: 3px; --r-sm: 3px; --r: 4px; --r-lg: 6px; --r-xl: 10px;
   /* Depths, one scale for every look: a tile (a key that opens something) stands
      deepest and goes in a little under a pointer, a button is thinner, anything pressed (held, on, picked) thinner still.
@@ -44,11 +45,16 @@
 ::-webkit-scrollbar-thumb { background: var(--line); background-clip: padding-box; border: 2px solid transparent; border-radius: 8px; }
 /* (no ligatures: Pixelify Sans joins fi and fl into one glyph that reads as an A) */
 html, body { margin: 0; height: 100%; height: var(--app-h, 100dvh); overflow: hidden; overscroll-behavior: none; background: var(--ink); color: var(--ink); font: 16px/1.4 var(--font); font-variant-ligatures: none; -webkit-tap-highlight-color: transparent; }
+/* HQ's page is <body>, in the room the book beside it leaves (--book-room, shell/book.js). Its layout containment holds
+   its fixed layers in its own box (a container query's no longer does), and as a container it answers the width
+   queries (@container page) and cqw lengths a window's media queries and vw can't. It clips rather than hides: the
+   fixed layers overflow it now, and a focus or a scrollIntoView must never scroll the page sideways. */
+body { width: calc(100% - var(--book-room, 0px)); contain: layout; container: page / inline-size; overflow: clip; }
 button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
 #hud, #zoom, #status, #hint, .toast, #card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 .muted { color: var(--muted); }
-#world { position: fixed; left: 0; top: 0; transform-origin: 0 0; image-rendering: pixelated; touch-action: none; display: block; cursor: grab; }
+#world { position: fixed; left: 0; top: 0; transform-origin: 0 0; touch-action: none; display: block; cursor: grab; }
 #bubbles { position: fixed; inset: 0; pointer-events: none; z-index: 2; overflow: hidden; }
 .bubble, #namecard { position: fixed; left: 0; top: 0; pointer-events: none; background: var(--paper); border: var(--bw) solid var(--line); padding: 5px 9px 6px; }
 .bubble { max-width: 200px; font-size: 14px; line-height: 17px; animation: pop .2s var(--ease, steps(3)); }
@@ -83,10 +89,8 @@ button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulat
   :is(.tools button, .tools a.desk, #zoom button, .req .btns button:not(.on-air .mic), .device .send, .device header :is(.past-btn, .x, .home),
     #projects .pj-key:not(.on, [aria-pressed=true], .pj-flat)):not(:active, .down, :disabled):hover {
     transform: var(--hover-button); box-shadow: var(--hover-lip, var(--shadow-hover-button)); } }
-/* (the brownstone's head keys stand on a thinner lip: down by as much, onto the pressed one) */
-body.brownstone .device header :is(.past-btn, .x, .home) { --hover-lip: var(--shadow-press); }
 .tools button[aria-pressed=true] { background: var(--gold); color: var(--on-accent); }
-svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, auto); }
 #btn-sound:not([aria-pressed=true]) .i-sound-on, #btn-sound[aria-pressed=true] .i-sound-off { display: none; }
 svg.icon .accent { fill: var(--gold); }
 /* a tile a swipe steps through: a small filled triangle just outside each side, centred in the gutter (--side-w, the
@@ -100,7 +104,7 @@ svg.icon .accent { fill: var(--gold); }
 .sides svg { width: 14px; height: 14px; transition: transform .1s; }
 .sides button:active svg { transform: scale(.8); }
 @media (hover: hover) { .sides button:hover { opacity: 1; } }
-#status { position: fixed; left: max(12px, var(--sal)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none; max-width: 60vw; }
+#status { position: fixed; left: max(12px, var(--sal)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none; max-width: 60cqw; }
 #status > span { padding: 2px 8px; font-size: 14px; pointer-events: auto; }
 #status [data-jobs] { cursor: pointer; }
 /* HQ's throughput (hud.js): what was done in the last day as bars by the hour, at work and waiting each over a bar, tasks
@@ -122,7 +126,7 @@ svg.icon .accent { fill: var(--gold); }
 #hint { position: fixed; left: 50%; top: calc(var(--app-h, 100dvh) - max(12px, var(--sab)) - var(--status-h, 0px) - 8px); transform: translate(-50%, -100%); color: var(--on-deep); background: rgba(29, 26, 47, .75);
   padding: 4px 12px; border-radius: var(--r); font-size: 14px; pointer-events: none; transition: opacity .6s; white-space: nowrap; }
 #hint.gone { opacity: 0; }
-#toasts { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 5; width: min(92vw, 420px); }
+#toasts { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 5; width: min(92cqw, 420px); }
 .toast { padding: 8px 12px; text-align: left; animation: drop .35s var(--ease, steps(4)); transition: opacity .4s; }
 .toast.gone { opacity: 0; }
 @keyframes drop { from { transform: translateY(-16px); opacity: 0; } }
@@ -131,7 +135,7 @@ svg.icon .accent { fill: var(--gold); }
 
 /* ---- panel ---- */
 /* (closed, it sits 100px out, past a look's soft shadow: Wire's blurs 60px.) */
-#panel { position: fixed; z-index: 10; top: calc(70px + var(--sat)); right: max(12px, var(--sar)); bottom: max(12px, var(--sab)); width: min(400px, calc(100vw - 24px)); background: var(--paper);
+#panel { position: fixed; z-index: 10; top: calc(70px + var(--sat)); right: max(12px, var(--sar)); bottom: max(12px, var(--sab)); width: min(400px, calc(100cqw - 24px)); background: var(--paper);
   border: var(--bw-lg) solid var(--line); box-shadow: var(--shadow-lg); border-radius: var(--r-lg); transform: translateX(calc(100% + 100px + var(--sar))); transition: transform .2s var(--ease, steps(5)); display: flex; flex-direction: column; }
 #panel.open { transform: none; }
 #panel-body { overflow-y: auto; padding: 16px 18px 24px; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
@@ -145,8 +149,8 @@ svg.icon .accent { fill: var(--gold); }
 .who p { margin: 4px 0 0; }
 .pframe { flex: none; width: 84px; height: 96px; background: radial-gradient(circle at 50% 60%, color-mix(in srgb, var(--c) 45%, white) 0 55%, transparent 56%), var(--cream);
   border: var(--bw) solid var(--line); border-radius: var(--r); display: grid; place-items: center; }
-.portrait { width: 56px; height: 112px; image-rendering: pixelated; margin-top: -26px; }
-.mini { width: 24px; height: 48px; image-rendering: pixelated; margin: -16px 0 -4px; }
+.portrait { width: 56px; height: 112px; margin-top: -26px; }
+.mini { width: 24px; height: 48px; margin: -16px 0 -4px; }
 .portrait.cat { width: 56px; margin-top: -40px; }
 .badge, .chip, .tag { display: inline-block; font-size: 13px; padding: 1px 7px; border: var(--bw) solid var(--line); border-radius: var(--r-sm); white-space: nowrap; color: var(--on-accent); }
 .st-working { background: #c3f0cb; } .st-waiting { background: #ffe7a3; } .st-sleeping { background: #d7d0f0; } .st-idle { background: #eee7da; }
@@ -199,6 +203,8 @@ svg.icon .accent { fill: var(--gold); }
 .cards > .card { box-shadow: var(--shadow-lg); transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); }
 @media (hover: hover) { .cards > .card:not(:active):hover { transform: var(--hover-tile); box-shadow: var(--shadow-hover); } }
 .cards > .card:active { transform: var(--press-tile); box-shadow: var(--shadow-press); }
+/* (a cover is a pixel picture in every look, shown at whole pixels, until the company's style draws it: the foundation's
+   step 5) */
 .card img, .post .cover { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; image-rendering: pixelated; background: var(--deep); }
 .card .ct { display: grid; gap: 2px; padding: 8px 10px 10px; }
 .card b { font-size: 19px; } .card small { color: var(--muted); }
@@ -210,7 +216,7 @@ svg.icon .accent { fill: var(--gold); }
 .model-said { margin: 6px 0 0; font-size: 14px; color: var(--muted); } .model-said.failed { color: var(--red); }
 .call-agent { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin: 4px 0 14px; font: inherit; font-size: 16px; color: var(--on-accent);
   background: var(--green, #7bd389); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); cursor: pointer; }
-.call-agent:active { transform: var(--press); box-shadow: none; } .call-agent svg { width: 16px; height: 16px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.call-agent:active { transform: var(--press); box-shadow: none; } .call-agent svg { width: 16px; height: 16px; fill: currentColor; shape-rendering: var(--icons, auto); }
 .post .sound { display: block; width: 100%; margin: -4px 0 10px; }
 .post .cover { border: var(--bw) solid var(--line); border-radius: var(--r); margin-bottom: 10px; }
 .post .html { font-size: 17px; } .post .html p { margin: 0 0 10px; }
@@ -232,27 +238,27 @@ svg.icon .accent { fill: var(--gold); }
 mark { background: var(--gold); color: var(--on-accent); }
 
 #card { position: fixed; z-index: 7; left: max(24px, var(--sal)); bottom: max(28px, var(--sab)); background: var(--cream); border: var(--bw-lg) solid var(--line);
-  box-shadow: var(--shadow-lg); border-radius: var(--r-lg); padding: 10px 18px 12px; opacity: 0; transform: translateY(20px); pointer-events: none; max-width: min(90vw, 520px); }
+  box-shadow: var(--shadow-lg); border-radius: var(--r-lg); padding: 10px 18px 12px; opacity: 0; transform: translateY(20px); pointer-events: none; max-width: min(90cqw, 520px); }
 #card b { display: block; font-size: 30px; line-height: 1.05; } #card span { display: block; color: var(--muted); font-size: 17px; margin-top: 2px; }
 #card.show { animation: card 4s var(--ease, steps(24)) forwards; }
 @keyframes card { 0% { opacity: 0; transform: translateY(20px); } 8%, 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-6px); } }
 body.touring #hud .tools > :not(#btn-tour):not(#btn-music):not(#btn-sound) { display: none; }
 body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toasts { display: none; }
 
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   #card b { font-size: 22px; } #card span { font-size: 14px; } #card { bottom: 20px; }
   #panel { top: auto; left: max(8px, var(--sal)); right: max(8px, var(--sar)); bottom: max(8px, var(--sab)); width: auto; height: min(72dvh, 640px); transform: translateY(calc(100% + 30px + var(--sab))); }
   .brand b { font-size: 16px; } .brand img { height: 15px; } .brand small { display: none; }
   .tools { gap: 6px; }
   .tools button, .tools a.desk { min-width: 38px; height: 38px; padding: 0 8px; } /* (38) */
-  #status { max-width: calc(100vw - 80px); } #status > span { font-size: 12px; }
+  #status { max-width: calc(100cqw - 80px); } #status > span { font-size: 12px; }
   #status > .flow { gap: 5px; padding: 5px 9px; } .flow-bars { width: 40px; } .flow-split { display: none; } /* (room for the three across a phone) */
   .flow-key { width: 5px; height: 5px; margin-right: 2px; } .flow-key.review { margin-left: 0; } /* (with the key's) */
   #hint { font-size: 12px; }
 }
 /* (a tablet upright, an iPad mini's 744 px: the logo and every tool still on one row at full size, the phone's label
    and the clock left out, and a logo that shrinks before a tool leaves the screen). */
-@media (min-width: 701px) and (max-width: 880px) {
+@container page (min-width: 701px) and (max-width: 880px) {
   .tools .lbl, .brand small { display: none; }
   .brand { flex-shrink: 1; min-width: 0; } .brand :is(img, svg.logo) { flex: 0 1 auto; min-width: 0; object-fit: contain; object-position: left center; }
 }
@@ -311,12 +317,12 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 #viewer .bar button:active { transform: translateY(1px); }
 #viewer iframe { flex: 1; width: 100%; border: 0; background: #fff; }
 /* a narrow phone with Send there too: the Note button keeps only its pin */
-@media (max-width: 400px) { #viewer .bar:has(.send:not([hidden])) .pin span { display: none; } }
+@container page (max-width: 400px) { #viewer .bar:has(.send:not([hidden])) .pin span { display: none; } }
 /* Share for outside notes: a quiet button on the bar, and its small form dropping over the page's top */
 #viewer .bar .share { background: none; color: var(--on-deep); padding: 0 8px; }
 #viewer .bar .share .ico { width: 16px; height: 16px; fill: currentColor; }
 #viewer .bar .share:active { background: color-mix(in srgb, var(--on-deep) 16%, transparent); }
-@media (max-width: 400px) { #viewer .bar .share span { display: none; } }
+@container page (max-width: 400px) { #viewer .bar .share span { display: none; } }
 /* The share box's parts, so it reads at a glance. The kinds, and the days before the
    first invite, are each one segmented control, the picked one raised off a quiet track. The people are a framed list with
    Send link and Remove quiet beside each. The invite form is its own group with Invite its one filled button. End now is last, in red words. */
@@ -416,21 +422,21 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .req .files a { display: inline-flex; align-items: center; gap: 8px; min-width: 0; min-height: 40px; padding: 4px 12px; color: var(--ink); text-decoration: none;
   background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
 .req .files a:active { transform: var(--press); box-shadow: var(--shadow-press); }
-.req .files svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.req .files svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, auto); }
 .req .files .fn { overflow-wrap: anywhere; } .req .files .size { flex: none; font-size: 13px; color: var(--muted); }
 .req .saved { background: var(--green); color: var(--on-accent); padding: 0 5px; border-radius: var(--r-sm); font-size: 12px; } .req .hint { margin: 0 0 10px; font-size: 13px; color: var(--muted); }
 /* the backup key, made on the desk phone: a key-cutting bench in miniature */
 .req .agekey { margin-bottom: 10px; font-size: 14px; } .req .agekey label { display: block; margin-top: 8px; } .req .agekey label input { margin-top: 3px; }
 .req .agekey .make { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 4px; font: inherit; font-size: 16px; font-weight: 600;
   color: var(--on-accent); background: var(--gold); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
-.req .agekey .make svg { width: 14px; height: 14px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.req .agekey .make svg { width: 14px; height: 14px; fill: currentColor; shape-rendering: var(--icons, auto); }
 .req .agekey .make:active { transform: var(--press); box-shadow: var(--shadow-press); } .req .agekey .make[disabled] { opacity: .6; }
 .req .agekey .make.again { width: auto; min-height: 36px; margin: 4px 0 6px; padding: 0 12px; font-size: 14px; background: var(--cream); box-shadow: var(--shadow-sm); }
 .req .agekey .secret { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: start; margin: 4px 0 6px; padding: 8px 10px; background: var(--tint-gold, #fff3c4); border: var(--bw) dashed var(--line); border-radius: var(--r); }
 .req .agekey .secret code { font: 600 15px/1.35 ui-monospace, 'Cascadia Mono', monospace; letter-spacing: .5px; word-break: break-all; user-select: all; }
 .req .agekey .secret .copy { min-height: 36px; padding: 0 8px; font-size: 14px; background: var(--paper); }
 .req .hint.refused { display: flex; gap: 6px; align-items: start; margin-top: -4px; color: var(--red); }
-.req .hint.refused svg { width: 14px; height: 14px; flex: none; margin-top: 2px; shape-rendering: var(--icons, crispEdges); }
+.req .hint.refused svg { width: 14px; height: 14px; flex: none; margin-top: 2px; shape-rendering: var(--icons, auto); }
 .req .agekey .hint { margin: 0 0 4px; } .req .agekey .hint:empty { display: none; } .req .agekey [data-age-msg] { color: var(--red); }
 .req .agekey .alert { margin: 4px 0 0; } .req .agekey .alert code { font: 600 14px ui-monospace, monospace; }
 .req .grant { margin: 0 0 10px; padding: 8px 10px; border: var(--bw) solid var(--line); border-radius: var(--r-lg); font-size: 15px; font-weight: 600; }
@@ -446,7 +452,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   border: var(--bw) solid var(--line); border-radius: var(--r-lg); font-size: 15px; line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
 .alert .sign { display: grid; place-items: center; width: 28px; height: 28px; border-radius: var(--r); background: var(--red); color: var(--paper); }
 .alert.done .sign { background: var(--green); color: var(--ink); }
-.alert .sign svg { width: 16px; height: 16px; shape-rendering: var(--icons, crispEdges); }
+.alert .sign svg { width: 16px; height: 16px; shape-rendering: var(--icons, auto); }
 .device.phone { background: var(--red); }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: var(--keys-gap); margin: 0 0 var(--keys-gap); font-size: 14px; color: var(--muted); }
 .pager button { width: 40px; height: 36px; font-size: 22px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); }
@@ -528,7 +534,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 /* the answered cards (desk.js: the archive): the header's Answered button (the intercom's Larger wears it too), the list, and a card as it was */
 .device header .past-btn { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 10px; font: inherit; font-size: 14px; background: var(--paper); color: var(--ink);
   border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
-.device header .past-btn svg { width: 14px; height: 14px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.device header .past-btn svg { width: 14px; height: 14px; fill: currentColor; shape-rendering: var(--icons, auto); }
 .device header .past-btn[aria-pressed=true] { background: var(--gold); color: var(--on-accent); }
 .device header .past-btn:active { transform: var(--press); box-shadow: var(--shadow-press); }
 .quiet .past-link { display: block; margin: 16px auto 0; min-height: 40px; padding: 0 14px; font: inherit; font-size: 15px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); }
@@ -540,7 +546,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .past-older { display: block; margin: 12px auto 0; min-height: 40px; padding: 0 14px; font: inherit; font-size: 15px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); cursor: pointer; }
 .pager .to-list { flex: 1; width: auto; margin: 0; font: inherit; font-size: 14px; color: var(--ink); }
 /* the open cards' list, by topic (desk.js renderList) */
-.pager .to-list svg { width: 12px; height: 12px; margin-right: 8px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.pager .to-list svg { width: 12px; height: 12px; margin-right: 8px; fill: currentColor; shape-rendering: var(--icons, auto); }
 .topic { margin: 10px 0 4px; font-size: 13px; text-transform: uppercase; letter-spacing: .5px; color: var(--muted); } .topic span { font-weight: 400; }
 .card-list { list-style: none; margin: 0; padding: 0; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r); overflow: hidden; }
 .card-list li + li { border-top: 1px solid var(--line); }
@@ -549,7 +555,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 /* cards for later (desk.js: Later on a card, its days, and the list of them) */
 .pager .later-btn { display: flex; align-items: center; gap: 6px; width: auto; margin: 0; padding: 0 14px; font: inherit; font-size: 14px; color: var(--ink); }
 .pager .later-btn[aria-expanded=true] { background: var(--gold); color: var(--on-accent); }
-.pager .later-btn svg, .later-link svg, .later-note svg { width: 12px; height: 12px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.pager .later-btn svg, .later-link svg, .later-note svg { width: 12px; height: 12px; flex: none; fill: currentColor; shape-rendering: var(--icons, auto); }
 .later-note { display: flex; align-items: center; gap: 8px; margin: 0 0 8px; padding: 0 0 0 10px; font-size: 14px; background: var(--tint-gold, #fff3c4);
   border: var(--bw) solid var(--line); border-radius: var(--r); overflow: hidden; max-height: 60px; animation: later-gone .5s 7.5s forwards; }
 .later-note span { flex: 1; } .later-note button { min-height: 36px; padding: 0 12px; font: inherit; font-size: 14px; font-weight: 600; background: none; border: 0; border-left: 1px solid var(--line); cursor: pointer; }
@@ -621,7 +627,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .chat .ceo { align-self: flex-start; background: var(--paper); color: var(--ink); }
 .intercom .chat .me { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 .intercom .chat .call { align-self: center; display: flex; align-items: center; gap: 6px; padding: 2px 10px; font-size: 13px; color: #c9ccd8; border: 1px dashed #565a70; }
-.intercom .chat .call svg { width: 12px; height: 12px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.intercom .chat .call svg { width: 12px; height: 12px; fill: currentColor; shape-rendering: var(--icons, auto); }
 /* a line from a person the board invited, theirs (desk.js guestLine). */
 .intercom .chat .guest { align-self: center; max-width: 92%; display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; color: #c9ccd8; border: 1px dashed #8f8466; }
 .intercom .chat .typing { opacity: .7; font-style: italic; }
@@ -638,14 +644,20 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
 /* pictures shown on a call: the attach button and the strip of what was sent */
 .intercom .call .row .attach { width: 52px; padding: 0; }
-@media (max-width: 440px) { .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; } } /* (all three on one row on a phone) */
+@container page (max-width: 440px) { .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; } } /* (all three on one row on a phone) */
+/* the screen's share key: Show my screen, Stop showing while the agent sees the page */
+.intercom .call .row.share { margin: 0 0 12px; }
+.intercom .call #call-screenshare { display: inline-flex; align-items: center; gap: 10px; }
+.intercom .call #call-screenshare svg.icon { width: 20px; height: 20px; }
+.intercom .call #call-screenshare[aria-pressed="true"] svg.icon { color: var(--red); }
+.intercom .call #call-screenshare:disabled { opacity: .55; }
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
 .intercom .call .pics li { flex: none; width: 84px; }
 .intercom .call .pics li:first-child { margin-left: auto; } .intercom .call .pics li:last-child { margin-right: auto; } /* (centred, and still scrolls to the first) */
 .intercom .call .pics .thumb { display: grid; place-items: center; height: 63px; background: #1d1f2e; color: #c9ccd8; border: var(--bw) solid var(--line); border-radius: var(--r); overflow: hidden; }
 .intercom .call .pics img { display: block; width: 100%; height: 100%; object-fit: cover; }
-.intercom .call .pics svg { width: 20px; height: 20px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.intercom .call .pics svg { width: 20px; height: 20px; fill: currentColor; shape-rendering: var(--icons, auto); }
 .intercom .call .pics i { display: block; margin-top: 4px; font-size: 12px; font-style: normal; line-height: 1.25; color: var(--muted); }
 .intercom .call .pics .busy img { opacity: .5; }
 .intercom .call .pics .seen i { color: var(--ink); font-weight: 600; }
@@ -691,6 +703,22 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .callbubble .cb-hangup svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .callbubble.paused .cb-face { filter: grayscale(.6); }
 @media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } }
+/* A call's cards (shell/calldraw.js): the agent's ask to see, with Show and Not now, and the page a call left, kept or
+   thrown away; over HQ and the call alike, in a toast's look, waiting until tapped. */
+#call-cards { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); z-index: 46; display: grid; gap: 8px; width: min(92vw, 380px); }
+#call-cards:empty { display: none; }
+#call-cards .call-card p { margin: 0 0 8px; }
+#call-cards .call-card .row { display: flex; gap: 8px; justify-content: flex-end; }
+#call-cards .call-card button { min-height: 36px; padding: 0 14px; font: inherit; color: var(--ink); background: var(--paper); border: var(--bw) solid var(--line);
+  border-radius: var(--r-sm); box-shadow: var(--shadow-sm); cursor: pointer; }
+#call-cards .call-card :is([data-show], [data-keep]) { background: var(--gold); color: var(--on-accent); }
+/* Wire: its answers are keys of a card's height, pressed down on a tap, Show and Keep lit as the one to press (body.keys's
+   list; the id here outweighs it). */
+body.keys #call-cards .call-card button { min-height: 48px; padding: 0 22px; background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge);
+  border-radius: var(--key-r); box-shadow: var(--key-lip); text-shadow: none; transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); }
+body.keys #call-cards .call-card button:is(:active, .down) { transform: var(--key-down); box-shadow: var(--key-down-lip); }
+body.keys.keys #call-cards .call-card :is([data-show], [data-keep]) { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); --hover-lip: var(--key-on-hover-lip); }
+body.keys.keys #call-cards .call-card :is([data-show], [data-keep]):is(:active, .down) { box-shadow: var(--key-on-down-lip); }
 /* Wire: the bubble is a key itself, its face set in, its keys with a lip that press down */
 body.keys .callbubble { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 body.keys .callbubble.held { box-shadow: var(--key-lip), 0 26px 50px rgba(0, 0, 0, .28); }
@@ -726,7 +754,7 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
 #dir-title { resize: none; max-height: 34dvh; overflow-y: auto; display: block; }
 .mic { width: 52px; height: 44px; display: grid; place-items: center; background: var(--cream); color: var(--ink); border: var(--bw) solid var(--line); border-radius: 22px; box-shadow: var(--shadow);
   touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
-.mic svg { width: 20px; height: 20px; fill: currentColor; shape-rendering: var(--icons, crispEdges); pointer-events: none; }
+.mic svg { width: 20px; height: 20px; fill: currentColor; shape-rendering: var(--icons, auto); pointer-events: none; }
 .mic[disabled] { border: 2px dashed var(--muted); color: var(--muted); box-shadow: none; }
 .onair { display: flex; align-items: center; gap: 5px; padding: 4px 7px 3px; font-size: 12px; line-height: 1; letter-spacing: 1px; font-weight: 600;
   background: #6f6376; color: #a99db0; border: var(--bw) solid var(--line); border-radius: var(--r-sm); }
@@ -766,12 +794,12 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
 .st:where(.st-ready, .st-done) { color: var(--scr); } .st:where(.st-busy, .st-running) { color: #ffd966; } .st:where(.st-sleeping, .st-queued) { color: #9bb0ff; } .st:where(.st-login, .st-blocked) { color: #ff9b4a; } .st:where(.st-failed, .st-closed) { color: #ff5c6a; }   /* (a seat whose account was closed) */
 .cursor { display: inline-block; width: 8px; height: 13px; background: var(--scr); margin-left: 4px; vertical-align: -2px; animation: blink 1s steps(2) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   /* (two rows of five 38 px keys beside the logo from 360 px up: the board's own five on the bottom one, filled first,
      the search and the world's keys above them.) */
   .tools { flex-wrap: wrap-reverse; justify-content: flex-end; max-width: calc(5 * 38px + 4 * 6px); } .brand { flex-shrink: 1; min-width: 0; } .brand b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .tools > :not(.board-tool) { order: 2; }
-  #toasts { top: calc(102px + var(--sat)); } /* below the second row of tools */
+  #toasts, #call-cards { top: calc(102px + var(--sat)); } /* below the second row of tools */
   /* the logo and the tools beside it, in rows: a long logo shrinks whole, and the tools never stack into a column that
      pushes the projects down. */
   #hud { display: grid; grid-template-columns: fit-content(55%) minmax(0, 1fr); }
@@ -826,9 +854,11 @@ body.keys .intercom .chat .hint .langs button { background: var(--key-bg); color
   border-bottom: 1px solid color-mix(in srgb, var(--scr) 25%, transparent); }
 .artifacts .applist .open .dim { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .applist .pic .glyph { width: 42%; height: auto; aspect-ratio: 1; color: var(--scr-ink); }
-.applist .pic img.cover { object-fit: cover; }
+/* a cover fills its tile from the tile's own box, not sized by the picture inside the grid, its top in view however
+   tall the picture */
+.applist .pic img.cover { position: absolute; inset: 0; object-fit: cover; object-position: top; }
 .applist .st-live, .applist .public { color: var(--scr); } .applist .st-test { color: #ffd966; }
-.applist .public { align-self: start; font-size: 12px; overflow-wrap: anywhere; text-decoration: none; padding: 4px 8px 6px 0; margin: -5px 0 -6px; }   /* */
+.applist .public { align-self: start; font-size: 12px; overflow-wrap: anywhere; text-decoration: none; padding: 4px 8px 6px 0; margin: -5px 0 -6px; }
 .applist .public:is(:hover, :focus-visible) { text-decoration: underline; }
 /* the front door: a row of its own above the apps, its picture one column of their grid, its name and address beside it
    */
@@ -853,7 +883,7 @@ i.mark { font-style: normal; font-size: 12px; line-height: 16px; text-align: cen
 .seat-status .use { grid-column: 1 / -1; display: grid; grid-template-columns: 46px minmax(60px, 1fr) 36px 6.6em; gap: 6px 10px; align-items: center; margin: 6px 0 2px; font-size: 12px; }
 .seat-status .use-label { color: var(--scr-dim); } .seat-status .use-pct { color: var(--scr-hi); text-align: end; }
 .seat-status .use-reset { color: var(--scr-dim); white-space: nowrap; }
-@media (max-width: 340px) { .seat-status .use { grid-template-columns: 46px minmax(60px, 1fr) 36px; } .seat-status .use-reset { grid-column: 2 / -1; } .seat-status .use-reset:empty { display: none; } }   /* (a reset goes under its bar when four columns don't fit) */
+@container page (max-width: 340px) { .seat-status .use { grid-template-columns: 46px minmax(60px, 1fr) 36px; } .seat-status .use-reset { grid-column: 2 / -1; } .seat-status .use-reset:empty { display: none; } }   /* (a reset goes under its bar when four columns don't fit) */
 .seat-status .bar { position: relative; height: 10px; border: 1px solid color-mix(in srgb, var(--scr) 60%, transparent); border-radius: 2px; }
 .seat-status .bar i { position: absolute; inset: 0 auto 0 0; background: repeating-linear-gradient(90deg, var(--scr) 0 6px, transparent 6px 8px); box-shadow: 0 0 6px color-mix(in srgb, var(--scr) 50%, transparent); }
 .seat-status .bar.full { border-color: #ff9b4a; } .seat-status .bar.full i { background: repeating-linear-gradient(90deg, #ff9b4a 0 6px, transparent 6px 8px); box-shadow: none; }
@@ -924,7 +954,7 @@ i.mark { font-style: normal; font-size: 12px; line-height: 16px; text-align: cen
 .rows.settings li.switch-row { align-items: center; min-height: 44px; }
 .rows.settings li.switch-row > b { grid-column: 1; }
 .rows.settings li.switch-row > :is(.ctl, .seg) { grid-column: 2; grid-row: 1; justify-self: end; display: flex; }
-@media (max-width: 400px) { .rows.settings li.switch-row:has(.seg) > .seg { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin-bottom: 4px; } }
+@container page (max-width: 400px) { .rows.settings li.switch-row:has(.seg) > .seg { grid-column: 1 / -1; grid-row: 2; justify-self: start; margin-bottom: 4px; } }
 /* An on/off switch, the CRT's own: a square track of screen light, its knob a block that jumps across */
 .crt .switch { all: unset; box-sizing: border-box; position: relative; flex: none; width: 48px; height: 26px; cursor: pointer; border: 1px solid var(--scr-dim); border-radius: 2px; background: var(--scr-ink); }
 .crt .switch i { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; background: var(--scr-dim); transition: left .08s steps(3), background .08s; }
@@ -951,7 +981,7 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 .jb-tabs { flex: 1 1 100%; display: flex; border: 1px solid currentColor; border-radius: var(--r-sm); overflow: hidden; }
 .jb-tabs button { font: inherit; background: none; color: var(--scr); border: 0; text-shadow: inherit; cursor: pointer; }
 .jb-tabs button { flex: 1 1 auto; min-width: 0; min-height: 44px; padding: 0 6px; font-size: 15px; white-space: nowrap; }
-@media (max-width: 420px) { .jb-tabs button { font-size: 13px; padding: 0 4px; } .jb-tabs i { margin-left: 4px; } }
+@container page (max-width: 420px) { .jb-tabs button { font-size: 13px; padding: 0 4px; } .jb-tabs i { margin-left: 4px; } }
 .jb-tabs button + button { border-left: 1px solid currentColor; }
 .jb-tabs [aria-selected=true] { background: var(--scr); color: var(--scr-ink); text-shadow: none; }
 .jb-tabs i { font-style: normal; margin-left: 6px; opacity: .75; }
@@ -968,7 +998,7 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 .crt .screen.fit { height: auto; }   /* the home screen is as tall as its grid */
 .apps button { all: unset; box-sizing: border-box; width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 14px 0 10px; cursor: pointer;
   border: 1px dashed color-mix(in srgb, var(--scr) 40%, transparent); border-radius: var(--r); }
-.apps svg { width: 32px; height: 32px; fill: currentColor; shape-rendering: var(--icons, crispEdges); filter: drop-shadow(0 0 2px currentColor); }
+.apps svg { width: 32px; height: 32px; fill: currentColor; shape-rendering: var(--icons, auto); filter: drop-shadow(0 0 2px currentColor); }
 .apps b { max-width: 100%; font-weight: 400; color: var(--scr-hi); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Settings: its sections in rows, each with what it's set to now; Look's buttons, the one on stage pressed
  */
@@ -987,11 +1017,11 @@ body.keys .rows.settings li > button.danger-row b { color: color-mix(in srgb, #e
 .push-app .push-said { grid-column: 1 / -1; margin: 2px 0 0; font-size: 13px; color: #ffd966; } .push-said:empty { display: none; }
 .push-help { display: grid; gap: 8px; justify-items: start; margin: 12px 0 0; font-size: 14px; color: var(--scr-soft); }
 .push-help :is(p, ol) { margin: 0; } .push-help ol { padding-left: 22px; } .push-help li { margin: 3px 0; } .push-help b { font-weight: 400; color: var(--scr-hi); }
-.push-help .ico { width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; shape-rendering: var(--icons, crispEdges); }
+.push-help .ico { width: 14px; height: 14px; fill: currentColor; vertical-align: -2px; shape-rendering: var(--icons, auto); }
 .push-app .push-rings { margin: 10px 0 0; font-size: 14px; color: var(--scr-soft); } /* (prose, not rows: nothing to tap) */
 .push-app .push-foot { margin: 10px 0 0; font-size: 13px; color: var(--scr-dim); }
 .bell { display: inline-flex; vertical-align: -2px; margin-right: 8px; }
-.bell svg { width: 16px; height: 16px; fill: currentColor; shape-rendering: var(--icons, crispEdges); filter: drop-shadow(0 0 2px currentColor); transform-origin: 50% 0; }
+.bell svg { width: 16px; height: 16px; fill: currentColor; shape-rendering: var(--icons, auto); filter: drop-shadow(0 0 2px currentColor); transform-origin: 50% 0; }
 /* Settings › Overseer (oversight.js): its lines, its key's box, its buttons and what they said */
 .oversight p { margin: 0 0 10px; } .oversight b { font-weight: 400; color: var(--scr-hi); } .oversight .dim { color: var(--scr-dim); font-size: 13px; }
 .oversight .acts { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -1018,7 +1048,7 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
    scaled up with the box (on a phone it's already the whole width: only the height) */
 .intercom.big #call-screen:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .intercom.big #call-screen .said { flex: 1; max-height: none; }
-@media (min-width: 561px) {
+@container page (min-width: 561px) {
   .intercom.big #call-screen .state { font-size: 28px; }
   .intercom.big #call-screen :is(.note, .said) { font-size: 20px; line-height: 1.45; }
   .intercom.big #call-screen .row { gap: 16px; }
@@ -1026,7 +1056,7 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
   .intercom.big #call-screen .row .attach { width: 64px; padding: 0; } .intercom.big #call-screen .attach svg.icon { width: 24px; height: 24px; }
   .intercom.big #call-screen .pics li { width: 112px; } .intercom.big #call-screen .pics .thumb { height: 84px; }
 }
-@media (max-width: 560px) {
+@container page (max-width: 560px) {
   .crt { margin: 0 6px 6px; padding: 6px; } .crt .screen { padding: 10px; }
   .intercom header b { font-size: 18px; }
 }
@@ -1035,7 +1065,7 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 .req .btns { gap: var(--keys-gap); }
 .req .btns button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; min-height: 0; padding: 0 14px; margin: 0;
   font: inherit; font-size: 16px; font-weight: 600; color: var(--ink); white-space: nowrap; border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
-.req .btns button svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
+.req .btns button svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, auto); }
 .req .btns button:active { transform: var(--press); box-shadow: var(--shadow-press); }
 .req .btns .send { flex: 1 1 0; min-width: 0; background: var(--gold); color: var(--on-accent); } .req .btns .approve { background: var(--green); color: var(--on-accent); } .req .btns .later { background: var(--cream); }
 .req .btns .mic { width: 44px; padding: 0; background: var(--cream); } .req .btns .mic svg { width: 16px; height: 16px; }
@@ -1043,7 +1073,7 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 /* Call as its phone alone, on a card that brings work back: its two answers fill the row */
 .req .btns .talk.icon { width: 44px; padding: 0; flex: none; } .req .btns .talk.icon svg { width: 16px; height: 16px; }
 /* the Share button keeps its word on a phone: as an icon alone the board didn't find it */
-@media (max-width: 440px) { .req .btns .talk .w { display: none; } .req .btns button { padding: 0 8px; gap: 6px; } }
+@container page (max-width: 440px) { .req .btns .talk .w { display: none; } .req .btns button { padding: 0 8px; gap: 6px; } }
 .req .row.on-air .mic { background: var(--red); color: #fff; }
 /* Send to the team, under a mail of the board's own */
 .mailfwd { margin: 10px 0 2px; }
@@ -1059,7 +1089,7 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .prose :is(ul, ol) { padding-left: 1.4em; }
 .prose li, .intercom .chat .prose li { display: list-item; max-width: none; padding: 0; border: 0; border-radius: 0; background: none; }
 .prose li + li { margin-top: .25em; }
-.prose img { display: block; max-width: 100%; height: auto; margin: 4px 0; border-radius: var(--r-sm); } .prose img + br { display: none; }   /* */
+.prose img { display: block; max-width: 100%; height: auto; margin: 4px 0; border-radius: var(--r-sm); } .prose img + br { display: none; }
 .prose pre { margin: 4px 0 6px; padding: 8px 10px; font: 14px/1.4 ui-monospace, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere;
   background: var(--paper); border: 1px solid var(--line); border-radius: var(--r-sm); }
 .prose pre code { font: inherit; }
@@ -1098,7 +1128,7 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .req label.photo.missing { border: 2px solid var(--red); box-shadow: 0 0 0 2px var(--red); }
 .req .photo .thumb { flex: none; width: 54px; height: 54px; display: grid; place-items: center; overflow: hidden; background: var(--paper); border: var(--bw) solid var(--line); border-radius: var(--r); }
 .req .photo .thumb img { width: 100%; height: 100%; object-fit: cover; }
-.req .photo .thumb svg { width: 28px; height: 28px; fill: var(--ink); shape-rendering: var(--icons, crispEdges); }
+.req .photo .thumb svg { width: 28px; height: 28px; fill: var(--ink); shape-rendering: var(--icons, auto); }
 .req .photo.busy .thumb { animation: photo-busy .8s steps(2) infinite; }
 @keyframes photo-busy { 50% { opacity: .45; } }
 @media (prefers-reduced-motion: reduce) { .req .photo.busy .thumb { animation: none; opacity: .45; } }
@@ -1117,21 +1147,22 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .req .photos .hint.shots b { color: var(--ink); font-weight: 600; }
 .req .photo .fn { display: block; color: var(--muted); font-size: 13px; } /* a document field's file name */
 /* a request's questions (desk.js answerFields, drawn by questions.js): each its own field, in order, before the photo
-   fields; chips to tap for a yes or no and a choice, a box for a number (its unit after it) or a short text
+   fields; chips to tap for a yes or no and a choice, a box for a number (its unit after it) or a short text. Room between the
+   fields and inside each, so a phone's stacked chips stand apart
    */
-.req .questions { list-style: none; display: grid; gap: 8px; margin: 10px 0 0; padding: 0; }
-.req .questions > li { padding: 10px 12px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r-lg); }
+.req .questions { list-style: none; display: grid; gap: 14px; margin: 16px 0 0; padding: 0; }
+.req .questions > li { padding: 14px 16px 16px; background: var(--cream); border: var(--bw) solid var(--line); border-radius: var(--r-lg); }
 .req .questions > li.missing { border: 2px solid var(--red); box-shadow: 0 0 0 2px var(--red); }
 .req .questions .ql { display: block; font-size: 16px; line-height: 1.3; overflow-wrap: anywhere; }
 .req .questions .qd { display: block; margin-top: 2px; font-size: 14px; color: var(--muted); line-height: 1.35; }
-.req .questions .qa { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-.req .questions .chip { min-width: 72px; background: var(--paper); }
+.req .questions .qa { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.req .questions .chip { min-width: 72px; background: var(--paper); white-space: normal; } /* (a long option wraps inside its field on a phone) */
 /* a pick-many: its options one under the other, each on (ticked) or off */
 .req .questions li[data-many] .qa { flex-direction: column; align-items: stretch; } .req .questions li[data-many] .chip { text-align: left; }
 .req .questions li[data-many] .chip::before { content: ''; display: inline-block; width: 1.2em; } .req .questions li[data-many] .chip.on::before { content: '✓'; }
 .req .questions .qa > input { width: 100%; } .req .questions .num { display: flex; align-items: center; gap: 8px; }
 .req .questions .num input { width: 8em; } .req .questions .unit { font-weight: 600; }
-.req .questions + .photos, .req .questions ~ #answer { margin-top: 10px; }
+.req .questions + .photos, .req .questions ~ #answer { margin-top: 16px; }
 /* the computer's Notes tab: review notes waiting for the board */
 .crt { position: relative; }
 .crt .why { color: var(--scr-cap); font-size: 13px; border: 1px dashed color-mix(in srgb, var(--scr) 40%, transparent); padding: 6px 8px; } .crt .why em { font-style: normal; color: #ffd966; }
@@ -1152,10 +1183,12 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .notes li.old .st { grid-column: 3; } .notes li.old b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }   /* (its state last) */
 .notes li.old .dim { grid-column: 2; white-space: nowrap; }
 .notes li.old .by { grid-column: 1 / -1; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }   /* who wrote it, or who was on a share: a line of its own */
+.notes li.old .reason { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }   /* why it waits, or its job's answer: a line under it */
 .crt .notes-warn { color: var(--scr-cap); font-size: 12px; }
 .notes h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .notes h3 [data-all] { white-space: nowrap; font: inherit; letter-spacing: 0; text-transform: none; background: none; border: 0; color: var(--scr); text-shadow: inherit; padding: 0 2px; min-height: 32px; cursor: pointer; }
 .st-sent { color: var(--scr); } .st-discarded { color: var(--scr-dim); }
+.st-rerouting { color: #ffd966; }   /* a sent note on its way to other work */
 .notes .acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 /* Shared for outside notes, above the notes */
 .notes .invites .person .meta { color: var(--scr-dim); } .notes .invites li.none, .notes .invites .msg { color: var(--scr-dim); }
@@ -1218,7 +1251,7 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 /* a platform app's line on the desk phone (shell/care.js phone(), shell/studio.js phone()). */
 .app-line { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; margin: 0 0 var(--keys-gap); padding: 6px 18px; font: inherit; font-size: 15px; text-align: left; cursor: pointer;
   color: var(--on-accent); background: var(--tint-gold, #fff3c4); border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow-sm); }
-.app-line svg { flex: none; width: 16px; height: 16px; fill: var(--red); shape-rendering: var(--icons, crispEdges); }
+.app-line svg { flex: none; width: 16px; height: 16px; fill: var(--red); shape-rendering: var(--icons, auto); }
 .app-line span { flex: 1; min-width: 0; } .app-line i { font-style: normal; font-size: 20px; line-height: 1; }
 .app-line:active { transform: var(--press); box-shadow: var(--shadow-press); }
 /* a company app's count on its icon on the computer's home screen */
@@ -1256,6 +1289,9 @@ body.keys.keys :is(.danger, [data-sure]) { color: var(--red); }
    the look's face for a panel (--key-panel-bg), so it stands apart from what it sits on. Later's days are keys of two
    lines, their words clear of the round ends. Pick a day is one of them. */
 body.keys :is(.req .questions > li, .later-pick, .later-list li, #panel, #viewer .sharebox, .cr-busy, .cr-remedy, .cr-owed, .cr-held) { --key-bg: var(--key-panel-bg); }
+/* (a card's chips stand on their lip: a wrapped row and the field's foot clear it too) */
+body.keys .req .questions .qa { row-gap: calc(10px + var(--depth-button)); }
+body.keys .req .questions > li:has(.chip) { padding-bottom: calc(16px + var(--depth-button)); }
 /* A row's keys each as wide as its words with the design system's padding (kits/design/keys.css .key), none stretched
    across the row: a card's answers, Reviews' send row. A key for an icon alone is round. */
 body.keys :is(.req .btns button, .notes .acts button) { flex: none; min-width: 0; height: auto; min-height: 48px; padding: 0 22px; }
@@ -1322,8 +1358,8 @@ body.keys #viewer .sharebox .invite button { background: var(--key-on-bg); color
 body.keys #viewer .sharebox .seg button[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; } /* (picked: down, unlit.) */
 
 /* ---- the projects view (shell/projects.js), over the building: the board's four levels as keys, a level at a time, each
-   under its head, in the brownstone's pixel look by default (inked paper keys with hard shadows over the town, a pixel
-   pin on the businesses' and projects'). Wire's and the deck's touches are in their skins. */
+   under its head, in the shell's own look by default (inked paper keys with hard shadows over the town). Each look's
+   touches are in its skin (the brownstone's pixel pin on the businesses' and projects'). */
 body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: none; }
 #hud .brand small { white-space: nowrap; }
 /* (Pixelify draws "fi" and "fl" as one glyph that reads as an A: no ligatures) */
@@ -1376,7 +1412,7 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
    scrollbar is hidden, so it takes no width from the column. (The HUD keeps its own edges and never moves as the view
    comes out.)
  */
-body.projects { --pj-max: 1200px; --pj-gutter: 18px; --pj-inline: max(var(--pj-gutter), calc((100vw - var(--pj-max)) / 2)); }
+#projects { --pj-max: 1200px; --pj-gutter: 18px; --pj-inline: max(var(--pj-gutter), calc((100cqw - var(--pj-max)) / 2)); }
 /* a level: its head, then its keys; they start under the HUD and scroll out of sight under its edge */
 .pj-board { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; overscroll-behavior: contain; touch-action: pan-y; scrollbar-width: none;
   padding: 0 var(--pj-pad) calc(28px + var(--sab)); }
@@ -1427,9 +1463,9 @@ body.projects { --pj-max: 1200px; --pj-gutter: 18px; --pj-inline: max(var(--pj-g
 .pj-eta { position: relative; }
 .pj-eta summary { list-style: none; }
 .pj-eta summary::-webkit-details-marker { display: none; }
-.pj-eta p { position: absolute; z-index: 1; top: calc(100% + 8px); left: 0; width: max-content; max-width: min(320px, 70vw); margin: 0; padding: 10px 13px; background: var(--pj-tile);
+.pj-eta p { position: absolute; z-index: 1; top: calc(100% + 8px); left: 0; width: max-content; max-width: min(320px, 70cqw); margin: 0; padding: 10px 13px; background: var(--pj-tile);
   color: var(--pj-ink); border: var(--bw) solid var(--line); border-radius: var(--pj-round); box-shadow: var(--pj-lift-sm); font-size: 14px; line-height: 1.38; }
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   .pj-head { min-height: 0; padding-top: 12px; padding-bottom: 12px; }
   .pj-where { flex: 1 1 calc(100% - 116px); order: 1; }
   .pj-where h1 { font-size: 22px; }
@@ -1482,9 +1518,10 @@ body.projects { --pj-max: 1200px; --pj-gutter: 18px; --pj-inline: max(var(--pj-g
 .pj-next small { flex: none; color: var(--muted); font-size: 13px; white-space: nowrap; }
 .pj-next .pj-pulse { height: 11px; gap: 4px; }
 .pj-next .pj-live { width: 2px; }
-@media (min-width: 1000px) { .pj-businesses:not(.pj-plain), .pj-loose { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@container page (min-width: 1000px) { .pj-businesses:not(.pj-plain), .pj-loose { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
 
-/* the faces: the look's own portraits */
+/* the faces: the look's own portraits (pixel pictures in every look, shown at whole pixels, until the company's style
+   draws them: the foundation's step 4) */
 .pj-face { display: inline-grid; place-items: center; width: 28px; height: 28px; flex: none; font-style: normal; font-size: 13px; background: var(--cream) center / 100% no-repeat;
   image-rendering: pixelated; border-radius: 2px; box-shadow: 0 0 0 2px var(--line); }
 .pj-face.big { width: 46px; height: 46px; font-size: 18px; }
@@ -1545,17 +1582,6 @@ body.projects { --pj-max: 1200px; --pj-gutter: 18px; --pj-inline: max(var(--pj-g
 .pj-chain > .pj-rows { margin: 0 0 0 20px; padding-left: 12px; border-left: 2px solid var(--rule, rgba(29, 26, 47, .25)); }
 .pj-report { font-size: 15px; line-height: 1.45; }
 
-/* the brownstone's own: a pixel pin on the businesses' and projects' keys */
-:is(.pj-business, [data-project])::before { content: ''; position: absolute; z-index: 1; top: 6px; left: 50%; margin-left: -8px; width: 16px; height: 22px; image-rendering: pixelated;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 11' shape-rendering='crispEdges'%3E%3Cpath fill='%231d1a2f' d='M2 0h4v1h1v1h1v4H7v1H6v1H5v3H3V8H2V7H1V6H0V2h1V1h1z'/%3E%3Cpath fill='%235b8def' d='M2 1h4v1h1v4H6v1H2V6H1V2h1z'/%3E%3Cpath fill='%23fffaf0' d='M2 2h2v1H3v1H2z'/%3E%3C/svg%3E") center / 100% no-repeat; } /* (round, at 2 px a pixel.) */
-/* and its keys arrive as notes pinned to a board (levels.js moveIn), its view's icon in its head's ink, the one waiting
-   for the board ringed in ink like the HUD's counts, a face's frame square like the face, and For you a chip in the
-   tile's ink. */
-body.brownstone #projects { --pj-arrival: pin; }
-body.brownstone .pj-slot { color: inherit; }
-body.brownstone .pj-mark.you { box-shadow: 0 0 0 2px var(--line); }
-body.brownstone .pj-person { border-radius: var(--r); }
-body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: var(--r-sm); background: var(--pj-on-you); color: var(--pj-you); }
 @media (prefers-reduced-motion: reduce) { .pj-live { animation: none; } }
 /* Projects 3.0: a cover on each business and project, people in its corner, deliverables, tasks with their codes.
  */
@@ -1668,7 +1694,7 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
 .pj-board-task.pj-flat .pj-phone { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { #projects .pj-task.working .pj-face { animation: none; } }
 /* (on a phone a task's size and code go under its words, so its title has the row's whole width) */
-@media (max-width: 700px) {
+@container page (max-width: 700px) {
   #projects .pj-task { flex-wrap: wrap; row-gap: 2px; padding-block: 5px; }
   .pj-task-side { width: 100%; padding-left: 36px; }
   .pj-step { margin-left: 26px; }
@@ -1693,9 +1719,8 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
 /* (a lifted key follows the pointer frame by frame: its transform eases into nothing.) */
 #projects .pj-lifted { z-index: 3; scale: 1.04; box-shadow: var(--pj-lift-big); cursor: grabbing; transition: box-shadow .12s var(--ease, ease-out), scale .12s var(--ease, ease-out); }
 
-@media (max-width: 700px) {
-  body.projects { --pj-gutter: 14px; }
-  #projects { --pj-pad: 14px; }
+@container page (max-width: 700px) {
+  #projects { --pj-gutter: 14px; --pj-pad: 14px; }
   #projects .pj-thread { padding: 12px; } /* (a cover stays flush to its key's edges) */
   .pj-project > b { padding: 10px 12px 0; }
   .pj-project > .pj-deliverables { padding: 6px 12px 12px; }
@@ -1708,7 +1733,7 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
    results by category. The search key is for a phone: a keyboard has /. */
 @media (pointer: fine) { #btn-find { display: none; } }
 /* (on a phone, first on the top row, which takes it as a fifth key, so the tools keep their two rows. order 1) */
-@media (max-width: 700px) and (pointer: coarse) { .tools #btn-find { order: 1; } .tools:has(#btn-find) { max-width: 236px; } }
+@media (pointer: coarse) { @container page (max-width: 700px) { .tools #btn-find { order: 1; } .tools:has(#btn-find) { max-width: 236px; } } }
 #finder { position: fixed; left: 0; right: 0; top: var(--vvt, 0px); height: var(--vvh, 100dvh); z-index: 35; display: flex; justify-content: center;
   align-items: flex-start; padding: max(12px, var(--sat)) max(12px, var(--sar)) max(12px, var(--sab)) max(12px, var(--sal)); background: rgba(29, 26, 47, .45); }
 #finder[hidden] { display: none; }
@@ -1720,7 +1745,7 @@ body.brownstone .pj-deliverables small.pj-you { padding: 0 5px; border-radius: v
 .finder-field input, #finder .finder-field input { flex: 1; min-width: 0; height: auto; margin: 0; padding: 0; border: 0; border-radius: 0; outline: 0; box-shadow: none;
   background: none; color: inherit; font: inherit; font-size: 20px; }
 .finder-chips { display: flex; gap: 6px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none; border-bottom: 1px solid color-mix(in srgb, var(--ink) 15%, transparent); }
-@media (min-width: 701px) { .finder-chips { flex-wrap: wrap; } }
+@container page (min-width: 701px) { .finder-chips { flex-wrap: wrap; } }
 .finder-chips button { flex: none; padding: 3px 10px; border: var(--bw) solid var(--line); border-radius: 999px; background: var(--paper); color: inherit; font: inherit;
   font-size: 14px; cursor: pointer; }
 .finder-chips button[aria-pressed="true"] { background: var(--gold); color: var(--on-accent); }

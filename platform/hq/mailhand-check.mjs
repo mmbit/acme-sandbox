@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // Mail's Send to the team (mail.ts forward): one button under a mail of the board's own, none under the agents' mail. A
 // click hands it on once and the button says so with the job's number; a mail already handed shows its job from the start.
-// In Brownstone and Wire, on a phone and a laptop.
+// In every look, on a phone and a laptop.
 //   node platform/hq/mailhand-check.mjs [out dir for shots]   (HQ's files from serve.mjs, its /api played here)
 import assert from 'node:assert/strict';
 import { mkdirSync } from 'node:fs';
 import { serve } from './serve.mjs';
+import { lookNames } from './looks.mjs';
 const { chromium } = await import('/usr/local/lib/node_modules/playwright/index.mjs').catch(
   () => import('/opt/node22/lib/node_modules/playwright/index.mjs'),
 );
@@ -44,7 +45,7 @@ const mail = () => [
     forwarded: 4321,
   },
 ];
-for (const look of ['brownstone', 'wire'])
+for (const look of lookNames())
   for (const [width, height, device] of [
     [390, 844, 'phone'],
     [1280, 800, 'laptop'],

@@ -7,14 +7,14 @@
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 import { loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
   loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
-  loadReviewProducts, loadReviewNotes, reviewShot, reviewPicture, sendNotes, discardNotes, uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
+  loadReviewProducts, uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
   loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, setPersonSketchbook, guestColleagues, loadLanguage, setLanguage } from './data.js'; // (setPersonSketchbook)
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
 import { companyFormats, dayTime, timeOf } from '../world/clock.js';
-import { scene, look, pick, lookName, RENDERERS, dressed, cover } from './stage.js';   // (cover)
+import { scene, look, pick, lookName, looks, dressed, cover } from './stage.js';   // (cover; looks)
 import { toast, flyTo, visitMascot } from './hud.js';
 import { openLibraryDoc } from './news.js';   // (Team's Gazette and Library buttons gone)
 import { onDirective } from './events.js';
@@ -44,7 +44,7 @@ import { prose, fencedLines, linked, bare, BOLD, covered, jobNameLink, jobsIn, w
 import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in its steps)
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
-import { frameMark } from '/__review/frame.js';
+import { notes, openReviews, holdReviews } from './reviews.js';
 
 const $ = s => document.querySelector(s);
 // The company's own HQ apps: theme/hq.yaml's apps, each kits/<name>/hq/app.js at /kits/<name>/app.js
@@ -55,8 +55,9 @@ const $ = s => document.querySelector(s);
 // photo studio's (studio.js), when the company runs the studio.
 let own = [], ownDone = false;
 const kitApps = (Array.isArray(theme.apps) ? theme.apps : []).filter(n => typeof n === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(n)).map(id => [id, `/kits/${id}/app.js`]);
-// The Sketchbook (sketchbook.js) is on every computer
-const platformApps = [['sketchbook', '/shell/sketchbook.js'], ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
+// The Sketchbook (sketchbook.js) is on every computer, unless the company's brand.yaml says computer: { sketchbook: false }
+const sketchbookOn = brand.computer?.sketchbook !== false;
+const platformApps = [...(sketchbookOn ? [['sketchbook', '/shell/sketchbook.js']] : []), ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
 const ownLoaded = Promise.resolve().then(() => Promise.all([...platformApps, ...kitApps]
   .map(([id, url]) => import(url).then(mod => mod.app && mod.draw ? { id, mod } : null, e => { console.warn(`[hq] ${url}: its HQ app didn't load`, e); return null; }))))
   .then(list => { own = list.filter(Boolean); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
@@ -105,6 +106,7 @@ export function initDesk() {
   }, true);
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
+  loadPin();
   document.addEventListener('visibilitychange', () => { if (document.hidden && voice && voice.phase !== 'sending') finishVoice(); });
 }
 function show(kind, html, force = false) {
@@ -201,13 +203,30 @@ function paintPin() {
   send.hidden = !n; send.innerHTML = `Send <i>${n}</i>`; // (the count, quietly)
   send.setAttribute('aria-label', `Send the ${n === 1 ? 'note' : 'notes'} waiting on this product`);
 }
+// notes discarded in Reviews no longer count on the viewer's Send.
+export function unpin(ids) {
+  if (viewing) { ids.forEach(id => viewing.pinned.delete(id)); paintPin(); }
+}
 // review mode in the frame lists its notes again after a send or discard here
-// notes sent or discarded in Reviews: review mode in the viewer's frame and the pin summoned on HQ itself count again
-const toldReview = () => {
+// notes sent or discarded in Reviews: review mode in the viewer's frame and HQ's own pin count again
+export const toldReview = () => {
   const f = $('#viewer iframe');
   if (viewing?.review && f) f.contentWindow?.postMessage({ hq: 'hq', notes: 1 }, viewing.review);
-  if (pinSummoned) dispatchEvent(new Event('review:notes'));
+  dispatchEvent(new Event('review:notes'));
 };
+// The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself, loaded once at start: the
+// coordinator serves the real one only behind the board's sign-in (feedback.ts). Its Send my notes opens Reviews at them.
+function loadPin() {
+  addEventListener('review:send', e => openComputer('notes', { notes: { ids: new Set(e.detail) } }));
+  const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
+  script.dataset.summoned = '';
+  script.dataset.book = '';   // the Pencil writes on HQ's pages, its notes in the board's book.
+  script.onload = () => coverPin(!!viewing);
+  document.head.append(script);
+}
+// HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
+// closes and only one pin ever shows
+const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: on }));
 // The send step: the computer's Reviews over the viewer, at the product the board's notes wait on, from the bar's Send
 // or review mode's own Send my notes. Nothing is ticked: the page in the frame can post notes (and ask for this step)
 // too, so only the board's own ticks in Reviews choose what's sent. Closing the computer goes back to the preview, and so
@@ -242,7 +261,7 @@ const DAYS = [1, 3, 7];
 // a share's kind as the box chooses it; the shop's preview door (the coordinator's FRONT), and the cycles host, where no
 // tester invite opens
 const KINDS = [['notes', 'Notes only'], ['view', 'View only'], ['tester', 'To try out']];
-const kindOf = s => s.tester ? 'tester' : s.view ? 'view' : 'notes';
+export const kindOf = s => s.tester ? 'tester' : s.view ? 'view' : 'notes';
 const onShop = url => new URL(url).host.startsWith('front.preview.');
 const onCycles = url => new URL(url).host.startsWith('cycles.');
 // the open share a page is in: its host, and its folder unless it opens the host whole
@@ -315,10 +334,10 @@ function wireCap(box, s, redraw) {
     catch (err) { button.disabled = false; tell(msg(), refused(err)); }
   });
 }
-const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
+export const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
 // (a share that ended with everyone in but reopens)
 // (as HTML, its job a link)
-const untilLine = s => s.reopens ? `Everyone has sent their notes: ${went(s)}. Until ${esc(dayTime(s.ends))}, anyone who sent theirs can add more, which opens it again; End now stops that.`
+export const untilLine = s => s.reopens ? `Everyone has sent their notes: ${went(s)}. Until ${esc(dayTime(s.ends))}, anyone who sent theirs can add more, which opens it again; End now stops that.`
   : esc(s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
   : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. Once everyone has sent their notes and taken a plan, they go to ${s.owner}.`
   : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. Once everyone has sent their notes and ordered, they go to ${s.owner}.`
@@ -335,18 +354,19 @@ function reviewState(s, p) {
 const ordered = (s, p) => !s.tester ? '' : s.pays === 'plan' ? (p.ordered ? ` · took ${p.ordered.join(' with ')}` : ' · no plan yet')
   : p.ordered ? ` · ordered${p.ordered.length ? ` from ${p.ordered.join(', ')}` : ''}` : ' · no order yet';
 // (titled, and Recent: everyone shared with lately who isn't on it)
-const shareHtml = s => `${peopleHtml((s?.people ?? []).map(p => ({ ...p, state: reviewState(s, p) })), true, { invite: !s?.reopens, titled: true, again: recent.filter(r => !s?.people.some(p => sameName(p.name, r.name))) })}${s ? '<p class="row acts"><button type="button" data-end>End now</button></p>' : ''}`;
+export const shareHtml = s => `${peopleHtml((s?.people ?? []).map(p => ({ ...p, state: reviewState(s, p) })), true, { invite: !s?.reopens, titled: true, again: recent.filter(r => !s?.people.some(p => sameName(p.name, r.name))) })}${s ? '<p class="row acts"><button type="button" data-end>End now</button></p>' : ''}`;
 // The people the board shared with in the last three weeks, by name and its title for them (loadPeople), as Share and
 // Reviews last loaded them: the box's Recent, a tap invites one again
 let recent = [];
-const loadRecent = () => loadPeople(world.dev).then(list => { recent = list; }, () => { /* Recent stays as it was: the box and Reviews work without it */ });
+export const loadRecent = () => loadPeople(world.dev).then(list => { recent = list; }, () => { /* Recent stays as it was: the box and Reviews work without it */ });
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
+export const noteCount = n => `${+n} ${+n === 1 ? 'note' : 'notes'}`;
 // where an ended share's notes went, as HTML
-const went = s => s.job ? `${esc(`${noteCount(s.notes)} to ${s.owner}`)} · job ${jobNameLink(s.job, s.job_code)}` : esc(s.notes ? `${noteCount(s.notes)} on their way to ${s.owner}` : s.view ? 'view only' : 'no notes');
+export const went = s => s.job ? `${esc(`${noteCount(s.notes)} to ${s.owner}`)} · job ${jobNameLink(s.job, s.job_code)}` : esc(s.notes ? `${noteCount(s.notes)} on their way to ${s.owner}` : s.view ? 'view only' : 'no notes');
 // Send link, Remove, Invite and End now on a share (in the viewer's box, or a share in Reviews): o.redraw(share, what to
 // say, as HTML) draws it again, o.page and o.days() make a new one with the first invite
-function wireShare(el, s, o) {
-  const busy = async work => { notesBusy = true; try { return await work(); } finally { notesBusy = false; } };
+export function wireShare(el, s, o) {
+  const busy = holdReviews;
   const after = (next, text) => {
     const said = next.ended && !s?.ended ? `Everyone has sent their notes: ${went(next)}.` : text;
     o.redraw(next.ended && !next.reopens ? null : next, said);
@@ -412,7 +432,7 @@ function fromViewer(e) {
     frame.style.background = backdropOf(d) ?? '';
   } else if (tag === 'deck' && e.origin.startsWith('https://cycles.preview.') && typeof d.open === 'string' && PREVIEW.test(d.open)) { // decks only, not product pages
     sfx.blip(); openViewer(d.open, backTo(d.back, e.origin) ?? me.url);
-  } else if (tag === 'deck' && d.hello && e.origin.startsWith('https://cycles.preview.') && dressed(look)) { // a deck wears the look (its slides.css)
+  } else if (tag === 'deck' && d.hello && e.origin.startsWith('https://cycles.preview.') && dressed) { // a deck wears the look (its slides.css)
     const to = e.source, name = look;
     fetch(`renderers/${name}/slides.css`).then(r => r.ok ? r.text() : null)
       .then(css => { if (css && viewing === me) to.postMessage({ [old ? 'onlyonery' : 'hq']: 'hq-look', look: name, css }, e.origin); })
@@ -889,8 +909,8 @@ const againHtml = list => list.length ? `<p class="again">${list.map(r => `<butt
 // open: Remove on each; o.invite: the Invite form (open, unless the share only reopens)
 function peopleHtml(list, open, o = {}) {
   const invite = o.invite ?? open;
-  // (bookHtml)
-  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${o.titled && p.address ? bookHtml(p) : ''}${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
+  // (bookHtml, where the company has the Sketchbook)
+  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${o.titled && p.address && sketchbookOn ? bookHtml(p) : ''}${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
       <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
   // (Recent atop the form)
   return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
@@ -2033,7 +2053,7 @@ const linePictures = m => m.pictures?.length ? `<span class="pics">${m.pictures.
 const backAt = ms => companyFormats().dayAt(new Date(ms)) === companyFormats().today() ? timeOf(ms) : dayTime(ms);
 const pausedLine = (p, ceo) => p.why === 'restarting' ? `Paused: restarting. ${cap(ceo)} picks this up as soon as it's back.`
   : p.why === 'seat' ? `Paused: waiting for a seat, back at about ${backAt(p.until)}.`
-  : p.why === 'signin' ? 'Paused: waiting for a seat to be signed in (the desk phone has its card).'
+  : p.why === 'signin' ? `Paused: waiting for a seat to be signed in (the ${names.phone} has its card).`
   : `Paused after a hiccup: trying again at about ${backAt(p.until)}.`;
 
 // the conversation so far; a new reply from the CEO chimes
@@ -2217,7 +2237,7 @@ export function openJob(id) {
   openProjects({ job: id });
 }
 // (opts.mail opens Mail at that message; opts.call Calls at that call; opts.notes opens Reviews at a product's notes, see
-// notesWanted; opts.section opens Settings at a section, opts.page at a page in it, a seat's or a machine's; opts.force
+// openReviews; opts.section opens Settings at a section, opts.page at a page in it, a seat's or a machine's; opts.force
 // moves on from a field with text in it, which the app saved first)
 export function openComputer(which = 'home', opts = {}) {
   if (open === 'computer' && typing() && !opts.force) return;
@@ -2226,12 +2246,10 @@ export function openComputer(which = 'home', opts = {}) {
   const app = apps().find(a => a[0] === tab);
   mailWanted = tab === 'mail' ? opts.mail ?? null : null;
   if (mailWanted != null) mailGroup = 'all';   // (the message is in All, whichever group it's in)
-  notesWanted = tab === 'notes' ? opts.notes ?? null : null;
   callWanted = tab === 'calls' ? opts.call ?? null : null;
-  if (tab === 'notes') notesShown = 'mine';
+  if (tab === 'notes') openReviews(opts.notes);
   section = tab === 'settings' ? opts.section ?? null : null;
   pageWanted = opts.page ?? null;
-  if (notesWanted) ticked.clear(); // a send step starts with nothing ticked: a tick left from before mustn't ride along unseen
   show('computer', `<header>${app ? '<button class="home" data-home aria-label="Home" title="Home">◂</button>' : ''}<b>${esc(names.os)}${app ? `<span> › ${app[1]}</span>` : ''}</b><button class="x" data-close aria-label="Close">×</button></header>
     <div class="crt"><div class="screen${tab === 'home' ? ' fit' : ''}" id="crt" tabindex="0"><p>LOADING…<i class="cursor"></i></p></div></div>`, opts.force);   // (fit: the home screen's height is its grid's)
   // Numbers and a company app go back to their own home first (a company app's back())
@@ -2337,7 +2355,7 @@ function settings(el) {
   if (section === 'sys:alerts') { el.innerHTML = '<div></div>'; return alerts(el.firstChild); }
   if (section === 'sys:overseer') { el.innerHTML = '<div></div>'; return oversight(el.firstChild, { dev: world.dev, ago }); }
   if (section === 'sys:language') { el.innerHTML = '<p class="acts looks"></p><p class="msg"></p>'; return languages(el.firstChild, el.lastChild); }
-  if (section === 'sys:look') { el.innerHTML = '<p class="acts looks"></p><section class="look-settings"></section>'; return looks(el.firstChild, el.lastChild); }
+  if (section === 'sys:look') { el.innerHTML = '<p class="acts looks"></p><section class="look-settings"></section>'; return lookSettings(el.firstChild, el.lastChild); }
   if (section) { el.innerHTML = `<section data-app-settings="${esc(section)}"></section>`; return own.find(k => k.id === section)?.mod.settings(el.firstChild, hq()); } // (a company app's box)
   const row = s => s.run ? `<li><button data-run="${s.id}"><b>${esc(s.name)}</b><span class="to">${s.mark ?? '›'}</span></button></li>`
     : `<li><button data-section="${esc(s.id)}"><b>${esc(s.name)}</b><span class="to"><span data-now="${esc(s.id)}"></span> ›</span></button></li>`;
@@ -2355,10 +2373,10 @@ function settings(el) {
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
-// Overseer's key (oversight.js) and the board's Language (languages); this device, Notifications and Look; tools, Pin a
-// note on HQ (summonPin) and Reload HQ, which run at once (run). HQ's search finds each by its name, a page in it by the
-// page's name (pages: a seat, a machine) and a section by a choice on it (choices: a language, a look, the one set now
-// first). The built-in ids start "sys:", so a company app can't take one.
+// Overseer's key (oversight.js) and the board's Language (languages); this device, Notifications and Look; tools, Reload
+// HQ, which runs at once (run). HQ's search finds each by its name, a page in it by the page's name (pages: a seat, a
+// machine) and a section by a choice on it (choices: a language, a look, the one set now first). The built-in ids start
+// "sys:", so a company app can't take one.
 export function settingsSections() {
   const chosen = (list, now) => [...list.filter(x => x === now), ...list.filter(x => x !== now)];
   return [
@@ -2371,27 +2389,10 @@ export function settingsSections() {
       return chosen(l.languages, l.languages.find(x => x.code === l.lang)).map(x => x.own);
     } },
     { caption: 'THIS DEVICE', id: 'sys:alerts', name: 'Notifications' },
-    { caption: 'THIS DEVICE', id: 'sys:look', name: 'Look', choices: () => Promise.all(chosen(RENDERERS, look).map(lookName)) },
-    { caption: 'TOOLS', id: 'sys:pin', name: `Pin a note on ${names.hq}`, run: () => { sfx.blip(); closeTool(); summonPin(); } },
+    { caption: 'THIS DEVICE', id: 'sys:look', name: 'Look', choices: async () => Promise.all(chosen((await looks).map(l => l.name), look).map(lookName)) },
     { caption: 'TOOLS', id: 'sys:reload', name: `Reload ${names.hq}`, mark: '↻', run: () => location.reload() },
   ];
 }
-// The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself: the coordinator serves the real
-// one only behind the board's sign-in (feedback.ts). Its menu puts it away, and Settings summons it back. Its Send my
-// notes opens Reviews at them.
-let pinSummoned = false;
-function summonPin() {
-  if (pinSummoned) return dispatchEvent(new Event('review:summon'));
-  pinSummoned = true;
-  addEventListener('review:send', e => openComputer('notes', { notes: { ids: new Set(e.detail) } }));
-  const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
-  script.dataset.summoned = '';
-  script.onload = () => coverPin(!!viewing);
-  document.head.append(script);
-}
-// HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
-// closes and only one pin ever shows
-const coverPin = on => pinSummoned && dispatchEvent(new CustomEvent('review:cover', { detail: on }));
 export function settingsBack() {
   const el = $('#crt');
   if (tab !== 'settings' || !section || !el) return false;
@@ -2419,12 +2420,12 @@ async function languages(el, msg) {
 // The looks (renderers) by their own names, the one on stage pressed. A pick swaps it in behind the computer, no reload,
 // and keeps it for this viewer. Until they pick one, the company's look (theme.renderer) is on stage, and pressed.
 // Under them, the look on stage's own settings, when it has any (its scene.js exports settings(el), which draws them).
-async function looks(el, box) {
-  const titles = await Promise.all(RENDERERS.map(lookName));
-  el.innerHTML = RENDERERS.map((n, i) => `<button data-look="${n}" aria-pressed="${n === look}">${esc(titles[i])}</button>`).join('');
+async function lookSettings(el, box) {
+  const shipped = (await looks).map(l => l.name), titles = await Promise.all(shipped.map(lookName));
+  el.innerHTML = shipped.map((n, i) => `<button data-look="${n}" aria-pressed="${n === look}">${esc(titles[i])}</button>`).join('');
   el.querySelectorAll('[data-look]').forEach(b => b.onclick = async () => {
     el.querySelectorAll('[data-look]').forEach(x => { x.disabled = true; });
-    sfx.blip(); await pick(b.dataset.look); looks(el, box);
+    sfx.blip(); await pick(b.dataset.look); lookSettings(el, box);
   });
   const { settings: own } = await import(`../renderers/${look}/scene.js`);
   box.replaceChildren(); box.hidden = !own;
@@ -2619,169 +2620,6 @@ async function inbox(el) {
   if (want) { want.open = true; requestAnimationFrame(() => want.scrollIntoView({ block: 'start' })); }
   else el.insertAdjacentHTML('afterbegin', '<p class="why">That message isn’t among the latest mail shown here.</p>');
 }
-// Review notes: what the board pinned on product preview pages. They wait here until the board sends the ones it
-// ticked to the product's owner. A preview page runs the product's own code, which can post notes too, so only a
-// batch sent from here reaches an agent. Note text is page-controlled: everything goes through esc(). A note starts
-// unticked (one that arrives during the 15 s refresh must never ride along unseen); the ones the board ticks live
-// in `ticked`, so the refresh keeps them. It skips a render while a screenshot is open or a send is on its way.
-// A note shows what the board needs to send or discard it: its words, where it was pinned in human terms (the element's
-// text, the screenshot), when, and what it was seen on. The page address and the selector travel with the note to the owner's job, not here; a sent note is
-// one line; the safety line shows only while notes wait, and Tick all sits by the heading for two notes or more. (for
-// notes() and this block)
-const ticked = new Set(), SEND_MAX = 50;
-let notesBusy = false;
-// The send step (sendStep) opens the tab at one product: notesWanted,
-// { slug, sent }. The first paint scrolls to that product and ticks nothing. A send from that product calls `sent`.
-let notesWanted = null;
-// Reviews' two submenus at its top: My notes, the board's own notes waiting to be sent, opened
-// first, and Shared, what it shared with outside people, each share one line that opens to its whole block.
-let notesShown = 'mine';
-const notesMenu = (waiting, open) => `<div class="pills" role="radiogroup" aria-label="Reviews">${[['mine', 'My notes', waiting], ['shared', 'Shared', open]]
-  .map(([k, label, n]) => `<button role="radio" aria-checked="${k === notesShown}" data-shown="${k}">${label}<i>${+n}</i></button>`).join('')}</div>`;
-const shorten = (s, n) => s.length > n ? `${s.slice(0, n).replace(/[\s.,;:]+$/, '')}…` : s;
-// (a general note is pinned to nothing)
-const pinnedOn = e => e?.kind === 'general' ? 'General note · ' : e?.text ? `on “${esc(shorten(e.text, 48))}” · ` : '';
-// The thumbnail is framed on the note's mark (frameMark), in the padding box of .notes li.pending .shot (style.css):
-// its img then gets the class framed.
-const SHOT_ASPECT = 70 / 52;
-function shotFrame(element, viewport) {
-  const placement = frameMark(element, viewport, SHOT_ASPECT);
-  return placement
-    ? ` class="framed" style="width:${placement.width};height:${placement.height};left:${placement.left};top:${placement.top}"`
-    : '';
-}
-// A picture the reviewer added to a note, small under its words
-const pictureButton = (id, file) => `<button data-picture="${+id}" data-file="${esc(file)}" aria-label="Show the picture bigger">`
-  + `<img src="${esc(reviewPicture(world.dev, id, file))}" alt="" loading="lazy"></button>`;
-async function notes(el) {
-  const idle = () => !notesBusy && !root().querySelector('.zoom') && el.isConnected;
-  if (!idle()) return;
-  const [products, shares] = await Promise.all([loadReviewProducts(world.dev), loadShares(world.dev), loadRecent()]);
-  const lists = await Promise.all(products.map(p => loadReviewNotes(world.dev, p.slug)));
-  if (!idle()) return;
-  const waiting = paintWaiting(products), want = notesWanted, first = want && !want.shown;
-  const open = new Set(lists.flat().filter(x => x.status === 'pending').map(x => +x.id));
-  ticked.forEach(id => open.has(id) || ticked.delete(id));   // sent or discarded since
-  const pending = x => `<li class="pending"><input type="checkbox" id="rn-${+x.id}" data-note="${+x.id}" ${ticked.has(+x.id) ? 'checked' : ''}>
-      <label for="rn-${+x.id}"><b>${esc(x.note)}</b></label><span class="dim">${pinnedOn(x.element)}${esc(ago(x.created))}</span>
-      ${x.seen ? `<span class="dim seen">${esc(x.seen)}</span>` : ''}
-      ${x.shot ? `<button class="shot" data-shot="${+x.id}" data-file="${esc(x.shotFile ?? '')}" aria-label="Show the screenshot bigger"><img src="${esc(reviewShot(world.dev, x.id, x.shotFile))}" alt="" loading="lazy"${shotFrame(x.element, x.viewport)}></button>` : ''}
-      ${x.pictures?.length ? `<span class="pics">${x.pictures.map(file => pictureButton(x.id, file)).join('')}</span>` : ''}</li>`;   // (pictures)
-  // (a note marked sent on a call with no job: answered there. One whose fix is live: fixed.)
-  const state = x => x.fixed_live ? 'fixed' : x.status === 'sent' && !x.job && x.call ? 'answered' : x.status;
-  // (an outside reviewer's, once it went: who wrote it, as they signed in; and a general note says so)
-  const by = x => {
-    const line = [x.element?.kind === 'general' ? 'General note' : '', x.author ? `by ${esc(x.author)}${x.author_email ? ` (${esc(x.author_email)})` : ''}` : ''].filter(Boolean);
-    return line.length ? `<span class="dim by">${line.join(' · ')}</span>` : '';
-  };
-  const done = x => `<li class="old"><span class="st st-${esc(x.status)}">${esc(state(x))}</span><b>${esc(x.note)}</b><span class="dim">${esc(ago(x.created))}</span>${by(x)}</li>`;
-  const live = shares.filter(s => !s.ended || s.reopens);
-  if (notesShown === 'shared') {
-    // (a share the board opened stays open through the refresh)
-    const unfolded = new Set([...el.querySelectorAll('section.share > details[open]')].map(d => +d.parentElement.dataset.share));
-    el.innerHTML = `${notesMenu(waiting, live.length)}${shares.length ? sharesHtml(shares, unfolded) : '<p><i class="prompt">&gt; </i>Nothing shared. A preview’s share invites outside people.</p>'}`;
-    shareActs(el, shares);
-  } else el.innerHTML = `${notesMenu(waiting, live.length)}<p class="cap"><i class="prompt">&gt; </i>REVIEW NOTES · ${waiting} WAITING</p>
-    ${waiting ? '<p class="warn notes-warn">Send only the notes you recognise: a preview page can write notes too.</p>' : ''}
-    ${products.map((p, i) => {
-      // (a discarded note is gone from the list, kept on the server.)
-      const open = lists[i].filter(x => x.status === 'pending'), old = lists[i].filter(x => !['pending', 'discarded'].includes(x.status));
-      if (!open.length && !old.length) return '';
-      // (wanted: by the notes pinned in the viewer too, as a deck's are about its cycle folder; data-agent for Call.
-      const wanted = want && (p.slug === want.slug || open.some(x => want.ids?.has(+x.id)));
-      return `<section class="notes${wanted ? ' wanted' : ''}" data-slug="${esc(p.slug)}" data-owner="${esc(p.ownerName || who(p.owner))}" data-agent="${esc(p.owner)}">
-        <h3><span>${esc(p.name || p.slug)}${+p.pending ? ` · ${+p.pending} waiting` : ''}</span>${open.length > 1 ? '<button data-all></button>' : ''}</h3>
-        ${open.length ? `<ul class="rows">${open.map(pending).join('')}</ul><p class="acts"><button class="cta" data-send></button><button data-call></button><button data-discard></button><span class="msg" role="status"></span></p>` : ''}
-        ${old.length ? `<ul class="rows">${old.slice(0, 10).map(done).join('')}</ul>${old.length > 10 ? `<p class="dim">+ ${old.length - 10} earlier</p>` : ''}` : ''}
-      </section>`;
-    }).join('') || '<p><i class="prompt">&gt; </i>No notes yet. Open a product preview and tap the pin to leave one.</p>'}`;
-  el.querySelectorAll('section.notes').forEach(s => {
-    const boxes = [...s.querySelectorAll('[data-note]')], send = s.querySelector('[data-send]'), drop = s.querySelector('[data-discard]'), msg = s.querySelector('.msg');
-    const ring = s.querySelector('[data-call]');
-    const all = s.querySelector('[data-all]');
-    if (!send) return;
-    const chosen = () => boxes.filter(b => b.checked).map(b => +b.dataset.note);
-    const paint = () => {
-      const n = Math.min(chosen().length, SEND_MAX), every = chosen().length === boxes.length;
-      send.textContent = n ? `Send ${n}` : 'Send'; send.disabled = drop.disabled = !n; ask.show();
-      ring.textContent = `Call ${s.dataset.owner}`; ring.disabled = !n;
-      if (all) { all.textContent = every ? 'Untick all' : 'Tick all'; all.dataset.every = every ? 1 : ''; }
-    };
-    const set = (b, on) => { b.checked = on; ticked[on ? 'add' : 'delete'](+b.dataset.note); };
-    boxes.forEach(b => b.onchange = () => { set(b, b.checked); paint(); });
-    if (all) all.onclick = () => { const on = !all.dataset.every; boxes.forEach(b => set(b, on)); paint(); sfx.blip(); };
-    const busy = async (doing, fn, done) => {
-      notesBusy = true; send.disabled = drop.disabled = true; msg.textContent = doing;
-      try { done(await fn()); }
-      catch (e) { const status = +String(e.message).match(/\d{3}$/)?.[0]; msg.textContent = status ? `That didn’t go through (error ${status}). Try again in a minute.` : 'Could not reach the coordinator. Try again.'; notesBusy = false; paint(); return; }
-      notesBusy = false; notes(el); refreshWaitingNotes(); toldReview();
-    };
-    // discarding can't be undone: the first tap asks, the second does it. The discarded notes no longer count on the
-    // viewer's Send. (steady: the row beside it stays put. Asking, the key says only "Sure?", no wider than Discard, so
-    // it keeps its own word's size; the line under it says what a second tap does.)
-    const ask = askAgain(drop, { status: msg, label: 'Discard', again: 'Sure?', question: () => `Tap again to discard ${noteCount(chosen().length)} for good.`, steady: true,
-      act: () => {
-        const ids = chosen();
-        busy('Discarding…', () => discardNotes(world.dev, ids), r => {
-          sfx.blip(); toast(`<b>Discarded</b><br>${r.count} ${r.count === 1 ? 'note' : 'notes'}`);
-          if (viewing) { ids.forEach(id => viewing.pinned.delete(id)); paintPin(); }
-        });
-      } });
-    paint();
-    send.onclick = () => { const ids = chosen().slice(0, SEND_MAX); busy('Sending…', () => sendNotes(world.dev, s.dataset.slug, ids), r => {
-      sfx.ding(0.6); toast(`<b>Sent to ${esc(r.name)}</b><br>${r.count} ${r.count === 1 ? 'note' : 'notes'} · job ${jobNameLink(r.job, r.job_code)}`);
-      if (s.classList.contains('wanted')) notesWanted?.sent?.(ids, r.count, r.name);
-    }); };
-    // a call about the ticked notes sends none of them: on it, the maker marks each one sent or leaves it waiting here
-    ring.onclick = () => { sfx.blip(); callAgent(s.dataset.agent, s.dataset.owner, 0, chosen().slice(0, SEND_MAX)); };
-  });
-  el.querySelectorAll('[data-shown]').forEach(b => b.onclick = () => {
-    if (notesBusy || notesShown === b.dataset.shown) return;
-    sfx.blip(); notesShown = b.dataset.shown; el.innerHTML = ''; notes(el); el.scrollTop = 0;
-  });
-  // a thumbnail opens the screenshot (or a picture added to the note) over the screen; a tap anywhere closes it
-  el.querySelectorAll('[data-shot], [data-picture]').forEach(b => b.onclick = () => {
-    const picture = b.dataset.picture, z = document.createElement('div');
-    const url = picture ? reviewPicture(world.dev, picture, b.dataset.file) : reviewShot(world.dev, b.dataset.shot, b.dataset.file);
-    const alt = picture ? 'A picture added to the note' : 'Screenshot of the page when the note was made';
-    z.className = 'zoom'; z.innerHTML = `<img src="${esc(url)}" alt="${alt}"><a href="${esc(url)}" target="_blank" rel="noopener">Full size ↗</a>`;
-    z.onclick = e => { if (e.target.tagName !== 'A') z.remove(); };
-    el.parentNode.append(z); sfx.blip();
-  });
-  if (!first) return;
-  want.shown = true;
-  const section = el.querySelector('section.wanted');
-  if (section) requestAnimationFrame(() => section.scrollIntoView({ block: 'start' }));
-}
-// Shared for outside notes: each open
-// share with what it opens and until when, its people (Send link, Remove, Invite) and End now (two taps, like Discard),
-// as the viewer's Share shows it. An ended one says who was on it and where its notes went, for a week.
-// Each open share is folded to its heading and one line (its people, the notes they sent, until when), and
-// opens to the rest; the ended ones sit below.
-const noteCount = n => `${+n} ${+n === 1 ? 'note' : 'notes'}`;
-const shareWhere = s => `${esc(s.what)}${s.prefix === '/' ? '' : ` (${esc(s.prefix)})`}`;
-const foldLine = s => [s.people.map(p => p.name).join(', ') || 'Nobody yet', s.view ? '' : `${noteCount(s.people.reduce((n, p) => n + (p.sent ? +p.notes : 0), 0))} sent`,
-  `until ${dayTime(s.ends)}`].filter(Boolean).join(' · ');
-const openShareHtml = (s, open) => `<details${open ? ' open' : ''}><summary><h3><span>${shareTitle(kindOf(s))} on ${shareWhere(s)}</span></h3><span class="dim">${esc(foldLine(s))}</span></summary>
-  <p class="dim">${untilLine(s)}</p>${shareHtml(s)}</details>`;
-// (unfolded: the ids of the shares the board has open)
-function sharesHtml(shares, unfolded) {
-  const ended = s => `<li class="old"><span class="st st-ended">ended</span><b>${shareWhere(s)}</b><span class="dim by">${[went(s), esc(s.people.map(p => p.name).join(', '))].filter(Boolean).join(' · ')}</span></li>`;
-  const old = shares.filter(s => s.ended && !s.reopens);
-  return `${shares.filter(s => !s.ended || s.reopens).map(s => `<section class="notes share" data-share="${+s.id}">${openShareHtml(s, unfolded.has(+s.id))}</section>`).join('')}
-    ${old.length ? `<section class="notes shares"><h3><span>Outside notes, ended</span></h3><ul class="rows">${old.map(ended).join('')}</ul></section>` : ''}`;
-}
-function shareActs(el, shares) {
-  el.querySelectorAll('section.share').forEach(sec => {
-    const draw = (s, said = '') => {
-      if (!s) { sec.innerHTML = `<p class="dim">${said}</p>`; return; }
-      sec.innerHTML = openShareHtml(s, sec.querySelector('details')?.open ?? false);
-      wireShare(sec, s, { redraw: draw });
-      if (said) sec.querySelector('.invites .msg').innerHTML = said;
-    };
-    draw(shares.find(s => s.id === +sec.dataset.share));
-  });
-}
 // The notes waiting on the board, every product's: the Reviews icon, and with the company apps' own counts (Care's, say)
 // the computer's HUD badge, refreshed with the requests (main.js) and by this tab. Null when the coordinator can't say.
 // (the badge sums every app's count, not the notes alone)
@@ -2797,7 +2635,7 @@ export async function refreshWaitingNotes() {
   if (homeShown) iconCount(homeShown, 'mail', mailWaiting, 'Mail');   // (no Mail icon on screen: nothing drawn)
   return products ? paintWaiting(products) : (paintComputerCount(waitingTotal()), null);
 }
-function paintWaiting(products) {
+export function paintWaiting(products) {
   notesWaiting = products.reduce((sum, p) => sum + (Number(p.pending) || 0), 0);
   paintComputerCount(waitingTotal());
   return notesWaiting;

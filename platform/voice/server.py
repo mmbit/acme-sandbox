@@ -32,6 +32,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from aloud import DAYS, aloud, number, respelt
+from drawing import ASK_WORDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -120,6 +121,7 @@ SCREEN_WORDS = {
     'none': "There's no screen on this call: nobody is showing our pages.",
     'unread': "Their screen couldn't be read for this turn: what they did comes with your next turn.",
     'gone': 'This session has no screen any more: the call ended, or its session was restarted.',
+    'failed': "The screen couldn't be read just now",
 }
 # The agent's sketch tool (hq_tools.py, through the same socket): one of the board's sketches, by its number or the
 # words of its label (the coordinator's sketch route), on the board's own calls only. Its picture counts against
@@ -359,6 +361,18 @@ def fetch_picture(picture_id, call):
     return {'id': picture_id, 'type': picture['type'], 'data': picture['data']} if takes(picture) else None
 
 
+def fetch_note(note_id, call):
+    """A note the board drew on this live call (the coordinator's note route): an entry for the call's pictures, its
+    number on the call's page, words and page under 'note', and its picture (the page around it) if it has one. None if
+    the note or its picture is unreadable. Raises if the coordinator refuses it."""
+    got = hq('GET', f'note?id={note_id}&call={call}')
+    picture = got.get('picture') if isinstance(got, dict) else None
+    if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
+        return None
+    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))},
+            'type': picture and picture['type'], 'data': picture and picture['data']}
+
+
 def picture_as(picture, kind):
     """A picture from the coordinator (a screen's from the watch-along routes, image/jpeg; a sketch's, image/png), as
     the agent can take it (of that type, whose data decodes as one), or None."""
@@ -387,18 +401,23 @@ async def serve_screens(path):
     return screens
 
 
+# Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
+# (ask_to_see and draw)
+ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS}
+
+
 async def screen_asked(reader, writer):
-    sketching = False
+    kind = 'screen'
     try:
         asked = json.loads(await reader.readline())
-        sketching = isinstance(asked, dict) and 'sketch' in asked
+        kind = next((k for k in ASKED_WORDS if isinstance(asked, dict) and k in asked), 'screen')
         call = SCREENS.get(asked.get('key')) if isinstance(asked, dict) and isinstance(asked.get('key'), str) else None
-        tool = call and (call.sketch_tool if sketching else call.screen_tool)
-        answer = await tool(asked) if tool else {'error': (SKETCH_WORDS if sketching else SCREEN_WORDS)['gone']}
+        tool = call and {'screen': call.screen_tool, 'sketch': call.sketch_tool, 'ask_to_see': call.drawing.ask_tool,
+                         'draw': call.drawing.ink_tool}[kind]
+        answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
-        print(f'screen tool: {err!r}', flush=True)
-        failed = SKETCH_WORDS['failed'] if sketching else "The screen couldn't be read just now"
-        answer = {'error': f'{failed} ({type(err).__name__}).'}
+        print(f'{kind} tool: {err!r}', flush=True)
+        answer = {'error': f"{ASKED_WORDS.get(kind, SCREEN_WORDS)['failed']} ({type(err).__name__})."}
     writer.write((json.dumps(answer) + '\n').encode())
     await writer.drain()
     writer.close()
@@ -508,7 +527,8 @@ class Agent:
         session = str(uuid.uuid4())  # (its records go when it ends: watch)
         signs = sign_in_pipe(self.signed)  # (on a pipe, not in its env: guard.py)
         try:
-            env = agent_env(os.environ, HQ, signs, self.token, self.agent, self.screen)
+            # (self.tz: the call's company.timeZone, for hq's times)
+            env = agent_env(os.environ, HQ, signs, self.token, self.agent, self.screen, self.tz)
             # It can read the company's files (main, read only) and hand work on with hq; nothing else (guard.TOOLS).
             self.proc = await asyncio.create_subprocess_exec(
                 'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -1081,6 +1101,11 @@ class Call:
         # session has heard ('brief' is the coordinator's briefing), and whether the caller has paused showing it
         self.screen = {'after': 0, 'seen': 0, 'pictures': 0, 'heard': set(), 'paused': False}
         self.screen_key = ''  # the session's key on the line's screen socket (SCREENS)
+        # The board drawing on its HQ call (drawing.py): its notes go with the
+        # pictures above (note), with entries of their own ('note'), and the agent's asks and rings wait here. On the
+        # last screen-turn the screen was on (screen['on']); away: HQ's connection dropped and it hasn't come back yet.
+        self.screen['on'], self.away = False, False
+        self.drawing = Drawing(self)
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -1472,7 +1497,7 @@ class Call:
         """HQ came back on a new connection: it dropped the audio it had queued, so none of it is still to play. The
         ping baseline stays (the same two clocks): HQ first sends again the board's audio the line hasn't had, with
         pings from when it was said, so it reads as late and the answer waits for all of it (behind, owed)."""
-        self.until = 0
+        self.until, self.away = 0, False  # (away)
 
     # ---- pictures the board shares on HQ's call screen
     async def show(self, picture_id):
@@ -1509,16 +1534,57 @@ class Call:
             self.picture_bytes += len(picture['data'])
             self.firsts[digest] = picture_id
             await self.tell(picture_id, 'received')
-        if self.ended or not self.ready():
-            return
-        if self.showing:  # (the quiet moment counts from the last one: pictures shared together go together)
+        if not self.ended and self.ready():
+            self.nudge()
+
+    def nudge(self):
+        """Something waits for the agent (pictures, notes, the board's answer to an ask): it goes with the board's next
+        words, or once the line has been quiet SHOWN_SECONDS (unprompted). The quiet moment counts from the last one:
+        pictures shared together go together."""
+        if self.showing:
             self.showing.cancel()
         self.showing = asyncio.create_task(self.unprompted())
 
+    async def note(self, note_id):
+        """A note the board just drew on this call's page in its book: fetched
+        from the coordinator, it takes its place with the pictures (show), its picture the page around it, which counts
+        against SESSION_BYTES: one that doesn't fit goes without it, and the agent hears so. HQ hears that the line has
+        it ('received'), or why not ('failed'), and sends it again until it does: a known id is let be."""
+        if ('note', note_id) in self.known:
+            return
+        self.known.add(('note', note_id))
+        if len(self.pictures) >= PICTURES:
+            return await self.tell_note(note_id, 'failed', 'too many')
+        entry = {'id': None, 'note': None, 'type': None, 'data': None}  # (no note: still on its way)
+        self.pictures.append(entry)
+        try:
+            fetched = await asyncio.to_thread(fetch_note, note_id, self.brain.call)
+        except Exception as err:
+            print(f'call: {self.agent} could not fetch note {note_id}: {err}', flush=True)
+            fetched = None
+        if self.ended:
+            return
+        if fetched is None:
+            self.pictures.remove(entry)
+            await self.tell_note(note_id, 'failed', 'unreadable')
+        else:
+            if fetched['data'] and self.picture_bytes + len(fetched['data']) > SESSION_BYTES:
+                fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
+            entry.update(fetched)
+            self.picture_bytes += len(entry['data'] or '')
+            await self.tell_note(note_id, 'received')
+        if not self.ended and self.ready():
+            self.nudge()
+
+    async def tell_note(self, note_id, state, why=None):
+        """HQ hears how far a note got, as a picture's word (tell), kept for a resumed connection (retell)."""
+        event = self.told[('note', note_id)] = {'type': 'note', 'id': note_id, 'state': state, **({'why': why} if why else {})}
+        await self.send_event(event)
+
     def ready(self):
-        """The pictures that can go to the agent now: those at the front of the line that are here. One still on its
-        way holds back the ones after it."""
-        return list(itertools.takewhile(lambda picture: picture['data'], self.pictures))
+        """The pictures that can go to the agent now: those at the front of the line that are here (a note without a
+        picture too). One still on its way holds back the ones after it."""
+        return list(itertools.takewhile(lambda picture: picture['data'] or picture.get('note'), self.pictures))
 
     async def unprompted(self):
         """Pictures shared with nothing said: once the line has been quiet for SHOWN_SECONDS (no reply on its way or
@@ -1527,9 +1593,9 @@ class Call:
         calm = time.monotonic()
         while True:
             await asyncio.sleep(0.1)
-            if self.ended or not self.pictures:  # (they went with the board's words)
+            if self.ended or not (self.pictures or self.drawing.answered):  # (they went with the board's words)
                 return
-            if not self.idle() or not self.ready():
+            if not self.idle() or not (self.ready() or self.drawing.answered):
                 calm = time.monotonic()
             elif time.monotonic() - calm >= SHOWN_SECONDS:
                 self.turn = asyncio.create_task(self.answer('', self.turn))
@@ -1548,23 +1614,28 @@ class Call:
         this request). HQ hears it once for each."""
         shown, self.unsent = [*self.unsent, *shown], []
         for picture in shown:
-            if picture['id'] not in self.held:
+            if picture['id'] not in self.held and picture['data']:  # (a note's picture too, which HQ hears nothing of)
                 self.held.append(picture['id'])
-                await self.tell(picture['id'], 'seen')
+                if 'note' not in picture:
+                    await self.tell(picture['id'], 'seen')
 
     async def lose_pictures(self, shown):
         """The session stopped: the next one has none of the pictures it saw or was being shown. HQ hears that each is
         lost (the board can share it again), and the restarted session's recap says which ones. Pictures still waiting
         for a turn go to the new session."""
-        lost = self.held + [picture['id'] for picture in [*self.unsent, *shown] if picture['id'] not in self.held]
+        lost = self.held + [picture['id'] for picture in [*self.unsent, *shown] if picture['id'] not in self.held
+                            and picture['data']]
         self.held, self.unsent = [], []
         self.screen['seen'] = 0  # (the next turn brings the screen's picture again)
         self.picture_bytes = sum(len(picture['data'] or '') for picture in self.pictures)
+        # (a note's id is 'note <n>': it's named in the recap, and HQ hears nothing)
+        notes = [picture_id.split()[1] for picture_id in lost if str(picture_id).startswith('note ')]
+        lost = [picture_id for picture_id in lost if not str(picture_id).startswith('note ')]
         for picture_id in lost:
             await self.tell(picture_id, 'failed', 'lost')
         numbers = ', '.join(f'#{picture_id}' for picture_id in lost)
         return (f"\n(You can't see {'picture' if len(lost) == 1 else 'pictures'} {numbers} any more: they were in the "
-                'stopped session. Ask the board to share them again if you need them.)') if lost else ''
+                'stopped session. Ask the board to share them again if you need them.)' if lost else '') + notes_lost(notes)
 
     async def tell(self, picture_id, state, why=None):
         """HQ hears how far a picture got. The line keeps the last word on each, as an event sent while HQ was away is
@@ -1580,6 +1651,7 @@ class Call:
         """A resumed connection hears where every picture is now."""
         for picture_id in list(self.told):
             await self.send_event(self.told[picture_id])  # (read as it's sent: no newer word on it goes out first)
+        await self.drawing.retell()
 
     # ---- a walk-through's screen (SCREEN_TURN_SECONDS)
     def watched(self):
@@ -1622,7 +1694,7 @@ class Call:
             print(f'call: {self.agent}: no screen with this turn: {err!r}', flush=True)
             # (a call nobody has shown a screen on hears nothing of it)
             return {**look, 'text': f"({SCREEN_WORDS['unread']})"} if 'brief' in heard else look
-        on = isinstance(got, dict) and got.get('on') is True
+        on = self.screen['on'] = isinstance(got, dict) and got.get('on') is True  # (on)
         self.screen['paused'] = paused = on and got.get('paused') is True
         if not paused:
             heard.discard('paused')  # (paused again later, the agent hears it again)
@@ -1756,9 +1828,13 @@ class Call:
         # session's recap has that line, not the picture.
         shown = self.ready()
         del self.pictures[:len(shown)]
-        if shown:
-            numbers = ', '.join(f"#{picture['id']}" for picture in shown)
-            self.write(f"Board: (shared {'picture' if len(shown) == 1 else 'pictures'} {numbers} on screen)")
+        # (notes)
+        shared, notes = [p for p in shown if 'note' not in p], [p for p in shown if 'note' in p]
+        if shared:
+            numbers = ', '.join(f"#{picture['id']}" for picture in shared)
+            self.write(f"Board: (shared {'picture' if len(shared) == 1 else 'pictures'} {numbers} on screen)")
+        for note in notes:
+            self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
         spoke, asked, worded_at = self.spoke, time.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
@@ -1777,7 +1853,10 @@ class Call:
         hum = asyncio.create_task(self.hum(stop, step, turn))
         ask = text if not again else ("(I wasn't finished, and I didn't hear your reply to the first part: "
                                       f"answer my whole message instead.) {text}")
-        ask = ask or f"(I've shared {'a picture' if len(shown) == 1 else f'{len(shown)} pictures'} on screen.)"
+        if shared and not ask:
+            ask = f"(I've shared {'a picture' if len(shared) == 1 else f'{len(shared)} pictures'} on screen.)"
+        # (the board's answers to the agent's asks first, then the screen's words, then the notes' before the words)
+        ask, answered = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask))), self.drawing.told()
         delivered = False  # the model has the message: its first request started
         earlier = self.lines[:turn['n']]  # (the call so far, for a fresh session: this message goes as its own)
         try:
@@ -1786,7 +1865,8 @@ class Call:
                 await self.restart(earlier)
             # (the screen's words go in front, its picture after the shared ones, its line before the caller's words)
             look = await self.screen_turn()
-            ask, pictures = '\n\n'.join(filter(None, (look['text'], ask))), [*shown, *look['pictures']]
+            ask = '\n\n'.join(filter(None, (answered, look['text'], ask)))
+            pictures = [*(picture for picture in shown if picture['data']), *look['pictures']]
             if look['line'] and not self.objected:
                 self.lines.insert(turn['n'], look['line'])
                 self.times.insert(turn['n'], wall_ms())  #.
@@ -2105,6 +2185,7 @@ class Call:
         self.brain.close()
         SCREENS.pop(self.screen_key, None)  # (its key answers nothing from now)
         self.pictures = []
+        self.drawing.end()
         if self.speaking:
             self.speaking.set()
         if self.brain.token:
@@ -2306,6 +2387,13 @@ async def app_call(ws):
                 await line.send(json.dumps({'type': 'pong', 'late': round(call.late, 1), 'heard': call.got}))
             elif kind == 'picture' and isinstance(e.get('id'), int):  # (beside the audio)
                 asyncio.create_task(call.show(e['id']))  # (tasks start in the order they're made: so do their places)
+            # (note, asked, inked)
+            elif kind == 'note' and isinstance(e.get('id'), int):  # (a note's place among the pictures, as theirs)
+                asyncio.create_task(call.note(e['id']))
+            elif kind == 'asked' and isinstance(e.get('id'), int):
+                call.drawing.asked(e['id'], e.get('answer'))
+            elif kind == 'inked' and isinstance(e.get('id'), int):
+                call.drawing.inked(e)
             elif kind == 'bye':
                 if line_heard := played(call.agent, e.get('played')):
                     print(line_heard, flush=True)
@@ -2326,6 +2414,7 @@ async def app_call(ws):
                 await asyncio.to_thread(call.end)
             else:
                 CALLS[cid]['timer'] = asyncio.create_task(hang_up_later(cid))
+                call.away = True  # (until it comes back: reconnected)
 
 
 # ---- the phone line: Twilio's media stream (8 kHz mu-law), admitted with a one-time ticket from HQ ----

@@ -35,6 +35,7 @@ export type Link = {
   causes: Wait[];
 };
 export type ThreadOutlook = {
+  capacityConditions?: string[];
   thread: string;
   // its open work jobs, oldest first, and its review runs and checks queued or running
   jobs: number[];
@@ -233,6 +234,7 @@ export function threadOutlooks(
       finish = eta === null ? null : eta + snapshot.deployLagMs;
     threads.set(thread, {
       thread,
+      capacityConditions: [...new Set(seen.flatMap(s => s.usual.capacityConditions ?? []))],
       jobs: work.map(j => j.id),
       runs: runs.map(r => r.id),
       left_ms: Math.round(seen.reduce((sum, s) => sum + s.usual.left_ms, 0) + runLeft),

@@ -178,3 +178,87 @@ test('due work pauses a predicted follow-through fix while the check itself keep
   assert.equal(protectedCheck.get(check.id)!.done, 60 * minute);
   assert.equal(protectedCheck.get(due.id)!.start, 60 * minute);
 });
+
+test('a projected reviewer spends its own measured memory instead of the author demand', () => {
+  const owner = work(1, {
+    memoryMb: 2400,
+    reviewPlan: {
+      panel: 'one',
+      count: 1,
+      terminal: 'review',
+      stages: [
+        {
+          key: 'review',
+          kind: 'review',
+          agent: 'reader',
+          engine: 'claude',
+          usualMs: 10,
+          slowMs: 10,
+          after: [],
+          memoryMb: 300,
+        },
+      ],
+    },
+  });
+  const input = snapshot([owner, work(2, { memoryMb: 2200, notBefore: 10 })]);
+  input.slots.claude = 2;
+  input.seatRuns = { claude: 2 };
+  input.memory = {
+    at: 0,
+    availableMb: 4000,
+    freeReserveMb: 1500,
+    defaultRunMb: 700,
+    totalSlots: 2,
+    heldSlots: 0,
+    heldMb: 0,
+    starting: [],
+    runningMb: {},
+  };
+  const played = play(
+    input,
+    new Map([
+      [1, { agent_ms: 10 }],
+      [2, { agent_ms: 10 }],
+    ]),
+  );
+  assert.equal(played.get(1)!.merged, 20);
+  assert.equal(played.get(2)!.start, 10);
+  assert.equal(played.get(2)!.done, 20);
+});
+
+test('occupants outside the modeled queue keep their worker slots and memory', () => {
+  const input = snapshot([work(1), work(2)]);
+  input.slots.claude = 2;
+  input.seatRuns = { claude: 2 };
+  input.memory = {
+    at: 0,
+    availableMb: 4000,
+    freeReserveMb: 1500,
+    defaultRunMb: 700,
+    totalSlots: 2,
+    heldSlots: 0,
+    heldMb: 0,
+    starting: [],
+    runningMb: { 99: 700 },
+  };
+  const played = play(
+    input,
+    new Map([
+      [1, { agent_ms: 10 }],
+      [2, { agent_ms: 10 }],
+    ]),
+  );
+  assert.equal(played.get(2)!.start, 10);
+  const blocked = structuredClone(input);
+  blocked.memory!.totalSlots = 1;
+  assert.equal(
+    play(
+      blocked,
+      new Map([
+        [1, { agent_ms: 10 }],
+        [2, { agent_ms: 10 }],
+      ]),
+    ).get(1)!.start,
+    null,
+  );
+});

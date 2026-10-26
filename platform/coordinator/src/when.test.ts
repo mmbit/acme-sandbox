@@ -67,7 +67,16 @@ test.before(async () => {
     capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 },
   });
 });
-test.afterEach(() => h.cancelQueued());
+// Anything queued cancelled, and the threads it leaves open and empty closed (an open thread with no task plays as its
+// owner's placeholder in the forecast)
+const clear = () => {
+  h.cancelQueued();
+  h.closedThreads();
+};
+test.afterEach(async () => {
+  clear();
+  await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
+});
 
 const ask = async (query: Record<string, string>) =>
   h.agent(`when?${new URLSearchParams({ agent: 'kit', size: '40m', ...query })}`, (await reader()).token);
@@ -76,7 +85,7 @@ const ask = async (query: Record<string, string>) =>
 // (a time it waits for: hq job --when), which its deadline counts.
 const SPRING_DONE = T0 + 90 * MIN;
 const spring = (slack: number, held = 0) => {
-  h.cancelQueued();
+  clear();
   const thread = h.dueThread({ deadline: SPRING_DONE + (held + slack) * MIN });
   const job = h.queue({
     agent: 'kit',
@@ -162,20 +171,20 @@ test("no time holds every window: work its window counts on starting later can't
 });
 
 test('no finish in the play with no window: the earliest is searched for within its reach all the same', async () => {
-  // six of moss's two-day jobs fill the one claude slot past the play's 8 days: with no window, then all on a thread due
-  // on day 7, which a deadline at the end of the reach queues the work behind, and a sooner one ahead of; then due two
-  // days and two hours out, where the work goes ahead of them only for a deadline between 80 and 160 minutes out (the
-  // order changes in between)
-  const threads = [null, T0 + 7 * 24 * HOUR, T0 + 48 * HOUR + 120 * MIN].map(d => d && h.dueThread({ deadline: d }));
-  for (const thread of threads) {
-    h.cancelQueued();
+  // six of moss's two-day jobs fill the one claude slot past the play's 8 days: with no window, then each on a thread
+  // of its own due on day 7, which a deadline at the end of the reach queues the work behind, and a sooner one ahead
+  // of; then due two days and two hours out, where the work goes ahead of them only for a deadline between 80 and 160
+  // minutes out (the order changes in between). (A thread each: in one thread they'd run one after another, its window
+  // missed already.)
+  for (const deadline of [null, T0 + 7 * 24 * HOUR, T0 + 48 * HOUR + 120 * MIN]) {
+    clear();
     for (let i = 0; i < 6; i++)
       h.queue({
         agent: 'moss',
         title: `Catalogue the letters, box ${i}`,
         engine: 'claude',
         queuedBy: 'juno',
-        thread,
+        thread: deadline && h.dueThread({ deadline }),
       });
     const { free, earliest } = (await ask({ q: 'paint the harbour map' })).body;
     assert.equal(free.finish, null);
@@ -189,6 +198,7 @@ test('no finish in the play with no window: the earliest is searched for within 
 });
 
 test('--by: whether it makes the time, and only if not, what would, as played: windows giving, one more seat', async () => {
+  await h.worker('room', { capacity: { slots: { claude: 2, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
   const by = async (time: number) => (await ask({ q: 'paint the harbour map', by: utc(time) })).body.by;
   spring(45);
   const yes = await by(T0 + 160 * MIN);
@@ -280,7 +290,7 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
     /- the size: [^]*- the plan: [^]*- other work [^]*- the window: [^]*If one moves it forward/,
   );
   // a seat whose fill rates aren't measured (codex's) isn't copied, nor said to be no help, and the plays say they
-  // counted it as never filling
+  // returned a conditional finish without a measured exhaustion time
   const unseated = (await ask({ q: 'paint the harbour map', agent: 'nib', by: utc(T0 + 20 * MIN) })).body.by;
   assert.deepEqual([unseated.makes, unseated.seat, unseated.unpriced], [false, null, ['codex-a']]);
   assert.match(
@@ -297,16 +307,17 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
         utc(T0 + 20 * MIN),
       )
     ).out,
-    /With one more codex seat: not played, as HQ has no codex seat with measured fill rates and reported slots to copy\.\n(.*\n)*Seat fill rates are not measured yet for codex-a: the play counts them as never filling\./,
+    /With one more codex seat: not played, as HQ has no codex seat with measured fill rates and reported slots to copy\.\n(.*\n)*Seat fill rates are not measured yet for codex-a: exhaustion times are unknown and these finishes are conditional\./,
   );
 });
 
 test('--by with one more seat: a sooner deadline on that seat is searched for too, never only the time asked', async () => {
+  await h.worker('room', { capacity: { slots: { claude: 2, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
   // two of kit's 40-minute jobs on threads of their own, both due T0 + 105 min, which one slot can't hold for both. Ten
   // minutes of work by T0 + 110 doesn't make it with every window held; with one more seat and a deadline at that
   // time, the plan orders it behind both and it's done too late, but a sooner deadline puts it first and every window
   // holds
-  h.cancelQueued();
+  clear();
   for (const season of ['spring', 'autumn'])
     h.queue({
       agent: 'kit',
@@ -365,6 +376,7 @@ test('a quote for urgent work counts making room instead of waiting for the runn
 test('an explicit added seat compares every project, thread and window without changing the plan', async () => {
   writeFileSync(`${h.repo}/company/seatplans.yaml`, 'claude-a: 20\n');
   spring(300);
+  await h.worker('room', { capacity: { slots: { claude: 2, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
   const other = h.dueThread({ deadline: T0 + 400 * MIN });
   h.queue({ agent: 'kit', title: 'Paint the harbour map at dusk', engine: 'claude', queuedBy: 'juno', thread: other });
   const before = await ask({ q: 'paint the harbour map' });
@@ -393,7 +405,12 @@ test('an explicit added seat compares every project, thread and window without c
   await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 1 } });
   const fullRoom = (await replay('20x')).body;
   for (const project of fullRoom.projects)
-    for (const thread of project.threads) assert.deepEqual(thread.after, thread.before);
+    for (const thread of project.threads) {
+      assert.equal(thread.after.finish, thread.before.finish);
+      assert.equal(thread.after.eta, thread.before.eta);
+      assert.equal(thread.after.held, thread.before.held);
+      assert.equal(thread.after.slack_ms, thread.before.slack_ms);
+    }
   await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { codex: 1 }, room: 16 } });
   assert.equal((await replay('20x')).body.available, true);
   await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
@@ -401,6 +418,9 @@ test('an explicit added seat compares every project, thread and window without c
   const cli = await h.hq(await reader(), 'when', '--extra-seat', '5x');
   assert.equal(cli.code, 0, cli.out);
   assert.match(cli.out, /Hypothetical added Claude Max 5x/);
+  assert.match(cli.out, /Before, usual pace seat predictions:/);
+  assert.match(cli.out, /With added seat, usual pace seat predictions:/);
+  assert.match(cli.out, /Thread finishes: \d+ earlier, \d+ later, \d+ unchanged, \d+ unresolved/);
   const eta = await h.hq(await reader(), 'projects', 'Due', '--extra-seat', '20x');
   assert.equal(eta.code, 0, eta.out);
   assert.match(eta.out, /Hypothetical added Claude Max 20x/);

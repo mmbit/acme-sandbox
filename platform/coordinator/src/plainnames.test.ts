@@ -11,7 +11,7 @@ const h = await harness('plainnames', {
   before: repo =>
     writeFileSync(
       `${repo}/company/projects.yaml`,
-      'planning: threads\nprojects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: Shop v2, owner: wren }\n',
+      'projects:\n  - { id: game, name: The game, owner: wren }\n  - { id: shop, name: Shop v2, owner: wren }\n',
     ),
 });
 const projects = await import('./projects.ts');
@@ -125,6 +125,7 @@ test("a new task's board title comes from the model's route, its brief read, and
 
 test("the model being down blocks nothing: the board reads the agent's words, why it failed stays on its row, and it's asked until it's named", async () => {
   await nameAll();
+  h.cancelQueued(); // (the thread's tasks left queued before would hold wren's job behind them)
   const queued = await h.agent('job', (await h.start({ agent: 'wren', title: 'Plan', thread: 'game/claims' })).token, {
     agent: 'kit',
     title: 'Profile the CPQ seat path',
@@ -197,7 +198,9 @@ test('work finished before it was named, done threads and done projects get plai
 
 test("Wire's last-work line reads the finished task's plain title", async () => {
   await nameAll();
-  await h.finish(await h.start({ agent: 'tess', title: 'Wire the CPQ cohort sweep', thread: 'game/claims' }));
+  // (a thread of its own: wren's job still runs in the claims thread, and holds the tasks after it)
+  projects.createThread({ project: 'game', name: 'Cohort sweep', goal: 'The cohort is swept', slug: 'sweep' });
+  await h.finish(await h.start({ agent: 'tess', title: 'Wire the CPQ cohort sweep', thread: 'game/sweep' }));
   const before = (await h.board('/api/work')).body.agents.tess.last;
   assert.deepEqual([before.title, before.naming], ['Wire the CPQ cohort sweep', undefined]);
   await nameAll();

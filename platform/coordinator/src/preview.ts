@@ -26,7 +26,8 @@ import { PREVIEW, PUBLIC_HOST } from './config.ts'; // (PREVIEW).
 import { FRONT } from './approvals.ts';
 import * as shares from './shares.ts';
 import { shelfOf } from './shelves.ts';
-import { viewerId } from './viewers.ts';
+import { type Viewer, viewerId } from './viewers.ts';
+import { json, productRequest } from './payments.ts';
 import * as owed from './owed.ts';
 import { logStep } from './log.ts';
 import { plansOf } from './pricing.ts';
@@ -61,8 +62,8 @@ export const boardOn = (req: IncomingMessage, host: string) => !!boardKey(req, h
 // command with it), and Caddy keeps it from the product as it does pv and ps. It ends with the run that asked (bound to
 // that run's token: a later run of the same job gets a new one) or after PASS_MS, whichever comes first. HQ keeps every
 // pass (who, for which host, when), and the job's log, which the board opens in HQ, says so as it's given.
-// On a product with plans a pass may be a test player of the job's (player: its name, players.ts): the same
-// pass, which the product knows as that player.
+// A pass may be a test player of the job's (player: its name, players.ts): the same pass, which the product knows as that
+// player, with a voucher on a product with plans.
 const PASS_MS = 60 * 60_000;
 db.exec(`create table if not exists preview_passes (hash text primary key, job integer not null, agent text not null,
   host text not null, run text not null, created text not null, expires integer not null, player text)`);
@@ -72,22 +73,36 @@ const passOf = (req: IncomingMessage, host: string) =>
     { job: number; run: string; player: string | null } | undefined;
 
 // POST /api/agent/preview-passes {slug, player?}: a pass to a product's preview for job's running run, given to agent (its
-// lead or a team member), as the job's test player of that name if asked (with its voucher), or why not
+// lead or a team member), as the job's test player of that name if asked (with its voucher on a product with plans), or why not
 export function createPass(job: number, agent: string, slug: unknown, player?: unknown) {
   if (typeof slug !== 'string' || slug === owed.CYCLES || slug.includes('/') || !owed.isProduct(slug))
     return [404, 'no such product'];
   if (player != null && (typeof player !== 'string' || !players.PLAYER.test(player)))
     return [400, 'a player is named in lowercase letters, digits and dashes, up to 32'];
-  if (player != null && !plansOf(slug)) return [409, `${slug} has no plans: a test player is for a product with plans`];
   const run = (db.prepare("select token from jobs where id = ? and status = 'running'").get(job) as { token: string } | undefined)?.token;
   if (!run) return [409, `job #${job} isn't running`];
   const secret = randomBytes(32).toString('base64url'), host = `${slug}${PREVIEW}`, expires = new Date(Date.now() + PASS_MS);
   db.prepare('insert into preview_passes (hash, job, agent, host, run, created, expires, player) values (?, ?, ?, ?, ?, ?, ?, ?)')
     .run(sha256(secret), job, agent, host, run, new Date().toISOString(), expires.getTime(), player ?? null);
-  const voucher = typeof player === 'string' ? players.voucherFor(slug, job, run, player) : undefined;
-  const access = voucher ? `test player ${player}, with a test voucher,` : 'view-only';
+  const voucher = typeof player === 'string' && plansOf(slug) ? players.voucherFor(slug, job, run, player) : undefined;
+  const access = typeof player !== 'string' ? 'view-only' : `test player ${player}${voucher ? ', with a test voucher,' : ''}`;
   logStep(job, agent, `Preview pass: ${access} on ${host} until ${expires.toISOString().slice(11, 16)} UTC or this run's end`);
   return { url: `https://${host}/`, cookie: `pp=${secret}`, expires: expires.toISOString(), ...(voucher ? { voucher } : {}) };
+}
+
+// GET /api/pay/viewer?id=<its X-Viewer> (a product's payments token, test mode alone) → {company}: whether the viewer is
+// the company's own, the board or a running job's test player on that product's preview host, so the product may open
+// what only the company tries there (a test purchase while its sales are closed). Never who it is.
+export async function companyViewer(req: IncomingMessage, res: ServerResponse) {
+  const asked = await productRequest(req, res);
+  if (!asked) return;
+  if (req.method !== 'GET') return json(res, 405, { error: 'GET' });
+  const { caller: c, body } = asked;
+  if (c.mode !== 'test') return json(res, 403, { error: "the company's own viewers are for test mode" });
+  const players = db.prepare(`select distinct p.job, p.run, p.player from preview_passes p join jobs j on j.id = p.job and
+    j.token = p.run and j.status = 'running' where p.host = ? and p.player is not null and p.expires > ?`)
+    .all(`${c.slug}${PREVIEW}`, Date.now()) as { job: number; run: string; player: string }[];
+  json(res, 200, { company: (['board', ...players] as Viewer[]).some(who => viewerId(c.slug, who) === body.id) });
 }
 
 // Who is looking at a page of a preview host: the board (its key, which wins), an outside reviewer whose share opens

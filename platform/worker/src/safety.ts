@@ -6,10 +6,11 @@ import type { Writable } from 'node:stream';
 const PASS = ['PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TERM', 'TZ', 'SHELL', 'PLAYWRIGHT_BROWSERS_PATH', 'DISABLE_AUTOUPDATER', 'CI'];
 // What the worker sets per seat and job. Anything else it passes by mistake is dropped, not leaked.
 // (HQ_RENDERS: the renders store, which jobs may read, renders.ts)
+// (HQ_TIME_ZONE: the board's clock, for hq's times in the intercom's run)
 // (the seat's sign-in never: it goes on a pipe, SIGN_IN below)
 // (a seat's provider: where Claude Code sends its requests, and the models behind its aliases, providers.ts)
 const SET = new Set(['HOME', 'USER', 'SHELL', 'TMPDIR', 'CLAUDE_CONFIG_DIR', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS',
-  'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CODEX_HOME', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_JOB', 'HQ_JOB_DIR', 'HQ_RENDERS',
+  'CLAUDE_CODE_DISABLE_AUTO_MEMORY', 'CODEX_HOME', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_JOB', 'HQ_JOB_DIR', 'HQ_RENDERS', 'HQ_TIME_ZONE',
   'CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_DEFAULT_FABLE_MODEL', 'ANTHROPIC_DEFAULT_OPUS_MODEL',
   'ANTHROPIC_DEFAULT_SONNET_MODEL', 'ANTHROPIC_DEFAULT_HAIKU_MODEL']);
 // Test partner keys as /api/worker/secrets hands them out (PRINTAPI_TEST_CLIENT_ID arrives as PRINTAPI_CLIENT_ID).

@@ -31,7 +31,7 @@ const reasons: string[] = [];
 subscribe('undici:request:error', () => setImmediate(() => process.send!({ lost: true })));
 const options = {
   checking: new Map([[child.pid!, reasons]]),
-  stopped: () => process.send!({ stopped: true, reasons }),
+  stopped: () => process.send!({ stopped: 'admitted', reasons }),
   ask: hqReports(url).blocked,
 };
 reload.listen(
@@ -40,7 +40,10 @@ reload.listen(
     start: () => {
       process.send!({ reloading: true });
       // A share sample that completed after reload began must not admit another stop.
-      void reload.block(owner, block, procs, options);
+      void reload.block(owner, block, procs, {
+        ...options,
+        stopped: () => process.send!({ stopped: 'refused' }),
+      });
     },
     ready: () => {
       if (mode === 'error-ready') throw new Error('Cannot inspect run state');

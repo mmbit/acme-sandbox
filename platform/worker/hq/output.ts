@@ -53,8 +53,25 @@ export function compareText(a: string, b: string) {
   return 0;
 }
 
-// 2026-10-08T14:30:12Z reads 2026-10-08 14:30
-export const minute = (time: string) => time.slice(0, 16).replace('T', ' ');
+// A moment as hq says it, to the minute and its zone named: 2026-10-08T14:30:12Z reads 2026-10-08 14:30 UTC. A run
+// that speaks to the board (a call, the intercom) has its clock in HQ_TIME_ZONE (org.yaml's company.timeZone): there
+// it reads 2026-10-08 16:30 CEST. HQ's times are UTC, so one without a zone is too. (with it every hq command's "${minute(x)} UTC" and hand-cut ISO time went through this, Print API's aside.)
+export const TIME_ZONE = process.env.HQ_TIME_ZONE || 'UTC';
+const clock = new Intl.DateTimeFormat('en-GB', {
+  timeZone: TIME_ZONE,
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+  timeZoneName: 'short',
+});
+export function minute(time: string) {
+  const zoned = /(Z|[+-]\d\d:?\d\d)$/i.test(time) ? time : `${time.replace(' ', 'T')}Z`;
+  const part = Object.fromEntries(clock.formatToParts(Date.parse(zoned)).map(p => [p.type, p.value]));
+  return `${part.year}-${part.month}-${part.day} ${part.hour}:${part.minute} ${part.timeZoneName}`;
+}
 
 // Words from outside (a sender, a subject, a file name) keep to their line: control characters become `by`.
 export const oneLine = (words: string, by = '_') => words.replace(/\p{Cc}/gu, by);

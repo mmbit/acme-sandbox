@@ -1,28 +1,43 @@
 """The call agent's tools, as a tiny MCP server over stdio in place of a shell (guard.TOOLS, guard.PARTNER)."""
-import json, os, re, socket, subprocess, sys
+import http.client, json, os, re, signal, socket, subprocess, sys, time, urllib.request
 from concurrent.futures import ThreadPoolExecutor, wait
 
-# The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_*
-HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL') if k in os.environ}
+import reads
+from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
+
+# The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_* (HQ_TIME_ZONE: the
+# board's clock for hq's times, guard.py agent_env)
+HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL', 'HQ_TIME_ZONE')
+          if k in os.environ}
 # The screen tool (and the sketch tool) asks the voice line itself, on its
 # socket, by the session's key (guard.agent_env): the line keeps the call's picture budget and its own token. Neither is
 # here on a call with no screen.
 SCREEN_SOCKET, SCREEN_KEY = os.environ.get('SCREEN_SOCKET', ''), os.environ.get('SCREEN_KEY', '')
 # (the coordinator refuses longer ones from a call too: server.ts, ledger.ts, messages.ts)
-TITLE, BRIEF, WHAT, ADD = 140, 8000, 200, 8000
+TITLE, BRIEF, WHAT, GOAL, ADD = 140, 8000, 200, 300, 8000
 PIN_WORDS = 4000  # a pin's words, as long as the note box takes (feedback.ts)
 UNSURE = "{} Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."
 UNNOTED = "{} Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."
-# A tool waits for the coordinator's real answer however long it takes: a slow coordinator is still there, and a fixed
-# cutoff turned its slow moments into hand-offs the agent couldn't confirm (board, call 127). Only hq's own failures end
-# it (a refused connection, a reset). The agent hears back within STILL s all the same, so the call is never silent for
-# long: a tool still waiting then says so and carries on in the background (WORK: what's under way at hang-up still
-# lands), and the waiting tool hears it.
-STILL = 20
+# A tool waits for the coordinator's real answer while the coordinator is alive: a slow coordinator is still there, and
+# a fixed cutoff would leave hand-offs unconfirmed that went through. While hq waits, a look at the coordinator's
+# /health every PROBE s, on its own ALIVE s, tells slow from down: a coordinator that answers neither is down, and the
+# tool gives up within seconds. One that's alive but never answers this request meets CEILING, a few times the slowest
+# real hand-off in the call logs (under a minute), so a call never hangs. A refused connection or a reset still ends it
+# at once (hq). The agent hears back within STILL s all the same, so the call is never silent for long: a tool still
+# waiting then says so and carries on in the background (WORK: what's under way at hang-up still lands), and the
+# waiting tool hears it.
+STILL, PROBE, ALIVE, CEILING = 20, 5, 5, 180
 WORK, PENDING = ThreadPoolExecutor(), []  # (PENDING: each tool still waiting, as (what it is, its future))
-STILL_WAITING = ("Still waiting for the coordinator's answer to {}: it's slow, not down, and this is still going "
-                 "through, not lost. Never use the tool again for it. Tell the board in a few words that it's still on "
-                 "its way, then use waiting to hear how it went.")
+UP = [None]  # (when the coordinator last answered a look at /health, time.monotonic())
+STILL_WAITING = ("Still waiting for the coordinator's answer to {}: it's slow, not down (it answered a check that it's "
+                 "alive moments ago), and this is still going through, not lost. Never use the tool again for it. Tell "
+                 "the board in a few words that it's still on its way, then use waiting to hear how it went.")
+STILL_CHECKING = ("Still waiting for the coordinator's answer to {}. Whether the coordinator is up is being checked: if "
+                  "it's down, waiting will say so within seconds. Never use the tool again for it. Tell the board in a "
+                  "few words that it's still on its way, then use waiting to hear how it went.")
+DOWN = "The coordinator is down: it doesn't answer at all, not even a check that it's alive. Tell the board so plainly."
+DOWN_HANDED = ' ' + UNSURE.format("The hand-off may or may not have gone through before it stopped answering.")
+NO_ANSWER = f"No answer in {CEILING // 60} minutes, though the coordinator is up, so the wait ended."
 # The board's call tools answer in numbers (jobs, items, pins, calls) the agent needs for its next tool, and the agent
 # speaks right after reading them: every answer but hang_up's carries this as a part of its own (answer()), the moment
 # the agent turns it into words. Text keeps its numbers.
@@ -35,6 +50,11 @@ CODE = re.compile(r'^[A-Za-z]{2,8}$')  # a task's code word (jobcodes.ts WORD)
 ID = {'type': 'string', 'pattern': '^[a-z0-9][a-z0-9-]*$', 'description': "the colleague's id, lowercase (e.g. ada)"}
 LINE = {'type': 'string', 'minLength': 1, 'maxLength': WHAT,
         'description': f'one plain line in your own words, at most {WHAT} characters: the board reads it'}
+# why the board wants it, which the work it leads to is judged against
+GOALS = {'type': 'string', 'minLength': 1, 'maxLength': GOAL,
+         'description': "why the board wants it: the goal it serves or the problem it solves, in the board's own "
+         f'terms from what it said on this call, never your plan for it. One plain line, at most {GOAL} characters. '
+         'The team judges the work, and any rule made from it, against this'}
 # a promise's time, for work new or already under way (a review, a running job)
 WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you told the board it will be done, at our '
         'pace: 2h, 90m or 1h30m from now, or a UTC time (14:30; the board says its own local time, so convert). Give '
@@ -50,7 +70,7 @@ TOOLS = [
      'again. If the board then adds to it or changes it, use add with that number: never a second job beside it, and '
      "never a promise to add it after the call. Its answer gives each agreed deadline's facts and the other threads it "
      'moves: your briefing says what the board hears of them. First use estimate, compare the scopes, and give your own size, refs and why. HQ saves it once. Only the CEO changes it later.',
-     'inputSchema': {'type': 'object', 'required': ['agent', 'title', 'code', 'brief', 'size', 'refs', 'why'],
+     'inputSchema': {'type': 'object', 'required': ['agent', 'title', 'code', 'brief', 'goal', 'size', 'refs', 'why'],
                      'additionalProperties': False, 'properties': {
          'agent': ID,
          'size': SIZE,
@@ -63,9 +83,11 @@ TOOLS = [
                    'description': f'one short line, at most {TITLE} characters, in plain words: the step alone, '
                    "since HQ shows it inside its thread, so never the thread's or project's name in front"},
          'brief': {'type': 'string', 'minLength': 1, 'maxLength': BRIEF, 'description': 'everything they need: what to '
-                   f'do, why, what the board said. At most {BRIEF:,} characters; more is two jobs'},
+                   f'do, why, what the board said. At most {BRIEF:,} characters with the goal; more is two jobs'},
+         'goal': GOALS,
          'item': {'type': 'integer', 'minimum': 1, 'description': 'if this job carries out a promise or a correction '
-                  'noted on this call: the number promise or replace answered with (it is then done when the job is)'},
+                  'noted on this call: the number promise or replace answered with (it is then done when the job '
+                  'is). The recorded goal of that item wins over goal here'},
          # (thread)
          'thread': {'type': 'string', 'pattern': THREAD.pattern, 'description': 'the open thread the work serves '
                     '(<project>/<slug>), needed with an item that has a time: the time goes on the thread. Without '
@@ -86,9 +108,11 @@ TOOLS = [
      "the board that you, or a colleague, will do something. Note it before you say it's done. It's on the call's list "
      'straight away, even if the line drops, but it reaches nobody live: after the call, the follow-up hands it out, '
      'and the board sees whether it happened.',
-     'inputSchema': {'type': 'object', 'required': ['owner', 'what'], 'additionalProperties': False, 'properties': {
+     'inputSchema': {'type': 'object', 'required': ['owner', 'what', 'goal'], 'additionalProperties': False,
+                     'properties': {
          'owner': {**ID, 'description': "who sees it through: your own id, or a colleague's (lowercase, e.g. ada)"},
          'what': LINE,
+         'goal': GOALS,
          'deadline': WHEN,
          # (askwindow.ts: the board's ask takes its window as it's queued, not after the call.)
          'job': {'type': 'integer', 'minimum': 1, 'description': "the owner's job already queued or running that the "
@@ -104,10 +128,13 @@ TOOLS = [
      'and any other is refused; then say the follow-up will correct it from the call. A job you queued on this call '
      "takes the board's change with add instead. Its answer names the item it replaced: if that isn't what the board "
      'meant, tell the board, and the follow-up puts it right.',
-     'inputSchema': {'type': 'object', 'required': ['item', 'what'], 'additionalProperties': False, 'properties': {
+     'inputSchema': {'type': 'object', 'required': ['item', 'what', 'goal'], 'additionalProperties': False,
+                     'properties': {
          'item': {'type': 'integer', 'minimum': 1, 'description': 'the earlier item\'s number (#n)'},
          'what': {**LINE, 'description': f'what it is now, one plain line in your own words, at most {WHAT} characters:'
                   ' the board reads it'},
+         'goal': {**GOALS, 'description': f"{GOALS['description']}. Why the board wants it now: the earlier "
+                  'reason if it still holds'},
          'deadline': {**WHEN, 'description': 'a new time, if the board changed it or you told it one (as for promise); '
                       "without one, the earlier item\'s time stays"}}}},
 ]
@@ -125,12 +152,14 @@ TOOLS += [
      "the job's session reads it at its next step. Only jobs you queued on this call (any other is refused: then the "
      "follow-up adds it from the call). Tell the board what this answers, in plain words. It's added only when this "
      "answers so; if it answers 'Not confirmed', it may be, so don't add it again.",
-     'inputSchema': {'type': 'object', 'required': ['job', 'words'], 'additionalProperties': False, 'properties': {
+     'inputSchema': {'type': 'object', 'required': ['job', 'words', 'goal'], 'additionalProperties': False,
+                     'properties': {
          'job': {'type': 'integer', 'minimum': 1,
                  'description': 'the job you queued on this call (#n, from the job tool)'},
          'words': {'type': 'string', 'minLength': 1, 'maxLength': ADD,
                    'description': "what the board added or changed, in the colleague's terms, as part of that job's "
-                   f'brief. At most {ADD:,} characters'}}}},
+                   f'brief. At most {ADD:,} characters'},
+         'goal': GOALS}}},
 ]
 # The board's settled word to work already under way (hq say on a call: call.ts reach), for real need only, as often as
 # the board's word needs: each goes on the call's list, so the follow-up
@@ -140,7 +169,7 @@ TOOLS += [
      "ends, pass it on to that running job or pull request's review, by the number your briefing lists, as often as "
      "the board's word needs; anything still being worked out goes to the follow-up. It goes on this call's list "
      "too. Tell the board where it went as this answers; if it answers 'Not confirmed', it may have gone, so don't send it again.",
-     'inputSchema': {'type': 'object', 'required': ['agent', 'job', 'words', 'what'], 'additionalProperties': False,
+     'inputSchema': {'type': 'object', 'required': ['agent', 'job', 'words', 'what', 'goal'], 'additionalProperties': False,
                      'properties': {
          'agent': {**ID, 'description': "whose job or review it is, lowercase (e.g. ada): a number that isn't theirs "
                    'is refused'},
@@ -150,7 +179,8 @@ TOOLS += [
                    'description': "what the board wants that work to know now, in the colleague's terms. At most "
                    f'{ADD:,} characters'},
          'what': {**LINE, 'description': f"what you passed on, one plain line for the call's list, at most {WHAT} "
-                  'characters: the board reads it'}}}},
+                  'characters: the board reads it'},
+         'goal': GOALS}}},
 ]
 # A call about the board's pins (review notes it rang about from HQ's Reviews; the briefing lists them): their words,
 # and marking one sent (hq pin). The board said a pin is sent only when the agent queues work for it or answers it on
@@ -239,17 +269,56 @@ TOOLS += [
          'by': {'type': 'string', 'description': "the board's time in UTC: 14:30 or 2026-10-06T14:30Z"},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
 ]
+# What a job's agent reads off the call (reads.py): the server's status report
+# (jobs, pull requests, deploys, seats, the services' logs) and the company's git, every branch with unmerged work.
+# Read-only; a long answer comes in pages (reads.PAGE), never cut.
+FROM = {'type': 'integer', 'minimum': 1, 'description': 'the line to start from, when an answer said where the rest '
+        'starts'}
+OFFSET = {'type': 'integer', 'minimum': 0, 'description': 'with from, the characters into that line to start at, when '
+          'an answer said the rest starts with an offset (a line longer than a page)'}
+TOOLS += [
+    {'name': 'report', 'description': "The server's status report, live, as your jobs read it with hq report: "
+     'containers and deploys, memory and disk, seats and usage, the open and recent jobs and pull requests with '
+     "reviews' findings, what waits on the board, calls, mail counts, errors and each service's last log lines. Use "
+     "it before you tell the board you can't see or haven't checked something. With no section, the list of its "
+     "sections; section: those whose heading has these words ('work', 'pull requests nobody', 'voice', 'errors'); "
+     'find: only the lines with these words (a job number, a pull request, a name), in a section or the whole report. '
+     'since or at: what changed since a time, or the report at a time (the last two days).',
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+         'section': {'type': 'string', 'description': "words of a section's heading"},
+         'find': {'type': 'string', 'description': 'only the lines with these words'},
+         'since': {'type': 'string', 'description': 'an ISO time: what changed since then'},
+         'at': {'type': 'string', 'description': 'an ISO time: the report as it was then'},
+         'from': FROM, 'offset': OFFSET}}},
+    {'name': 'git', 'description': "The company's code as your jobs read it with git, every branch: main, a job's "
+     "work not merged yet (job/<n>, as a pull request's branch) and a job's commits that never reached a pull request "
+     '(outgoing/job/<n>). log: the commits of rev (a range main..job/<n>: what the branch adds), optionally of a path; '
+     'show: a commit (stat: only the files it changed), or with path a file or folder as it is at rev; diff: a range, '
+     'main...job/<n> for what a branch changed (stat: the files only), optionally under a path; grep: the lines with '
+     'pattern at rev (a fixed string), optionally under a path; branches: the branches, newest first, pattern '
+     'narrowing them.',
+     'inputSchema': {'type': 'object', 'required': ['command'], 'additionalProperties': False, 'properties': {
+         'command': {'type': 'string', 'enum': ['log', 'show', 'diff', 'grep', 'branches']},
+         'rev': {'type': 'string', 'description': 'a branch, tag or commit (main, job/1234, a sha; main if left '
+                 'out), or a range for log and diff (main...job/1234)'},
+         'path': {'type': 'string', 'description': 'a file or folder in the repository'},
+         'pattern': {'type': 'string', 'description': "grep's words, or words in the branches' names and subjects"},
+         'ignore_case': {'type': 'boolean'},
+         'stat': {'type': 'boolean', 'description': 'show and diff: the files changed and their counts only'},
+         'from': FROM, 'offset': OFFSET}}},
+]
 # Managing the company's work on the call: hq's management commands, as the agent runs them off the
 # call, with the coordinator's own rules on who may do what. Each command, and which of its own commands it takes (None:
 # all of them; '': the command alone; '#': a number, to read one). None of them takes a file, waits for the board or
 # speaks as the job a call doesn't have (status, ask, wait, reply, meeting say...). Their short lines go as hq's
 # arguments, as off the call; a brief and the board's words still go on stdin (job, add, reach). The coordinator opens
 # only these commands' routes to a call's token (server.ts MANAGE_ROUTES).
+# overseer, route, items and the estimate checks are the reads a job has, the call's too: the notes to the Overseer, the notes routed to jobs, every call's open items (one line each), the timing checks
 MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
           'thread': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
           'meeting': {'', '#', 'ask', 'asks', 'set', 'join', 'drop'}, 'jobs': None, 'requests': None, 'close': None,
-          'topic': None, 'summary': None, 'followthrough': {''}, 'estimate': {'set'}, 'seat-warning': None,
-          'owed': {'', 'close'}}
+          'topic': None, 'summary': None, 'followthrough': {''}, 'seat-warning': None, 'owed': {'', 'close'},
+          'overseer': {''}, 'route': {'log'}, 'items': {''}, 'estimate': {'set', '--audit', '--accuracy', '--calibration'}}
 TOOLS += [
     {'name': 'manage', 'description': "Manage the company's work now, as you would with hq off the call, when the "
      'board decides it or it is yours to do: cancel a queued job that never ran (cancel <job> "why"), stop a running one '
@@ -262,7 +331,8 @@ TOOLS += [
      'a product\'s return to the board that its words close (owed, owed close <slug> "why"), a '
      'decision (decision, decision link), subscription warnings (seat-warning), a stuck pull request back to review '
      '(review), and reads (jobs, plan '
-     '<project>, thread list, summary, followthrough). HQ allows you what it allows you off the call. It acts at once: '
+     '<project>, thread list, summary, followthrough, items, overseer, route log, estimate --audit, --accuracy or '
+     '--calibration). HQ allows you what it allows you off the call. It acts at once: '
      "then tell the board what you did, in plain words: that's what your follow-up reads in the transcript. Never "
      "promise it for after the call when this can do it now.",
      'inputSchema': {'type': 'object', 'required': ['command'], 'additionalProperties': False, 'properties': {
@@ -327,6 +397,26 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['sketch'], 'additionalProperties': False, 'properties': {
          'sketch': {'type': 'string', 'minLength': 1, 'maxLength': 200,
                     'description': "its number, '12', or a few words of its label"}}}},
+]
+# The board drawing on its call: the agent asks to see the board's screen, and
+# rings something on the board's page in its own ink, through the line too (drawing.py: HQ shows the ask and draws the
+# ring, and the line keeps what waits for HQ's answer).
+WORDS = {'type': 'string', 'minLength': 1, 'maxLength': WHAT_MOST}
+TOOLS += [
+    {'name': 'ask_to_see', 'description': "Ask the board to show you its screen, naming the one thing you want to see "
+     "(\"the pricing page\"). HQ shows your ask with Show and Not now; it blocks nothing, so carry on talking: their "
+     'answer comes with a later turn, and once they tap Show their screen comes with each turn.',
+     'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
+         'what': {**WORDS, 'description': 'the one thing you want to see, in a few words'}}}},
+    {'name': 'draw', 'description': "Draw on the board's page in your own ink: a ring round something it can see, named "
+     "by its visible words (a button's label, a heading, a price), or round its note N on this call's page; words go "
+     "beside the ring in your hand (a few words, or none). It's kept on the call's page in the book. Use it to point, "
+     "the way you'd point at a screen.",
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+         'ring': {**WORDS, 'description': 'the words on their screen to ring, as they show there (or note, not both)'},
+         'note': {'type': 'integer', 'minimum': 1, 'description': "the board's note to ring, by its number on this "
+                  "call's page (or ring, not both)"},
+         'words': {'type': 'string', 'maxLength': BESIDE_MOST, 'description': 'a few words beside the ring, or none'}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -420,26 +510,82 @@ def when(a):
 
 def looked(name, argv):
     """Run a lookup and return (ok, text)."""
-    r = subprocess.run(argv, env=HQ_ENV, stdin=subprocess.DEVNULL, capture_output=True, text=True)
-    if r.returncode:
-        return False, f'hq {name} failed: {(r.stderr or r.stdout).strip()[:300] or "the coordinator refused it"}'
+    code, out, err = ran(argv)
+    if code:
+        return False, f'hq {name} failed: {(err or out)[:300] or "the coordinator refused it"}'
     # Successful lookups return every line so long transcripts remain complete.
-    return True, r.stdout.strip()
+    return True, out
 
 
 def run(args, words):
     """hq, from an argument list in the allowlisted environment, with the words on stdin: (exit code, stdout, stderr).
     Never the words in argv: any uid can read /proc/<pid>/cmdline."""
-    r = subprocess.run(['hq', *args], env=HQ_ENV, input=words, capture_output=True, text=True)
-    return r.returncode, r.stdout.strip(), r.stderr.strip()
+    return ran(['hq', *args], words)
+
+
+class GaveUp(Exception):
+    """hq stopped waiting: the coordinator is down ('down'), or alive with no answer past CEILING ('ceiling')."""
+
+
+def ran(argv, words=None):
+    """hq's (exit code, stdout, stderr), however long the coordinator takes while it's alive. GaveUp once it's down or
+    past CEILING, with hq stopped (STILL's comment)."""
+    ends = time.monotonic() + CEILING
+    with subprocess.Popen(argv, env=HQ_ENV, stdin=subprocess.DEVNULL if words is None else subprocess.PIPE,
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True) as p:
+        while True:
+            try:  # (hq that answered during a look gives its answer, past CEILING too)
+                out, err = p.communicate(words, timeout=None if p.poll() is not None else
+                                         max(0, min(PROBE, ends - time.monotonic())))
+                return p.returncode, out.strip(), err.strip()
+            except subprocess.TimeoutExpired:
+                words = None  # (sent: communicate takes it once)
+            why = 'ceiling' if time.monotonic() >= ends else None if alive() else 'down'
+            if why and p.poll() is None:
+                os.killpg(p.pid, signal.SIGKILL)
+                p.communicate()
+                raise GaveUp(why)
+
+
+def alive():
+    """Whether the coordinator answers a look at its /health within ALIVE s (noted in UP)."""
+    try:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                f"{HQ_ENV['HQ_URL']}/health", timeout=ALIVE) as r:
+            if r.status != 200:
+                return False
+    except (OSError, http.client.HTTPException):
+        return False
+    UP[0] = time.monotonic()
+    return True
 
 
 def plain(what):
     """The refusal for a "what" that isn't one plain line within the limit (never cut), or None."""
-    if not what or '\n' in what or '\r' in what:
-        return 'what needs one plain line: the board reads it'
-    if len(what) > WHAT:
-        return f'what too long ({len(what):,} > {WHAT:,}): make it one short line; the follow-up has the whole call'
+    return one_line_refusal('what', what, WHAT, 'the board reads it', 'make it one short line')
+
+
+def goal_refusal(goal):
+    """The refusal for a "goal" that isn't one plain line within the limit (never cut), or None."""
+    return one_line_refusal('goal', goal, GOAL, 'why the board wants it, in its own terms', 'say why in one short line')
+
+
+def one_line_refusal(name, value, limit, why, shorter):
+    """A tool field's one-line check, with its own limit and refusal wording."""
+    if not value or '\n' in value or '\r' in value:
+        return f'{name} needs one plain line: {why}'
+    if len(value) > limit:
+        return f'{name} too long ({len(value):,} > {limit:,}): {shorter}; the follow-up has the whole call'
+
+
+def goal_first(goal, text):
+    """A brief or an addition as its job reads it: why the board wants it, then the work."""
+    return f'Why the board wants this: {goal}\n\n{text}'
+
+
+def on_stdin(goal, words):
+    """The goal and the words for hq's --goal - (item add and replace, say), as one JSON object on stdin."""
+    return json.dumps({'goal': goal, 'words': words})
 
 
 def hq(name, a):
@@ -465,11 +611,12 @@ def hq(name, a):
     if name not in ('promise', 'replace'):
         return False, f'no tool {name}: hand work on with job, note a promise with promise'
     what, item, owner = str(a.get('what', '')).strip(), a.get('item'), str(a.get('owner', ''))
+    goal = str(a.get('goal', '')).strip()
     if name == 'promise' and not COLLEAGUE.fullmatch(owner):
         return False, 'owner must be a colleague id, like ada'
     if name == 'replace' and (type(item) is not int or item < 1):
         return False, "item must be the earlier item's number"
-    if refused := plain(what):
+    if refused := plain(what) or goal_refusal(goal):
         return False, refused
     deadline = a.get('deadline')
     if refused := readable(deadline):
@@ -480,10 +627,10 @@ def hq(name, a):
     if thread is not None and (work is None or not (type(thread) is str and THREAD.fullmatch(thread))):
         return False, 'thread goes with job, and is one of the open threads, like shop/launch-deck'
     # (the words, as the agent gave them, are the quote: the follow-up has the call's own around them)
-    when = [*(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
-            *(['--thread', thread] if thread else [])]
+    flags = ['--goal', '-', *(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
+             *(['--thread', thread] if thread else [])]
     args = ['item', 'add', 'promise', owner] if name == 'promise' else ['item', 'replace', str(item)]
-    r = run([*args, what, '-', *when], what)
+    r = run([*args, what, '-', *flags], on_stdin(goal, what))
     return answered(r, 'Nothing recorded', 'it may or may not be on the list', UNNOTED)
 
 
@@ -493,10 +640,15 @@ def job(a):
         return False, 'agent must be a colleague id, like ada'
     item = a.get('item')
     title, brief = str(a.get('title', '')).strip(), str(a.get('brief', '')).strip()
+    goal = str(a.get('goal', '')).strip()
     if not title or not brief:
         return False, 'job needs a title and a brief'
+    if refused := goal_refusal(goal):
+        return False, refused
     if item is not None and (type(item) is not int or item < 1):
         return False, 'item must be the number promise or replace answered with'
+    if item is None:
+        brief = goal_first(goal, brief)
     code = a.get('code')
     if not (type(code) is str and CODE.fullmatch(code)):
         return False, 'code must be one word of 2 to 8 letters for what the task does, like COVERS'
@@ -507,7 +659,7 @@ def job(a):
         return False, (f'title too long ({len(title):,} > {TITLE:,}): keep it to one short line and put the rest in '
                        'the brief')
     if len(brief) > BRIEF:
-        return False, f'brief too long ({len(brief):,} > {BRIEF:,}): split it into two jobs'
+        return False, f'brief too long ({len(brief):,} > {BRIEF:,}, the goal counted): split it into two jobs'
     now = a.get('now', False)
     if type(now) is not bool:
         return False, 'now must be true or false'
@@ -536,20 +688,26 @@ def valid_size(size):
 
 def add(a):
     """add: hq extend <job> -, the words on stdin. Its answer says where they went (the brief, or the running job)."""
-    n, words = a.get('job'), str(a.get('words', '')).strip()
+    n, words, goal = a.get('job'), str(a.get('words', '')).strip(), str(a.get('goal', '')).strip()
     if type(n) is not int or n < 1:
         return False, 'job must be the number the job tool answered with'
     if not words:
         return False, 'add needs what the board added or changed'
+    if refused := goal_refusal(goal):
+        return False, refused
+    words = goal_first(goal, words)
     if len(words) > ADD:
-        return False, f'too long ({len(words):,} > {ADD:,}): keep the addition short; the follow-up has the whole call'
+        return False, (f'too long ({len(words):,} > {ADD:,}, the goal counted): keep the addition short; the '
+                       'follow-up has the whole call')
     return answered(run(['extend', str(n), '-'], words), 'Nothing was added', 'it may or may not have been added')
 
 
 def reach(a):
-    """reach: hq say <agent> - --job <n> --what "line", the words on stdin. Its answer says where they went."""
+    """reach: hq say <agent> - --job <n> --what "line" --goal -, the goal and the words on stdin. Its answer says
+    where they went."""
     agent, n = str(a.get('agent', '')), a.get('job')
     words, what = str(a.get('words', '')).strip(), str(a.get('what', '')).strip()
+    goal = str(a.get('goal', '')).strip()
     if not COLLEAGUE.fullmatch(agent):
         return False, 'agent must be a colleague id, like ada'
     if type(n) is not int or n < 1:
@@ -559,9 +717,9 @@ def reach(a):
     if len(words) > ADD:
         return False, (f'too long ({len(words):,} > {ADD:,}): keep it to what the work needs now; the follow-up has '
                        'the whole call')
-    if refused := plain(what):
+    if refused := plain(what) or goal_refusal(goal):
         return False, refused
-    reply = run(['say', agent, '-', '--job', str(n), '--what', what], words)
+    reply = run(['say', agent, '-', '--job', str(n), '--what', what, '--goal', '-'], on_stdin(goal, words))
     return answered(reply, 'Nothing was sent', 'it may or may not have gone')
 
 
@@ -682,6 +840,29 @@ def sketch(a):
     return shown(line_asked({'sketch': asked}))
 
 
+def ask_to_see(a):
+    """(ok, content) of the ask_to_see tool: the voice line's answer on its socket (asked, or why not)."""
+    if not (what := what_asked(a.get('what'))) or set(a) - {'what'}:
+        return False, [{'type': 'text', 'text': ASK_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': ASK_WORDS['none']}]
+    return said(line_asked({'ask_to_see': what}))
+
+
+def draw(a):
+    """(ok, content) of the draw tool: the voice line's answer on its socket once HQ has drawn the ring (or why not)."""
+    if not (ink := ink_asked(a)):
+        return False, [{'type': 'text', 'text': INK_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': INK_WORDS['none']}]
+    return said(line_asked({'draw': ink}))
+
+
+def said(got):
+    """(ok, content) of the line's answer in words: what it did ({ok}), or its refusal ({error})."""
+    return 'error' not in got, [{'type': 'text', 'text': str(got.get('error', got.get('ok')))}]
+
+
 def line_asked(asked):
     """The voice line's answer on its socket to one ask, by this session's key."""
     with socket.socket(socket.AF_UNIX) as line:  # (the line always answers or closes: it waits on the coordinator)
@@ -701,12 +882,35 @@ def shown(got):
 
 def awaited(name, a):
     """(ok, text) of the board's tool, as soon as the coordinator answers, or within STILL s that it's still waiting."""
-    future = WORK.submit(lambda: when(a) if name == 'when' else (look if name in LOOK_UPS else hq)(name, a))
+    future = WORK.submit(used, name, a)
     if wait([future], STILL).done:
         return future.result()
     what = next((f'{name} ({a[k]})' for k in ('title', 'what', 'query', 'words') if isinstance(a.get(k), str)), name)
     PENDING.append((what, future))
-    return True, STILL_WAITING.format(what)
+    return True, still(what)
+
+
+def used(name, a):
+    """(ok, text) of the board's tool, or why hq stopped waiting for the coordinator (GaveUp)."""
+    if name == 'report':
+        return reads.report(a, HQ_ENV)
+    if name == 'git':
+        return reads.git(a)
+    looking = name == 'when' or name in LOOK_UPS
+    try:
+        return when(a) if name == 'when' else (look if looking else hq)(name, a)
+    except GaveUp as e:
+        if e.args[0] == 'down':
+            return False, DOWN if looking else DOWN + DOWN_HANDED
+        return False, f'{NO_ANSWER} Try again later.' if looking else UNSURE.format(
+            f'Not confirmed: {NO_ANSWER} It may or may not have gone through: check it before you do it again.')
+
+
+def still(what):
+    """The answer for a tool still waiting: slow, not down, only when the coordinator answered a look at /health
+    within STILL s."""
+    up = UP[0] is not None and time.monotonic() - UP[0] < STILL
+    return (STILL_WAITING if up else STILL_CHECKING).format(what)
 
 
 def waiting():
@@ -716,7 +920,7 @@ def waiting():
     done = wait([future for _, future in PENDING], STILL).done  # (one look: one landing between two would be lost)
     came = [(what, outcome(future)) for what, future in PENDING if future in done]
     PENDING[:] = [(what, future) for what, future in PENDING if future not in done]
-    lines = [f'{what}: {text}' for what, (_, text) in came] + [STILL_WAITING.format(what) for what, _ in PENDING]
+    lines = [f'{what}: {text}' for what, (_, text) in came] + [still(what) for what, _ in PENDING]
     return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
 
 
@@ -741,8 +945,9 @@ def answer(msg, offered=TOOLS):
     elif method == 'tools/call':
         p = msg.get('params', {})
         name, arguments = p.get('name'), p.get('arguments') or {}
-        if name == 'screen' or (name == 'sketch' and offered is TOOLS):  # (its own content: a picture and its line)
-            ok, content = (screen if name == 'screen' else sketch)(arguments)
+        # (its own content: a picture and its line, or the line's words; ask_to_see and draw)
+        if name == 'screen' or (name in ('sketch', 'ask_to_see', 'draw') and offered is TOOLS):
+            ok, content = {'screen': screen, 'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw}[name](arguments)
             return {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': not ok}}
         if offered is PARTNER_TOOLS:
             ok, text = partner(name, arguments)

@@ -55,7 +55,10 @@ beforeEach(async () => {
     'delete from jobs; delete from threads; delete from alarms; delete from runs; delete from seats; delete from prs',
   );
   for (const engine of ['claude', 'codex'])
-    assert.equal((await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready' })).status, 200);
+    assert.equal(
+      (await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready', util: 0.1, week: 0.1 })).status,
+      200,
+    );
   await h.worker('room', { capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { codex: 1 }, room: 1 } });
 });
 

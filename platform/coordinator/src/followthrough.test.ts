@@ -208,6 +208,19 @@ test('hq followthrough reads the agreement in the board words, the running work,
   assert.equal((await h.agent('followthrough', game.token)).status, 403);
 });
 
+test("a check's session owes its verdict before it ends, and only a check owes one", async () => {
+  reset();
+  agreed();
+  const other = await h.start({ agent: 'bolt', title: 'A step' });
+  followThroughSweep(Date.now());
+  const check = await startCheck();
+  const owed = async (job: Running) => (await h.agent('followthrough-owed', job.token)).body.owed;
+  assert.equal(await owed(check), true);
+  assert.equal(await owed(other), false);
+  await h.hq(check, 'followthrough', 'ok');
+  assert.equal(await owed(check), false);
+});
+
 test("a check that hasn't started in time is an alarm on the status line", () => {
   reset();
   agreed();
@@ -324,6 +337,40 @@ test("the hour's check starts before work whose window passed hours ago", async 
   followThroughSweep(Date.now());
   assert.equal((await h.claim('claude'))?.id, checks()[0].job);
   assert.equal((await h.claim('claude'))?.id, late);
+});
+
+test("a hold on the checks' own project holds its work, never the hour's check that judges the hold", async () => {
+  reset();
+  agreed();
+  const pauses = await import('./pauses.ts');
+  const { pausedOn } = await import('./jobs.ts');
+  const { words } = await import('./goingon.ts');
+  const forecast = await import('./forecast.ts');
+  db.prepare(
+    `insert into threads (id, project, name, goal, created) values ('office/desk', 'office', 'The desk', 'Tidy', ?)`,
+  ).run(new Date().toISOString());
+  const held = h.queue({ agent: 'bolt', engine: 'claude', title: 'Office work', thread: 'office/desk' });
+  const paused = pauses.pause({ project: 'office', why: 'Hold back until the trials are in', byHand: true }, ceo());
+  assert.equal(typeof paused, 'object', String(paused));
+  try {
+    followThroughSweep(Date.now());
+    const [check] = checks();
+    assert.match(String(check.thread), /^office\//, 'the check is in the paused project, where made() puts it');
+    assert.equal(pausedOn(check.job), null, 'hq jobs shows it held by nothing');
+    assert.equal(pausedOn(held), 'office');
+    const pausedLine = () => read({ id: check.job, agent: ceo() }).split('\n- office (project')[1] ?? '';
+    assert.match(pausedLine(), /, 1 queued held\)/, 'the queued check is no work the pause holds');
+    const claimed = await h.claim('claude');
+    assert.equal(claimed?.id, check.job, 'the claim takes the check');
+    assert.equal(await h.claim('claude'), null, 'and leaves the held work');
+    assert.match(words(forecast.current()), /office is paused, but no pause holds HQ's hourly follow-through check/);
+    const line = pausedLine();
+    assert.match(line, /, 1 queued held\)/);
+    assert.doesNotMatch(line, /Still on it/, "the running check isn't listed as work still on the paused project");
+    await h.finish({ ...claimed!, agent: ceo() });
+  } finally {
+    db.exec('delete from pause_until; delete from pauses');
+  }
 });
 
 test('below the room line a claim takes the work whose measured memory fits the room, whatever its kind', async () => {

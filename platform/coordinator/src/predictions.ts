@@ -24,6 +24,7 @@ import { playOrder } from './simulation.ts';
 import { loopSizes, SLOW_SHARE, type Pace } from './reviewtime.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
 import { history, latestGiven } from './sizes.ts';
+import { corrected } from './sizerbias.ts';
 import * as threadorder from './threadorder.ts';
 
 // slow_agent_ms: the slow size, the one a time told holds to. A row without one gets it from its picks
@@ -231,7 +232,19 @@ export function recordFor(now: number, jobs: Pick<QueuedJob, 'id'>[]) {
   // (by its owner and words: its placeholder's number moves as other threads are drawn or get a task.)
   const drawn = (p: { agent: string; title: string }) =>
     kept(`drawn\n${p.agent}\n${p.title}`, () => ({ title: p.title, origin: 'work', agent: p.agent }));
-  return { stored: saved, latest: latestSizes(ids, saved), loop: loopSizes(now), predicted, drawn };
+  return { stored: saved, latest: asPlayed(latestSizes(ids, saved), now), loop: loopSizes(now), predicted, drawn };
+}
+
+// A size an agent (or a model) gave plays at what that sizer's sizes have lately come to (sizerbias.ts); the tool's,
+// which stand on done jobs already, and the CEO's revision of work under way, made with its progress in view, as they
+// are.
+function asPlayed(latest: Map<number, JobSize>, now: number) {
+  for (const [job, size] of latest) {
+    if (size.by === 'tool' || size.revised) continue;
+    const { agent_ms, high_ms } = corrected(size.agent_ms, size.by, now);
+    latest.set(job, { ...size, agent_ms, high_ms });
+  }
+  return latest;
 }
 
 // The play's per-job hours: a work job's stored prediction (work older than the predictions, or one the sweep hasn't
@@ -291,7 +304,14 @@ function storedSizes(jobs?: number[]) {
 // estimate tool ('tool': its stored prediction). high_ms is the agent time the slow play takes: the sizer's high, never
 // below its middle; for an agent's one number, that number at its prediction's slow share; the tool's slow size. low_ms:
 // none for the tool's or an agent's.
-export type JobSize = { agent_ms: number; low_ms: number | null; high_ms: number; by: string; at: string };
+export type JobSize = {
+  agent_ms: number;
+  low_ms: number | null;
+  high_ms: number;
+  by: string;
+  at: string;
+  revised?: boolean; // (the CEO's revision: sizes.ts)
+};
 
 // Every job's latest size, or these jobs' only: the latest one given (sizes.ts), else the tool's.
 export function latestSizes(jobs?: number[], stored = storedSizes(jobs)) {
@@ -302,7 +322,8 @@ export function latestSizes(jobs?: number[], stored = storedSizes(jobs)) {
     const tool = stored.get(job);
     const share = tool ? tool.slow.agent_ms / tool.usual.agent_ms : SLOW_GUESS;
     const high = Math.max(given.high_ms ?? wholeSeconds(given.agent_ms * share), given.agent_ms);
-    latest.set(job, { agent_ms: given.agent_ms, low_ms: given.low_ms, high_ms: high, by: given.by, at: given.at });
+    const { by, at, revised } = given;
+    latest.set(job, { agent_ms: given.agent_ms, low_ms: given.low_ms, high_ms: high, by, at, revised });
   }
   return latest;
 }

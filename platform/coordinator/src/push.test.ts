@@ -119,8 +119,10 @@ test("a card from work on a thread with a deadline rings, whatever urgency its a
   const phone = await device('cards');
   const due = await h.start({ agent: 'bolt', title: 'The invite fix', queuedBy: 'juno', thread: h.dueThread({ deadline: Date.now() + 2 * HOUR }) });
   const plain = await h.start({ agent: 'bolt', title: 'Tidy the readme' });
-  // a fix on the deadline work's pull request: on its thread, so the same deadline
-  const fix = await h.start({ agent: 'bolt', title: 'Fixing review notes', branch: `job/${due.id}` });
+  // a fix on the deadline work's pull request: on its thread, so the same deadline (the pull request's: a task there
+  // would wait for the one running)
+  h.storedPr(9101, due.id, 'open', ['invite.ts']);
+  const fix = await h.start({ agent: 'bolt', title: 'Fixing review notes', branch: `job/${due.id}`, pr: 9101, stage: 'fix' });
   // (as soon as it can: a deadline of now.)
   const rushed = await h.start({ agent: 'bolt', title: 'The login fix', thread: h.dueThread({ deadline: Date.now() }) });
   const card = async (job: typeof due, title: string, urgency?: string) => (await h.agent('request', job.token, { kind: 'decision', title, body: 'x', urgency })).body.id;

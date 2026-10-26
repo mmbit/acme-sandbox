@@ -917,7 +917,7 @@ test("roles.care's job lists the open customers waiting on a person, with nothin
       assert.ok(!JSON.stringify(body).includes(bit), `nothing of the customer's: ${bit}`);
     const cli = await h.hq(later, 'care');
     assert.equal(cli.code, 0, cli.out);
-    assert.match(cli.out, new RegExp(`^${w}  person, pinwheel, waiting for the board, its ask for changes with care, language nl, came .*, last line 2026-10-02 09:00, a draft on it$`, 'm'));
+    assert.match(cli.out, new RegExp(`^${w}  person, pinwheel, waiting for the board, its ask for changes with care, language nl, came .*, last line 2026-10-02 09:00 UTC, a draft on it$`, 'm'));
     assert.match(cli.out, new RegExp(`^${t}  person, pinwheel, with the team, language en, `, 'm'));
     assert.equal((db.prepare('select customers from jobs where id = ?').get(later.id) as any).customers, 0, 'the listing marks nothing');
     await boardCall('/api/care/unask', { id: waiting });

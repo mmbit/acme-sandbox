@@ -39,6 +39,7 @@ services:
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
       PUBLIC_HOST: ${PUBLIC_HOST}
       REPO_DIR: /repo
+      WORK_MIRROR_DIR: /work/mirror.git
       DATA_DIR: /data
       WORKER_TOKEN: ${WORKER_TOKEN}
       VOICE_TOKEN: ${VOICE_TOKEN}
@@ -50,6 +51,7 @@ services:
     volumes:
       - ..:/repo:ro                     # the server's checkout
       - hqdata:/data
+      - work:/work:ro                   # saved branch and outgoing refs for failed-task takeovers
       # the zips the board uploads on the desk phone, unpacked (src/zips.ts): its own volume, so the worker can read it
       # without the data volume
       - imports:/imports
@@ -79,6 +81,9 @@ services:
       - voiceseat:/seat:ro              # one Claude seat's token, put there by the worker's keeper (no /seats)
       - ..:/repo:ro                     # the deployed company files, for looking things up during a call
       - voice:/data                     # the calls' Claude sessions
+      # The worker's mirror of the repository, every branch, read only: the call agent's git tool (platform/voice/reads.py),
+      # the unmerged work a job reads with git. Only the mirror, never the jobs' folders beside it.
+      - { type: volume, source: work, target: /mirror, read_only: true, volume: { subpath: mirror.git } }
     # Not on default, where the worker is: a job could open ws://voice:8080 itself, without the board's session (which
     # only Caddy checks), and speak as the board. Its own network has Caddy and the coordinator (and the internet).
     # It is also the only way from Caddy to the coordinator (login challenges, platform/coordinator/src/auth.ts).

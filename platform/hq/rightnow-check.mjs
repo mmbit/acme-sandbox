@@ -12,8 +12,9 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from './serve.mjs';
 import { playwright, errorsOf, until } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
-const RENDERERS = process.argv[2]?.split(',') ?? ['brownstone', 'holo', 'wire'];
+const RENDERERS = process.argv[2]?.split(',') ?? lookNames();
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
 const MOCK_ORG = fileURLToPath(new URL('mock/org.json', import.meta.url));

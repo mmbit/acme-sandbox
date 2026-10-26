@@ -158,12 +158,10 @@ async function listAsks(rest: string[]) {
   const asks = await answer<Ask[]>('meetings/asks', "Couldn't read the asks");
   if (!asks.length) return print('No open meeting asks.');
   for (const ask of asks) {
-    const by = ask.by ? `, by ${minute(ask.by)} UTC` : '';
-    print(
-      `#${ask.id} ${text(ask.topic)} (from ${ask.agent} with ${ask.with.join(', ')}${by}, ${minute(ask.created)} UTC)`,
-    );
+    const by = ask.by ? `, by ${minute(ask.by)}` : '';
+    print(`#${ask.id} ${text(ask.topic)} (from ${ask.agent} with ${ask.with.join(', ')}${by}, ${minute(ask.created)})`);
     for (const m of ask.overlap) {
-      const when = m.at ? `, ${minute(m.at)} UTC` : '';
+      const when = m.at ? `, ${minute(m.at)}` : '';
       print(
         `    meeting #${m.meeting} ${text(m.topic)} (${m.status}${when}) already holds ${m.seats.join(', ')}: hq meeting join ${m.meeting} ${ask.id}`,
       );
@@ -180,7 +178,7 @@ async function setMeeting(given: string[]) {
     stop('usage: hq meeting set <ask>... "topic" --code WORD [--at <time>]');
   const body = { asks: asks.map(Number), topic, code: values.code, ...(values.at && { at: values.at }) };
   const set = await answer<{ meeting: number; at: string; seats: Seat[] }>('meetings/set', 'No meeting was set', body);
-  print(`Meeting #${set.meeting} is set for ${minute(set.at)} UTC, with ${seatList(set.seats)}.`);
+  print(`Meeting #${set.meeting} is set for ${minute(set.at)}, with ${seatList(set.seats)}.`);
 }
 
 async function joinMeeting([meetingId, askId, ...rest]: string[]) {
@@ -267,11 +265,10 @@ function tallyLines(t: Tally | null, seats: Heard['seats']) {
       ...(jobs(true) ? [`  The sizer couldn't size ${jobs(true)}: their owners set them (hq estimate set).`] : []),
     ];
   }
-  const when = (ms: number | null) =>
-    ms === null ? 'no finish in sight' : `${minute(new Date(ms).toISOString())} UTC`;
+  const when = (ms: number | null) => (ms === null ? 'no finish in sight' : `${minute(new Date(ms).toISOString())}`);
   const outlook = (o: Outlook) => `${when(o.finish)}${o.standing ? `, ${o.standing}` : ''}`;
   return [
-    `The tally (${minute(t.at)} UTC): every thread of the meeting's projects and every windowed one, played with the changes.`,
+    `The tally (${minute(t.at)}): every thread of the meeting's projects and every windowed one, played with the changes.`,
     ...t.threads.map(
       x =>
         `  ${x.id} (${x.owner}'s): ${outlook(x)}${x.deadline ? ` (deadline ${when(x.deadline)})` : ''}` +
@@ -338,21 +335,21 @@ async function listMeetings() {
 }
 
 function liveLine(m: Listed) {
-  const started = m.started ? `started ${minute(m.started)} UTC, ` : '';
+  const started = m.started ? `started ${minute(m.started)}, ` : '';
   return `  #${m.id} ${text(m.topic)} (${started}chaired by ${m.chair}): ${m.seats.join(', ')}`;
 }
 
 function plannedLine(m: Listed) {
-  const at = m.at ? `${minute(m.at)} UTC` : 'as soon as every seat can start';
+  const at = m.at ? `${minute(m.at)}` : 'as soon as every seat can start';
   return `  #${m.id} ${text(m.topic)} (${at}, chaired by ${m.chair}): ${m.seats.join(', ')}`;
 }
 
 async function showMeeting(id: string) {
   const m = await answer<Meeting>(`meetings/one?id=${id}`, `No meeting #${id}`);
   const times = [
-    m.at && `at ${minute(m.at)} UTC`,
-    m.started && `started ${minute(m.started)} UTC`,
-    m.ended && `ended ${minute(m.ended)} UTC`,
+    m.at && `at ${minute(m.at)}`,
+    m.started && `started ${minute(m.started)}`,
+    m.ended && `ended ${minute(m.ended)}`,
   ].filter(Boolean);
   print(
     `#${m.id} ${text(m.topic)} (${[m.status, ...times].join(', ')}), called by ${m.called_by}, chaired by ${m.chair}`,
@@ -374,14 +371,14 @@ async function showMeeting(id: string) {
 }
 
 function seatLine(seat: Meeting['seats'][number]) {
-  const handed = seat.handed ? `, handed in ${minute(seat.handed)} UTC` : '';
+  const handed = seat.handed ? `, handed in ${minute(seat.handed)}` : '';
   const changed = seat.changed ? `: ${oneLine(seat.changed, ' ')}` : '';
   return `  ${seat.agent} (job #${seat.job})${handed}${changed}`;
 }
 
 // A line said in the meeting, kept to one line so it can't pass for another agent's
 const spoken = (line: Line) =>
-  `${minute(line.at).slice(11)} ${line.agent}${line.to?.length ? ` to ${line.to.join(', ')}` : ''}: ${oneLine(line.text, ' ')}`;
+  `${minute(line.at).slice(11, 16)} ${line.agent}${line.to?.length ? ` to ${line.to.join(', ')}` : ''}: ${oneLine(line.text, ' ')}`;
 
 const seatList = (seats: Seat[]) => seats.map(seat => `${seat.agent} (job #${seat.job})`).join(', ');
 

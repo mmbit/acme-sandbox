@@ -1,6 +1,7 @@
 // The executive's summary (hq summary): the company's picture in a few plain lines, for the CEO to judge. What the board
 // asked for and how long each has waited, what finished since the last check (finished.ts: threads done and the board's
-// items, merged and deployed), the platform's alarms on now (alarms.ts), what threatens the plan (threats.ts), what
+// items, merged and deployed), the threads whose work is in for their owners to judge (threadjudge.ts), the platform's
+// alarms on now (alarms.ts), what threatens the plan (threats.ts), what
 // waits for a decision of the board's, the work proposed to the CEO, and whether the queue grew faster than it drained.
 // It's read from the minute's forecast and HQ's own records, and it tells nobody: the CEO's hourly follow-through check
 // carries it (followthrough.ts), and whether the board hears any of it, work it asked to hear about the moment it's
@@ -10,6 +11,7 @@ import { agreements } from './agreements.ts';
 import * as jobs from './jobs.ts';
 import * as threats from './threats.ts';
 import * as finished from './finished.ts';
+import * as threadjudge from './threadjudge.ts';
 import * as proposals from './proposals.ts';
 import * as decisions from './decisions.ts';
 import * as alarms from './alarms.ts';
@@ -32,6 +34,10 @@ export function read(f: Forecast) {
   const parts: Part[] = [
     { head: 'The board asked for (and how long it has waited)', lines: asked(f.now) },
     news,
+    {
+      head: 'Ready to judge (each owner closes it with hq plan done or draws its next task)',
+      lines: threadjudge.lines(f.now),
+    },
     { head: 'Alarms on now (HQ told you and nobody else)', lines: alarms.lines() },
     { head: 'What threatens the plan', lines: threats.lines(f) },
     { head: "Held for the board's decision", lines: decisions.awaited() },

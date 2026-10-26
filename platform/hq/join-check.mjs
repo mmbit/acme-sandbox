@@ -23,6 +23,7 @@ import { createServer } from 'node:http';
 import { connect } from 'node:net';
 import { tmpdir } from 'node:os';
 import { playwright, errorsOf } from '../../shared/browser/browser.mjs';
+import { reviewPart } from '../../shared/review/parts.mjs';
 
 const { chromium, webkit } = playwright();
 const SHOTS = process.argv[2] ?? mkdtempSync(`${process.env.TMPDIR ?? tmpdir()}/join-shots-`);
@@ -131,6 +132,9 @@ const previewServer = createServer((req, res) => {
       (reviewOff ? '/* review mode: off */\n' : REVIEW.replace('{{HQ_ORIGIN}}', base)) +
         FRAMED.replace('{{HQ_ORIGIN}}', base),
     );
+  // (review mode's parts beside it)
+  const part = path === '/__review/review.js' || reviewOff ? null : reviewPart(path);
+  if (part !== null) return script(part);
   if (path === '/__review/watchalong.js') return script(joinAsset('watchalong.js').body);
   if (path === '/__review/vendor/rrweb-record.js') return script(joinAsset('vendor/rrweb-record.js').body);
   if (path !== '/' && path !== '/two') {

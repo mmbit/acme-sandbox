@@ -45,7 +45,12 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
   python3 -c "import json, sys; s = json.load(open(sys.argv[1])); print(f\"renders: {len(s['put'])} in place, {len(s['missing'])} missing\", *s['missing'][:10])" \
     "/var/lib/$SERVER_NAME/renders.json" 2>/dev/null
   # when each part of this run began, to line up with the loop's worst seconds
-  steps="hq.db $(date -u +%T)"
+  steps="hq.db read ahead $(date -u +%T)"
+  # hq.db read through once first, a plain read that takes none of SQLite's locks: after a deploy's build the file is off
+  # the machine's memory, and a statement below that reads it from the disk holds every commit of HQ's back for seconds
+  # (or past db.ts's busy timeout: "database is locked")
+  hqdata=$(docker volume inspect -f '{{.Mountpoint}}' infra_hqdata 2>/dev/null) && timeout 60 nice cat "$hqdata/hq.db" > /dev/null
+  steps+=", hq.db $(date -u +%T)"
   echo; echo "== board requests and seats"
   $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
     import { DatabaseSync } from 'node:sqlite'; const db = new DatabaseSync('/data/hq.db', { timeout: 5000 });
@@ -171,10 +176,12 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
     console.log('== copies to the forward address (all records, sent 0 carries its reason)');
     console.table(db.prepare(\"select mail, substr(tried, 1, 19) tried, sent, status, failure why from mail_copies order by mail desc\").all());
     console.log('== forward-copy sends (one row per email, with its mail ids)');
-    // (from the first copy tried on, by the events' time index: none is older, and a scan of the whole log reads HQ's
-    // biggest table while HQ's writes wait.)
-    console.table(db.prepare(\"select id, ts, text from events indexed by events_ts where ts >= (select min(tried) from mail_copies) and type = 'log' \"
-      + \"and text like 'Mail: a copy of % went to the forward address' order by id\").all());
+    // (each email's line in the minute after its copies were marked sent, which HQ logs it right after: the copies first
+    // (cross join), each one's minute by the events' time index, so the statement reads only those minutes of HQ's
+    // biggest table.)
+    console.table(db.prepare(\"select distinct e.id, e.ts, e.text from mail_copies c cross join events e indexed by events_ts on e.ts >= c.tried \"
+      + \"and e.ts < strftime('%Y-%m-%dT%H:%M:%fZ', c.tried, '+1 minute') where c.sent = 1 and e.type = 'log' \"
+      + \"and e.text like 'Mail: a copy of % went to the forward address' order by e.id\").all());
     // Each paid basket's confirmation email (basketmail.ts), the last 7 days: whether it went (rendered: test mode without
     // the service, so it never left), and HQ's log lines on basket emails. Ids and statuses only; a tester's order is
 
@@ -183,7 +190,12 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
       console.table(db.prepare(\"select p.id session, iif(substr(p.id, 1, 15) = 'cs_test_tester_', 'tester', p.mode) kind, substr(p.created,1,16) created, p.status payment, \"
         + \"e.status email, e.tries, e.rendered, substr(e.updated,1,16) email_updated, c.status parcel from payments p left join basket_emails e on e.session = p.id \"
         + \"left join parcels c on c.session = p.id where p.basket is not null and p.status not in ('open', 'expired') and p.created > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days') order by p.created desc limit 40\").all());
-      console.table(db.prepare(\"select substr(ts,1,19) ts, substr(text,1,220) text from events where type = 'log' and text like 'Payments:%basket email%' and ts > strftime('%Y-%m-%dT%H:%M:%S', 'now', '-7 days') order by ts desc limit 40\").all());
+      // (an hour of the log per statement, newest first, so a waiting HQ write commits between hours)
+      const basketLines = db.prepare(\"select substr(ts,1,19) ts, substr(text,1,220) text from events indexed by events_ts where ts >= ? and ts < ? and type = 'log' and text like 'Payments:%basket email%' order by ts desc\");
+      const lines = [];
+      for (let hour = 0, end = Date.now(); hour < 7 * 24 && lines.length < 40; hour++, end -= 3600e3)
+        lines.push(...basketLines.all(new Date(end - 3600e3).toISOString(), new Date(end).toISOString()));
+      console.table(lines.slice(0, 40));
     } catch { /* no basket_emails or parcels table until the coordinator has started with them */ }
     console.log('== intercom (openings)');
     // a line a customer-holding job wrote (chat.ts about_customer) shows as such.

@@ -9,9 +9,8 @@
 // computer holding something typed, brings that up), and in a tab of its own HQ's Reviews at those notes. My notes is a
 // sidebar: a dozen notes with their screenshots, loaded as the list scrolls, on a phone and a desktop, in the frame and
 // in a tab; Change and Delete there; Escape and its button close it. Shift + drag draws a rectangle, a circle in every
-// other way, and Change brings a note's mark back on its page, to draw again. On HQ itself Settings summons the same tool,
-// its notes wait in Reviews under HQ, and its menu puts it away; while the viewer shows a preview, only the preview's pin
-// shows. Every line of the menu fits on one line on a phone.
+// other way, and Change brings a note's mark back on its page, to draw again. HQ itself always has the same tool, its
+// notes go into the board's book; while the viewer shows a preview, only the preview's pin shows. Every line of the menu fits on one line on a phone.
 //   node platform/hq/notes-check.mjs [--shots dir]
 // (Send my notes over a tool, after a late goodbye)
 // First HQ in dev mode, then with a fake /api and a product preview played by Playwright at
@@ -22,6 +21,7 @@ import { readFile, mkdir, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
+import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wrappedMenuLines } from '../../shared/review/lines.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
@@ -31,9 +31,6 @@ const org = await (await fetch(`${base}/mock/org.json`)).json();
 const ceo = org.departments.flatMap(d => d.agents).find(a => a.id === org.company.ceo);
 const PRODUCT = 'https://hello.preview.test';
 const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
-// (the frame.js module, the screenshot route and the framing checks below)
-const frameJs = await readFile(`${ROOT}/shared/review/frame.js`, 'utf8');
-const inkJs = await readFile(`${ROOT}/shared/review/ink.js`, 'utf8');   // (the pen)
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hello</title>
   <style>body { font: 18px system-ui; margin: 24px; } h1 { margin-top: 80px; }</style>
   <h1>Hello, whoever you are</h1><p>A little card for a friend.</p><script src="/__review/review.js" defer></script>`;
@@ -41,7 +38,7 @@ const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, 
 // ---- the coordinator, played: products, notes, sends
 const OWNERS = { hello: ['Hello', 'bolt', 'Bolt'], 'pebble-pals': ['Pebble Pals', 'wren', 'Wren'] };
 let lastId = 0;
-const note = (slug, text, status = 'pending') => ({ id: ++lastId, created: new Date().toISOString(), slug, page: '/', note: text, element: { tag: 'h1', selector: 'h1', text: 'Hello', kind: 'pin' },
+const note = (slug, text, status = 'pending') => ({ id: ++lastId, created: new Date().toISOString(), slug, page: '/', note: text, element: { v: 1, url: `${PRODUCT}/`, el: { tag: 'h1', selector: 'h1', text: 'Hello' }, ink: [], kind: 'pin', area: null },
   viewport: {}, trail: [], shot: false, status, job: null });
 const notes = [note('hello', 'An older note on the headline'), note('pebble-pals', 'The pebble could wiggle'), note('hello', 'Already sent', 'sent')];
 const sends = [], photos = new Map(), edits = [];   // a note's id → its screenshot, as review mode sent it
@@ -98,14 +95,12 @@ await context.route(`${base}/api/**`, async r => {
 });
 await context.route(`${PRODUCT}/**`, r => {
   const path = new URL(r.request().url()).pathname;
-  if (path === '/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
-  if (path === '/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
-  if (path === '/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
+  if (fulfilPart(r, path, reviewJs)) return;
   if (path === '/__review/notes') {
     const posted = r.request().postDataJSON(), added = note('hello', posted.note);
     if (posted.shot) { Object.assign(added, { element: posted.element, viewport: posted.viewport, shot: true }); photos.set(added.id, posted.shot); }
     added.seen = 'Chrome 141 on Linux, desktop, screen 390×844, window 390×844, pixel ratio 2'; // the coordinator's seenOn
-    if (posted.element?.kind === 'general') Object.assign(added, { element: { selector: '', tag: '', text: '', kind: 'general' }, posted });
+    if (posted.element?.kind === 'general') Object.assign(added, { element: { v: 1, url: posted.page, el: null, ink: [], kind: 'general', area: null }, posted });
     if (posted.pictures?.length) Object.assign(added, { posted, pictures: pictured(added.id, posted.pictures) });
     notes.push(added);
     return r.fulfill({ json: { ok: true, id: added.id } });
@@ -115,9 +110,10 @@ await context.route(`${PRODUCT}/**`, r => {
   const waiting = () => notes.filter(n => n.slug === 'hello' && n.status === 'pending');
   if (path === '/__review/mine') {
     const withShots = new URL(r.request().url()).searchParams.has('shots');
-    const markOf = ({ element: e, viewport: v }) => e.kind === 'general' ? null : { kind: e.kind, tag: e.tag, selector: e.selector, rect: e.rect, area: e.area, path: e.path, ink: e.ink, view: { x: v.x, y: v.y, w: v.w, h: v.h } };
-    const list = waiting().map(n => ({ id: n.id, note: n.note, page: n.page, kind: n.element.kind, text: n.element.text,
-      ...(withShots ? { here: true, mark: markOf(n), shot: n.shot ? { url: `${base}/api/review/shot?id=${n.id}`, element: n.element, viewport: n.viewport } : null,
+    // (as feedback.ts mine() gives them: the anchor, and what frames the screenshot)
+    const markOf = ({ element: e }) => e.kind === 'general' ? null : { v: e.v, url: e.url, el: e.el, view: e.view, ink: e.ink, kind: e.kind, area: e.area };
+    const list = waiting().map(n => ({ id: n.id, note: n.note, page: n.page, kind: n.element.kind, text: n.element.el?.text ?? '',
+      ...(withShots ? { here: true, mark: markOf(n), shot: n.shot ? { url: `${base}/api/review/shot?id=${n.id}`, mark: { kind: n.element.kind, area: n.element.area, el: n.element.el && { box: n.element.el.box }, view: n.element.view } } : null,
         pictures: (n.pictures ?? []).map(p => ({ file: p.file, url: `${base}/api/review/shot?id=${n.id}&pic=${p.file}` })) } : {}) }));   // (pictures)
     return r.fulfill({ json: { notes: list.length, list, sent: false, more: false } });
   }
@@ -233,7 +229,8 @@ assert.ok(await page.evaluate(() => document.elementFromPoint(innerWidth / 2, in
 assert.ok(await nothingTicked(), 'nothing is ticked, the older note and the one just pinned alike');
 const thumbnail = page.locator(`li.pending:has([data-note="${mine}"]) .shot img`);
 await thumbnail.waitFor();
-assert.ok(await showsMark(thumbnail, minesMark.element.rect, minesMark.viewport.w), "the note's thumbnail is framed on the pinned headline");
+const onScreen = ({ el: { box }, view }) => ({ ...box, x: box.x - view.x, y: box.y - view.y });   // (the anchor's document px)
+assert.ok(await showsMark(thumbnail, onScreen(minesMark.element), minesMark.viewport.w), "the note's thumbnail is framed on the pinned headline");
 assert.equal(await page.textContent(`li.pending:has([data-note="${mine}"]) .seen`), minesMark.seen, 'the note says what it was seen on');
 assert.ok(await page.$eval('section.wanted [data-send]', b => b.disabled));
 await page.click(`[data-note="${mine}"]`);   // the board ticks the note it recognises
@@ -385,11 +382,11 @@ assert.deepEqual(await overPage(tab), [], 'nothing comes up over the page in a t
 // one
 const items = () => tab.$$eval('review-mode .menu .items button:not([hidden])', bs => bs.map(b => b.firstChild.textContent));
 await tab.click('review-mode .more');
-assert.deepEqual(await items(), ['General note', 'My notes', 'Listen as I draw', 'Send my notes'], 'the board has a Send in the tool');
+assert.deepEqual(await items(), ['General note', 'My notes', 'Send my notes'], 'the board has a Send in the tool');
 assert.equal(await tab.textContent('review-mode .menu .cap'), `Review · ${pendingHello()} notes to send`);
 // every line of it on one line on a phone: the count only in the caption, a sub-line only what its title doesn't say
 const subs = () => tab.$$eval('review-mode .menu .items button:not([hidden]) small', s => s.map(x => x.textContent));
-assert.deepEqual(await subs(), ['About it all, not one spot', 'Read, change or delete', 'Off', 'Tick and send in HQ']);
+assert.deepEqual(await subs(), ['About it all, not one spot', 'Read, change or delete', 'Tick and send in HQ']);
 assert.deepEqual(await tab.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
 assert.equal(await tab.textContent('review-mode .more .count'), String(notes.filter(n => n.slug === 'hello' && n.status === 'pending').length), "the count is the board's notes waiting on the product");
 await shot('menu', tab);
@@ -403,7 +400,8 @@ await tab.click('review-mode .send');
 await tab.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
 const general = notes.find(n => n.note === 'The pages greet in two different ways');
 await tab.waitForFunction(n => document.querySelector('review-mode').shadowRoot.querySelector('.more .count').textContent === n, String(notes.filter(n => n.slug === 'hello' && n.status === 'pending').length));
-assert.deepEqual([general.posted.element, general.posted.shot, general.posted.page], [{ kind: 'general' }, null, `${PRODUCT}/`]);
+const { kind, el, ink: lines, area } = general.posted.element;
+assert.deepEqual([{ kind, el, lines, area }, general.posted.shot, general.posted.page], [{ kind: 'general', el: null, lines: [], area: null }, null, `${PRODUCT}/`]);
 // My notes: the sidebar, every note with its screenshot (a general note has none), the words in full and the page; the
 // board changes one's words there, and deletes another (two taps: discarded, as in HQ)
 const tabNote = notes.find(n => n.note === 'Seen in a browser tab');
@@ -760,9 +758,7 @@ await rm(saved.match(/^Screenshot: (\S+)$/m)[1]);
 const SHELF = 'https://front.preview.test', posted = [];
 await context.route(`${SHELF}/**`, r => {
   const path = new URL(r.request().url()).pathname;
-  if (path === '/hello/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
-  if (path === '/hello/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
-  if (path === '/hello/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
+  if (path.startsWith('/hello/') && fulfilPart(r, path, reviewJs)) return;
   if (path === '/hello/__review/coach') return r.fulfill({ json: { show: false } });
   if (path.includes('/__review/') && r.request().method() === 'POST') { posted.push(path); return r.fulfill({ json: { ok: true, id: ++lastId } }); }
   return r.fulfill({ contentType: 'text/html', body: PAGE.replace('src="/__review/', 'src="./__review/') });
@@ -771,22 +767,28 @@ const shelf = await context.newPage();
 shelf.on('pageerror', e => errors.push(e.message));
 await shelf.goto(`${SHELF}/hello/`);
 await pinNote(shelf, 'Seen on a shelf', () => shelf.click('review-mode .fab', { force: true }), shelf.mouse);
-assert.deepEqual(posted, ['/hello/__review/notes'], "a shelf's note goes to its own path");
+// (the mark started the mic: its clip, if it went, goes there too)
+assert.deepEqual(posted.filter(p => p !== '/hello/__review/voice'), ['/hello/__review/notes'], "a shelf's note goes to its own path");
 
-// ---- HQ itself: Settings summons review mode over HQ's own screens (drawn under HQ's CSP, which admits no inline
-// style), its note goes to HQ's own /__review/notes and waits in Reviews under HQ, its Send my notes opens Reviews at
-// it, a send there clears its count, and its menu puts the pin away until Settings summons it again
+// ---- HQ itself: review mode over HQ's own screens (drawn under HQ's CSP, which admits no inline style), its note goes
+// into the board's book, on the sheet of HQ's page there (book-check.mjs has the Pencil's story).
 OWNERS.hq = ['HQ', 'bolt', 'Bolt'];
-const onHq = [];
+const onHq = [], booked = [];
 await context.route(`${base}/__review/**`, r => {
-  const path = new URL(r.request().url()).pathname, hqNotes = () => notes.filter(n => n.slug === 'hq' && n.status === 'pending');
-  if (path === '/__review/review.js') return r.fulfill({ contentType: 'text/javascript; charset=utf-8', body: reviewJs });
-  if (path === '/__review/frame.js') return r.fulfill({ contentType: 'text/javascript', body: frameJs });
-  if (path === '/__review/ink.js') return r.fulfill({ contentType: 'text/javascript', body: inkJs });
+  const path = new URL(r.request().url()).pathname;
+  if (fulfilPart(r, path, reviewJs)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/__review/mine') return r.fulfill({ json: { notes: hqNotes().length, list: hqNotes().map(n => ({ id: n.id, note: n.note, page: n.page })), sent: false, more: false } });
-  if (path === '/__review/notes') { onHq.push(path); notes.push(note('hq', r.request().postDataJSON().note)); return r.fulfill({ json: { ok: true, id: lastId } }); }
+  if (path === '/__review/mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } }); // (HQ's notes are the book's)
+  if (path === '/__review/notes') { onHq.push(path); return r.fulfill({ json: { ok: true, id: ++lastId } }); }
   return r.fulfill({ status: 404, body: '' });
+});
+await context.route(`${base}/api/book**`, r => {
+  const path = new URL(r.request().url()).pathname;
+  if (path === '/api/book') return r.fulfill({ json: { day: '2026-10-26', today: '2026-10-26', days: [], pages: [] } });
+  if (path === '/api/book/sheets') return r.fulfill({ json: { open: [], sent: [] } });
+  if (path === '/api/book/page/new') return r.fulfill({ json: { id: 5, ...r.request().postDataJSON() } });
+  if (path === '/api/book/note') { const b = r.request().postDataJSON(); booked.push(b); return r.fulfill({ json: { note: { id: 9, n: 1, status: 'open', ...b }, sheet: { id: 1 } } }); }
+  return r.fulfill({ json: { notes: [] } });
 });
 await context.route(`${base}/?intro=0`, async r => r.fulfill({ response: await r.fetch(),
   headers: { 'content-security-policy': "default-src 'self'; style-src 'self' https://fonts.googleapis.com; style-src-attr 'unsafe-inline'; img-src 'self' data: blob:; frame-src 'self' https://*.preview.test" } }));   // (frame-src)
@@ -794,34 +796,23 @@ const hq = await context.newPage();
 hq.on('pageerror', e => errors.push(e.message));
 await hq.goto(`${base}/?intro=0`);
 await until(hq, '#loading.gone');
-const summon = async () => { await hq.click('#btn-computer'); await hq.click('[data-app=settings]'); await hq.click('[data-run="sys:pin"]'); };
-await summon();
-await hq.waitForSelector('review-mode .fab');
+await hq.waitForSelector('review-mode .fab');   // (signed in, HQ always has it)
 assert.equal(await hq.$eval('review-mode .fab', b => getComputedStyle(b).position), 'absolute', 'review mode is drawn under HQ\'s CSP');
 await hq.click('review-mode .fab', { force: true });
 await hq.waitForSelector('review-mode .veil:not([hidden])');
 await hq.mouse.click(120, 24);   // (HQ's plate, up in the corner)
 await hq.waitForSelector('review-mode .sheet:not([hidden])');
+assert.equal(await hq.textContent('review-mode .send'), 'Send', "HQ's post-it has one Send");
 await hq.fill('review-mode textarea', 'The plate could say the time');
 await hq.click('review-mode .send');
-await hq.waitForFunction(() => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent === '1', null, { timeout: 20_000 });
-assert.deepEqual(onHq, ['/__review/notes'], "a note on HQ goes to HQ's own review mode");
+await hq.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
+assert.deepEqual(onHq, [], "a note on HQ doesn't wait in Reviews");
+assert.deepEqual(booked.map(b => ({ page: b.page, words: b.words, said: b.said, v: b.anchor.v, pinned: !!b.anchor.el })),
+  [{ page: 5, words: 'The plate could say the time', said: 'typed', v: 1, pinned: true }], 'it goes on its sheet in the book');
 await shot('hq-pinned', hq);
 await hq.click('review-mode .more');
-await hq.click('review-mode [data-mine]');
-await hq.waitForSelector('section.notes.wanted[data-slug=hq] [data-note]');
-assert.deepEqual(await hq.$$eval('section.notes[data-slug=hq] label b', bs => bs.map(b => b.textContent)), ['The plate could say the time'], 'it waits in Reviews under HQ');
-// sent from Reviews: the pin's count clears without a tap on it
-await hq.click('section.notes[data-slug=hq] [data-note]');
-await hq.click('section.notes[data-slug=hq] [data-send]');
-await hq.waitForFunction(() => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent === '', null, { timeout: 5000 });
-await hq.click('[data-close]');
-await hq.click('review-mode .more');
-await hq.click('review-mode [data-away]');
-assert.equal(await hq.$eval('review-mode', h => getComputedStyle(h).display), 'none', 'its menu puts the pin away');
-await summon();
-assert.equal(await hq.$eval('review-mode', h => getComputedStyle(h).display), 'block', 'and Settings summons it again');
-await hq.click('review-mode .more');
+assert.deepEqual(await hq.$$eval('review-mode .menu .items button:not([hidden])', items => items.map(i => i.firstChild.textContent)), ['General note'],
+  'its menu, its notes sent: a general note, and no switch to put the pin away');
 await hq.click('review-mode [data-general]');
 const draft = 'The cards row is cut off on the right';
 await hq.fill('review-mode textarea', draft);
@@ -857,4 +848,4 @@ assert.deepEqual(errors, []);
 await context.unrouteAll({ behavior: 'ignoreErrors' });   // (HQ still polling as it closes)
 await browser.close(); server.close();
 // (the summary's over a tool, after a late goodbye; its pictures)
-console.log(`notes-check: the badge, the send step from the viewer's slim bar (every note waiting counted) and from review mode's Send my notes ticking no note (over a tool, after a late goodbye; something typed comes up instead), the menu's lines unwrapped on a phone, a discard there, nothing over the page after a pin, My notes as a sidebar with a dozen screenshots loaded as it scrolls (phone and desktop, frame and tab), Change, Delete, Escape, Send my notes in a tab opening Reviews, Call by Send about the ticked notes, a shelf's note on its own path, the board's general note and My notes from the pin's menu, the polaroid and the thumbnail framed on the pin, the pin on HQ itself from Settings, one pin over a framed preview (HQ's covered note taking nothing pasted or dropped), its count cleared by a send in Reviews, pictures pasted, dropped and taken off a note (scaled on the device), in My notes, kept by a change, in Reviews and saved by hq note${shots ? ` (screenshots in ${shots})` : ''}`);
+console.log(`notes-check: the badge, the send step from the viewer's slim bar (every note waiting counted) and from review mode's Send my notes ticking no note (over a tool, after a late goodbye; something typed comes up instead), the menu's lines unwrapped on a phone, a discard there, nothing over the page after a pin, My notes as a sidebar with a dozen screenshots loaded as it scrolls (phone and desktop, frame and tab), Change, Delete, Escape, Send my notes in a tab opening Reviews, Call by Send about the ticked notes, a shelf's note on its own path, the board's general note and My notes from the pin's menu, the polaroid and the thumbnail framed on the pin, the pin always on HQ itself (its note on its sheet in the book), one pin over a framed preview (HQ's covered note taking nothing pasted or dropped), pictures pasted, dropped and taken off a note (scaled on the device), in My notes, kept by a change, in Reviews and saved by hq note${shots ? ` (screenshots in ${shots})` : ''}`);

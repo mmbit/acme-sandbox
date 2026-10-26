@@ -36,12 +36,12 @@
   opacity: 0.5;
   cursor: default;
 }
-.sd svg.px {
+.sd svg.small {
   width: 16px;
   height: 16px;
   flex: none;
   fill: currentColor;
-  shape-rendering: var(--icons, crispEdges);
+  shape-rendering: var(--icons, auto);
 }
 .sd img {
   text-shadow: none;

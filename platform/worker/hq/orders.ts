@@ -49,14 +49,17 @@ type Order = {
 };
 type OrdersRead = { keys?: unknown; synced?: string; error?: string; since: string; orders: Order[] };
 
-const at = (time: string | null | undefined) => (time === null || time === undefined ? '?' : minute(time));
+// (Print API's own times, Dutch with no offset, as they come; HQ's own through minute())
+const at = (time: string | null | undefined) =>
+  time === null || time === undefined ? '?' : time.slice(0, 16).replace('T', ' ');
+const hqTime = (time: string | null | undefined) => (time === null || time === undefined ? '?' : minute(time));
 
 function ordersReport({ keys, synced, error, since, orders }: OrdersRead) {
   const placed = orders ?? [];
   if (!present(keys)) return ['No live Print API keys yet: no live orders to list.'];
   const lines = [
     present(synced)
-      ? `HQ last read Print API at ${at(synced)} UTC (it reads every hour).`
+      ? `HQ last read Print API at ${hqTime(synced)} (it reads every hour).`
       : "HQ hasn't read Print API yet (it does within the hour after the live keys are in).",
   ];
   if (present(error)) lines.push(`Last failure: ${text(error)}.`);
@@ -82,7 +85,7 @@ function orderBlock(order: Order) {
     `  ours: ${ours(order.ours)}`,
   ];
   if (present(order.reprintOf)) lines.push(`  reprint of: ${text(order.reprintOf)}`);
-  lines.push(`  HQ first saw it ${at(order.firstSeen)} UTC, last checked ${at(order.lastChecked)} UTC`, '');
+  lines.push(`  HQ first saw it ${hqTime(order.firstSeen)}, last checked ${hqTime(order.lastChecked)}`, '');
   return lines;
 }
 

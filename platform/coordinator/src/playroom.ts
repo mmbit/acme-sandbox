@@ -1,6 +1,7 @@
 // The play's room (simulation.ts): a full room holds the moment's claims together, a claim may pause running work to
 // make room for itself, and what holds a waiting run until it starts (moved out
 // of simulation.ts).
+import * as memory from './playmemory.ts';
 import type { Wait } from './eta.ts';
 import { compare, deadlinePressure, DEADLINE_PAUSE_MS, PAUSE_MS, spareOnly } from './planner.ts';
 import * as capacity from './playseats.ts';
@@ -16,7 +17,14 @@ export function holdFullRoom(
   seats: capacity.Moment,
   busy: Map<string, number>,
 ) {
-  if (running.length < (play.snapshot.room ?? Infinity)) return false;
+  if (
+    !memory.full(
+      play.snapshot,
+      running.map(run => run.row),
+      seats.now,
+    )
+  )
+    return false;
   const limits = play.snapshot.seatRuns ?? {};
   const choose = capacity.choices(seats, busy, limits);
   // (by its resource, then its deadline pressure: a seat's shared reviews are the seat's own, so it needs no key of its

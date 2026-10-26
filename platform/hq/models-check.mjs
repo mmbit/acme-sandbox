@@ -11,7 +11,8 @@ import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, errorsOf } from '../../shared/browser/browser.mjs';
 
-const RENDERERS = process.argv[2]?.split(',') ?? ['brownstone', 'holo', 'wire'];
+const RENDERERS = process.argv[2]?.split(',') ?? lookNames();
+import { lookNames } from './looks.mjs';
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
 const out = mkdtempSync(join(tmpdir(), 'models-check-')),

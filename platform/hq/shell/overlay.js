@@ -1,6 +1,7 @@
 // Over the canvas: speech bubbles and name cards, DOM placed per frame where the scene anchors them.
 import { esc, clamp } from '../util.js';
 import { scene, chrome } from './stage.js';
+import { pageWidth } from './page.js';
 
 let bubbles = [], shown = null; // shown: the card up now
 
@@ -25,7 +26,7 @@ function dropBubble(b) { b.el?.remove(); return false; }
 
 // a: the anchor (CSS px)
 function place(el, a, w, h, taken) {
-  const x = clamp(a.x - w / 2, 8, innerWidth - w - 8);
+  const x = clamp(a.x - w / 2, 8, pageWidth() - w - 8);
   let y = Math.max(chrome().top, a.y - h - 12);
   // stack above any bubble already placed here
   for (let moved = true, n = 0; moved && taken && n < 6; n++) { moved = false; for (const r of taken) if (x < r.x + r.w && x + w > r.x && y < r.y + r.h + 6 && y + h + 6 > r.y) { y = r.y - h - 8; moved = true; } }
@@ -52,7 +53,7 @@ function drawBubbles() {
 // screen.
 function drawCard() {
   const el = document.getElementById('namecard'), a = shown && scene.anchor(shown.target);
-  if (!a || a.x < 0 || a.y < 0 || a.x > innerWidth || a.y > innerHeight) { if (!el.hidden) el.hidden = true; return; }
+  if (!a || a.x < 0 || a.y < 0 || a.x > pageWidth() || a.y > innerHeight) { if (!el.hidden) el.hidden = true; return; }
   if (el.hidden || el.dataset.id !== shown.target.id) { el.hidden = false; el.dataset.id = shown.target.id; el.innerHTML = `<b>${esc(shown.title)}</b><small>${esc(shown.sub)}</small>`; shown.w = el.offsetWidth; shown.h = el.offsetHeight; }
   place(el, a, shown.w, shown.h);
   el.style.opacity = Math.min(1, shown.life * 2);

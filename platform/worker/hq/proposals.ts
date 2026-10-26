@@ -115,7 +115,7 @@ function line(p: Proposal) {
       : p.status === 'dropped'
         ? `: dropped, ${text(p.why)}`
         : '';
-  return `#${p.id} ${text(p.title)} (${who}${thread}${whose}, ${minute(p.created)} UTC)${became}`;
+  return `#${p.id} ${text(p.title)} (${who}${thread}${whose}, ${minute(p.created)})${became}`;
 }
 
 async function accept(given: string[]) {

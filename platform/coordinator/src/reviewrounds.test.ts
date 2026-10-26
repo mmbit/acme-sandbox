@@ -22,6 +22,7 @@ const projects = await import('./projects.ts');
 const plan = await import('./plan.ts');
 const windows = await import('./windows.ts');
 const proposals = await import('./proposals.ts');
+const inbox = await import('./reviewinbox.ts');
 await worker('seat', { seat: 'codex-1', engine: 'codex', state: 'ready' });
 plan.setOwner('game', 'wren', { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
 projects.createThread({
@@ -61,10 +62,9 @@ const end = async (run: Run, report: Record<string, unknown> = { output: '{"summ
 const heads = new Map<number, string>();
 // The author's job on the thread pushes PR n (the first time), or its fix job does
 async function push(n: number, thread = 'game/world') {
-  const fix = db.prepare("select id from jobs where pr = ? and kind = 'work' and status = 'queued'").get(n) as
-    { id: number } | undefined;
+  const fix = draw(n);
   const job = fix
-    ? ({ ...(await worker('claim', { seat: 'claude-1', engine: 'claude' })).body, seat: 'claude-1' } as Run)
+    ? ((await h.claimJob(fix.id)) as Run)
     : ((await h.start({ agent: 'bolt', branch: `review/${n}`, thread })) as Run);
   const sha = randomBytes(20).toString('hex');
   const since = heads.get(n);
@@ -96,12 +96,20 @@ const findingsOf = (n: number) =>
     issue: string;
     outcome: string | null;
   }[];
-const fixPrompt = (n: number) =>
-  (
-    db.prepare("select prompt from jobs where pr = ? and kind = 'work' and status = 'queued'").get(n) as {
-      prompt: string;
-    }
-  ).prompt;
+// PR n's queued fix task. (A thread's findings go to its project's owner: wren draws the round's blocking ones as one
+// task for its author first, if they're still in the inbox.)
+function draw(n: number) {
+  const item = inbox.get(n);
+  const left = item ? inbox.unassigned(n, item.round) : [];
+  if (left.length) {
+    const made = proposals.accept(`findings:${n}`, 'wren', { for: 'bolt', findings: left, title: `Fix PR #${n}` });
+    assert.equal(typeof made, 'object', String(made));
+  }
+  return db
+    .prepare("select id, prompt from jobs where branch = ? and kind = 'work' and stage = 'fix' and status = 'queued'")
+    .get(`review/${n}`) as { id: number; prompt: string } | undefined;
+}
+const fixPrompt = (n: number) => draw(n)!.prompt;
 const bundles = () =>
   db
     .prepare("select id, project, brief, status from proposals where title like 'Review follow-ups%' order by id")
@@ -328,7 +336,9 @@ test("a first round near its thread's deadline is a later one, and the upstream 
 
 test('a ruling from the upstream round on whose job was never asked what went wrong before review still rules its round', async () => {
   const n = 604;
-  await push(n);
+  // (a thread of its own: the first world's ended with its merges, and its owner draws fixes only into an open one)
+  projects.createThread({ project: 'game', name: 'Ships land', goal: 'Every ship can land', slug: 'ships' });
+  await push(n, 'game/ships');
   for (const run of await claim(n, 'review')) await end(run);
   const [ruling] = await claim(n, 'consolidate');
   await end(

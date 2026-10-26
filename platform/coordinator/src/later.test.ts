@@ -305,16 +305,8 @@ test("a follow-up's card about work it handed out (--when deployed:<job>) is hel
   assert.equal((await titles())[0], 'The plan: go?');
 });
 
-test("a card held on a thread's first task stays held when that task ends, and goes once the thread's pull request is merged and deployed", async t => {
+test("a card held on a thread's first task stays held when that task ends, and goes once the thread's pull request is merged and deployed", async () => {
   const threadends = await import('./threadends.ts');
-  const settingsPath = `${h.repo}/company/projects.yaml`;
-  const settings = readFileSync(settingsPath, 'utf8');
-  t.after(() => {
-    writeFileSync(settingsPath, settings);
-    threadends.watch();
-  });
-  writeFileSync(settingsPath, `${settings}\nplanning: threads\n`);
-  threadends.watch();
   const thread = h.dueThread();
   const first = await h.start({ agent: 'lark', thread }),
     last = h.queue({ agent: 'moss', thread, engine: 'held-thread' });

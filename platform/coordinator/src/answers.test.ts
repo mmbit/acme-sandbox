@@ -6,17 +6,12 @@ import { harness } from './harness.ts';
 
 const h = await harness('answers', {
   before: repo =>
-    writeFileSync(
-      `${repo}/company/projects.yaml`,
-      'projects:\n  - { id: game, name: The game, owner: wren }\nplanning: threads\n',
-    ),
+    writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: game, name: The game, owner: wren }\n'),
 });
 const { db } = h;
 const projects = await import('./projects.ts');
-const threadends = await import('./threadends.ts');
 
 beforeEach(() => {
-  threadends.watch();
   h.cancelQueued();
   db.exec(`delete from runs; delete from jobs; delete from threads; delete from thread_needs; delete from plan_changes;
     delete from waits; delete from wakes; delete from proposals; delete from messages; delete from sorts`);

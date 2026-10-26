@@ -18,9 +18,11 @@ export async function zoom(src, label) {
   const view = placing(box, img);
   fingers(box, view);
   wheel(box, view);
+  // (the box follows the page, which the book's slide resizes as the window does.)
+  const fitting = new ResizeObserver(() => img.complete && view.fit());
   const close = () => {
     sfx.close();
-    removeEventListener('resize', view.fit);
+    fitting.disconnect();
     box.close();
     box.remove();
   };
@@ -31,9 +33,9 @@ export async function zoom(src, label) {
   });
   // (Escape closes this alone, not the tool under it)
   box.addEventListener('keydown', e => e.key === 'Escape' && e.stopPropagation());
-  addEventListener('resize', view.fit);
   // (fitted once open, when the box has its size)
   box.showModal();
+  fitting.observe(box);
   if (img.complete) view.fit();
   else img.onload = view.fit;
   sfx.open();

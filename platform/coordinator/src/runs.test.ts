@@ -1335,7 +1335,6 @@ test("a machine set up with its install command: one command with its key, the m
         gpus: false,
         helpers: 2,
         sockets: true,
-        alone: false,
       },
     ],
     busy: [],
@@ -1384,37 +1383,6 @@ test("a machine set up with its install command: one command with its key, the m
   const key = /HELPER_KEY=(helper_[\w-]{43})/.exec(again.body.install)![1];
   assert.equal((await asHelper('/api/helper/setup', {})).status, 401);
   assert.equal((await asKey(key, '/api/helper/setup', {})).status, 200);
-  await h.finish(job);
-});
-
-test('a kind that keeps its helpers alone: the manager hears so, and only a helper on a network of its own takes its runs, never one an older manager made', async t => {
-  declareKinds(
-    t,
-    `${TESTS_KIND}
-    model:
-      about: a model's own commands
-      sockets: true
-      alone: true
-`,
-  );
-  await lendOne();
-  const kinds = (await asHelper('/api/helper/setup', {})).json.kinds;
-  assert.deepEqual(
-    kinds.map((kind: { name: string; alone: boolean }) => [kind.name, kind.alone]),
-    [
-      ['tests', false],
-      ['model', true],
-    ],
-  );
-  const job = await h.start({ agent: 'bolt' });
-  const sent = await sendRun(job.token, { command: 'true', kind: 'model' });
-  const locked = await asHelper('/api/helper/take', { kind: 'model', slot: 1, locked: true });
-  assert.equal(locked.status, 400, 'on the shared network an older manager made');
-  assert.match(locked.text, /installed again/);
-  assert.equal(stateOf(sent.json.id), 'waiting');
-  const alone = await asHelper('/api/helper/take', { kind: 'model', slot: 1, locked: true, alone: true });
-  assert.equal(alone.json.id, takeOf(sent.json.id));
-  assert.equal(alone.json.sockets, true);
   await h.finish(job);
 });
 
@@ -1479,52 +1447,5 @@ test("a lent machine's runs fit its own memory cap together: a run of another ki
   assert.equal(stateOf(render.json.id), 'waiting');
   await asHelper(`/api/helper/runs/${simTake}/finish`, Buffer.alloc(0), { 'x-run-exit': '0' });
   assert.equal((await asHelper('/api/helper/take', { kind: 'render', slot: 1 })).json.id, takeOf(render.json.id));
-  await h.finish(job);
-});
-
-test("a lent machine's GPU runs take its cards one at a time: one of another GPU kind waits while one runs, with memory to spare, and goes once it ends; a kind without GPUs isn't held", async t => {
-  declareKinds(
-    t,
-    '    voice:\n      memoryGb: 4\n      gpus: true\n    inference:\n      memoryGb: 4\n      gpus: true\n    render:\n      memoryGb: 4\n',
-  );
-  await lendOne();
-  const job = await h.start({ agent: 'bolt' });
-  const voice = await sendRun(job.token, { command: 'true', kind: 'voice' });
-  const inference = await sendRun(job.token, { command: 'true', kind: 'inference' });
-  const render = await sendRun(job.token, { command: 'true', kind: 'render' });
-  const voiceTake = (await asHelper('/api/helper/take', { kind: 'voice' })).json.id;
-  assert.equal(voiceTake, takeOf(voice.json.id));
-  assert.equal(
-    (await asHelper('/api/helper/take', { kind: 'inference' })).status,
-    204,
-    'the voice run holds the cards, and no machine memory cap is set',
-  );
-  assert.equal(stateOf(inference.json.id), 'waiting');
-  assert.equal((await asHelper('/api/helper/take', { kind: 'render' })).json.id, takeOf(render.json.id));
-  await asHelper(`/api/helper/runs/${voiceTake}/finish`, Buffer.alloc(0), { 'x-run-exit': '0' });
-  assert.equal((await asHelper('/api/helper/take', { kind: 'inference' })).json.id, takeOf(inference.json.id));
-  await h.finish(job);
-});
-
-test('a faster machine whose cards another GPU run holds leaves a GPU run to a slower one whose cards are free', async t => {
-  declareKinds(
-    t,
-    '    voice:\n      memoryGb: 4\n      gpus: true\n    inference:\n      memoryGb: 4\n      gpus: true\n',
-  );
-  await lendNone();
-  const fast = await lend('the rig');
-  const slow = await lend('an old laptop');
-  const job = await h.start({ agent: 'bolt' });
-  const asFast = (kind: string) => asKey(fast.key, '/api/helper/take', { kind, cpus: 16, memoryGb: 64, bench: 120 });
-  const asSlow = (kind: string) => asKey(slow.key, '/api/helper/take', { kind, cpus: 4, memoryGb: 8, bench: 60 });
-  const voice = await sendRun(job.token, { command: 'true', kind: 'voice' });
-  const voiceTake = (await asFast('voice')).json.id;
-  assert.equal(voiceTake, takeOf(voice.json.id));
-  const inference = await sendRun(job.token, { command: 'true', kind: 'inference' });
-  assert.equal((await asFast('inference')).status, 204, "the voice run holds the rig's cards");
-  const inferenceTake = (await asSlow('inference')).json.id;
-  assert.equal(inferenceTake, takeOf(inference.json.id), 'the rig asked just now, but has no room for it');
-  assert.equal((await finishAs(fast.key, voiceTake)).status, 200);
-  assert.equal((await finishAs(slow.key, inferenceTake)).status, 200);
   await h.finish(job);
 });

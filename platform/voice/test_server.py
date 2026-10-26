@@ -124,6 +124,7 @@ import limit_model  # noqa: E402
 import guard  # noqa: E402
 import room  # noqa: E402
 import echo  # noqa: E402
+import drawing  # noqa: E402
 
 server.time = NS(monotonic=lambda: CLOCK[0], time=lambda: NOW / 1000)  # (time: when a call went live, app_call)
 REPLY = "Sure, I'll check the orders now. Then I'll look at the invoices. And after that, the parcels."  # 3 sentences: 6 s
@@ -3058,6 +3059,200 @@ class Screen(Juno):
         proc = await asyncio.create_subprocess_exec(*guard.HQ_TOOLS, env=env, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE)
         out, _ = await proc.communicate(''.join(json.dumps(m) + '\n' for m in msgs).encode())
         return [(r['result']['isError'], r['result']['content']) for r in map(json.loads, out.decode().splitlines())]
+
+
+# The board drawing on its call
+NOTES = {41: (2, 'this  feels\nhigh', {'type': 'image/png', 'data': DOT}), 42: (3, '', None),
+         43: (4, 'and here', {'type': 'image/jpeg', 'data': BROKEN})}  # (by the note's id: its number, words, picture)
+TEACUPS = '/projects/teacups'
+
+
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class BoardDrawing(Juno):
+    """The board draws on its own call (call 7): its notes come from the coordinator's note route (`NOTES`, anything else
+    a 404), the agent asks to see its screen and rings things on its page, and HQ answers on the call's WebSocket."""
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.hq, server.hq, self.fetched, self.screen_on = server.hq, self.coordinator, [], False
+
+    async def asyncTearDown(self):
+        server.hq = self.hq
+
+    def coordinator(self, method, path, body=None):
+        if path == 'screen-turn':
+            return {'on': self.screen_on, 'paused': False, 'lines': [], 'last': 0, 'version': 0}
+        self.fetched.append(path)
+        note_id = int(path.split('id=')[1].split('&')[0])
+        if path != f'note?id={note_id}&call=7' or note_id not in NOTES:
+            raise HTTPError(f'http://hq/api/voice/{path}', 404, 'Not Found', {}, None)
+        n, words, picture = NOTES[note_id]
+        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture}
+
+    def told(self, kind):
+        return [{k: v for k, v in e.items() if k != 'type'} for e in self.events if e['type'] == kind]
+
+    async def turn(self, words):
+        await self.talk(words, 30)
+        await self.quiet(20)
+        await self.settle()
+        await self.quiet(250)
+
+    async def quiet_turn(self):
+        """The line stays quiet long enough for what waits to go in a turn of its own."""
+        await self.quiet(70)
+        await asyncio.sleep(0.3)
+        await self.settle()
+        await self.quiet(250)
+
+    async def test_a_note_goes_to_the_agent_as_a_picture_and_its_words_once_with_the_boards_next_words(self):
+        await self.call.note(41)
+        await self.call.note(41)  # (HQ sends it again until it hears back: let be)
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}])
+        await self.turn('Is that right?')
+        drawn = "(I drew note 2 on HQ's page /projects/teacups, saying “this feels high”: the picture is the page around it, my ink on it.)"
+        self.assertEqual((self.brain.asked, self.brain.shown), ([f'{drawn}\n\nIs that right?'], [['note 2']]))
+        self.assertEqual(self.call.lines[:2], ['Board: (drew note 2 on /projects/teacups)', 'Board: Is that right?'])
+        self.assertEqual(self.call.picture_bytes, len(DOT))
+        self.assertEqual(self.fetched, ['note?id=41&call=7'])
+        self.assertEqual(self.told('picture'), [], 'HQ hears no picture word for a note')
+        await self.call.note(41)
+        await self.turn('And now?')
+        self.assertEqual(self.brain.shown[1], [], 'once')
+        recap = await self.call.lose_pictures([])  # (a restarted session: the recap names it, HQ hears nothing)
+        self.assertIn("You can't see the board's note 2 any more", recap)
+        self.assertEqual(len(self.events), len([e for e in self.events if e['type'] != 'note']) + 1)
+
+    async def test_notes_drawn_while_the_line_is_quiet_go_in_a_turn_of_their_own_in_their_order(self):
+        await self.call.note(42)  # (no picture: its words alone, here none)
+        await self.call.note(41)
+        await self.quiet_turn()
+        self.assertEqual(self.brain.asked, ["(I drew note 3 on HQ's page /projects/teacups.)\n(I drew note 2 on HQ's page "
+                                            '/projects/teacups, saying “this feels high”: the picture is the page around it, my '
+                                            'ink on it.)'])
+        self.assertEqual(self.brain.shown, [['note 2']])
+        self.assertEqual(self.call.lines[:2], ['Board: (drew note 3 on /projects/teacups)', 'Board: (drew note 2 on /projects/teacups)'])
+
+    async def test_a_note_whose_picture_doesnt_fit_the_calls_bytes_goes_with_its_words(self):
+        with unittest.mock.patch.object(server, 'SESSION_BYTES', len(DOT) - 1):
+            await self.call.note(41)
+            await self.turn('See?')
+        self.assertEqual(self.told('note'), [{'id': 41, 'state': 'received'}])
+        self.assertEqual(self.brain.shown, [[]])
+        self.assertEqual(self.brain.asked, ["(I drew note 2 on HQ's page /projects/teacups, saying “this feels high”. Its "
+                                            "picture didn't fit: the call has had all the pictures it can hold.)\n\nSee?"])
+        self.assertEqual(self.call.picture_bytes, 0)
+
+    async def test_a_note_the_line_cannot_read_is_refused_and_told_again_on_resume(self):
+        for note_id in (99, 43):  # (not this call's, a picture broken partway)
+            await self.call.note(note_id)
+        self.assertEqual(self.told('note'), [{'id': 99, 'state': 'failed', 'why': 'unreadable'},
+                                             {'id': 43, 'state': 'failed', 'why': 'unreadable'}])
+        await self.quiet(100)
+        await asyncio.sleep(0.3)
+        self.assertEqual(self.brain.asked, [])
+        self.events.clear()
+        await self.call.retell()
+        self.assertEqual(self.told('note'), [{'id': 99, 'state': 'failed', 'why': 'unreadable'},
+                                             {'id': 43, 'state': 'failed', 'why': 'unreadable'}])
+
+    async def test_an_ask_to_see_goes_to_hq_and_the_boards_tap_comes_with_the_agents_next_turn(self):
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        reader, writer = await asyncio.open_unix_connection(str(socket_path))
+        writer.write((json.dumps({'ask_to_see': "the pricing page", 'key': self.call.screen_key}) + '\n').encode())
+        self.assertEqual(json.loads(await reader.read()), {'ok': server.ASK_WORDS['asked'].format(what="the pricing page")})
+        writer.close()
+        self.assertEqual(self.told('ask'), [{'id': 1, 'what': "the pricing page"}])
+        self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the basket'}),
+                         {'error': server.ASK_WORDS['waiting'].format(what="the pricing page")})
+        self.call.drawing.asked(7, 'not now')  # (no such ask)
+        self.call.drawing.asked(1, 'show')
+        self.call.drawing.asked(1, 'not now')  # (answered already)
+        await self.turn('There.')
+        show = "(They tapped Show on your ask to see the pricing page: their screen comes with their turns from now.)"
+        self.assertEqual(self.brain.asked, [f'{show}\n\nThere.'])
+        self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the basket'}), {'ok': server.ASK_WORDS['asked'].format(what='the basket')})
+        self.call.drawing.asked(2, 'not now')
+        await self.quiet_turn()  # (nothing said: its own turn once the line is quiet)
+        self.assertEqual(self.brain.asked[1:], ['(They tapped Not now on your ask to see the basket.)'])
+        self.assertEqual(self.told('ask'), [{'id': 1, 'what': "the pricing page"}, {'id': 2, 'what': 'the basket'}])
+
+    async def test_no_ask_while_the_screen_is_shown_or_hq_is_away(self):
+        self.screen_on = True
+        await self.turn('Here it is.')
+        self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}), {'error': server.ASK_WORDS['shown']})
+        self.screen_on = False
+        await self.turn('Stopped.')
+        self.call.away = True
+        self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}), {'error': server.ASK_WORDS['away']})
+        self.assertEqual(await self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}), {'error': server.INK_WORDS['away']})
+        self.call.reconnected()
+        self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}))
+        self.assertEqual(self.told('ask'), [{'id': 1, 'what': 'the shop'}])
+
+    async def ink(self, draw, answer=None):
+        """The draw tool's answer, with HQ answering the ring it was sent (`answer`'s fields; None: no answer)."""
+        tool = asyncio.create_task(self.call.drawing.ink_tool({'draw': draw}))
+        while not tool.done() and len(self.told('ink')) < len(self.inks) + 1:
+            await asyncio.sleep(0.01)
+        self.inks = self.told('ink')
+        if answer is not None:
+            self.call.drawing.inked({'type': 'inked', 'id': self.inks[-1]['id'], **answer})
+        return await tool
+
+    async def test_a_ring_goes_to_hq_and_the_tool_answers_with_hqs_word(self):
+        self.inks = []
+        self.assertEqual(await self.ink({'ring': 'Add to basket', 'words': 'this one'}, {'drawn': True}),
+                         {'ok': 'Drawn: a ring round “Add to basket” on their page, in your ink, with “this one” beside it. '
+                                "It stays on this call's page in the book."})
+        self.assertEqual(await self.ink({'note': 2}, {'drawn': False, 'why': 'There is no note 2 on this page.'}),
+                         {'error': 'There is no note 2 on this page.'})
+        with unittest.mock.patch.object(drawing, 'INK_SECONDS', 0.05):
+            self.assertEqual(await self.ink({'ring': 'Basket'}), {'error': server.INK_WORDS['late']})
+        self.call.drawing.inked({'type': 'inked', 'id': 3, 'drawn': True})  # (too late: let be)
+        self.assertEqual(await self.ink({'ring': 'x', 'note': 2}), {'error': server.INK_WORDS['shape']})
+        self.assertEqual(self.inks, [{'id': 1, 'ring': 'Add to basket', 'note': None, 'words': 'this one'},
+                                     {'id': 2, 'ring': None, 'note': 2, 'words': ''}, {'id': 3, 'ring': 'Basket', 'note': None, 'words': ''}])
+        tool = asyncio.create_task(self.call.drawing.ink_tool({'draw': {'ring': 'Checkout'}}))
+        while len(self.told('ink')) < 4:
+            await asyncio.sleep(0.01)
+        await asyncio.to_thread(self.call.end)  # (hung up while HQ draws it: from the hang-up's thread)
+        self.assertEqual(await asyncio.wait_for(tool, 1), {'error': server.INK_WORDS['ended']})
+
+    async def test_hqs_note_tap_and_ring_answer_reach_the_call_on_its_websocket(self):
+        old = server.Line(Socket([]))  # (HQ's connection, dropped: what's sent on it is lost)
+        old.ws.closed = True
+        self.call.live_at = 1.0
+        server.CALLS['c1'] = {'call': self.call, 'line': old, 'timer': None}
+        self.call.send_event = lambda e: server.CALLS['c1']['line'].send(json.dumps(e))
+        self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}))
+        ink = asyncio.create_task(self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}))
+        await asyncio.sleep(0.05)
+        resumed = Socket([json.dumps(m) for m in ({'resume': 'c1'}, {'type': 'note', 'id': 41}, {'type': 'asked', 'id': 1, 'answer': 'show'},
+                                                  {'type': 'inked', 'id': 2, 'drawn': True})])
+        try:
+            await server.app_call(resumed)
+            await asyncio.sleep(0.1)
+        finally:
+            if timer := server.CALLS.pop('c1')['timer']:
+                timer.cancel()
+        sent = [json.loads(m) for m in resumed.sent]
+        self.assertIn({'type': 'ask', 'id': 1, 'what': 'the shop'}, sent, 'the waiting ask, again on the resumed connection')
+        self.assertIn({'type': 'note', 'id': 41, 'state': 'received'}, sent)
+        self.assertIn('ok', await ink)
+        self.assertTrue(self.call.away, 'the connection dropped')
+        self.assertEqual(self.call.drawing.answered, ["(They tapped Show on your ask to see the shop: their screen comes with "
+                                                      'their turns from now.)'])
+
+    async def test_no_asks_or_rings_on_a_call_out_or_the_phone(self):
+        for callout, phone in ((12, False), (0, True)):
+            self.call.callout, self.call.phone = callout, phone
+            self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}), {'error': server.ASK_WORDS['none']})
+            self.assertEqual(await self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}), {'error': server.INK_WORDS['none']})
+        self.assertEqual(self.told('ask') + self.told('ink'), [])
 
 
 @unittest.skipUnless(np is not None and limit_model.installed(), 'needs numpy and the Claude CLI (the worker and the voice image have it)')

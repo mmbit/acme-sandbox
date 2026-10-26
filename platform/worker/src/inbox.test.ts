@@ -1,18 +1,20 @@
 // node --test src/inbox.test.ts   (the real Claude CLI with the worker's --settings, a scripted model and a stand-in
 // coordinator on 127.0.0.1: a colleague's message sent mid-run reaches the model's next request, once, in the job's own
 // thread only, and the hook acknowledges it; a lost ack means it comes again; skipped where the CLI isn't installed,
-// the worker image has it)
+// the worker image has it. And the real Codex CLI with a Codex work run's hook: HQ's word on memory at its next step)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, mkdirSync, rmSync, chownSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, chownSync, writeFileSync } from 'node:fs';
 import { createServer, type ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { inboxSettings } from './inbox.ts';
+import { inboxHooks, inboxSettings } from './inbox.ts';
+import { completionHooks } from './completion.ts';
 
 const HQ = new URL('../bin/hq', import.meta.url).pathname;
-const cli = (() => { try { execFileSync('claude', ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } })();
+const has = (name: string) => { try { execFileSync(name, ['--version'], { stdio: 'ignore' }); return true; } catch { return false; } };
+const cli = has('claude'), codex = has('codex');
 const TOKEN = `job-token-${randomBytes(8).toString('hex')}`;
 
 type Req = { thread: 'main' | 'sub'; text: string };   // each model request: whose, and everything it carries
@@ -160,4 +162,61 @@ test("HQ's word that memory is low is in the next request as HQ's own, and a sto
   assert.ok(main[1].text.includes(`PostToolUse:Bash hook additional context: ${line}`), main[1].text.slice(-800));
   assert.deepEqual(r.stops, [false, true]);
   assert.deepEqual(r.acks, [], 'nothing to acknowledge');
+});
+
+test("a Codex work run hears HQ's word on memory at its next step, once, and its stop is never kept going for it", { skip: !codex && 'no codex CLI here' }, async () => {
+  // the worker's hooks.json for a Codex work run carries the inbox hook after each tool call, and none as it stops
+  const hooks: Record<string, { hooks: { command: string }[] }[] | undefined> = completionHooks('work', { hq: HQ, messages: 'steps', checkout: '/work/x' });
+  assert.deepEqual(hooks.PostToolUse, inboxHooks(HQ).PostToolUse);
+  assert.ok(hooks.Stop?.length && hooks.Stop.every(h => !h.hooks[0].command.includes('inbox')));
+  const line = `HQ: the server is short of memory right now ${randomBytes(4).toString('hex')}`;
+  const requests: string[] = [], stops: boolean[] = [], waiting: string[] = [];
+  const server = createServer((req, res) => {
+    let b = ''; req.on('data', d => { b += d; });
+    req.on('end', () => {
+      // lowmemory.ts's take(): each line once, never to a stopping session
+      if (req.url === '/api/agent/inbox') {
+        const stopping = JSON.parse(b || '{}').stopping === true;
+        stops.push(stopping);
+        res.setHeader('content-type', 'application/json');
+        return res.end(JSON.stringify(stopping || req.headers.authorization !== `Bearer ${TOKEN}` ? [] : waiting.splice(0).map(text => ({ memory: 1, text }))));
+      }
+      if (!req.url!.endsWith('/responses')) { res.writeHead(404); return res.end(); }
+      requests.push(b);
+      const n = requests.length;
+      if (n === 1) waiting.push(line);
+      if (n === 3) waiting.push(`${line} again`);   // waiting as the session stops: it ends all the same
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      const ev = (d: any) => res.write(`event: ${d.type}\ndata: ${JSON.stringify(d)}\n\n`);
+      ev({ type: 'response.created', response: { id: `resp_${n}` } });
+      ev({ type: 'response.output_item.done', item: n < 3
+        ? { type: 'function_call', id: `fc_${n}`, call_id: `call_${n}`, name: 'exec_command', arguments: JSON.stringify({ cmd: `echo ${n}` }) }
+        : { type: 'message', role: 'assistant', id: `msg_${n}`, content: [{ type: 'output_text', text: 'Done.' }] } });
+      ev({ type: 'response.completed', response: { id: `resp_${n}`, usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 } } });
+      res.end();
+    });
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const url = `http://127.0.0.1:${(server.address() as any).port}`;
+  const home = mkdtempSync(`${tmpdir()}/inbox-codex-`);
+  try {
+    mkdirSync(`${home}/.codex`); mkdirSync(`${home}/work`);
+    writeFileSync(`${home}/.codex/hooks.json`, JSON.stringify({ hooks: inboxHooks(HQ, true) }));
+    const env = { PATH: process.env.PATH, HOME: home, CODEX_HOME: `${home}/.codex`, STAND_IN_KEY: 'test', HQ_URL: url, HQ_TOKEN: TOKEN, HQ_AGENT: 'bolt', HQ_JOB: '934', HQ_JOB_DIR: `${home}/work/.hq` };
+    const child = spawn('codex', ['exec', '--json', '--skip-git-repo-check', '--dangerously-bypass-hook-trust', '--dangerously-bypass-approvals-and-sandbox',
+      '-c', 'model_provider="stand-in"', '-c', `model_providers.stand-in={name="stand-in",base_url="${url}/v1",wire_api="responses",env_key="STAND_IN_KEY"}`,
+      '-m', 'gpt-6.1-sol', '-'], { cwd: `${home}/work`, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let out = '', err = '';
+    child.stdout.on('data', d => { out += d; }); child.stderr.on('data', d => { err += d; });
+    child.stdin.end('MAIN: do the job.');
+    const code = await new Promise<number>(r => child.on('close', c => r(c ?? 1)));
+    assert.equal(code, 0, (err + out).slice(-800));
+    assert.equal(requests.length, 3, 'the stop ends the session');
+    const heard = (r: string) => r.split(JSON.stringify(line).slice(1, -1)).length - 1;
+    assert.deepEqual(requests.map(heard), [0, 1, 1], 'in the request after the first step, and not again');
+    assert.deepEqual(stops, [false, false], 'after each tool call, never as it stops');
+    assert.deepEqual(waiting, [`${line} again`], 'the line waiting as it stopped was never taken');
+  } finally {
+    server.close(); rmSync(home, { recursive: true, force: true });
+  }
 });

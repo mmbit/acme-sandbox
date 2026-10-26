@@ -12,6 +12,8 @@ import { makeLook, spriteFrame } from '../brownstone/sprites.js';
 import { cam, view, reset, setScreen, step as camStep, matrices, project, ray, focus as frame, camera } from './camera.js';
 
 export const info = { id: 'holo', name: 'Holo deck', context: 'webgl2', label: 'The company as a hologram over a radar table' };
+// The look's style (pixel, line or any), which picks its icons.
+export const style = 'any';
 
 const HOLD = 4.2;          // seconds the tour stays at each stop
 const SPARKS = [MAG, GOLD, TEAL, CORAL, VIOLET, WHITE];

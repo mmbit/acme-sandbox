@@ -4,7 +4,7 @@
 // app with a metrics.json, or a kit with a dashboard, shows up here with no change to HQ. Their labels are text from the
 // repo, so every string is escaped. Numbers are figures, charts and tables here, never a sentence with a few of them in
 // bold.
-import { esc, hash, pixelArt, stylesheet } from '../util.js';
+import { esc, hash, gridArt, stylesheet } from '../util.js';
 import { icon } from './icons.js';
 import { loadNumbers, loadNumbersApp, loadApps } from './data.js';
 import { appTile, appGroups, showTiles } from './tiles.js';
@@ -105,7 +105,7 @@ const range = (from, to) => from && to ? companyFormats().days(from, to, 'en') :
 const clock = ts => dayTime(ts, { weekday: false, separator: ' · ' });
 const country = c => { if (!c) return 'Unknown'; try { return new Intl.DisplayNames(['en'], { type: 'region' }).of(c) || c; } catch { return c; } };
 
-// ---------------------------------------------------------------- pixel art
+// ---------------------------------------------------------------- pictures
 // Each app's own little sigil: a mirrored 5×5 pattern from its slug, the same on every visit (the JSON names no icon).
 function sigil(slug) {
   const h = hash(slug);
@@ -115,8 +115,10 @@ function sigil(slug) {
     rows.push([...half, half[1], half[0]].join(''));
   }
   if (rows.join('').split('#').length < 8) rows[2] = '#####'; // never a near-empty one
-  return pixelArt(['.......', ...rows.map(r => `.${r}.`), '.......'], 'px sigil');
+  return gridArt(['.......', ...rows.map(r => `.${r}.`), '.......'], 'small sigil');
 }
+// A grid picture (pixel art) where the look wears pixel icons, else the name's initial in its place (numbers.css)
+const gridOr = (art, name, cls) => `${art}<i class="${cls} grid-not" aria-hidden="true">${esc([...String(name)][0] ?? '?')}</i>`;
 
 // ---------------------------------------------------------------- charts (inline SVG, one series each)
 function spark(vals, { w = 104, h = 30, dot = 3 } = {}) {
@@ -219,7 +221,7 @@ function print(el) {
 
 // ---------------------------------------------------------------- a dashboard (the printout)
 const head = (n, t) => `<h2><span class="n">${n}</span>${esc(t)}</h2>`;
-const how = t => t ? `<span class="how">${icon('server', 'px')}<span>counted: ${esc(t)}</span></span>` : '';
+const how = t => t ? `<span class="how">${icon('server', 'small')}<span>counted: ${esc(t)}</span></span>` : '';
 
 function dashHtml(d, v) {
   const f = d.file ?? {}, steps = new Map((f.steps ?? []).map(s => [s.id, s])), label = id => steps.get(id)?.label ?? id;
@@ -229,7 +231,7 @@ function dashHtml(d, v) {
 
   // The paper's top: the printer's line, the title, the range keys. An app not launched gets no notice: its zeros say it.
   const top = `<div class="dot"><span>${esc(names.os)} Numbers · printout</span><span>${d.updated ? `last report ${esc(clock(d.updated))}` : 'no report yet'}</span><span class="sig" data-nx-signal hidden>no signal · retrying</span></div>
-    <div class="title">${sigil(d.slug)}<div><h1>${esc(d.name)}</h1><p><span class="st ${d.status === 'live' ? 'live' : 'pre'}">${d.status === 'live' ? 'LIVE' : 'PREVIEW'}</span> Last ${int(d.days)} days · ${esc(range(d.from, d.to))}</p></div></div>
+    <div class="title">${gridOr(sigil(d.slug), d.name, 'small sigil')}<div><h1>${esc(d.name)}</h1><p><span class="st ${d.status === 'live' ? 'live' : 'pre'}">${d.status === 'live' ? 'LIVE' : 'PREVIEW'}</span> Last ${int(d.days)} days · ${esc(range(d.from, d.to))}</p></div></div>
     <div class="ranges"><div class="range" role="group" aria-label="Period">${PERIODS.map(p => `<button data-days="${p}" aria-pressed="${p === v.days}">${p} days</button>`).join('')}</div>
     ${v.status === 'live' ? `<div class="range" role="group" aria-label="Whose visits">${[['live', 'Live'], ['preview', 'Preview']].map(([m, l]) => `<button data-mode="${m}" aria-pressed="${m === v.mode}">${l}</button>`).join('')}</div>` : ''}</div>
     ${d.status === 'live' && d.mode === 'preview' ? '<p class="banner">Preview numbers: the board’s and the team’s own visits to the preview, never mixed with the real ones.</p>' : ''}
@@ -249,7 +251,7 @@ function dashHtml(d, v) {
   const funnel = `<div class="card">${sec('The funnel')}<p class="sub">Counts from page loads and orders, never names.</p><div class="fun">${fun.map((id, i) => {
     const c = d.steps?.[id] ?? 0, next = fun[i + 1], nc = d.steps?.[next] ?? 0;
     let gap = '';
-    if (next && f.blind?.after === id) gap = `<div class="blind">${icon('mobile', 'px')}<b>The blind middle</b><span>${esc(f.blind.text ?? '')}</span><div class="conv"><b class="f">${pct(ratio(nc, c), 1)}</b> of ${esc(label(id))} reach ${esc(label(next))}</div></div>`;
+    if (next && f.blind?.after === id) gap = `<div class="blind">${icon('mobile', 'small')}<b>The blind middle</b><span>${esc(f.blind.text ?? '')}</span><div class="conv"><b class="f">${pct(ratio(nc, c), 1)}</b> of ${esc(label(id))} reach ${esc(label(next))}</div></div>`;
     else if (next) gap = `<div class="conv"><b class="f">${pct(ratio(nc, c), 0)}</b> go on to ${esc(label(next))}</div>`;
     return `<div class="step"><span class="nm">${esc(label(id))}</span><span class="ct">${int(c)}</span>${how(steps.get(id)?.how)}<span class="bar"><i style="width:${(100 * c / max).toFixed(2)}%"></i></span></div>${gap}`;
   }).join('')}</div></div>`;
@@ -284,7 +286,7 @@ function dashHtml(d, v) {
   const targets = targetsHtml(d.targets ?? [], sec, 'The team’s own targets for this app.', 'No targets in this app’s file yet.');
 
   // 8. the promise
-  const promise = `<div class="card promise-card">${sec('How we count')}<div class="promise">${icon('lock', 'px')}<b>No cookies · no IP addresses in our counts</b><span>Counted from page loads and orders, on our own server. Nothing is stored on anyone’s device. Where visitors are counted, a hash of address and browser is kept for that day only.</span></div></div>`;   // (the visitors' hash)
+  const promise = `<div class="card promise-card">${sec('How we count')}<div class="promise">${icon('lock', 'small')}<b>No cookies · no IP addresses in our counts</b><span>Counted from page loads and orders, on our own server. Nothing is stored on anyone’s device. Where visitors are counted, a hash of address and browser is kept for that day only.</span></div></div>`;   // (the visitors' hash)
 
   const chat = d.chat ? chatLine(d.chat) : ''; // the support chat's line (Care › Numbers' way in)
   // the company's own sections, under the tiles: each app's { html } for these numbers, or nothing (this and ${more} below)
@@ -325,10 +327,12 @@ function companyIn(home, id) {
   const b = (home.dashboards ?? []).find(x => x.id === id);
   return b ? { ...b, days: home.days, from: home.from, to: home.to } : { missing: true };
 }
-// its picture: the kit's pixel art (rows of # and .), else a sigil from its id
-function companyIcon(b, cls = 'px') {
+// its picture: the icon the kit names (as an app's), or its rows of # and ., else a sigil from its id (both grid
+// pictures: its initial where the look isn't pixel).
+function companyIcon(b, cls = 'small') {
+  if (typeof b.icon === 'string' && /^[\w-]+$/.test(b.icon)) return icon(b.icon, cls);
   const ok = Array.isArray(b.icon) && b.icon.length && b.icon.length <= 32 && b.icon.every(r => typeof r === 'string' && /^[#.]{1,32}$/.test(r) && r.length === b.icon[0].length);
-  return ok ? pixelArt(['.'.repeat(b.icon[0].length + 2), ...b.icon.map(r => `.${r}.`), '.'.repeat(b.icon[0].length + 2)], cls) : sigil(b.id);
+  return gridOr(ok ? gridArt(['.'.repeat(b.icon[0].length + 2), ...b.icon.map(r => `.${r}.`), '.'.repeat(b.icon[0].length + 2)], cls) : sigil(b.id), b.name, cls);
 }
 const amount = (v, u) => u === 'EUR' ? money(v) : unitVal(v, u); // (euros as the apps' printouts show them: cents only under €100)
 const figure = (f, i) => `<div class="tile${i ? '' : ' hero'}"><span class="l">${esc(f.label)}</span><span class="v">${f.value == null ? '—' : esc(typeof f.value === 'string' ? f.value : amount(Number(f.value), f.unit))}</span>${f.sub ? `<span class="s">${esc(f.sub)}</span>` : ''}</div>`;
@@ -336,7 +340,7 @@ const cell = (v, u) => v == null ? '—' : esc(amount(Number(v), u)); // (a coun
 function companyHtml(b, v) {
   const n = { i: 0 }, sec = title => head(++n.i, title), figures = (b.figures ?? []).filter(f => f && f.label != null);
   const top = `<div class="dot"><span>${esc(names.os)} Numbers · printout</span><span class="sig" data-nx-signal hidden>no signal · retrying</span></div>
-    <div class="title">${companyIcon(b, 'px sigil')}<div><h1>${esc(b.name)}</h1><p>${b.about ? `${esc(b.about)} · ` : ''}Last ${int(b.days)} days · ${esc(range(b.from, b.to))}</p></div></div>
+    <div class="title">${companyIcon(b, 'small sigil')}<div><h1>${esc(b.name)}</h1><p>${b.about ? `${esc(b.about)} · ` : ''}Last ${int(b.days)} days · ${esc(range(b.from, b.to))}</p></div></div>
     <div class="ranges"><div class="range" role="group" aria-label="Period">${PERIODS.map(p => `<button data-days="${p}" aria-pressed="${p === v.days}">${p} days</button>`).join('')}</div></div>`;
   // (wide paper: the first figure a little wider, the rest in the same row)
   const tiles = figures.length ? `<section data-nx="top"><div class="tiles figs" style="--cols: 1.6fr repeat(${Math.max(1, Math.min(figures.length, 5) - 1)}, minmax(0, 1fr))">${figures.map(figure).join('')}</div></section>` : '';
@@ -364,7 +368,7 @@ function abCard(t, label, sec) {
   const rate = r => r == null ? '—' : pct(r, r < 0.1 ? 2 : 1);
   const arm = (a, i) => `<div class="side"><div class="top"><span class="k k${i}">${esc(a.letter)}</span><span class="lbl">${a.letter === 'A' ? 'as it is' : 'the change'}</span>
       <span class="reading"><span class="r">${rate(a.metric?.rate)}</span><small>${running(t) && t.state === 'not-called' ? 'so far' : ''}</small></span></div>
-    <div class="prog"><i class="k${i}" style="width:${Math.min(100, 100 * (a.metric?.of ?? 0) / (t.finish || 1)).toFixed(1)}%"></i>${icon('finish', 'px')}</div>
+    <div class="prog"><i class="k${i}" style="width:${Math.min(100, 100 * (a.metric?.of ?? 0) / (t.finish || 1)).toFixed(1)}%"></i>${icon('finish', 'small')}</div>
     <div class="pl"><span><b class="f">${int(a.metric?.of)}</b> of ${int(t.finish)} ${esc(label(m[0]))}</span><span>${int(a.metric?.n)} ${esc(label(m[1]))}</span></div>
     ${a.guardrail ? `<div class="gr">Guardrail, ${esc(label(g?.[1]))} ÷ ${esc(label(g?.[0]))}: <b>${rate(a.guardrail.rate)}</b></div>` : ''}</div>`;
   const prog = Math.max(0, t.progress ?? 0);
@@ -387,7 +391,7 @@ function goalWords(k) {
   const g = unitVal(k.goal, k.unit), m = k.max != null ? unitVal(k.max, k.unit) : null;
   return k.lower ? `target ${g} or less${m ? `, at most ${m}` : ''}` : `target ${g} or more${m ? `, at least ${m}` : ''}`;
 }
-const mark = k => k.mark === 'green' ? `<span class="ok">${icon('tick', 'px')}on target</span>` : k.mark === 'amber' ? `<span class="watch">${icon('eye', 'px')}watch</span>` : `<span class="nodat">${icon('dash', 'px')}no data yet</span>`;
+const mark = k => k.mark === 'green' ? `<span class="ok">${icon('tick', 'small')}on target</span>` : k.mark === 'amber' ? `<span class="watch">${icon('eye', 'small')}watch</span>` : `<span class="nodat">${icon('dash', 'small')}no data yet</span>`;
 
 // The support chat's line: its conversations, resolved without a person beside emails to a person (always read together),
 // each a figure, and the way to Care › Numbers for the same app and mode, whose back button prints this dashboard again

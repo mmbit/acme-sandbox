@@ -825,6 +825,8 @@ export const sendSeatKey = (dev, seat, key) => seatPost(dev, 'key', { seat, key 
 // the level a seat stops at (percent of its limits), and pacing for every seat
 export const setSeatStop = (dev, seat, stop) => seatPost(dev, 'stop', { seat, stop });
 export const setPacing = (dev, on) => seatPost(dev, 'pacing', { on });
+// whether a seat may spend its account's credits past its plan
+export const setSeatCredits = (dev, seat, on) => seatPost(dev, 'credits', { seat, on });
 
 // The mock worker: it takes an action up after a moment, works on it, then says how it went. A key or code that reads
 // "wrong" fails, so the failures can be seen too. Keys are never kept.
@@ -844,6 +846,7 @@ async function mockSeatAction(action, body) {
   if (!row || row.removing) throw seatRefused(`There’s no seat called ${body.seat}.`);
   if (action === 'remove') { row.removing = true; work(row, 'remove', () => rows.splice(rows.indexOf(row), 1)); }
   if (action === 'stop') work(row, 'stop', a => { row.stop = body.stop; finish(a, 'done', `Stops at ${body.stop}% of its limits now.`); });
+  if (action === 'credits') work(row, 'credits', a => { row.use_credits = body.on; finish(a, 'done', body.on ? 'It may spend credits past its plan now, while its account has them.' : 'It keeps to its plan now: paced over its week, it stops at its level.'); });
   if (action === 'pause') work(row, body.paused ? 'pause' : 'resume', a => { Object.assign(row, { paused: body.paused, state: body.paused ? 'paused' : 'ready' });
     finish(a, 'done', body.paused ? 'Paused. It finishes its job and takes no new ones.' : 'Resumed. It takes work again.'); });
   if (action === 'key') {

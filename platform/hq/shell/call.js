@@ -4,6 +4,7 @@
 // The call's audio is callaudio.js's, shared with the join link's page: the voice through an <audio> element for the
 // echo canceller, the screen kept on, the microphone brought back after the screen went off.
 // The call is a layer of its own over whatever HQ shows, and minimises into a bubble while it goes on (callscreen.js).
+// The Pencil writes on HQ during a call, and the agent asks to see and draws in its own ink (calldraw.js).
 import { esc } from '../util.js';
 import { loadLanguage } from './data.js';
 import { hush } from './audio.js';
@@ -11,8 +12,9 @@ import { CallAudio } from './callaudio.js';
 import * as world from '../world/world.js';
 import { toast } from './hud.js';
 import { names } from './brand.js';
-import { openLayer, closeLayer, minimise, expand, watchAlong } from './callscreen.js';
+import { openLayer, closeLayer, minimise, expand, shareKey } from './callscreen.js';
 import { startPictures, picturesLive, pictureState, stopPictures } from './callpictures.js';
+import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './calldraw.js';
 import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
@@ -100,6 +102,7 @@ function connect(c, hello) {
     // the call waits 30 s on the other end: keep trying to get back to it
     if (c.id && e.code !== 4000 && (c.tries = (c.tries ?? 0) + 1) <= 12) {
       c.live = false;
+      reconnected(c);
       c.audio.mark('reconnecting');
       stopPlayback(c);
       callSay('Reconnecting…');
@@ -130,7 +133,8 @@ const FROM_LINE = {
     c.tries = 0;
     resend(c, ev.heard);
     picturesLive(c);
-    if (c.small) watchAlong(c); // (minimised before it picked up)
+    shareKey(c); // (Show my screen, once picked up)
+    startDrawing(c);
   },
   state(c, ev) {
     callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: c.name }[ev.state] ?? '');
@@ -139,6 +143,7 @@ const FROM_LINE = {
   heard(c, ev) {
     c.said = '';
     callSay(null, `“${ev.text}”`);
+    DRAWING.heard(c, ev);
   },
   said(c, ev) {
     c.said = `${c.said ?? ''} ${ev.text}`.trim();
@@ -160,6 +165,9 @@ const FROM_LINE = {
   },
   clear: c => stopPlayback(c),
   picture: (c, ev) => pictureState(c, ev),
+  note: DRAWING.note,
+  ask: DRAWING.ask,
+  ink: DRAWING.ink,
   // the agent hung up once the board had said goodbye: as the Hang up button does
   hangup: () => endCall(),
 };
@@ -296,6 +304,7 @@ function endCall(why) {
   c.ws?.close();
   c.voiced = [];
   stopPictures(c);
+  stopDrawing(c);
   c.audio.close();
   c.watch?.stop();
   c.bubble?.close();

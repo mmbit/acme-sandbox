@@ -73,9 +73,10 @@ export function flyTo(id) {
 export function visitMascot(id) {
   if (scene.focus({ kind: 'mascot', id }, { close: true })) { stopTour(); later(() => world.pet(id), 700); } // (once the camera's there)
 }
-// index.html's own words stand until boot, which names the building and the board's tools from the brand
+// index.html's own words stand until boot, which names the building and the board's tools from the brand (the canvas
+// a view in any look's drawing)
 function nameHud() {
-  cv.setAttribute('aria-label', `Pixel-art view of the ${names.hq} building. The ${names.computer}'s People tab lists everyone in text.`);
+  cv.setAttribute('aria-label', `A view of the ${names.hq} building. The ${names.computer}'s People tab lists everyone in text.`);
   $('#hud .brand b').textContent = names.hq;
   $('#btn-desk').title = `${cap(names.phone)}: requests waiting for you`; $('#btn-desk .sr').textContent = names.phoneShort; // (.sr)
   $('#btn-news').title = cap(names.newsletter); $('#btn-news .sr').textContent = names.newsletterShort;

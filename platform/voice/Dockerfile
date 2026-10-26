@@ -3,8 +3,9 @@
 # Dutch in, and a care call's voice per language thorsten or kerstin) for the agent's, and the Claude CLI for the agent's side of the call. Internal only; audio
 # is never stored. Every model is fetched at build time, so a call never waits for a download.
 FROM node:24.22.1-bookworm-slim
-# (tzdata: the line says when a seat's limit ends on the company's clock, company.timeZone.)
-RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv curl bzip2 ca-certificates jq tzdata \
+# (tzdata: the line says when a seat's limit ends on the company's clock, company.timeZone. git: the call agent's git
+# tool reads the worker's mirror, reads.py.)
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv curl bzip2 ca-certificates jq tzdata git \
     && rm -rf /var/lib/apt/lists/*
 # Pinned like the worker's: a rebuild installs exactly what was reviewed (bump deliberately).
 RUN npm install -g @anthropic-ai/claude-code@2.1.283
@@ -100,9 +101,10 @@ RUN curl -fsSL -o smart-turn-v3.2-cpu.onnx "$SMART_TURN/smart-turn-v3.2-cpu.onnx
     && printf '%s  %s\n' "$SMART_TURN_SHA256" smart-turn-v3.2-cpu.onnx | sha256sum -c -
 # turns.py too (server.py logs each call's numbers from it, then forgets the session), echo.py, aloud.py (numbers in
 # words, shared with On Air), room.py (a call out's room on the join page), endpoint.py and dictate.py (a note's live
-# dictation)
+# dictation), reads.py (the call agent's report and git tools), drawing.py (the
+# board's notes, the agent's asks to see its screen and rings on its page)
 COPY voice/server.py voice/aloud.py voice/guard.py voice/hq_tools.py voice/turns.py voice/echo.py voice/room.py \
-     voice/endpoint.py voice/dictate.py /app/
+     voice/endpoint.py voice/dictate.py voice/reads.py voice/drawing.py /app/
 # (and the TypeScript it runs, beside it as in the repo)
 COPY worker/bin/hq /usr/local/bin/hq
 COPY worker/hq /usr/local/hq

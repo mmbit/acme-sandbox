@@ -13,11 +13,12 @@ import { playwright, errorsOf, tap } from '../../shared/browser/browser.mjs';
 
 const server = await serve(undefined, 0),
   base = `http://localhost:${server.address().port}`;
+import { lookNames } from './looks.mjs';
 const out = mkdtempSync(join(tmpdir(), 'onair-check-')),
   browser = await playwright().chromium.launch();
 const texts = (page, sel) => page.$$eval(sel, els => els.map(e => e.textContent.replace(/\s+/g, ' ').trim()));
 
-for (const look of ['brownstone', 'holo', 'wire'])
+for (const look of lookNames())
   for (const [w, h, device] of [
     [390, 844, 'phone'],
     [1180, 820, 'tablet'],

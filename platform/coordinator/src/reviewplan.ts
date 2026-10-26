@@ -264,8 +264,14 @@ function buildPlan(context: Context): ReviewPlan {
     const own = context.own.get(round) ?? [];
     const fixing = own.some(run => run.kind === 'work' && isOpen(run));
     const checking = own.find(run => run.kind === 'consolidate' && run.stage !== 'ruling' && isOpen(run));
+    // A push's triage after the ruling (a kept touch-up's) opens the round again: only a ruling since it rules it, so
+    // the reviews that triage queues and the ruling after them are stages, not a round with nothing left to run.
+    const triaged = own.findLastIndex(run => run.stage === 'triage' && run.status !== 'cancelled');
     const ruled =
-      fixing || own.some(run => run.kind === 'consolidate' && run.stage !== 'triage' && run.status === 'done');
+      fixing ||
+      own.some(
+        (run, i) => i > triaged && run.kind === 'consolidate' && run.stage !== 'triage' && run.status === 'done',
+      );
     if (!ruled) preceding = addReads(context, stages, round, own, preceding, checking);
     if (!ruled) {
       const known = own.findLast(run => run.kind === 'consolidate' && run.stage !== 'triage' && isOpen(run));
@@ -273,6 +279,7 @@ function buildPlan(context: Context): ReviewPlan {
         addStage(context, stages, `${round}:ruling`, 'consolidate', context.actors.consolidator, preceding, known),
       ];
     }
+    if (ruled && !fixing) preceding = addChecks(context, stages, round, own, preceding);
     if (round < context.count || fixing) {
       const fixes = own.filter(run => run.kind === 'work' && isOpen(run));
       if (fixes.length)
@@ -291,6 +298,17 @@ function buildPlan(context: Context): ReviewPlan {
     terminal: preceding.at(-1) ?? null,
     unresolved: !!context.pr && inReview(context.pr),
   };
+}
+
+// A ruled round's check queued since (the merge check after main came in, a push's new triage) is what resolves it: a
+// stage of its own, so the work waiting on the merge gives it its window, not a stall with none.
+function addChecks(context: Context, stages: ReviewStage[], round: number, own: Run[], preceding: string[]) {
+  for (const check of own.filter(run => run.kind === 'consolidate' && isOpen(run))) {
+    const measurement = check.stage === 'triage' ? 'triage' : 'consolidate';
+    const key = `${round}:check:${check.id}`;
+    preceding = [addStage(context, stages, key, 'consolidate', check.agent, preceding, check, measurement)];
+  }
+  return preceding;
 }
 
 function addReads(

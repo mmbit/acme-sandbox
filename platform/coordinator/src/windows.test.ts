@@ -19,7 +19,8 @@ const plan = await import('./plan.ts');
 const forecast = await import('./forecast.ts');
 const { inOneStep } = await import('./db.ts');
 const threats = await import('./threats.ts');
-await import('./predictionlog.ts');
+const threadends = await import('./threadends.ts');
+const predictionlog = await import('./predictionlog.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE,
@@ -43,8 +44,13 @@ beforeEach(async () => {
   db.exec(
     'delete from jobs; delete from requests; delete from prs; delete from waits; delete from wakes; delete from seats; delete from runs; delete from predictions; delete from calls; delete from call_tokens; delete from call_items',
   );
+  // (an earlier test's thread left open and empty plays as its owner's placeholder in the forecast)
+  h.closedThreads();
   for (const engine of ['claude', 'codex'])
-    assert.equal((await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready' })).status, 200);
+    assert.equal(
+      (await h.worker('seat', { seat: `${engine}-1`, engine, state: 'ready', util: 0.1, week: 0.1 })).status,
+      200,
+    );
   assert.equal(
     (
       await h.worker('room', {
@@ -133,11 +139,13 @@ test('hq window: on a thread named by its id, a job on it or a pull request; set
     [{ thread: 'shop/nothing', deadline: '2h' }, 409, 'a thread that is there'],
   ] as const)
     assert.equal((await h.agent('window', kit.token, body)).status, status, why);
+  // (the thread's branch holds the pushed work: its merge clears the branch, and the thread is done once closed)
+  h.mergedPr(9101);
+  threadends.merged(9101);
   assert.equal(
     (await h.agent('plan/done', (await h.start({ agent: 'moss', title: 'x' })).token, { thread: shop })).status,
     200,
   );
-  h.mergedPr(9101);
   const done = await h.agent('window', kit.token, { thread: shop, deadline: '2h' });
   assert.equal(done.status, 409, 'an open thread');
   assert.match(done.body.error, new RegExp(`${shop} is done: a window goes on an open thread`));
@@ -151,6 +159,7 @@ test("a call's item with its time sets its thread's window when it's handed out:
   assert.equal(ctx.status, 200, JSON.stringify(ctx.body));
   const promise = await h.agent('item', ctx.body.token, {
     kind: 'promise',
+    goal: 'The board wants it on time.',
     owner: 'bolt',
     what: 'The deck',
     deadline: '2h',
@@ -175,8 +184,9 @@ test("a due thread's whole chain goes first: its work, the reviews and fixes on 
   const due = h.dueThread({ deadline: soon }),
     dueLater = h.dueThread({ deadline: later }),
     plain = opened();
-  // the due thread's work waits for work in another thread, which waits for more: two levels down
-  const deep = await h.start({ agent: 'kit', title: 'The fonts', thread: plain });
+  // the due thread's work waits for work in another thread, which waits for more: two levels down (each in a thread
+  // of its own, to run at once)
+  const deep = await h.start({ agent: 'kit', title: 'The fonts', thread: opened() });
   const base = await h.start({ agent: 'kit', title: 'Header', thread: plain });
   const board = await h.start({ agent: 'kit', title: 'Front page', thread: due });
   // each in review on its pull request (review.test.ts covers how it gets there)
@@ -251,7 +261,9 @@ test("a due thread's whole chain goes first: its work, the reviews and fixes on 
 test("a card rings from work the pass gives a latest start (a due thread's, work it waits for) and the board's own", async () => {
   const due = h.dueThread({ deadline: Date.now() + HOUR }),
     plain = opened();
+  // (each running in a thread of its own, the due thread's first: a task queued ahead in its thread holds the next)
   const needed = await h.start({ agent: 'kit', title: 'The fonts', thread: plain });
+  const own = await h.start({ agent: 'kit', title: 'The header', thread: due });
   jobs.createJob({
     agent: 'juno',
     title: 'Walk the shop',
@@ -260,9 +272,8 @@ test("a card rings from work the pass gives a latest start (a due thread's, work
     after: needed.id,
     queuedBy: 'juno',
   });
-  const own = await h.start({ agent: 'kit', title: 'The header', thread: due });
-  const other = await h.start({ agent: 'kit', title: 'The footer', thread: plain });
-  const call = await h.start({ agent: 'juno', title: "The call's follow-up", thread: plain });
+  const other = await h.start({ agent: 'kit', title: 'The footer', thread: opened() });
+  const call = await h.start({ agent: 'juno', title: "The call's follow-up", thread: opened() });
   h.storedCall(1, 'juno', call.id);
   const rings = async (job: Running) =>
     (db.prepare('select urgency from requests where id = ?').get(await h.ask(job)) as { urgency: string }).urgency;
@@ -474,7 +485,9 @@ test("hq window --try saves nothing: the thread's row, the latest forecast and t
       .map((t: { id: string; outlook: { eta: number | null } }) => ({ thread: t.id, eta: t.outlook.eta }));
   };
   const planned = await finishes();
-  const logged = () => (db.prepare('select count(*) n from prediction_log').get() as { n: number }).n;
+  // (the rows the plays kept, written first)
+  const logged = () =>
+    (predictionlog.write(), db.prepare('select count(*) n from prediction_log').get() as { n: number }).n;
   const [row, log] = [thread(second), logged()];
   const tried = await h.agent('window', kit.token, { thread: second, deadline: '1m', try: true });
   assert.equal(tried.status, 200, JSON.stringify(tried.body));

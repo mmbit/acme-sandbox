@@ -66,7 +66,7 @@ test("a pass opens its own preview host, view-only: never the chat's route, revi
   const note = await on(HELLO, '/__review/notes', pass.cookie, {
     note: 'x',
     page: `https://${HELLO}/`,
-    element: { tag: 'p' },
+    element: { el: { tag: 'p' }, kind: 'pin' },
   });
   assert.equal(note.status, 403);
   // no link for another device

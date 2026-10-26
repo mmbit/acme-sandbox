@@ -14,6 +14,7 @@ const CONFIGS = [
   'eslint.config.js',
   'tsconfig.json',
   '.prettierignore',
+  'shared/gates/brand.ts',
   'shared/gates/gates.ts',
   'shared/gates/lent.ts',
   'shared/gates/output.ts',
@@ -382,6 +383,22 @@ test('raw output stays out of the knowledge base and the products: past 2,000 li
   assert.match(run.out, /frames\.json: raw output in git/);
   assert.doesNotMatch(run.out, /world\.json|summary\.json|README|tools\/x/);
   assert.doesNotMatch(run.out, /lines of generated output/, 'one refusal for a data file');
+});
+
+test("a brand.yaml whose colour isn't #rrggbb is refused, a company's own and the template's, read as HQ reads it", () => {
+  const before = { 'platform/coordinator/package.json': '{}\n', 'company/brand.yaml': "colour: '#4477ff'\n" };
+  // (the coordinator's packages, its YAML parser among them, as the worker links them from its image)
+  const run = (after: Record<string, string>) => gates(before, after, { env: { GATES_HOME: repo } });
+  const short = run({ 'company/brand.yaml': "name: Acme\ncolour: '#47f'\nmail: { boardOnly: [board] }\n" });
+  assert.equal(short.status, 1);
+  assert.match(short.out, /company\/brand\.yaml: its colour "#47f" isn't #rrggbb/);
+  // unquoted, a # starts a comment, which leaves no colour at all
+  const unquoted = run({ 'template/company/brand.yaml': 'colour: #4477ff\n' });
+  assert.equal(unquoted.status, 1);
+  assert.match(unquoted.out, /template\/company\/brand\.yaml: its colour null isn't #rrggbb/);
+  assert.match(run({ 'company/brand.yaml': 'name: [\n' }).out, /company\/brand\.yaml: doesn't parse/);
+  for (const yaml of ["colour: '#D6EA3C'\n", 'name: Acme\n'])
+    assert.equal(run({ 'company/brand.yaml': yaml, 'products/x/brand.yaml': "colour: 'lime'\n" }).status, 0);
 });
 
 test("a merge of main not yet committed counts as made: main's own files aren't the change's, in a linked worktree too", () => {

@@ -43,6 +43,7 @@ for (const cap of [7168, 8192]) {
 test('host availability bounds admission even when the cgroup has more room', t => {
   const { reading, memory } = fixture(t);
   reading(8192 * 2 ** 20, 1024 * 2 ** 20, 0, 5404499968);
+  assert.equal(memory.availableMb(), 5404499968 / 2 ** 20);
   let admitted = 0;
   while (memory.room()) {
     memory.take();
@@ -71,9 +72,11 @@ test('holds and young starts reduce admission but shortage uses the unreserved r
   memory.keepsHold('slot1', 'seat1', start, { held: true });
   assert.equal(memory.room(), true);
   memory.take();
+  assert.deepEqual(memory.startupReservations(), [{ until: STARTING_MS, mb: JOB_MB }]);
   assert.equal(memory.room(), false);
   assert.equal(memory.room(false), true);
   advance();
+  assert.deepEqual(memory.startupReservations(), []);
   assert.equal(memory.room(), true);
 });
 

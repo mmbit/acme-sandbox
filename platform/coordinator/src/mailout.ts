@@ -16,7 +16,7 @@ import type { IncomingHttpHeaders } from 'node:http';
 import { db, redacted } from './db.ts';
 import { address, redact, secret } from './secrets.ts';
 import { ZONE as zone } from './config.ts';
-import { companyDay, infra, mailDomains, names, roles } from './company.ts';
+import { companyDay, companyTime, infra, mailDomains, names, roles } from './company.ts';
 import { publish } from './events.ts';
 
 // A send that didn't go, kept with the service's answer, so why can be read after a deploy has taken the log with it
@@ -141,7 +141,7 @@ function notDelivered({ id, event, outcome, status, why }: Undelivered) {
   if (db.prepare('update mail_sent set failed = ? where id = ? and failed is null').run(event, id).changes === 0) return;
   const sent = db.prepare('select ts, about from mail_sent where id = ?').get(id) as { ts: string; about: string | null };
   // The service's project also carries the support chat's emails (platform/care/src/email.ts), which HQ never labels
-  const about = sent.about ?? (unrecorded ? "an email HQ can't name (the support chat's, or an older one)" : `an email HQ sent at ${sent.ts.slice(0, 16)} UTC`);
+  const about = sent.about ?? (unrecorded ? "an email HQ can't name (the support chat's, or an older one)" : `an email HQ sent at ${companyTime(Date.parse(sent.ts))}`);
   why = clean(why).slice(0, 160);
   keepFailure(status, `delivery: ${event} (${about})${why ? `: ${why}` : ''}`);
   publish({ type: 'log', agent: roles().process, text: `Email: NEEDS A PERSON: ${about} didn't reach its reader: the email service ${outcome}${why ? ` (${why})` : ''}.` });

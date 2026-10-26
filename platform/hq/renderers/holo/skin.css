@@ -75,7 +75,6 @@ body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, 
   ) */
 #projects { --pj-surface: rgba(4, 18, 26, .86); --pj-head: #041119; --pj-card: rgba(5, 22, 30, .95); --pj-hud-reach: 0px; } /* (--pj-hud-reach: the HUD's glass has no lip.) */
 :is(.pj-modal, .pj-card) { -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
-:is(.pj-business, [data-project])::before { content: none; }
 #projects .pj-tile {
   background-image: linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff),
     linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff), linear-gradient(#80eaff, #80eaff);

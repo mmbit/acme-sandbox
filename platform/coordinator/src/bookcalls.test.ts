@@ -1,0 +1,103 @@
+// node --test src/bookcalls.test.ts   (the harness: the test company, the real server, the board's session, the voice line)
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { existsSync, readdirSync } from 'node:fs';
+import sharp from 'sharp';
+import { harness } from './harness.ts';
+
+const h = await harness('bookcalls');
+const { db } = h;
+const { ORIGIN } = await import('./config.ts');
+const DIR = `${h.dataDir}/book`;
+
+const ring = (color: string) => ({
+  color,
+  size: 4,
+  points: [
+    [10, 20, 0.5, 0],
+    [190, 120, 0.6, 16],
+    [12, 24, 0.5, 40],
+  ],
+});
+const SNIP = `data:image/png;base64,${(
+  await sharp({ create: { width: 20, height: 10, channels: 3, background: '#ff0000' } })
+    .png()
+    .toBuffer()
+).toString('base64')}`;
+const anchor = (color = '#ff5a5f') => ({
+  v: 1,
+  url: `${ORIGIN}/?open=projects#t=secret`,
+  el: { selector: '#projects > li:nth-child(2)', tag: 'li', text: 'Teacups', box: { x: 10, y: 400, w: 300, h: 40 } },
+  view: { w: 1024, h: 768, x: 0, y: 300, dpr: 2 },
+  ink: [ring(color)],
+});
+const note = (body: Record<string, unknown>) =>
+  h.board('/api/book/note', { anchor: anchor(), words: '', said: 'spoken', ...body });
+
+test("a call's page: the board's notes and the agent's ink numbered on it, never on a sheet to send; the line reads the board's", async () => {
+  const { call, token } = await h.liveCall('juno');
+  const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
+  assert.deepEqual([page.kind, page.call, page.summary], ['call', call, null]);
+
+  const one = (await note({ page: page.id, words: 'This feels high?', snip: SNIP })).body;
+  assert.equal(one.note.n, 1);
+  assert.equal(one.note.by, 'board');
+  assert.equal(one.asked, null, "a question on a call is the call's agent's to answer, there and then");
+  const two = (
+    await note({ page: page.id, anchor: anchor('#7b5ea7'), words: 'or with shipping in?', said: 'typed', by: 'juno' })
+  ).body;
+  assert.deepEqual([two.note.n, two.note.by, two.sheet.id], [2, 'juno', one.sheet.id]);
+  assert.match((await note({ page: page.id, by: 'lark' })).body.error, /the call's agent \(juno\)/);
+  const sheetPage = (
+    await h.board('/api/book/page/new', { kind: 'sheet', owner: 'juno', url: '/?open=desk', w: 800, h: 600 })
+  ).body;
+  assert.match((await note({ page: sheetPage.id, by: 'juno' })).body.error, /only a call's page/);
+
+  // the agent's own open sheet goes on beside the call's, which is never listed to send, nor sent
+  const own = (await note({ page: sheetPage.id, said: 'typed' })).body;
+  assert.notEqual(own.sheet.id, one.sheet.id);
+  const sheets = (await h.board('/api/book/sheets')).body;
+  assert.deepEqual(
+    sheets.open.map((s: any) => s.id),
+    [own.sheet.id],
+  );
+  assert.match((await h.board('/api/book/send', { id: one.sheet.id })).body.error, /stay on its page/);
+  // ...nor moved to a sheet that is, and a question written over one asks nothing either
+  const moved = await h.board('/api/book/note/move', { id: one.note.id, to: 'juno' });
+  assert.equal(moved.status, 409);
+  assert.match(moved.body.error, /stays on its call's page/);
+  const edited = (
+    await h.board('/api/book/note/edit', { id: two.note.id, words: 'Or with shipping in?', said: 'typed' })
+  ).body;
+  assert.deepEqual([edited.note.words, edited.asked], ['Or with shipping in?', null]);
+
+  // the voice line reads the board's note, on this live call only, never the agent's own ink
+  const read = await h.voice(`note?id=${one.note.id}&call=${call}`);
+  assert.equal(read.status, 200);
+  assert.deepEqual([read.body.n, read.body.words, read.body.url], [1, 'This feels high?', '/?open=projects']);
+  assert.equal(read.body.picture.type, 'image/png');
+  assert.equal((await sharp(Buffer.from(read.body.picture.data, 'base64')).metadata()).width, 20);
+  assert.equal((await h.voice(`note?id=${two.note.id}&call=${call}`)).status, 404, "the agent's own ink");
+  assert.equal((await h.voice(`note?id=${own.note.id}&call=${call}`)).status, 404, "a sheet's note");
+  assert.equal((await h.voice(`note?id=${one.note.id}&call=${call + 1}`)).status, 404, 'another call');
+
+  // the call ends: the line reads no more, the page stays with the call's summary on top once it's written
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: This feels high.'], token });
+  assert.equal((await h.voice(`note?id=${one.note.id}&call=${call}`)).status, 404, 'the call has ended');
+  db.prepare('update calls set reply = ? where id = ?').run('Prices: shipping shown in, from Monday.', call);
+  const listed = (await h.board('/api/book')).body.pages.find((p: any) => p.id === page.id);
+  assert.equal(listed.summary, 'Prices: shipping shown in, from Monday.');
+
+  // thrown away in one tap: its notes, their snips and its sheet go with it
+  const snip = readdirSync(DIR).find(f => f.startsWith(`n${one.note.id}-`));
+  assert.ok(snip, 'the snip was kept');
+  assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200);
+  assert.ok(!existsSync(`${DIR}/${snip}`));
+  assert.equal((db.prepare('select count(*) n from book_notes where page = ?').get(page.id) as { n: number }).n, 0);
+  assert.ok(!db.prepare('select 1 from book_sheets where id = ?').get(one.sheet.id));
+  assert.equal(
+    (await h.board('/api/book/page/delete', { id: sheetPage.id })).status,
+    409,
+    "a sheet's page still waits",
+  );
+});

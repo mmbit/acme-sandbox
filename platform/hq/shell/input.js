@@ -5,6 +5,7 @@ import { cv, scene, pointed, resize } from './stage.js';
 import { dropCard } from './overlay.js';
 import { stopTour } from './tour.js';
 import { syncHud } from './hud.js';
+import { onPageResize } from './page.js';
 import { openAgent, openRoom, closePanel, panelOpen } from './panel.js';
 import { openGazette, openLibrary } from './news.js';
 import { openPhone, openIntercom, openComputer } from './desk.js';
@@ -46,7 +47,8 @@ export function press(x, y) { audio.unlock(); stopTour(); tap(x, y, false); }
 export function bindInput() {
   bindCanvas(cv);
   let resizeT;
-  addEventListener('resize', () => { clearTimeout(resizeT); resizeT = setTimeout(() => resize(), 150); });
+  // (the book's slide resizes the page every frame: the canvas follows once it rests)
+  onPageResize(() => { clearTimeout(resizeT); resizeT = setTimeout(() => resize(), 150); });
   const code = ['ArrowUp', 'ArrowUp', 'ArrowDown', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowLeft', 'ArrowRight', 'b', 'a'];
   let seq = [];
   addEventListener('keydown', e => {

@@ -135,38 +135,25 @@ test('a hold is on its runner: one that hits its limit after the hold loses it, 
   assert.equal((await claimIn('claude#3', 'claude-2'))?.kind, 'meeting');
 });
 
-test("a hold is on its runner's pace too: one paced while the seat can wait for its reset loses it, and the meeting waits", async () => {
+test('a due meeting keeps its holds on paced runners and gathers before ordinary work', async () => {
   const { meeting } = await setMeeting();
   const week = Date.now() + 2 * 24 * 3_600_000;
-  const pace = (seat: string, paced: boolean) =>
-    h.worker('seat', {
-      seat,
-      engine: 'claude',
-      state: 'ready',
-      until: 0,
-      week: 0.6,
-      weekResets: week,
-      pace: paced || undefined,
-    });
-  await pace('claude-1', false);
-  await pace('claude-2', false);
-  assert.ok(await claimIn('claude#1', 'claude-1'));
-  await pace('claude-1', true); // (its week ran ahead: only work that must start before its reset, and a seat is undated)
-  assert.equal(await claimIn('claude#1', 'claude-1', week), null, 'an empty claim releases its meeting hold');
-  assert.equal(meetingseats.holding('claude#1'), null, 'without waiting for another slot to claim');
-
-  assert.ok(await claimIn('claude#2', 'claude-2'), 'the other slots hold seats on the unpaced runner');
-  assert.ok(await claimIn('claude#3', 'claude-2'));
-  assert.equal(meetingStatus(meeting), 'planned', "claude#1's hold on the paced runner doesn't count");
-  assert.equal(meetingseats.holding('claude#1'), null, 'and is let go');
-  assert.equal(await claimIn('claude#1', 'claude-1', week), null, 'claude#1 on its paced runner holds nothing');
-  assert.equal(meetingStatus(meeting), 'planned');
-
-  await pace('claude-1', false);
-  assert.equal((await claimIn('claude#1', 'claude-1'))?.kind, 'meeting', 'unpaced again, the last seat starts');
+  assert.ok(await holds('claude#1'));
+  await h.worker('seat', {
+    seat: 'claude-1',
+    engine: 'claude',
+    state: 'ready',
+    until: 0,
+    week: 0.6,
+    weekResets: week,
+    pace: true,
+  });
+  assert.ok((await claimIn('claude#1', 'claude-1', week))?.held, 'its set time is before the reset');
+  assert.ok((await claimIn('claude#2', 'claude-1', week))?.held);
+  assert.equal((await claimIn('claude#3', 'claude-1', week))?.kind, 'meeting');
   assert.equal(meetingStatus(meeting), 'live');
-  assert.equal((await claimIn('claude#2', 'claude-2'))?.kind, 'meeting');
-  assert.equal((await claimIn('claude#3', 'claude-2'))?.kind, 'meeting');
+  assert.equal((await claimIn('claude#1', 'claude-1', week))?.kind, 'meeting');
+  assert.equal((await claimIn('claude#2', 'claude-1', week))?.kind, 'meeting');
 });
 
 test("a meeting whose follow-up carries the board's call item is the board's word: paced seats gather it", async () => {
@@ -184,10 +171,9 @@ test("a meeting whose follow-up carries the board's call item is the board's wor
     });
   const chairSeat = seats.find(s => s.agent === 'juno')!.job;
   const followUp = h.queue({ agent: 'juno', title: 'The plan from the meeting', after: chairSeat });
-  assert.equal(
-    await claimIn('claude#1', 'claude-1', week),
-    null,
-    'a follow-up carrying nothing: the seats wait for the reset',
+  assert.ok(
+    (await claimIn('claude#1', 'claude-1', week))?.held,
+    'the set time admits paced seats before the follow-up carries the board item',
   );
 
   const item = db
@@ -433,8 +419,8 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
     meeting,
     ask: kitAsk.body.id,
   });
-  await h.finish((await claimIn('claude#4'))!); // (the CEO's job for kit's ask)
-  const kit = (await claimIn('claude#5'))!;
+  const kit = (await claimIn('claude#4'))!;
+  await h.finish((await claimIn('claude#5'))!); // (the CEO's job for kit's ask)
   assert.equal(kit.id, late.body.seats[0].job, 'a seat joined to a live meeting starts at once');
   meetingseats.sweep(Date.now() + 24 * 3_600_000);
   assert.equal(meetingStatus(meeting), 'live', 'a day on, it still runs');
@@ -529,9 +515,17 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
     (db.prepare('select stopping from jobs where id = ?').get(bolt.id) as { stopping: string }).stopping,
     /meeting #\d+ ended \(the chair closed it\)/,
   );
+  writeFileSync(`${h.repo}/company/projects.yaml`, 'covers:\n  game: covers/game.png\n');
   const shown = company.gazette().find(p => p.slug === `meeting-${meeting}`);
+  rmSync(`${h.repo}/company/projects.yaml`);
   assert.equal(shown?.title, 'The editor comes first', 'the headline, not the topic');
   assert.ok(shown);
+  assert.equal(shown.board, true, "in the board's feed");
+  assert.deepEqual(
+    shown.meeting,
+    { people: ['juno', 'wren', 'bolt', 'kit'], pictures: ['covers/game.png'] },
+    'its cover drawn from who sat in it, the chair first, and the pictures of the projects it changed',
+  );
   assert.match(shown.html, /<p>We build the editor first, in one thread\.<\/p>/);
   assert.match(shown.html, /<strong>Game<\/strong>/);
   assert.match(

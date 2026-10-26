@@ -126,6 +126,35 @@ test("a board item's pull request keeps the board's word on a paced seat until i
     'the rest waits for the reset');
 });
 
+test("a deadline's pull request whose round is ruled: the check queued since carries the deadline onto a paced seat", async () => {
+  reset();
+  const reset2 = Date.now() + 2 * 24 * H;
+  const author = h.ended({ agent: 'bolt' });
+  h.storedPr(9010, author, 'open', ['platform/hq/shell/call.js'], { sha: 'c'.repeat(40), round: 2, since: author });
+  const round = { agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 9010, branch: `job/${author}`, round: 2 };
+  h.ended({ ...round, sha: 'b'.repeat(40), stage: 'ruling' }, 'done', 'merge');
+  const check = h.queue({ ...round, sha: 'c'.repeat(40), stage: 'merge' });
+  const walk = queue('The walk the board waits on', { after: author, thread: h.dueThread({ deadline: Date.now() + 6 * H }) });
+  const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
+  assert.deepEqual([await paced(), await paced()], [check, undefined], 'the check, then nothing till the merge');
+  assert.equal(h.job(walk).status, 'queued');
+});
+
+test("a deadline's pull request whose ruled round a push's triage opened again: its queued review carries the deadline", async () => {
+  reset();
+  const reset2 = Date.now() + 2 * 24 * H;
+  const author = h.ended({ agent: 'bolt' });
+  h.storedPr(9011, author, 'open', ['platform/hq/shell/call.js'], { sha: 'c'.repeat(40), round: 2, since: author });
+  const round = { agent: 'quill', engine: 'claude', kind: 'consolidate', pr: 9011, branch: `job/${author}`, round: 2 };
+  h.ended({ ...round, sha: 'b'.repeat(40), stage: 'ruling' }, 'done', 'merge');
+  h.ended({ ...round, sha: 'c'.repeat(40), stage: 'triage' }, 'done');
+  const review = h.queue({ ...round, agent: 'rook', kind: 'review', sha: 'c'.repeat(40), stage: 'review' });
+  const walk = queue('The walk the board waits on', { after: author, thread: h.dueThread({ deadline: Date.now() + 6 * H }) });
+  const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
+  assert.deepEqual([await paced(), await paced()], [review, undefined], 'the review, then nothing till its ruling');
+  assert.equal(h.job(walk).status, 'queued');
+});
+
 test('downtime work that windowed work waits for runs like any other: on a seat past its spare room, and in the order', async () => {
   reset();
   const normal = queue('Sprint work');

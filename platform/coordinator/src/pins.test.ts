@@ -31,10 +31,10 @@ const keyFor = async (host: string) => {
 // a 1×1 PNG
 const PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 const HOST = 'hello.preview.company.test', KEY = await keyFor(HOST);
-// a note the board pins on a preview page in review mode
+// a note the board pins on a preview page in review mode (its element: the anchor v1)
 const pinned = async (words: string, page = '/shop', shot = true, host = HOST) => {
   const r = await onHost(host, '/__review/notes', { cookie: KEY, origin: `https://${host}` },
-    { note: words, page: `https://${host}${page}`, shot: shot ? PNG : undefined, element: { tag: 'button', selector: 'main > button', text: 'Order now' } });
+    { note: words, page: `https://${host}${page}`, shot: shot ? PNG : undefined, element: { el: { tag: 'button', selector: 'main > button', text: 'Order now' }, kind: 'pin' } });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   return r.body.id as number;
 };
@@ -65,7 +65,7 @@ test("a call's images: every pin's screenshot first, the pictures in what room i
   // four pictures as big as a note takes (1.5 MB, 2 MB in base64): with two screenshots, room for two of them
   const big = 'data:image/jpeg;base64,' + Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(1536 * 1024 - 4)]).toString('base64');
   const r = await onHost(HOST, '/__review/notes', { cookie: KEY, origin: `https://${HOST}` },
-    { note: 'Warmer, like these', page: `https://${HOST}/shop`, shot: PNG, pictures: [big, big, big, big], element: { tag: 'button', selector: 'main > button', text: 'Order now' } });
+    { note: 'Warmer, like these', page: `https://${HOST}/shop`, shot: PNG, pictures: [big, big, big, big], element: { el: { tag: 'button', selector: 'main > button', text: 'Order now' }, kind: 'pin' } });
   assert.equal(r.status, 200, JSON.stringify(r.body));
   const a = r.body.id as number, b = await pinned('And this one');
   const c = await ring([a, b]);

@@ -1,17 +1,25 @@
 // Saved queue-time estimates, their evidence, and the CEO's explicit revisions.
 import { createHash } from 'node:crypto';
-import { db, redacted } from './db.ts';
+import { columnsOf, db, once, redacted } from './db.ts';
 import { ceo } from './company.ts';
 import { ORIGIN, cleanPastJobs, pastJobs, type JobOrigin } from './matching.ts';
 import { MODEL as SIZER } from './smallmodel.ts';
 import { duration } from '../../worker/hq/waits.ts';
 
 // by: the sizer's model ('haiku') or an agent's id. low_ms and high_ms: none for an agent's one number. brief: the hash
-// of the prompt it sized (briefOf), kept as evidence when the brief changes.
+// of the prompt it sized (briefOf), kept as evidence when the brief changes. revised: the CEO's revision of a job under
+// way (setSize), made with its progress in view, not a guess at queue time.
 db.exec(`create table if not exists sizes (id integer primary key, job integer not null, at text not null, by text not null,
-  agent_ms real not null, low_ms real, high_ms real, refs text not null, why text not null, brief text not null);
+  agent_ms real not null, low_ms real, high_ms real, refs text not null, why text not null, brief text not null,
+  revised integer not null default 0);
   create index if not exists sizes_job on sizes (job)`);
 redacted('sizes', 'why');
+once('2026-10-26-sizes-revised', () => {
+  if (columnsOf('sizes').includes('revised')) return;
+  db.exec('alter table sizes add column revised integer not null default 0');
+  // (before it, only setSize gave a job a second size)
+  db.exec('update sizes set revised = 1 where id not in (select min(id) from sizes group by job)');
+});
 
 export type GivenSize = {
   job: number;
@@ -23,8 +31,9 @@ export type GivenSize = {
   refs: number[];
   why: string;
   brief: string;
+  revised?: boolean;
 };
-type Row = Omit<GivenSize, 'refs'> & { refs: string };
+type Row = Omit<GivenSize, 'refs' | 'revised'> & { refs: string; revised: number };
 
 export const briefOf = (prompt: string) => createHash('sha256').update(prompt).digest('hex').slice(0, 16);
 
@@ -51,7 +60,7 @@ export function recordQueued(job: number, by: string, prompt: string, size: Queu
 
 export function record(size: Omit<GivenSize, 'at'>, now = Date.now()) {
   db.prepare(
-    'insert into sizes (job, at, by, agent_ms, low_ms, high_ms, refs, why, brief) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    'insert into sizes (job, at, by, agent_ms, low_ms, high_ms, refs, why, brief, revised) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
   ).run(
     size.job,
     new Date(now).toISOString(),
@@ -62,6 +71,7 @@ export function record(size: Omit<GivenSize, 'at'>, now = Date.now()) {
     JSON.stringify(size.refs),
     size.why,
     size.brief,
+    size.revised ? 1 : 0,
   );
 }
 
@@ -93,6 +103,7 @@ export function history(job: number) {
 const shown = ({ id: _id, ...row }: Row & { id?: number }): GivenSize => ({
   ...row,
   refs: JSON.parse(row.refs) as number[],
+  revised: !!row.revised,
 });
 
 // Only the CEO revises a saved estimate when a task slips. Earlier estimates remain in history.
@@ -125,7 +136,7 @@ export function setSize(job: number, time: string, why: string, by: string, now 
   if (by !== ceo()) return refused(403, 'only the CEO changes a saved estimate when work slips');
   if (!why.trim()) return refused(400, 'give the reason the saved estimate needs changing');
   const size = { job, by, agent_ms: agentMs, low_ms: null, high_ms: agentMs, refs: [], why: oneLine(why, WHY_MAX) };
-  record({ ...size, brief: briefOf(found.prompt) }, now);
+  record({ ...size, brief: briefOf(found.prompt), revised: true }, now);
   return size;
 }
 

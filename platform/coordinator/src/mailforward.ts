@@ -13,7 +13,7 @@
 import { readFileSync, statSync } from 'node:fs';
 import { db } from './db.ts';
 import { publish } from './events.ts';
-import { brand, companyDay, names, roles } from './company.ts';
+import { brand, companyDay, companyTime, names, roles } from './company.ts';
 import { secret } from './secrets.ts';
 import * as mail from './mail.ts';
 import * as mailout from './mailout.ts';
@@ -81,8 +81,9 @@ function copyOf(id: number, box: string): Copy {
     files = listed.map((_, n) => mail.attachment(id, n));
   if (!files.every((a): a is NonNullable<typeof a> => !!a))
     throw new UnkeptFilesError('HQ no longer keeps all of its attachments');
+  // (received on the board's clock)
   const head =
-    `A copy of mail #${id} to ${m.recipient}, from ${m.sender}, received ${m.received.slice(0, 16).replace('T', ' ')} UTC.` +
+    `A copy of mail #${id} to ${m.recipient}, from ${m.sender}, received ${companyTime(Date.parse(m.received))}.` +
     (m.subject ? ` Subject: ${m.subject}.` : '') +
     (files.length ? ` Attached: ${files.map(a => a.name).join(', ')}.` : '');
   const text = `${head}\n\n${m.body ?? ''}`;

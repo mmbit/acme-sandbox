@@ -4,6 +4,7 @@ import { esc } from '../util.js';
 import { withJobLinks } from './prose.js';
 import { timeOf } from '../world/clock.js';
 import { engineName } from './engine.js';
+import { names } from './brand.js';
 
 // Where a job is, as the board reads it: its chip's word
 export const state = j => j.status === 'queued' ? (j.paused ? 'paused' : j.ready ? 'next' : holdsOf(j).length ? 'waits' : 'later') : j.status;
@@ -27,14 +28,15 @@ export function titleHtml(j) {
 export const nameText = (x, field = 'title') => x[field];
 export const nameHtml = (x, field = 'title') => (field === 'title' ? withJobLinks(x[field]) : esc(x[field]));
 
-// Where a job is now, in words: what it waits for (a --when job's events too, holdsOf), or when it started or ended
+// Where a job is now, in words: what it waits for (a --when job's events too, holdsOf; the desk phone by the company's
+// own word, brand.js names.phone), or when it started or ended
 export function whereNow(j, { who, ago }) {
   const s = state(j), engine = engineName(j.engine);
   return s === 'running' ? `asked ${ago(j.created)}`
-    : s === 'blocked' ? `waits for your answer on the desk phone${j.request_title ? `: “${cut(j.request_title)}”` : ''}`
+    : s === 'blocked' ? `waits for your answer on the ${names.phone}${j.request_title ? `: “${cut(j.request_title)}”` : ''}`
     : s === 'paused' ? (j.until ? `paused until ${timeOf(j.until)}` : 'goes on at the next free seat')
     : s === 'next' ? `starts at the next free ${engine} seat${j.downtime ? ' with room to spare' : ''}`
-    : s === 'waits' ? holdsOf(j).map(h => h.wake ?? (h.card ? `after your answer on the desk phone: “${cut(h.title ?? '')}”`
+    : s === 'waits' ? holdsOf(j).map(h => h.wake ?? (h.card ? `after your answer on the ${names.phone}: “${cut(h.title ?? '')}”`
       : `after ${who(h.agent)}’s “${cut(nameText(h) ?? '')}”, ${AFTER[h.state] ?? 'not finished'}`)).join('; ')
     : s === 'later' ? `not before ${timeOf(j.until)}`
     : `${j.status === 'done' ? 'finished' : j.status} ${ago(j.finished ?? j.created)}`;

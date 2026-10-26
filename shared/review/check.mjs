@@ -13,7 +13,8 @@
 // and its buttons (to a product or a cycles demo), and every cycle page but a deck from HQ's viewer and "Open in browser",
 // and a cycles page's PDF link inside HQ's viewer (it saves, the page stays),
 // and checks: the real script (not the empty one), the pin drawn,
-// on screen, clear of HQ's bar and the product's own buttons, and a tap on it starting a note. Exit 1 on any failure.
+// on screen, clear of HQ's bar and the product's own buttons, and a tap on it starting a note. Last, a mark's anchor
+// (anchor.js) on real elements in a product's page. Exit 1 on any failure.
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:https';
 import { request } from 'node:http';
@@ -448,7 +449,61 @@ if (slugs.length) {
   await page.setViewportSize(upright); await page.waitForTimeout(900);
   const back = await fab(), home = Math.abs(back.top - high.top) < 4;
   report('drag-upright', a, { ok: home, why: home ? `upright again, back at y ${Math.round(back.top)}` : `upright again at y ${Math.round(back.top)}, dragged to ${Math.round(high.top)}` });
+  // 9. a mark's anchor (anchor.js, as the coordinator serves it) on real elements: its selector, found again by the
+  // browser's own querySelector through an open shadow root, the private rule, and a point placed on its element as it
+  // is now, in document px
+  await page.goto(`https://${a}.preview.${ZONE}/`); await page.waitForTimeout(600);
+  const wrong = await page.evaluate(anchorCases);
+  report('anchor', a, { ok: !wrong.length, why: wrong.length ? wrong.join('; ') : 'selectors found again (an id with a digit, a shadow root), private words kept out, a point on its element as it is now' });
   await page.close();
+}
+
+// The anchor's cases, run in the page: what went wrong, or nothing
+async function anchorCases() {
+  const { anchorOf, found, placer, selector, textOf } = await import('/__review/anchor.js');
+  const wrong = [], same = (got, want, what) => JSON.stringify(got) !== JSON.stringify(want) && wrong.push(`${what}: ${JSON.stringify(got)}, not ${JSON.stringify(want)}`);
+  const fixture = Object.assign(document.createElement('div'), { id: 'anchor-check' });
+  fixture.style.cssText = 'position: relative; height: 4000px';
+  fixture.innerHTML = `<section id="123"><p></p><p class="lead big third">Lead</p></section><h1 style="position: absolute; top: 900px; left: 10px; width: 300px; height: 50px; margin: 0">Hello</h1>
+    <dl data-private><dd>someone@example.com</dd></dl><p class="long">  ${'word '.repeat(60)}  </p><img alt="A  cat"><chat-box id="9lives"></chat-box><chat-box class="private" data-private></chat-box>`;
+  document.body.append(fixture);
+  const $ = s => fixture.querySelector(s);
+  try {
+    // an id that starts with a digit is escaped, and the browser finds the element by it
+    const lead = $('p.lead');
+    same(selector(lead), 'section#\\31 23 > p.lead.big:nth-of-type(2)', 'the selector');
+    same(found(selector(lead), document) === lead, true, 'found by its selector');
+    // in an open shadow root: the host's path, a space, its own (the escape's space kept)
+    const chat = $('chat-box#\\39 lives'), shadow = chat.attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<div class="panel"><button id="send">Send</button></div>';
+    const send = shadow.querySelector('button');
+    same(selector(send), 'chat-box#\\39 lives button#send', 'the shadow selector');
+    same(found(selector(send), document) === send, true, 'found through the shadow root');
+    same(found('chat-box#\\39 lives nav', document), null, 'nothing there');
+    // no words from a private element, inside a private host's shadow root too; others at most 200
+    same(textOf($('dd')), '', 'a private element');
+    const inner = Object.assign(document.createElement('p'), { textContent: 'My address is…' });
+    $('chat-box.private').attachShadow({ mode: 'open' }).append(inner);
+    same(textOf(inner), '', 'inside a private host');
+    same(textOf($('p.long')).length, 200, 'long words');
+    same(textOf($('img')), 'A cat', 'an image');
+    // drawn scrolled down, a point on the headline stays on it with the page back at the top, follows it as it widens,
+    // and stays where it was once the headline is gone
+    const h1 = $('h1');
+    scrollTo(0, 600);
+    const view = { w: innerWidth, h: innerHeight, x: scrollX, y: scrollY, dpr: devicePixelRatio }, anchor = anchorOf(h1, { url: location.href, view });
+    scrollTo(0, 0);
+    const top = Math.round(h1.getBoundingClientRect().top + scrollY), { x, y, w } = anchor.el.box;
+    same(y, top, "the box's document y");
+    same(placer(anchor, document, { x: scrollX, y: scrollY })([x + w, y]), [x + w, y], 'a point on it, scrolled back');
+    h1.style.width = '600px';
+    same(placer(anchor, document, { x: scrollX, y: scrollY })([x + w, y]), [x + 2 * w, y], 'a point on it, twice as wide');
+    h1.remove();
+    same(placer(anchor, document, { x: scrollX, y: scrollY })([x + w, y]), [x + w, y], 'its element gone');
+  } finally {
+    fixture.remove();
+  }
+  return wrong;
 }
 
 const bad = results.filter(r => !r.ok);

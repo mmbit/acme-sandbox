@@ -6,16 +6,14 @@ import { writeFileSync } from 'node:fs';
 import { harness, until } from './harness.ts';
 import { completeTriage } from './reviewfixture.ts';
 
-// (the shop's owner draws the tasks its reviews' findings make, where the company plans by threads)
+// (the shop's owner draws the tasks its reviews' findings make)
 const h = await harness('reviewrows', {
   before: repo =>
     writeFileSync(`${repo}/company/projects.yaml`, 'projects:\n  - { id: shop, name: The shop, owner: moss }\n'),
 });
 const { db, github, worker } = h;
 const { withFindings } = await import('./reviewrows.ts');
-const order = await import('./threadorder.ts');
 const projects = await import('./projects.ts');
-const { remember } = await import('./db.ts');
 // (a merge runs on after the route that set it off has answered: a test waits until GitHub has been quiet a moment)
 let lastAsked = 0;
 github.wait = () => {
@@ -396,59 +394,54 @@ test('a fix round says what it fixes: the findings its ruling sent back', async 
 // Tasks drawn from a ruling's findings in the owner's inbox, as the owner draws them (hq inbox accept, hq job
 // --findings): by the title HQ draws them with, named, and checking the review's own edits.
 test("a task drawn from the inbox says what it fixes: its findings, or its own name, never HQ's title", async () => {
-  remember(order.MODE, 'threads');
-  try {
-    // a ruling's findings in the shop's thread, for its owner to draw
-    const rule = async (n: number, slug: string, ruling: object) => {
-      projects.createThread({ project: 'shop', name: `Fee ${slug}`, goal: `The fee is ${slug}`, slug });
-      await push(n, `shop/${slug}`);
-      const [first, ...rest] = await claim(n, 'review');
-      await end(first, { summary: 'one', findings: [reported(11, 'The fee is counted twice. Twice.', 'blocking')] });
-      for (const run of rest) await end(run);
-      const [consolidate] = await claim(n, 'consolidate');
-      await end(consolidate, ruling);
-      assert.equal(queued(n, 'work').length, 0); // (none drawn for it: the owner draws them)
-    };
-    const fee = { file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' };
-    await rule(85670, 'counted', { decision: 'changes', blocking: [fee] });
-    await rule(85671, 'touched', { decision: 'changes', blocking: [], nonblocking: [fee] });
-    const [id] = (db.prepare('select id from findings where pr = 85670').all() as { id: number }[]).map(f => f.id);
-    const owner = await h.start({ agent: 'moss', title: 'Draw the fixes' });
-    const drawn = async (reply: Promise<{ status: number; body: { job?: number; id?: number } }>) => {
-      const { status, body } = await reply;
-      assert.equal(status, 200, JSON.stringify(body));
-      return fixesOf(body.job ?? body.id!);
-    };
-    const accept = (n: number, findings?: string, title?: string) =>
-      drawn(h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt', findings, title }));
-    // (under the task the reviewer named)
-    assert.deepEqual(await accept(85670, String(id)), {
-      round: 1,
-      findings: ['The fee is counted twice.'],
-      title: 'Count the fee once',
-    });
-    h.cancelQueued();
-    const named = h.agent('job', owner.token, {
-      agent: 'bolt',
-      title: 'Count the fee once',
-      prompt: 'Count it once',
-      thread: 'shop/counted',
-      findings: String(id),
-    });
-    assert.deepEqual(await drawn(named), {
-      round: 1,
-      findings: ['The fee is counted twice.'],
-      title: 'Count the fee once',
-    });
-    // (no touch-ups named by the reviewer: the accepter names the check.)
-    assert.deepEqual(await accept(85671, undefined, 'Check the review touch-ups'), {
-      round: 1,
-      findings: [],
-      touchups: true,
-    });
-  } finally {
-    remember(order.MODE, 'off');
-  }
+  // a ruling's findings in the shop's thread, for its owner to draw
+  const rule = async (n: number, slug: string, ruling: object) => {
+    projects.createThread({ project: 'shop', name: `Fee ${slug}`, goal: `The fee is ${slug}`, slug });
+    await push(n, `shop/${slug}`);
+    const [first, ...rest] = await claim(n, 'review');
+    await end(first, { summary: 'one', findings: [reported(11, 'The fee is counted twice. Twice.', 'blocking')] });
+    for (const run of rest) await end(run);
+    const [consolidate] = await claim(n, 'consolidate');
+    await end(consolidate, ruling);
+    assert.equal(queued(n, 'work').length, 0); // (none drawn for it: the owner draws them)
+  };
+  const fee = { file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' };
+  await rule(85670, 'counted', { decision: 'changes', blocking: [fee] });
+  await rule(85671, 'touched', { decision: 'changes', blocking: [], nonblocking: [fee] });
+  const [id] = (db.prepare('select id from findings where pr = 85670').all() as { id: number }[]).map(f => f.id);
+  const owner = await h.start({ agent: 'moss', title: 'Draw the fixes' });
+  const drawn = async (reply: Promise<{ status: number; body: { job?: number; id?: number } }>) => {
+    const { status, body } = await reply;
+    assert.equal(status, 200, JSON.stringify(body));
+    return fixesOf(body.job ?? body.id!);
+  };
+  const accept = (n: number, findings?: string, title?: string) =>
+    drawn(h.agent('proposals/accept', owner.token, { id: `findings:${n}`, for: 'bolt', findings, title }));
+  // (under the task the reviewer named)
+  assert.deepEqual(await accept(85670, String(id)), {
+    round: 1,
+    findings: ['The fee is counted twice.'],
+    title: 'Count the fee once',
+  });
+  h.cancelQueued();
+  const named = h.agent('job', owner.token, {
+    agent: 'bolt',
+    title: 'Count the fee once',
+    prompt: 'Count it once',
+    thread: 'shop/counted',
+    findings: String(id),
+  });
+  assert.deepEqual(await drawn(named), {
+    round: 1,
+    findings: ['The fee is counted twice.'],
+    title: 'Count the fee once',
+  });
+  // (no touch-ups named by the reviewer: the accepter names the check.)
+  assert.deepEqual(await accept(85671, undefined, 'Check the review touch-ups'), {
+    round: 1,
+    findings: [],
+    touchups: true,
+  });
 });
 
 // A fix job's row as the board's view reads it: what it fixes

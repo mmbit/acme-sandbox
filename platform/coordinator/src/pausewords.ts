@@ -50,16 +50,15 @@ export type Pause = {
 };
 
 export const targetOf = (p: Pick<Row, 'project' | 'thread'>) => p.thread ?? p.project;
-// The queued and running work on threads, and in none but what the desk's pause lets go (jobs.ts deskLets), read
-// once for all the pauses described and split per pause in JS: a per-pause query matching its thread or any of its
-// project's can't use jobs_status, so it would scan every job's row each time.
+// The queued and running work a pause may hold: on threads, and in none but what the desk's pause lets go, never what
+// no pause holds (jobs.ts pauseLets: the hourly check judging the holds, a pause's wake). Read once for all the pauses described and split per pause in JS: a per-pause query matching its
+// thread or any of its project's can't use jobs_status, so it would scan every job's row each time.
 type OnThread = Pause['running'][number] & { thread: string | null };
 export const workOnThreads = () =>
   db
     .prepare(
-      `select j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.started, j.thread from jobs j
-      where j.status in ('queued', 'running') and j.kind != 'chat' and (j.thread is not null or not ${jobs.deskLets('j')})
-      order by j.id`,
+      redraws.query(`select j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.started, j.thread from jobs j
+      where j.status in ('queued', 'running') and not ${jobs.pauseLets('j')} order by j.id`),
     )
     .all() as OnThread[];
 // Whether job `j` is on what pause `p` pauses: its thread, every thread of its project, or the desk's work

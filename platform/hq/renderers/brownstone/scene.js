@@ -15,6 +15,8 @@ import { slides } from './billboard.js';
 import { ART } from './mascots.js';
 
 export const info = { id: 'brownstone', name: 'Brownstone', context: '2d', label: 'The company as an isometric pixel-art brownstone in a little town' };
+// The look's style (pixel, line or any), which picks its icons.
+export const style = 'pixel';
 const INTRO_STEP = 0.32;        // seconds between floors dropping into place
 const WALL_DUR = 0.9;           // seconds for the outside walls to lift off, or come back down
 const HOLD = 4.2;               // seconds the tour stays at each of the building's stops
@@ -27,6 +29,16 @@ export const fx = {}; // planes, bells, signTaps, the bar's rounds and how many 
 // shut is what's shown. The intro starts closed and opens up unless the walls are on. The tour always opens.
 const walls = {};
 
+// Pixelify Sans, the look's lettering (skin.css --font), from Google Fonts (the only fonts HQ's CSP allows), once per
+// page; until it's there, or if it never comes, the fallbacks. (On a <link> of its own, not skin.css's @import, so a
+// blocked font doesn't fail the change of look)
+function loadFont() {
+  if (document.querySelector('link[data-brownstone-font]')) return;
+  const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Pixelify+Sans:wght@400;600&display=swap' });
+  l.dataset.brownstoneFont = '';
+  document.head.append(l);
+}
+
 // brand: the company's brand.yaml (what it leaves out, the brownstone draws its own way) and its names.
 // settings.intro: the floors drop into place first. shell: sound, toasts, cards, what its chrome covers.
 export function createScene({ canvas: screen, world: w, brand: b, settings, shell: s }) {
@@ -37,7 +49,8 @@ export function createScene({ canvas: screen, world: w, brand: b, settings, shel
   Object.assign(walls, { on, shut: settings.intro || on, anim: null, freeze: null });
   Object.assign(cam, { t: null, vx: 0, vy: 0, held: false, pinching: false });
   const offs = listen();
-  document.body.classList.add('brownstone'); // (the shell's pixel touches for this look alone: style.css).
+  document.body.classList.add('brownstone'); // (the shell's pixel touches for this look alone: its skin.css).
+  loadFont();
   if (w.dev) for (const m of w.mascots) if (!ART[m.kind]) console.warn(`[hq] the brownstone has no art for a ${m.kind}, so ${m.name} isn't in the building`);
   return {
     update: step, draw, hit, focus, resize, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,

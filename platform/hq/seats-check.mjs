@@ -17,10 +17,11 @@ import { join } from 'node:path';
 import { serve } from './serve.mjs';
 import { playwright, errorsOf, tap, until } from '../../shared/browser/browser.mjs';
 
-const RENDERERS = process.argv[2]?.split(',') ?? ['brownstone', 'holo', 'wire']; // (node seats-check.mjs wire: one look)
+const RENDERERS = process.argv[2]?.split(',') ?? lookNames(); // (node seats-check.mjs wire: one look)
 // one login card on the desk phone, as the coordinator files it when a seat loses its sign-in
 // (and claude-1's week resetting in 2.5 days, so its even pace is 64% of the week gone)
 const mockSeats = JSON.parse(readFileSync(new URL('./mock/seats.json', import.meta.url)));
+import { lookNames } from './looks.mjs';
 mockSeats.find(s => s.id === 'claude-1').week_resets = Date.now() + 2.5 * 864e5;
 const files = {
   'mock/seats.json': Buffer.from(JSON.stringify(mockSeats)),

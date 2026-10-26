@@ -45,11 +45,11 @@ export function printJobs({ job, jobs, typical }: { job?: Job; jobs: Job[]; typi
 function jobLines(j: Job) {
   const wall = j.wall_minutes === null ? '' : `, ${duration(j.wall_minutes)} from its first start to its end`;
   const pr = j.pr
-    ? `, ${j.files} files changed, PR #${j.pr.number} ${j.pr.merged_at ? `merged ${minute(j.pr.merged_at)} UTC` : j.pr.status}`
+    ? `, ${j.files} files changed, PR #${j.pr.number} ${j.pr.merged_at ? `merged ${minute(j.pr.merged_at)}` : j.pr.status}`
     : ', no pull request';
   const spent = j.spend === null ? 'seat spend not reported' : `${spendText(j.spend, j.unit)} of seat spend`;
   const lines = [
-    `#${j.id} ${j.agent}, done ${minute(j.finished)} UTC: ${j.title}`,
+    `#${j.id} ${j.agent}, done ${minute(j.finished)}: ${j.title}`,
     `  ${j.rebuilt ? '≈' : ''}${duration(j.agent_minutes)} of agent time in ${plural(j.runs, 'run')}${wall}; ${spent}${pr}`,
   ];
   if (j.tool_bound)

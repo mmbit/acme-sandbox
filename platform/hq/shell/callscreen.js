@@ -1,6 +1,7 @@
 // A call's screen (call.js): a layer of its own over HQ, drawn as the intercom draws a call, and the bubble it minimises
-// into (callbubble.js), floating over HQ's tools and the viewer while the call goes on. From the first minimising on,
-// the page is watched along: the call's agent sees what the board sees, recorded with the call (shared/watchalong).
+// into (callbubble.js), floating over HQ's tools and the viewer while the call goes on. Once the board picks Show my
+// screen, the page is watched along: the call's agent sees what the board sees, recorded with the call
+// (shared/watchalong). Minimising shares nothing.
 import { esc, store as saved } from '../util.js';
 import { startWatchalong } from './data.js';
 import { cue } from './audio.js';
@@ -8,10 +9,16 @@ import { CallBubble } from './callbubble.js';
 import * as world from '../world/world.js';
 import { scene } from './stage.js';
 import { icon } from './icons.js';
+import { tell } from './desk.js';
 
 const $ = s => document.querySelector(s);
 const PICTURE = icon('picture');
 const MINIMISE = icon('minimise');
+const EYE = icon('eye');
+// the screen's one share control, in the call's words
+const SHOW = 'Show my screen',
+  STOP = 'Stop showing',
+  UNSHOWN = 'Your screen couldn’t be shown. Try Show my screen again.';
 export function openLayer(c) {
   const layer = (c.layer = document.createElement('div'));
   layer.id = 'call-layer';
@@ -24,9 +31,11 @@ export function openLayer(c) {
       <p class="note" id="call-note" role="status" hidden></p>
       <p class="note" id="call-mic" role="status" hidden></p><!-- (the microphone hears nothing) -->
       <p class="note" id="call-net" role="status" hidden></p><!-- (the line hears the board late: lagging) -->
+      <p class="note" id="call-unshown" role="status" hidden></p><!-- (Show my screen didn't start) -->
       <p class="said" id="call-said"></p>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
+      <div class="row share"><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW}</span></button></div>
       <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-skip">Interrupt</button><button class="hangup" id="call-end">Hang up</button></div>
     </div></div>
   </div>`;
@@ -39,6 +48,7 @@ export function openLayer(c) {
     if (e.target === layer && c.onBackdrop) minimise(c);
   });
   $('#call-min').onclick = () => minimise(c);
+  $('#call-screenshare').onclick = () => showScreen(c);
   cue('open');
 }
 export function closeLayer(c) {
@@ -46,7 +56,7 @@ export function closeLayer(c) {
   if (!c.small) cue('close');
 }
 
-// Minimised: the screen shrinks into the bubble, HQ comes back under it, and the page starts being watched along
+// Minimised: the screen shrinks into the bubble and HQ comes back under it (watched along only if the board showed it)
 export async function minimise(c) {
   if (c.small) return;
   c.small = true;
@@ -65,7 +75,6 @@ export async function minimise(c) {
     .finished.catch(() => {});
   if (c.small) c.layer.hidden = true;
   c.layer.classList.remove('leaving');
-  watchAlong(c);
 }
 // From the screen's middle to the bubble's
 function bubbleShift(c, from) {
@@ -111,16 +120,19 @@ function newBubble(c) {
     onSound: name => cue(name === 'settle' ? 'dock' : name),
   });
   if (portrait?.accent) bubble.el.style.setProperty('--cb-accent', portrait.accent);
-  bubble.watching('off');
+  bubble.watching(watchState(c));
   return bubble;
 }
 
-// ---- the watch-along: from the call's first minimising on, HQ records itself for the call's agent and the call's
-// record (the board's typing kept, except passwords and inside private parts: shared/watchalong). Pause stops it at
-// once, and only the board resumes it; it ends with the call.
+// ---- the watch-along: from the board's Show my screen on, HQ records itself for the call's agent and the call's
+// record (the board's typing kept, except passwords and inside private parts: shared/watchalong). Stop showing (or the
+// bubble's Pause) stops it at once, as a pause the agent is told of, and only the board shows it again; it ends with
+// the call. (shown by the board's choice, never by minimising)
 export async function watchAlong(c) {
-  if (c.watch || c.watchStarting || !c.call || c.over) return; // (not picked up yet: the call's 'call' asks again)
+  if (c.watch || c.watchStarting || !c.call || c.over) return; // (not picked up yet: the key waits for it)
   c.watchStarting = true;
+  shareKey(c);
+  unshown(c, '');
   try {
     const session = await startWatchalong(world.dev, c.call, c.key);
     const recorder = session.events && (await import('/shared/watchalong/watchalong.js'));
@@ -128,24 +140,59 @@ export async function watchAlong(c) {
     c.watch = recorder
       ? recorder.watch({ url: session.events, typed: 'shown', canvasFps: 0.5, onEnd: why => watchEnded(c, why) })
       : mockWatch();
-    c.bubble.watching('watched');
+    c.paused = false;
+    cue('toggle', true);
   } catch (err) {
     console.error('[hq] watch-along didn’t start:', err);
+    unshown(c, UNSHOWN);
   } finally {
     c.watchStarting = false;
+    showWatching(c);
   }
 }
 function watchEnded(c, why) {
   if (why !== 'stopped') console.error(`[hq] watch-along ended: ${why}`);
   c.watch = null;
-  c.bubble?.watching('off');
+  showWatching(c);
 }
 function pauseWatch(c, paused) {
   if (!c.watch) return;
   if (paused) c.watch.pause();
   else c.watch.resume();
-  c.bubble.watching(paused ? 'paused' : 'watched');
+  c.paused = paused;
+  showWatching(c);
   cue('toggle', !paused);
+}
+// Show on the agent's ask to see (calldraw.js): the watch-along starts, or a paused one shows again
+export function share(c) {
+  if (!c.watch) return watchAlong(c);
+  if (c.paused) pauseWatch(c, false);
+}
+// The call screen's Show my screen: starts the watch-along, or shows the paused one again; Stop showing pauses it
+function showScreen(c) {
+  if (!c.watch) return watchAlong(c);
+  pauseWatch(c, !c.paused);
+}
+const watchState = c => (!c.watch ? 'off' : c.paused ? 'paused' : 'watched');
+function showWatching(c) {
+  c.bubble?.watching(watchState(c));
+  shareKey(c);
+}
+// The key says what it does next, and waits for the call to pick up (call.js asks again then)
+export function shareKey(c) {
+  const key = c.layer?.querySelector('#call-screenshare');
+  if (!key) return;
+  const shown = watchState(c) === 'watched';
+  key.disabled = !c.call || c.watchStarting || c.over;
+  key.setAttribute('aria-pressed', String(shown));
+  key.lastElementChild.textContent = shown ? STOP : SHOW;
+}
+// The board asked to show its screen and it didn't start: said on the call screen until the next try
+function unshown(c, words) {
+  const n = c.layer?.querySelector('#call-unshown');
+  if (!n) return;
+  tell(n, words);
+  n.hidden = !words;
 }
 // On mock data the page has nowhere to post: the controls work, nothing is recorded
 const mockWatch = () => ({ pause() {}, resume() {}, stop: async () => {} });

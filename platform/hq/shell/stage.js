@@ -9,15 +9,18 @@ import { toast, bindControls } from './hud.js';
 import { panelOpen } from './panel.js';
 import { brand, theme } from './brand.js';
 import { wearIcons } from './icons.js';
+import { pageWidth, onPageResize } from './page.js';
 
-// Every renderer HQ ships (renderers/<name>/scene.js): theme/hq.yaml picks the company's, a viewer may pick another.
-// (soft, glass, paper and ring are archived on the branch archive/looks-six.)
-export const RENDERERS = ['brownstone', 'holo', 'wire'];
-// The looks that dress the shell to match: its UI (renderers/<name>/skin.css over style.css) and its sounds
-// (renderers/<name>/sounds.js over the chiptune). The others wear its pixel art and play its chiptune.
-const DRESSED = new Set(['holo', 'wire']);
-export const dressed = name => DRESSED.has(name);
-export let cv = document.querySelector('#world'), scene, look; // look: the renderer on stage, by name
+// Every renderer HQ ships, as the server reads their folders (looks.mjs): [{ name, dressed }]. theme/hq.yaml picks the
+// company's, a viewer may pick another. A dressed look dresses the shell to match: its UI (renderers/<name>/skin.css
+// over style.css) and its sounds (renderers/<name>/sounds.js). Each says its style in its scene.js (`style`: pixel, line
+// or any).
+export const looks = fetch('renderers/looks.json').then(r => {
+  if (!r.ok) throw new Error(`HQ's list of looks didn't load: HTTP ${r.status}`);
+  return r.json();
+});
+// look: the renderer on stage, by name; dressed: whether it dresses the shell
+export let cv = document.querySelector('#world'), scene, look, dressed;
 export const pointed = { selected: null, hover: null }; // the agent to ring: whose panel is open, or under the mouse
 export let paused = false; // dev: tests hold the loop and drive frames themselves
 export const pause = on => { paused = on; };
@@ -34,20 +37,21 @@ export const later = (fn, ms) => timer(timers)(fn, ms);
 // one can't become WebGL) and scene, swapped in for the old ones once it's made. A swap that fails keeps the old
 // scene (false); at boot it throws. intro: the scene opens with its intro (at boot).
 export async function mount(name, intro = false) {
-  const next = cv.cloneNode(), mine = new Set();
+  const next = cv.cloneNode(), mine = new Set(), entry = (await looks).find(l => l.name === name);
   next.removeAttribute('style'); // (where the last scene placed its canvas)
   const sound = { play: audio.play, weather: audio.setWeather, ready: audio.ready };
-  let kit, links = [], fresh, sounds;
+  let kit, links = [], fresh, sounds, style;
   try {
-    if (!RENDERERS.includes(name)) throw new Error(`HQ has no renderer called ${name}`);
-    kit = kitOf(name); links = skin(name, kit);
-    let createScene;
-    [{ createScene }, sounds] = await Promise.all([
+    if (!entry) throw new Error(`HQ has no renderer called ${name}`);
+    kit = kitOf(name); links = skin(entry, kit);
+    let sceneModule;
+    [sceneModule, sounds] = await Promise.all([
       import(`../renderers/${name}/scene.js`),
-      wornSounds(DRESSED.has(name) ? import(`../renderers/${name}/sounds.js`) : {}, kit),
+      wornSounds(entry.dressed ? import(`../renderers/${name}/sounds.js`) : {}, kit),
       ...links.map(loaded),
     ]);
-    fresh = await createScene({ canvas: next, world, brand, settings: { ...theme[name], intro }, shell: { sound, toast, card: overlay.card, tap: press, chrome, store, later: timer(mine) } });
+    style = sceneModule.style;
+    fresh = await sceneModule.createScene({ canvas: next, world, brand, settings: { ...theme[name], intro }, shell: { sound, toast, card: overlay.card, tap: press, chrome, store, later: timer(mine) } });
   } catch (e) {
     links.forEach(l => l.remove());
     if (!scene) throw e;
@@ -61,8 +65,8 @@ export async function mount(name, intro = false) {
     for (const id of timers) clearTimeout(id);
     bindCanvas(next);
   }
-  cv.replaceWith(next); cv = next; scene = fresh; timers = mine; look = name;
-  wearIcons(name, kit);
+  cv.replaceWith(next); cv = next; scene = fresh; timers = mine; look = name; dressed = entry.dressed;
+  wearIcons(style, kit);
   audio.wear(sounds);
   resize(); scene.focus({ kind: 'home' }, { instant: true });
   bindControls();
@@ -71,11 +75,11 @@ export async function mount(name, intro = false) {
 // A look's skin, linked beside the one worn now (which goes when the scene swaps, so the UI is never bare): its <link>s,
 // none for a look without a skin or a kit. The look's own skin.css, then the kit the company dresses it in (the kit's
 // hq/style.css, served at /kits/<kit>/), laid over it. (the kit)
-function skin(name, kit) {
-  const sheets = [DRESSED.has(name) && ['skin', `renderers/${name}/skin.css`], kit && ['kit', `/kits/${kit}/style.css`]];
+function skin(entry, kit) {
+  const sheets = [entry.dressed && ['skin', `renderers/${entry.name}/skin.css`], kit && ['kit', `/kits/${kit}/style.css`]];
   return sheets.filter(Boolean).map(([as, href]) => {
     const l = Object.assign(document.createElement('link'), { rel: 'stylesheet', href });
-    l.dataset[as] = name;
+    l.dataset[as] = entry.name;
     document.head.append(l);
     return l;
   });
@@ -117,11 +121,11 @@ const HUD_GAP = 10, PANEL_W = 420, SHEET = 0.72, WIDE = 700; // and the sheet's 
 // hang a little lower; scenes frame below the tools.)
 const insets = {}, tools = document.querySelector('#hud .tools');
 let hudBottom = null;
-addEventListener('resize', () => { for (const side in insets) delete insets[side]; hudBottom = null; });
+onPageResize(() => { for (const side in insets) delete insets[side]; hudBottom = null; });
 new ResizeObserver(() => { hudBottom = null; }).observe(tools);
 const inset = side => insets[side] ??= parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sa' + side)) || 0;
 // top: the HUD; bottom: the safe area; panel: open, a side panel (wide) or a bottom sheet, its width and share
-export const chrome = () => ({ top: (hudBottom ??= tools.getBoundingClientRect().bottom) + HUD_GAP, bottom: inset('b'), panel: { open: !!panelOpen(), wide: innerWidth > WIDE, right: PANEL_W, share: SHEET } });
+export const chrome = () => ({ top: (hudBottom ??= tools.getBoundingClientRect().bottom) + HUD_GAP, bottom: inset('b'), panel: { open: !!panelOpen(), wide: pageWidth() > WIDE, right: PANEL_W, share: SHEET } });
 
 // A home-screen app on iOS reports a viewport one status bar too short, leaving the bottom of the screen empty.
 // When it fills the screen, the screen's own size is the true one. --app-h hands it to the CSS, which places
@@ -133,7 +137,7 @@ function viewHeight() {
   document.documentElement.style.setProperty('--app-h', `${h}px`);
   return h;
 }
-export function resize() { scene.resize(innerWidth, viewHeight(), Math.min(devicePixelRatio || 1, 2)); }
+export function resize() { scene.resize(pageWidth(), viewHeight(), Math.min(devicePixelRatio || 1, 2)); }
 
 // ---------------------------------------------------------------- loop
 let last = 0, acc = 0, cost = 8;

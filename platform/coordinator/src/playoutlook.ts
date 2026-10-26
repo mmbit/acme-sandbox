@@ -21,6 +21,7 @@ export function outlook(play: Play, row: QueuedJob, horizonDays: number): Outloo
       run.active,
       (play.stages.get(row.id) ?? []).flatMap(id => play.runs.get(id)!.active),
     ),
+    capacityConditions: play.conditions,
     unpricedSeats: play.seats.filter(s => s.fiveRate === null || s.weekRate === null).map(s => s.id),
     start: run.start,
     done: run.done,

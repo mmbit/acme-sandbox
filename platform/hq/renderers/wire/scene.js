@@ -5,7 +5,7 @@
 // key, and in "at work first" the keys slide into their new places like a slide puzzle. Drawn in the DOM, which scrolls
 // natively; the shell's canvas lies under it, empty, and the page hands its taps to the shell (shell.tap), which asks
 // hit() what's there.
-import { esc, store, rgb, roleHtml } from '../../util.js';
+import { esc, store, rgb, mix, roleHtml } from '../../util.js';
 import { contrastChannels } from '/contrast.js'; // WCAG's contrast ratio (shared/contrast/contrast.js)
 import { EMOTES, fade } from '../../world/emotes.js';
 import { companyFormats } from '../../world/clock.js';
@@ -17,7 +17,8 @@ import { engineMark } from '../../shell/engine.js';
 import { icon } from '../../shell/icons.js';
 import { sides } from '../../shell/sides.js';
 import { fillSteps } from '../../shell/steplog.js';
-import { theme } from '../../shell/brand.js';
+import { pageWidth } from '../../shell/page.js';
+import { brand, theme } from '../../shell/brand.js';
 import { pace } from './pace.js';
 // Slate's motion, the brand guide's too (shared/tactile).
 import { holdPresses, pressBriefly, PRESS_MIN_MS } from '../../../../shared/tactile/press.js';
@@ -36,6 +37,8 @@ export const info = {
   context: '2d',
   label: 'The work itself: a key per agent, what they are on and how fast it goes',
 };
+// The look's style (pixel, line or any), which picks its icons.
+export const style = 'any';
 
 const HOLD = 8; // a tour stop
 const GAP = 10, // between keys (skin.css --g)
@@ -82,6 +85,7 @@ export function createScene({ canvas, world: w, shell: s, settings }) {
     solo: null,
     card: null,
     origin: null, // (what the big key flew out of, when not its own key: solo)
+    onLeave: null, // (and what the shell does once it's gone: focus)
     days: null,
     week: {},
     jobs: null,
@@ -216,7 +220,8 @@ async function logo(plate) {
 // the next colourway on, the logo's accent part pressed down
 function recolour(plate) {
   const all = ways();
-  store.set('wire.colourway', all[(all.indexOf(colourway()) + 1) % all.length].id);
+  const at = all.findIndex(w => w.id === colourway().id);
+  store.set('wire.colourway', all[(at + 1) % all.length].id);
   appear();
   keys.press();
   if (!still())
@@ -289,8 +294,16 @@ const WIRE_WAYS = [
     onAccent: '#15171c',
   },
 ];
+// A colourway that sets no accent of its own wears the brand's colour (brand.yaml colour, its logo's): its lip a shade
+// darker, its letters black or white, whichever reads on it. The coordinator serves it only as #rrggbb
+const branded = w => {
+  const c = brand.colour;
+  if (w?.accent !== undefined || c === undefined) return w;
+  const on = contrastChannels(rgb(c), [0, 0, 0]) > contrastChannels(rgb(c), [255, 255, 255]) ? '#000000' : '#ffffff';
+  return { side: mix(c, '#000000', 0.3), onAccent: on, ...w, accent: c };
+};
 const ways = () => {
-  const own = (theme.wire?.colourways ?? []).filter(w => w?.id && WAY.every(k => HEX.test(w[k] ?? '')));
+  const own = (theme.wire?.colourways ?? []).map(branded).filter(w => w?.id && WAY.every(k => HEX.test(w[k] ?? '')));
   return own.length ? own : WIRE_WAYS;
 };
 const kebab = k => k.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
@@ -808,6 +821,8 @@ function leave() {
   S.solo = null;
   S.card = null;
   S.origin = null;
+  const left = S.onLeave;
+  S.onLeave = null;
   root.classList.remove('alone');
   root.querySelector('.solo .sides')?.remove();
   keys.close();
@@ -819,6 +834,7 @@ function leave() {
   };
   if (el && back) flyBack(el, back).onfinish = done;
   else done();
+  left?.();
 }
 // The big key, turned over (its front: the work; its back: the rest): edge on, the other face, and back, its close
 // button gone while it turns. Flat at rest (in 3D the log wouldn't scroll). Today, which has one face, counts its day
@@ -871,9 +887,10 @@ function message({ agent: from, to, text }) {
   root.querySelector('.flights').append(slip);
   const w = slip.offsetWidth,
     h = slip.offsetHeight,
-    x0 = Math.min(Math.max(8, ra.left + ra.width / 2 - w / 2), innerWidth - w - 8),
+    // (inside HQ's page, beside its book.)
+    x0 = Math.min(Math.max(8, ra.left + ra.width / 2 - w / 2), pageWidth() - w - 8),
     y0 = Math.max(S.top, ra.top + 20) - h / 2,
-    x1 = Math.min(Math.max(8, rb.left + rb.width / 2 - w / 2), innerWidth - w - 8),
+    x1 = Math.min(Math.max(8, rb.left + rb.width / 2 - w / 2), pageWidth() - w - 8),
     y1 = rb.top + rb.height / 2 - h / 2,
     lift = Math.min(160, 40 + Math.hypot(x1 - x0, y1 - y0) / 4),
     dur = Math.min(1900, 1100 + Math.hypot(x1 - x0, y1 - y0) / 1.5);
@@ -1037,7 +1054,7 @@ function layout() {
 function fit() {
   const board = root.querySelector('.board'),
     pad = parseFloat(getComputedStyle(board).paddingLeft) || 14,
-    room = (board.clientWidth || innerWidth) - 2 * pad,
+    room = (board.clientWidth || pageWidth()) - 2 * pad,
     phone = room < 600;
   S.side = phone ? Math.floor((room - GAP) / 2) : SIDE;
   root.style.setProperty('--t', `${S.side}px`);
@@ -1101,7 +1118,8 @@ function act({ kind, id }) {
 }
 // home: the board; an agent, a mascot or a room's agent: their key, big (out of from, an element of the shell's, where
 // given)
-function focus(target, { from = null } = {}) {
+// from: an element of the shell's it flies out of (and back into); onLeave: what the shell does once it's gone again
+function focus(target, { from = null, onLeave = null } = {}) {
   if (target.kind === 'home') {
     if (S.solo !== null) leave();
     return true;
@@ -1111,6 +1129,8 @@ function focus(target, { from = null } = {}) {
       ? S.tiles.findIndex(t => t.kind === 'agent' && world.agents.get(t.id)?.roomId === target.id)
       : S.tiles.findIndex(t => t.id === target.id && t.kind === target.kind);
   if (i < 0) return false;
+  // (one card replacing another keeps the shell's callback for the first, unless it brings its own)
+  S.onLeave = onLeave ?? (S.solo !== null ? S.onLeave : null);
   if (S.solo !== i) solo(i, 0, from);
   return true;
 }

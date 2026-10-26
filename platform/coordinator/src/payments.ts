@@ -106,6 +106,8 @@
 //                                     (code_expired).
 // Headers: authorization: Bearer <PAYMENTS_TOKEN>, x-product: <slug>, x-mode: test|live.
 // A paid order's own emails to its customer: POST /api/pay/email (ordermail.ts).
+// Whether a preview's viewer is the company's own (the board, a running job's test player): GET /api/pay/viewer?id=
+// (preview.ts companyViewer).
 // A closing product's full refunds, only with the board's recorded decision: /api/pay/closures (closures.ts).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';

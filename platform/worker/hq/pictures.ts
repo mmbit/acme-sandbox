@@ -2,7 +2,7 @@
 // them.
 import { ApiError, getJson } from './api.ts';
 import { savePicture } from './files.ts';
-import { print, stop, text, warn } from './output.ts';
+import { minute, print, stop, text, warn } from './output.ts';
 
 const USAGE = 'usage: hq picture <id> [id...]';
 
@@ -28,8 +28,8 @@ export const picture = {
         continue;
       }
       const path = savePicture(`picture-${id}`, shared.type, text(shared.data));
-      const created = text(shared.created).slice(0, 16).replaceAll('T', ' ');
-      print(`Picture #${id} (${text(shared.from)}, ${created} UTC) → ${path}`);
+      const created = minute(text(shared.created));
+      print(`Picture #${id} (${text(shared.from)}, ${created}) → ${path}`);
     }
     if (missing) stop('');
   },

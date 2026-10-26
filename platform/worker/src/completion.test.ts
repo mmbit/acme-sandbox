@@ -55,7 +55,37 @@ test('a work Stop hook returns the formatter failure and accepts the corrected f
     assert.equal(failed.decision, 'block');
     assert.ok(failed.reason.includes('sample.js'));
     writeFileSync(`${home}/sample.js`, 'const answer = { ready: true };\n');
-    assert.deepEqual(await workHook(home, {}, readable), {});
+    await withNotes([[]], async env => assert.deepEqual(await workHook(home, env, readable), {}));
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("a work Stop hook whose gates pass tells the run once of the board's notes it left open", async () => {
+  const home = mkdtempSync(`${tmpdir()}/completion-notes-`);
+  try {
+    writeFileSync(`${home}/package.json`, JSON.stringify({ scripts: { gates: 'true' } }));
+    await withNotes([[7, 9], []], async env => {
+      const first = await workHook(home, env);
+      assert.equal(first.decision, 'block');
+      assert.match(first.reason, /the board's notes #7, #9 sent to this job are neither marked fixed nor answered/);
+      assert.match(first.reason, /hq note <id> answered/);
+      assert.deepEqual(await workHook(home, env), {}, 'told once, it may stop');
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('a work Stop hook whose note check fails blocks with the error, not as if no note were open', async () => {
+  const home = mkdtempSync(`${tmpdir()}/completion-notes-down-`);
+  try {
+    writeFileSync(`${home}/package.json`, JSON.stringify({ scripts: { gates: 'true' } }));
+    await withNotes([], async env => {
+      const failed = await workHook(home, env);
+      assert.equal(failed.decision, 'block');
+      assert.match(failed.reason, /HQ is restarting/);
+    });
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -76,7 +106,7 @@ test('a failed local fallback retains the helper failure and a passing fallback 
     assert.equal(failed.decision, 'block');
     assert.match(failed.reason, /helper transport unavailable[\s\S]*local gates unavailable/);
     writeFileSync(`${checkout}/gates.cjs`, "if (process.argv.includes('--helper')) process.exit(2);\n");
-    assert.deepEqual(await workHook(checkout), {});
+    await withNotes([[]], async env => assert.deepEqual(await workHook(checkout, env), {}));
   } finally {
     rmSync(checkout, { recursive: true, force: true });
   }
@@ -119,10 +149,77 @@ test("a work Stop hook's gates can't read, write or reopen the CLI home outside 
   }
 });
 
-async function workHook(cwd: string, env: Record<string, string> = {}, readable: string[] = []) {
+test("a follow-through check's work Stop hook holds the session until HQ owes nothing, then runs the gates", async () => {
+  const checkout = mkdtempSync(`${tmpdir()}/completion-owed-`);
+  let owed: boolean | 'failing' | 'gone' = 'failing';
+  const server = createServer((req, res) => {
+    assert.equal(req.url, '/api/agent/followthrough-owed');
+    assert.equal(req.headers.authorization, 'Bearer test-job-token');
+    if (owed === 'gone') return res.destroy();
+    res.statusCode = owed === 'failing' ? 503 : 200;
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(owed === 'failing' ? { error: 'HQ is restarting' } : { owed }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    writeFileSync(`${checkout}/package.json`, JSON.stringify({ scripts: { gates: 'node gates.cjs' } }));
+    writeFileSync(`${checkout}/gates.cjs`, "console.log('gates ran'); process.exit(1);");
+    const { port } = server.address() as { port: number };
+    const env = { HQ_URL: `http://127.0.0.1:${port}`, HQ_TOKEN: 'test-job-token' };
+    // (a lookup that fails holds the session as a verdict owed does, and runs no gates)
+    const failed = await workHook(checkout, env);
+    assert.equal(failed.decision, 'block');
+    assert.ok(failed.reason.includes('HQ is restarting'), failed.reason);
+    owed = 'gone';
+    const dropped = await workHook(checkout, env);
+    assert.equal(dropped.decision, 'block');
+    assert.ok(!dropped.reason.includes('gates ran'), dropped.reason);
+    owed = true;
+    const held = await workHook(checkout, env);
+    assert.equal(held.decision, 'block');
+    assert.ok(held.reason.includes('recorded no verdict'), held.reason);
+    assert.ok(!held.reason.includes('gates ran'), held.reason);
+    owed = false;
+    assert.ok((await workHook(checkout, env)).reason.includes('gates ran'));
+  } finally {
+    server.close();
+    rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+// A stub HQ that answers the work Stop hook's note check (notes-untold) with each list in turn, then 503, and owes no
+// follow-through verdict: env is the address and token the hook reaches it by.
+async function withNotes(told: number[][], run: (env: Record<string, string>) => Promise<void>) {
+  const server = createServer((req, res) => {
+    if (req.url === '/api/agent/followthrough-owed') return res.end(JSON.stringify({ owed: false }));
+    const ours = req.url === '/api/agent/notes-untold' && req.headers.authorization === 'Bearer job-token';
+    const notes = ours ? told.shift() : undefined;
+    res.writeHead(notes ? 200 : ours ? 503 : 404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(notes ? { notes } : { error: ours ? 'HQ is restarting' : 'not found' }));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address() as { port: number };
+    await run({ HQ_URL: `http://127.0.0.1:${address.port}`, HQ_TOKEN: 'job-token' });
+  } finally {
+    server.close();
+  }
+}
+
+// (HQ's address and token only as a test gives them: a job's own would reach the real HQ. A test that gives none
+// gets the stub, with no note list: its gates fail before the note check)
+async function workHook(cwd: string, env: Record<string, string> = {}, readable: string[] = []): Promise<any> {
+  if (!env.HQ_URL) {
+    let answer;
+    await withNotes([], async hq => {
+      answer = await workHook(cwd, { ...env, ...hq }, readable);
+    });
+    return answer;
+  }
+  const { HQ_URL: _url, HQ_TOKEN: _token, ...own } = process.env;
   const child = spawn(hq, ['complete', 'work', cwd, ...readable], {
     cwd,
-    env: { ...process.env, ...env },
+    env: { ...own, ...env },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
   let output = '';
