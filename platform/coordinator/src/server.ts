@@ -34,6 +34,7 @@ import * as plan from './plan.ts';
 import * as meetings from './meetings.ts';
 import * as meetingseats from './meetingseats.ts';
 import * as lowmemory from './lowmemory.ts';
+import * as diskwarnings from './diskwarnings.ts';
 import * as threadorder from './threadorder.ts';
 import { oneTaskThread } from './made.ts';
 import * as threadrelease from './threadrelease.ts';
@@ -43,7 +44,7 @@ import * as decisions from './decisions.ts';
 import * as followthrough from './followthrough.ts';
 import * as takeover from './takeover.ts';
 import * as models from './models.ts';
-import { diskCheck } from './disk.ts';
+import { diskCheck, jobReserve } from './disk.ts';
 import { startSchedule, recurring, runNow } from './schedule.ts';
 import * as onair from './onair.ts';
 import * as preview from './preview.ts';
@@ -94,15 +95,21 @@ import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts';   // the board's pictures on the intercom and calls
 import * as book from './book.ts';   // the board's book: its pages.
+import { bookFor, people as bookPeople } from './sketchpeople.ts';   // (and invited people's)
 import * as booknotes from './booknotes.ts';   // and its sheets and notes
+import * as booksheets from './booksheets.ts';   // and its sheets going out.
 import * as bookreads from './bookreads.ts';   // and the agents' and calls' reads of its pages
 import * as bookslips from './bookslips.ts';   // and the answers clipped onto its notes
 import * as bookcalls from './bookcalls.ts';   // and calls' pages
+import * as booksearch from './booksearch.ts';   // and its Search.
+import './bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as sketchbook from './sketchbook.ts';   // and the Sketchbook, its free pages
+import * as pair from './pair.ts';   // two of the board's devices paired for a session
 import { NOTE_MAX, SAVE_MAX } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
 import * as language from './language.ts';   // the board's language
 import * as messages from './messages.ts';
+import { oneLine } from './agreements.ts';
 import * as memory from './memory.ts';
 import * as merged from './merged.ts';
 import * as estimates from './estimates.ts';
@@ -118,10 +125,13 @@ import * as calibration from './calibration.ts';
 import * as accuracy from './accuracy.ts';
 import * as meetinggist from './meetinggist.ts';
 import * as plainnames from './plainnames.ts';
+import * as handwriting from './handwriting.ts';
 import { boardJob, boardJobs } from './boardnames.ts'; // (the jobs the board reads, by its names)
 import * as sizes from './sizes.ts';
 import * as moves from './moves.ts';
 import * as projects from './projects.ts';
+import * as pad from './pad.ts';
+import * as goals from './goals.ts';
 import * as reviewrows from './reviewrows.ts';
 import * as projectorder from './projectorder.ts';   // the board's order of the projects' tiles
 import * as pauses from './pauses.ts';
@@ -161,7 +171,7 @@ import { stalled } from './stalljobs.ts';
 import * as runs from './runs.ts';   // long runs sent to a helper machine (hq run).
 import * as testresults from './testresults.ts';   // pushes' tests, kept by the code they tested.
 import * as machines from './machines.ts';   // the machines that take them
-import { routes, JSON_MAX, type RouteHandler, type RouteRequest, type RouteTable } from '../../../shared/routes/routes.ts';
+import { routes, JSON_MAX, readBody, parseJson, type RouteHandler, type RouteRequest, type RouteTable } from '../../../shared/routes/routes.ts';
 const MODULES_LOADED_MS = performance.now();
 
 // HQ's own version: a fingerprint of the files it's made of (not the repo's commit, which moves with every product
@@ -222,6 +232,12 @@ class Refused {
 // and what the company's parts add (kits.ts)
 const withChat = (r: any) => kits.numbers(r?.slug ? { ...r, chat: careNumbers.line(r.slug, r.mode, r.days) } : r);
 const refusal = (r: unknown) => typeof r === 'string' ? new Refused(400, r) : Array.isArray(r) ? new Refused(r[0], r[1], r[2]) : r;
+// A board's route on a book it names (who: its own, or an invited person's, sketchpeople.ts bookFor): then's answer, or
+// none's for a book that isn't one (404).
+const inBook = (who: unknown, then: (who: string) => unknown, none: () => unknown = () => 404) => {
+  const found = bookFor(who);
+  return found ? then(found) : none();
+};
 // What HQ refuses a job that holds a customer's details for good (outbox.ts file, guests.ts write): recorded, so the job's
 // ending done doesn't handle a call item it carries (ledger.ts withheld).
 const refusedDeliverable = (me: Me, what: string, r: unknown) => {
@@ -235,6 +251,8 @@ const linked = (item: number, job: number | undefined, r: unknown) => {
   if (job && (r as { ok?: boolean })?.ok && call != null && ledger.mine(job, call) && memory.customerCall(call)) jobs.handedCustomerData(job);
   return refusal(r);
 };
+// The CEO's job, on an item ready for the board's yes (ledger.ts done)
+const ceoOnReady = (me: Me, id: number) => !me.call && me.agent === ceo() && ledger.item(id)?.status === 'ready';
 // A job reads a call and corrects its items when it works for it (ledger.mine), or follows up a call that carried on from
 // it (ledger.resumed: the board rang back before it was followed up), or is org.yaml's roles.asks's (keepsAsks).
 const works = (me: Me, call: number) => ledger.mine(me.id, call) || ledger.resumed(me.id, call) || keepsAsks(me, call);
@@ -388,22 +406,37 @@ const api: Record<string, BoardRoute> = {
   'POST /api/pictures/forget': (q, s, b) => pictures.forget(Number(b.id)),
   // the board's book: a day's pages, a page, a new one, its label, archive and delete (book.ts; a save and a note are
   // board rows, for their size), its sheets and notes (booknotes.ts) and slips (bookslips.ts).
-  'GET /api/book': (q, s, b) => book.listPages(b),
-  'GET /api/book/page': (q, s, b) => book.getPage(Number(b.id)),
-  'POST /api/book/page/new': (q, s, b) => refusal(book.createPage(b)),
+  // (who: an invited person's book, the board's too to open and draw in, sketchpeople.ts bookFor; the people with one.
+  'GET /api/book': (q, s, b) => inBook(b.who, who => book.listPages(b, who)),
+  'GET /api/book/page': (q, s, b) => inBook(b.who, who => book.getPage(Number(b.id), who)),
+  'POST /api/book/page/new': (q, s, b) => inBook(b.who, who => refusal(book.createPage(b, who))),
+  'GET /api/book/people': () => bookPeople(),
   'POST /api/book/page/label': (q, s, b) => refusal(book.labelPage(b)),
   'POST /api/book/page/archive': (q, s, b) => refusal(book.archivePage(b)),
   'POST /api/book/page/delete': (q, s, b) => refusal(book.deletePage(Number(b.id))),
-  'GET /api/book/notes': (q, s, b) => booknotes.pageNotes(Number(b.page)),
+  'GET /api/book/notes': (q, s, b) => (b.url === undefined ? booknotes.pageNotes(Number(b.page)) : refusal(booknotes.urlNotes(b.url))),   // (url)
   'POST /api/book/note/edit': (q, s, b) => refusal(booknotes.editNote(b)),
   'POST /api/book/note/move': (q, s, b) => refusal(booknotes.moveNote(b)),
   'POST /api/book/note/delete': (q, s, b) => refusal(booknotes.wipeNote(Number(b.id))),
-  'GET /api/book/sheets': () => booknotes.sheets(),
+  'POST /api/book/note/restore': (q, s, b) => refusal(booknotes.restoreNote(b)),
+  'GET /api/book/sheets': () => booksheets.sheets(),
   'POST /api/book/sheet/order': (q, s, b) => refusal(booknotes.orderSheet(b)),
-  'POST /api/book/send': (q, s, b) => refusal(booknotes.send(Number(b.id))),
-  'POST /api/book/undo': (q, s, b) => refusal(booknotes.undo(Number(b.id))),
+  'POST /api/book/send': (q, s, b) => refusal(booksheets.send(Number(b.id))),
+  'POST /api/book/undo': (q, s, b) => refusal(booksheets.undo(Number(b.id))),
+  // two notes linked, and a free page sent on its own
+  'POST /api/book/note/link': (q, s, b) => refusal(booknotes.linkNotes(b)),
+  'POST /api/book/page/send': async (q, s, b) => refusal(await booksheets.sendPage(b)),
   'POST /api/book/slip/tick': (q, s, b) => refusal(bookslips.tick(b)),
   'POST /api/book/slip/reply': (q, s, b) => refusal(bookslips.replyTo(b)),
+  // two of the board's devices paired by a one-time code, and their pairing ended (pair.ts; its stream and sends are board
+  // rows).
+  'POST /api/pair': (q, s, b) => refusal(pair.createPair(b)),
+  'POST /api/pair/join': (q, s, b) => refusal(pair.joinPair(b)),
+  'POST /api/pair/end': (q, s, b) => refusal(pair.endPair(b)),
+  // the book's words found: notes written, said or typed, and answers
+  'GET /api/book/search': (q, s, b) => booksearch.searchBook(b.q),
+  // the words in the board's ink, read by a small model (handwriting.ts.)
+  'POST /api/book/read': async (q, s, b) => refusal(await handwriting.read(b)),
   // the board's Sketchbook, on the book's free pages (sketchbook.ts; its save is a board row, for its size).
   'GET /api/sketches': () => sketchbook.listSketches(),
   'GET /api/sketches/ink': (q, s, b) => sketchbook.getSketch(Number(b.id)),
@@ -541,6 +574,7 @@ const worker: Record<string, (b: any) => unknown> = {
   'POST /api/worker/main-merges': () => review.mainMerges(),
   'POST /api/worker/main-merged': b => review.mainMerged(b),
   // the worker's room and each job's share of it, every minute (room.ts)
+  'POST /api/worker/disk': () => jobReserve(),
   'POST /api/worker/room': b => room.reportRoom(b ?? {}),
   // a run the worker blocked for its job's share, and the words its output gets (blocks.ts).
   'POST /api/worker/blocked': b => blocks.blocked(b ?? {}),
@@ -553,6 +587,10 @@ const worker: Record<string, (b: any) => unknown> = {
   // the names the board reads, put plainly by the same: the next names due, and the model's answer (plainnames.ts.)
   'POST /api/worker/names/claim': () => plainnames.claim() ?? {},
   'POST /api/worker/names/answer': b => plainnames.answer(b ?? {}),
+  // the board's handwriting read into type, by the same: the next ink to read and the model's
+  // answer (handwriting.ts.)
+  'POST /api/worker/reads/claim': () => handwriting.claim() ?? {},
+  'POST /api/worker/reads/answer': b => handwriting.answer(b ?? {}),
   // a push's tests, kept by the code they tested: the claim before they run, and their result (testresults.ts)
   'POST /api/worker/tests/claim': b => testresults.claimTests(b),
   'POST /api/worker/tests/done': b => testresults.doneTests(b),
@@ -609,7 +647,7 @@ const seePhotos = (id: number, me: Me, read: () => unknown) => {
 const assignable = (id: string) => staff(id) || (org().alumni ?? []).some((a: { id: string }) => a.id === id);
 // The thread a job queued by an agent serves (hq job --thread; one started for it is the plan's: newthread.ts).
 function threadFor(b: any, me: Me): { thread: string } | { from?: number } | Refused {
-  const thread = jobThread(b, { agent: me.agent, job: me.id || undefined, onCall: !!me.call });
+  const thread = jobThread(b, { agent: me.agent, job: me.id || undefined });
   return 'refusal' in thread ? new Refused(thread.status, thread.refusal) : thread;
 }
 function jobOrigin(b: any, me: Me) {
@@ -981,11 +1019,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq thread move and hq job move: work regrouped by the CEO, the process team or its owner (regroup.ts).
   'POST /api/agent/threads/move': (b, me) => {
     const agent = speaker(b.as, me);
-    return agent ? refusal(regroup.moveThread(String(b.id ?? ''), String(b.project ?? ''), agent)) : 403;
+    return agent ? refusal(regroup.moveThread(String(b.id ?? ''), String(b.project ?? ''), agent, String(b.why ?? ''))) : 403;
   },
   'POST /api/agent/jobs/move': (b, me) => {
     const agent = speaker(b.as, me);
-    return agent ? refusal(regroup.moveJob(Number(b.id), String(b.thread ?? ''), agent, me.id)) : 403;
+    return agent ? refusal(regroup.moveJob(Number(b.id), String(b.thread ?? ''), agent, me.id, String(b.why ?? ''))) : 403;
   },
   // hq thread pause | resume and hq project pause | resume: the CEO or the project's owner holds its queued work, or lets
   // it go again (pauses.ts).
@@ -1004,6 +1042,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     return agent ? refusal(projects.say(String(b.project ?? ''), b.text, agent)) : 403;
   },
+  // hq project goal: the CEO marks a project a goal, or no longer (goals.ts).
+  'POST /api/agent/projects/goal': (b, me) => {
+    const agent = speaker(b.as, me);
+    return agent ? refusal(goals.markGoal(String(b.id ?? ''), b.goal === true, agent)) : 403;
+  },
+  // hq pad: the CEO's page, its versions, and the CEO's jobs' rewrite of it (pad.ts).
+  'GET /api/agent/pad': b => (b.history === '1' ? { versions: pad.padHistory() } : { page: pad.pad() }),
+  'POST /api/agent/pad': (b, me) => refusal(pad.writePad(b.text, { agent: me.agent, job: me.id })),
   'GET /api/agent/seat-warnings': () => ({ warning: seatwarning.getSeatWarning() }),
   'POST /api/agent/seat-warnings': (b, me) => {
     const agent = speaker(b.as, me);
@@ -1013,6 +1059,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq decision "name" --blocks ...: a decision of the board's that what depends on it waits for; hq decision link: the
   // card that asks it (decisions.ts)
   'POST /api/agent/decisions': (b, me) => refusal(decisions.create(b.name, Array.isArray(b.blocks) ? b.blocks : [], me.agent)),
+  // hq decision show <id>: the waiting visual changes, for their card author (decisions.ts).
+  'GET /api/agent/decisions/show': (b, me) => refusal(decisions.show(Number(b.id), me.agent)),
   'POST /api/agent/decisions/link': (b, me) => refusal(decisions.link(Number(b.id), Number(b.card), me.agent)),
   // hq propose: new work proposed to a project's owner, out of the queue; hq inbox: the open proposals waiting for the
   // agent (all of them for the CEO with --all) and its own, and the owner's or the CEO's accept or drop (proposals.ts).
@@ -1020,7 +1068,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     return agent ? refusal(proposals.propose({ agent, job: me.id }, b, assignable)) : 403;
   },
-  'GET /api/agent/proposals': (b, me) => { const agent = speaker(b.as, me); return agent ? proposals.list(agent, b.all === '1') : 403; },
+  'GET /api/agent/proposals': (b, me) => { const agent = speaker(b.as, me); return agent ? proposals.list(agent, b.all === '1', me.id) : 403; },
   'POST /api/agent/proposals/accept': (b, me) => { const agent = speaker(b.as, me); return agent
     ? refusal(proposals.accept(reviewinbox.inboxId(b.id), agent, { thread: b.thread, newThread: b.newThread, for: b.for, findings: b.findings, code: b.code, title: b.title, size: b.size, refs: b.refs, why: b.why })) : 403; },  // (title)
   'POST /api/agent/proposals/drop': (b, me) => { const agent = speaker(b.as, me); return agent
@@ -1094,13 +1142,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (b.request != null) {
       const request = Number(b.request);
       if (![id, request].every(n => Number.isSafeInteger(n) && n! > 0)) return new Refused(400, 'jobs and cards are named by their numbers');
-      return answer(b.drop === true ? jobs.dropCardWait(id!, request, me.agent) : jobs.addCardWait(id!, request, me.agent));
+      return answer(b.drop === true ? jobs.dropCardWait(id!, request, me.agent, String(b.why ?? '')) : jobs.addCardWait(id!, request, me.agent, String(b.why ?? '')));
     }
     // (a job number given that isn't one, "x" or 1.5, is refused: as NaN it would pass the checks and change nothing)
     if ([id, from, to].some(n => n != null && !(Number.isSafeInteger(n) && n > 0))) return new Refused(400, 'jobs are named by their numbers');
-    if (id != null && from == null && to != null) return answer(jobs.addWait(id, to, me.agent));
-    if (id != null && from != null && to != null) return answer(jobs.moveWait(id, from, to, me.agent));
-    if (id != null && from != null) return answer(jobs.dropWait(id, from, me.agent));
+    if (id != null && from == null && to != null) return answer(jobs.addWait(id, to, me.agent, String(b.why ?? '')));
+    if (id != null && from != null && to != null) return answer(jobs.moveWait(id, from, to, me.agent, String(b.why ?? '')));
+    if (id != null && from != null) return answer(jobs.dropWait(id, from, me.agent, String(b.why ?? '')));
     return new Refused(400, 'name a job to wait for (add), one to move a wait from and to (move), or one to stop waiting for (drop)');
   },
   // hq review <pr>: a stuck pull request goes back to the panel, same round and commit, or to its author's job when the
@@ -1132,7 +1180,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (!on || (me.call ? b.replaces == null && b.kind !== 'promise' : !ledger.mine(me.id, on))) return new Refused(403, me.call ? 'on a call, only a promise or a correction goes on the list' : "this job doesn't work for that call");
     if (b.replaces != null && !me.call && !ledger.followsUp(me.id)) return new Refused(403, "only a call's follow-up replaces an earlier item");
     if (b.replaces != null && !old) return new Refused(409, `item #${b.replaces} isn't there to replace`);
-    if (me.call && b.replaces != null && old?.status !== 'open') return new Refused(409, `item #${b.replaces} isn't open: on a call, only an open item is replaced (the call's follow-up can replace a handled one)`);
+    // (a ready item is still open: its work ended, the board's yes is still to come, and the briefing lists it)
+    if (me.call && b.replaces != null && !['open', 'ready'].includes(old!.status)) return new Refused(409, `item #${b.replaces} isn't open: on a call, only an open item is replaced (the call's follow-up can replace a handled one)`);
     if (me.call && old && old.call !== me.callId && !me.listed?.includes(old.id)) return new Refused(409, `item #${old.id} isn't one from your briefing: the call's follow-up corrects it from the transcript`);
     if (!assignable(String(b.owner ?? ''))) return new Refused(400, `${b.owner} isn't a colleague who takes work`);
     // --deadline: the time the board was given for it, which its job takes
@@ -1166,15 +1215,28 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // (pause: an open pause, which carries the item from then on: pauses.ts)
   'POST /api/agent/item-link': (b, me) => {
     const on = ledger.itemCall(Number(b.id)) ?? 0;
-    if (!works(me, on)) return 404;
-    if (!ledger.decides(me.id, Number(b.id), true) && !keepsAsks(me, on)) return new Refused(403, `item #${b.id} is the call's follow-up's to link, or its own job's`);
+    const chief = me.agent === ceo() && !memory.customerCall(on) && !memory.keysCall(on)
+      && memory.callAccess(on, me) === true;
+    if (!works(me, on) && !chief) return 404;
+    const ordinary = ledger.decides(me.id, Number(b.id), true) || keepsAsks(me, on);
+    if (!ordinary && !chief) return new Refused(403, `item #${b.id} is the call's follow-up's to link, or its own job's`);
+    const why = oneLine(String(b.why ?? ''));
+    if (!ordinary && !why) return new Refused(400, 'say why the CEO links this item with --why "reason": HQ shows it on the feed');
     const pause = b.to?.pause == null ? undefined : pauses.openPause(String(b.to.pause));
     if (typeof pause === 'string') return new Refused(409, pause);
-    return linked(Number(b.id), Number(b.to?.job) || undefined, ledger.link(Number(b.id), { job: Number(b.to?.job) || undefined, request: Number(b.to?.request) || undefined, pause, ref: b.to?.ref, thread: str(b.thread) }, me.agent, me.id));
+    const link = ledger.link(Number(b.id), { job: Number(b.to?.job) || undefined, request: Number(b.to?.request) || undefined, pause, ref: b.to?.ref, thread: str(b.thread) }, me.agent, me.id);
+    if (typeof link !== 'string' && why) publish({ type: 'log', agent: me.agent, text: `Linked call item: ${why}` });
+    return linked(Number(b.id), Number(b.to?.job) || undefined, link);
   },
-  'POST /api/agent/item-drop': (b, me) => !works(me, ledger.itemCall(Number(b.id)) ?? 0) ? 404
+  // (a ready item, its work ended without the board's yes: the CEO's too, as hq item done is)
+  'POST /api/agent/item-drop': (b, me) => ceoOnReady(me, Number(b.id)) ? refusal(ledger.drop(Number(b.id), b.why, me.id))
+    : !works(me, ledger.itemCall(Number(b.id)) ?? 0) ? 404
     : !ledger.decides(me.id, Number(b.id)) ? new Refused(403, `only the call's follow-up drops an item (it cancels the item's jobs)`)
     : refusal(ledger.drop(Number(b.id), b.why, me.id)),
+  // hq item done <item> "what the board said": the board has the task or promise and said yes. The CEO's jobs only, on
+  // any call (it reads nothing of the call); a live call's token records none.
+  'POST /api/agent/item-done': (b, me) => me.call || me.agent !== ceo() ? new Refused(403, "only the CEO records the board's yes on an item")
+    : refusal(ledger.done(Number(b.id), b.said, me.id)),
   // hq reply: what the board reads after the call, apart from the job's report (ledger.ts reply).
   'POST /api/agent/reply': (b, me) => refusal(ledger.reply(me.id, String(b.text ?? ''))),
   // A lead can ask the board and keep its session (and team) alive while it waits: hq ask / hq wait.
@@ -1189,7 +1251,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (typeof files === 'string') return new Refused(400, files);
     return refusal(jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
-      address: b.address, questions: b.questions, decides: b.decides, when: b.when }));   // (topic, zips, visibleFrom, address, questions, decides, when)
+      address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk }));   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
   },
   'POST /api/agent/request-answer': (b, me) => refusal(jobs.requestAnswer(Number(b.id), me.id)),
   // (only cards agents file, and a team member's only from its own job: its name isn't unique. An email card: its drafter
@@ -1291,14 +1353,6 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'POST /api/agent/mail-summary/arrived': (b, me) => me.agent !== roles().finance
     ? new Refused(403, "only Finance (org.yaml's roles.finance) records the books' arrival, from its job")
     : refusal(mailforward.confirmArrival(b)),
-  // hq pin words|sent (a call's pin_words and pin_sent tools): a pin the call is about, still waiting (feedback.ts): its
-  // new words, or sent with the job queued for it or answered on the call. Only a call's token.
-  'POST /api/agent/pin': (b, me) => {
-    if (!me.call || !me.callId) return new Refused(403, 'only a call about the pins changes them');
-    if (b.sent && (b.job == null) === (b.answered !== true)) return new Refused(400, 'sent needs the job queued for it, or answered');
-    const r = b.sent ? feedback.markSent(me.callId, Number(b.id), b.job ?? null, me.agent) : feedback.reword(me.callId, Number(b.id), b.words);
-    return typeof r === 'string' ? new Refused(409, r) : r;
-  },
   // hq note <id>: a review note the board sent, and its screenshot, for the agent whose job it was sent to; an outside
   // reviewer's for the jobs its share's notes went to (feedback.ts noteFor).
   'GET /api/agent/note': (b, me) => feedback.noteFor(Number(b.id), me),
@@ -1353,9 +1407,10 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const r = !agent ? 403 : !assignable(to) ? 404 : messages.send({ agent, job: me.id }, to, String(b.text ?? ''), undefined, undefined, b.needsAnswer === true);
     return r === 409 ? new Refused(409, `a chain of messages may start ${messages.CHAIN} jobs, and this one has`) : r; },
   // (a meeting seat's lines, and the server's memory: lowmemory.ts)
-  'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true)],
+  'POST /api/agent/inbox': (b, me) => [...messages.take(me.id), ...meetingseats.take(me.id), ...lowmemory.take(me.id, b.stopping === true), ...diskwarnings.take(me.id, b.stopping === true)],
   // (and the meeting lines it printed, lines)
   'POST /api/agent/inbox-ack': (b, me) => {
+    if (b.disk !== undefined && diskwarnings.ack(me.id, b.disk) === 400) return 400;
     if (b.lines !== undefined) meetingseats.read(me.id, b.lines);
     return messages.ack(me.id, b.ids);
   },
@@ -1375,7 +1430,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/estimate/audit': () => estimates.audit(),
   // hq when: when new work could be done without making any window miss, or whether by a time and what would make it
   // (when.ts).
-  'GET /api/agent/when': (b, me) => refusal(when.when(b, me.agent)),
+  'GET /api/agent/when': async (b, me) => refusal(await when.when(b, me.agent)),
   // An explicit CEO revision of a saved estimate, and the threads that moved (sizes.ts setSize)
   'POST /api/agent/sizes': (b, me) => {
     const agent = speaker(b.as, me);
@@ -1503,9 +1558,9 @@ const CALL_READS = ['GET /api/agent/report', 'GET /api/agent/overseer', 'GET /ap
 // (the when tool: the eta tool)
 const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET /api/agent/search', 'GET /api/agent/history', 'GET /api/agent/call', 'GET /api/agent/intercom',
   'GET /api/agent/seat-warnings', 'POST /api/agent/seat-warnings',
-  'GET /api/agent/numbers', 'POST /api/agent/pin', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/now', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message',
+  'GET /api/agent/numbers', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/now', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message',
   'POST /api/agent/expedite',
-  ...MANAGE_ROUTES, ...CALL_READS]);   // (pin)
+  ...MANAGE_ROUTES, ...CALL_READS]);
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
 // The voice line (platform/voice), with its own token: a call's context (and its agent's call token), the transcript
@@ -1515,10 +1570,9 @@ const voice: Record<string, (b: any) => unknown> = {
   'GET /api/voice/call-context': b => call.context(String(b.agent ?? ceo()), String(b.lang ?? 'en'), Number(b.request) || 0),
   // (the same, with the call's token in the body when the voice line restarts its agent mid-call: the call goes on)
   // phone: the call is on the phone line, with no screen for pictures
-  // pins: the review notes the board rang about from HQ's Reviews
   // a call out to a partner (callouts.ts): its briefing, its hand-over, its ticket, and a join link's room
   'POST /api/voice/call-context': b => b.callout != null ? callline.context(b) : call.context(String(b.agent ?? ceo()), String(b.lang ?? 'en'), Number(b.request) || 0, String(b.token ?? ''),
-    b.phone === true, b.pins ?? null),
+    b.phone === true, b.walk === true),   // (walk)
   'POST /api/voice/call-end': b => b.callout != null ? callline.handOver(b) : call.handOver(String(b.agent ?? ''), Array.isArray(b.lines) ? b.lines.map(String) : [], Number(b.request) || 0, String(b.token ?? ''), b.times),
   'POST /api/voice/call-ticket': b => callline.redeem(String(b.ticket ?? '')) ?? phone.redeem(String(b.ticket ?? '')),
   'POST /api/voice/phone-done': b => phone.phoneDone(String(b.call ?? '')),   // the agent on the shop's line hung up
@@ -1711,13 +1765,30 @@ const board: RouteTable = {
   'GET /shared/watchalong/vendor/rrweb-replay.css': async ({ res }) => send(res, 200, await readFile(new URL('style.css', watchalong.REPLAY)), TYPES['.css']),
   // a page's ink and scraps, a note with its snip, and the pictures to show: a page's drawn here, a scrap, a snip and a
   // slip's (book.ts, booknotes.ts, bookslips.ts).
-  'POST /api/book/page/save': boardJson((q, s, b) => refusal(book.savePage(b)), SAVE_MAX),
+  // (who and every book's pictures)
+  'POST /api/book/page/save': boardJson((q, s, b) => inBook(b.who, who => refusal(book.savePage(b, who))), SAVE_MAX),
   'POST /api/book/note': boardJson((q, s, b) => refusal(booknotes.addNote(b)), NOTE_MAX),
-  'GET /api/book/picture': ({ req, res }) => book.servePicture(req, res),
-  'POST /api/book/scrap': ({ req, res }) => book.uploadScrap(req, res),
-  'GET /api/book/scrap': ({ req, res }) => book.serveScrap(req, res),
+  'GET /api/book/picture': ({ req, res }) => book.servePicture(req, res, null),
+  'POST /api/book/scrap': ({ req, res, url }) =>
+    inBook(url.searchParams.get('who'), who => book.uploadScrap(req, res, who), () => book.notFound(res)),
+  'GET /api/book/scrap': ({ req, res }) => book.serveScrap(req, res, null),
   'GET /api/book/snip': ({ req, res }) => booknotes.serveSnip(req, res),
   'GET /api/book/slip/picture': ({ req, res }) => bookslips.serveSlipPicture(req, res),
+  // a paired device's stream, and its events for the other one, over HQ's JSON cap when a mark carries its strokes
+  // (pair.ts).
+  'GET /api/pair/live': ({ req, res, url }) => {
+    const refused = pair.listen(req, res, url.searchParams);
+    return refused && answer(res, refusal(refused));
+  },
+  'POST /api/pair/send': async ({ req, res }) => {
+    const bytes = await readBody(req, pair.SEND_MAX);
+    if (!bytes) return answer(res, 413);
+    const body = parseJson(bytes);
+    return answer(res, body === null ? new Refused(400, 'the body: JSON') : refusal(pair.sendEvents(body)));
+  },
+  // a slip's "now", the note's place cut again from the live page
+  'POST /api/book/slip/now': boardJson((q, s, b) => refusal(bookslips.cutNow(b)), NOTE_MAX),
+  'GET /api/book/slip/now': ({ req, res }) => bookslips.serveSlipPicture(req, res, undefined, 'now'),
   // a sketch's ink and scraps, its picture and a scrap (sketchbook.ts, book.ts; the board sees every book's).
   'POST /api/sketches/save': boardJson((q, s, b) => refusal(sketchbook.saveSketch(b)), SAVE_MAX),
   'GET /api/sketches/picture': ({ req, res }) => book.servePicture(req, res, null),
@@ -1762,6 +1833,8 @@ const board: RouteTable = {
   // the repo
   'GET /shared/holidays/holidays.js': hqFile(`${REPO_DIR}/shared/holidays`, '/holidays.js'),
   'GET /shared/format/format.js': hqFile(`${REPO_DIR}/shared/format`, '/format.js'),
+  // and the QR a second screen pairs by, which main.js loads through pair.js: without it HQ never starts
+  'GET /shared/qr/qr.js': hqFile(`${REPO_DIR}/shared/qr`, '/qr.js'),
   // and the keys' motion Slate shares with the brand guide
   'GET /shared/tactile/:file([a-z]+\\.js)': request =>
     hqFile(`${REPO_DIR}/shared/tactile`, `/${request.params.file}`)(request),
@@ -1949,6 +2022,8 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   merged.start(); // each merged pull request's lines, from the checkout's merges, for the sizer
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
+  bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
+  pair.startSweep(); // pairings never joined, left by both devices, or ended a day ago
   watchGazette(); // new posts: a toast in HQ, the unread count, a push
   onair.watchOnAir(); // new episodes: a push
   studio.watch(); // the photo studio's waiting photos, once its key is in.
@@ -2016,6 +2091,7 @@ export function stop(on = server, exit: (code: number) => void = code => process
     void memory.stopModel().then(() => exit(0));
   });
   endAll();
+  pair.endStreams();
   on.closeIdleConnections();
   setTimeout(() => exit(0), 5_000).unref();
 }

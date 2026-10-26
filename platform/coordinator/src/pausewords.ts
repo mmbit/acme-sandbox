@@ -18,8 +18,8 @@ export type Row = {
   until_time: string | null;
   woken: number | null;
 };
-// A job a pause waits for, and where it is in words (untilWords)
-export type Until = { id: number; agent: string; title: string; state: string };
+// A job a pause waits for, where it is in words (untilWords), and whether it has ended, merged or not (ended)
+export type Until = { id: number; agent: string; title: string; state: string; ended: boolean };
 // An open pause as the follow-through read, hq and the projects view show it: what it pauses, why, by whom since when,
 // the time (ISO) and the jobs that wake its owner, the job that woke them once they're met (woken), the board's decision
 // it waits for (with its card once there is one), the board's call item, and the work on it that's held or still running.
@@ -117,18 +117,20 @@ export function untilsOf(pauses: number[]) {
   for (const r of rows)
     untils.set(r.pause, [
       ...(untils.get(r.pause) ?? []),
-      { id: r.id, agent: r.agent, title: r.title, state: untilWords(r) },
+      { id: r.id, agent: r.agent, title: r.title, ...untilWords(r) },
     ]);
   return untils;
 }
 
-// Where a job a pause waits for is: under way, in review, merged, or ended without merging (which wakes its owner too)
+// Where a job a pause waits for is: under way, in review, merged, or ended without merging (which wakes its owner too),
+// and whether it has ended
 function untilWords(j: { status: string; on_main: number; merged: number; pr: string | null }) {
-  if (j.merged) return 'merged';
-  if (j.on_main) return 'done, its commits on main';
-  if (j.status === 'blocked') return 'waiting for the board';
-  if (j.status === 'queued' || j.status === 'running') return j.status;
+  const at = (state: string, ended: boolean) => ({ state, ended });
+  if (j.merged) return at('merged', true);
+  if (j.on_main) return at('done, its commits on main', true);
+  if (j.status === 'blocked') return at('waiting for the board', false);
+  if (j.status === 'queued' || j.status === 'running') return at(j.status, false);
   const [number, status] = (j.pr ?? '').split(' ');
-  if (j.status === 'done' && ['open', 'stuck', 'board'].includes(status)) return `in review (PR #${number})`;
-  return j.status === 'done' ? 'done without merged work' : j.status;
+  if (j.status === 'done' && ['open', 'stuck', 'board'].includes(status)) return at(`in review (PR #${number})`, false);
+  return at(j.status === 'done' ? 'done without merged work' : j.status, true);
 }

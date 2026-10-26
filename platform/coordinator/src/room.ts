@@ -157,6 +157,41 @@ export function measuredMb(job: number): number | null {
   return typicalMemory(own.agent, own.kind);
 }
 
+// Reserve each successful pause group's release for its waiter before considering the next waiter.
+export function pauseBudget(running: number[], at: number) {
+  const memory = plannerCapacity(at)?.memory;
+  const occupants = (
+    db
+      .prepare("select id from jobs where id in (select value from json_each(?)) and kind != 'chat' and off_worker = 0")
+      .all(JSON.stringify(running)) as { id: number }[]
+  ).map(r => r.id);
+  const demand = (id: number) => measuredMb(id) ?? memory?.defaultRunMb ?? 0;
+  let slots = memory ? memory.totalSlots - memory.heldSlots - occupants.length : Infinity;
+  let freeMb = memory
+    ? memory.availableMb -
+      memory.freeReserveMb -
+      memory.heldMb -
+      memory.starting.reduce((sum, r) => sum + (r.until > at ? r.mb : 0), 0)
+    : Infinity;
+  if (memory) {
+    for (const [id, mb] of Object.entries(memory.runningMb)) {
+      const job = db.prepare('select status from jobs where id = ?').get(Number(id)) as { status: string } | undefined;
+      if (!job) slots--;
+      else if (!occupants.includes(Number(id))) freeMb += mb ?? demand(Number(id));
+    }
+    for (const id of occupants) if (!(id in memory.runningMb)) freeMb -= demand(id);
+  }
+  const release = (ids: number[]) => ids.reduce((sum, id) => sum + (memory?.runningMb[id] ?? demand(id)), 0);
+  return {
+    fits: (waiter: number, victims: number[]) =>
+      slots + victims.length > 0 && freeMb + release(victims) >= demand(waiter),
+    reserve: (waiter: number, victims: number[]) => {
+      slots += victims.length - 1;
+      freeMb += release(victims) - demand(waiter);
+    },
+  };
+}
+
 export function measuredMemories(rows: { id: number; agent: string; kind: string }[]) {
   const peaks = db
     .prepare('select id, peak_mb from jobs where id in (select value from json_each(?))')

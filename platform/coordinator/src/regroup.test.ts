@@ -2,7 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
-import { harness } from './harness.ts';
+import { randomBytes } from 'node:crypto';
+import { harness, until } from './harness.ts';
 
 const h = await harness('regroup', {
   before: repo =>
@@ -28,7 +29,7 @@ const predictionlog = await import('./predictionlog.ts');
 
 const reset = () =>
   db.exec(`delete from jobs; delete from prs; delete from threads; delete from thread_aliases; delete from pauses;
-    delete from prediction_log; delete from thread_needs; delete from messages`);
+    delete from prediction_log; delete from thread_needs; delete from messages; delete from wakes`);
 const started = (slug: string, project = 'game') => {
   const t = projects.createThread({ project, name: `Thread ${slug}`, goal: 'It works', slug });
   assert.equal(typeof t, 'object', typeof t === 'string' ? t : '');
@@ -383,4 +384,72 @@ test("a thread's task that ran stays in its thread, and expedite's refusal says 
   );
   assert.equal(threadOf(running.id), levels);
   assert.equal(await expedite(999_999), "there's no job #999999: check the number");
+});
+
+test('a task expedite took out of its thread merges ahead of its review only on a push its gates and tests passed, never on its third failing one', async () => {
+  reset();
+  const levels = started('levels');
+  const ceo = (await h.start({ agent: 'juno' })).token;
+  const failing = h.queue({ agent: 'kit', thread: levels }),
+    passing = h.queue({ agent: 'kit', thread: levels });
+  for (const id of [failing, passing]) assert.equal((await h.agent('expedite', ceo, { id })).body.starts, 'next');
+  const push = async (job: number, branch: number, pr: number, gates: { passed: boolean; report: string }) => {
+    const r = await h.finish(await h.claimJob(job), {
+      pr,
+      branch: `job/${branch}`,
+      files: ['platform/coordinator/src/review.ts'],
+      sha: randomBytes(20).toString('hex'),
+      gates,
+      tests: { passed: true, report: 'Tests passed' },
+    });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  };
+  const fixRound = () =>
+    (
+      db
+        .prepare("select id from jobs where kind = 'work' and branch = ? and status = 'queued'")
+        .get(`job/${failing}`) as {
+        id: number;
+      }
+    ).id;
+  const expedited = (pr: number) =>
+    (db.prepare('select expedited from prs where number = ?').get(pr) as { expedited: number }).expedited;
+  const red = { passed: false, report: 'lib/a.ts:9: x is never used' };
+  await push(failing, failing, 7101, red);
+  await push(fixRound(), failing, 7101, red);
+  await push(fixRound(), failing, 7101, red);
+  assert.equal(expedited(7101), 0, 'the third failing push goes on to its review, not merged ahead of it');
+  assert.equal(
+    (await h.agent('expedite', ceo, { id: failing })).body.error,
+    "PR #7101's last push didn't pass its gates and tests, so it isn't merged ahead of its review: a later push that passes them merges",
+  );
+  assert.equal(expedited(7101), 0);
+  await push(passing, passing, 7102, { passed: true, report: 'Gates passed' });
+  assert.equal(expedited(7102), 1, 'a push both passed merges expedited');
+  await until(() => h.github.pr(7102).merged === true, 'the expedited merge');
+});
+
+test('expedite says what the work still needs first, as the queue holds it, and that it starts next only once nothing does', async () => {
+  reset();
+  const levels = started('levels');
+  const ceo = (await h.start({ agent: 'juno' })).token;
+  const road = h.queue({ agent: 'moss', title: 'Lay the road' });
+  const task = h.queue({ agent: 'kit', thread: levels, after: road });
+  const plain = h.queue({ agent: 'kit' });
+  h.jobs.holdForMerge(plain, road, 'juno');
+  const expedite = async (id: number) => (await h.agent('expedite', ceo, { id })).body;
+  const unmerged = new RegExp(`^until #${road}\\b[^(]*\\(moss: Lay the road\\) is done and merged$`);
+  const left = await expedite(task);
+  assert.equal(left.starts, undefined, "it doesn't start next");
+  assert.match(left.waits, unmerged);
+  assert.equal(left.from, levels);
+  assert.match((await expedite(plain)).waits, unmerged);
+  assert.equal(await h.claim(engineOf(task)), null, 'expedite keeps its after');
+  assert.equal(await h.claim(engineOf(plain)), null, 'expedite keeps its further wait');
+  // ended with nothing to merge: its after is met, a further wait never is
+  await h.finish(await h.claimJob(road), { status: 'done' });
+  assert.deepEqual(await expedite(task), { ok: true, id: task, starts: 'next' });
+  assert.match((await expedite(plain)).waits, unmerged);
+  assert.equal(await h.claim(engineOf(plain)), null, 'a further wait still needs a merge');
+  assert.equal((await h.claim(engineOf(task)))?.id, task, 'the met after releases expedited work');
 });

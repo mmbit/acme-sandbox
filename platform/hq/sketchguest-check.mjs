@@ -1,14 +1,17 @@
 #!/usr/bin/env node
 // An invited person's own Sketchbook, on the real coordinator through a real guest sign-in (the code by email, in test
-// mode on the page): the board gives it in Reviews' people (its switch), their link's page has Your Sketchbook, and
-// there, held like an iPad mini (touch, 744 × 1133) and then an iPhone (390 × 844), the shelf, a new sketch drawn with
-// a pen (its pressure kept), saved, labelled and sent to the CEO, which reaches the intercom as their line with its
-// picture. A save refused for its size says so over the page, on the phone too, with a New sketch.
+// mode on the page): the invite gives it, with no switch, their link's page has Your Sketchbook, and there, held like
+// an iPad mini (touch, 744 × 1133) and then an iPhone (390 × 844), the shelf, a new sketch drawn with a pen (its
+// pressure kept), saved, labelled and sent to the CEO, which reaches the intercom as their line with its picture. The
+// board, in HQ on a desktop, opens their book from its rail and draws on that sketch in its own ink, and they see it on
+// their open page; a line of theirs drawn as the board draws again keeps both. A save refused for its size says so over
+// the page, on the phone too, with a New sketch. (The board's part)
 //   node platform/hq/sketchguest-check.mjs [--shots dir]
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { harness } from '../coordinator/src/harness.ts';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
+import { reviewPart } from '../../shared/review/parts.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -37,8 +40,6 @@ const code = (await (await form(`${door}/send`, {})).text()).match(/page from .*
 assert.ok(code, 'the door sends a code');
 const signedIn = await form(`${door}/verify`, { code });
 const cookie = signedIn.headers.get('set-cookie').split(';')[0].split('=');
-// the board's switch for her, as Reviews' people row sends it
-assert.equal((await h.board('/api/review/people/sketchbook', { name: 'Ines', on: true })).body.sketchbook, true);
 
 const browser = await playwright().chromium.launch();
 async function open(viewport) {
@@ -121,6 +122,123 @@ const line = (await h.board('/api/chat')).body.messages.at(-1);
 assert.deepEqual([line.who, line.text], ['guest', `From Ines’s Sketchbook: “Bigger logo” (sketch #${mine.id})`]);
 assert.equal(line.pictures.length, 1);
 await shot('guest-sent-ipad', page);
+
+// ---- the board opens her book from its rail in HQ, on a desktop, and draws on her sketch in its own ink (Night)
+const NIGHT = '#2a2352';
+// (her canvas's pixels in the board's ink, not hers: Night's blue well over its red, her Ink's about level)
+const nightOn = p =>
+  p.evaluate(() => {
+    const c = document.querySelector('.sk-sheet canvas.dry'),
+      d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 110 && d[i + 2] - d[i] > 25) n++;
+    return n;
+  });
+assert.equal(await nightOn(page), 0, 'only her ink so far');
+const hq = await openPage(browser, { viewport: { width: 1280, height: 800 } });
+const [, boardSession] = h.boardCookie.split('=');
+await hq.context.addCookies([{ name: 's', value: boardSession, url: base }]);
+// (HQ's POSTs from 127.0.0.1, sent on from here with HQ's ORIGIN, as for her page above)
+await hq.context.route(`${base}/api/**`, async route => {
+  const r = route.request();
+  if (r.method() !== 'POST') return route.fallback();
+  const res = await fetch(r.url(), {
+    method: 'POST',
+    headers: { ...r.headers(), origin: ORIGIN, cookie: h.boardCookie },
+    body: r.postDataBuffer(),
+  });
+  route.fulfill({
+    status: res.status,
+    headers: Object.fromEntries(res.headers),
+    body: Buffer.from(await res.arrayBuffer()),
+  });
+});
+// (review mode's parts HQ imports, which the coordinator gives the board on HQ's own host only)
+await hq.context.route(`${base}/__review/*.js`, route => {
+  const part = reviewPart(new URL(route.request().url()).pathname, null);
+  return part === null
+    ? route.fallback()
+    : route.fulfill({ contentType: 'text/javascript; charset=utf-8', body: part });
+});
+await hq.page.goto(`${base}/?intro=0`);
+const chip = hq.page.locator('#book .bk-person[title="Ines’s book"]');
+await chip.waitFor({ timeout: 20000 });
+const read = hq.page.waitForResponse(r => r.url().includes(`/api/book/page?id=${mine.id}`) && r.ok());
+await chip.click();
+await read;
+await until(
+  hq.page,
+  () => /Ines’s book/.test(document.querySelector('#book .bk-when')?.textContent),
+  'her book, named',
+);
+assert.equal(await chip.getAttribute('aria-pressed'), 'true');
+await shot('board-in-her-book-desktop', hq.page);
+const sheet = await hq.page.locator('#book .bk-page').first().boundingBox(),
+  desk = await hq.page.locator('#book .bk-desk').boundingBox();
+const top = Math.max(sheet.y, desk.y) + 120;
+const saved = hq.page.waitForRequest(r => r.url().endsWith('/api/book/page/save') && r.postDataJSON().who);
+await hq.page.mouse.move(sheet.x + 60, top);
+await hq.page.mouse.down();
+for (let i = 1; i <= 16; i++) await hq.page.mouse.move(sheet.x + 60 + i * 14, top + Math.sin(i / 2) * 10);
+await hq.page.mouse.up();
+const save = (await saved).postDataJSON();
+assert.equal(save.ink.at(-1).color, NIGHT, "the board's own ink");
+assert.ok(save.since, 'saved over the page as the board read it');
+await until(
+  hq.page,
+  () => !document.querySelector('#book .bk-page .bk-refusal:not([hidden])'),
+  'nothing refused on the page',
+);
+// she sees it on her open page, as soon as she looks (her tab back in front)
+await new Promise(r => setTimeout(r, 1500));
+await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+await page.waitForFunction(
+  () => {
+    const c = document.querySelector('.sk-sheet canvas.dry'),
+      d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 200 && d[i] < 110 && d[i + 2] - d[i] > 25) return true;
+    return false;
+  },
+  null,
+  { timeout: 15000, polling: 200 },
+);
+const seen = await nightOn(page);
+assert.ok(seen > 40, `the board's line on her page: ${seen} px`);
+await shot('guest-sees-board-ipad', page);
+// the board draws again as she does: her save over the page she had is refused and merged, and both lines stay
+const before = await (
+  await fetch(`${base}/guest/sketchbook/api/ink?id=${mine.id}`, { headers: { cookie: cookie.join('=') } })
+).json();
+const second = {
+  color: NIGHT,
+  size: 4,
+  points: [
+    [100, 700, 0.5, 0],
+    [300, 720, 0.5, 40],
+  ],
+};
+assert.equal(
+  (
+    await h.board('/api/book/page/save', {
+      who: save.who,
+      id: mine.id,
+      ink: [...before.ink, second],
+      scraps: [],
+      since: before.updated,
+    })
+  ).status,
+  200,
+);
+await pen(across(box.x + 80, box.y + 440, box.x + 360));
+await until(page, () => document.querySelector('.sk-state')?.textContent === 'Saved', 'hers saves, merged');
+const after = await (
+  await fetch(`${base}/guest/sketchbook/api/ink?id=${mine.id}`, { headers: { cookie: cookie.join('=') } })
+).json();
+assert.equal(after.ink.length, before.ink.length + 2, 'her line and the board’s second, none lost');
+assert.ok(after.ink.some(s => JSON.stringify(s.points) === JSON.stringify(second.points)));
+assert.ok((await nightOn(page)) > seen, "the board's second line drawn on her page too");
+assert.deepEqual(hq.errors, []);
+await hq.context.close();
 
 // ---- back on the shelf, the sketch with its picture
 await page.locator('[data-back]').tap();

@@ -18,6 +18,7 @@ import { numbers, spend } from './numbers.ts';
 import { orders } from './orders.ts';
 import { overseer } from './overseer.ts';
 import { owed } from './owed.ts';
+import { pad } from './pad.ts';
 import { StopError, print, stop } from './output.ts';
 import { phone } from './phone.ts';
 import { plan } from './plan.ts';
@@ -62,6 +63,7 @@ const COMMANDS: Record<string, Command> = {
   decision,
   followthrough,
   summary,
+  pad,
   projects: projects.projectLines,
   now: projects.now,
   items: ledger.items,
@@ -90,7 +92,6 @@ const COMMANDS: Record<string, Command> = {
   note: feedback.note,
   notes: feedback.notes,
   reviewers: feedback.reviewers,
-  pin: feedback.pin,
   route: feedback.route,
   preview,
   run: runs.run,

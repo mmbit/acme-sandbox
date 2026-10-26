@@ -64,7 +64,7 @@ import server  # noqa: E402
 from piper import PiperVoice  # noqa: E402
 
 tmp = tempfile.TemporaryDirectory()
-server.LIVE = server.CALL_LOGS = Path(tmp.name)
+PATHS = server.Paths(calls=Path(tmp.name), live=Path(tmp.name))
 reply_lang = ['en']  # (the language the stand-in care answers in this call)
 
 
@@ -152,7 +152,7 @@ async def call(lang):
     ticket = {'agent': 'poppy', 'lang': LANGS[code][0], 'kind': 'care', 'engine': ENGINE, 'langs': LANGS[code],
               'voice': 'bill_boerst', 'voices': VOICES, 'respell': {},
               'hello': {'nl': 'Hallo', 'de': 'Guten Tag', 'en': 'Hello'}}  # (hello: a line from before #16033 says it)
-    server.hq = lambda method, path, body=None: ticket if path == 'call-ticket' else {}
+    coordinator = lambda method, path, body=None: ticket if path == 'call-ticket' else {}
     engines = []
     say = server.Call.say
 
@@ -172,7 +172,7 @@ async def call(lang):
         voice = np.concatenate([server.resample(np.frombuffer(c.audio_int16_bytes, np.int16).astype(np.float32) / 32768,
                                                 c.sample_rate, server.RATE) for c in piper.synthesize(said)])
     t0 = time.monotonic()
-    line = asyncio.create_task(server.phone_call(ws))
+    line = asyncio.create_task(server.phone_call(ws, wiring=server.Wiring(hq=coordinator, paths=PATHS)))
     quiet = np.zeros(int(0.2 * server.RATE), np.float32)
     while not ws.played or time.monotonic() < ws.end + 1.5:  # (the opening plays out; the caller waits 1.5 s more)
         await frames(ws, quiet)

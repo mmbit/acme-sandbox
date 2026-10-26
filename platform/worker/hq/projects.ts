@@ -12,7 +12,8 @@ export const thread = {
    hq thread list [<project>] [--all]                the open threads, all or one project's (--all: the done ones too)
    hq thread move <project>/<slug> <project>         move the thread to another project, as <project>/<slug> there, with its
                                                      jobs, reviews, pause and estimates (its owner, the CEO or Process). The
-                                                     old id keeps working${outlooks.help}${pauses.help('thread')}`,
+                                                     old id keeps working. Out of a pause: its owner or the CEO, with
+                                                     --why "reason", shown on the feed${outlooks.help}${pauses.help('thread')}`,
 
   async run([action, ...args]: string[]) {
     if (action === 'pause') return pauses.pause('thread', args);
@@ -57,6 +58,9 @@ export const project = {
                                                      the CEO makes a project in its business (its product), with its
                                                      owner, who draws its plan (hq plan). --code: two or three capitals,
                                                      the prefix of its tasks' codes (HQ-COVERS), its own for good.${asHelp(companyLevels().lines.project)}
+   hq project goal <project> on | off                the CEO marks a project one of our goals, or no longer: its bets are
+                                                     its threads, their windows its dates and their done when its number.
+                                                     While a goal is open, the CEO's check runs every hour with it
    hq project code <project> XX                      the CEO gives a project made before codes its prefix, once
    hq project owner <project> <agent>                the CEO names a project's owner
    hq project business <project> <business | none>   the CEO moves a project into a business (one of projects.yaml's),
@@ -76,11 +80,12 @@ export const project = {
     if (action === 'business') return setBusiness(args);
     if (action === 'code') return setCode(args);
     if (action === 'rename') return renameProject(args);
+    if (action === 'goal') return markGoal(args);
     if (action === 'done') return projectDone(args);
     const [id, sentence, ...rest] = args;
     if (action !== 'say' || !id || !sentence?.trim() || rest.length)
       stop(
-        'usage: hq project say <project> "sentence", hq project new <id> "name" --code XX --owner <agent> [--business <id>], hq project code <project> XX, hq project owner <project> <agent>, hq project business <project> <business | none>, hq project rename <project> "name", hq project done <project>, or hq project pause | resume <project>',
+        'usage: hq project say <project> "sentence", hq project new <id> "name" --code XX --owner <agent> [--business <id>], hq project code <project> XX, hq project goal <project> on | off, hq project owner <project> <agent>, hq project business <project> <business | none>, hq project rename <project> "name", hq project done <project>, or hq project pause | resume <project>',
       );
     const answer = await api.change('project-notes', { body: api.withSpeaker({ project: id, text: sentence }) });
     if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
@@ -102,6 +107,14 @@ async function newProject(given: string[]) {
   const made = api.parseOrNull(answer.body) as { id?: string } | null;
   if (!api.isSuccess(answer.status) || !made?.id) stop(`No project was made: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Project ${id} made, owned by ${values.owner}: its plan is hq plan ${id}.`);
+}
+
+// hq project goal (the coordinator's goals.ts).
+async function markGoal([id, onOff, ...rest]: string[]) {
+  if (!id || (onOff !== 'on' && onOff !== 'off') || rest.length) stop('usage: hq project goal <project> on | off');
+  const answer = await api.change('projects/goal', { body: api.withSpeaker({ id, goal: onOff === 'on' }) });
+  if (!api.isSuccess(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'no answer')}`);
+  print(onOff === 'on' ? `${id} is one of our goals now.` : `${id} is no longer a goal.`);
 }
 
 // hq project code (the coordinator's plan.ts setCode).
@@ -151,9 +164,13 @@ async function projectDone([id, ...rest]: string[]) {
 
 type Thread = { id: string; project: string; name: string; owner: string; goal: string; status: string; open: number };
 
-async function moveThread([id, project, ...rest]: string[]) {
+async function moveThread(given: string[]) {
+  const {
+    values: { why },
+    args: [id, project, ...rest],
+  } = takeValues(given, ['--why'], 'Nothing moved');
   if (!id || !project || rest.length) stop('usage: hq thread move <project>/<slug> <project>');
-  const answer = await api.change('threads/move', { body: api.withSpeaker({ id, project }) });
+  const answer = await api.change('threads/move', { body: api.withSpeaker({ id, project, why }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing moved: ${api.errorIn(answer.body, 'no answer')}`);
   const moved = JSON.parse(answer.body) as Thread;
   print(`Thread ${text(moved.name)} is ${text(moved.id)} now; ${id} still finds it.`);

@@ -78,13 +78,13 @@ function split(r, cap) {
 
 // First-fit packing into levels with two wings of fixed capacity, keeping org order where possible. A split room's
 // next part goes beside its last part (the other wing of that floor) or above it, in the same wing: the department
-// reads as one block going up the building.
-function pack(list, cx, cy, levels = []) {
+// reads as one block going up the building. endsNot(i, wing, r): r mustn't fill that wing of floor i up to its end
+function pack(list, cx, cy, levels = [], endsNot = () => false) {
   const cap = { x: cx, y: cy }, last = new Map(); // a split room's src → where its last part went: { i, wing }
   for (const r of list) {
     const prev = r.part > 1 ? last.get(r.src) : null, wings = prev?.wing === 'y' ? ['y', 'x'] : ['x', 'y'];
     let i = prev?.i ?? 0, wing = null;
-    for (; i < levels.length && !wing; i++) wing = wings.find(w => (!prev || i === prev.i || w === prev.wing) && levels[i][w].used + r.len <= cap[w]);
+    for (; i < levels.length && !wing; i++) wing = wings.find(w => (!prev || i === prev.i || w === prev.wing) && levels[i][w].used + r.len <= cap[w] && !(levels[i][w].used + r.len === cap[w] && endsNot(i, w, r)));
     if (!wing) {
       levels.push({ x: { rooms: [], used: 0 }, y: { rooms: [], used: 0 } }); i = levels.length;
       wing = wings.find(w => r.len <= cap[w]);
@@ -106,11 +106,16 @@ function plan(info, Lx, Ly) {
   const rest = rooms.filter(r => r !== top && !base.includes(r) && !ground.includes(r));
   const lounge = { id: 'lounge', name: 'Lounge', kind: 'lounge', size: 's', agents: [], features: [], len: 3, commons: true, auto: true };
   const up = pack(ground, Lx, Ly);
-  pack([...rest, lounge], Lx, Ly, up);
-  // the lobby goes in the x wing on the ground floor, and the street runs past the end of the dock's wing
-  const g0 = up[0];
-  if (g0 && g0.y.rooms.some(r => r.kind === 'lobby') && !g0.x.rooms.some(r => r.kind === 'lobby')) [g0.x, g0.y] = [g0.y, g0.x];
-  const street = g0?.y.rooms.some(r => r.kind === 'dock') ? 'y' : 'x';
+  // the lobby goes in the x wing on the ground floor, and the street runs past the end of the dock's wing (the rest
+  // brings neither: the ground floor's wings swap once it's packed)
+  const g0 = up[0], swap = g0 && g0.y.rooms.some(r => r.kind === 'lobby') && !g0.x.rooms.some(r => r.kind === 'lobby');
+  const street = g0?.[swap ? 'x' : 'y'].rooms.some(r => r.kind === 'dock') ? 'y' : 'x';
+  // An empty department's room three tiles long doesn't end the park side's wing on an even floor above the ground: the
+  // fire escape's flight comes down there across the middle of its back wall, with no room either side for its notice
+  // (ESCAPE; the top floor, where the ladder goes up instead, unknown till the packing's done, is kept to as well). The
+  // wing ends with another room, or the filler its leftover floor becomes
+  pack([...rest, lounge], Lx, Ly, up, (i, w, r) => i > 0 && i % 2 === 0 && w !== street && r.len === 3 && r.dept && !r.agents.length);
+  if (swap) [g0.x, g0.y] = [g0.y, g0.x];
   // the basement fills the street side's wing first, on under the street to the island's end, and the park side's only
   // when that's full: under the park is soil.
   const [bx, by] = BASE_CAP(Lx, Ly);
@@ -255,6 +260,52 @@ export function standBeside(L, level, p) {
   const floor = (x, y) => !inWell(x, y, FEET) && FEET_CORNERS.every(([a, b]) => roomAt(L, level, x + a * FEET, y + b * FEET));
   const [dx, dy] = BESIDE.find(([bx, by]) => floor(p.x + bx, p.y + by)) ?? [0, 0];
   return { x: p.x + dx, y: p.y + dy };
+}
+
+// the park end's fire escape (facade.js fireEscape): its landings run from a0 to a1 tiles out from the back walls and n
+// past the wing's end. The flight down to landing k runs from from(k) over landing k + 1 to to(k) at landing k, its
+// stringers n0 and n1 past the end and its handrail rail px over the n1 one; the top landing's gooseneck ladder goes up
+// at up(top) on to up(top) + rung, ladder past the end (rooms.js keeps an empty
+// room's notice clear of it)
+const from = k => k % 2 ? 0.5 : 2.5;
+export const ESCAPE = { a0: 0.3, a1: 2.7, n: 0.6, from, to: k => k % 2 ? 2.2 : 0.8, n0: 0.1, n1: 0.36, rail: 11, ladder: 0.42, rung: 0.22, up: top => top > 1 ? (from(top - 1) < 1.5 ? 2.25 : 0.45) : 2.25 };
+// Where the fire escape crosses rows z0 to z1 px over level's floor of the back wall that ends at its wing's end, as
+// [s0, s1] in tiles from that end (negative: along the wall), seen as what stands a out shows a nearer the wall's start
+// and 16a px lower (iso.js SY). Below level's floor and above its ceiling it crosses nothing there: the landing's
+// railing and the flight's foot stay under 12 px less 16a, the landing above starts FH up
+function escapeCrossing(level, top, z0, z1) {
+  const { n0, n1, rail, ladder, rung, up } = ESCAPE, a0 = from(level), a1 = ESCAPE.to(level);
+  if (level === top) return [ladder - up(top) - rung, ladder - up(top)]; // (the gooseneck's rails stand the floor's full height)
+  // each of the flight's straight runs, n past the end, from h px at a0 down FH to a1: where its z' = h - FH t - 16 a(t) is in z0..z1
+  const along = [[n0, FH], [n1, FH], [n1, FH + rail]].flatMap(([n, h]) => {
+    const at = z => (h - 16 * a0 - z) / (FH + 16 * (a1 - a0)), t0 = Math.max(0, at(z1)), t1 = Math.min(1, at(z0));
+    return t0 > t1 ? [] : [t0, t1].map(t => n - a0 - (a1 - a0) * t);
+  });
+  return [Math.min(...along), Math.max(...along)];
+}
+
+// how far out from the back wall a room's glass partition runs: a tile short of the room's front (rooms.js partition)
+export const partitionDepth = room => (room.wing !== 'y' ? room.y1 : room.x1) - 1;
+
+// The stretches of a room's back wall, [a0, a1] in tiles from its start, that what stands in front of it past its back
+// row hides, as what stands d out shows d nearer the start: the next room's glass partition at its far end, and at the
+// park end the fire escape's iron where it crosses the notice's rows (NOTICE_Z). In turn: with the partition's whole
+// pane, then (for a wall too short to clear it) with only its front post, the pane's tint over the rest. Every wall at
+// the escape's end clears its iron (plan) (out of rooms.js, where backWall hangs the notice, for its test)
+export function wallHidden(room, L) {
+  const X = room.wing !== 'y', len = X ? room.x1 - room.x0 : room.y1 - room.y0, end = X ? room.x1 : room.y1;
+  const next = room.lv.rooms.find(r => r.wing === room.wing && (X ? r.x0 : r.y0) === end), post = next && len - partitionDepth(next);
+  const escape = room.level > 0 && room.level < L.nUp && (L.street !== 'x') === X && end === (X ? L.X1 : L.Y1) && escapeCrossing(room.level, L.nUp - 1, ...NOTICE_Z).map((s, k) => len + s + (k ? 1 : -1) / 16);
+  const postOnly = next && [post - 1 / 16, post + 0.07 + 1 / 16];
+  return [[next && [post - 1 / 16, len], escape], [postOnly, escape]].map(h => h.filter(Boolean));
+}
+const NOTICE_Z = [19, 28]; // the rows of an empty room's notice, px over its floor (rooms.js backWall's band, WALL.vacant's card)
+// the flat x nearest x where iw px of a back wall (F_: rooms.js frame), from x0 to x1, cross none of its hidden stretches (wallHidden), or null
+export function clearOf(hidden, F_, x, iw, x0, x1) {
+  const spans = hidden.map(([a0, a1]) => F_.X ? [a0 * 16, a1 * 16] : [(F_.len - a1) * 16, (F_.len - a0) * 16]);
+  const clear = u => u >= x0 && u + iw <= x1 && !spans.some(([h0, h1]) => u < h1 && u + iw > h0);
+  const at = [x, ...spans.flatMap(([h0, h1]) => [Math.ceil(h1), Math.floor(h0) - iw])].filter(clear);
+  return at.length ? at.reduce((b, u) => Math.abs(u - x) < Math.abs(b - x) ? u : b) : null;
 }
 
 // the middle of the arcade's neon, in tiles from the room's start: just past its back row (cabinets, TV and timeboard,

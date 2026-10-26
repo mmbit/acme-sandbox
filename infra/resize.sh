@@ -8,24 +8,25 @@
 set -euo pipefail
 # company/infra.env read as data (infra-env.sh), never sourced
 . "$(dirname "$0")/infra-env.sh"
-API=https://api.hetzner.cloud/v1 NAME=$SERVER
+NAME=$SERVER
 TYPES=$(cat "$(dirname "$0")/server-type") DISK=$(cat "$(dirname "$0")/server-disk" 2>/dev/null || true) MAX_EUR=${MAX_EUR:-35}
-api() { curl -sS -X "$1" "$API$2" -H "Authorization: Bearer $HCLOUD_TOKEN" -H "Content-Type: application/json" ${3:+-d "$3"}; }
-wait_for() { # action id
-  for _ in $(seq 1 120); do
-    status=$(api GET "/actions/$1" | jq -r '.action.status')
-    [ "$status" = success ] && return 0
-    [ "$status" = error ] && { api GET "/actions/$1" | jq -c '.action.error'; return 1; }
-    sleep 5
-  done
-  echo "Timed out waiting for action $1"; return 1
-}
+. "$(dirname "$0")/hetzner.sh"   # api, wait_for
 
 # shuts the server down cleanly (off by force after five minutes)
 stop() {
-  wait_for "$(api POST "/servers/$id/actions/shutdown" | jq -r '.action.id')"
+  wait_for "$(api POST "/servers/$id/actions/shutdown" | jq -r '.action.id')" "shut $NAME down" 10
   for _ in $(seq 1 60); do [ "$(api GET "/servers/$id" | jq -r '.server.status')" = off ] && break; sleep 5; done
-  if [ "$(api GET "/servers/$id" | jq -r '.server.status')" != off ]; then wait_for "$(api POST "/servers/$id/actions/poweroff" | jq -r '.action.id')"; fi
+  if [ "$(api GET "/servers/$id" | jq -r '.server.status')" != off ]; then wait_for "$(api POST "/servers/$id/actions/poweroff" | jq -r '.action.id')" "power $NAME off" 10; fi
+}
+
+# waits for a change of the server's type: returns 1 when Hetzner failed it, so the run tries what comes next. One whose
+# outcome is unknown ends the run there: another change or a start could undo it, or be refused while it still runs.
+changed() { # action id, what it does
+  local status=0
+  wait_for "$1" "$2" 10 || status=$?
+  [ $status != 2 ] ||
+    { echo "::error::Stopped with $NAME off: check its type and disk in Hetzner's console" >&2; exit 2; }
+  return $status
 }
 
 server=$(api GET "/servers?name=$NAME" | jq '.servers[0]')
@@ -40,8 +41,8 @@ for t in $TYPES; do
     stop
     resp=$(api POST "/servers/$id/actions/change_type" "$(jq -n --arg t "$t" '{server_type:$t, upgrade_disk:true}')")
     action=$(echo "$resp" | jq -r '.action.id // empty')
-    [ -n "$action" ] && wait_for "$action" || echo "Hetzner didn't grow it: $(echo "$resp" | jq -c '.error // .')"
-    wait_for "$(api POST "/servers/$id/actions/poweron" | jq -r '.action.id')"
+    [ -n "$action" ] && changed "$action" "grow the disk of $NAME" || echo "Hetzner didn't grow it: $(echo "$resp" | jq -c '.error // .')"
+    wait_for "$(api POST "/servers/$id/actions/poweron" | jq -r '.action.id')" "start $NAME" 10
     now=$(api GET "/servers/$id" | jq -r '.server.primary_disk_size')
     echo "$NAME is running with a $now GB disk."
     [ "$now" -gt "$disk" ] || exit 1
@@ -58,10 +59,10 @@ for TYPE in $TYPES; do
   if [ $stopped = 0 ]; then stop; stopped=1; fi
   resp=$(api POST "/servers/$id/actions/change_type" "$(jq -n --arg t "$TYPE" '{server_type:$t, upgrade_disk:false}')")
   action=$(echo "$resp" | jq -r '.action.id // empty')
-  if [ -n "$action" ] && wait_for "$action"; then break; fi
+  if [ -n "$action" ] && changed "$action" "make $NAME a $TYPE"; then break; fi
   echo "$TYPE: $(echo "$resp" | jq -c '.error // .')"
 done
-[ $stopped = 1 ] && wait_for "$(api POST "/servers/$id/actions/poweron" | jq -r '.action.id')"
+[ $stopped = 1 ] && wait_for "$(api POST "/servers/$id/actions/poweron" | jq -r '.action.id')" "start $NAME" 10
 now=$(api GET "/servers/$id" | jq -r '.server.server_type.name')
 echo "$NAME is now a $now and running."
 [ "$now" != "$current" ] || { echo "No wanted type was available."; exit 1; }

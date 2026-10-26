@@ -407,10 +407,13 @@ test("a job's tokens reach HQ: on the feed, its recent readings on its agent's s
   assert.equal((await h.agent('event', kit.token, { type: 'tokens', total: 1200, grew: 1200 })).status, 200);
   assert.equal((await h.agent('event', kit.token, { type: 'tokens', total: 3400, grew: 2200 })).status, 200);
   assert.deepEqual((await agentOf()).status.tokens.map(([, total]: number[]) => total), [1200, 3400]);
+  // a new run of the job counts from nothing: all the readings of the run before go, even below its first total
+  assert.equal((await h.agent('event', kit.token, { type: 'tokens', total: 2000, grew: 2000 })).status, 200);
+  assert.deepEqual((await agentOf()).status.tokens.map(([, total]: number[]) => total), [2000]);
   // a reading after a restart (the status has none before it) counts what it grew by, not the job's whole total
   agentStatus.get('kit')!.tokens = undefined;
   assert.equal((await h.agent('event', kit.token, { type: 'tokens', total: 3500, grew: 100 })).status, 200);
-  assert.equal(today() - before, 3500);
+  assert.equal(today() - before, 5500);
   await end(kit, 'done');
   assert.equal((await agentOf()).status.tokens, undefined);
 });

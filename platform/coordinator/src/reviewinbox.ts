@@ -3,6 +3,7 @@ import { unassignedFindings } from './inbox.ts';
 import { oneLine } from './agreements.ts';
 import { db, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
+import * as messages from './messages.ts';
 import * as reviewwork from './reviewwork.ts';
 import { threadOfBranch } from './panel.ts';
 import * as reviewclosure from './reviewclosure.ts';
@@ -227,17 +228,26 @@ export function recordTask(job: number, fix: Fix) {
     JSON.stringify(ids),
   );
   prioritizeFixes(job);
-  const all = new Set(
-    tasks(fix.pr, fix.round)
-      .filter(j => j.status !== 'cancelled' && j.status !== 'failed')
-      .flatMap(j => j.findings),
-  );
-  if (fix.item.findings.filter(f => f.kind !== 'nonblocking').every(f => all.has(f.id)))
-    db.prepare("update proposals set status = 'accepted', decided = ?, accepted = ? where id = ?").run(
-      new Date().toISOString(),
-      job,
-      fix.item.proposal,
-    );
+  acceptDrawn(job, fix.item);
+}
+
+// Assignment can go away after acceptance. Only the current ruled round reopens for its owner's next sort.
+export function reopenUndrawn() {
+  const rows = db
+    .prepare(
+      `select item.pr, q.id, q.agent, q.title, q.project from review_inbox item join proposals q on q.id = item.proposal
+    join prs p on p.number = item.pr where q.status = 'accepted' and p.status in ('open', 'stuck')
+    and p.round = item.round and exists (${unassignedFindings('item.pr', 'item.round')})`,
+    )
+    .all() as { pr: number; id: number; agent: string; title: string; project: string | null }[];
+  const reopened = [];
+  for (const row of rows) {
+    const item = get(row.pr)!;
+    if (!reviewwork.current(item.thread, row.pr)) continue;
+    db.prepare("update proposals set status = 'open', decided = null, accepted = null where id = ?").run(item.proposal);
+    reopened.push(row);
+  }
+  return reopened;
 }
 
 export const instructions = (fix: Fix) => `Fix the named review findings on PR #${fix.pr}, round ${fix.round}.
@@ -253,6 +263,25 @@ export function copyTask(before: number, after: number) {
     select ?, pr, round, findings from review_fix_tasks where job = ?`,
   ).run(after, before);
   prioritizeFixes(after);
+  const fix = context(after);
+  if (fix) acceptDrawn(after, get(fix.pr)!);
+}
+
+function acceptDrawn(job: number, item: Item) {
+  const proposal = db.prepare("select 1 from proposals where id = ? and status = 'open'").get(item.proposal);
+  if (!proposal) return;
+  const all = new Set(
+    tasks(item.pr, item.round)
+      .filter(j => j.status !== 'cancelled' && j.status !== 'failed')
+      .flatMap(j => j.findings),
+  );
+  if (!item.findings.filter(f => f.kind !== 'nonblocking').every(f => all.has(f.id))) return;
+  db.prepare("update proposals set status = 'accepted', decided = ?, accepted = ? where id = ?").run(
+    new Date().toISOString(),
+    job,
+    item.proposal,
+  );
+  messages.withdraw(item.proposal);
 }
 
 // Review fixes occupy the existing queued slots before continuations that need their merge.

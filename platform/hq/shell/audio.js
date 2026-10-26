@@ -79,15 +79,18 @@ let holidays = new Set();
 export function setHolidays(on) { holidays = on; }
 
 // ---- the engine: what every pack plays its sounds with
-// A note: an oscillator at f Hz, gliding to f × slide, rising in attack s and dying away by dur s; cut: a low-pass on it
-// (softens a square or a saw); pan: where it sits, -1 (left) to 1 (right)
-export function tone(f, dur, { type = 'square', vol = 0.12, at = 0, slide = 0, attack = 0.008, cut = 0, pan = 0, bus = packBus } = {}) {
+// A note: an oscillator at f Hz, gliding to f × slide, rising in attack s and dying away by dur s; hold: s it stays at
+// full before it starts dying (a steady tone, dur its fade); cut: a low-pass on it (softens a square or a saw); pan:
+// where it sits, -1 (left) to 1 (right)
+export function tone(f, dur, { type = 'square', vol = 0.12, at = 0, slide = 0, attack = 0.008, hold = 0, cut = 0, pan = 0, bus = packBus } = {}) {
   if (!context) return;
-  const t = context.currentTime + at, o = context.createOscillator(), g = context.createGain();
+  const t = context.currentTime + at, o = context.createOscillator(), g = context.createGain(), end = t + hold + dur;
   o.type = type; o.frequency.setValueAtTime(f, t);
-  if (slide) o.frequency.exponentialRampToValueAtTime(f * slide, t + dur);
-  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-  o.connect(g).connect(cut ? lowpass(cut, panned(pan, bus)) : panned(pan, bus)); o.start(t); o.stop(t + dur + 0.05);
+  if (slide) o.frequency.exponentialRampToValueAtTime(f * slide, end);
+  g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack);
+  if (hold) g.gain.setValueAtTime(vol, t + Math.max(attack, hold));
+  g.gain.exponentialRampToValueAtTime(0.0001, end);
+  o.connect(g).connect(cut ? lowpass(cut, panned(pan, bus)) : panned(pan, bus)); o.start(t); o.stop(end + 0.05);
 }
 const lowpass = (freq, bus) => { const f = context.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq; f.connect(bus); return f; };
 const panned = (pan, bus) => { if (!pan || !context.createStereoPanner) return bus; const p = context.createStereoPanner(); p.pan.value = pan; p.connect(bus); return p; };
@@ -123,7 +126,15 @@ export function sample({ L, R, sr }, { vol = 1, at = 0, bus = packBus } = {}) {
 // it lacks is the platform's own: a switch's click from the sound kit.
 let pack = {};
 const click = () => foley('switch', { size: 0.9 }, { vol: 0.8 });
-export const sfx = new Proxy({}, { get: (_, name) => (...a) => (pack.sfx?.[name] ?? click)(...a) });
+// The platform's own sounds where a call should sound like a phone in any look (a pack may still bring its own): the
+// network's ringing tone while the line picks up, 425 Hz as in the Netherlands and most of Europe (the voice line's
+// hang-up tone's pitch), a second of it every five (call.js repeats it), with a quiet second harmonic; then a handset
+// lifted off its cradle, the hook switch's click under the plastic's clack.
+const OWN = {
+  ringing: () => { tone(425, 0.03, { type: 'sine', vol: 0.07, attack: 0.03, hold: 0.97 }); tone(850, 0.03, { type: 'sine', vol: 0.011, attack: 0.03, hold: 0.97 }); },
+  pickUp: () => { foley('clack', { hold: 0, size: 1.2, pitch: -3 }, { vol: 0.8 }); foley('switch', { size: 1.4, pitch: -2 }, { vol: 0.35, at: 0.025 }); },
+};
+export const sfx = new Proxy({}, { get: (_, name) => (...a) => (pack.sfx?.[name] ?? OWN[name] ?? click)(...a) });
 // A sound by its name, as the scenes (shell.sound.play) and a kit's moments call it.
 export const play = (name, ...a) => sfx[name](...a);
 // A sound of the platform's sound kit (/foley.js), rendered once per take (four takes each, picked at random, so repeats
@@ -143,10 +154,25 @@ export function foley(name, params = {}, { vol = 1, at = 0 } = {}) {
 let cueBus = null;
 export function cue(name, ...a) {
   if (!context || !prefs.sound) return;
+  playOn(cues(), name, a);
+}
+const cues = () => {
   if (!cueBus) { cueBus = context.createGain(); cueBus.gain.value = sfxBus.gain.value; cueBus.connect(context.destination); }
+  return cueBus;
+};
+function playOn(bus, name, a) {
   const look = packBus;
-  packBus = cueBus;
+  packBus = bus;
   try { play(name, ...a); } finally { packBus = look; }
+}
+// A call's sound that goes on until something happens (the ring until the line picks up): cued every `every` s on a
+// bus of its own, which the function it returns cuts at once, mid-sound.
+export function cueRepeating(name, every) {
+  if (!context) return () => {};
+  const bus = context.createGain(), again = () => prefs.sound && playOn(bus, name, []), timer = setInterval(again, every * 1000);
+  bus.connect(cues());
+  again();
+  return () => { clearInterval(timer); bus.gain.setTargetAtTime(0, context.currentTime, 0.005); setTimeout(() => bus.disconnect(), 100); };
 }
 // The stage puts on a look's pack as its scene goes on. The sounds play through a bus of the pack's own, which a swap
 // fades and drops, so the last look's (its van's whirr) never ring on under the new one's.

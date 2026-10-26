@@ -1,9 +1,10 @@
 // What wakes a pause's owner (pauses.ts): once its time has come and its --until jobs have all merged or ended, HQ queues
 // them a job to judge it, and the pause stays on. They lift it, take the results to the board, or keep it on for what's
-// still missing; nothing but a resume lifts it (board, 25 Oct). A pause waiting for the board's decision is lifted by
-// the board's answer.
+// still missing; nothing but a resume lifts it. A pause waiting for the board's decision is lifted by the board's
+// answer.
 import { db, inOneStep, mergePending } from './db.ts';
 import { ceo, projects } from './company.ts';
+import { deliveredWords } from './followthroughwords.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
@@ -51,18 +52,21 @@ function wake(p: Row, t: number) {
   const owner = p.item != null ? ceo() : p.by;
   const name = jobs.pauseName(targetOf(p));
   inOneStep(() => {
+    const brief = wakeBrief(p, t, owner);
     const { id } = jobs.createJob({
       agent: owner,
       code: madeCode('alarms', 'hq', STANDING.pauseMet),
       title: `Judge the pause on ${name}: what it waited for is met`,
-      prompt: wakeBrief(p, t),
+      prompt: brief.text,
       effort: 'medium',
     });
+    if (brief.customers) jobs.handedCustomerData(id);
     made('alarms', 'hq', { id }, projects().made.alarms?.hq ? { asap: t } : undefined);
     db.prepare(
       "update settings set value = json_set(value, '$.allow', json_insert(coalesce(json_extract(value, '$.allow'), json('[]')), '$[#]', ?)) where key = 'company.paused'",
     ).run(id);
     db.prepare('update pauses set woken = ? where id = ?').run(id, p.id);
+    db.prepare('insert into pause_wakes (job, pause) values (?, ?)').run(id, p.id);
   });
   publish({
     type: 'log',
@@ -72,39 +76,48 @@ function wake(p: Row, t: number) {
 }
 
 // What the woken owner reads: the pause, what was met, each job it waited for as it ended (its report, and whether its
-// work is on main), and the three ways on.
-function wakeBrief(p: Row, t: number) {
+// work is on main), what counts as delivered (company.ts deliveredWords) and the three ways on. A report with a customer's details only for an owner who reads it (jobs.readsReport),
+// and then the wake job holds them too (`customers`).
+function wakeBrief(p: Row, t: number, owner: string) {
   const name = jobs.pauseName(targetOf(p));
   const kind = p.thread ? 'thread' : 'project';
   const until = untilsOf([p.id]).get(p.id) ?? [];
   const reports = new Map(
     (
       db
-        .prepare('select id, result from jobs where id in (select value from json_each(?))')
-        .all(JSON.stringify(until.map(u => u.id))) as { id: number; result: string | null }[]
-    ).map(r => [r.id, r.result]),
+        .prepare('select id, result, customers from jobs where id in (select value from json_each(?))')
+        .all(JSON.stringify(until.map(u => u.id))) as { id: number; result: string | null; customers: number }[]
+    ).map(r => [r.id, r]),
   );
+  const shown = [...reports.values()].filter(r => jobs.readsReport(r, { id: 0, agent: owner }));
   const at = (iso: string) => `${iso.slice(0, 16).replace('T', ' ')} UTC`;
   const jobsMet = until.map(u => {
-    const report = (reports.get(u.id) ?? '').trim();
+    const r = reports.get(u.id)!;
+    const report = (r.result ?? '').trim();
     const cut = report.length > REPORT_MAX ? `${report.slice(0, REPORT_MAX)}… (the rest: hq history)` : report;
-    return `- #${u.id} ${u.agent}: ${u.title}. It ended ${u.state}.\n  Its report: ${cut || 'none'}`;
+    const said = shown.includes(r) ? cut || 'none' : `(${jobs.REPORT_LEFT_OUT})`;
+    return `- #${u.id} ${u.agent}: ${u.title}. It ended ${u.state}.\n  Its report: ${said}`;
   });
-  return [
+  const text = [
     `The pause on ${name} (paused by ${p.by}, ${at(p.at)}): ${p.why}`,
     p.item != null
       ? `It carries the board's call item #${p.item} (\`hq followthrough\` shows it in the board's words).`
       : '',
     `What it waited for is met${p.until_time ? `: its time came (${at(p.until_time)})` : ''}${until.length ? `${p.until_time ? ', and ' : ': '}every job it waited for has ended:\n${jobsMet.join('\n')}` : '.'}`,
-    `The pause is still on, as of ${at(new Date(t).toISOString())}: nothing lifts it but a resume. Judge against what it was for, read in its why and the board's words, not against whether those jobs ended: a job that ended, merged or deployed hasn't delivered what the board waits for until the board has seen it and said yes. Then one of:`,
+    `The pause is still on, as of ${at(new Date(t).toISOString())}: nothing lifts it but a resume. Judge against what it was for, read in its why and the board's words, not against whether those jobs ended. Delivered means ${deliveredWords()} Then one of:`,
     `- It has what it waited for: lift it (\`hq ${kind} resume ${targetOf(p)}\`), and where the board waits for those results, take them to it (a card on the desk phone with what was found and your recommendation).`,
     `- What it waited for ended without what the hold needs (no results, a failure, a step still missing): queue what's missing and keep holding on it: \`hq ${kind} pause ${targetOf(p)} "why" --until <that job>\` keeps the pause on and wakes you again when that ends.`,
-    `- Only the board can judge it: one card on the desk phone, the pause kept on.`,
+    `- Only the board can judge it: ${owner === ceo() ? '' : `ask the CEO (${ceo()}, \`hq say\`), who alone names a decision of the board's, to `}make the pause wait for its answer, which lifts it: ${BOARD_WAITS(targetOf(p))}.`,
     `Say in your report which you did and why.`,
   ]
     .filter(Boolean)
     .join('\n\n');
+  return { text, customers: shown.some(r => !!r.customers) };
 }
+// How a pause waits for the board (decisions.ts create, and the card that asks it): the woken owner's third way and the
+// hourly check's (followthrough.ts)
+export const BOARD_WAITS = (target: string) =>
+  `\`hq decision "<what the board decides>" --blocks ${target}\` (it keeps the pause on, now on that decision), then its card, \`hq ask ... --decides <its id>\``;
 
 // A pull request closed with every commit of its branch on main (review.ts close): its work in a pause's --until is
 // on main, as it meets the waits on it. The next sweep wakes the pause's owner if nothing else is left.

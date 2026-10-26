@@ -5,32 +5,36 @@ import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
-import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf } from './jobs.ts';   // (failedNote) (holdsCustomerData)
+import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf, stillHolds } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
 import * as pausewake from './pausewake.ts';
 import { unreadable, missing, ceo, roles, names, infra, reviewSettings } from './company.ts';   // (names, infra)
 import * as reviewtriage from './reviewtriage.ts';
+import { FOUNDATION_QUESTION } from './reviewlenses.ts';
 import * as reviewrefusals from './reviewrefusals.ts';
 import { TRUST_RULE, FINDING, FINDING_NOTES, CONSOLIDATOR_TRUST, BLOCKING, DISMISSED_FIELD, AUTHOR_TRUST, TASK_NOTE, weighed } from './trust.ts'; // (TASK_NOTE)
 import * as findings from './findings.ts';
 import * as reviewsources from './reviewsources.ts';
 import * as panel from './panel.ts';
 import * as engineOnly from './engineonly.ts';
+import * as decisions from './decisions.ts';
+import * as visualapproval from './visualapproval.ts';
 import * as visual from './visual.ts';
 import * as threadorder from './threadorder.ts';
 import * as reviewinbox from './reviewinbox.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import * as rounds from './reviewrounds.ts';
-import { findThread } from './projects.ts';
+import { findThread, ownerOf } from './projects.ts';
 import * as followups from './followups.ts';
 import * as waiting from './reviewpushes.ts';
 
 // A pull request merged: marked so, the threads whose work it held (threadends.ts merged), and what its reviews left
-// into the project's follow-ups.
+// into the project's follow-ups, and the visual hold it was still in, when it landed another way (visualapproval.closed).
 const pullRequestMerged = (pr: number) => {
   markMerged(pr);
+  visualapproval.closed(pr);
   threadends.merged(pr);
   followUp(pr, true);
 };
@@ -103,9 +107,11 @@ type Push = {
 // (changedFrom) when the worker's list is from another commit
 // (lines)
 // (at: the first push of that commit.)
-const recordPush = (pr: number, sha: string, files: string[], lines?: findings.ChangedLines) =>
-  db.prepare(`insert into pushes (pr, sha, files, lines, at) values (?, ?, ?, ?, ?)
-    on conflict(pr, sha) do update set files = excluded.files, lines = excluded.lines`).run(pr, sha, JSON.stringify(files), lines ? JSON.stringify(lines) : null, new Date().toISOString());
+// (checked: whether its gates and tests both passed on it, checksPassed)
+const recordPush = (pr: number, sha: string, files: string[], lines: findings.ChangedLines | undefined, checked: boolean) =>
+  db.prepare(`insert into pushes (pr, sha, files, lines, at, checked) values (?, ?, ?, ?, ?, ?)
+    on conflict(pr, sha) do update set files = excluded.files, lines = excluded.lines, checked = excluded.checked`)
+    .run(pr, sha, JSON.stringify(files), lines ? JSON.stringify(lines) : null, new Date().toISOString(), checked ? 1 : 0);
 
 // Called when an author's job finishes with a pull request (new, or updated after fixes). `sha` is the head commit
 // the worker pushed: the panel reviews exactly that commit, and only that commit is merged. `pushedSince` is the branch's
@@ -131,7 +137,7 @@ export function startReview(
 ) {
   // (settings; lines)
   sha = /^[0-9a-f]{40}([0-9a-f]{24})?$/.test(sha ?? '') ? sha : undefined;
-  if (sha) recordPush(pr, sha, files, lines);
+  if (sha) recordPush(pr, sha, files, lines, gates?.passed === true && tests?.passed === true);
   // (gate_fails; tests_incomplete)
   const prev = db
     .prepare('select sha, round, status, since, gate_fails, tests_incomplete from prs where number = ?')
@@ -149,7 +155,10 @@ export function startReview(
   if (!sha) return stuck(pr, 'the worker reported no head commit, so there is nothing pinned to review');
   if (plantedReviewFiles(push, files)) return;
   const pinned = { ...push, sha };
-  if (expedites(branch)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
+  if (expedites(branch)) {
+    if (checksPassed(pr, sha)) return void mergeExpedited(pr, () => reviewRound(pinned, { round, base, before }, files, links, pushedSince));
+    publish({ type: 'log', agent: author, text: `PR #${pr} is expedited, but its gates and tests didn't both pass on this push: it merges after its review` });
+  }
   if (mergeChecked(pinned, round, base, before, links) || resetRefused(push, files)) return;
   if (panelCalledBack(pinned, round, files, links)) return;
   // A pull request of only the office's records merges without a review, before any round of one (round 0: its first
@@ -167,8 +176,15 @@ function cleared(push: Push, pushed: waiting.Push) {
   const { pr, prev } = push,
     { files, frontmatter, knowledge, pushedSince, gates, tests } = pushed;
   const owed = owedFirst(push, files, pushedSince); // (owed)
-  if (prev && reviewinbox.get(pr)?.round === prev.round &&
-    (reviewinbox.unassigned(pr, prev.round).length || reviewinbox.tasks(pr, prev.round).some(task => task.status !== 'done' && task.status !== 'cancelled'))) return;
+  const item = prev && reviewinbox.get(pr);
+  if (prev && item?.round === prev.round) {
+    const undrawn = reviewinbox.unassigned(pr, prev.round);
+    if (undrawn.length) {
+      hold(pr, `round ${prev.round} waits for unassigned blocking findings ${undrawn.map(id => `#${id}`).join(', ')} in findings:${pr}, ${ownerOf(item)}'s to draw`);
+      return;
+    }
+    if (reviewinbox.tasks(pr, prev.round).some(task => task.status !== 'done' && task.status !== 'cancelled')) return;
+  }
   if (documentsSentBack(push, frontmatter, knowledge) || madeRightFirst(push, files, owed)) return;
   const failing = failingChecks(gates, tests);
   if (heldForChecks(push, failing, gates, tests)) return;
@@ -181,7 +197,7 @@ function cleared(push: Push, pushed: waiting.Push) {
 // thread is reviewed once, at its end: the next task's push takes its place (its files against main hold the thread's
 // work), and one that ends without a push or stops being ready lets it go (releaseHeld). It is checked first like any
 // push (owedFirst, the documents, the gates and tests), so one owing something goes back to its author instead. A pull
-// request's fixes and the board's notes are no task's, so they never wait.
+// request's fixes and the board's notes never wait, a thread's tasks or not (threadorder.ts answersRound).
 function heldForThread(push: waiting.Push) {
   const next = push.job === undefined ? undefined : threadorder.nextReady(push.job);
   if (next === undefined) return false;
@@ -284,6 +300,16 @@ const failingChecks = (gates?: Check, tests?: Check) =>
     c => c.check?.passed === false && typeof c.check.report === 'string',
   );
 
+// Tests the platform stopped aren't the author's to fix: no job for them, the pull request waits stuck with why, as one
+// whose tests ran out of tries, so `hq review` runs them again (testsAgain).
+function platformStopped({ pr, branch, author, sha }: Push, tests: Check) {
+  db.prepare('insert into prs (number, branch, author, sha) values (?, ?, ?, ?) on conflict(number) do nothing').run(pr, branch, author, sha ?? null);
+  ledger.prOpened(branch);
+  db.prepare('update prs set tests_incomplete = ? where number = ?').run(GATE_TRIES, pr);
+  stuck(pr, `the platform couldn't run its tests (${String(tests.report).split('\n')[0].slice(0, 200)}); \`hq review ${pr}\` runs them again`);
+  return true;
+}
+
 // Whether the gates or the tests hold the push (sent back, or stuck), each streak counted
 function heldForChecks(push: Push, failing: ReturnType<typeof failingChecks>, gates?: Check, tests?: Check) {
   const { pr, branch, author, sha, prev } = push;
@@ -294,6 +320,7 @@ function heldForChecks(push: Push, failing: ReturnType<typeof failingChecks>, ga
   const gateReport = failing.map(c => `### The ${c.name}\n${c.check!.report}`).join('\n\n');
   if (gates?.passed === null)
     publish({ type: 'log', agent: author, text: `PR #${pr}: the gates could not run, so it goes on without them: ${String(gates.report).slice(0, 300)}` });
+  if (unfinished && tests!.platform) return platformStopped(push, tests!);
   if (unfinished && testsIncomplete >= GATE_TRIES) {
     db.prepare('insert into prs (number, branch, author, sha) values (?, ?, ?, ?) on conflict(number) do nothing').run(pr, branch, author, sha ?? null);
     ledger.prOpened(branch);
@@ -390,7 +417,14 @@ function mergeChecked(
 }
 
 // A pass its branch left for new work (a push that waited for it) is no merge to check: the next push is a round of its own
-const checksMerge = (before: ReturnType<typeof ruling>, links: string[]) => before?.decision === 'merge' && !links.length && !waiting.passLeft(before.id);
+function checksMerge(before: ReturnType<typeof ruling>, links: string[]) {
+  if (!before || links.length || waiting.passLeft(before.id)) return false;
+  if (before.decision === 'merge') return true;
+  if (before.decision !== 'board') return false;
+  const card = db.prepare("select answer from requests where job = ? and kind = 'review' and status = 'answered' order by id desc limit 1")
+    .get(before.id) as { answer: string } | undefined;
+  return !!card && /^merge\b/i.test(card.answer.trim());
+}
 
 // Starting the company over is the board's alone: the server ignores a reset a pull request brings (infra/reset.py).
 function resetRefused({ pr, branch, author }: Push, files: string[]) {
@@ -473,7 +507,8 @@ function sendBack(push: { pr: number; branch: string; author: string; sha?: stri
 }
 
 // The gates' or the tests' report on a push, from the worker: passed, failed, or not run (null).
-export type Check = { passed: boolean | null; report: string };
+// platform: it couldn't complete only because the worker couldn't measure its disk use (pushchecks.ts)
+export type Check = { passed: boolean | null; report: string; platform?: boolean };
 const CHECKS = [
   { name: 'gates', what: 'the gates (Prettier, ESLint and the type check, on what it adds: CODE_STYLE.md, "The gates")' },
   { name: 'tests', what: 'the tests of the areas it touches (CODE_STYLE.md, "Tests")' },
@@ -541,7 +576,7 @@ function dispatchTriage(job: { id: number; pr: number; round: number; sha: strin
     sha: job.sha!, judges: seat.files, stage: 'review', step: 'Reviewing',
     cli: seat.security && findAgent(seat.agent)?.engine === 'codex' ? 'codex' : undefined,
     prompt: reviewerPrompt(job.pr, pr.branch, briefingFor(pr.branch, job.round, selected.throwaway), seat.security, seat.files, true, pr.fixes_from, selected.throwaway)
-      + lens(seat, seat.agent === selected.looker) + boardWords(pr.branch)
+      + lens(seat, seat.agent === selected.looker, selected.foundation.includes(seat.agent)) + boardWords(pr.branch)
       + scopeFor(pr) });
   publish({ type: 'log', agent: selected.consolidator,
     text: `PR #${job.pr}, round ${job.round}: ${selected.reason}. Reviewers: ${selected.reviewers.map(seat => `${seat.agent}: ${seat.reason}`).join(', ') || 'the consolidator alone'}` });
@@ -601,7 +636,7 @@ export function outputProblem(id: number, output: unknown): string | undefined {
 }
 
 // The consolidator's verdict is the JSON file it was asked to write, read as JSON: no digging for braces in whatever else it wrote.
-const parse = (out: string): { decision?: string; summary?: string; blocking?: unknown[]; nonblocking?: unknown[]; findings?: unknown[]; touchups?: unknown[]; touchups_task?: unknown; outcomes?: unknown; upstream?: unknown; finding_sources?: unknown; pre_existing?: unknown[] } => {   // (outcomes; touchups_task)
+const parse = (out: string): { decision?: string; summary?: string; blocking?: unknown[]; nonblocking?: unknown[]; findings?: unknown[]; touchups?: unknown[]; touchups_task?: unknown; outcomes?: unknown; upstream?: unknown; finding_sources?: unknown; pre_existing?: unknown[]; major_visual?: unknown } => {   // (outcomes; touchups_task)
   try { const v = JSON.parse(out); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
 };
 // A reviewer reported only with the JSON its prompt asks for, findings and all. A run that ended without it (no final
@@ -613,19 +648,18 @@ const missingReview = (looker: string | null | undefined) => (j: { agent: string
   unreported(j) || (j.agent === looker && visual.visualFor(JSON.parse(j.judges ?? '[]')).length > 0 && !visual.sawPreviews(j.output));
 const lookerOf = (pr: number, round: number, sha: string | null) => reviewtriage.selected(pr, round, sha)?.looker;
 
-// What's wrong with a deciding verdict's outcomes (findings.misjudged), reviewer sources, line on what went wrong before
-// review when asked for one (owesDiagnosis), the fix tasks it names (untitled), its findings that aren't findings
-// (findings.unfound) or a "changes" that leaves nothing to fix. Such a verdict decides nothing (decide), so no ruling
-// lookup counts it: the round is unruled, and its consolidator runs it again (retried), or `hq review` does. A ruling
-// once acted on stays as it was read then, but for entries that aren't findings, which nothing ever read. A merge check
-// is judged only on those: its blocking findings are all its "changes" sends.
+// What's wrong with a deciding verdict's outcomes, sources, diagnosis, tasks or findings. An unreadable ruling
+// decides nothing. Accepted rulings retain their judgment except for unread findings and a merge's visual judgment.
+// A merge check judges only findings.
 function misjudged(j: { id: number; pr: number; round: number; stage: string | null; output: string | null }, touchupsPending = false) {
   const v = parse(j.output ?? '');
   if (!DECIDES.includes(v.decision as string)) return undefined;
   const decision = decisionOf(j.output ?? '', j.stage);
-  // (unfound, even in a ruling acted on: none of those entries was read.)
   const unread = decision === 'changes' || decision === 'close' ? findings.unfound(v, j.stage === 'merge' && decision === 'changes') : undefined;
-  if (unread || j.stage === 'merge' || findings.accepted(j.id)) return unread;
+  if (unread || j.stage === 'merge') return unread;
+  if (v.decision !== 'merge' && findings.accepted(j.id)) return undefined;
+  if (typeof v.major_visual !== 'boolean') return 'the required "major_visual" judgment must be true or false';
+  if (findings.accepted(j.id)) return undefined;
   const sources = reviewsources.problem(v, j.id);
   const undiagnosed = owesDiagnosis(j.id) && !(typeof v.upstream === 'string' && v.upstream.trim());
   // The Stop hook runs before the worker can publish touch-ups. Completed rulings need the pushed head.
@@ -705,7 +739,7 @@ const run = (id: number) => db.prepare('select * from jobs where id = ?').get(id
 function again(j: Run, delay = RETRY_MS, agent = j.agent) {
   const sameAgent = agent === j.agent;
   const reason = reviewrefusals.reason(db, j.id);
-  const prompt = j.prompt + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '');
+  const prompt = j.prompt + (j.kind === 'consolidate' ? visualapproval.reviewStep(j.round, j.stage) : '') + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '');
   const { id } = j.stage === 'triage' ? retriage(j, prompt.slice(j.prompt.length)) : createJob({ agent, kind: j.kind, pr: j.pr, round: j.round, branch: j.branch, sha: j.sha ?? undefined, insteadOf: j.id, queuedBy: j.queued_by ?? undefined,
     downtime: !!j.downtime, stage: j.stage ?? undefined, step: j.step ?? undefined, title: j.title, prompt, customers: holdsCustomerData(j.id),
     writes: j.writes ? JSON.parse(j.writes) : undefined, forSeat: sameAgent ? j.for_seat : null, cli: sameAgent ? j.cli ?? undefined : undefined,
@@ -844,7 +878,7 @@ function roundJob(job: Omit<Parameters<typeof createJob>[0], 'title' | 'agent'> 
   const { branch, checks_note, files, since } = db.prepare('select branch, checks_note, files, since from prs where number = ?').get(job.pr) as Pr;
   const previews = previewsStep(job, JSON.parse(files));
   const made = createJob({ agent: panel.consolidator(job.pr, job.stage), kind: 'consolidate', branch, downtime: downtime(branch),
-    ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + previews + checks_note + boardDecisions(job.pr) });
+    ...named(job.step, branch, job.pr), ...job, prompt: job.prompt + visualapproval.reviewStep(job.round, job.stage) + previews + checks_note + boardDecisions(job.pr) });
   if ((job.kind ?? 'consolidate') === 'consolidate' && !['merge', 'triage'].includes(job.stage ?? ''))
     reviewsources.record(made.id, roundReviews(job.pr, job.round, job.sha ?? null, since));
   // a consolidation briefed for the upstream round is asked what went wrong before review, and owes it (owesDiagnosis)
@@ -887,6 +921,7 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
     if (refusedRead(job.id, `${name}'s verdict (job #${job.id}) can't be read: ${unread}`)) return;
     return stuck(job.pr, `${name}'s verdict (job #${job.id}) can't be read (${unread}), so nothing is decided on it`);
   }
+  if (!pr.expedited && decision !== 'close' && check.stage !== 'merge') visualapproval.record(pr, v.major_visual as boolean);
   const before = decision === 'changes' ? fixAttempt(job, check.stage) : undefined;
   const previous = before && { id: before.id, pr: job.pr, blocking: parse(before.output).blocking };
   const reporters = [...roundReviews(job.pr, job.round, job.sha, pr.since), { agent, engine: findAgent(agent)!.engine }];
@@ -977,20 +1012,31 @@ function callPanel(job: { id: number; round: number; sha: string | null }, pr: P
     `The previous reader identified a new concern: ${why}. Judge the additional reads it needs.`, pr.fixes_from);
 }
 
-// Merges the reviewed head only (or the worker's merge of main into it, which brings nothing else). If there is none, or
-// the branch moved since, the pull request waits, visibly.
+// Merges only the head the caller checked. A worker merge of main needs its own checks through the author's next
+// push. If there is no checked head, or the branch moved since, the pull request waits visibly.
 // `voided`: whether the ruling it acts on no longer stands, asked before every try (it waits on GitHub and the worker
 // between them), and set aside if so: it stops there, as superseded (ruledAgain).
 async function merge(pr: Pr, title: string, voided = () => false): Promise<Merged> {
+  const visualWait = { ok: false, moved: false, superseded: true, why: 'waiting for visual approval' };
+  const waitingForVisual = () => {
+    const why = visualapproval.waitReason(pr.number);
+    if (!why) return false;
+    hold(pr.number, why);
+    return true;
+  };
+  if (waitingForVisual()) return visualWait;
   if (!pr.sha) { stuck(pr.number, 'no reviewed commit is recorded, so it is not merged'); return { ok: false, moved: true, why: 'no sha' }; }
-  // the reviewed commit, or the worker's merge of main into it (mergeMain)
-  let head = mainMerge(pr.number, pr.sha) ?? pr.sha;
   const ruledOut = { ok: false, moved: false, superseded: true, why: "the board's word its ruling went by changed" };
   if (voided()) return ruledOut;
-  let m: Merged = await mergePullRequest(pr.number, title, head);
+  let m: Merged = await mergePullRequest(pr.number, title, pr.sha);
   // A push meanwhile started a round of its own: nothing to merge, mark stuck or send back here, and no merge round.
   const movedOn = () => (db.prepare('select sha from prs where number = ?').get(pr.number) as { sha: string | null } | undefined)?.sha !== pr.sha;
   const superseded = { ok: false, moved: true, superseded: true, why: 'the branch moved while its merge waited' };
+  const needsChecks = (sha: string): Merged => {
+    if (movedOn()) return superseded;
+    if (voided()) return ruledOut;
+    return { ok: false, moved: false, why: `the worker merged main as ${sha}, which needs its own checks before it can merge` };
+  };
   // Merged already: an earlier try went through, but the coordinator restarted before it heard back (a merge deploys, and
   // a deploy restarts it), so the ruling is being acted on again. Or closed there by hand meanwhile.
   // A refusal is often no conflict: main moved seconds before ("Base branch was modified"), or GitHub is still working out
@@ -1001,13 +1047,15 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
       if (gh?.state === 'merged') { m = { ok: true, moved: false, why: '' }; break; }
       if (gh?.state === 'closed') return { ok: false, moved: false, why: 'closed on GitHub', closed: true };
       // GitHub merges without .gitattributes' merge drivers, so a branch that only adds to the files every branch adds to
-      // (union: the profiles, DECISIONS) "conflicts" there. Git's own merge decides: a clean one is tried below once
-      // GitHub has seen it; only files git can't merge go back to the author.
+      // (union: the profiles, DECISIONS) "conflicts" there. Git's own merge prepares the new head for the author's
+      // checked push. An unchanged head can be retried here.
       if (gh?.mergeable === false) {
-        const merged = await mergeMain(pr, head);
+        const merged = await mergeMain(pr, pr.sha);
         // the worker's answer is about the commit before that push
         if (movedOn()) return superseded;
-        if (merged.sha) head = merged.sha;
+        if (merged.sha === pr.sha) {
+          // the head holds main already (GitHub hadn't caught up): it is tried again below
+        } else if (merged.sha) return needsChecks(merged.sha);
         else if (merged.moved) m = { ok: false, moved: true, why: merged.why ?? '' };
         else {
           m.why += merged.conflicts ? ` (it conflicts with main${merged.conflicts.length ? ` in ${merged.conflicts.slice(0, 10).join(', ')}` : ''})`
@@ -1016,19 +1064,19 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
         }
       }
     }
-    // Moved: GitHub may not show the worker's merge of main as the branch's head yet, or that merge was reported while the
-    // reviewed commit was tried (a ruling acted on again after a restart). Only that merge is tried (again): any other move
-    // waits, stuck.
+    // Moved: the branch may be at the worker's merge of main into the head, reported before this try (a ruling acted on
+    // again after a restart), which needs its own checks. Any other move waits, stuck.
     if (m.moved) {
       const merged = mainMerge(pr.number, pr.sha);
-      if (!merged) break;
-      head = merged;
+      if (merged && merged !== pr.sha) return needsChecks(merged);
+      break;
     }
     if (tries > MERGE_TRIES) { if (!m.moved) m.why += ` (still refused after ${tries} tries)`; break; }
     await new Promise(r => setTimeout(r, MERGE_WAIT * 3 ** (tries - 1)));
     if (movedOn()) return superseded;
     if (voided()) return ruledOut;
-    m = await mergePullRequest(pr.number, title, head);
+    if (waitingForVisual()) return visualWait;
+    m = await mergePullRequest(pr.number, title, pr.sha);
   }
   if (m.moved) stuck(pr.number, `the branch changed after the panel reviewed ${pr.sha.slice(0, 7)}, so it is not merged (${m.why})`);
   return m;
@@ -1042,7 +1090,7 @@ const MERGE_TRIES = 3, MERGE_WAIT = Number(process.env.MERGE_RETRY_MS) || 5000;
 // ---- merging main with git's own merge
 // The worker holds the mirror and the push (the coordinator has no git): it asks for main merges (mainMerges) and
 // reports each one (mainMerged), git.ts mergeBase. The merge brings only main's commits and lines both sides wrote, so it
-// needs no review round: the reviewed commit stays the pull request's `sha`, and its merge of main is what GitHub merges.
+// stays in the same review round, but the author must push it through its checks before it can merge.
 type MainMerge = { sha?: string; conflicts?: string[]; moved?: boolean; why?: string };
 const asked = new Map<number, { pr: number; branch: string; head: string; until: number; done: (merged: MainMerge) => void }>();
 // Past this the author takes it. The worker is told the time left (mainMerges), and pushes nothing once it's up
@@ -1065,10 +1113,9 @@ export function mainMerges() {
 }
 
 // The worker's report: main merged into `head` as `sha`, or the files git couldn't merge, or the branch isn't at `head`
-// (`moved`), or why it couldn't try. A merge is kept for the commit the panel reviewed, so a ruling acted on again
-// (actOnRulings) merges it too, and so does an office merge a restart cut off. One that arrives after a restart cut
-// the wait off may find the pull request stuck: the merge, tried again before this report, found the branch moved, by this
-// very push. It goes back to open, and actOnRulings merges it.
+// (`moved`), or why it couldn't try. A merge is kept for the checked commit so a restarted ruling or records-only merge
+// can send the generated head through the author's checked push. A late report may find the pull request stuck because
+// its merge attempt found the branch moved. It goes back to open so actOnRulings can queue that check.
 export function mainMerged(report: { pr?: unknown; head?: unknown; sha?: unknown; conflicts?: unknown; moved?: unknown; why?: unknown }) {
   const pr = db.prepare('select * from prs where number = ?').get(Number(report.pr)) as Pr | undefined;
   const isSha = (s: unknown): s is string => typeof s === 'string' && /^[0-9a-f]{40}$/.test(s);
@@ -1078,7 +1125,7 @@ export function mainMerged(report: { pr?: unknown; head?: unknown; sha?: unknown
     db.prepare('insert or replace into main_merges (pr, sha, head) values (?, ?, ?)').run(pr.number, pr.sha, report.sha);
     if (pr.status === 'stuck' && (ruled(pr.number, pr.round, pr.sha) || officeOnly(pr.author, pr.branch, JSON.parse(pr.files), JSON.parse(pr.links), pr.number))) {
       db.prepare("update prs set status = 'open' where number = ?").run(pr.number);
-      publish({ type: 'log', agent: panel.attribution(pr.number), text: `PR #${pr.number} is open again: the branch moved by the worker's merge of main, which is merged next` });
+      publish({ type: 'log', agent: panel.attribution(pr.number), text: `PR #${pr.number} is open again: the branch moved by the worker's merge of main, which needs checks before it can merge` });
     }
   }
   const waiting = asked.get(pr.number);
@@ -1172,23 +1219,28 @@ async function mergeAlone(pr: Pr, title: string, refused: (m: Merged) => void, v
 // blocks becomes its author's next job (reviewedAfter).
 export const expedites = (branch: string) =>
   !!db.prepare("select 1 from jobs where kind = 'work' and expedite = 1 and coalesce(branch, 'job/' || id) = ?").get(branch);
+// Whether the gates and the tests both passed on that commit (pushes.checked), which every expedited merge needs: the
+// GATE_TRIES-th failing push goes on to its review, and its streak's reset says nothing of how it did.
+const checksPassed = (pr: number, sha: string) =>
+  (db.prepare('select checked from pushes where pr = ? and sha = ?').get(pr, sha) as { checked: number | null } | undefined)?.checked === 1;
 async function mergeExpedited(n: number, review: () => void) {
-  db.prepare('update prs set expedited = 1 where number = ?').run(n);
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr;
   const m = await mergeAlone(pr, `Merge PR #${pr.number} expedited (its review follows)`, m => {
     if (!m.moved) bringUpToDate(pr, m.why);
   });
-  if (!m?.ok) return;
+  if (!m?.ok) return m;
   // (merged: the round stays open for the review of what merged)
-  db.prepare("update prs set status = 'open', why = null where number = ?").run(pr.number);
+  db.prepare("update prs set expedited = 1, status = 'open', why = null where number = ?").run(pr.number);
   publish({ type: 'log', agent: pr.author, text: `PR #${pr.number} merged expedited, on its gates and tests: its review follows` });
   review();
+  return m;
 }
 // hq expedite <job> (the CEO's, from a job or a call): a queued or running job starts first and merges on its checks; one
 // that has pushed, its pull request still in review, merges now if its last push passed them. A thread's task that never
 // started leaves its thread first (regroup.ts takeOut). Each refusal says why and what to do instead, as the call's agent
-// repeats it to the board.
-export async function expedite(id: number, agent: string): Promise<string | { id: number; starts?: string; merged?: number; from?: string }> {
+// repeats it to the board. Expedite passes pauses and holds, never what the work needs first: `waits` says what still
+// holds it (jobs.ts stillHolds), and only with nothing does it start next.
+export async function expedite(id: number, agent: string): Promise<string | { id: number; starts?: string; waits?: string; merged?: number; from?: string }> {
   const job = db.prepare('select id, kind, status, thread, branch from jobs where id = ?').get(id) as
     { id: number; kind: string; status: string; thread: string | null; branch: string | null } | undefined;
   if (!job) return `there's no job #${id}: check the number`;
@@ -1196,11 +1248,11 @@ export async function expedite(id: number, agent: string): Promise<string | { id
   if (job.kind !== 'work') return `job #${id} is HQ's own ${job.kind}, not work: expedite the work it's for`;
   if (job.thread) {
     const from = regroup.takeOut(id, agent);
-    return from.taken ? { id, starts: 'next', from: from.thread } : from.refusal;
+    return from.taken ? { id, ...startsWhen(id), from: from.thread } : from.refusal;
   }
   if (['queued', 'running', 'blocked'].includes(job.status)) {
     db.prepare('update jobs set expedite = 1 where id = ?').run(id);
-    return { id, starts: job.status === 'running' ? 'running now' : 'next' };
+    return { id, ...(job.status === 'running' ? { starts: 'running now' } : startsWhen(id)) };
   }
   const pr = db.prepare("select number from prs where branch = ? and status in ('open', 'stuck')").get(job.branch ?? `job/${id}`) as
     { number: number } | undefined;
@@ -1211,17 +1263,25 @@ export async function expedite(id: number, agent: string): Promise<string | { id
   const refused = await expeditePr(pr.number);
   return refused ?? { id, merged: pr.number };
 }
+const startsWhen = (id: number) => {
+  const waits = stillHolds(id);
+  return waits ? { waits } : { starts: 'next' };
+};
 // An open or stuck pull request whose last push passed its checks: merged now, and its round reviewed again on what
-// merged.
+// merged. A refusal says what stopped it.
 async function expeditePr(n: number) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as (Pr & { gate_fails: number }) | undefined;
   if (!pr || !['open', 'stuck'].includes(pr.status) || !pr.sha) return `PR #${n} has no push to merge yet: its next push merges on its checks`;
-  if (pr.gate_fails || pr.tests_incomplete) return `PR #${n}'s last push didn't pass its gates and tests: its author's next push merges on them`;
-  await mergeExpedited(n, () => {
+  if (pr.gate_fails || pr.tests_incomplete || !checksPassed(n, pr.sha))
+    return `PR #${n}'s last push didn't pass its gates and tests, so it isn't merged ahead of its review: a later push that passes them merges`;
+  if (deciding.has(n)) return `PR #${n} is being merged already: if it hasn't merged in a few minutes, run hq expedite again`;
+  const merged = await mergeExpedited(n, () => {
     db.prepare('update prs set since = (select coalesce(max(id), 0) from jobs) where number = ?').run(n);
     queueTriage(n, pr.branch, pr.sha!, pr.round, JSON.parse(pr.files), JSON.parse(pr.links), '\n\nThis pull request is already merged (expedited): review what merged.', pr.fixes_from);
   });
-  return null;
+  if (!merged) return `PR #${n} did not merge: GitHub didn't answer (the coordinator's log has the error). Run hq expedite again in a minute`;
+  if (merged.closed) return `PR #${n} was closed on GitHub, so nothing merges`;
+  return merged.ok ? null : `PR #${n} did not merge: ${merged.why}. Its next push must pass its own checks`;
 }
 // The ruling on what an expedited merge merged: a pass ends it, and anything else (blocking findings, a close, the board's
 // call) is its author's next job, on a new branch from main, as the code is already live.
@@ -1298,6 +1358,7 @@ export function sweepAction(
   if (pr.status !== 'open' || !pr.sha) return undefined;
   // A ruling delivered to the owner's inbox waits for the owner, even on a pull request that's now only records.
   const saved = sweepRuling(pr);
+  if (saved?.decision === 'merge' && !misjudged(saved.job) && visualapproval.waitReason(pr.number)) return undefined;
   if (saved && reviewinbox.get(pr.number)?.ruling === saved.job.id) {
     // (one whose entries aren't findings, delivered before misjudged refused it, goes back to its consolidator:
     // reviewFinished.)
@@ -1650,6 +1711,7 @@ closely as any new code.${tail}`;
 export async function withdrawn(pr: number) {
   const c = await closePullRequest(pr);
   db.prepare("update prs set status = 'closed' where number = ?").run(pr);
+  visualapproval.closed(pr);
   publish({ type: 'log', agent: panel.attribution(pr), text: c.ok ? `Closed PR #${pr}: its author's fix left nothing of it for main` : `PR #${pr} is closed here (its author's fix left nothing of it for main), but GitHub refused to close it (${c.why}): close it there by hand` });
 }
 // Work closed unmerged: someone decided it shouldn't land (the consolidator's "close", the board's card, a person on
@@ -1664,6 +1726,7 @@ async function close(pr: number, why: string) {
   const row = db.prepare('select * from prs where number = ?').get(pr) as Pr;
   if (!done) reviewclosure.hold(row.branch, pr);
   db.prepare("update prs set status = 'closed', why = ? where number = ?").run(why, pr);
+  visualapproval.closed(pr);
   followUp(pr, false);
   publish({ type: 'log', agent: panel.attribution(pr), text: c.ok ? `Closed PR #${pr}: ${why}` : `PR #${pr} is closed here (${why}), but GitHub refused to close it (${c.why}): close it there by hand` });
   unmerged(pr, row.branch);
@@ -1846,8 +1909,9 @@ around the review, the gates or the sandbox).`;
 const DEFENSIVE = 'as a defensive review of our own code: describe each flaw and its fix, prove it with a local test at most, and write no '
   + 'working exploit or payload aimed at anything live.';
 // (REVIEWER_PLACES)
-// The one discipline triage chose a reader for, and whether seeing what the change shows is theirs
-const lens = (seat: reviewtriage.Read, looking: boolean) => `
+// The one discipline triage chose a reader for, whether seeing what the change shows is theirs, and the foundation
+// question when triage gave it them
+const lens = (seat: reviewtriage.Read, looking: boolean, foundation: boolean) => `
 
 ## Your lens: ${seat.domain}
 Triage chose you for this: ${seat.reason}. Review only from that discipline, the way your role reads work. The checks
@@ -1855,7 +1919,7 @@ above are the whole panel's bar: you judge the part your lens covers, and the ot
 secret or a house-rule break you meet is still a finding.
 ${looking ? "You are this round's one reader who looks at what the change shows: rendering it, screenshots and page checks are yours."
     : 'Rendering, screenshots and page checks are not yours on this change. Run or try code only if your lens is how it behaves.'}
-`;
+${foundation ? FOUNDATION_QUESTION : ''}`;
 const shellQuote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 const reviewerPrompt = (pr: number, branch: string, b: rounds.Briefing, high: boolean, files: string[], scoped = false, base: string | null = null,
   throwaway = false) => `
@@ -1985,22 +2049,47 @@ export async function boardDecided(n: number, answer: string) {
   const a = answer.trim().toLowerCase();
   if (/^merge\b/.test(a)) {
     if (waiting.waits(n)) {
+      waiting.leavePass(ruling(n, pr.round, pr.sha)!.id);
       db.prepare("update prs set status = 'open' where number = ?").run(n);
       replayWaiting(n);
       return;
     }
     const m = await merge(pr, `Merge PR #${n} (board decision)`);
-    if (m.ok) pullRequestMerged(n);
-    if (!m.moved) publish({ type: 'log', agent: ceo(), text: m.ok ? `The board merged PR #${n}` : `Merging PR #${n} failed: ${m.why}` });
+    if (m.closed) return close(n, 'it was closed on GitHub before its merge');
+    if (m.superseded || m.moved) return;
+    if (!m.ok) {
+      db.prepare("update prs set status = 'open' where number = ?").run(n);
+      return bringUpToDate(pr, m.why);
+    }
+    pullRequestMerged(n);
+    publish({ type: 'log', agent: ceo(), text: `The board merged PR #${n}` });
   } else if (/^close\b/.test(a)) {
     waiting.drop(n);
     await close(n, 'the board closed it on its card');
   } else {
     waiting.drop(n);
-    db.prepare("update prs set status = 'open', round = 0, review_since = (select coalesce(max(id), 0) from jobs) where number = ?").run(n);
-    createJob({ agent: pr.author, kind: 'work', branch: pr.branch, pr: n, stage: 'feedback', ...named('The board\'s notes', pr.branch, n),
-      prompt: `The board looked at your pull request #${n} (branch ${pr.branch}) and says:\n\n${answer}\n\nUpdate the branch accordingly; the panel reviews again when you're done.` });
+    returnFeedback(pr, "The board's notes",
+      `The board looked at your pull request #${n} (branch ${pr.branch}) and says:\n\n${answer}\n\nUpdate the branch accordingly; the panel reviews again when you're done.`);
   }
+}
+
+// Return board feedback to the author and retire the ruling before the next push.
+export function returnFeedback(pr: Pick<Pr, 'number' | 'branch' | 'author'>, title: string, prompt: string) {
+  db.prepare("update prs set status = 'open', round = 0, review_since = (select coalesce(max(id), 0) from jobs) where number = ?").run(pr.number);
+  createJob({ agent: pr.author, kind: 'work', branch: pr.branch, pr: pr.number, stage: 'feedback',
+    ...named(title, pr.branch, pr.number), prompt });
+}
+
+// A separate board ruling may already have authorized the merge while its visual card still held it.
+export async function visualDecided(card: number) {
+  for (const pr of decisions.cardMerges(card)) {
+    const waiting = db.prepare("select 1 from prs where number = ? and status = 'board'").get(pr.number);
+    if (!waiting) continue;
+    const request = db.prepare("select status, answer from requests where kind = 'review' and pr = ? order by id desc limit 1")
+      .get(pr.number) as { status: string; answer: string } | undefined;
+    if (request?.status === 'answered') await boardDecided(pr.number, request.answer);
+  }
+  await actOnRulings();
 }
 
 // hq review <pr>: the way back for a stuck pull request, without a push. Its round goes back to the panel on the commit it

@@ -21,15 +21,11 @@ function checkout() {
     'eslint.config.js',
     'tsconfig.json',
     '.prettierignore',
-    'shared/gates/gates.ts',
-    'shared/gates/repo.ts',
-    'shared/gates/lent.ts',
-    'shared/gates/output.ts',
-    'shared/gates/sizes.ts',
+    'shared/gates', // whole, for any module the gates come to import
     'shared/demo/renders.mjs',
   ]) {
     mkdirSync(dirname(join(root, path)), { recursive: true });
-    cpSync(join(repo, path), join(root, path));
+    cpSync(join(repo, path), join(root, path), { recursive: true });
   }
   writeFileSync(join(root, '.gitignore'), 'node_modules\n');
   writeFileSync(join(root, 'shared/gates/tests-on-helper.sh'), ON_HELPER);

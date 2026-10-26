@@ -75,13 +75,23 @@ roles:
 # takeMinutes (how long a run waits for the lent machine before this server takes it).
 # runs: { helper: the helper, cpus: 4, memoryGb: 8, diskGb: 16, maxMinutes: 240, takeMinutes: 3 }
 
-# HQ's hourly follow-through check (platform/coordinator/src/followthrough.ts), which the CEO runs while the board's
-# agreements stand or the CEO's summary has something in it. prompt: the company's own words for it, after the check's
+# HQ's hourly follow-through check (platform/coordinator/src/followthrough.ts, its text heartbeat.ts), which the CEO runs while the board's
+# agreements stand, a goal is open (hq project goal) or the CEO's summary has something in it. prompt: the company's own words for it, after the check's
 # own text, as a schedule routine's additions are: what the check is for to this board, how far it goes, when to ask
-# the board. Left out, the check runs on its own text.
+# the board. Left out, the check runs on its own text. delivered: what this company counts as delivered, which the
+# check and the owner a pause's met condition wakes both judge by, finishing "Delivered means ...". Left out:
+# what the board asked for is in its hands (the thing itself, or the results and report it waits for), and a job
+# ending, merging or deploying with nothing to show is not delivery. The CEO's page (hq pad) comes after both: the
+# CEO rewrites it itself.
 # followThrough:
 #   prompt: |
 #     The company's own words for the hourly check.
+#   delivered: the board has seen it and said yes.
+
+# What is live for the major-visual-change review judgment. A description, never file patterns.
+# Left out: public sites and apps already in use, and HQ's own look.
+# review:
+#   live: "The company's live products, public site and HQ's looks."
 
 # Agents who finished their work. Names stay taken.
 alumni: []

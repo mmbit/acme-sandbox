@@ -172,3 +172,32 @@ test("a thread task's push owing a redo goes back to its author, never held for 
     'the redo, back to its author',
   );
 });
+
+test("a push goes back for a redo when the last run on its branch was Codex's: by its own branch, its thread's or the job it's named after", async () => {
+  assert.equal(
+    typeof projects.createThread({ project: 'hq', name: 'Doors', goal: 'Doors look right', slug: 'doors' }),
+    'object',
+  );
+  // (each Codex run ended after the Opus run that pushes: a push reviewed later, once its round is ruled, reads it)
+  const codexRun = (fields: Record<string, unknown>) =>
+    h.pastJob({ kind: 'work', agent: 'nib', engine: 'codex', finished: Date.now() + 60_000, ...fields });
+  const named = codexRun({});
+  codexRun({ thread: 'hq/doors' });
+  codexRun({ branch: 'job/door' });
+  const pushes: [number, Record<string, unknown>, string][] = [
+    [507, { branch: 'job/door' }, 'job/door'],
+    [508, { thread: 'hq/doors' }, 'job/doors'],
+    [509, {}, `job/${named}`],
+  ];
+  // (all started before any redo is queued on Opus for the claim to take)
+  const runs = [];
+  for (const [, fields] of pushes) runs.push(await h.start({ agent: 'bolt', engine: 'claude', ...fields }));
+  for (const [i, [pr, , branch]] of pushes.entries()) {
+    await h.finish(runs[i], { pr, branch, files: [PIXEL, `qa/${branch.replace('/', '-')}.md`], sha: sha('i') });
+    assert.deepEqual(
+      onPr(pr).map(row => [row.agent, row.kind]),
+      [['bolt', 'work']],
+      `the redo of ${branch}`,
+    );
+  }
+});

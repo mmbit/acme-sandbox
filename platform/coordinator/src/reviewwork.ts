@@ -21,7 +21,7 @@ export function target(item: Item, ask: JobThreadAsk, by: string) {
   if (!project) return { refusal: 'name an existing project or open thread' };
   const refused = refusal(project, by);
   if (refused) return { refusal: refused };
-  return jobThread({ ...ask, thread: thread ?? undefined }, { agent: by, onCall: false });
+  return jobThread({ ...ask, thread: thread ?? undefined }, { agent: by });
 }
 
 export function current(thread: string | null, pr?: number) {

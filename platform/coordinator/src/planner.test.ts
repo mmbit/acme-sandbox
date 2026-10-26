@@ -760,6 +760,39 @@ test('unmeasured future demand spends the real worker startup allowance', () => 
   assert.equal(played.get(2)!.start, 10 * MINUTE);
 });
 
+test('a job measured past the room the snapshot leaves starts on the allowance, as the worker admits it', () => {
+  // (700 MB above the reserve, as on 26 October with too little free for any of Margin's 1.6-2.1 GB jobs: the play
+  // started none of them in 8 days, and paused the queue behind them)
+  const input = snapshot([work(1, { memoryMb: 1900 }), work(2, { memoryMb: 1900 }), work(3, { memoryMb: 300 })], {
+    room: 8,
+    slots: { codex: 8 },
+    seatRuns: { codex: 8 },
+    memory: {
+      at: 0,
+      availableMb: 2200,
+      freeReserveMb: 1500,
+      defaultRunMb: 700,
+      totalSlots: 8,
+      heldSlots: 0,
+      heldMb: 0,
+      starting: [],
+      runningMb: {},
+    },
+  });
+  const played = play(
+    input,
+    sizes([
+      [1, 10],
+      [2, 10],
+      [3, 10],
+    ]),
+  );
+  assert.equal(played.get(1)!.start, 0);
+  // (the first holds its measured 1.9 GB while it runs)
+  assert.equal(played.get(2)!.start, 10 * MINUTE);
+  assert.equal(played.get(3)!.start, 20 * MINUTE);
+});
+
 test('the seat account names exhausted work, the binding window, reset gap and resuming seat', () => {
   const HOUR = 60 * MINUTE;
   const input = snapshot([work(1, { engine: 'claude', for_seat: 'claude' })]);
@@ -963,6 +996,7 @@ test('a Codex hold moves its return to a window that binds while work continues'
   assert.equal(hold.quota, 'week');
   assert.equal(hold.until, 6 * HOUR);
   assert.equal(hold.running_continues, true);
+  assert.ok(Math.abs(hold.idle_ms! - HOUR) < 2, 'work finishes an hour before the extended return');
   assert.equal(events.find(event => event.type === 'release')!.at, 6 * HOUR);
   assert.equal(seen.outlooks.get(2)!.start, 6 * HOUR);
 });
@@ -1011,3 +1045,166 @@ test('known finished occupants return memory and slots while unknown occupants r
   input.memory!.runningMb = { 999: 700 };
   assert.equal(play(input, durations).get(2)!.start, null);
 });
+
+for (const neededMb of [900, 1200])
+  // (either size starts on the worker's starting allowance, defaultRunMb, not its measured peak: playmemory.ts canStart)
+  test(`a ${neededMb} MB waiter makes room with a whole pause group`, () => {
+    const input = snapshot(
+      [
+        work(1, { status: 'running', seat: 'codex', memoryMb: 400 }),
+        work(2, { status: 'running', seat: 'codex', memoryMb: 400 }),
+        work(3, { status: 'running', seat: 'claude', engine: 'claude', board: 1, memoryMb: 1400 }),
+        work(4, { memoryMb: neededMb, due: 0 }),
+      ],
+      {
+        slots: { codex: 4, claude: 1 },
+        seatRuns: { codex: 4, claude: 1 },
+        memory: {
+          at: 0,
+          availableMb: 1600,
+          freeReserveMb: 1500,
+          defaultRunMb: 700,
+          totalSlots: 3,
+          heldSlots: 0,
+          heldMb: 0,
+          starting: [],
+          runningMb: { 1: 400, 2: 400, 3: 1400 },
+        },
+      },
+    );
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 60],
+          [2, 60],
+          [3, 30],
+          [4, 10],
+        ]),
+        { pace },
+      );
+      assert.equal(seen.get(4)!.start, DEADLINE_PAUSE_MS);
+      for (const id of [1, 2]) assert.equal(seen.get(id)!.done, 70 * MINUTE + 2 * DEADLINE_PAUSE_MS);
+      assert.equal(seen.get(3)!.done, 30 * MINUTE, 'the board lane keeps its room');
+    }
+  });
+
+test('a held Codex seat becomes idle only after its last concurrent run finishes', () => {
+  const HOUR = 60 * MINUTE;
+  for (const minutes of [
+    [60, 120],
+    [180, 240],
+  ]) {
+    const input = snapshot([
+      work(1, { status: 'running', seat: 'codex' }),
+      work(2, { status: 'running', seat: 'codex' }),
+      work(3),
+    ]);
+    Object.assign(input.seats[0], { state: 'draining', until: 3 * HOUR });
+    input.slots.codex = 2;
+    input.seatRuns!.codex = 2;
+    const seen = inspect(
+      input,
+      sizes([
+        [1, minutes[0]],
+        [2, minutes[1]],
+        [3, 10],
+      ]),
+    );
+    const hold = seen.seats.find(seat => seat.seat === 'codex')!.events[0];
+    assert.equal(hold.running_continues, true);
+    assert.equal(hold.running!.length, 2);
+    assert.equal(hold.idle_ms, Math.max(0, 3 * HOUR - minutes[1] * MINUTE));
+    assert.equal(seen.outlooks.get(3)!.start, 3 * HOUR);
+  }
+});
+
+for (const arrivesAt of [0, DEADLINE_PAUSE_MS / 2])
+  test(`a later waiter at ${arrivesAt} cannot spend another waiter's pause release`, () => {
+    const input = snapshot(
+      [
+        work(1, { status: 'running', seat: 'codex', memoryMb: 400 }),
+        work(2, { status: 'running', seat: 'codex', memoryMb: 400 }),
+        work(3, { status: 'running', seat: 'codex', memoryMb: 400 }),
+        work(4, { status: 'running', seat: 'claude', engine: 'claude', board: 1, memoryMb: 1400 }),
+        work(5, { memoryMb: 900, due: 0 }),
+        work(6, { memoryMb: 1300, due: MINUTE, notBefore: arrivesAt }),
+      ],
+      {
+        slots: { codex: 5, claude: 1 },
+        seatRuns: { codex: 5, claude: 1 },
+        memory: {
+          at: 0,
+          availableMb: 1600,
+          freeReserveMb: 1500,
+          defaultRunMb: 700,
+          totalSlots: 6,
+          heldSlots: 0,
+          heldMb: 0,
+          starting: [],
+          runningMb: { 1: 400, 2: 400, 3: 400, 4: 1400 },
+        },
+      },
+    );
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 5],
+          [2, 60],
+          [3, 60],
+          [4, 30],
+          [5, 10],
+          [6, 10],
+        ]),
+        { pace },
+      );
+      assert.equal(seen.get(5)!.start, DEADLINE_PAUSE_MS, 'the first waiter gets its pause group');
+      assert.equal(seen.get(1)!.done, 5 * MINUTE, 'the remaining run finishes without an unhelpful pause');
+      assert.ok(seen.get(6)!.start! >= seen.get(5)!.done!);
+    }
+  });
+
+for (const constrained of ['engine', 'seat'] as const)
+  test(`a later waiter cannot spend the ${constrained} place promised to another pause group`, () => {
+    const input = snapshot(
+      [
+        work(1, { status: 'running', seat: 'claude', engine: 'claude', memoryMb: 2000 }),
+        work(2, { status: 'running', seat: 'claude', engine: 'claude', memoryMb: 400 }),
+        work(3, { status: 'running', seat: 'claude', engine: 'claude', memoryMb: 400 }),
+        work(4, { memoryMb: 900, due: 0 }),
+        work(5, { memoryMb: 1000, due: MINUTE }),
+      ],
+      {
+        slots: { codex: constrained === 'engine' ? 1 : 5, claude: 3 },
+        seatRuns: { codex: constrained === 'seat' ? 1 : 5, claude: 3 },
+        memory: {
+          at: 0,
+          availableMb: 1600,
+          freeReserveMb: 1500,
+          defaultRunMb: 700,
+          totalSlots: 5,
+          heldSlots: 0,
+          heldMb: 0,
+          starting: [],
+          runningMb: { 1: 2000, 2: 400, 3: 400 },
+        },
+      },
+    );
+    for (const pace of ['usual', 'slow'] as const) {
+      const seen = play(
+        input,
+        sizes([
+          [1, 5],
+          [2, 60],
+          [3, 60],
+          [4, 10],
+          [5, 10],
+        ]),
+        { pace },
+      );
+      assert.equal(seen.get(4)!.start, DEADLINE_PAUSE_MS);
+      assert.equal(seen.get(1)!.done, 5 * MINUTE, 'more memory cannot free the promised place');
+      assert.equal(seen.get(5)!.start, seen.get(4)!.done);
+    }
+  });

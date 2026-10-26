@@ -12,7 +12,8 @@ export function completionHooks(
     readable = [],
   }: { hq?: string; messages?: boolean | 'steps'; checkout?: string; readable?: string[] } = {},
 ) {
-  const inbox = messages && (kind === 'work' || kind === 'meeting') ? inboxHooks(hq, messages === 'steps') : undefined;
+  const inbox =
+    messages && ['work', 'meeting', 'chat'].includes(kind) ? inboxHooks(hq, messages === 'steps') : undefined;
   const check =
     kind === 'work'
       ? ['work', checkout, ...readable].join(' ')

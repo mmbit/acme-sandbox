@@ -325,6 +325,20 @@ test("a paid basket's records end 7 years after the end of its year, 10 for Germ
   const dutch = await paidBasket('end@example.nl', 'NL'),
     german = await paidBasket('end@example.de', 'DE');
   const year = new Date().getUTCFullYear();
+  assert.equal((await call('/api/pay/parcel/cancel', as('hello'), { line: dutch.lines[1] })).status, 200);
+  const refunded = await call('/api/pay/line/refund', as('hello'), { id: dutch.lines[1] });
+  assert.equal(refunded.status, 200, refunded.text);
+  // the imitation's records of a session (its session and its payment's refunds)
+  const imitation = (session: string) =>
+    (
+      db
+        .prepare(
+          `select count(*) n from imitation_records where id = ? or json_extract(record, '$.payment_intent') =
+      (select json_extract(record, '$.payment_intent') from imitation_records where kind = 'session' and id = ?)`,
+        )
+        .get(session, session) as any
+    ).n;
+  assert.equal(imitation(dutch.session), 2);
   const has = (session: string) => !!db.prepare('select 1 from payments where id = ?').get(session);
   const lineCount = (session: string) =>
     (db.prepare('select count(*) n from pay_lines where session = ?').get(session) as any).n;
@@ -336,6 +350,7 @@ test("a paid basket's records end 7 years after the end of its year, 10 for Germ
   assert.ok(!db.prepare('select 1 from parcels where session = ?').get(dutch.session));
   assert.ok(!db.prepare('select 1 from session_lines where session = ?').get(dutch.session));
   assert.ok(!db.prepare('select 1 from basket_emails where session = ?').get(dutch.session));
+  assert.equal(imitation(dutch.session), 0, "the imitation's session and refund");
   assert.ok(has(german.session));
   records.endRecords(Date.parse(`${year + 11}-01-01T12:00:00Z`));
   assert.ok(!has(german.session));

@@ -7,9 +7,9 @@
 //   - A page is its ink (shared/review/ink.js strokes in the page's CSS px) and its scraps (pictures taped on), kept
 //     in the data volume, never the repo: book/<id>-s-<random>.png|jpg (0700/0600). Its picture is drawn here
 //     (bookrender.ts), once a change, and kept until the next: book/<id>-<random>.png.
-//   - A picture waiting on a free page until the board places it (fromReview, waiting) has no route today: review
-//     mode's send to the first Sketchbook is gone (job #18524). One never reaches a page's picture, an agent or a call
-//     before the board has seen it.
+//   - A picture can wait on a free page until the board places it (fromReview, waiting): it reaches no page's picture,
+//     agent or call before the board has seen it. Nothing sends one but fromReview's test; HQ's tray shows those
+//     still waiting.
 //   - Any job reads every page (hq sketches, hq sketch <id>), and a board call's agent one by number or label words
 //     (bookreads.ts): the board shares its book with the whole team. An invited person's are theirs, outside text.
 //   - The Sketchbook's screens and an invited person's room read and write their sketches, the free pages,
@@ -24,7 +24,7 @@ import * as pictures from './pictures.ts';
 import { keepFile, refuse, reply } from './uploads.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
 import { render } from './bookrender.ts';
-import { grownTo, inkOf, isRefused, labelOf, pageSide, type Refused } from './pagechecks.ts';
+import { PAGE, grownTo, inkOf, isRefused, labelOf, pageSide, type Refused } from './pagechecks.ts';
 import {
   DIR,
   WAITING_MAX,
@@ -126,6 +126,8 @@ export function createPage(b: any, who = BOARD) {
     return [400, "a sheet's page has its HQ page's address: a path on HQ"] as Refused;
   if (kind === 'call' && !db.prepare('select 1 from calls where id = ?').get(Number(b.call)))
     return [400, "a call's page names its call"] as Refused;
+  // (an invited person's book, the board drawing in it too, has their sketches only.)
+  if (who !== BOARD && kind !== 'free') return [400, "a person's own book has free pages only"] as Refused;
   if (who !== BOARD && bookFull(who)) return [413, BOOK_FULL] as Refused;
   const now = new Date().toISOString();
   const id = Number(
@@ -149,12 +151,39 @@ export function createPage(b: any, who = BOARD) {
   );
   return summary(row(id, who)!);
 }
-// POST /api/book/page/save { id, ink, scraps, h? }: the whole ink and the scraps placed on it, and its height once it
-// has grown. Its picture is drawn again when it's next read. Those placed leave waiting; scrap files nothing names go
-// once they're a day old.
+// Today's sheet page for an owner in the board's book, whatever its url (one a day: its notes keep their own pages in
+// their anchors), or a new one at url, which may be a product preview's whole https address: the coordinator's way to
+// a page for review mode's notes on a preview (bookreview.ts), where the route takes only HQ's paths. w and h: the
+// screen it was seen on, brought within a page's sides (a page is no bigger than PAGE, whatever the screen).
+export function sheetPageFor(owner: string, url: string, w: number, h: number) {
+  const day = companyDay(Date.now()),
+    found = db
+      .prepare(
+        `select ${COLUMNS} from book_pages where who = ? and day = ? and kind = 'sheet' and owner = ? and archived = 0 order by id limit 1`,
+      )
+      .get(BOARD, day, owner) as Page | undefined;
+  if (found) return found;
+  const side = (v: number) => Math.min(PAGE.max, Math.max(PAGE.min, Math.round(v) || PAGE.min)),
+    now = new Date().toISOString();
+  const id = Number(
+    db
+      .prepare(
+        "insert into book_pages (who, day, kind, owner, url, label, created, updated, w, h) values (?, ?, 'sheet', ?, ?, '', ?, ?, ?, ?)",
+      )
+      .run(BOARD, day, owner, url, now, now, side(w), side(h)).lastInsertRowid,
+  );
+  return row(id)!;
+}
+// POST /api/book/page/save { id, ink, scraps, h?, since? }: the whole ink and the scraps placed on it, and its height
+// once it has grown. Its picture is drawn again when it's next read. Those placed leave waiting; scrap files nothing
+// names go once they're a day old. since: the page's updated as the saver last read or saved it; a page saved since
+// by someone else (a person and the board in the person's book, two screens) is refused, so no save lands over ink it
+// never saw: the saver reads it again and merges (pagemerge.js). (since)
+export const CHANGED = 'this page changed since it was read: read it again';
 export function savePage(b: any, who = BOARD) {
   const p = row(Number(b?.id), who);
   if (!p) return 404;
+  if (typeof b.since === 'string' && b.since !== p.updated) return [409, CHANGED] as Refused;
   const ink = inkOf(b.ink);
   if (isRefused(ink)) return ink;
   const scraps = scrapsOf(b.scraps, p.id);
@@ -221,10 +250,12 @@ export async function pictureOf(p: Page): Promise<string | null> {
   const png = await render({ w: p.w, h: p.h, ink: JSON.parse(ink), scraps: JSON.parse(p.scraps) }, DIR);
   const name = `${p.id}-${randomBytes(4).toString('hex')}.png`;
   keepFile(`${DIR}/${name}`, png);
-  // (a change while it was drawn: that one's picture is drawn when it's read, and this one goes)
-  if (
-    !db.prepare('update book_pages set picture = ? where id = ? and updated = ?').run(name, p.id, p.updated).changes
-  ) {
+  // (a change while it was drawn, or another draw of the same page kept first: this one goes, and the page's picture
+  // now is the one read)
+  const kept = db
+    .prepare('update book_pages set picture = ? where id = ? and updated = ? and picture is ?')
+    .run(name, p.id, p.updated, p.picture);
+  if (!kept.changes) {
     rmSync(`${DIR}/${name}`, { force: true });
     const now = row(p.id, null);
     return now ? pictureOf(now) : null;
@@ -288,10 +319,10 @@ export function serveScrap(req: IncomingMessage, res: ServerResponse, who: strin
 }
 const TOO_MANY_UPLOADS = 'too many uploads for this page today';
 
-// A picture waiting on a free page of the board's until the board places it (no route sends one today: see the
-// header): on the free page the board opened last ('last', not archived, with room for it), or a new one ('new', or
-// none). What sent it could be a product page's own script, so WAITING_MAX wait in the whole book at most.
-// { id, fresh }: fresh, a page made for it.
+// A picture waiting on a free page of the board's until the board places it (only its test calls it: see the header):
+// on the free page the board opened last ('last', not archived, with room for it), or a new one ('new', or none). A
+// sender could be a product page's own script, so WAITING_MAX wait in the whole book at most. { id, fresh }: fresh, a
+// page made for it.
 const REVIEW_PAGE = { w: 1200, h: 800 };
 export function fromReview(raw: Buffer, to: 'new' | 'last'): Refused | { id: number; fresh: boolean } {
   const p = pictures.picture(raw);

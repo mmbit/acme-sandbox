@@ -13,7 +13,7 @@ db.exec('create index if not exists runs_ended on runs (ended)');
 // records from before this table.
 // (snagged)
 export type RunEnd =
-  'done' | 'failed' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'lost' | 'rebuilt' | 'snagged';
+  'done' | 'failed' | 'stopped' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'lost' | 'rebuilt' | 'snagged';
 
 const iso = (ms: number) => new Date(ms).toISOString();
 

@@ -61,7 +61,7 @@ export function nextEvent(play: Play, now: number) {
     event(run.readyAt);
     while (run.fixedAt < run.fixed.length && run.fixed[run.fixedAt] <= now) run.fixedAt++;
     if (run.fixedAt < run.fixed.length) event(run.fixed[run.fixedAt]);
-    for (const { run: prior, lag } of run.priors) if (prior && prior.done !== null) event(prior.done + lag);
+    for (const { run: prior, lag } of run.timedPriors) if (prior.done !== null) event(prior.done + lag);
   }
   for (const seat of play.seats) event(capacity.seatEvent(seat, play.seats, now, busy.get(seat) ?? []));
   const release = memory.nextEvent(play.snapshot, now);

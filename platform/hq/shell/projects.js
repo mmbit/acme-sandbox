@@ -5,7 +5,7 @@ import { loadRoom, loadJob, loadJobLog, loadThread, loadFindings, loadJobFacts }
 import { loadBoard, keepOrder } from './boardload.js';
 import { sfx } from './audio.js';
 import { openPhone } from './desk.js';
-import { scene } from './stage.js';
+import { scene, cover } from './stage.js'; // (cover)
 import { panelOpen } from './panel.js';
 import { flyTo } from './hud.js';
 import './projectkeys.js';
@@ -13,16 +13,14 @@ import { levelHtml, SKELETON } from './projectlevels.js'; // (SKELETON)
 import { rowState } from './threads.js';
 import { jobSheet, followSteps, findingsOf, factsOf, stepsKept } from './jobsheet.js'; // (factsOf, stepsKept)
 import * as levels from './levels.js';
-import { sortable, sorting, sortGesture } from './sorting.js';
-import { sides } from './sides.js';
+import { sortable, sortGesture } from './sorting.js';
 import { keepCovers, coversIn } from './covers.js'; // (coversIn)
+import { morph } from './morph.js';
 
 const $ = s => document.querySelector(s);
 const REFRESH_MS = 20000;
 // what a tap opens, by its data- attribute
-const TAPPABLE = 'business project group thread job up done close card leave turn side'
-  .split(' ')
-  .map(n => `data-${n}`);
+const TAPPABLE = 'business project group thread job up done close card leave turn'.split(' ').map(n => `data-${n}`);
 
 let board = null,
   // while no job can start for memory, the coordinator's line saying so (room.ts), else null
@@ -30,17 +28,7 @@ let board = null,
   // where the board is: a business, a project and a thread in it, or a group (recurring, unsorted); jobId: the job open
   // over it (lookedUp: one asked for by a link that the board no longer holds); back: whether it's turned over (its
   // steps show there); notice: what came of a work link's job, if it isn't there (gone, unopened)
-  view = {
-    business: null,
-    project: null,
-    thread: null,
-    group: null,
-    jobId: null,
-    showDone: false,
-    back: false,
-    notice: null,
-    unkept: false,
-  },
+  view = { ...levels.HOME, back: false, notice: null, unkept: false },
   lookedUp = null,
   // the job a work link asked for, until the view has moved to its thread (placeOf).
   landing = null,
@@ -57,7 +45,12 @@ let board = null,
   timer = null,
   // the level's keys coming in (levels.moveIn) and the view flying out, which a refresh waits for rather than cutting
   // them short.
-  arriving = Promise.resolve();
+  arriving = Promise.resolve(),
+  // how far down each level the board went into another from was scrolled, by its place (levels.placeKey): back up
+  // there, it's where it was.
+  scrolls = new Map(),
+  // the open card's log's following while its job runs, or null once it ends (follow).
+  following = null;
 export const projectsOpen = () => !$('#projects').hidden;
 const modal = () => $('#projects .pj-modal');
 // until the board first loads: three of the view’s keys pressed in turn.
@@ -66,14 +59,8 @@ const UNKEPT = '<p class="pj-notice pj-unkept" role="status">Couldn’t confirm 
 
 // ---------------------------------------------------------------- in and out
 export function initProjects() {
-  // (a level's sides beside the view, outside it)
-  $('#projects').innerHTML = `<div class="pj-modal"></div>${sides('pj-sides')}`;
-  $('#projects .pj-sides').hidden = true; // (until paint shows a level's: none while the projects load)
+  $('#projects').innerHTML = '<div class="pj-modal"></div>';
   $('#projects').addEventListener('click', tapped);
-  levels.swipes($('#projects'), {
-    mayDrag: () => !view.jobId && here().beside.length > 1 && !sorting(),
-    onSwipe: step,
-  });
   sortable($('#projects'), { onSorted: sorted });
   new ResizeObserver(measureInset).observe($('#hud'));
   // (before desk.js closes a device on the same Escape; an agent's card or panel out over the view closes first)
@@ -136,6 +123,8 @@ export async function closeProjects() {
   const mine = supersede();
   clearInterval(timer);
   $('#projects').classList.add('pj-shut');
+  // (the scene stepped on under the view: it draws again as the veil fades, showing the world as it is now)
+  cover(false, 'projects');
   await levels.fly(modal(), null, true);
   if (move === mine) switched(false);
 }
@@ -144,6 +133,7 @@ export const toggleProjects = from => (projectsOpen() && !shutting() ? closeProj
 const shutting = () => $('#projects').classList.contains('pj-shut');
 function switched(on) {
   $('#projects').hidden = !on;
+  cover(on, 'projects'); // (the deck dimmed under it draws nothing while it's out: Holo's costs a slow device's frames)
   $('#projects').classList.remove('pj-shut');
   document.body.classList.toggle('projects', on);
   $('#btn-projects').setAttribute('aria-pressed', on);
@@ -158,7 +148,7 @@ async function refresh(motion = '', paints = true) {
   try {
     [board, { line: room }] = await Promise.all([loadBoard(world.dev), loadRoom(world.dev)]);
     for (const t of projects().flatMap(p => p.threads)) closed.delete(t.id);
-    const done = projects().flatMap(p => p.done);
+    const done = everyProject().flatMap(p => p.done);
     if (done.some(t => t.id === view.thread)) closed.set(view.thread, await loadThread(world.dev, view.thread));
     if (view.jobId && !jobsOnBoard().some(j => j.id === view.jobId) && lookedUp?.id !== view.jobId) {
       lookedUp = await loadJob(world.dev, view.jobId);
@@ -182,13 +172,16 @@ async function refresh(motion = '', paints = true) {
 
 // ---------------------------------------------------------------- the board's work, read
 const projects = () => board?.projects ?? [];
+// the completed, as projects with only done threads (a list opens them)
+const completed = () => (board?.completed ?? []).map(p => ({ ...p, threads: [], done: p.threads }));
+const everyProject = () => [...projects(), ...completed()];
 const businesses = () => board?.businesses ?? [];
-const work = () => ({ projects: projects(), businesses: businesses(), closed });
+const work = () => ({ projects: projects(), completed: completed(), businesses: businesses(), closed });
 const here = () => levels.level(view, work());
 // every job with its project and thread (a done thread's the board opened too), and the loose ones (being placed) with
 // neither
 function jobsOnBoard() {
-  const threads = projects().flatMap(p =>
+  const threads = everyProject().flatMap(p =>
     [...p.threads, ...[...closed.values()].filter(t => t.project === p.id)].map(t => [p, t]),
   );
   const placed = threads.flatMap(([p, t]) => t.jobs.map(j => ({ ...j, project: p, projectThread: t })));
@@ -216,6 +209,7 @@ async function go(change, motion = '') {
   const mine = supersede();
   await levels.leave($('#projects .pj-level'), motion);
   if (move !== mine) return;
+  if (motion === 'down') scrolls.set(levels.placeKey(view), $('#projects .pj-board')?.scrollTop ?? 0);
   view = { ...view, notice: null, unkept: false, ...change };
   paint(motion);
 }
@@ -234,7 +228,7 @@ function tapped(e) {
   } else if (data.project) {
     sfx.open();
     go({ project: data.project, thread: null, showDone: false }, 'down');
-  } else if (data.thread) openThread(data.thread);
+  } else if (data.thread) openThread(data.thread, data.in);
   else if (data.group) {
     sfx.open();
     go({ group: data.group, business: null, project: null, thread: null, showDone: false }, 'down');
@@ -252,7 +246,6 @@ function tapped(e) {
     openPhone(Number(data.card));
   } else if ('leave' in data) closeProjects();
   else if ('turn' in data) turnJob();
-  else if (data.side) step(Number(data.side));
 }
 // A tap on the dimmed page round the view closes it, one beside the open job closes that, and one on its card (not on
 // a key or a link) turns it over, as the home page's big key does; one on a line of its steps opens that line, as there
@@ -270,8 +263,7 @@ function openJob(id, row) {
   if (j && rowState(j) === 'working' && world.agents.has(j.agent)) {
     if (!scene.cards) return flyTo(j.agent);
     sfx.press();
-    scene.focus({ kind: 'agent', id: j.agent }, { from: row, onLeave: sided });
-    return sided();
+    return scene.focus({ kind: 'agent', id: j.agent }, { from: row });
   }
   sfx.press();
   origin = row.getBoundingClientRect();
@@ -287,10 +279,6 @@ async function closeJob() {
   if (card) await levels.fly(card, row?.getBoundingClientRect(), true);
   if (move === mine) go({ jobId: null, back: false });
 }
-// The level's sides while a swipe would step, as the swipe's mayDrag: none behind an open job or behind an agent's card
-// out of a task
-const sided = () =>
-  ($('#projects .pj-sides').hidden = Boolean(view.jobId) || Boolean(scene?.carded?.()) || here().beside.length < 2);
 // The open job's card, turned over (where it has a back)
 function turnJob() {
   const card = $('#projects .pj-card');
@@ -299,15 +287,15 @@ function turnJob() {
   view.back = !view.back;
   levels.turn(card);
 }
-// A thread opens over its project: an open one at once, a done one once its jobs are loaded, if the board is still at
-// that project then. A load that fails says so on its tile, where a tap tries again.
-async function openThread(id) {
+// A thread opens over its project (on a list of threads, the one it's in: view.group keeps the list): an open one at
+// once, a done one once its jobs are loaded, if the board is still there. A load that fails says so, a tap tries again.
+async function openThread(id, project = view.project) {
   if (opening?.id === id && opening.pending) return;
   sfx.open();
-  const open = () => go({ thread: id, showDone: closed.has(id) }, 'down');
+  const open = () => go({ project, thread: id, showDone: closed.has(id) }, 'down');
   if (projects().some(p => p.threads.some(t => t.id === id))) return open();
   const mine = supersede();
-  opening = { id, project: view.project, words: 'Opening…', pending: true };
+  opening = { id, project, words: 'Opening…', pending: true };
   paint();
   try {
     const thread = await loadThread(world.dev, id);
@@ -325,12 +313,6 @@ function up() {
   if (!change) return closeProjects();
   sfx.close();
   go(change, 'up');
-}
-function step(by) {
-  const change = levels.besideOf(here(), by);
-  if (!change) return;
-  sfx.swipe();
-  go(change, by > 0 ? 'from-right' : 'from-left');
 }
 // A grid's new order, kept by the coordinator for every device.
 async function sorted(ids) {
@@ -356,17 +338,26 @@ const reads = {
   facts: id => loadJobFacts(world.dev, id),
   steps: id => loadJobLog(world.dev, id),
 };
+// the open card's steps followed till its job, as the view has it now, ends.
+function follow(sheet, job, kept) {
+  const run = job.status === 'running' ? {} : null;
+  following = run;
+  const now = () => jobsOnBoard().find(x => x.id === job.id);
+  followSteps(sheet, job, reads.steps, kept, now).then(() => {
+    if (following === run) following = null;
+  });
+}
 function paint(motion = '') {
   const el = $('#projects');
   if (view.business && !businesses().some(e => e.id === view.business)) view.business = null;
-  if (view.project && !projects().some(p => p.id === view.project)) view.project = view.thread = null;
+  if (view.project && !everyProject().some(p => p.id === view.project)) view.project = view.thread = null;
   const l = here();
   if (view.thread && l.at !== 'thread') view.thread = null;
   const kept = {
     board: el.querySelector('.pj-board')?.scrollTop ?? 0,
-    job: el.querySelector('.pj-card-faces')?.scrollTop ?? 0,
     steps: stepsKept(el),
     sums: [...el.querySelectorAll('.pj-eta[open]')].map(d => d.dataset.eta),
+    page: !!el.querySelector('.pj-page[open]'),
     focus: levels.focusOf(el, TAPPABLE),
   };
   const sameJob = el.querySelector('.pj-card')?.dataset.jobOpen === String(view.jobId ?? '');
@@ -374,19 +365,31 @@ function paint(motion = '') {
   const notice = view.notice ? `<p class="pj-notice" role="status">${view.notice}</p>` : '',
     unkept = view.unkept ? UNKEPT : '';
   const starved = room ? `<p class="pj-notice" role="status">${esc(room)}</p>` : '';
-  modal().innerHTML = `<div class="pj-board">${starved}${notice}${unkept}${levelHtml(l, { view, board, opening })}</div>`;
-  el.querySelector('.pj-pop')?.remove();
+  const level = `<div class="pj-board">${starved}${notice}${unkept}${levelHtml(l, { view, board, opening })}</div>`;
   const listed = findingsOf(job, reads.findings, paint),
     facts = factsOf(job, reads.facts, paint, board);
-  el.insertAdjacentHTML('beforeend', jobSheet(job, jobsOnBoard(), { back: view.back, findings: listed, facts }));
+  const sheetHtml = jobSheet(job, jobsOnBoard(), { back: view.back, findings: listed, facts });
+  // (a move draws the level anew; anything else, a refresh say, brings the view up to date in place: rebuilt, it
+  // flashed, an open job's veil fading in again. The open job's steps it loaded stay, still followed; another job's
+  // card is drawn anew, so the last one's steps, still loading, land in its own log and not in this one's.)
+  const log = el.querySelector('.pj-card .steplog');
+  if (motion) {
+    modal().innerHTML = level;
+    el.querySelector('.pj-pop')?.remove();
+    el.insertAdjacentHTML('beforeend', sheetHtml);
+  } else {
+    if (!sameJob) el.querySelector('.pj-pop')?.remove();
+    morph(el, `<div class="pj-modal">${level}</div>${sheetHtml}`, n => sameJob && n.matches('.steplog'));
+  }
   el.dataset.level = l.at;
-  sided();
-  if (!motion) el.querySelector('.pj-board').scrollTop = kept.board;
+  el.querySelector('.pj-board').scrollTop =
+    motion === 'up' ? (scrolls.get(levels.placeKey(view)) ?? 0) : motion ? 0 : kept.board;
   el.querySelectorAll('.pj-eta').forEach(d => (d.open = kept.sums.includes(d.dataset.eta)));
+  el.querySelector('.pj-page')?.toggleAttribute('open', kept.page);
   const sheet = el.querySelector('.pj-card');
-  if (sheet && sameJob) sheet.querySelector('.pj-card-faces').scrollTop = kept.job;
   if (sheet && !sameJob) levels.fly(sheet, origin);
-  if (sheet) followSteps(sheet, job, reads.steps, sameJob ? kept.steps : null);
+  if (sheet && (sheet.querySelector('.steplog') !== log || (job.status === 'running' && !following)))
+    follow(sheet, job, sameJob ? kept.steps : null);
   if (kept.focus) el.querySelectorAll(kept.focus.selector)[kept.focus.index]?.focus({ preventScroll: true });
   levels.moveIn(el, motion);
   arriving = levels.settled(el);

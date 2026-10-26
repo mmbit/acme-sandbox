@@ -106,6 +106,7 @@ svg.icon .accent { fill: var(--gold); }
 @media (hover: hover) { .sides button:hover { opacity: 1; } }
 #status { position: fixed; left: max(12px, var(--sal)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; gap: 6px; flex-wrap: wrap; pointer-events: none; max-width: 60cqw; }
 #status > span { padding: 2px 8px; font-size: 14px; pointer-events: auto; }
+body:not(.keys) #status > span { flex: none; } /* (never narrower than its words, outside Wire's one line) */
 #status [data-jobs] { cursor: pointer; }
 /* HQ's throughput (hud.js): what was done in the last day as bars by the hour, at work and waiting each over a bar, tasks
    in ink and reviews lighter, a swatch of each by its count. */
@@ -118,6 +119,7 @@ svg.icon .accent { fill: var(--gold); }
 .flow-bars .review { fill: var(--flow-review); }
 .flow-key { display: inline-block; width: 8px; height: 8px; margin-right: 4px; border-radius: 2px; background: currentColor; }
 .flow-key.review { margin-left: 4px; background: var(--flow-review); }
+/* (a pill in every look: half its height rounds each end, which no look's sheet overrides.) */
 .flow-split { width: 40px; height: 6px; flex: none; border-radius: 3px;
   background: linear-gradient(to right, currentColor calc((1 - var(--review)) * 100%), var(--flow-review) 0); }
 #zoom { position: fixed; right: max(12px, var(--sar)); top: calc(var(--app-h, 100dvh) - max(12px, var(--sab))); transform: translateY(-100%); display: flex; flex-direction: column; gap: 8px; }
@@ -254,8 +256,13 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   #status { max-width: calc(100cqw - 80px); } #status > span { font-size: 12px; }
   #status > .flow { gap: 5px; padding: 5px 9px; } .flow-bars { width: 40px; } .flow-split { display: none; } /* (room for the three across a phone) */
   .flow-key { width: 5px; height: 5px; margin-right: 2px; } .flow-key.review { margin-left: 0; } /* (with the key's) */
+  /* (and the tasks over the reviews, outside Wire's one line) */
+  body:not(.keys) .flow-and { display: block; height: 0; overflow: hidden; }
   #hint { font-size: 12px; }
 }
+/* (a page beside the open book at half an iPad mini's split screen, ~200 px: the throughput's words alone, over two
+   lines, so the pill fits the page rather than running under the book.) */
+@container page (max-width: 300px) { .flow-bars { display: none; } .flow-words > span { white-space: normal; } }
 /* (a tablet upright, an iPad mini's 744 px: the logo and every tool still on one row at full size, the phone's label
    and the clock left out, and a logo that shrinks before a tool leaves the screen). */
 @container page (min-width: 701px) and (max-width: 880px) {
@@ -291,14 +298,12 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
  */
 #tool > .device, #call-layer > .device { margin: auto; }
 #tool[hidden], #call-layer[hidden] { display: none; }
-/* the send step opens the computer over the viewer, so closing it goes back to the preview */
-#tool.over-viewer { z-index: 31; }
 /* the preview ends above the home bar, so a page's own bottom corner (review mode's pin) stays easy to tap */
 #viewer { position: fixed; inset: 0 0 auto; height: var(--app-h, 100dvh); z-index: 30; display: flex; flex-direction: column; background: var(--deep); padding: var(--sat) var(--sar) var(--sab) var(--sal); }
 #viewer[hidden] { display: none; }
 /* The bar: one slim row, so the page keeps the room. Back and Close are quiet
    glyphs, the address is the link that opens the page in the browser, and only what review mode does is filled: Note
-   in review mode's red, and Send N, its count on gold, once notes are pinned. */
+   in review mode's red. */
 #viewer .bar { display: flex; align-items: center; gap: 6px; height: 40px; padding: 2px 6px; color: var(--on-deep); font-size: 15px; }
 #viewer .bar button { flex: none; display: flex; align-items: center; gap: 6px; height: 36px; min-width: 36px; padding: 0 10px; border: 0; border-radius: var(--r);
   font: inherit; white-space: nowrap; }
@@ -308,16 +313,10 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 #viewer .bar .where { flex: 1; min-width: 0; display: flex; align-items: center; height: 36px; padding: 0 6px; color: var(--on-deep); text-decoration: none; white-space: nowrap; }
 #viewer .bar .where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; opacity: .5; }
 #viewer .bar .where i { flex: none; margin-left: 6px; font-style: normal; color: var(--gold); }
-#viewer .bar .where.flash { display: block; line-height: 36px; overflow: hidden; text-overflow: ellipsis; color: var(--gold); }
 #viewer .bar .pin { background: #ff5a5f; color: #fff; box-shadow: inset 0 -3px 0 #c23c44; }
 #viewer .bar .pin svg { width: 16px; height: 16px; fill: currentColor; }
-#viewer .bar .send { background: var(--paper); color: var(--ink); box-shadow: inset 0 -3px 0 color-mix(in srgb, var(--paper) 75%, #000); }
-#viewer .bar .send i { min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--gold); color: var(--on-accent); font-style: normal; font-size: 13px;
-  line-height: 20px; text-align: center; }
 #viewer .bar button:active { transform: translateY(1px); }
 #viewer iframe { flex: 1; width: 100%; border: 0; background: #fff; }
-/* a narrow phone with Send there too: the Note button keeps only its pin */
-@container page (max-width: 400px) { #viewer .bar:has(.send:not([hidden])) .pin span { display: none; } }
 /* Share for outside notes: a quiet button on the bar, and its small form dropping over the page's top */
 #viewer .bar .share { background: none; color: var(--on-deep); padding: 0 8px; }
 #viewer .bar .share .ico { width: 16px; height: 16px; fill: currentColor; }
@@ -507,9 +506,6 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .invites .person .meta { display: block; font-size: 13px; color: var(--muted); } .invites .person b + .meta { display: inline; }
 .invites .person .glang { font-size: 13px; color: var(--muted); margin-top: 4px; } .invites .person .glang select { font: inherit; color: var(--ink); margin-left: 4px; max-width: 100%; }
 .invites .acts { display: flex; gap: 6px; flex: none; margin: 0; } .invites button { white-space: nowrap; }
-/* a person's own Sketchbook, on or off (desk.js bookHtml). */
-:is(#viewer .sharebox, *) .invites .person .book { display: flex; align-items: center; gap: 6px; margin-top: 4px; min-height: 32px; padding: 0 10px; font-size: 13px; color: var(--muted); background: none; border: 1px dashed currentColor; border-radius: 99px; }
-.invites .person .book small { font-size: 12px; opacity: .8; } :is(#viewer .sharebox, *) .invites .person .book[aria-pressed=true] { color: var(--ink); border-style: solid; background: color-mix(in srgb, var(--gold) 30%, transparent); }
 .invites li.none { color: var(--muted); font-size: 14px; }
 .invites .invite { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
 .invites .invite input { flex: 1 1 130px; width: auto; min-width: 0; min-height: 40px; } .invites .invite button { flex: none; }
@@ -638,7 +634,35 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .who { margin: 0; font-size: 14px; color: var(--muted); }
 .intercom .call .state { margin: 6px 0; font-size: 22px; font-weight: 600; }
 .intercom .call .note { margin: 8px 0 0; } /* (an alert) */
-.intercom .call .said { min-height: 3.5em; max-height: 30dvh; overflow-y: auto; margin: 8px 0 14px; font-size: 16px; }
+/* The call's own little screen at its top: the agent's pixel figure standing in the screen's light, bobbing on two frames
+   while it speaks, a ring in its colour as wide as it's loud (as the bubble's face), and what it's doing in the corner.
+   Under it the transcript, the board's lines and the agent's, a box of its own that scrolls. */
+.intercom .call { --cb-accent: var(--gold); }
+.intercom .call .call-face { position: relative; display: grid; place-items: end center; height: 184px; margin: 0 0 10px; overflow: hidden; --cb-level: 0;
+  background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r);
+  box-shadow: inset 0 0 0 calc(2px + var(--cb-level) * 3px) color-mix(in srgb, var(--cb-accent) calc(20% + var(--cb-level) * 70%), transparent); transition: box-shadow .08s linear; }
+/* (the light it stands in, brighter as it speaks, and the floor) */
+.intercom .call .call-face::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: radial-gradient(ellipse 46% 70% at 50% 100%, color-mix(in srgb, var(--cb-accent) calc(22% + var(--cb-level) * 40%), transparent), transparent 70%); }
+.intercom .call .call-face::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 18px; pointer-events: none;
+  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--scr) 22%, transparent) 0 2px, transparent 2px 8px); border-top: 2px solid color-mix(in srgb, var(--scr) 40%, transparent); }
+.intercom .call .cf-figure { position: relative; z-index: 1; display: grid; place-items: end center; margin-bottom: 12px; }
+.intercom .call .cf-figure > canvas { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; }
+.intercom .call .cf-figure > .cb-initial { margin-bottom: 30px; font-size: 52px; line-height: 1; color: var(--scr); text-shadow: var(--scr-glow); }
+.intercom .call .call-face.talking .cf-figure > * { animation: cb-talk .24s steps(2) infinite; }
+.intercom .call .call-face[data-state=thinking] .cf-figure > canvas { animation: cb-think 1.6s steps(4) infinite; }
+.intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--scr); text-shadow: var(--scr-glow); }
+.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(96px, 24dvh, 220px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
+  text-align: left; background: #1d1f2e; border: var(--bw) solid var(--line); border-radius: var(--r); }
+.intercom .call .lines:empty::before { content: attr(data-empty); margin: auto; padding: 0 12px; font-size: 13px; color: #9a9eb4; text-align: center; }
+.intercom .call .lines li { max-width: 88%; padding: 5px 9px 6px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; border-radius: var(--r); animation: cs-line-in .2s steps(3) both; }
+.intercom .call .lines .who { display: block; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; opacity: .7; }
+.intercom .call .lines .agent { align-self: flex-start; background: var(--paper); color: var(--ink); box-shadow: inset 3px 0 0 var(--cb-accent); }
+.intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
+@keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
+/* a phone on its side: the little screen smaller, so the keys stay in view */
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 72px; } }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
@@ -702,7 +726,27 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .callbubble .cb-keys .cb-hangup { flex: none; width: 38px; background: var(--red); color: #fff; }
 .callbubble .cb-hangup svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .callbubble.paused .cb-face { filter: grayscale(.6); }
-@media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } }
+/* slim (review mode, a small screen): a strip of audio bars in the agent's colour in place of the face, moving with its
+   voice, hang up and Pause beside it; the box changes size in its corner while its contents are out (callbubble.js
+   slim). */
+.callbubble > * { transition: opacity .15s steps(3); }
+.callbubble.morphing { overflow: hidden; }
+.callbubble.morphing > * { opacity: 0; transition: none; }
+.callbubble.slim { grid-auto-flow: column; align-items: center; width: auto; gap: 4px; padding: 4px; }
+.callbubble.slim .cb-face { place-items: center; width: 60px; height: 34px; box-shadow: none; }
+.callbubble.slim .cb-face > :not(.cb-bars) { display: none; }
+.callbubble .cb-bars:not([hidden]) { display: flex; align-items: center; gap: 3px; height: 22px; }
+.callbubble .cb-bars i { width: 5px; height: 100%; background: var(--cb-accent); box-shadow: 0 0 4px color-mix(in srgb, var(--cb-accent) 60%, transparent);
+  scale: 1 calc(.2 + var(--cb-level) * var(--cb-reach) * .8); transition: scale .08s steps(2); }
+.callbubble.talking .cb-bars i { animation: cb-bar .3s steps(3) calc(var(--cb-i) * -.11s) infinite alternate; }
+.callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s steps(2) calc(var(--cb-i) * .2s) infinite; }
+@keyframes cb-bar { to { transform: scaleY(.5); } }
+@keyframes cb-bar-think { 50% { scale: 1 .45; } }
+.callbubble.slim .cb-keys { gap: 4px; }
+.callbubble.slim .cb-keys .cb-hangup { width: 36px; }
+.callbubble.slim .cb-eye { left: -7px; top: -7px; width: 22px; height: 17px; }
+.callbubble.slim .cb-eye svg { width: 13px; height: 13px; }
+@media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .callbubble .cb-bars i, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the bars, the little screen, the lines) */
 /* A call's cards (shell/calldraw.js): the agent's ask to see, with Show and Not now, and the page a call left, kept or
    thrown away; over HQ and the call alike, in a toast's look, waiting until tapped. */
 #call-cards { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); z-index: 46; display: grid; gap: 8px; width: min(92vw, 380px); }
@@ -711,14 +755,14 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 #call-cards .call-card .row { display: flex; gap: 8px; justify-content: flex-end; }
 #call-cards .call-card button { min-height: 36px; padding: 0 14px; font: inherit; color: var(--ink); background: var(--paper); border: var(--bw) solid var(--line);
   border-radius: var(--r-sm); box-shadow: var(--shadow-sm); cursor: pointer; }
-#call-cards .call-card :is([data-show], [data-keep]) { background: var(--gold); color: var(--on-accent); }
+#call-cards .call-card :is([data-show], [data-keep], [data-open]) { background: var(--gold); color: var(--on-accent); }
 /* Wire: its answers are keys of a card's height, pressed down on a tap, Show and Keep lit as the one to press (body.keys's
    list; the id here outweighs it). */
 body.keys #call-cards .call-card button { min-height: 48px; padding: 0 22px; background: var(--key-bg); color: var(--key-ink); border: 1.5px solid var(--key-edge);
   border-radius: var(--key-r); box-shadow: var(--key-lip); text-shadow: none; transition: transform .12s var(--ease, ease-out), box-shadow .12s var(--ease, ease-out); }
 body.keys #call-cards .call-card button:is(:active, .down) { transform: var(--key-down); box-shadow: var(--key-down-lip); }
-body.keys.keys #call-cards .call-card :is([data-show], [data-keep]) { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); --hover-lip: var(--key-on-hover-lip); }
-body.keys.keys #call-cards .call-card :is([data-show], [data-keep]):is(:active, .down) { box-shadow: var(--key-on-down-lip); }
+body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open]) { background: var(--key-on-bg); color: var(--key-on-ink); box-shadow: var(--key-on-lip); --hover-lip: var(--key-on-hover-lip); }
+body.keys.keys #call-cards .call-card :is([data-show], [data-keep], [data-open]):is(:active, .down) { box-shadow: var(--key-on-down-lip); }
 /* Wire: the bubble is a key itself, its face set in, its keys with a lip that press down */
 body.keys .callbubble { background: var(--key-bg); border: 1.5px solid var(--key-edge); border-radius: 22px; box-shadow: var(--key-lip), 0 18px 40px rgba(0, 0, 0, .22); transition: box-shadow .2s, scale .2s cubic-bezier(.2, 1.4, .4, 1); }
 body.keys .callbubble.held { box-shadow: var(--key-lip), 0 26px 50px rgba(0, 0, 0, .28); }
@@ -731,6 +775,22 @@ body.keys .callbubble .cb-keys button { background: var(--key-bg); color: var(--
 body.keys .callbubble .cb-keys button:active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
 body.keys.keys .callbubble .cb-pause[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }
 body.keys.keys .callbubble .cb-hangup { background: var(--red); color: #fff; border-radius: 999px; box-shadow: 0 var(--depth-button) 0 color-mix(in srgb, var(--red) 60%, #000); }
+/* Wire, slim: a pill of soft rounded bars, set in like the face; the call's little screen set in the same way, the figure
+   standing on its own soft shadow, the lines easing in. */
+body.keys .callbubble > * { transition: opacity .18s ease-out; }
+body.keys .callbubble.morphing > * { transition: none; }
+body.keys .callbubble.slim { border-radius: 999px; padding: 5px; gap: 5px; }
+body.keys .callbubble.slim .cb-face { border-radius: 999px; }
+body.keys .callbubble .cb-bars i { width: 4px; border-radius: 2px; box-shadow: none; transition: scale .1s ease-out; }
+body.keys .callbubble.talking .cb-bars i { animation: cb-bar .42s ease-in-out calc(var(--cb-i) * -.15s) infinite alternate; }
+body.keys .callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s ease-in-out calc(var(--cb-i) * .2s) infinite; }
+body.keys .intercom .call .call-face { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--k-ink) 7%, var(--key-bg)); transition: box-shadow .12s ease-out; }
+body.keys .intercom .call .call-face::after { left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
+body.keys .intercom .call .cf-figure { margin-bottom: 14px; }
+body.keys .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
+body.keys .intercom .call .call-face .state { top: 10px; left: 14px; font-size: 12px; color: var(--k-muted); }
+body.keys .intercom .call .lines { border-radius: 16px; }
+body.keys .intercom .call .lines li { border-radius: 12px; animation: cs-line-in .28s cubic-bezier(.2, .8, .2, 1) both; }
 .intercom .chat .hint { align-self: center; max-width: 100%; color: #c8ccd8; font-size: 14px; text-align: center; }
 /* a new company's first visit: the languages to talk in, each by its own name (desk.js paintWelcome). */
 .intercom .chat .hint .langs { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 12px; }
@@ -1072,6 +1132,8 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 .req .btns .talk, .req .btns .share { background: var(--cream); }
 /* Call as its phone alone, on a card that brings work back: its two answers fill the row */
 .req .btns .talk.icon { width: 44px; padding: 0; flex: none; } .req .btns .talk.icon svg { width: 16px; height: 16px; }
+/* a walk-through offered: its own row over the card's answers, the whole width, in words on every screen. */
+.req .btns.walk { margin-bottom: 8px; } .req .btns.walk .talk { flex: 1 1 auto; }
 /* the Share button keeps its word on a phone: as an icon alone the board didn't find it */
 @container page (max-width: 440px) { .req .btns .talk .w { display: none; } .req .btns button { padding: 0 8px; gap: 6px; } }
 .req .row.on-air .mic { background: var(--red); color: #fff; }
@@ -1163,30 +1225,26 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .req .questions .qa > input { width: 100%; } .req .questions .num { display: flex; align-items: center; gap: 8px; }
 .req .questions .num input { width: 8em; } .req .questions .unit { font-weight: 600; }
 .req .questions + .photos, .req .questions ~ #answer { margin-top: 16px; }
-/* the computer's Notes tab: review notes waiting for the board */
+/* the computer's Reviews: the sheets the board sent, each note its number, its words, its snip and its answer's state
+ */
 .crt { position: relative; }
 .crt .why { color: var(--scr-cap); font-size: 13px; border: 1px dashed color-mix(in srgb, var(--scr) 40%, transparent); padding: 6px 8px; } .crt .why em { font-style: normal; color: #ffd966; }
 .notes .rows { margin-bottom: 10px; }
-.notes li.pending { grid-template-columns: auto 1fr auto; } .notes li.pending > * { grid-column: 2; }
-.notes li.pending input { grid-column: 1; grid-row: 1 / span 3; width: 20px; height: 20px; margin: 2px 0 0; accent-color: var(--scr); }
-.notes li.pending label b { white-space: pre-wrap; word-break: break-word; cursor: pointer; }
-.notes li.pending .shot { display: block; grid-column: 3; grid-row: 1 / span 3; align-self: start; padding: 0; margin: 0; border: 1px solid var(--scr); background: #000; border-radius: var(--r-sm); width: 72px; height: 54px; overflow: hidden; cursor: zoom-in; position: relative; }   /* (margin 0, not a row's; relative: a framed img sits on the note's mark, desk.js shotFrame) */
-.notes li.pending .shot img { width: 100%; height: 100%; object-fit: cover; object-position: top; display: block; }
-.notes li.pending .shot img.framed { position: absolute; max-width: none; object-fit: fill; }
-/* the pictures added to a note, under its words */
-.notes li.pending .pics { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
-.notes li.pending .pics button { display: block; padding: 0; margin: 0; width: 40px; height: 40px; border: 1px solid var(--scr); background: #000; border-radius: var(--r-sm); overflow: hidden; cursor: zoom-in; }
-.notes li.pending .pics img { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* a sent note is one line (its status, the start of its words, when); the safety
-   line is a plain caption */
+.notes.sent > .dim { color: var(--scr-dim); font-size: 13px; overflow-wrap: anywhere; }
+.notes li.sent-note { grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; }
+.notes li.sent-note .n { grid-column: 1; min-width: 1.6em; color: var(--scr-cap); }
+.notes li.sent-note .words { grid-column: 2; white-space: pre-wrap; overflow-wrap: anywhere; }
+.notes li.sent-note .shot { display: block; grid-column: 3; grid-row: 1 / span 2; padding: 0; margin: 0; border: 1px solid var(--scr); background: #000; border-radius: var(--r-sm); width: 72px; height: 54px; overflow: hidden; cursor: zoom-in; }
+.notes li.sent-note .shot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.notes li.sent-note .st, .notes li.sent-note .by, .notes li.sent-note .reason { grid-column: 2; overflow-wrap: anywhere; }
+.st-answered { color: #ffd966; } .st-ticked, .st-fixed { color: var(--scr); }
+/* an ended share is one line (its status, where, who was on it) */
 .notes li.old { opacity: .55; grid-template-columns: minmax(0, 1fr) auto auto; align-items: baseline; }
 .notes li.old .st { grid-column: 3; } .notes li.old b { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }   /* (its state last) */
 .notes li.old .dim { grid-column: 2; white-space: nowrap; }
 .notes li.old .by { grid-column: 1 / -1; grid-row: 2; white-space: normal; overflow-wrap: anywhere; }   /* who wrote it, or who was on a share: a line of its own */
 .notes li.old .reason { grid-column: 1 / -1; white-space: normal; overflow-wrap: anywhere; }   /* why it waits, or its job's answer: a line under it */
-.crt .notes-warn { color: var(--scr-cap); font-size: 12px; }
 .notes h3 { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-.notes h3 [data-all] { white-space: nowrap; font: inherit; letter-spacing: 0; text-transform: none; background: none; border: 0; color: var(--scr); text-shadow: inherit; padding: 0 2px; min-height: 32px; cursor: pointer; }
 .st-sent { color: var(--scr); } .st-discarded { color: var(--scr-dim); }
 .st-rerouting { color: #ffd966; }   /* a sent note on its way to other work */
 .notes .acts { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
@@ -1206,15 +1264,10 @@ body.keys .mailfwd .act:disabled { transform: var(--key-down); box-shadow: var(-
 .notes.share > details > summary h3 span::after { content: '\a0▸'; } .notes.share > details[open] > summary h3 span::after { content: '\a0▾'; }   /* (a no-break space: the arrow stays with the last word) */
 .notes.share > details > summary > .dim { display: block; color: var(--scr-dim); font-size: 13px; overflow-wrap: anywhere; }
 .st-ended { color: var(--scr-dim); }
-/* the product the send step opened at: its Send button stays in reach while the board reads its notes */
-.notes.wanted .acts { position: sticky; bottom: 0; z-index: 1; padding: 8px 0; background: var(--scr-bg); }
 .notes .acts button { font: inherit; font-size: 14px; background: none; color: var(--scr); border: 1px solid currentColor; border-radius: var(--r-sm); padding: 6px 12px; min-height: 44px; text-shadow: inherit; }
 .notes .acts .cta { background: var(--scr); color: var(--scr-ink); text-shadow: none; box-shadow: 0 0 12px color-mix(in srgb, var(--scr) 45%, transparent); }
 .notes .acts button[disabled] { opacity: .5; }
 .notes .msg { color: #ffd966; font-size: 13px; }
-/* stuck to the screen's foot, its message line keeps its room: a question showing would lift the buttons under the finger
- */
-.notes.wanted .acts .msg { flex-basis: 100%; min-height: 1lh; }
 .crt .zoom { position: absolute; inset: 10px; z-index: 2; display: grid; grid-template-rows: 1fr auto; gap: 6px; place-items: center; padding: 8px; background: rgba(10,16,12,.94); border-radius: 10px; cursor: zoom-out; }
 .crt .zoom img { max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; border: 1px solid var(--scr); }
 .crt .zoom a { color: var(--scr); font-size: 13px; }
@@ -1378,12 +1431,9 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 /* (under the HUD's keys, their lip included (--pj-hud-reach, how far a look's lip reaches down), the view keeps the
    gutter of its sides: never touching.) */
 #projects { --pj-hud-reach: var(--px-button); --pj-clear: calc(var(--pj-top, 64px) + var(--pj-hud-reach) + var(--pj-gutter, 14px)); }
-.pj-modal, .pj-sides { position: absolute; top: var(--pj-clear); bottom: max(14px, var(--sab)); left: max(var(--pj-inline), var(--sal)); right: max(var(--pj-inline), var(--sar)); }
+.pj-modal { position: absolute; top: var(--pj-clear); bottom: max(14px, var(--sab)); left: max(var(--pj-inline), var(--sal)); right: max(var(--pj-inline), var(--sar)); }
 .pj-modal {
   display: flex; flex-direction: column; overflow: hidden; background: var(--pj-surface); border: var(--bw-lg) solid var(--line); border-radius: var(--pj-frame-r); box-shadow: var(--pj-frame-lift); }
-/* a level the board can swipe: its sides beside the view (sides.js), gone with it. */
-.pj-sides { --side-w: min(44px, var(--pj-inline)); animation: pj-dim .3s; transition: opacity .24s; }
-#projects.pj-shut .pj-sides { opacity: 0; }
 #projects :where(.pj-board, .pj-card) button { font: inherit; color: inherit; background: none; border: 0; padding: 0; text-align: inherit; cursor: pointer; }
 /* the first load: three keys pressed in turn, each lit by the accent while down. */
 .pj-loading { position: absolute; top: 40%; width: 100%; display: flex; justify-content: center; gap: 14px; }
@@ -1422,6 +1472,12 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 .pj-board > .pj-none { margin-top: 20px; }
 .pj-notice { margin: 0 auto 18px; padding: 12px 14px; background: var(--pj-tile); color: var(--pj-ink);
   border: var(--bw) solid var(--line); border-radius: var(--pj-round); box-shadow: var(--pj-lift-sm); font-size: 16px; line-height: 1.38; }
+/* the CEO's page at the projects' top: a key that opens its text */
+.pj-page { margin: 0 0 18px; }
+.pj-page summary { list-style: none; display: inline-flex; }
+.pj-page summary::-webkit-details-marker { display: none; }
+.pj-page p { margin: 10px 0 0; padding: 12px 14px; background: var(--pj-tile); color: var(--pj-ink); border: var(--bw) solid var(--line);
+  border-radius: var(--pj-round); box-shadow: var(--pj-lift-sm); font-size: 16px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* the keys: white on the ground, a lip that goes down when pressed; the one accent only where something waits on the board */
 #projects :is(.pj-tile, .pj-key, .pj-row, .pj-task) { background: var(--pj-tile); border: var(--bw) solid var(--line); box-shadow: var(--pj-lift-sm); color: var(--pj-ink); }
@@ -1441,22 +1497,29 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 :is(.pj-back-key, .pj-close) svg { width: 20px; height: 20px; }
 @media (hover: hover) { body:not(.brownstone, .keys) #projects .pj-key:not(.on, [aria-pressed=true]):hover { /* (.keys) */ background: color-mix(in srgb, var(--pj-tile) 88%, var(--pj-ink)); } }
 
-/* a level's head, the same strip at every level: back up (at home the view's mark in its place), where the board is
-   (the level above over its name), its marks, its keys and the view's close. */
-.pj-head { order: -1; position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; min-height: 76px;
-  margin: 0 calc(-1 * var(--pj-pad)) 18px; padding: 14px var(--pj-pad); background: var(--pj-head, var(--pj-surface)); box-shadow: 0 1px 0 var(--rule, rgba(29, 26, 47, .2)); }
+/* a level's head, the same strip at every level: back up (at home the view's mark in its place) and the view's close
+   at the ends of its first line, and between them, wrapping as they need, where the board is (the level above over its
+   name), its marks and its keys. A mark wider than the line wraps its words. */
+.pj-head { order: -1; position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; align-content: center;
+  gap: 10px 14px; min-height: 76px; margin: 0 calc(-1 * var(--pj-pad)) 18px; padding: 14px var(--pj-pad); background: var(--pj-head, var(--pj-surface));
+  box-shadow: 0 1px 0 var(--rule, rgba(29, 26, 47, .2)); }
+.pj-flow { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; min-width: 0; min-height: 44px; }
 .pj-slot { display: grid; place-items: center; width: 44px; height: 44px; flex: none; color: var(--muted); }
 .pj-slot svg { width: 28px; height: 28px; }
 .pj-where { flex: 0 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .pj-where small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 13px; font-weight: 600; }
 .pj-where h1 { margin: 0; font-size: 26px; line-height: 1.12; font-weight: 700; text-wrap: balance; overflow-wrap: anywhere; }
-.pj-marks { display: flex; align-items: center; gap: 10px; flex: none; }
+.pj-marks { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; min-width: 0; }
+.pj-marks .pj-note { white-space: normal; }
 .pj-marks .pj-person { padding: 2px; box-shadow: none; }
 .pj-marks .pj-crown { top: -10px; width: 18px; height: 12px; margin-left: -9px; }
 .pj-note { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .pj-note svg { width: 16px; height: 16px; flex: none; }
+/* a head's pause mark says what it waits for in a sentence: it wraps in the room the head has left beside its name
+   and keys, its icon on the first line */
+.pj-marks .pj-paused { min-width: 0; align-items: flex-start; }
+.pj-marks:has(.pj-paused) { flex: 1 1 240px; }
 .pj-keys { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
-.pj-marks + .pj-close, .pj-where + .pj-close { margin-left: auto; }
 #projects .pj-head .pj-key:not(.pj-back-key, .pj-close) { min-height: 36px; padding: 0 14px; font-size: 14px; }
 .pj-key svg { width: 16px; height: 16px; flex: none; }
 /* a thread's live estimate: a key with its time, its sums under it on a tap */
@@ -1467,11 +1530,13 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
   color: var(--pj-ink); border: var(--bw) solid var(--line); border-radius: var(--pj-round); box-shadow: var(--pj-lift-sm); font-size: 14px; line-height: 1.38; }
 @container page (max-width: 700px) {
   .pj-head { min-height: 0; padding-top: 12px; padding-bottom: 12px; }
-  .pj-where { flex: 1 1 calc(100% - 116px); order: 1; }
   .pj-where h1 { font-size: 22px; }
-  .pj-close { order: 2; }
-  .pj-marks { order: 3; flex: 1 1 0; min-width: 0; flex-wrap: wrap; margin-left: 58px; }
-  .pj-keys { order: 4; }
+  /* (on a phone the name's line alone sits between back and close: its marks and keys run on under the close) */
+  .pj-flow { display: contents; }
+  .pj-where { grid-column: 2; align-self: center; }
+  .pj-close { grid-area: 1 / 3; }
+  :is(.pj-marks, .pj-keys) { grid-column: 2 / -1; }
+  .pj-keys { margin-left: 0; }
 }
 
 /* the tiles of a level, as many to a row as fit */
@@ -1691,6 +1756,25 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 .pj-step::before { content: ''; position: absolute; left: -12px; top: -4px; bottom: 50%; width: 12px; border: 0 solid var(--line); border-width: 0 0 2px 2px; }
 #projects .pj-step .pj-task { min-height: 32px; }
 #projects .pj-step .pj-face { width: 20px; height: 20px; }
+/* a list of threads (threadlist.js), in the task rows' looks: a finished one reads as a changelog's line, its name and
+   face whole, and its time at the side */
+.pj-task-side .pj-when { font-size: 13px; font-weight: 700; white-space: nowrap; }
+#projects .pj-threads .pj-task.done .pj-task-text b { font-weight: 700; color: inherit; }
+#projects .pj-threads .pj-task.done .pj-face { opacity: 1; filter: none; }
+/* (a list's rows roomier than a thread's tasks, each its own key; a wide page puts the time beside the name.) */
+.pj-lists { display: flex; flex-direction: column; gap: 22px; }
+.pj-list-head { margin: 0 0 10px 4px; font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.pj-list-head span { margin-left: 4px; font-variant-numeric: tabular-nums; }
+.pj-threads { gap: 10px; }
+#projects .pj-threads .pj-task { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; column-gap: 14px; min-height: 64px; padding: 12px 16px 12px 12px; }
+#projects .pj-threads .pj-face { width: 34px; height: 34px; }
+.pj-threads .pj-task-text { display: grid; gap: 3px; padding-top: 1px; }
+.pj-threads .pj-task-text b { font-size: 16px; }
+.pj-threads .pj-task-text small { font-size: 14px; line-height: 1.35; }
+.pj-threads .pj-in { font-weight: 600; }
+.pj-threads .pj-task-side { padding-top: 2px; }
+.pj-threads .pj-task.lit .pj-in { color: inherit; }
+#projects .pj-threads .pj-task.done { background: var(--pj-tile); border-color: var(--line); box-shadow: var(--pj-lift-sm); } /* (a finished row a key like the rest) */
 .pj-board-task.pj-flat .pj-phone { color: var(--muted); }
 @media (prefers-reduced-motion: reduce) { #projects .pj-task.working .pj-face { animation: none; } }
 /* (on a phone a task's size and code go under its words, so its title has the row's whole width) */
@@ -1698,6 +1782,9 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
   #projects .pj-task { flex-wrap: wrap; row-gap: 2px; padding-block: 5px; }
   .pj-task-side { width: 100%; padding-left: 36px; }
   .pj-step { margin-left: 26px; }
+  /* (a list's time under its words, in their column) */
+  #projects .pj-threads .pj-task { grid-template-columns: auto minmax(0, 1fr); row-gap: 6px; padding: 10px 12px 10px 10px; column-gap: 12px; }
+  .pj-threads .pj-task-side { grid-column: 2; width: auto; padding: 0; }
 }
 .pj-code { padding: 3px 6px; font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .14em; color: var(--pj-ink); background: var(--pj-ground);
   border-radius: 4px; flex: none; white-space: nowrap; } /* (whole beside a review's badge) */
@@ -1715,9 +1802,13 @@ body.projects :is(#zoom, #hint, #status, #bubbles, #namecard, #card) { display: 
 /* who reads a review's round and why, as its triage chose them (jobsheet.js). */
 .pj-chosen { margin: 0 0 8px; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
 .pj-readers .pj-row-text small { overflow-wrap: anywhere; }
-.pj-sortable > [data-sort] { -webkit-touch-callout: none; user-select: none; }
+/* (Safari selected a held key's words without the prefix) */
+.pj-sortable > [data-sort] { -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 /* (a lifted key follows the pointer frame by frame: its transform eases into nothing.) */
 #projects .pj-lifted { z-index: 3; scale: 1.04; box-shadow: var(--pj-lift-big); cursor: grabbing; transition: box-shadow .12s var(--ease, ease-out), scale .12s var(--ease, ease-out); }
+/* (and the board stays where it is as the keys make way: the browser's scroll anchoring would move it by the keys'
+   difference in height, the lifted key off the finger.) */
+.pj-sortable:has(> .pj-lifted) { overflow-anchor: none; }
 
 @container page (max-width: 700px) {
   #projects { --pj-gutter: 14px; --pj-pad: 14px; }

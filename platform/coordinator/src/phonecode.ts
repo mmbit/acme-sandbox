@@ -33,7 +33,7 @@ import { FRONT } from './approvals.ts';
 import { yamlFile } from './company.ts';
 import * as payments from './payments.ts';
 import { payment } from './ordermail.ts';
-import { orderPage } from './basketmail.ts';
+import { orderPage } from './basketwords.ts';
 import * as mailout from './mailout.ts';
 import * as mailpage from './mailpage.ts';
 

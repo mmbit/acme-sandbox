@@ -48,6 +48,19 @@ test('work for a hire that never lands is cancelled after a while, and whoever q
   assert.ok((h.jobs.listJobs() as any[]).some(j => j.id > ads && j.agent === 'juno'), 'the CEO, who queued it, gets a job about it');
 });
 
+test('work for a stopped hiring is cancelled and its queuer hears why', async () => {
+  const lead = await h.start({ agent: 'juno', title: 'Hire Cora' });
+  const queued = await queue(lead, { agent: 'cora', title: 'The shop', after: lead.id });
+  assert.equal(queued.status, 200);
+  assert.equal((await h.agent('stop', lead.token, { id: lead.id, why: 'Hiring withdrawn' })).status, 200);
+  await h.finish(lead, { status: 'stopped' });
+  const now = Date.now();
+  hiring.sweep(now);
+  hiring.sweep(now + 31 * 60_000);
+  assert.equal(h.job(queued.body.id).status, 'cancelled');
+  assert.ok((h.jobs.listJobs() as any[]).some(j => j.id > queued.body.id && j.agent === 'juno'));
+});
+
 test("a new company's CEO is told to hire first, and only while the company has no team", async () => {
   const followUp = async () => {
     const ctx = await h.voice('call-context?agent=juno&request=0');

@@ -394,7 +394,7 @@ test('a create whose answer got lost comes back as the same session, also when t
   } finally { Date.now = realNow; }
 });
 
-test('a session Stripe no longer knows (a restart of the imitation, a new key) counts as expired, not as an error', async () => {
+test('a session Stripe no longer knows (a new key, or a restart of the imitation before it kept them) counts as expired, not as an error', async () => {
   writeFileSync(`${DATA}/secrets/STRIPE_TEST_RESTRICTED_KEY`, 'rk_test_abc123');
   // (made before the imitation restarted: no route makes a session Stripe then forgets)
   const now = new Date().toISOString();
@@ -944,12 +944,54 @@ test("a customer's deletion request: the line's words and order page go at once,
     const row = db.prepare('select description, detail, order_url, amount from pay_lines where id = ?').get(a.json.line) as any;
     assert.deepEqual([row.description, row.detail, row.order_url, row.amount], ['', null, null, 3995], 'no grace; the price stays for the books');
     const deliver = () => (db.prepare('select deliver from payments where id = ?').get(c.json.id) as any).deliver;
+    // the imitation's own record of the session: its payer email goes with the basket's, its payment state stays
+    const imitation = () => JSON.parse((db.prepare("select record from imitation_records where kind = 'session' and id = ?").get(c.json.id) as any).record);
     await payments.tick();
     assert.ok(deliver(), 'its parcel still needs the address');
+    assert.ok(imitation().customer_details.email);
     parcelNeedsIt = false;
     await payments.tick();
     assert.equal(deliver(), null, 'gone as soon as no parcel needs it');
+    const s = imitation();
+    assert.deepEqual([s.customer_email, s.customer_details.email, s.status, s.payment_status], [null, null, 'complete', 'paid'], 'and the imitation\'s copy');
   } finally { payments.keepAddress.splice(payments.keepAddress.indexOf(needs), 1); }
+});
+
+test("a deletion request while a parcel holds the address past 14 days: the imitation's copy of the payer email goes with the address", async () => {
+  shop();
+  const a = await line('pebblet', 'peb-ask-held-1');
+  const c = await checkoutOf(await basketOf(a.json));
+  await payPage(c.json.url);
+  await payments.tick();
+  let parcelNeedsIt = true;
+  const needs = (session: string) => session === c.json.id && parcelNeedsIt;
+  payments.keepAddress.push(needs);
+  try {
+    assert.equal((await call('/api/pay/line/forget', as('pebblet'), { id: a.json.line })).status, 200);
+    const imitation = () => JSON.parse((db.prepare("select record from imitation_records where kind = 'session' and id = ?").get(c.json.id) as any).record);
+    assert.ok(imitation().customer_details.email, 'its parcel still needs the address');
+    parcelNeedsIt = false;
+    await payments.tick(Date.now() + 15 * 864e5);
+    assert.equal((db.prepare('select deliver from payments where id = ?').get(c.json.id) as any).deliver, null);
+    const s = imitation();
+    assert.deepEqual([s.customer_email, s.customer_details.email, s.status, s.payment_status], [null, null, 'complete', 'paid']);
+  } finally { payments.keepAddress.splice(payments.keepAddress.indexOf(needs), 1); }
+});
+
+test("a deletion request after the basket's address went takes the imitation's copy of the payer email at once", async () => {
+  shop();
+  const a = await line('pebblet', 'peb-ask-late-1');
+  const c = await checkoutOf(await basketOf(a.json));
+  await payPage(c.json.url);
+  await payments.tick();
+  await outOfParcel('pebblet', a.json.line);
+  await payments.tick(Date.now() + 15 * 864e5);
+  assert.equal((db.prepare('select deliver from payments where id = ?').get(c.json.id) as any).deliver, null, 'gone after 14 days');
+  const imitation = () => JSON.parse((db.prepare("select record from imitation_records where kind = 'session' and id = ?").get(c.json.id) as any).record);
+  assert.ok(imitation().customer_details.email);
+  assert.equal((await call('/api/pay/line/forget', as('pebblet'), { id: a.json.line })).status, 200);
+  const s = imitation();
+  assert.deepEqual([s.customer_email, s.customer_details.email, s.status, s.payment_status], [null, null, 'complete', 'paid']);
 });
 
 test('a line that goes into another basket while its first basket ends a session stays in one payable basket', async () => {
@@ -1513,6 +1555,7 @@ test('a payment refuses retirement without changing a column until it is refunde
   await until(() => heldFees.length, 'Stripe holds the fee lookup');
   assert.deepEqual((await retire('bud-retire-paid')).json, { reference: 'bud-retire-paid' });
   assert.deepEqual([rowsOf('bud-retire-paid'), attemptsOf('bud-retire-paid')], [[], []]);
+  assert.throws(() => stripeSession(c.json.id), /No such checkout\.session/, 'nor does the imitation keep it');
   feeLookup = null;
   heldFees.splice(0).forEach(answer => answer());
   await new Promise(r => setTimeout(r, 100));

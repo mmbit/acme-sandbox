@@ -13,24 +13,23 @@ import { redrawInk } from './surface.js';
 import { paint, refresh } from './menu.js';
 import { cancel, reset } from './tool.js';
 import { toBook } from './pencil.js';
+import { PAPER } from './paper.js';
+import { across } from './handover.js';
 
 export const CSS = `
-      /* The post-it is a scrap of the book (platform/hq/shell/booklook.css): its paper and dot grid, a head torn along
-         the grid, the gold of its ribbon down the side, the photo taped on, the book's indigo for Send. The same on every
-         page and every look. */
+      /* The post-it is a scrap of the book (paper.js): its paper and dot grid, a head torn along
+         the grid, the photo taped on, the book's indigo for Send. The same on every page and every look. */
       /* (100cqw: .ui's width, base.js) */
-      .sheet { pointer-events: auto; position: absolute; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--kb, 0px)); width: min(540px, calc(100cqw - 20px));
-        transform: translateX(-50%) rotate(-.6deg); isolation: isolate; padding: 26px 18px 14px 36px; color: #2a2352;
+      .sheet { ${PAPER}
+        pointer-events: auto; position: absolute; left: 50%; bottom: calc(max(12px, env(safe-area-inset-bottom)) + var(--kb, 0px)); width: min(540px, calc(100cqw - 20px));
+        transform: translateX(-50%) rotate(-.6deg); isolation: isolate; padding: 26px 18px 14px; color: var(--bk-night);
         font-family: "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-        background: radial-gradient(circle, rgba(42,35,82,.16) 1px, transparent 1.3px) 4px 14px / 16px 16px, linear-gradient(#fffaf0, #fffaf0) 0 7px / 100% 100% no-repeat;
+        background: var(--bk-dots) 4px 14px / 16px 16px, linear-gradient(var(--bk-paper), var(--bk-paper)) 0 7px / 100% 100% no-repeat;
         border-radius: 0 0 5px 5px; filter: drop-shadow(0 10px 18px rgba(29,26,47,.28)) drop-shadow(0 1px 2px rgba(29,26,47,.18));
         animation: pop .35s cubic-bezier(.3,1.5,.5,1); max-height: calc(100dvh - 24px - var(--kb, 0px)); overflow: auto; }
       .sheet[hidden] { display: none; }
-      .sheet::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 8px; z-index: -1; background: #fffaf0;
+      .sheet::before { content: ""; position: absolute; left: 0; right: 0; top: 0; height: 8px; z-index: -1; background: var(--bk-paper);
         clip-path: polygon(0 6px, 4% 3px, 8% 7px, 13% 2px, 18% 6px, 23% 3px, 28% 8px, 34% 3px, 39% 6px, 45% 1px, 50% 7px, 56% 3px, 61% 8px, 67% 2px, 72% 6px, 78% 1px, 83% 7px, 89% 3px, 94% 6px, 100% 2px, 100% 100%, 0 100%); }
-      .sheet::after { content: ""; position: absolute; left: 13px; top: 5px; width: 10px; height: min(150px, 62%); z-index: -1;
-        background: linear-gradient(90deg, #b98322 0 .8px, #e2ad45 .8px 3px, #f6d27a 3px 5.4px, #e2ad45 5.4px calc(100% - .8px), #b98322 calc(100% - .8px));
-        clip-path: polygon(0 0, 100% 0, 100% 100%, 50% calc(100% - 8px), 0 100%); }
       .sheet.away { animation: away .5s cubic-bezier(.6,-.3,.7,.5) forwards; }
       @keyframes pop { from { transform: translateX(-50%) translateY(40px) rotate(3deg) scale(.9); opacity: 0 } }
       @keyframes away { to { transform: translate(35vw, 20vh) rotate(25deg) scale(.1); opacity: 0 } }
@@ -44,10 +43,10 @@ export const CSS = `
       .polaroid.busy .img { background: linear-gradient(110deg, #3a3148 30%, #5a5478 50%, #3a3148 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
       @keyframes develop { from { filter: brightness(2.2) sepia(.6) blur(2px); opacity: .4 } }
       .who { min-width: 0; flex: 1; padding-top: 2px; }
-      .who h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; line-height: 1.3; letter-spacing: .14em; text-transform: uppercase; color: #2a2352; }
-      .chip { display: inline-block; max-width: 100%; background: #f7efdf; box-shadow: inset 0 0 0 1px #e8dcc4, inset 0 -2px 0 #e2ad45; border-radius: 3px; padding: 2px 8px; font: 13px/1.4 ui-monospace, Menlo, monospace;
+      .who h2 { margin: 0 0 8px; font-size: 13px; font-weight: 700; line-height: 1.3; letter-spacing: .14em; text-transform: uppercase; color: var(--bk-night); }
+      .chip { display: inline-block; max-width: 100%; background: var(--bk-paper2); box-shadow: inset 0 0 0 1px var(--bk-line), inset 0 -2px 0 var(--bk-gold); border-radius: 3px; padding: 2px 8px; font: 13px/1.4 ui-monospace, Menlo, monospace;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .page { display: block; margin-top: 5px; color: #5a5478; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .page { display: block; margin-top: 5px; color: var(--bk-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .redraw { margin-top: 6px; padding: 4px 0; font-size: 14px; font-weight: 700; color: #c23c44; text-decoration: underline; text-underline-offset: 3px; }   /* changing a note: its mark drawn again */
       .redraw[hidden] { display: none; }
       .sheet.bare .polaroid, .sheet.bare .chip { display: none; } /* a general note: no photo */
@@ -55,10 +54,10 @@ export const CSS = `
       textarea::placeholder { color: #8f88a8; }
       .row { display: flex; gap: 10px; align-items: center; }
       .grow { flex: 1; }
-      .ghost { padding: 12px 14px; border-radius: 999px; color: #5a5478; font-weight: 700; }
-      .send { padding: 12px 22px; border-radius: 999px; background: #2a2352; color: #fffaf0; font-weight: 700; box-shadow: 0 3px 0 #1d1a2f, 0 4px 10px rgba(29,26,47,.25); }
+      .ghost { padding: 12px 14px; border-radius: 999px; color: var(--bk-muted); font-weight: 700; }
+      .send { padding: 12px 22px; border-radius: 999px; background: var(--bk-night); color: var(--bk-paper); font-weight: 700; box-shadow: 0 3px 0 #1d1a2f, 0 4px 10px rgba(29,26,47,.25); }
       .send:active { transform: translateY(3px); box-shadow: 0 0 0 #1d1a2f; } .send[disabled] { opacity: .5; }
-      .msg { min-height: 20px; margin: 8px 2px 0; font-size: 14px; color: #5a5478; }
+      .msg { min-height: 20px; margin: 8px 2px 0; font-size: 14px; color: var(--bk-muted); }
       /* (no message over the page after a pin) */`;
 
 export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note for the team">
@@ -98,15 +97,27 @@ export function compose(r) {
   mark.page = location.href;
   // changing a note: this mark replaces the one shown, and stays on the page with its element as the sheet comes back
   if (r.editing) r.editing = { ...r.editing, redrawn: true, mark: { ...marked(r), live: mark.el } };
+  r.shot = shoot(r, mark);
+  // (the mic: the first mark starts it; on a call the call hears the board, and no post-it shows: callnotes.js.
+  // A paired phone's own mark goes to the other screen without a post-it, so without the mic too: nothing listens
+  // unseen.)
+  if (r.call) return;
+  const unseen = across(r); // (decided once: the mic and the post-it agree, whichever screen holds the page by then)
+  if (canRecord && !r.rec && !r.stopping && !unseen) startMic(r);
+  setTimeout(() => stuck(r, mark, unseen), 380); // let the pin land, then the note
+}
+// The mark's screenshot, developed in the polaroid while the mark is open: the picture is the mark's either way, for
+// one that left for the other screen meanwhile (handover.js.)
+function shoot(r, mark) {
   const pol = r.$('.polaroid'),
     img = r.$('.polaroid .img');
   pol.classList.add('busy');
   img.textContent = '';
   r.exposure = null;
   // (on a call the snip goes to the call's agent: masked.)
-  r.shot = snapshot(r, { masked: !!r.call }).then(
+  return snapshot(r, { masked: !!r.call }).then(
     taken => {
-      if (r.mark !== mark) return null;
+      if (r.mark !== mark) return taken;
       pol.classList.remove('busy');
       if (taken) {
         r.exposure = taken;
@@ -116,12 +127,8 @@ export function compose(r) {
     },
     () => null,
   );
-  // (the mic: the first mark starts it; on a call the call hears the board, and no post-it shows: callnotes.js.
-  if (r.call) return;
-  if (canRecord && !r.rec && !r.stopping) startMic(r);
-  setTimeout(() => stuck(r, mark), 380); // let the pin land, then the note
 }
-function stuck(r, mark) {
+function stuck(r, mark, unseen) {
   if (r.mark !== mark) return;
   r.veil.classList.add('marked');
   r.dock.hidden = true;
@@ -132,6 +139,7 @@ function stuck(r, mark) {
   r.$('.chip').textContent = `<${t.tag}>${t.video ? ` at ${clock(t.video.time)}` : ''}${words}`; // (the moment before the words the chip may cut)
   r.$('.page').textContent = here();
   r.$('.who h2').textContent = mark.kind === 'circle' ? 'About this bit…' : 'About this…';
+  if (unseen && across(r)) return; // (the pairing ended meanwhile: it shows here.)
   showSheet(r);
   if (mark.frameless) r.msg.textContent = `${r.msg.textContent} ${mark.frameless}`.trim();
 }
@@ -158,6 +166,30 @@ export function general(r) {
   r.text.placeholder = 'Something across the pages, or that differs between them? Type it, or tap the mic and say it.';
   showSheet(r);
 }
+// A mark from the other screen that can't land on this one's layout (handover.js): a note about the page, its picture
+// the other screen's own with the mark on it (snap: a data URL, or null when it had none; el: what it marked there, by
+// its anchor), nothing drawn on this page.
+export function snapped(r, snap, el) {
+  general(r);
+  r.$('.chip').textContent = el
+    ? `<${el.tag}>${el.text ? ` “${el.text.slice(0, 40)}${el.text.length > 40 ? '…' : ''}”` : ''}`
+    : '';
+  r.mark.snap = snap;
+  r.mark.taken = true;
+  r.$('.who h2').textContent = 'From your other screen';
+  r.$('.page').textContent = `${snap ? 'As it looked there' : 'No picture came across'} · ${here()}`;
+  r.text.placeholder = r.ask;
+  if (!snap) return;
+  r.sheet.classList.remove('bare');
+  const img = r.$('.polaroid .img');
+  r.$('.polaroid').classList.remove('busy');
+  const pic = Object.assign(document.createElement('img'), {
+    src: snap,
+    alt: 'The mark as your other screen showed it',
+  });
+  Object.assign(pic.style, { objectFit: 'contain', objectPosition: 'center' }); // (the snip is cut round the mark: all of it shows)
+  img.replaceChildren(pic);
+}
 export function showSheet(r) {
   r.msg.textContent = '';
   r.sheet.hidden = false;
@@ -174,6 +206,12 @@ export function showSheet(r) {
   if (matchMedia('(pointer: fine)').matches) r.text.focus();
 }
 
+// The note open as a step began, still open after its wait: a new note by its mark, a change by its editing (it has no
+// mark until it's redrawn), which a Cancel clears
+function opened(r) {
+  const { mark, editing } = r;
+  return () => r.mark === mark && r.editing === editing;
+}
 // Pin it: the words (once any still being said are in), the screenshot and the pictures, to the coordinator next to
 // the script; a change saves instead
 async function pinIt(r) {
@@ -195,9 +233,11 @@ async function pinIt(r) {
   r.mode = 'sending';
   r.pinIt.disabled = true;
   r.msg.textContent = r.shot ? 'Developing the photo…' : 'Sending…';
-  const waiting = r.pictures,
+  const open = opened(r),
+    waiting = r.pictures,
     url = photo(r, await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), 9000))]), r.mark);
   const added = await picturesNow(r, waiting);
+  if (!open()) return; // (cancelled meanwhile: the next note, if one's begun, is its own.)
   if (!added) {
     r.mode = 'note';
     r.pinIt.disabled = false;
@@ -206,11 +246,15 @@ async function pinIt(r) {
   r.msg.textContent = 'Sending…';
   return r.editing ? save(r, note, url, added) : pinned(r, note, url, added);
 }
-// A new note: once it's in, the post-it flies off and the menu counts it
+// A new note: once it's in, the post-it flies off and the menu counts it. The board's goes on its book's sheet for the
+// page's owner; said: how its words came. Each step after a wait is this
+// note's only while its mark is still the one open: a post-it cancelled meanwhile, and another begun, is left alone
 async function pinned(r, note, url, added) {
+  const mark = r.mark;
   try {
     const res = await post(r.ROUTE, 'notes', {
       note,
+      said: r.spoken && !r.typed ? 'spoken' : 'typed',
       page: r.mark.page,
       element: marked(r),
       viewport: r.mark.view,
@@ -228,28 +272,30 @@ async function pinned(r, note, url, added) {
             ? 'The link has ended. Thank you for your notes!'
             : 'The review key has expired: open this page from HQ again.',
       );
-    r.text.value = '';
     r.state.notes += 1;
-    r.sheet.classList.add('away');
-    // Pinned: the menu's button boings and counts it, and HQ's viewer bar shows Send N (refresh). Nothing over the page
-    // being reviewed.
+    if (r.mark === mark) {
+      r.text.value = '';
+      r.sheet.classList.add('away');
+    }
+    // Pinned: the menu's button boings and counts it (refresh). Nothing over the page being reviewed.
     setTimeout(() => {
-      r.pinIt.disabled = false;
-      reset(r);
+      if (r.mark === mark) reset(r);
       paint(r);
       refresh(r);
       r.more.classList.add('boing');
       setTimeout(() => r.more.classList.remove('boing'), 700);
     }, 450);
   } catch (err) {
+    if (r.mark !== mark) return;
     r.mode = 'note';
     r.pinIt.disabled = false;
     r.msg.textContent = err instanceof RefusedError ? err.message : 'Could not reach HQ. Try again?';
   }
 }
-// On HQ: the note on its sheet in the book (a mark needs no words there: its ink says it), and the post-it flies off.
+// On HQ: the note on its sheet in the book (a mark needs no words there: its ink says it), and the post-it flies off;
+// as pinned's, only while its mark is the one open
 async function booked(r) {
-  if (r.mark.kind === 'general' && !r.text.value.trim()) {
+  if (r.mark.kind === 'general' && !r.mark.snap && !r.text.value.trim()) {
     r.text.focus();
     r.msg.textContent = 'A word or two first?';
     return;
@@ -257,22 +303,24 @@ async function booked(r) {
   r.mode = 'sending';
   r.pinIt.disabled = true;
   r.msg.textContent = 'Putting it in the book…';
+  const mark = r.mark,
+    open = () => r.mark === mark;
   try {
     const photoless = await toBook(r);
+    if (!open()) return;
     r.text.value = '';
     // (a note that went without its photo says so before the post-it goes)
     if (photoless) r.msg.textContent = 'In the book. No photo this time.';
     setTimeout(
       () => {
+        if (!open()) return;
         r.sheet.classList.add('away');
-        setTimeout(() => {
-          r.pinIt.disabled = false;
-          reset(r);
-        }, 450);
+        setTimeout(() => open() && reset(r), 450);
       },
       photoless ? 1800 : 0,
     );
   } catch (err) {
+    if (!open()) return;
     r.mode = 'note';
     r.pinIt.disabled = false;
     r.msg.textContent = err?.status ? `The book said no: ${err.message}` : 'Could not reach the book. Try again?';
@@ -280,12 +328,14 @@ async function booked(r) {
 }
 // A change: the words and pictures, and a mark drawn again with its screenshot; then back to My notes (pictures)
 async function save(r, note, url, added) {
-  const redrawn = r.editing.redrawn
-    ? { page: r.mark.page, element: marked(r), viewport: r.mark.view, shot: url || null }
-    : {};
+  const open = opened(r),
+    redrawn = r.editing.redrawn
+      ? { page: r.mark.page, element: marked(r), viewport: r.mark.view, shot: url || null }
+      : {};
   try {
     const res = await post(r.ROUTE, 'edit', { id: r.editing.n.id, note, pictures: added, ...redrawn });
     await refusal(res);
+    if (!open()) return; // (cancelled while it went: the post-it begun since is left alone.)
     if (!res.ok)
       throw new RefusedError(
         res.status === 404
@@ -295,6 +345,7 @@ async function save(r, note, url, added) {
     r.pinIt.disabled = false;
     cancel(r);
   } catch (err) {
+    if (!open()) return;
     r.mode = 'note';
     r.pinIt.disabled = false;
     r.msg.textContent = err instanceof RefusedError ? err.message : 'Couldn’t save it. Try again?';
@@ -303,6 +354,8 @@ async function save(r, note, url, added) {
 
 export function setupPostit(r) {
   r.$('[data-cancel]').onclick = () => cancel(r);
+  // (words typed after any were said: the Pencil keeps its own.)
+  if (!r.book) r.text.addEventListener('input', () => (r.typed = true));
   r.pinIt.onclick = () => pinIt(r);
   // With the on-screen keyboard up (Chrome on Android resizes only the visual viewport), lift the note above it.
   const vv = window.visualViewport;

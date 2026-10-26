@@ -1,6 +1,7 @@
 """A call out's room on the join link's page (/voice/join): up to six people and the agent on one call (the README's
 "A room")."""
 import asyncio, collections, json, re, secrets, time
+from typing import NamedTuple
 from urllib.error import HTTPError
 
 import numpy as np
@@ -35,10 +36,17 @@ ROOMS = {}     # call out -> its Room
 ENDED = set()  # call outs whose room has ended: a link is good for one call
 
 
-async def join(ws, ticket_for, make_call):
+class RoomLimits(NamedTuple):
+    """How long a room waits once empty and after `hangup`: the line's are these defaults; a test gives its room
+    shorter ones."""
+    empty_seconds: float = EMPTY_SECONDS
+    hang_up_wait_seconds: float = HANG_UP_WAIT_SECONDS
+
+
+async def join(ws, ticket_for, make_call, limits=RoomLimits()):
     """One person on the join page, from their first message to their leaving. ticket_for(token): the coordinator's
     join-ticket, {agent, lang, callout, name}. make_call(send_audio, send_event, clear, ticket, hang_up, speakers): the
-    room's Call."""
+    room's Call. limits: a new room's RoomLimits."""
     try:
         first = json.loads(await asyncio.wait_for(ws.recv(), 10))
     except Exception:
@@ -62,7 +70,7 @@ async def join(ws, ticket_for, make_call):
         return await ws.close(4004, 'link')
     room = ROOMS.get(callout)
     if room is None:
-        room = ROOMS[callout] = Room(callout, ticket, make_call)
+        room = ROOMS[callout] = Room(callout, ticket, make_call, limits)
         asyncio.create_task(room.start())
     person = room.admit(ws, name, first.get('rejoin'))
     if person is None:  # MOST are in: a passed-on link can't crowd the call (the page says it's full)
@@ -157,13 +165,15 @@ class Person:
 
 class Room:
     """One call out's room: its people, its Call, the agent's voice waiting to be mixed, and the mixer's clock."""
-    def __init__(self, callout, ticket, make_call):
+    def __init__(self, callout, ticket, make_call, limits=RoomLimits()):
         self.callout, self.ticket, self.people = callout, ticket, {}
+        self.limits = limits  #.
         self.voice = collections.deque()  # the agent's audio still to play (float32 arrays) and the events between them
         self.ear = asyncio.Queue()        # what the agent hears, frame by frame, on its way to Call.hear
         self.mixed = 0                    # samples the mixer has given the agent to hear
         self.talking, self.talking_at = None, 0.0
         self.ready, self.ended, self.failed, self.empty, self.tasks = asyncio.Event(), False, False, None, []
+        self.started = False  # (its Call started: the link's one call is used, however the room ends)
         self.call = make_call(self.play, self.event, self.clear, ticket, self.hang_up, self.speaker)
 
     async def start(self, clock=True):
@@ -171,10 +181,8 @@ class Room:
         try:
             await self.call.start()
         except Exception as err:
-            print(f'room: call out {self.callout} could not start: {err!r}', flush=True)
-            self.failed = True
-            await self.end()
-            return
+            return await self.fail('could not start', err)
+        self.started = True
         self.tasks.append(asyncio.create_task(self.listen()))
         if clock:
             self.tasks.append(asyncio.create_task(self.run()))
@@ -222,7 +230,7 @@ class Room:
 
     def leave(self, person, ws, bye):
         """A person's connection ended: said bye (gone), or dropped (away: their place waits for them). With nobody
-        left, the room ends EMPTY_SECONDS later."""
+        left, the room ends its limits' empty_seconds later."""
         if person.ws is not ws or self.ended:
             return
         person.ws = None
@@ -235,7 +243,7 @@ class Room:
             self.empty = asyncio.create_task(self.end_later())
 
     async def end_later(self):
-        await asyncio.sleep(EMPTY_SECONDS)
+        await asyncio.sleep(self.limits.empty_seconds)
         self.empty = None
         print(f'room: call out {self.callout} ended: nobody came back', flush=True)
         await self.end()
@@ -243,14 +251,20 @@ class Room:
     async def hang_up(self):
         """The agent ended the call (Call.leave): everyone hears it, and the room ends once their pages have left."""
         self.broadcast({'type': 'hangup'})
-        await asyncio.sleep(HANG_UP_WAIT_SECONDS)
+        await asyncio.sleep(self.limits.hang_up_wait_seconds)
+        await self.end()
+
+    async def fail(self, what, err):
+        """The room ends on an error, said in the log, and the pages hear the link has closed."""
+        print(f'room: call out {self.callout} {what}: {err!r}', flush=True)
+        self.failed = True
         await self.end()
 
     async def end(self):
         if self.ended:
             return
         self.ended = True
-        if not self.failed:  # (one that never started can be opened again: its link may still be good)
+        if self.started:  # (one that never started can be opened again: its link may still be good)
             ENDED.add(self.callout)
         ROOMS.pop(self.callout, None)
         for task in [*self.tasks, self.empty]:
@@ -354,11 +368,14 @@ class Room:
             self.broadcast({'type': 'talking', 'id': None})
 
     async def listen(self):
-        """What the mixer gave the agent to hear, into the Call: beside the clock, so the recogniser never holds it."""
+        """What the mixer gave the agent to hear, into the Call: beside the clock, so the recogniser never holds it. A hear
+        that raises ends the call, said in the log, rather than leaving it deaf."""
         while True:
             samples = await self.ear.get()
             try:
                 await self.call.hear(samples)
+            except Exception as err:
+                return await self.fail('stopped hearing', err)
             finally:
                 self.ear.task_done()
 

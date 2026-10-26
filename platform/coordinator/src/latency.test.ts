@@ -110,7 +110,9 @@ test('a stall names the hold that explains it: not a long poll that only waited,
 test('a stall is one job per cause: every request one cause, a step without its numbers another; a started job holds the alarm until its work is out', async () => {
   const { stalled } = await import('./stalljobs.ts');
   const jobs = () =>
-    h.db.prepare("select id, title, prompt from jobs where title like 'HQ stood still%' order by id").all() as {
+    h.db
+      .prepare("select id, title, prompt from jobs where prompt like 'HQ''s coordinator stood still%' order by id")
+      .all() as {
       id: number;
       title: string;
       prompt: string;
@@ -131,6 +133,17 @@ test('a stall is one job per cause: every request one cause, a step without its 
   assert.match(requests.prompt, /2\.3 s behind GET \/api\/work\.\n- At .*: 2\.5 s behind GET \/api\/agent\/search\.$/);
   assert.match(play.prompt, /played 612 ms \(203 jobs\)\.$/);
 
+  // each waits for its sort into the project it's for, as HQ's other template work: the CEO names it, and it may start.
+  assert.notEqual((await h.claim(h.job(requests.id).engine))?.id, requests.id, 'unsorted, it waits');
+  const proposals = await import('./proposals.ts'),
+    { ceo } = await import('./company.ts');
+  for (const [job, title, code] of [
+    [requests.id, 'Make the work list quick', 'WORKFAST'],
+    [play.id, "Make the play's parts quick", 'PLAYFAST'],
+  ] as const) {
+    const { proposal } = h.db.prepare('select proposal from sorts where job = ?').get(job) as { proposal: number };
+    assert.equal((proposals.accept(proposal, ceo(), { title, code }) as { job: number }).job, job);
+  }
   const running = await h.claim(h.job(requests.id).engine);
   assert.equal(running?.id, requests.id, 'the first cause is claimed first');
   stalled({ name: 'POST /api/agent/window', ms: 3_300 }, 3_300, now + 180_000);

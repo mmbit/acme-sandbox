@@ -69,7 +69,8 @@ export function start({ db }: Store, purpose: string, ref: string, typed: Typed,
 }
 
 // A batch from the page, as its body came in: the HTTP status to answer. A wrong key is 404 too, so a guess learns
-// nothing. A batch past BATCH_BYTES is 413; one past the session's room is 507, and the session is full.
+// nothing. A batch past BATCH_BYTES is 413; one past the session's room is 507, and the session is full. An empty one
+// keeps nothing: the page only asks how its session is
 export function add(store: Store, id: number, key: string, body: Buffer) {
   const session = find(store, id);
   if (!session || !sameKey(keyOf(store, id), key)) return 404;
@@ -77,6 +78,7 @@ export function add(store: Store, id: number, key: string, body: Buffer) {
   if (body.length > BATCH_BYTES) return 413;
   const events = batchOf(body);
   if (!events) return 400;
+  if (!events.length) return 200;
   const at = Date.now();
   const line = gzipSync(`${JSON.stringify({ at, events })}\n`);
   if (session.bytes + line.length > SESSION_BYTES) return 507;

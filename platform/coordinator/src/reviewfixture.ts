@@ -13,15 +13,13 @@ export function recordedReviews(db: DatabaseSync, queue: (job: JobFields) => num
       .run(at === undefined ? null : new Date(at).toISOString(), number);
   // A job recorded as ended with no runs, so no estimate is sized on it, and the pull request of a job's branch stored in
   // a review state (open, stuck, board, merged).
-  // (added, removed: its lines, as merged.ts counts them at the merge.)
-  const ended = (j: JobFields, status = 'done', decision?: string) => {
+  // (added, removed: its lines, as merged.ts counts them at the merge. result: its report.)
+  const ended = ({ result, ...j }: JobFields & { result?: string }, status = 'done', decision?: string) => {
     const id = queue(j);
-    const output = decision ? JSON.stringify({ decision, summary: 'A recorded ruling', outcomes: [] }) : null;
-    db.prepare("update jobs set status = ?, finished = '2026-10-19T08:00:00Z', output = ? where id = ?").run(
-      status,
-      output,
-      id,
-    );
+    const output = decision ? recordedVerdict(decision) : null;
+    db.prepare(
+      "update jobs set status = ?, finished = '2026-10-19T08:00:00Z', output = ?, result = ? where id = ?",
+    ).run(status, output, result ?? null, id);
     return id;
   };
   const storedPr = storePr.bind(null, db);
@@ -32,6 +30,9 @@ export function recordedReviews(db: DatabaseSync, queue: (job: JobFields) => num
   const clearReviewHistory = () => db.exec("delete from prs where status = 'merged'");
   return { mergedPr, ended, storedPr, failedJobs, clearReviewHistory };
 }
+
+const recordedVerdict = (decision: string) =>
+  JSON.stringify({ decision, major_visual: false, summary: 'A recorded ruling', outcomes: [] });
 
 function storePr(
   db: DatabaseSync,

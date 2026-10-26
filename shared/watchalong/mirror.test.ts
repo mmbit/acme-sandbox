@@ -3,9 +3,13 @@
 // sharp): what the recorded page carries never runs, and its canvas frames are still drawn.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Mirrors } from './mirror.ts';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { Mirrors, shown } from './mirror.ts';
 import type { Asked } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
 
@@ -97,8 +101,11 @@ test(
     const red = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#ff0000' } })
       .png()
       .toBuffer();
+    const blue = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#0000ff' } })
+      .png()
+      .toBuffer();
     const start = Date.now();
-    await mirrors.open(1, [...page(start), frame(start + 10, red)], NONE);
+    await mirrors.open(1, [...page(start), frame(start + 5, blue), frame(start + 10, red)], NONE);
     const now = await mirrors.now(1, { long: 400 });
     assert.ok(now);
     const data = await sharp(now.bytes).raw().toBuffer();
@@ -155,5 +162,158 @@ test(
       await blueAt(await mirrors.at(whole, start + 400, { long: 400, png: true }, NONE), 300),
       'and after it, all (a PNG)',
     );
+  },
+);
+
+test("a mirror opens with what the screen still shows: from the last full snapshot, each canvas's latest picture", () => {
+  const png = Buffer.from('picture');
+  const drawn = (at: number, id: number): RecordedEvent => ({
+    type: 3,
+    timestamp: at,
+    data: { source: 9, id, type: 0, commands: [{ property: 'fillRect', args: [0, 0, 10, 10] }] },
+  });
+  const other = (at: number) => ({ ...frame(at, png), data: { ...(frame(at, png).data as object), id: 7 } });
+  const ink = { type: 5, timestamp: 40, data: { tag: 'ink', payload: {} } };
+  const events = [
+    ...page(0),
+    frame(10, png),
+    ...page(20),
+    frame(30, png),
+    ink,
+    drawn(45, 6),
+    other(50),
+    frame(60, png),
+  ];
+  assert.deepEqual(shown(events), [...page(20), ink, drawn(45, 6), other(50), frame(60, png)]);
+  // (no full snapshot yet: all of it)
+  assert.deepEqual(shown([frame(10, png), frame(20, png)]), [frame(20, png)]);
+});
+
+test(
+  "a picture never waits on what the screen doesn't show: a lazy picture below it or in a hidden part",
+  { skip, timeout: 30_000 },
+  async () => {
+    const start = Date.now();
+    const events = page(start);
+    const body = (events[1].data as { node: { childNodes: { childNodes: { childNodes: object[] }[] }[] } }).node
+      .childNodes[0].childNodes[1].childNodes;
+    body.push(
+      element(7, 'div', { style: 'height: 3000px' }),
+      element(8, 'img', { src: `${SHOP}/below.png`, loading: 'lazy' }),
+      element(9, 'div', { style: 'display: none' }, [
+        element(10, 'img', { src: `${SHOP}/hidden.png`, loading: 'lazy' }),
+      ]),
+    );
+    await mirrors.open(3, events, NONE);
+    assert.ok(await mirrors.now(3, { long: 400 }), 'the screen now');
+    assert.ok(await mirrors.at(events, start, { long: 400 }, NONE), 'and a past moment');
+    assert.equal(mirrors.seen(3), true);
+  },
+);
+
+test(
+  'a live mirror still answers while another opens after it (each tab its own window)',
+  { skip, timeout: 30_000 },
+  async () => {
+    const start = Date.now();
+    await mirrors.open(4, page(start), NONE);
+    await mirrors.open(5, page(start), NONE);
+    assert.ok(await mirrors.now(4, { long: 400 }), 'the first');
+    assert.ok(await mirrors.now(5, { long: 400 }), 'and the second');
+  },
+);
+
+// A recording the replay can't take in: an ink stroke whose colour can't be read as text, which the ink throws on
+const unreadable = (at: number): RecordedEvent => ({
+  type: 5,
+  timestamp: at,
+  data: { tag: 'ink', payload: { n: 1, id: 1, phase: 'start', stroke: { color: { toString: 0 } } } },
+});
+
+test(
+  "a mirror whose step fails isn't seen and is gone, and opens again from the recording when next asked for",
+  { skip, timeout: 30_000 },
+  async () => {
+    const start = Date.now();
+    await mirrors.open(6, page(start), NONE);
+    mirrors.feed(6, [unreadable(start + 10)]);
+    while (mirrors.seen(6) !== false) await sleep(20);
+    assert.equal(mirrors.has(6), false, 'a batch it failed on closed it');
+    await mirrors.open(6, page(start), NONE);
+    assert.ok(await mirrors.now(6, { long: 400 }), 'opened again, it answers');
+    assert.equal(mirrors.seen(6), true);
+    // and the same when it fails as it opens
+    await assert.rejects(mirrors.open(7, [...page(start), unreadable(start + 10)], NONE));
+    assert.equal(mirrors.seen(7), false);
+    assert.equal(mirrors.has(7), false);
+  },
+);
+
+// Chromium's process, gone within a few seconds
+async function exited(pid: number | undefined) {
+  assert.ok(pid);
+  for (let tries = 0; tries < 100; tries++) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await sleep(50);
+  }
+  return false;
+}
+
+test(
+  "a mirror's tab closes once its time runs out: one hanging when its mirror was closed, one whose page never opened, or a live one's step",
+  { skip, timeout: 90_000 },
+  async () => {
+    const folder = mkdtempSync(join(tmpdir(), 'mirror-test-'));
+    after(() => rmSync(folder, { recursive: true, force: true }));
+    // a stand-in for rrweb's replayer
+    const replay = (name: string, script: string) => {
+      mkdirSync(join(folder, name));
+      writeFileSync(join(folder, name, 'replay.js'), script);
+      writeFileSync(join(folder, name, 'style.css'), '');
+      return pathToFileURL(join(folder, name, '/'));
+    };
+    const start = Date.now();
+    // the page opens, and a step hangs (no frame ever comes); its mirror is closed before its time runs out
+    const stuck = new Mirrors(
+      replay('stuck', 'window.requestAnimationFrame = () => 0; export class Replayer { startLive() {} addEvent() {} }'),
+      () => Promise.resolve(null),
+    );
+    const opening = stuck.open(1, page(start), NONE);
+    await sleep(3_000);
+    const pid = await stuck.pid();
+    await stuck.close(1);
+    await assert.rejects(opening, /took over/);
+    assert.ok(await exited(pid), 'its tab closed, and Chromium with it');
+    assert.equal(await stuck.pid(), undefined);
+    // the page never opens: a past moment's request ends at its time, and Chromium closes
+    const broken = new Mirrors(replay('broken', "throw new Error('no replayer');"), () => Promise.resolve(null));
+    const past = broken.at(page(start), start, { long: 400 }, NONE);
+    await sleep(1_000);
+    const brokenPid = await broken.pid();
+    await assert.rejects(past, /took over/);
+    assert.ok(await exited(brokenPid), 'its tab closed, and Chromium with it');
+    // a live mirror's step hangs (its page's frames stop once a batch with a change comes): it isn't seen and is gone,
+    // its tab closed, and it opens again from the recording
+    const hanging = new Mirrors(
+      replay(
+        'hanging',
+        'export class Replayer { startLive() {} addEvent(event) { if (event.type === 3) window.requestAnimationFrame = () => 0; } }',
+      ),
+      () => Promise.resolve(null),
+    );
+    await hanging.open(1, page(start), NONE);
+    assert.equal(hanging.seen(1), true);
+    const hangingPid = await hanging.pid();
+    hanging.feed(1, [{ type: 3, timestamp: start + 10, data: { source: 2 } }]);
+    while (hanging.seen(1) !== false) await sleep(100);
+    assert.equal(hanging.has(1), false, 'its step ran out of time and closed it');
+    assert.ok(await exited(hangingPid), 'its tab closed, and Chromium with it');
+    await hanging.open(1, page(start), NONE);
+    assert.equal(hanging.seen(1), true, 'opened again, it is seen');
+    await hanging.closeAll();
   },
 );

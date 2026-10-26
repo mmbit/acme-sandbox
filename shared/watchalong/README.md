@@ -18,7 +18,9 @@ await watching.stop(); // what's recorded so far sent, then stopped
 ```
 
 - `url`: where the batches go, the store's session route with its key (the coordinator's `POST /api/watchalong/start`
-  hands it out for a live call). A batch goes once a second, sooner when 200 events wait.
+  hands it out for a live call). A batch goes once a second, sooner when 200 events wait; with nothing to send (a quiet
+  page, or paused) an empty one goes, which the store keeps nothing of, so the page still hears whether the agent sees
+  it (`onSeen`) and that the session is over.
 - `typed`: `'shown'` keeps what's typed, except passwords (the board's own calls); `'hidden'` keeps only that something
   was typed, and how much (guests, customers). Frames follow the page that asks them.
 - `canvasFps`: canvas pictures a second (HQ's building is a canvas), 0 for none. `canvas.js` takes them, loaded only
@@ -112,6 +114,14 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   Nothing of the recorded page runs either (an onerror, a javascript: address): the replay's page allows only its own
   script files, and rrweb's frame takes that policy on (the frame runs scripts, as rrweb draws canvas frames only so).
   A mirror closes with its session or after `IDLE_MS` with nothing recorded or asked; Chromium with the last one.
+  Each tab is a window of its own (a hidden tab never paints), a picture waits only on the pictures on screen (a lazy
+  one below it never loads, so never decodes), and every step has `STEP_MS`: one that fails or runs past it closes
+  its mirror, which opens again from the recording when next asked for (`seen` says false until then). Without that a
+  step left hanging held every later picture of its session behind it, silently. 15 s is how long the voice line waits
+  for the coordinator. A mirror opens with only what the screen still shows (`shown`): the events since the last full
+  snapshot, each canvas's latest picture alone (canvas.js's wipe the whole canvas). From the whole recording a share of
+  HQ's building took 2.8 s to its first picture after 10 minutes and past 15 s after 30; now 0.9 s after 60 (measured
+  with Chromium 1243, a 744 × 1133 canvas at 0.5 frames a second, 58 KB each).
 - Memory (measured with Playwright's Chromium 1243, proportional set size of the whole process tree): about 440 MB
   with one mirror open, growing about 2.5 MB a minute at HQ's canvas rate (90 frames a minute; 520 MB after 30
   minutes), and about 60 MB more for each further mirror.
@@ -122,6 +132,9 @@ Agents can't watch video, so a session reaches one as lines and pictures.
   px, a region, or the moments since a time). Both by the session's purpose and the thing it belongs to, and only for a
   purpose with its own briefing (`BRIEFS`: the board's call, a guest's walk-through), so no other is ever told it sees
   the board's screen.
+  Its answer to each of a watched session's batches carries `seen` (the page's `onSeen`), the batch that opens the
+  mirror's once it has opened or failed to: HQ's call shows the eye only while the agent's side has the screen, and
+  says when it doesn't.
 
 **For agents, after the call.** A job steps back through an ended walk-through call with `hq call <id> moments` (the
 call's moments and its transcript's lines in one timeline by the server's clock, each with its time on the company's

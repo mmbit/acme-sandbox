@@ -11,6 +11,8 @@ import { refreshOrg } from './main.js';
 import { names } from './brand.js';
 
 export function onEvent(ev) {
+  // (the book changed on the store, an answer clipped onto a note: the book reads its sheets again, bookrail.js.
+  if (ev.type === 'book') return void document.dispatchEvent(new CustomEvent('book:changed'));
   if (world.apply(ev).unknown) refreshOrg(); // someone new
 }
 

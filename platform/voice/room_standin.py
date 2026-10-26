@@ -8,7 +8,7 @@ the real line rather than its own stand-in.
 
 
 """
-import asyncio, os, sys, time
+import asyncio, functools, os, sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -26,16 +26,18 @@ OPENING = "Hi, this is Ada from Testco. I'm an AI assistant, calling about our p
 class Loud:
     """The VAD: speech wherever a 32 ms window is loud enough for a voice, a quarter of a second at least."""
     def __init__(self, cfg, buffer_size_in_seconds):
-        self.on, self.seg, self.done = False, [], []
+        self.on, self.seg, self.done, self.n = False, [], [], 0
 
     def accept_waveform(self, x):
         self.on = float(np.sqrt(np.mean(x ** 2))) > 0.02
         if self.on:
             self.seg += list(x)
-            return
-        if len(self.seg) > RATE // 4:
-            self.done.append(NS(samples=self.seg))
-        self.seg = []
+        else:
+            # (its start counted in samples heard before this window, as Silero's: Call.hear reads it)
+            if len(self.seg) > RATE // 4:
+                self.done.append(NS(samples=self.seg, start=self.n - len(self.seg)))
+            self.seg = []
+        self.n += len(x)
 
     def is_speech_detected(self):
         return self.on
@@ -58,7 +60,7 @@ def hum(text):
 
 
 class Agent(test_server.Brain):
-    def __init__(self, *args, **kwargs):
+    def __init__(self):
         super().__init__()
         self.opening, self.token, self.reply = OPENING, 'stand-in', "Yes, I hear you. Let me check that for you."
 
@@ -72,21 +74,23 @@ def coordinator(method, path, body=None):
 
 async def main(port):
     server.sherpa_onnx.VoiceActivityDetector = Loud
-    server.time = time  # (test_server's clock moves with the audio: here it's the real one)
-    server.hq, server.Agent = coordinator, Agent
     server.ORIGIN = sys.argv[2] if len(sys.argv) > 2 else ''  # (after test_server, which sets its own)
     if not server.ORIGIN:  # (any page: the coordinator's every link is open too)
         room_call = server.room_call
 
-        async def any_page(ws):
+        async def any_page(ws, *given):
             server.ORIGIN = ws.request.headers.get('Origin')
-            return await room_call(ws)
+            return await room_call(ws, *given)
         server.room_call = any_page
     server.Call.transcribe = lambda self, seg: 'Can you hear me?'
-    server.pocket.generate_audio_stream = lambda state, text, stop=None: iter([NS(numpy=lambda: hum(text))])
-    server.CALL_LOGS = server.LIVE = Path(os.environ.get('TMPDIR', '/tmp'), f'room-standin-{os.getpid()}')
-    server.CALL_LOGS.mkdir(parents=True, exist_ok=True)
-    async with server.serve(server.route, '127.0.0.1', port, max_size=1 << 20):
+    server.pocket.generate_audio_stream = lambda state, text, stop=None: iter([NS(numpy=lambda: hum(text))]) (the route is given its call maker and what the line is wired to, which it
+    # hands to its calls)
+    files = Path(os.environ.get('TMPDIR', '/tmp'), f'room-standin-{os.getpid()}')
+    files.mkdir(parents=True, exist_ok=True)
+    wiring = server.Wiring(hq=coordinator, paths=server.Paths(calls=files, live=files))
+    make_call = lambda *args, **kwargs: server.Call(*args, **kwargs, brain=Agent())
+    route = functools.partial(server.route, make_call=make_call, wiring=wiring)
+    async with server.serve(route, '127.0.0.1', port, max_size=1 << 20):
         print('ready', flush=True)
         await asyncio.Future()
 

@@ -23,10 +23,12 @@ test('a desktop: the book a column of at most 480 on the right, open by default;
   assert.deepEqual(widths(l), [902, 10, 480, 48]);
 });
 
-test('folded: only the rail is left, and the page grows into the room', () => {
-  const l = layout(...MINI, { mode: 'folded', book: null });
-  assert.deepEqual(widths(l), [1085, 0, 0, 48]);
-  assert.equal(l.room, RAIL);
+test('folded, on every shape: the page takes the whole screen, the book none of it (its lip lies over the page)', () => {
+  for (const size of [MINI, MINI_PORTRAIT, DESKTOP, HALF, PHONE]) {
+    const l = layout(...size, { mode: 'folded', book: null });
+    assert.deepEqual(widths(l), [size[0], 0, 0, 0]);
+    assert.equal(l.room, 0);
+  }
 });
 
 test('portrait and half a split screen start folded, and open beside the page, which narrows', () => {
@@ -47,17 +49,31 @@ test('two-thirds of a split screen sits beside the page, open, as in landscape',
   assert.equal(l.page + l.spine + l.book + l.rail, 755);
 });
 
-test('a phone has no room for a page beside the book: open, it is the spread', () => {
+test('a phone has no room for a page beside the book: open, it is the spread, over HQ at its whole width', () => {
   const l = layout(...PHONE, { mode: 'open', book: null });
   assert.equal(l.mode, 'spread');
   assert.equal(l.book, PHONE[0] - RAIL);
+  assert.equal(l.page, PHONE[0]);
+  assert.equal(l.room, 0);
 });
 
-test('the spread covers all but the rail, and the page keeps its open width under it', () => {
+test('the spread covers the screen with the rail, and the page keeps its open width under it', () => {
   const l = layout(...MINI, { mode: 'spread', book: null });
-  assert.equal(l.book, 1133 - RAIL);
+  assert.equal(l.book + l.rail, 1133);
   assert.equal(l.room, 513);
   assert.equal(l.page, 620);
+});
+
+// (the lip and facing)
+test("the spread's paper holds two facing pages only where each is at least 300 wide; a phone's is one page", () => {
+  const facing = size => layout(...size, { mode: 'spread', book: null }).facing;
+  assert.equal(layout(...PHONE, { mode: 'open', book: null }).facing, false);
+  assert.equal(facing(PHONE), false);
+  assert.equal(facing(HALF), false);
+  assert.equal(facing(MINI_PORTRAIT), true);
+  assert.equal(facing(MINI), true);
+  assert.equal(facing(DESKTOP), true);
+  assert.equal(layout(...MINI, { mode: 'open', book: null }).facing, false);
 });
 
 test('the spine let go: a flick or past half the book folds it, past half the screen spreads it, else a new width', () => {
@@ -82,7 +98,7 @@ test('from the spread, a flick right or a drag past a quarter brings the page ba
   assert.equal(released(...MINI, spread, 100, 0).mode, 'spread');
 });
 
-test("the rail's edge pulled left past a third of the book, or flicked, brings the book back", () => {
+test('the lip pulled left past a third of the book, or flicked, brings the book back', () => {
   const folded = { mode: 'folded', book: null };
   assert.equal(pulled(...MINI, folded, -160, 0).mode, 'open');
   assert.equal(pulled(...MINI, folded, -40, -0.8).mode, 'open');

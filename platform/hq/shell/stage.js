@@ -25,9 +25,11 @@ export const pointed = { selected: null, hover: null }; // the agent to ring: wh
 export let paused = false; // dev: tests hold the loop and drive frames themselves
 export const pause = on => { paused = on; };
 // The preview viewer fills the screen over the stage: nothing behind it updates or draws until it closes, as with the
-// tab hidden (the scene's resizes go on).
-let covered = false;
-export const cover = on => { covered = on; };
+// tab hidden (the scene's resizes go on). by: what covers it (the viewer, the call player, the projects view), so one
+// closing leaves the stage under another covered. Under the projects view alone the scene still updates, so what the
+// world's events start plays out and ends on time, and only its drawing waits. (by, the projects view)
+const covers = new Set();
+export const cover = (on, by) => { covers[on ? 'add' : 'delete'](by); };
 let now = 0, timers = new Set(); // timers: the timeouts for the scene on stage (its shell.later), dropped with it
 const timer = set => (fn, ms) => { const id = setTimeout(() => { set.delete(id); fn(); }, ms); set.add(id); };
 // the shell's own timeout for the scene on stage now: a swap drops it too
@@ -143,13 +145,16 @@ export function resize() { scene.resize(pageWidth(), viewHeight(), Math.min(devi
 let last = 0, acc = 0, cost = 8;
 export function loop(t) {
   requestAnimationFrame(loop);
-  if (document.hidden || paused || covered) { last = t; return; }
+  // (a look's own key out big over a cover, an agent's card over the projects view, draws on)
+  const held = covers.size && !scene?.carded?.();
+  if (document.hidden || paused || (held && [...covers].some(by => by !== 'projects'))) { last = t; return; }
   const dt = Math.min(0.1, (t - last) / 1000 || 0);
   last = t; acc += dt;
   // 60 fps when the device keeps up, 30 when it doesn't: kind to tablets, smooth for recordings
   if (acc < (cost > 12 ? 1 / 32 : 1 / 64)) return;
   const t0 = performance.now();
   step(acc); acc = 0;
+  if (held) return;
   draw();
   cost = cost * 0.95 + (performance.now() - t0) * 0.05;
 }

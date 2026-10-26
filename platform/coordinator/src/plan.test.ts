@@ -432,7 +432,7 @@ test('a project done leaves the lists once nothing is left in it, and stays amon
   const site = thread('site-one', 'privacy');
   const asking = await h.start({ agent: 'bolt', title: 'Ask site one', thread: site });
   const one = asking.id;
-  // (a proposal to the owner: its planning job, on the Front Desk, in no thread of the project)
+  // (a proposal to the owner: its planning job, in a one-task thread of the project's that ends with it)
   const proposed = await h.agent('proposals', asking.token, { title: 'Site two', brief: 'x', project: 'privacy' });
   assert.equal(proposed.status, 200, JSON.stringify(proposed.body));
   const proposal = proposed.body as { id: number };
@@ -441,7 +441,7 @@ test('a project done leaves the lists once nothing is left in it, and stays amon
   assert.match(String(plan.projectDone('privacy', 'bolt')), /wren's/);
   assert.equal(
     plan.projectDone('privacy', 'wren'),
-    `privacy isn't done yet: it has open threads privacy/site-one (hq plan done, or hq thread move); work still to run or in review: #${one}; proposals in its inbox: #${proposal.id} (hq inbox)`,
+    `privacy isn't done yet: it has open threads privacy/site-one, privacy/job-${planning!.id} (hq plan done, or hq thread move); work still to run or in review: #${one}, #${planning!.id}; proposals in its inbox: #${proposal.id} (hq inbox)`,
   );
   assert.equal((await h.finish(asking)).status, 200);
   const dropped = await h.agent('proposals/drop', planning!.token, { id: proposal.id, why: 'One site at a time' });
@@ -466,7 +466,14 @@ test('a project done leaves the lists once nothing is left in it, and stays amon
   // (its name the board's, the agent's words until it's made: plainnames.test.ts.)
   assert.deepEqual(
     [done.name, done.naming, done.threads.map((t: any) => [t.id, t.jobs, t.done])],
-    ['Our details off the listings', undefined, [[site, 1, 1]]],
+    [
+      'Our details off the listings',
+      undefined,
+      [
+        [site, 1, 1],
+        [`privacy/job-${planning!.id}`, 1, 1],
+      ],
+    ],
   );
   assert.ok(done.done, 'with when');
   assert.equal(

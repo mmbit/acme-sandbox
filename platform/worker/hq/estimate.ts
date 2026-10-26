@@ -228,7 +228,8 @@ function engineLine(e: Engine) {
 }
 
 // A time as hq says it, its zone named: "Sat 24 Oct, 17:30 UTC", or on a run that speaks to the board, on its clock
-// (output.ts TIME_ZONE): "Sat 24 Oct, 19:30 CEST". Times given to hq stay UTC.
+// (output.ts TIME_ZONE): "Sat 24 Oct, 19:30 CEST". A time given to hq with its date and no zone is on the company's
+// clock (the coordinator's windows.ts parse).
 export const at = (ms: number) =>
   new Date(ms).toLocaleString('en-GB', {
     weekday: 'short',

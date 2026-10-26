@@ -1,0 +1,153 @@
+/* The book's Search (booksearch.js): an index card laid over the top of the book's paper, by the rail's magnifier, a
+   ruled line to write a word on, and the finds under it, each with its note's number and its words, the find
+   highlighted as with a marker. */
+#book .bk-find {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  z-index: 7;
+  width: min(440px, calc(100% - 36px));
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding: 10px 12px 8px 14px;
+  border-radius: 4px 4px 10px 10px;
+  background: #fffdf8;
+  box-shadow:
+    0 1px 0 rgba(42, 35, 82, 0.08),
+    0 14px 30px rgba(29, 26, 47, 0.22);
+  transform: rotate(-0.4deg);
+  transform-origin: top right;
+  animation: bk-find-in 0.18s ease-out;
+}
+#book .bk-find[hidden] {
+  display: none;
+}
+@keyframes bk-find-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) rotate(-1.2deg);
+  }
+}
+/* the line to write on: tall enough for the Pencil's handwriting, a pencilled rule under it */
+#book .bk-find-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 2px dashed var(--bk-line);
+  color: var(--bk-muted);
+}
+#book .bk-find-line > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+#book .bk-find input {
+  all: unset;
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  font: 22px/52px var(--bk-font);
+  color: var(--bk-night);
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: manipulation;
+}
+#book .bk-find input::placeholder {
+  color: rgba(90, 84, 120, 0.42);
+}
+#book .bk-find input::-webkit-search-cancel-button {
+  display: none;
+}
+#book .bk-find-shut {
+  all: unset;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  cursor: pointer;
+}
+#book .bk-find-shut svg {
+  width: 18px;
+  height: 18px;
+}
+#book .bk-find-shut:focus-visible,
+#book .bk-found button:focus-visible {
+  outline: 2px solid var(--bk-night);
+}
+#book .bk-find-say {
+  margin: 8px 2px 2px;
+  font-size: 13px;
+  color: var(--bk-muted);
+}
+#book .bk-find-say:empty {
+  display: none;
+}
+#book .bk-found {
+  list-style: none;
+  margin: 4px -6px 0;
+  padding: 0;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+}
+#book .bk-found button {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  column-gap: 10px;
+  width: 100%;
+  padding: 9px 6px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+#book .bk-found li + li button {
+  border-top: 1px solid var(--bk-line);
+  border-radius: 0 0 8px 8px;
+}
+#book .bk-found button:hover,
+#book .bk-found button:active {
+  background: rgba(255, 217, 102, 0.18);
+}
+/* the note's number in its red disc, as on HQ's page and its sheet; an answer's, on a slip of its own */
+#book .bk-find-n {
+  grid-row: span 2;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bk-red);
+  color: #fff;
+  font:
+    700 12px/22px system-ui,
+    -apple-system,
+    sans-serif;
+  text-align: center;
+}
+#book .bk-found [data-answer] .bk-find-n {
+  background: var(--bk-night);
+}
+#book .bk-find-words {
+  font: 15px/1.4 var(--bk-font);
+  color: var(--bk-night);
+  overflow-wrap: anywhere;
+}
+#book .bk-found mark {
+  color: inherit;
+  background: linear-gradient(100deg, transparent 2%, rgba(255, 217, 102, 0.85) 6% 94%, transparent 98%);
+  border-radius: 3px 6px 4px 7px;
+  padding: 0 1px;
+}
+#book .bk-found small {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--bk-muted);
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-find {
+    animation: none;
+  }
+}

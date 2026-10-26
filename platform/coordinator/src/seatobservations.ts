@@ -35,8 +35,8 @@ export function recordWindowObservations(seat: string, times: ObservationTimes =
   db.prepare('delete from seat_window_observations where seat = ? and at < ?').run(seat, Date.now() - 14 * 86_400_000);
 }
 
-// Each seat as it reports itself now. A seat the board gave no stop level runs to the worker's own (seats.ts
-// STOP_DEFAULT). With whether it runs on credits, which the play paces it by as the worker does (playseats.ts).
+// A seat without a configured stop uses seats.ts STOP_DEFAULT. Credits bypass quota stops in playseats.ts.
+// Weekly pacing still applies, as in the worker.
 export function observedSeats(now: number, stopDefault: number): SeatNow[] {
   const rows = db
     .prepare(

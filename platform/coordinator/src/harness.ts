@@ -13,9 +13,10 @@ import assert from 'node:assert/strict';
 import { mkdtempSync } from 'node:fs';
 import { execFile } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { createServer, request } from 'node:http';
+import { createServer, request, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { fixtureRepo } from './fixture.ts';
+import { playGithub } from './playgithub.ts';
 import { recordedReviews, type JobFields } from './reviewfixture.ts';
 import { recordedPastJobs } from './pastjobs.fixture.ts';
 import { recordedCalls } from './calls.fixture.ts';
@@ -61,13 +62,14 @@ export async function harness(
   const { ORIGIN } = await import('./config.ts');
 
   let base = '';
+  let server: Server | undefined;
   if (serve) {
     const { app } = await import('./server.ts');
-    const server = createServer(app).listen(0);
-    server.keepAliveTimeout = 0;
-    await new Promise(r => server.once('listening', r));
-    base = `http://localhost:${(server.address() as AddressInfo).port}`;
-    test.after(() => server.close());
+    const listening = (server = createServer(app).listen(0));
+    listening.keepAliveTimeout = 0;
+    await new Promise(r => listening.once('listening', r));
+    base = `http://localhost:${(listening.address() as AddressInfo).port}`;
+    test.after(() => listening.close());
   }
 
   // A route with a bearer token: a JSON body makes it a POST.
@@ -147,7 +149,7 @@ export async function harness(
           },
         },
         (e, out, err) => r({ code: e ? Number(e.code) : 0, out: out + err }),
-      ),
+      ).stdin!.end(),
     );
 
   // A job's life, as the worker lives it. A job made here runs on an engine of its own unless the test names one, so
@@ -244,7 +246,7 @@ export async function harness(
   const { mergedPr, ended, storedPr, failedJobs, clearReviewHistory } = recordedReviews(db, queue);
   // Jobs that ended before the test.
   const pastJob = recordedPastJobs(db, { storedPr, mergedPr });
-  const { storedCall, liveCall } = recordedCalls(db, voice);
+  const { storedCall, carriedItem, liveCall } = await recordedCalls(db, voice);
   // A job as HQ lists it (its status, result, note...)
   const job = (id: number) => (jobs.listJobs() as any[]).find(j => j.id === id);
   // A persisted stuck review whose replacement can still report.
@@ -278,6 +280,7 @@ export async function harness(
     repo,
     dataDir,
     base,
+    server, // (a test that sends a request once another has reached HQ listens for its 'request')
     db,
     jobs,
     github,
@@ -312,6 +315,7 @@ export async function harness(
     failedJobs,
     clearReviewHistory,
     storedCall,
+    carriedItem,
     liveCall,
     pastJob,
     ...storedPlans(db), // (plan states no route makes)
@@ -323,78 +327,4 @@ export async function harness(
 export async function until(ready: () => unknown, what: string, ms = 5_000) {
   for (const stop = Date.now() + ms; !ready(); await new Promise(r => setTimeout(r, 2)))
     if (Date.now() > stop) throw new Error(`Still waiting after ${ms / 1000} s: ${what}`);
-}
-
-// GitHub, played: the pull requests the coordinator merges, reads and closes, each open until something happens to it.
-// A test sets how GitHub answers (`pr(n)`'s fields, or `refuse` for the next merge) and reads what happened to the pull
-// request (its state, the title it was merged under), never which calls were made. Anything else goes to the real fetch.
-export type PullRequest = {
-  state: 'open' | 'closed';
-  added?: string; // what its diff adds (github.ts pullRequestDiff)
-  files?: import('./github.ts').PullRequestFile[]; // GitHub's own list of its files, in place of `added`'s
-  merged: boolean;
-  mergeable: boolean | null;
-  head: string;
-  base: string;
-  aheadBy: number;
-  title?: string;
-  mergedSha?: string;
-};
-function playGithub() {
-  const pulls = new Map<number, PullRequest>();
-  const pr = (n: number) => {
-    if (!pulls.has(n))
-      pulls.set(n, { state: 'open', merged: false, mergeable: true, head: `h${n}`, base: 'main', aheadBy: 2 });
-    return pulls.get(n)!;
-  };
-  // the next merges' answers, in turn (a status and GitHub's message): a race with main, a moved branch...
-  const refuse: { status: number; message: string }[] = [];
-  // a hook before GitHub answers: a test holds an answer back (a slow or silent GitHub) by returning a promise
-  const gh = {
-    pr,
-    pulls,
-    refuse,
-    wait: undefined as undefined | ((method: string, n: number, signal?: AbortSignal | null) => Promise<void> | void),
-  };
-  const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
-  const real = globalThis.fetch;
-  globalThis.fetch = (async (url: string | URL | Request, init: RequestInit = {}) => {
-    const u = String(url);
-    if (!u.startsWith('https://api.github.com/')) return real(url, init);
-    const method = init.method ?? 'GET',
-      n = Number(u.match(/\/pulls\/(\d+)/)?.[1]);
-    const compared = u.match(/\/compare\/[^/]+\.\.\.h(\d+)$/);
-    await gh.wait?.(method, compared ? Number(compared[1]) : n, init.signal);
-    if (compared) return json({ ahead_by: pr(Number(compared[1])).aheadBy });
-    const p = pr(n);
-    // the files' diffs (github.ts pullRequestDiff): a test sets what a pull request adds as p.added, a page at a time
-    if (method === 'GET' && u.includes('/files')) {
-      const query = new URL(u).searchParams,
-        size = Number(query.get('per_page') ?? 30),
-        page = Number(query.get('page') ?? 1);
-      const files = p.files ?? [{ patch: (p.added ?? '').replace(/^/gm, '+') }];
-      return json(files.slice((page - 1) * size, page * size));
-    }
-    if (method === 'GET')
-      return json({
-        merged: p.merged,
-        state: p.state,
-        mergeable: p.mergeable,
-        base: { ref: p.base },
-        head: { sha: p.head },
-      });
-    if (method === 'PATCH') {
-      p.state = 'closed';
-      return json({});
-    }
-    // PUT: the merge
-    const { commit_title, sha } = JSON.parse(String(init.body));
-    if (p.state !== 'open') return json({ message: 'Pull Request is not mergeable' }, 405);
-    const refusal = refuse.shift();
-    if (refusal) return json({ message: refusal.message }, refusal.status);
-    if (p.mergeable === false) return json({ message: 'Pull Request is not mergeable' }, 405);
-    Object.assign(p, { state: 'closed', merged: true, title: commit_title, mergedSha: sha });
-    return json({ merged: true });
-  }) as typeof fetch;
-  return gh;
 }

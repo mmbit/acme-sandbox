@@ -40,10 +40,9 @@ def serve(reset):
     return f'http://127.0.0.1:{httpd.server_address[1]}', httpd.shutdown
 
 
-def cli_env(env, url, config):
-    """The call agent's environment (guard.agent_env) pointed at the model, with a throwaway CLI config folder."""
-    return {**env, 'ANTHROPIC_BASE_URL': url, 'CLAUDE_CONFIG_DIR': config,
-            'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
+def cli_env(env, url):
+    """The call agent's environment (guard.agent_env: the CLI config is the test's Paths.cli_config), at the model."""
+    return {**env, 'ANTHROPIC_BASE_URL': url, 'CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC': '1'}
 
 
 def installed():

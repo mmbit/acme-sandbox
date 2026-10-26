@@ -38,7 +38,7 @@ export async function openCallPlayer(c) {
   }
   document.body.append(box);
   box.showModal();
-  cover(true); // (HQ's scene under it neither updates nor draws while the player covers it)
+  cover(true, 'player'); // (HQ's scene under it neither updates nor draws while the player covers it)
   sfx.open();
   const shown = { player: null, reading: null };
   closes(box, shown);
@@ -81,7 +81,7 @@ function closes(box, shown) {
     box.close();
     box.remove();
     current = null;
-    cover(false);
+    cover(false, 'player');
     removeEventListener('click', onJob, true);
     sfx.close();
   };

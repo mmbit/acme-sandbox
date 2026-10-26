@@ -37,6 +37,21 @@ body {
 .callbubble .cb-keys button:active { transform: var(--press); }
 .callbubble .cb-keys .cb-pause[aria-pressed=true] { background: var(--cy); color: var(--scr-ink); border-color: var(--cy); box-shadow: var(--cy-glow); }
 .callbubble .cb-keys .cb-hangup { background: color-mix(in srgb, var(--red) 70%, transparent); color: #fff; border-color: var(--red); border-radius: 999px; }
+/* slim: bars of light on the glass; the call's little screen a projector's, a grid of light the figure stands in */
+.callbubble > * { transition: opacity .18s ease-out; }
+.callbubble.morphing > * { transition: none; }
+.callbubble.slim { border-radius: 999px; padding: 5px 6px; }
+.callbubble.slim .cb-face { border-radius: 999px; background: rgba(0, 10, 16, .6); }
+.callbubble .cb-bars i { width: 3px; border-radius: 2px; background: color-mix(in srgb, var(--cb-accent) 55%, #fff); box-shadow: 0 0 6px var(--cb-accent), 0 0 12px color-mix(in srgb, var(--cb-accent) 50%, transparent); transition: scale .1s ease-out; }
+.callbubble.talking .cb-bars i { animation: cb-bar .4s ease-in-out calc(var(--cb-i) * -.14s) infinite alternate; }
+.callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s ease-in-out calc(var(--cb-i) * .2s) infinite; }
+.intercom .call .call-face { border: 1px solid var(--line); border-radius: 10px; transition: box-shadow .12s ease-out;
+  background: linear-gradient(rgba(90, 220, 255, .07) 1px, transparent 1px) 0 0 / 100% 12px, linear-gradient(90deg, rgba(90, 220, 255, .07) 1px, transparent 1px) 0 0 / 12px 100%, rgba(0, 10, 16, .7); }
+.intercom .call .call-face::after { left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--cb-accent) 30%, transparent), transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--cb-accent) 40%, transparent); }
+.intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
+.intercom .call .lines { border-radius: 10px; }
+.intercom .call .lines li { animation: cs-line-in .28s ease-out both; }
 #panel h2, .device header b, #card b, .brand b, .masthead h2, #panel h3, .gz-tabs button { text-transform: uppercase; letter-spacing: .08em; }
 #panel h2, .device header b, #card b, .brand b, .masthead h2 { text-shadow: 0 0 10px rgba(110, 225, 255, .55); font-weight: 700; }
 /* the board's devices: dark glass, opaque enough that a speech bubble behind never reads through (the desk phone's was
@@ -149,3 +164,15 @@ body { --cy: var(--scr); --cy-hi: var(--scr-hi); --cy-fill: rgba(110, 225, 255, 
 .cp[data-look='holo'] .wp-moment[aria-current] {
   box-shadow: 0 0 12px rgba(128, 234, 255, 0.45);
 }
+/* the HUD on a phone's page, where the tools run out of two rows beside the logo: sound, music and the tour fold behind
+   More (scene.js). A tablet beside the open book still fits all of them, so they stay out there, as in Wire. Open, they
+   take a row of their own under the rest: HQ's tools wrap in reverse there, so they go first and a break follows them
+ */
+#btn-more { display: none; }
+@container page (max-width: 600px) {
+  .tools #btn-more { display: grid; }
+  .tools > :is(#btn-sound, #btn-music, #btn-tour) { order: -2; }
+  .tools.more-open::before { content: ''; flex-basis: 100%; order: -1; }
+  body:not(.touring) .tools:not(.more-open) > :is(#btn-sound, #btn-music, #btn-tour) { display: none; }
+}
+.tools #btn-more[aria-expanded='true'] { color: var(--cy); }

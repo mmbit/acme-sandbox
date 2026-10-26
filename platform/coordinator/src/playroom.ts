@@ -3,7 +3,7 @@
 // of simulation.ts).
 import * as memory from './playmemory.ts';
 import type { Wait } from './eta.ts';
-import { compare, deadlinePressure, DEADLINE_PAUSE_MS, PAUSE_MS, spareOnly } from './planner.ts';
+import { deadlinePressure, DEADLINE_PAUSE_MS, PAUSE_MS } from './planner.ts';
 import * as capacity from './playseats.ts';
 import * as reviewroom from './reviewroom.ts';
 import type { Play, Run } from './simulation.ts';
@@ -16,20 +16,11 @@ export function holdFullRoom(
   running: Run[],
   seats: capacity.Moment,
   busy: Map<string, number>,
+  room: memory.Room,
 ) {
-  if (
-    !memory.full(
-      play.snapshot,
-      running.map(run => run.row),
-      seats.now,
-    )
-  )
-    return false;
+  if (!memory.full(room)) return false;
   const limits = play.snapshot.seatRuns ?? {};
   const choose = capacity.choices(seats, busy, limits);
-  // (by its resource, then its deadline pressure: a seat's shared reviews are the seat's own, so it needs no key of its
-  // own)
-  const unpausable = new Map<'memory' | capacity.Seat, (Run | undefined)[]>();
   for (const run of waiting) {
     if (!(run.row.engine in play.snapshot.slots)) {
       run.nextHold = unreported(run);
@@ -38,16 +29,7 @@ export function holdFullRoom(
     const { seat, roomSeat } = choose(run.row, run.order);
     if ('id' in roomSeat) {
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : 'memory';
-      const pressure = Number(deadlinePressure(run.order, seats.now));
-      let bound = unpausable.get(resource);
-      if (!bound) unpausable.set(resource, (bound = []));
-      const earlier = bound[pressure];
-      // A lower-order non-board claim cannot pause work that an earlier one could not. Shared reviews have the
-      // same victim rule on a seat. Spare claims and the board's initial pause delay do not establish that bound.
-      if (!earlier || compare(earlier.order, run.order) > 0) {
-        if (roomVictim(play, run, running, seats.now, resource, roomSeat).victim) return false;
-        if (!run.order.board && !spareOnly(run.row, run.order)) bound[pressure] = run;
-      }
+      if (roomVictims(play, run, running, seats.now, resource, roomSeat, room).victims.length) return false;
       run.nextHold = run.queueWait;
     } else run.nextHold = roomSeat;
   }
@@ -72,42 +54,87 @@ export function makeRoom(
   now: number,
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
+  room: memory.Room,
 ) {
-  const { victim, needsReview } = roomVictim(play, waiting, running, now, resource, seat);
-  if (!victim) return false;
-  const run = play.runs.get(victim.id)!;
+  const { victims, needsReview } = roomVictims(play, waiting, running, now, resource, seat, room);
+  if (!victims.length) return false;
   const pauseMs = deadlinePressure(waiting.order, now) ? DEADLINE_PAUSE_MS : PAUSE_MS;
-  run.left = Math.max(0, run.ends - now) + pauseMs;
-  run.readyAt = now + pauseMs;
-  run.state = 'pausing';
-  run.reviewSeat = needsReview && typeof resource !== 'string' ? seat.id : null;
-  run.ends = now + pauseMs;
+  for (const victim of victims) {
+    const run = play.runs.get(victim.id)!;
+    run.left = Math.max(0, run.ends - now) + pauseMs;
+    run.readyAt = now + pauseMs;
+    run.state = 'pausing';
+    run.roomFor = { waiter: waiting, seat };
+    run.reviewSeat = needsReview && typeof resource !== 'string' ? seat.id : null;
+    run.ends = now + pauseMs;
+  }
   waiting.readyAt = now + pauseMs;
   return true;
 }
 
-function roomVictim(
+function roomVictims(
   play: Play,
   waiting: Run,
   running: Run[],
   now: number,
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
+  room: memory.Room,
 ) {
-  const candidates = running
-    .filter(r => r.state === 'running' && (typeof resource === 'string' || r.seat?.id === resource.id))
-    .filter(r => resource === 'memory' || r.row.engine === waiting.row.engine)
-    .map(r => r.standing);
   const limit = play.snapshot.seatRuns?.[seat.engine] ?? Infinity;
   const needsReview = reviewroom.needsRoom(waiting.standing, reviewOccupants(running, seat.id), limit);
-  const victim = reviewroom.roomVictim(
-    waiting.standing,
+  const candidates = running.filter(r => r.state === 'running');
+  const seatFull = running.filter(r => r.seat?.id === seat.id).length >= limit;
+  const engineFull =
+    running.filter(r => r.row.engine === waiting.row.engine).length >= (play.snapshot.slots[waiting.row.engine] ?? 0);
+  const victims = reviewroom.pauseGroup(
     candidates,
-    now,
-    { limit, capped: typeof resource !== 'string', needsReview },
-    resource === 'memory' ? undefined : waiting.row.engine,
+    (remaining, selected) => {
+      const onSeat = seatFull || typeof resource !== 'string';
+      const onEngine = engineFull || resource === 'engine';
+      const eligible = selected.length
+        ? remaining
+        : remaining.filter(r => (onSeat ? r.seat?.id === seat.id : !onEngine || r.row.engine === waiting.row.engine));
+      const victim = reviewroom.roomVictim(
+        waiting.standing,
+        eligible.map(r => r.standing),
+        now,
+        { limit, capped: typeof resource !== 'string', needsReview },
+      );
+      return victim && play.runs.get(victim.id);
+    },
+    selected => fitsAfterPauses(play, waiting, running, seat, room, selected),
   );
-  return { victim, needsReview };
+  return { victims: victims.map(r => r.standing), needsReview };
+}
+
+function fitsAfterPauses(
+  play: Play,
+  waiting: Run,
+  running: Run[],
+  seat: capacity.Seat,
+  room: memory.Room,
+  selected: Run[],
+) {
+  const pausing = running.filter(r => r.state === 'pausing');
+  const reservations = new Map(pausing.map(r => [r.roomFor!.waiter, r.roomFor!.seat]));
+  reservations.delete(waiting);
+  const released = [...pausing, ...selected];
+  const remaining = running.filter(r => !released.includes(r));
+  const available = memory.afterPauses(
+    room,
+    released.map(r => r.row),
+  );
+  let onEngine = remaining.filter(r => r.row.engine === waiting.row.engine).length;
+  let onSeat = remaining.filter(r => r.seat?.id === seat.id).length;
+  for (const [waiter, reservedSeat] of reservations) {
+    memory.join(available, waiter.row);
+    if (waiter.row.engine === waiting.row.engine) onEngine++;
+    if (reservedSeat.id === seat.id) onSeat++;
+  }
+  const engineSlots = play.snapshot.slots[waiting.row.engine] ?? 0;
+  const seatRuns = play.snapshot.seatRuns?.[seat.engine] ?? Infinity;
+  return memory.canStart(available, waiting.row) && onEngine < engineSlots && onSeat < seatRuns;
 }
 
 export function hold(run: Run, now: number, by: Wait) {

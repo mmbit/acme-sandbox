@@ -6,12 +6,21 @@
 //
 import { test, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 import { followthroughFixture } from './followthrough.fixture.ts';
 import { completeTriage, recordedDeploy } from './reviewfixture.ts';
 
 const RUNS_TOKEN = 'runs-secret';
-const h = await harness('summary', { env: { RUNS_TOKEN } });
+// A kit of the test company's that adds its numbers to the summary (kits.ts heartbeat)
+const STATS_KIT = `export const heartbeat = () => ({ head: 'Visitors', lines: ['12 today, 80 this week'] });\n`;
+const h = await harness('summary', {
+  env: { RUNS_TOKEN },
+  before: repo => {
+    mkdirSync(`${repo}/kits/stats`, { recursive: true });
+    writeFileSync(`${repo}/kits/stats/coordinator.ts`, STATS_KIT);
+  },
+});
 const { db } = h;
 const { followThroughSweep } = await import('./followthrough.ts');
 const forecast = await import('./forecast.ts');
@@ -123,6 +132,60 @@ test("with nothing agreed, the summary's lines bring the CEO the hourly check, w
   followThroughSweep(t0 + 30 * MIN);
   assert.equal(checks().length, 1, 'one an hour');
   assert.deepEqual(notices(), [], 'and nothing else');
+});
+
+// Delivered means the board said yes
+test("a promise whose work ended stays on what the board asked for as ready, with how long since, until the board's yes", async () => {
+  reset();
+  const now = held();
+  const work = await h.start({ agent: 'bolt', title: 'The trial' });
+  await h.finish(work);
+  const { item } = agreed(
+    { kind: 'promise', what: 'The trial results to the board', status: 'ready', job: work.id, ready: now - 2 * HOUR },
+    now - 5 * HOUR,
+  );
+  const ceo = await h.start({ agent: 'juno', title: 'The morning round' });
+  const asked = async () => (await h.agent('summary', ceo.token)).body.text as string;
+  assert.match(
+    await asked(),
+    new RegExp(
+      `^The board asked for \\(and how long it has waited\\):\\n- item #${item} \\(call \\d+, promise for juno, ready 2 h, open until the board says yes \\(hq item done\\)\\), waiting 5 h: The trial results to the board$`,
+      'm',
+    ),
+  );
+  assert.match(
+    await asked(),
+    /^- item #\d+ \(call \d+, promise for juno\): The trial results to the board\. Its work \(#\d+\) ended .*\. It's ready, not delivered: open until the board has it and says yes \(hq item done\)$/m,
+    'finished, not delivered',
+  );
+  assert.equal((await h.agent('item-done', ceo.token, { id: item, said: 'Yes' })).status, 200);
+  assert.doesNotMatch(await asked(), /^The board asked for/m, 'off the list once the board said yes');
+});
+
+test("an open goal brings the CEO the hourly check, its bets read live with the kits' numbers; those numbers alone don't", async () => {
+  reset();
+  followThroughSweep(t0);
+  assert.deepEqual(checks(), [], "a kit's numbers are news, not a reason to look");
+  const juno = await h.start({ agent: 'juno', title: 'Goals' });
+  const bet = h.dueThread({ deadline: t0 + 30 * HOUR });
+  const walk = h.queue({ agent: 'kit', title: 'Walk the path to payment', thread: bet });
+  assert.equal(
+    (await h.agent('project-notes', juno.token, { project: 'due', text: 'First paying customers' })).status,
+    200,
+  );
+  assert.equal((await h.agent('projects/goal', juno.token, { id: 'due', goal: true })).status, 200);
+  await h.finish(juno);
+  followThroughSweep(t0);
+  const [check] = checks();
+  assert.ok(check, 'a check, with nothing else in the summary');
+  const { prompt } = db.prepare('select prompt from jobs where id = ?').get(check.job) as { prompt: string };
+  assert.match(
+    prompt,
+    new RegExp(
+      `Our goals [^\\n]*:\\n- Due \\(due\\): First paying customers\\n  - ${bet} "Thread \\d+", done when It ships · window to [^·]+ · (ETA|no ETA)[^·]+ · next #${walk} Walk the path to payment \\(kit, queued`,
+    ),
+  );
+  assert.match(prompt, /\n\nVisitors:\n- 12 today, 80 this week\n/);
 });
 
 test('an alarm on (here the disk) is in the summary, and brings the CEO the hourly check with it', async () => {

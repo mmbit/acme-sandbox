@@ -1,6 +1,6 @@
 // A job of the projects view, opened over its thread as a big key that turns over, like the home page's: on its front
 // what it is, who does it, where it is (the board's card first when it waits on it), when the planner has it start and
-// be done, and what it waits for, and a finished one what it did in a line or two; on its back its record (when it ran,
+// be done, and what it waits for, and a finished one what it did in a few plain sentences; on its back its record (when it ran,
 // its agent time, its pull request), who reviewed it and what they found, its reviews and fixes, its report, what
 // follows it (together or one after another) and its steps, as the agent's big key on HQ home shows them (steplog.js).
 // A review loop job's output is for HQ to read, never shown: its triage and findings are, in words.
@@ -33,6 +33,7 @@ import { glance, lasted } from '../../../shared/signs/signs.js';
 // all: every job the view holds (each with its project and thread); back: whether it's turned over (kept across paints);
 // findings: a finished review's, and facts: its record, as projects.js loaded them (findingsOf, factsOf). Its turn mark
 // sits in the card's bottom corner as the agents' big keys' does, under the face that scrolls, so it's always there.
+// (data-owner: the job's agent, whose sheet a mark on it goes on.)
 export function jobSheet(j, all, { back = false, findings = null, facts = null } = {}) {
   if (!j) return '';
   const byId = id => all.find(x => x.id === id);
@@ -53,7 +54,7 @@ export function jobSheet(j, all, { back = false, findings = null, facts = null }
   };
   const reverse = backOf(j, all, row, { findings, facts });
   const turned = back && reverse;
-  return `<div class="pj-pop"><article class="pj-card${turned ? ' flipped' : ''}" role="dialog" aria-label="${esc(nameText(j))}" data-job-open="${Number(j.id)}">
+  return `<div class="pj-pop"><article class="pj-card${turned ? ' flipped' : ''}" role="dialog" aria-label="${esc(nameText(j))}" data-job-open="${Number(j.id)}" data-owner="${esc(j.agent ?? '')}">
     <div class="pj-card-keys"><button class="pj-key" data-close aria-label="Close">${icon('close')}</button></div>
     <div class="pj-card-faces"><section class="pj-front">${frontOf(j, row)}</section>${reverse ? `<section class="pj-back">${reverse}</section>` : ''}</div>
     ${reverse ? `<button class="pj-turns" data-turn aria-label="${turned ? 'Turn back to its front' : 'Turn over: its record and steps'}">${icon('redo')}</button>` : ''}</article></div>`;
@@ -85,20 +86,22 @@ function frontOf(j, row) {
     s !== 'working' && start && { words: start, icon: 'tour' },
     done && { words: done, icon: 'finish' },
   ].filter(Boolean);
-  // (a finished one's state as the icon set's tick, and what it did in a line or two)
+  // (a finished one's state as the icon set's tick, and what it did in a few plain sentences)
   const said = finished(j) ? summaryOf(j) : '',
     mark = !lit && s === 'done' ? icon('tick', 'pj-done') : '';
   return `<small class="pj-code-line">${esc(jobName(j.id, j.code))}</small><h2>${nameHtml(j)}</h2>
     <div class="pj-who">${face(j.agent, 'big')}<div><b>${esc(who(j.agent))}</b><small>${withJobLinks(what.filter(Boolean).join(' · '))}</small></div></div>
-    ${said ? `<p class="pj-summary">${said}</p>` : ''}
+    ${said ? `<h4>What it did</h4><p class="pj-summary">${said}</p>` : ''}
     <div class="pj-why-big ${lit ? 'you' : s}"><p><b>${mark}${esc(lit ? 'For you' : cap(word(j)))}</b>${esc(why)}</p>${asks.map(c => `<button class="pj-key on" data-card="${Number(c.id)}">${icon('phone')}<span>${asks.length > 1 ? esc(c.title) : 'Open the card'}</span></button>`).join('')}</div>
     ${times.length ? `<p class="pj-times">${times.map(time => `<span class="pj-note">${icon(time.icon)}<span>${esc(cap(time.words))}</span></span>`).join('')}</p>` : ''}
     ${before.length ? `<h4>Starts once these are merged</h4><ul class="pj-rows">${before.map(x => row(x, AFTER[x.state] ?? x.state)).join('')}</ul>` : ''}`;
 }
 
-// What a finished job did, in a line or two, for its front: a review loop job's from what HQ read of its output (who its
-// triage chose and why, what a reviewer found, how its ruling went), any other's its report's opening; never a review
-// loop job's output itself, which is for HQ (machine-read JSON).
+// What a finished job did, for its front: a review loop job's from what HQ read of its output (who its triage chose and
+// why, what a reviewer found, how its ruling went), never that output itself, which is for HQ (machine-read JSON); any
+// other's in the board's words, written from its report by the coordinator's small model (plainnames.ts), and where
+// none is made (work that failed, a call's or a meeting's, customer work, a task done before they were, or one just
+// done) its report's opening, so a failed one's says why it stopped.
 const RULED = {
   merge: 'Ruled it ready to merge',
   changes: 'Sent it back for another round',
@@ -120,7 +123,7 @@ export function summaryOf(j) {
     const parts = [f.blocking && counted(f.blocking, 'blocking finding'), f.notes && counted(f.notes, 'note')];
     return parts.some(Boolean) ? `Found ${listed(parts.filter(Boolean))}.` : 'Found nothing to fix.';
   }
-  return reportOf(j) ? opening(reportOf(j)) : '';
+  return j.did ? esc(j.did) : reportOf(j) ? opening(reportOf(j)) : '';
 }
 // A job's report as prose: none for a review loop job's (its output is HQ's to read) or one that's data, not words
 const reportOf = j => (j.kind === 'review' || j.kind === 'consolidate' || isData(j.result) ? '' : (j.result ?? ''));
@@ -203,7 +206,7 @@ function readersOf(j) {
     <ul class="pj-rows pj-readers">${[...reads, ...rules, ...out].join('')}</ul>`;
 }
 
-// The back: its record, who read its round and what was found, its reviews and fixes, what it did, what follows it, and
+// The back: its record, who read its round and what was found, its reviews and fixes, its report, what follows it, and
 // last its steps, filling the rest of the card as the agent's big key's log does; empty for one with none of them yet.
 function backOf(j, all, row, { findings, facts }) {
   const reviews = stepsOf(j, j.projectThread).filter(x => x.id !== j.id);
@@ -215,7 +218,7 @@ function backOf(j, all, row, { findings, facts }) {
     reviews.length
       ? `<h4>Its reviews and fixes</h4><ul class="pj-rows">${reviews.map(x => row(x, cap(word(x)), stateOf(x), { name: doingOf(x) })).join('')}</ul>`
       : '',
-    report ? `<h4>What it did</h4><div class="prose pj-report">${prose(report)}</div>` : '',
+    report ? `<h4>Its report</h4><div class="prose pj-report">${prose(report)}</div>` : '',
     followers(j, all, row),
   ].join('');
   const shown = logged.job === j.id && Array.isArray(logged.lines) ? logged.lines : null;
@@ -315,14 +318,15 @@ function followers(j, all, row) {
 // A job's steps (its log), as the agent's big key shows them (steplog.js), on its card's back: read as the card opens,
 // again every few seconds while it runs, and kept for the card's next paint (logged, with the job's status as they were
 // read), so a repaint shows them at once, where the board had them (kept: stepsKept's, from the card before the paint).
-// card: the card painted.
+// card: the card painted; latest(): the job as the view has it now, whose end ends the following once its log is read
+// again for its last steps (a refresh keeps the card, and j is the job as the card opened).
 const LOG_MS = 5000;
 let logged = { job: null, lines: null, status: null };
 export const stepsKept = el => {
   const ol = el.querySelector('.pj-card .steplog');
   return ol && { top: ol.scrollTop, open: [...ol.querySelectorAll('li.open')].map(li => li.dataset.k) };
 };
-export async function followSteps(card, j, load, kept = null) {
+export async function followSteps(card, j, load, kept = null, latest = () => j) {
   const ol = card.querySelector('.steplog');
   if (!ol) return;
   if (kept) {
@@ -332,17 +336,18 @@ export async function followSteps(card, j, load, kept = null) {
   if (logged.job === j.id && logged.lines && logged.status !== 'running' && j.status !== 'running') return;
   let first = !kept;
   while (ol.isConnected) {
+    const { status } = latest() ?? j;
     try {
       const lines = await load(j.id);
-      logged = { job: j.id, lines, status: j.status };
+      logged = { job: j.id, lines, status };
       if (!ol.isConnected) return;
       fillSteps(ol, lines, { time: stamp, text: l => stepText(j, l), empty: 'No steps logged for this job.', first });
       first = false;
     } catch {
       if (logged.job !== j.id)
-        ol.innerHTML = `<li class="aside">${j.status === 'running' ? 'Its steps didn’t load. Trying again…' : 'Its steps didn’t load. Open it again to try once more.'}</li>`;
+        ol.innerHTML = `<li class="aside">${status === 'running' ? 'Its steps didn’t load. Trying again…' : 'Its steps didn’t load. Open it again to try once more.'}</li>`;
     }
-    if (j.status !== 'running') return;
+    if (status !== 'running') return;
     await new Promise(r => setTimeout(r, LOG_MS));
   }
 }

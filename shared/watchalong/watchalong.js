@@ -40,8 +40,10 @@ const FULL_SNAPSHOT = 2,
 // Starts recording this page and posting its events to `url` (the store's session route, its key in the query).
 // typed: 'shown' keeps what is typed, except passwords (the board's own calls); 'hidden' keeps only that it was typed
 // and how much (guests, customers). canvasFps: canvas frames a second, 0 for none. onEnd(why) runs once it stops for
-// good: 'stopped', 'over', 'full', 'too big' (one event past what a post holds) or 'unreachable'.
-export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {} }) {
+// good: 'stopped', 'over', 'full', 'too big' (one event past what a post holds) or 'unreachable'. onSeen(seen) runs
+// with each batch the server says whether the agent watching along sees the page (true or false; a session watched for
+// no agent, or not known yet, says nothing).
+export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {}, onSeen = () => {} }) {
   let stopPage = null,
     stopping = false,
     ended = false;
@@ -54,7 +56,7 @@ export function watch({ url, typed = 'hidden', canvasFps = 0, onEnd = () => {} }
     document.removeEventListener('load', frameLoaded, true);
     onEnd(why);
   };
-  const outbox = sender(url, finish);
+  const outbox = sender(url, finish, onSeen);
   const start = () => (stopPage = recordPage(typed, canvasFps, outbox.push));
   // A page loaded in a frame records itself once asked (answerFrames), its first page and every one after
   const frameLoaded = event =>
@@ -113,20 +115,23 @@ function recordPage(typed, canvasFps, emit) {
 }
 
 // The page's events to the store, one post on its way at a time: once a second, or sooner once BATCH_EVENTS wait.
-// What the server hasn't taken goes again with the next. onEnd(why) once the server says it's over or stays out of reach.
-function sender(url, onEnd) {
+// What the server hasn't taken goes again with the next. onEnd(why) once the server says it's over or stays out of reach,
+// onSeen(seen) as it says whether the agent sees the page: with nothing to send (a quiet page, or paused) an empty batch
+// still asks, so the page hears it all the same.
+function sender(url, onEnd, onSeen) {
   let waiting = [],
     held = [],
     inFlight = null;
   const send = async leaving => {
     held = [...held, ...waiting];
     waiting = [];
-    while (held.length) {
+    do {
       const batch = firstBatch(held);
-      const status = batch.length ? await post(url, batch, leaving) : 413;
+      const { status, seen } = batch.length || !held.length ? await post(url, batch, leaving) : { status: 413 };
       if (status !== 200) return refused(status);
+      if (typeof seen === 'boolean') onSeen(seen);
       held = held.slice(batch.length);
-    }
+    } while (held.length);
   };
   const refused = status => {
     if (ENDINGS[status]) onEnd(ENDINGS[status]);
@@ -354,8 +359,8 @@ function firstBatch(events) {
 }
 const bytesOf = text => new TextEncoder().encode(text).length;
 
-// A batch to the store: its answer's status, or 0 when the network failed. One leaving the page goes with keepalive,
-// which the browser caps at 64 KB.
+// A batch to the store: its answer's status (0 when the network failed) and seen. One leaving the page goes with
+// keepalive, which the browser caps at 64 KB.
 async function post(url, events, leaving) {
   const body = JSON.stringify({ events });
   try {
@@ -365,8 +370,9 @@ async function post(url, events, leaving) {
       body,
       keepalive: leaving && bytesOf(body) < 60_000,
     });
-    return answer.status;
+    const said = answer.ok ? await answer.json().catch(() => ({})) : {};
+    return { status: answer.status, seen: said?.seen };
   } catch {
-    return 0;
+    return { status: 0 };
   }
 }

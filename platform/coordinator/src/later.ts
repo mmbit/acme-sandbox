@@ -5,7 +5,7 @@
 // leaves a card out of the desk phone's list while it's ahead (SHOWN). A card can be held the same way until work it
 // waits for is live (holdsFor).
 import { db } from './db.ts';
-import { companyDay, timeZone } from './company.ts';
+import { companyDay, companyMoment } from './company.ts';
 import { announceRequest } from './push.ts';
 import * as approvals from './approvals.ts';
 import { followsUp } from './ledger.ts';
@@ -49,31 +49,6 @@ const readBack = (at: number, isDay: boolean) => (isDay ? companyDay(at) : new D
 const BACK_HOUR = 8;
 // 08:00 on a day on the company's clock, in ms, found from the zone's offset at that moment
 const morning = (y: number, m: number, d: number) => companyMoment(y, m, d, BACK_HOUR, 0);
-// A time on the company's clock, in ms (callouts.ts --at too)
-export function companyMoment(y: number, m: number, d: number, hour: number, minute: number) {
-  const local = Date.UTC(y, m - 1, d, hour, minute);
-  let at = local;
-  for (let i = 0; i < 2; i++) at = local - offset(at); // twice: the offset may differ on either side of a clock change
-  return at;
-}
-function offset(at: number) {
-  const clock = new Intl.DateTimeFormat('en-US', {
-    timeZone: timeZone(),
-    hourCycle: 'h23',
-    year: 'numeric',
-    month: 'numeric',
-    day: 'numeric',
-    hour: 'numeric',
-    minute: 'numeric',
-    second: 'numeric',
-  });
-  const numericParts = clock.formatToParts(at).map(p => [p.type, Number(p.value)]);
-  const parts = Object.fromEntries(numericParts);
-  return (
-    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) -
-    Math.floor(at / 1000) * 1000
-  );
-}
 
 // The board snoozes an open card until a day it picks (08:00 that day on the company's clock), or with day null brings a
 // hidden one back now, as a new card. Any open card, whoever filed it.

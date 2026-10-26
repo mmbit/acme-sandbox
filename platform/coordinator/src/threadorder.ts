@@ -28,6 +28,9 @@ export function inNeedsOrder(threads: Thread[]) {
 
 // A task: a work job in a thread that isn't a pull request's (its fixes and updates are the pull request's).
 type Job = { id: number; kind: string; pr: number | null; thread: string | null; branch: string | null };
+// A fix for a round's findings or the board's notes (matching.ts ORIGIN's 'fix'), a thread's task or a pull request's
+export const answersRound = (j: { stage: string | null; round: number | null }) =>
+  j.stage === 'feedback' || (j.stage === 'fix' && j.round !== null);
 export const isTask = (j: Job): j is Job & { thread: string } => j.kind === 'work' && j.pr === null && !!j.thread;
 export type Task = jobs.Named & {
   id: number;
@@ -113,7 +116,7 @@ export function reader() {
     const next = !before.some(t => OPEN.includes(t.status));
     return {
       follows: before.findLast(t => OPEN.includes(t.status))?.id ?? null,
-      failed: before.find(t => t.status === 'failed')?.id ?? null,
+      failed: before.find(t => t.status === 'failed' || t.status === 'stopped')?.id ?? null,
       round: next ? round : null,
       needs: next ? needsOpen(thread) : [],
     };
@@ -264,10 +267,13 @@ export function pullOf(id: number) {
 
 // The task after job `id` in its thread's turns, if it's a task and that one starts now: running, or queued with
 // nothing to wait for but a seat (jobs.ts readyWork). Its push waits for it (review.ts heldForThread). Undefined for a
-// next task that waits for a time, a card or another thread's merge.
+// next task that waits for a time, a card or another thread's merge, and for a fix of a review's findings or the
+// board's notes (a task drawn from the inbox, reviewinbox.ts accept): its push answers the round, so it goes to review
+// at once. (PR #3264's fix waited hours for a next task still queued.)
 export function nextReady(id: number) {
-  const job = db.prepare('select id, kind, pr, thread, branch from jobs where id = ?').get(id) as Job | undefined;
-  if (!job || !isTask(job)) return undefined;
+  const job = db.prepare('select id, kind, pr, thread, branch, stage, round from jobs where id = ?').get(id) as
+    (Job & { stage: string | null; round: number | null }) | undefined;
+  if (!job || !isTask(job) || answersRound(job)) return undefined;
   const { turn } = inTurn(tasksOf(job.thread)),
     at = turn.findIndex(t => t.id === id);
   const next = at < 0 ? undefined : turn.slice(at + 1).find(t => OPEN.includes(t.status));

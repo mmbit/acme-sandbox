@@ -336,19 +336,26 @@ mark {
   border: 1px solid var(--line);
   box-shadow: var(--shadow-sm);
 }
-.intercom .chat {
+.intercom .chat,
+.intercom .call .lines {
   background: var(--field);
   border-color: var(--line);
 }
-.intercom .chat .ceo {
+.intercom .chat .ceo,
+.intercom .call .lines .agent {
   background: var(--their-bg);
   color: var(--ink);
   border: 1px solid var(--rule);
 }
-.intercom .chat .me {
+.intercom .chat .me,
+.intercom .call .lines .board {
   background: var(--cy-tint);
   color: var(--cy-hi);
   border: 1px solid color-mix(in srgb, var(--cy) 55%, transparent);
+}
+/* (the call's transcript, as the chat) */
+.intercom .call .lines:empty::before {
+  color: var(--muted);
 }
 /* (.guest) */
 .intercom .chat :is(.call, .hint, .guest) {

@@ -17,10 +17,12 @@ const company = await import('./company.ts');
 const { planChange } = await import('./db.ts');
 const { codeOf } = await import('./jobcodes.ts');
 const { PROMPT_CHARS } = await import('./smallmodel.ts');
+const summary = await import('./summary.ts');
+const forecast = await import('./forecast.ts');
 
 beforeEach(async () => {
   db.exec(`delete from jobs; delete from messages; delete from meetings; delete from meeting_seats; delete from meeting_lines;
-  delete from meeting_asks; delete from schedule_runs; delete from seats`);
+  delete from meeting_asks; delete from schedule_runs; delete from seats; delete from calls; delete from call_items`);
   await h.worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', until: 0 });
 });
 
@@ -156,38 +158,53 @@ test('a due meeting keeps its holds on paced runners and gathers before ordinary
   assert.equal((await claimIn('claude#2', 'claude-1', week))?.kind, 'meeting');
 });
 
-test("a meeting whose follow-up carries the board's call item is the board's word: paced seats gather it", async () => {
+test('a due meeting gathers on paced seats, and its live seats follow earlier dated work without a board item', async () => {
+  const { meeting, dated, claim } = await dueBesideDated();
+  await gathers(meeting, claim);
+  assert.equal((await claim('claude#4'))?.id, dated, 'dated admission alone does not grant the board lane');
+});
+
+test("a due meeting's board item keeps its live seats ahead of earlier dated work on paced seats", async () => {
+  const { meeting, seats, dated, followUp, claim } = await dueBesideDated();
+  h.carriedItem(followUp, 'juno');
+  const started = await gathers(meeting, claim);
+  const next = await claim('claude#4');
+  assert.equal(next?.kind, 'meeting', 'the board lane wins after gathering releases its room reservation');
+  assert.ok(seats.some(s => s.job === next?.id));
+  assert.notEqual(next?.id, started?.id);
+  assert.equal(status(dated), 'queued');
+});
+
+// A meeting due on a paced runner, dated work queued before it, and the chair's follow-up after its seat. claim is a
+// slot's claim on that runner.
+async function dueBesideDated() {
   const { meeting, seats } = await setMeeting();
   const week = Date.now() + 2 * 24 * 3_600_000;
-  for (const seat of ['claude-1', 'claude-2'])
-    await h.worker('seat', {
-      seat,
-      engine: 'claude',
-      state: 'ready',
-      until: 0,
-      week: 0.6,
-      weekResets: week,
-      pace: true,
-    });
+  await h.worker('seat', {
+    seat: 'claude-1',
+    engine: 'claude',
+    state: 'ready',
+    until: 0,
+    week: 0.6,
+    weekResets: week,
+    pace: true,
+  });
+  const dated = h.queue({ agent: 'moss', engine: 'claude', thread: h.dueThread({ deadline: Date.now() + 60_000 }) });
   const chairSeat = seats.find(s => s.agent === 'juno')!.job;
   const followUp = h.queue({ agent: 'juno', title: 'The plan from the meeting', after: chairSeat });
-  assert.ok(
-    (await claimIn('claude#1', 'claude-1', week))?.held,
-    'the set time admits paced seats before the follow-up carries the board item',
-  );
+  const claim = (slot: string) => claimIn(slot, 'claude-1', week);
+  return { meeting, seats, dated, followUp, claim };
+}
 
-  const item = db
-    .prepare(
-      `insert into call_items (call, kind, owner, what, quote, ts)
-    values (1, 'task', 'juno', 'Plan the build', 'Board: plan it, then build it.', 'x') returning id`,
-    )
-    .get() as { id: number };
-  db.prepare('update jobs set item = ? where id = ?').run(item.id, followUp);
-  assert.ok(await claimIn('claude#1', 'claude-1', week), 'carrying the open item, a paced slot holds a seat');
-  assert.ok(await claimIn('claude#2', 'claude-2', week));
-  assert.equal((await claimIn('claude#3', 'claude-2', week))?.kind, 'meeting', 'and the last one starts it');
+// Two paced slots hold the meeting's seats by its set time, and the third starts it.
+async function gathers(meeting: number, claim: (slot: string) => ReturnType<typeof claimIn>) {
+  assert.equal((await claim('claude#1'))?.held?.meeting, meeting, 'the set time admits paced seats');
+  assert.equal((await claim('claude#2'))?.held?.meeting, meeting);
+  const started = await claim('claude#3');
+  assert.equal(started?.kind, 'meeting');
   assert.equal(meetingStatus(meeting), 'live');
-});
+  return started;
+}
 
 test("a claim without a slot's name (an older worker) never starts a seat", async () => {
   await setMeeting();
@@ -511,6 +528,13 @@ test('no time limit: the chair sees progress, the tally runs once all have hande
   });
   assert.deepEqual(closed.body, { ended: true });
   assert.equal(meetingStatus(meeting), 'done');
+  // (the CEO's next check reads it: its headline and next step.)
+  assert.match(
+    summary.read(forecast.refresh(Date.now())).text,
+    new RegExp(
+      `Meetings closed since the last check:\\n- meeting #${meeting}: The editor comes first\\. Next: the editor starts now\\.\\n`,
+    ),
+  );
   assert.match(
     (db.prepare('select stopping from jobs where id = ?').get(bolt.id) as { stopping: string }).stopping,
     /meeting #\d+ ended \(the chair closed it\)/,

@@ -1,8 +1,7 @@
 // The recorded judgment that chooses a round's independent reads from the actual diff.
-// (the foundation keeper's seat)
 import { matchesGlob } from 'node:path';
 import { db, redacted } from './db.ts';
-import { org } from './company.ts';
+import { org, roles } from './company.ts';
 import { findAgent } from './jobs.ts';
 import { withPicks } from './models.ts';
 import * as panel from './panel.ts';
@@ -11,7 +10,7 @@ import * as reviewinbox from './reviewinbox.ts';
 import * as engineOnly from './engineonly.ts';
 import * as visual from './visual.ts';
 import { TRUST_RULE } from './trust.ts';
-import { keeperSeat } from './reviewkeeper.ts';
+import * as lenses from './reviewlenses.ts';
 
 export type Read = { agent: string; reason: string; files: string[]; domain: string; security: boolean };
 export type Selection = {
@@ -20,6 +19,7 @@ export type Selection = {
   consolidator: string;
   reviewers: Read[];
   looker: string | null;
+  foundation: string[];
   throwaway?: boolean;
   exceptions?: { agent: string; reason: string }[];
 };
@@ -45,8 +45,7 @@ secrets, sign-in, outside data or the review machinery? Which domain owner needs
 need only one domain read. Security joins for a concrete risk in how HTML is built or escaped, scripts, credentials,
 external data or other dangerous behavior. Keep Codex for security and general independent reads where needed.
 Prefer Claude for visual and domain reads and low-risk rulings when an eligible Claude consolidator can do them.
-${LENSES}
-${THROWAWAY}
+${lenses.brief(readabilityReader(pr))}
 
 On a re-review, omit "reviewers" to use just the eligible original finders of the open blockers listed below${finderList(pr, files)}.
 You may explicitly replace that list, but name a reason in "exceptions" for each finder omitted, except a finder
@@ -65,29 +64,14 @@ read), then end with exactly the same JSON and stop:
 {"decision":"review" | "escalate", "reason":"why this scope and panel, or the owner decision needed",
 "consolidator":"suggested eligible consolidator id, optional", "reviewers":[{"agent":"eligible staff id", "reason":"why needed",
 "files":["assigned paths, folders ending in / or globs"], "domain":"discipline", "security":false}],
-"looker":"the one reader who renders and opens the previews" | null, "throwaway":false,
-"exceptions":[{"agent":"omitted finder id", "reason":"why this finder cannot or need not recheck"}]}.
+"looker":"the one reader who renders and opens the previews" | null,
+"foundation":"the reader who also asks the foundation question" | null, "throwaway":false,
+"exceptions":[{"agent":"omitted finder or readability reader id", "reason":"why they cannot or need not read"}]}.
 A nonempty reviewers list must collectively cover every file reported above. Name a folder ("platform/hq/shell/") or a
 glob ("platform/hq/**/*.css") for many files rather than copying each path: it reads as the reported files it matches.
 An empty reviewers list gives the whole assigned read to the independent consolidator. Omit reviewers only on a
 re-review to retain the finders. Triage is no merge approval.${scope(pr, base)}`;
 }
-
-// Each reader's one discipline, and the one reader at most who sees what the change shows
-const LENSES = `Each reader looks through one lens, the discipline their role names: give it as their "domain", and keep their
-reason to it. A lens on the code (readability, structure, security) reads the diff alone. Seeing what the change shows
-(its previews, screenshots, a page check) is one reader's, named in "looker", and only when the change needs a visual
-eye: a reader above whose files include what shows, or the consolidator when it reads alone. Otherwise "looker" is null
-and nobody renders anything. Configured preview commands cover only their own paths, not every UI change.
-If engine constraints move all of the chosen reader's visual files away, the look follows those files to their reader.
-If the consolidator has no separate reader seat, its look passes to a reader holding the shown files, or stays with
-the consolidator when it reads alone.`;
-
-// Whether the change is throwaway, judged from what it is (CODE_STYLE.md): its readers then hold it to the low bar
-const THROWAWAY = `Set "throwaway" when the change is work that runs once or twice and goes to the archive: a prototype, a
-demo reel, a concept film, a presentation. Its readers then look only at whether it misses the board's vision in an
-important way and at real breakage or safety, so one reader, or the consolidator alone, is usually enough. Code that
-customers use, that other code builds on, or that keeps running is never throwaway, whatever its folder.`;
 
 function candidatesFor(pr: number) {
   const excluded = panel.excludedAuthors(pr);
@@ -164,6 +148,7 @@ export function read(job: number, output?: string): Selection | string {
       consolidator,
       reviewers: [],
       looker: null,
+      foundation: [],
     };
   const files = JSON.parse(row.judges) as string[];
   const reviewers = readersOf(row.pr, report, eligible, files);
@@ -171,18 +156,19 @@ export function read(job: number, output?: string): Selection | string {
   const assigned = constrained(row.pr, reviewers);
   const covered = new Set(assigned.flatMap(reader => reader.files));
   if (assigned.length && files.some(file => !covered.has(file))) return 'reviewers must cover every assigned file';
-  const keeper = keeperSeat(row.pr, files, eligible);
-  if (keeper && !assigned.some(reader => reader.agent === keeper.agent)) assigned.push(keeper);
   const omission = omissionProblem(row.pr, report, assigned, files, suggested);
   if (omission) return omission;
   const looker = lookerOf(report.looker ?? null, reviewers, assigned, suggested);
   if (looker === undefined) return 'the looker must be a reader of files that show';
+  const foundation = foundationOf(report.foundation ?? null, reviewers, assigned);
+  if (foundation === undefined) return 'the foundation question goes to one of the readers';
   return {
     decision: report.decision,
     reason: report.reason,
     consolidator,
     reviewers: assigned,
     looker,
+    foundation,
     throwaway: report.throwaway === true,
     exceptions: report.exceptions ?? [],
   };
@@ -201,6 +187,19 @@ function lookerOf(chosen: string | null, readers: Read[], assigned: Read[], cons
   const files = shown.length ? shown : (original?.files ?? []);
   if (retained?.files.some(file => files.includes(file))) return retained.agent;
   return assigned.find(reader => reader.files.some(file => files.includes(file)))?.agent;
+}
+
+// The readers asked the foundation question: the one triage gave it, and any seat engine constraints moved that reader's
+// files to; undefined when triage named no reader of its own
+function foundationOf(chosen: string | null, readers: Read[], assigned: Read[]) {
+  if (chosen === null) return [];
+  const original = readers.find(reader => reader.agent === chosen);
+  if (!original) return undefined;
+  const kept = assigned.filter(reader => reader.agent === chosen).flatMap(reader => reader.files);
+  const moved = original.files.filter(file => !kept.includes(file));
+  return assigned
+    .filter(reader => reader.agent === chosen || reader.files.some(file => moved.includes(file)))
+    .map(reader => reader.agent);
 }
 
 function eligibleFor(pr: number) {
@@ -241,15 +240,23 @@ function readersOf(pr: number, report: any, eligible: (agent: unknown) => boolea
 
 function omissionProblem(pr: number, report: any, assigned: Read[], files: string[], consolidator?: string) {
   const chosen = new Set([...assigned.map(reader => reader.agent), consolidator]);
-  const omitted = finders(pr, files).filter(reader => !chosen.has(reader.agent));
-  if (
-    omitted.some(
-      reader =>
-        !Array.isArray(report.exceptions) ||
-        !report.exceptions.some((exception: any) => exception?.agent === reader.agent && words(exception.reason)),
-    )
-  )
+  const excepted = (agent: string) =>
+    Array.isArray(report.exceptions) &&
+    report.exceptions.some((exception: any) => exception?.agent === agent && words(exception.reason));
+  if (finders(pr, files).some(reader => !chosen.has(reader.agent) && !excepted(reader.agent)))
     return 'omitted finder needs a reason';
+  const readability = readabilityReader(pr);
+  if (readability && !chosen.has(readability) && !excepted(readability))
+    return 'omitted readability reader needs a reason';
+}
+
+// The readability reader a first read chooses unless excepted: none on a re-review, or when they may not read
+function readabilityReader(pr: number) {
+  const agent = roles().readability;
+  const { fixes_from } = db.prepare('select fixes_from from prs where number = ?').get(pr) as {
+    fixes_from: string | null;
+  };
+  return agent && !fixes_from && eligibleFor(pr)(agent) ? agent : undefined;
 }
 
 // A reader's files as paths: a folder (ending in /) or a glob reads as the round's files it matches, a path as itself.

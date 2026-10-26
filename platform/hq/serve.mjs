@@ -15,16 +15,20 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/cs
 // read: a path from the repo's root → its bytes (the working tree's, or a commit's); files: bytes that stand in for a path
 export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files = {}) {
   const server = createServer(async (req, res) => {
-    const asked = decodeURIComponent(new URL(req.url, 'http://x').pathname).slice(1), path = !asked || asked.endsWith('/') ? `${asked}index.html` : asked;
+    // An address that doesn't parse (`//`, a broken escape like `/a%`) gets a 400, so it doesn't stop the server.
+    const asked = addressOf(req.url);
+    if (asked === null) return res.writeHead(400).end();
+    const path = !asked || asked.endsWith('/') ? `${asked}index.html` : asked;
     // (and a company's own HQ apps at /kits/<name>/…, from kits/<name>/hq/)
     const kit = /^kits\/([a-z0-9][a-z0-9-]*)\/(.+)$/.exec(path);
     // (and the keys' motion, the statistics and the signs Slate shares, shared/tactile/, shared/stats/ and shared/signs/
     // with the contrast sums it imports.)
     const sharedKit = /^shared\/(tactile|stats|signs|contrast)\/[a-z]+\.js$/.test(path);
-    // (and review mode's framing rule, which HQ's note thumbnails import, its pen, which the Sketchbook draws with, the
-    // platform's sound kit, its button that asks once more and its contrast sums, and the holidays' table and the shared
-    // formats the clock imports; the pen)
-    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
+    // (and review mode's framing rule, which HQ's note thumbnails import, its pen, which the Sketchbook draws with, its
+    // paper, the book's too, the platform's sound kit, its button that asks once
+    // more and its contrast sums, and the holidays' table and the shared formats the clock imports; the pen; the anchor
+    // and the QR a second screen pairs by; the slips the book's answers are drawn as)
+    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', '__review/paper.js': 'shared/review/paper.js', '__review/anchor.js': 'shared/review/anchor.js', '__review/slip.js': 'shared/review/slip.js', 'shared/qr/qr.js': 'shared/qr/qr.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
       'shared/holidays/holidays.js': 'shared/holidays/holidays.js', 'shared/format/format.js': 'shared/format/format.js' }[path];
     // (and the looks HQ ships, read from their folders.)
     const listed = path === 'renderers/looks.json' && JSON.stringify(looks());
@@ -34,6 +38,15 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
   });
   await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
   return server;
+}
+
+// a request's address → its path from the root, decoded, or null when it doesn't parse
+function addressOf(url) {
+  try {
+    return decodeURIComponent(new URL(url, 'http://x').pathname).slice(1);
+  } catch {
+    return null;
+  }
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) console.log(`HQ in dev mode: http://127.0.0.1:${(await serve(undefined, Number(process.argv[2] ?? 8000))).address().port}/`);

@@ -1,33 +1,25 @@
 // The projects view's levels and the moves between them: where the board is (home, a business, a project, a thread or a
-// group) and the keys beside it, the change one level up or to the next key beside, a sideways drag that brings that
-// one in, and the motion of each. projects.js keeps the view and paints it. work: the board's businesses and projects,
-// and the done threads it has opened.
+// group), the change one level up, and the motion of each. projects.js keeps the view and paints it. work: the board's
+// businesses and projects (open, and completed: those whose threads are all done), and the done threads it has opened.
 
 import { sfx } from './audio.js';
 import { dropKey, pinKey } from './drop.js'; // (pinKey)
-import { inEtaOrder, finished } from './threads.js'; // (finished)
+import { finished } from './threads.js';
+import { LISTS } from './threadlist.js';
 
-const SWIPE = 70; // how far a sideways drag on a level goes before the next one beside it comes in (CSS px)
+// Where the board starts: home, nothing open (projects.js view)
+export const HOME = { business: null, project: null, thread: null, group: null, jobId: null, showDone: false };
 
-// The level the board is at, and the keys beside it (a swipe's)
+// The level the board is at. A thread opened from a list of threads names it (list).
 export function level(view, work) {
-  const p = work.projects.find(x => x.id === view.project),
+  const p = [...work.projects, ...work.completed].find(x => x.id === view.project),
     t = p && threadIn(p, view.thread, work);
-  // (a done thread has no keys beside it: the open ones are its project's, in the order its page lists them)
-  if (t)
-    return {
-      at: 'thread',
-      p,
-      t,
-      beside: p.threads.includes(t) ? inEtaOrder(p).map(x => x.id) : [],
-      key: 'thread',
-      on: t.id,
-    };
-  if (p) return { at: 'project', p, beside: siblingsOf(p, work).map(x => x.id), key: 'project', on: p.id };
+  if (t) return { at: 'thread', p, t, list: LISTS[view.group] ? view.group : null };
+  if (p) return { at: 'project', p };
   const b = work.businesses.find(x => x.id === view.business);
-  if (b) return { at: 'business', b, beside: work.businesses.map(x => x.id), key: 'business', on: b.id };
-  if (view.group) return { at: 'group', beside: [] };
-  return { at: 'home', beside: [] };
+  if (b) return { at: 'business', b };
+  if (view.group) return { at: 'group' };
+  return { at: 'home' };
 }
 // A project's thread: an open one, or a done one of its own the board opened (its jobs loaded on the tap)
 function threadIn(p, id, work) {
@@ -35,47 +27,28 @@ function threadIn(p, id, work) {
   return p.threads.find(x => x.id === id) ?? (done?.project === p.id ? done : undefined);
 }
 export const projectsOf = (business, work) => work.projects.filter(p => p.business === business);
-// a project's neighbours: its business's projects, a routine's the other routines (each with its schedule), or every other project where the company has no businesses
-const siblingsOf = (p, work) =>
-  p.business && work.businesses.length
-    ? projectsOf(p.business, work)
-    : work.projects.filter(x => !x.schedule === !p.schedule);
 
 // ---------------------------------------------------------------- the changes
 // Into a business: at its projects' tiles, even when it has only the one
 export const intoBusiness = id => ({ business: id, project: null, thread: null });
-// One level up: a thread to its project, a project to its business, a routine's to Recurring, a business or a group
-// home. Null at home.
+// One level up: a thread to its project or the list it was opened from, a project to its business, a routine's to
+// Recurring, a business or a group home. Null at home.
 export function upFrom(l, work) {
   if (l.at === 'home') return null;
+  if (l.at === 'thread' && l.list) return { project: null, thread: null, showDone: false };
   if (l.at === 'thread') return { thread: null, showDone: work.closed.has(l.t.id) };
   if (l.at === 'project' && l.p.schedule) return { project: null, business: null, group: 'recurring' };
   if (l.at === 'project' && work.businesses.some(b => b.id === l.p.business))
     return { business: l.p.business, project: null };
   return { business: null, project: null, thread: null, group: null };
 }
-// The next key beside the level's, round (by: 1 or -1), or null where it has none
-export function besideOf(l, by) {
-  if (l.beside.length < 2) return null;
-  const i = l.beside.indexOf(l.on),
-    id = l.beside[(i + by + l.beside.length) % l.beside.length];
-  const change =
-    l.key === 'business' ? intoBusiness(id) : l.key === 'project' ? { project: id, thread: null } : { thread: id };
-  return { ...change, showDone: false };
-}
 
 // ---------------------------------------------------------------- the motion
-// motion: 'down' a level (its keys drop in), 'up' one, 'from-right'/'from-left' beside it, '' on a refresh (where
-// everything was scrolled to stays)
+// motion: 'down' a level (its keys drop in), 'up' one, '' on a refresh (where everything was scrolled to stays)
 // The level's keys fade out the way it goes (projects.js's go commits a move after this, unless a later one came)
 export async function leave(grid, motion) {
   if (!motion || !grid || still()) return;
-  const out =
-    motion === 'down'
-      ? 'scale(.97)'
-      : motion === 'up'
-        ? 'scale(1.02)'
-        : `translateX(${motion === 'from-right' ? -40 : 40}px)`;
+  const out = motion === 'down' ? 'scale(.97)' : 'scale(1.02)';
   await grid
     .animate([{ opacity: 1 }, { opacity: 0, transform: out }], { duration: 140, easing: 'ease-in', fill: 'forwards' })
     .finished.catch(() => {
@@ -84,16 +57,16 @@ export async function leave(grid, motion) {
 }
 // The level's keys come in: down, those in view drop in one after another from above the head and land with a clack,
 // as the home page's keys do (or are pinned on, in a look whose --pj-arrival is pin), and a thread's task rows, which
-// aren't tiles, fade in with their tree's lines; up, they settle from a little bigger; beside, from the side of the
-// swipe. Where the board is, in the head, comes the way it went.
+// aren't tiles, fade in with their tree's lines; up, they settle from a little bigger. Where the board is, in the head,
+// comes the way it went.
 export function moveIn(el, motion) {
   if (!motion || still()) return;
   const board = el.querySelector('.pj-board').getBoundingClientRect(),
     inView = k => k.getBoundingClientRect().top < board.bottom,
     keys = [...el.querySelectorAll('.pj-level .pj-tile, .pj-level:not(.pj-tasks) > .pj-none')].filter(inView),
     rows = [...el.querySelectorAll('.pj-tasks > li')].filter(inView),
-    told = [...el.querySelectorAll('.pj-head > :not(.pj-key, .pj-slot)')];
-  const side = motion === 'up' || motion === 'from-left' ? -1 : 1;
+    told = [...el.querySelectorAll('.pj-head :is(.pj-where, .pj-marks, .pj-keys)')];
+  const side = motion === 'up' ? -1 : 1;
   for (const k of told)
     k.animate(
       [
@@ -118,11 +91,11 @@ export function moveIn(el, motion) {
       }),
     );
   }
-  const from =
-    motion === 'up'
-      ? { opacity: 0, transform: 'scale(1.04)' }
-      : { opacity: 0, transform: `translateX(${side * 50}px)` };
-  comeIn([...keys, ...rows], from, { duration: 300, stagger: 18, easing: 'cubic-bezier(.2, .9, .3, 1.12)' });
+  comeIn(
+    [...keys, ...rows],
+    { opacity: 0, transform: 'scale(1.04)' },
+    { duration: 300, stagger: 18, easing: 'cubic-bezier(.2, .9, .3, 1.12)' },
+  );
 }
 // Elements in from a frame of their own, one after another
 const comeIn = (els, from, { duration, stagger, easing }) =>
@@ -141,6 +114,8 @@ export function placeOf(j) {
   const done = !j.project.threads.includes(j.projectThread) || finished(j);
   return { business: null, group: null, project: j.project.id, thread: j.projectThread.id, showDone: done };
 }
+// A place view names, as a key (projects.js keeps each level's scroll by it)
+export const placeKey = v => [v.group, v.business, v.project, v.thread].join('/');
 // Whether work holds the place view names (its thread, project or business): a done thread not loaded yet, say, doesn't.
 export function holds(view, work) {
   const at = level(view, work).at;
@@ -232,50 +207,3 @@ export function turn(card) {
   };
 }
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-// A sideways drag on el carries the level's keys, and past SWIPE the next one beside it comes in (onSwipe(by), by 1 or
-// -1); up and down it scrolls. mayDrag(e): whether a drag at that pointer event carries the level, asked as it starts
-// and as it goes (a key lifted to sort ends it). The click that ends a drag isn't a tap: it stops before el's own
-// click listeners.
-export function swipes(el, { mayDrag, onSwipe }) {
-  let drag = null,
-    swiped = false;
-  el.addEventListener(
-    'click',
-    e => {
-      if (swiped) e.stopImmediatePropagation();
-      swiped = false;
-    },
-    { capture: true },
-  );
-  el.addEventListener('pointerdown', e => {
-    swiped = false;
-    const grid = e.target.closest('.pj-level');
-    if (grid && mayDrag(e)) drag = { grid, x: e.clientX, y: e.clientY, dx: 0 };
-  });
-  el.addEventListener('pointermove', e => {
-    if (!drag) return;
-    if (!mayDrag(e)) {
-      drag.grid.style.transform = '';
-      drag = null;
-      return;
-    }
-    drag.dx = e.clientX - drag.x;
-    if (Math.abs(drag.dx) > 8 && Math.abs(drag.dx) > Math.abs(e.clientY - drag.y))
-      Object.assign(drag.grid.style, { transition: 'none', transform: `translateX(${drag.dx}px)` });
-  });
-  const lift = () => {
-    if (!drag) return;
-    const { grid, dx } = drag;
-    drag = null;
-    // (the click that ends it, in the same task, isn't a tap)
-    if (Math.abs(dx) > 8 && grid.style.transform) {
-      swiped = true;
-      setTimeout(() => (swiped = false));
-    }
-    if (Math.abs(dx) > SWIPE && grid.style.transform) onSwipe(-Math.sign(dx));
-    else Object.assign(grid.style, { transition: 'transform .2s', transform: '' });
-  };
-  el.addEventListener('pointerup', lift);
-  el.addEventListener('pointercancel', lift);
-}

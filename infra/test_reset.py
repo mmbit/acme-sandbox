@@ -45,11 +45,11 @@ class Company(unittest.TestCase):
                  'template/company/org.yaml': 'template org\n', 'template/company/infra.env': 'SERVER_NAME=company\n',
                  'template/theme/hq.yaml': 'renderer: wire\n',
                  'AGENTS.md': 'our agents\n', 'company/CHARTER.md': 'our mission\n', 'company/org.yaml': 'eleven agents\n',
-                 'company/brand.yaml': 'name: Testco\n', 'company/infra.env': INFRA_ENV, 'company/people/lyra.md': 'long memory\n',
+                 'company/brand.yaml': 'name: Testco\n', 'company/infra.env': INFRA_ENV, 'company/people/ada.md': 'long memory\n',
                  'theme/hq.yaml': 'renderer: holo\n', 'products/shop/app.js': 'shop\n', 'kits/sound/bed.js': 'bed\n',
                  'knowledge/notes/a.md': 'note\n', 'concepts/round-1.md': 'concept\n',
                  'company/reset.yaml': 'id: 2026-10-03-clean\nkeep:\n  - company/brand.yaml\n  - theme/\n',
-                 'company/reset/company/org.yaml': 'lyra and the board\n', 'company/reset/company/people/lyra.md': 'fresh profile\n'}
+                 'company/reset/company/org.yaml': 'ada and the board\n', 'company/reset/company/people/ada.md': 'fresh profile\n'}
         for path, text in files.items():
             write(self.repo, path, text)
         git(self.repo, 'add', '-A')
@@ -81,8 +81,8 @@ class Company(unittest.TestCase):
             self.assertNotIn(gone, tracked)
         self.assertEqual(self.read('company/CHARTER.md'), 'template charter\n')
         self.assertEqual(self.read('AGENTS.md'), 'template agents\n')
-        self.assertEqual(self.read('company/org.yaml'), 'lyra and the board\n')
-        self.assertEqual(self.read('company/people/lyra.md'), 'fresh profile\n')
+        self.assertEqual(self.read('company/org.yaml'), 'ada and the board\n')
+        self.assertEqual(self.read('company/people/ada.md'), 'fresh profile\n')
         self.assertEqual(self.read('company/brand.yaml'), 'name: Testco\n')
         self.assertEqual(self.read('theme/hq.yaml'), 'renderer: holo\n')
         self.assertEqual(self.read('company/infra.env'), INFRA_ENV, "the server's names are always kept")

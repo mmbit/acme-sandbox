@@ -7,10 +7,14 @@
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
 //     tapped. Show starts the watch-along as Show my screen does.
 //   - The agent's ink comes down the call's own socket ({ type: 'ink' }); the Pencil draws it in the agent's colour,
-//     kept on the call's page, and the line hears whether it could ({ type: 'inked' }).
+//     kept on the call's page, and the line hears whether it could ({ type: 'inked' }). With a preview open in HQ's
+//     viewer, review mode there rings it instead (calldrive.js inFrame), over the page and not kept.
 //   - Hung up, a call that drew leaves its page in the board's day: kept, or thrown away with one tap.
+//   - A walk-through (a card's Walk me through it) opens its page as it's picked up; hung up, the page stays only if the
+//     board wrote on it, and goes by itself if not (walkthroughs.ts sweeps one HQ couldn't).
 import { esc } from '../util.js';
 import { minimise, share } from './callscreen.js';
+import { inFrame, viewerFrame } from './calldrive.js';
 
 const $ = s => document.querySelector(s);
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
@@ -35,9 +39,9 @@ export function startDrawing(c) {
     resend(c);
   };
   const onPen = e => {
-    if (e.pointerType !== 'pen' || c.small || c.over || e.target.closest?.('button, input, textarea, select, a'))
+    if (e.pointerType !== 'pen' || c.over || e.target.closest?.('button, input, textarea, select, a, .callbubble'))
       return;
-    minimise(c);
+    minimise(c, { pen: true }); // (slim audio bars, minimised already too)
   };
   document.addEventListener('pencil:note', onNote);
   addEventListener('pointerdown', onPen, true);
@@ -45,7 +49,7 @@ export function startDrawing(c) {
     document.removeEventListener('pencil:note', onNote);
     removeEventListener('pointerdown', onPen, true);
   };
-  event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color });
+  event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color, walk: c.walk });
 }
 // Notes the line hasn't said it has, on this connection (a new one: all of them again)
 export function resend(c) {
@@ -65,6 +69,7 @@ export const FROM_LINE = {
   heard: (c, ev) => event('call:heard', { text: ev.text }),
   ask: (c, ev) => askCard(c, ev),
   ink(c, ev) {
+    if (viewerFrame()) return inPreview(c, ev);
     let answered = false;
     const reply = ({ drawn, why }) => {
       if (answered || c.over) return;
@@ -81,6 +86,24 @@ export const FROM_LINE = {
   },
 };
 
+// The agent's ring in the preview open in HQ's viewer: round words there (its notes are on HQ's own pages)
+async function inPreview(c, ev) {
+  const answer =
+    ev.note == null
+      ? await inFrame({ ring: ev.ring, words: ev.words ?? '', color: c.color, name: c.name }).catch(err => ({
+          done: false,
+          why: `HQ couldn't ask the preview (${err?.message || err}).`,
+        }))
+      : {
+          done: false,
+          why: `They have a preview open: their notes are on HQ's own pages. Ring words the preview shows.`,
+        };
+  if (!c.over)
+    c.ws?.send(
+      JSON.stringify({ type: 'inked', id: ev.id, drawn: !!answer.done, ...(answer.why ? { why: answer.why } : {}) }),
+    );
+}
+
 // ---- the agent's ask to see: one card at a time, the newest, until it's tapped
 function askCard(c, ev) {
   if (c.asked?.id === ev.id) return; // (sent again on a new connection)
@@ -93,14 +116,20 @@ function askCard(c, ev) {
     if (c.asked?.id === ev.id) c.asked = null;
     c.ws?.send(JSON.stringify({ type: 'asked', id: ev.id, answer: word }));
   };
-  card.querySelector('[data-show]').onclick = () => {
-    share(c);
-    answer('show');
+  // (a share that doesn't start leaves the ask waiting, the card saying so: the agent hears Show only once it's shown)
+  // (both buttons wait while it starts, so the ask is answered once)
+  const show = card.querySelector('[data-show]');
+  const not = card.querySelector('[data-not]');
+  show.onclick = async () => {
+    show.disabled = not.disabled = true;
+    if (await share(c)) return answer('show');
+    show.disabled = not.disabled = false;
+    card.querySelector('p').textContent = 'Your screen couldn’t be shown. Tap Show to try again.';
   };
-  card.querySelector('[data-not]').onclick = () => answer('not now');
+  not.onclick = () => answer('not now');
 }
-// A call's card over HQ and the call alike, never recorded (the call's own controls)
-function cardOf(c, kind) {
+// A call's card over HQ and the call alike, never recorded (the call's own controls); calldrive.js's too
+export function cardOf(c, kind) {
   let box = $('#call-cards');
   if (!box) {
     box = Object.assign(document.createElement('div'), { id: 'call-cards' });
@@ -124,7 +153,24 @@ export async function stopDrawing(c) {
     setTimeout(done, FILED_WAIT_MS);
   });
   c.drawing();
+  if (c.walk) return walkEnded(c);
   if (c.page || c.drew) pageCard(c);
+}
+// A walk-through's page as the call ends: kept, with the card, if the board wrote on it (a note of its own, the book's
+// ink or a picture), else thrown away. Left as it is if the book can't say: the sweep takes an empty one.
+async function walkEnded(c) {
+  try {
+    const page = await callPage(c),
+      notes = await fetch(`/api/book/notes?page=${page.id}`, { credentials: 'same-origin' });
+    if (!notes.ok) throw new Error(`its notes: ${notes.status}`);
+    const written = page.strokes || page.pictures || (await notes.json()).notes.some(n => n.by !== c.agent);
+    if (written) return pageCard(c);
+    const gone = await post('/api/book/page/delete', { id: page.id });
+    if (!gone.ok) throw new Error(`the book answered ${gone.status}`);
+    event('book:paged');
+  } catch (err) {
+    console.error('[hq] the walk-through’s page wasn’t looked at:', err);
+  }
 }
 // The card for the page the call left: its id from the board's notes, or (the agent's ink alone made it) found in
 // today's book as Throw away is tapped
@@ -135,10 +181,11 @@ function pageCard(c) {
   card.querySelector('[data-keep]').onclick = () => card.remove();
   card.querySelector('[data-away]').onclick = async () => {
     try {
-      c.page ??= await callPage(c);
+      c.page ??= (await callPage(c)).id;
       const gone = await post('/api/book/page/delete', { id: c.page });
       if (!gone.ok) throw new Error(`the book answered ${gone.status}`);
       card.remove();
+      event('book:paged');
     } catch (err) {
       console.error("HQ: the call's page wasn't thrown away", err);
       card.querySelector('p').textContent = 'The page couldn’t be thrown away just now. Try again?';
@@ -150,7 +197,7 @@ async function callPage(c) {
   if (!day.ok) throw new Error(`today's book: ${day.status}`);
   const page = (await day.json()).pages.find(p => p.kind === 'call' && p.call === c.call);
   if (!page) throw new Error(`call ${c.call} has no page in today's book`);
-  return page.id;
+  return page;
 }
 const post = (path, body) =>
   fetch(path, {

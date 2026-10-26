@@ -4,9 +4,9 @@ from pathlib import Path
 
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
-# (git, report; ask_to_see, draw)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'draw', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job', 'manage',
-              'pin_sent', 'pin_words', 'promise', 'reach', 'replace', 'report', 'screen', 'search', 'sketch', 'waiting', 'when']
+# (git, report; ask_to_see, draw; drive, open_work; pin_words and pin_sent gone with HQ's waiting notes)
+CALL_TOOLS = ['add', 'ask_to_see', 'call', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job',
+              'manage', 'open_work', 'promise', 'reach', 'replace', 'report', 'screen', 'search', 'sketch', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
 # Off limits to Read, Grep and Glob, where a set has them
 FENCED = ('/proc', '/seat', '/data', '/dev', '/sys', '/etc', '/models', '/tmp')
@@ -33,7 +33,9 @@ def cli_tools(names, builtin, tool_set=None):
 # call, intercom and projects (eta), reads the server's status report (report) and every branch's code (git: the
 # worker's mirror, read only), searches and fetches the web (WebSearch runs at Anthropic; WebFetch from this container,
 # as a job's does from the worker), and sees the caller's screen on a walk-through (screen) and the board's sketches
-# (sketch), asks to see the board's screen (ask_to_see) and rings things on its page (draw), all through the voice line's own socket. What stays shut, and why:
+# (sketch), asks to see the board's screen (ask_to_see) and rings things on its page (draw), suggests opening a piece of
+# work there and moves it while it talks (open_work, drive), all through the
+# voice line's own socket. What stays shut, and why:
 # - no shell (Bash): it runs as the line's uid, which can read /seat, the seat's sign-in (README's "Trust"), and a
 #   command steered by any text it reads (a web page, a misheard word) could send that anywhere. Its reads are tools
 #   that run hq and git from argument lists they build, so no word of the agent's becomes a command.
@@ -89,13 +91,14 @@ def sign_in_pipe(seat_token):
     return r
 
 
-def agent_env(environ, hq_url, sign_in_fd, call_token, agent, screen=None, time_zone='UTC'):
+def agent_env(environ, hq_url, sign_in_fd, call_token, agent, screen=None, time_zone='UTC', *, work, cli_config):
     """The call agent's whole environment: nothing of the server's passes but PATH and HOME (sign_in_fd:
     sign_in_pipe). screen: the line's screen socket and the session's key, on a call with a screen (hq_tools.py's
     screen and sketch tools read them; hq never gets them). time_zone: the board's clock (the call's
-    company.timeZone), hq's answers' times are in it."""
-    return {'PATH': environ['PATH'], 'HOME': environ.get('HOME', '/data/call'), 'LANG': 'C.UTF-8',
-            'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR': str(sign_in_fd), 'CLAUDE_CONFIG_DIR': '/data/claude',
+    company.timeZone), hq's answers' times are in it. work: HOME where the server has none; cli_config: the CLI's
+    config folder (server.Paths' work and cli_config)."""
+    return {'PATH': environ['PATH'], 'HOME': environ.get('HOME', str(work)), 'LANG': 'C.UTF-8',
+            'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR': str(sign_in_fd), 'CLAUDE_CONFIG_DIR': str(cli_config),
             'DISABLE_AUTOUPDATER': '1', 'HQ_URL': hq_url, 'HQ_TOKEN': call_token, 'HQ_AGENT': agent,
             'HQ_CALL': '1',  # (hq job and hq item: the brief and the words on stdin, never a file)
             # (what hq answers on a call is read out: its times on the board's clock)

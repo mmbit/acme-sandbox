@@ -10,9 +10,12 @@ import { sfx } from './audio.js';
 import { sheetPen, pictureOf } from './sketchpen.js';
 import { offerPaste, placeWaiting, wirePictures } from './sketchpaste.js';
 import { tray } from './sketchtools.js';
+import { merged, mergedScraps } from './pagemerge.js';
 
 const SAVE_AFTER_MS = 1200,
   RETRY_MS = 5000,
+  // an open sketch looks for another's ink this often while it shows
+  LOOK_MS = 10000,
   // the bar's and the tray's room around the page, and the page's margin on the desk
   BAR_PX = 60,
   TRAY_PX = 132,
@@ -39,7 +42,7 @@ export async function openSketch(book, id, closed) {
   box.setAttribute('aria-label', sketch.label || 'Untitled sketch');
   box.innerHTML = pageHtml(sketch, book.to);
   document.body.append(box);
-  const page = { book, sketch, box, closed, find: s => box.querySelector(s), adding: new Set() };
+  const page = { book, sketch, box, closed, find: s => box.querySelector(s), adding: new Set(), base: baseOf(sketch) };
   page.say = (words, warn) => say(page, words, warn);
   const inHand = tray(page.find('.sk-tray'), held => box.classList.toggle('erasing', held.kind === 'eraser'));
   page.save = saver(page);
@@ -55,9 +58,15 @@ export async function openSketch(book, id, closed) {
   const fits = new ResizeObserver(() => place(page));
   fits.observe(page.find('.sk-desk'));
   const pictures = wirePictures(page);
+  // (another's ink: the board's in a person's own book, theirs in the board's view of it.)
+  const look = () => !document.hidden && lookAgain(page),
+    looking = setInterval(look, LOOK_MS);
+  document.addEventListener('visibilitychange', look);
   page.stop = () => {
     fits.disconnect();
     pictures.stop();
+    clearInterval(looking);
+    document.removeEventListener('visibilitychange', look);
   };
   wireBar(page);
   box.showModal();
@@ -172,19 +181,50 @@ function full(page, words) {
 }
 
 // The sketch as it is now, saved once its pictures are loaded to be drawn: its lines, its pictures (one still on its way
-// up isn't the sketch's yet) and the page rendered
-function saving(page) {
+// up isn't the sketch's yet) and the page rendered. Saved over the sketch as last read or saved (since); one someone
+// else changed meanwhile is read again, merged and saved
+function saving(page, again = true) {
   const ink = page.ink.lines.slice(),
     scraps = page.ink.scraps.filter(s => s.file).map(s => ({ ...s }));
+  const body = () => ({
+    id: page.sketch.id,
+    ink,
+    scraps: placed(scraps),
+    picture: ink.length || scraps.length ? pictureOf({ ...page.sketch, ink, scraps }) : null,
+    since: page.sketch.updated,
+  });
   return () =>
     page.ink.ready().then(() =>
-      page.book.act('save', {
-        id: page.sketch.id,
-        ink,
-        scraps: scraps.map(({ file, x, y, w, h, tilt }) => ({ file, x, y, w, h, tilt })),
-        picture: ink.length || scraps.length ? pictureOf({ ...page.sketch, ink, scraps }) : null,
-      }),
+      page.book.act('save', body()).then(
+        saved => ((page.base = { ink, scraps: placed(scraps) }), saved),
+        async e => {
+          if (e.status !== 409 || !again) throw e;
+          catchUp(page, await page.book.load(page.sketch.id));
+          return saving(page, false)();
+        },
+      ),
     );
+}
+const placed = scraps => scraps.map(({ file, x, y, w, h, tilt }) => ({ file, x, y, w, h, tilt }));
+const baseOf = sketch => ({ ink: sketch.ink.slice(), scraps: placed(sketch.scraps ?? []) });
+// The sketch as the store has it now (now: read whole) merged into the page: this side's lines and pictures since it
+// last read or saved it, and the other side's (pagemerge.js)
+function catchUp(page, now) {
+  const { ink, scraps } = page.base;
+  page.ink.replace(merged(ink, page.ink.lines, now.ink), mergedScraps(scraps, page.ink.scraps, now.scraps));
+  Object.assign(page, { base: baseOf(now) });
+  page.sketch.updated = now.updated;
+  steps(page);
+}
+// While it shows and nothing of this side's waits to be saved: the sketch read again, and another's ink drawn in
+async function lookAgain(page) {
+  if (page.save.pending || page.shutting || page.looking) return;
+  page.looking = true;
+  const at = page.sketch.updated,
+    now = await page.book.load(page.sketch.id).catch(() => null);
+  page.looking = false;
+  // (a save of this side's that landed meanwhile is newer than what was read)
+  if (now && now.updated !== at && page.sketch.updated === at && !page.save.pending) catchUp(page, now);
 }
 
 function wireBar(page) {

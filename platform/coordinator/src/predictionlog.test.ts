@@ -258,7 +258,7 @@ test('hq estimate --calibration splits the sizes by agent, area and sizer, and t
     'README.md',
   ]);
   done('kit', 40, 20, landed, ['platform/coordinator/src/c.ts']);
-  done('ada', 30, 30, landed, ['products/carrel/app.js'], 'haiku');
+  done('ada', 30, 30, landed, ['products/acme/app.js'], 'haiku');
   // a's ETA as logged: a day and more before it landed, an hour late; seven hours before, 20 minutes early; two
   // hours before, on time (its slow time a quarter of an hour after)
   const log = h.db.prepare(
@@ -281,7 +281,7 @@ test('hq estimate --calibration splits the sizes by agent, area and sizer, and t
   );
   assert.equal(group(r.body.sizes.by_agent, 'kit').count, 2);
   assert.equal(group(r.body.sizes.by_area, 'platform/coordinator').count, 2);
-  assert.equal(group(r.body.sizes.by_area, 'products/carrel').count, 1);
+  assert.equal(group(r.body.sizes.by_area, 'products/acme').count, 1);
   const lead = (name: string) => r.body.eta.find((l: any) => l.lead === name);
   assert.deepEqual(
     ['an hour', 'six hours', 'a day'].map(name => [

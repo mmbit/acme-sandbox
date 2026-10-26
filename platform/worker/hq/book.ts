@@ -77,12 +77,17 @@ const labelled = (s: Sketch) => (s.label ? ` “${oneLine(s.label)}”` : '');
 // The pictures placed on it, after `gap`, or nothing when there are none.
 const pictured = (s: Sketch, gap: string) => (s.pictures ? `${gap}${plural(s.pictures, 'picture')}` : '');
 
+// (--artifact)
+const FLAGS = ['--picture', '--link', '--artifact'];
 export const answer = {
   help: `
    hq answer <note> "<answer>" [--picture <file>]   clip your answer onto a note the board sent you from its book (its
-       [--link <https url>]                          number in your brief): what you did, or the answer, in a sentence or
+       [--link <https url>] [--artifact <id>]        number in your brief): what you did, or the answer, in a sentence or
                                                      two for the board; a picture (png or jpg, 2 MB at most) or a running
-                                                     preview's link to show it. The board ticks it, or writes a reply
+                                                     preview's link to show it; --artifact: something new that runs (an
+                                                     app, a page), by its id in HQ's artifacts (an app's slug, a path
+                                                     for an artifact.yaml), its running preview shown on the answer once
+                                                     it's merged and running. The board ticks it, or writes a reply
                                                      under it, which comes back to you as a new note`,
 
   async run(args: string[]) {
@@ -90,17 +95,17 @@ export const answer = {
       words = args[1] ?? '';
     const flags = new Map<string, string>();
     for (let k = 2; k < args.length; k += 2) flags.set(args[k], args[k + 1] ?? '');
-    const known =
-      [...flags.keys()].every(f => f === '--picture' || f === '--link') && [...flags.values()].every(Boolean);
+    const known = [...flags.keys()].every(f => FLAGS.includes(f)) && [...flags.values()].every(Boolean);
     if (!/^[0-9]+$/.test(note) || !words.trim() || !known)
-      stop('usage: hq answer <note> "<answer>" [--picture <file>] [--link <https url>]');
+      stop('usage: hq answer <note> "<answer>" [--picture <file>] [--link <https url>] [--artifact <id>]');
     const file = flags.get('--picture');
     const bytes = file === undefined ? null : readBytes(file);
     if (file !== undefined && !bytes) stop(`hq answer: can't read ${file}`);
     const type = bytes && bytes[0] === 0x89 ? 'png' : 'jpeg';
     const picture = bytes ? { picture: `data:image/${type};base64,${bytes.toString('base64')}` } : {};
     const link = flags.has('--link') ? { link: flags.get('--link') } : {};
-    await post('answer', { note: Number(note), text: words, ...picture, ...link });
+    const artifact = flags.has('--artifact') ? { artifact: flags.get('--artifact') } : {};
+    await post('answer', { note: Number(note), text: words, ...picture, ...link, ...artifact });
     print(`Answer clipped onto note #${note}.`);
   },
 };

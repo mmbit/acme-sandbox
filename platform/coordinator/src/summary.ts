@@ -3,11 +3,13 @@
 // items, merged and deployed), the threads whose work is in for their owners to judge (threadjudge.ts), the platform's
 // alarms on now (alarms.ts), what threatens the plan (threats.ts), what
 // waits for a decision of the board's, the work proposed to the CEO, and whether the queue grew faster than it drained.
+// After the board's asks come the company's goals (goals.ts), what its kits add (kits.ts heartbeat: the numbers it steers
+// by) and the meetings closed since the last check.
 // It's read from the minute's forecast and HQ's own records, and it tells nobody: the CEO's hourly follow-through check
 // carries it (followthrough.ts), and whether the board hears any of it, work it asked to hear about the moment it's
 // ready included, is the CEO's call.
 import { db } from './db.ts';
-import { agreements } from './agreements.ts';
+import { agreements, readyFor } from './agreements.ts';
 import * as jobs from './jobs.ts';
 import * as threats from './threats.ts';
 import * as finished from './finished.ts';
@@ -16,6 +18,9 @@ import * as proposals from './proposals.ts';
 import * as decisions from './decisions.ts';
 import * as alarms from './alarms.ts';
 import * as routing from './routing.ts';
+import * as goals from './goals.ts';
+import * as kits from './kits.ts';
+import { closedSince } from './meetingchair.ts';
 import type { Forecast } from './forecast.ts';
 
 const HOUR_MS = 3_600_000;
@@ -25,14 +30,23 @@ const QUEUE_HOURS = 6;
 type Part = { head: string; lines: string[] };
 
 // The summary as hq summary prints it, and whether anything in it is for the CEO to look at (the follow-through check
-// is queued for it): a line in any part but the finished one, where only work carrying the board's word counts (a
-// finished thread of the company's own is news, not a reason to look). The queue's line is always there.
-//
+// is queued for it): an open goal, or a line in any part but the news, where only finished work carrying the board's
+// word counts (a finished thread of the company's own is news, not a reason to look, and so are the kits' numbers and
+// the meetings closed). The queue's line is always there.
 export function read(f: Forecast) {
   const done = finished.lines(f.now);
   const news: Part = { head: 'Finished since the last check (merged and deployed)', lines: done.map(d => d.line) };
+  const numbers = kits.heartbeat();
+  const meetings: Part = { head: 'Meetings closed since the last check', lines: closedSince(threats.lastCheck(f.now)) };
+  const told = [news, meetings, ...numbers];
   const parts: Part[] = [
     { head: 'The board asked for (and how long it has waited)', lines: asked(f.now) },
+    {
+      head: 'Our goals (projects the CEO marked: each bet a thread, its number in its done when)',
+      lines: goals.lines(f),
+    },
+    ...numbers,
+    meetings,
     news,
     {
       head: 'Ready to judge (each owner closes it with hq plan done or draws its next task)',
@@ -44,11 +58,12 @@ export function read(f: Forecast) {
     { head: "Proposed, each for its project's owner (hq inbox --all)", lines: proposals.waiting() },
   ];
   const shown = parts.filter(p => p.lines.length).map(p => `${p.head}:\n${p.lines.map(l => `- ${l}`).join('\n')}`);
-  const worth = parts.some(p => p !== news && p.lines.length > 0) || done.some(d => d.board);
+  const worth = parts.some(p => !told.includes(p) && p.lines.length > 0) || done.some(d => d.board);
   return { text: [...shown, queueLine(f.now)].join('\n\n'), worth };
 }
 
-// The call items still open or whose work is (agreements.ts: a decision handled is a standing rule, not a wait), the
+// The call items still open, ready for the board's yes, or whose work is open (agreements.ts: a decision handled is a
+// standing rule, not a wait), the
 // cards the board answered whose work is still open, the products that owe the board a return after its feedback
 // (owed.ts), the board's notes on a pull request still being worked in, and its sent notes a routing check ended without
 // routing (routing.ts). A customer's card stays out (house rule 7).
@@ -59,7 +74,7 @@ function asked(now: number) {
     .filter(a => a.status === 'open' || a.kind !== 'decision')
     .map(a => {
       const { ts } = db.prepare('select ts from calls where id = ?').get(a.call) as { ts: string };
-      return `item #${a.id} (call ${a.call}, ${a.kind} for ${a.owner}, ${a.status}), waiting ${since(ts)}: ${a.what}`;
+      return `item #${a.id} (call ${a.call}, ${a.kind} for ${a.owner}, ${readyFor(a, now)}), waiting ${since(ts)}: ${a.what}${a.stopped ? ` · returned by stopped job #${a.stopped}` : ''}`;
     });
   const cards = (
     db
@@ -109,7 +124,7 @@ function queueLine(now: number) {
   const { open, came, went } = db
     .prepare(
       `select sum(status in ('queued', 'running', 'blocked')) open, sum(created > $since) came,
-        sum(status in ('done', 'failed', 'cancelled') and finished > $since) went from jobs indexed by jobs_counts
+        sum(status in ('done', 'failed', 'stopped', 'cancelled') and finished > $since) went from jobs indexed by jobs_counts
         where kind != 'chat'`,
     )
     .get({ since }) as { open: number | null; came: number | null; went: number | null };

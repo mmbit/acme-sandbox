@@ -52,7 +52,8 @@ const posting = (session: { id: number; key: string }) => ({
   events: `/api/watchalong/events?id=${session.id}&key=${session.key}`,
 });
 
-// POST /api/watchalong/events?id=<id>&key=<key>: one batch from the page
+// POST /api/watchalong/events?id=<id>&key=<key>: one batch from the page. seen: whether the agent sees it, so a share
+// reaching nobody says so, once a mirror opening for it opened or failed
 export async function addEvents(req: IncomingMessage, res: ServerResponse) {
   const query = new URL(req.url ?? '/', 'http://x').searchParams;
   const id = Number(query.get('id')),
@@ -60,7 +61,8 @@ export async function addEvents(req: IncomingMessage, res: ServerResponse) {
   const body = await readBody(req, store.BATCH_BYTES);
   if (!body) return refuse(req, res, 413, 'too large');
   const status = store.add(kept, id, key, body);
-  return reply(res, status, status === 200 ? { ok: true } : { error: ERRORS[status] });
+  if (status === 200) await mirrors.settled(id); // (the page may send no other batch to be told by)
+  return reply(res, status, status === 200 ? { ok: true, seen: mirrors.seen(id) } : { error: ERRORS[status] });
 }
 const ERRORS: Record<number, string> = {
   400: 'not a batch of events',
@@ -230,8 +232,7 @@ looking over ${their} shoulder would ("the blue button at the bottom"), and neve
 times out. While the screen is paused you see nothing of it.)`;
 };
 
-// What each purpose's agent is told once the screen is shown. A purpose without a briefing is never
-// watched for an agent.
+// What each purpose's agent is told once the screen is shown. A purpose without a briefing is never watched for an agent.
 const BRIEFS = new Map([
   [CALL, briefing('the board', 'its')],
   [CALLOUT, briefing('they', 'their')],

@@ -43,12 +43,9 @@ class CareCall(Juno):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.care = CareService(STARTED)
-        self.saved = {k: getattr(server, k) for k in ('CARE_ENGINES', 'CARE_CALL_SECONDS', 'hq', 'Call')}
-        server.CARE_ENGINES = {'care': {'url': self.care.url, 'token': 'care-test-token', 'calls': 2}}
+        self.engines = {'care': {'url': self.care.url, 'token': 'care-test-token', 'calls': 2}}  # (the line's CARE_ENGINES)
+        self.wiring = self.wiring._replace(care_engines=self.engines)  # (the phone line's, handed to its calls)
         self.hq, self.calls, self.ws = [], [], None
-        server.hq = self.coordinator
-        made = server.Call
-        server.Call = lambda *a, **k: self.calls.append(made(*a, **k)) or self.calls[-1]
         self.ticket = {'agent': 'poppy', 'lang': 'nl', 'kind': 'care', 'langs': LANGS['nl'], 'voice': 'bill_boerst',
                        'voices': {'nl': 'alex', 'de': 'thorsten'}}
         server.SAID.clear()  # (the opening's audio, kept from the call before)
@@ -61,8 +58,6 @@ class CareCall(Juno):
         if getattr(self, 'line', None):
             await asyncio.wait_for(self.line, 5)
         self.care.stop()
-        for k, v in self.saved.items():
-            setattr(server, k, v)
         server.CARE_LIVE.clear()
 
     def coordinator(self, method, path, body=None):
@@ -71,11 +66,13 @@ class CareCall(Juno):
             return self.ticket
         return {}
 
-    async def dial(self, opening=True):
-        """Twilio's stream starts with the care ticket; the call picks up and (opening) its opening has been said."""
+    async def dial(self, opening=True, **limits):
+        """Twilio's stream starts with the care ticket; the call (make_call's, with these of server.Limits, kept in
+        self.calls) picks up and (opening) its opening has been said."""
         self.ws = LiveSocket(json.dumps({'event': 'start', 'start': {'streamSid': 'MZ1', 'callSid': SID,
                                                                       'customParameters': {'ticket': 'tk'}}}), queued=True)
-        self.line = asyncio.create_task(server.phone_call(self.ws))
+        kept = lambda *args, **given: self.calls.append(self.make_call(*args, limits=limits, **given)) or self.calls[-1]
+        self.line = asyncio.create_task(server.phone_call(self.ws, kept, self.wiring))
         for _ in range(300):
             await asyncio.sleep(0.01)
             if self.calls and self.calls[-1].turn or self.ws.closed:
@@ -83,7 +80,6 @@ class CareCall(Juno):
         if self.ws.closed:
             return
         self.call = self.calls[-1]
-        self.call.transcribe = self.transcribe
         if opening:
             await self.settle()
 
@@ -437,7 +433,7 @@ class CareCall(Juno):
         """A second care deployment, shop-two, with its own stand-in care that answers its own token alone."""
         other = CareService(STARTED, token='shop-two-token')
         self.addCleanup(other.stop)
-        server.CARE_ENGINES['shop-two'] = {'url': other.url, 'token': 'shop-two-token', 'calls': calls}
+        self.engines['shop-two'] = {'url': other.url, 'token': 'shop-two-token', 'calls': calls}
         return other
 
     async def test_the_tickets_deployment_takes_the_call_at_its_own_address_with_its_own_token(self):
@@ -479,8 +475,8 @@ class CareCall(Juno):
         self.assertEqual(self.care.asked, [])
 
     async def test_an_unknown_deployment_or_one_without_its_address_or_token_is_refused(self):
-        server.CARE_ENGINES.update({'no-token': {'url': self.care.url, 'token': '', 'calls': 2},
-                                    'no-url': {'url': '', 'token': 'care-test-token', 'calls': 2}})
+        self.engines.update({'no-token': {'url': self.care.url, 'token': '', 'calls': 2},
+                             'no-url': {'url': '', 'token': 'care-test-token', 'calls': 2}})
         for engine, why in (('elsewhere', 'no such deployment'), ('no-token', 'no url or token'),
                             ('no-url', 'no url or token'), (7, 'no such deployment')):
             with self.subTest(engine):
@@ -508,8 +504,7 @@ class CareCall(Juno):
                 self.assertEqual(server.CARE_LIVE, {})
 
     async def test_a_care_call_ends_at_its_time_limit_without_phone_done(self):
-        server.CARE_CALL_SECONDS = 0.5
-        await self.dial(opening=False)
+        await self.dial(opening=False, care_call_seconds=0.5)
         await self.hung_up()
         self.assertTrue(self.ws.closed)
         self.assertNotIn('phone-done', [p for p, _, _ in self.hq])

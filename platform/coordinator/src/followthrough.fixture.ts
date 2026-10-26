@@ -9,7 +9,7 @@ import type { harness } from './harness.ts';
 const RESET = `delete from jobs; delete from runs; delete from calls; delete from call_items; delete from followthrough_checks;
   delete from requests; delete from prs; delete from seats; delete from threads; delete from thread_needs;
   delete from plan_changes; delete from test_results; delete from helper_runs; delete from proposals;
-  delete from meeting_asks; delete from predictions; delete from sizes;
+  delete from meeting_asks; delete from predictions; delete from sizes; update projects set goal = null; delete from pad_versions;
   delete from settings where key = 'followthrough.alarm' or key like 'stall.%' or key in ('company.paused', 'runs.held')`;
 
 // After the harness, as it must come before any of the coordinator's modules.
@@ -84,7 +84,16 @@ async function callHandedOut(
 // A job's thread and its window
 type Placed = { thread: string | null; deadline: number | null; aim: number | null };
 
-type Item = { kind?: string; what?: string; quote?: string; status?: string; job?: number; due?: number };
+// ready: since when its work ended and it waits for the board's yes (ms; ledger.ts done).
+type Item = {
+  kind?: string;
+  what?: string;
+  quote?: string;
+  status?: string;
+  job?: number;
+  due?: number;
+  ready?: number;
+};
 
 // A call with the board (the CEO's unless named) and one item on it, with the time given for it on the call (due, ms)
 // when it has one; returns the call and the item.
@@ -112,7 +121,7 @@ function createAgreement(
   );
   const itemId = db
     .prepare(
-      'insert into call_items (call, kind, owner, what, quote, status, job, due, ts) values (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'insert into call_items (call, kind, owner, what, quote, status, job, due, ts, ready_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       id,
@@ -124,6 +133,7 @@ function createAgreement(
       item.job ?? null,
       item.due ?? null,
       new Date(at).toISOString(),
+      item.ready == null ? null : new Date(item.ready).toISOString(),
     ).lastInsertRowid;
   return { call: id, item: Number(itemId) };
 }

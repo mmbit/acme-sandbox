@@ -39,6 +39,7 @@ const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, 
 const posted = [],
   clips = [],
   dictations = [];
+const SLOW_MS = 2000;
 let line = 'live',
   frames = 0,
   ended = 0;
@@ -97,8 +98,13 @@ function coordinator(ws) {
     }
     if (JSON.parse(m).type !== 'end') return;
     ended++;
-    ws.send(JSON.stringify({ type: 'heard', text: words[2], partial: false }));
-    ws.send(JSON.stringify({ type: 'done' }));
+    const last = () => {
+      ws.send(JSON.stringify({ type: 'heard', text: words[2], partial: false }));
+      ws.send(JSON.stringify({ type: 'done' }));
+    };
+    // (slow: the last phrase comes a while after the stop, as a long one does)
+    if (line === 'slow') setTimeout(last, SLOW_MS);
+    else last();
   });
 }
 function product(r, tool) {
@@ -370,6 +376,22 @@ await page.waitForFunction(
 );
 assert.equal(await page.locator(inUi('textarea')).inputValue(), 'Words from the clip, then make the logo bigger.');
 await page.locator(inUi('[data-cancel]')).tap();
+// a note cancelled while its stop waits for the last phrase: those words go in no note
+line = 'slow';
+ended = 0;
+await pen(loop(h1.x + 160, h1.y + h1.height / 2, 180, 45));
+await page.waitForFunction(
+  () => document.querySelector('review-mode').shadowRoot.querySelector('textarea').value === 'Make the Headline.',
+  null,
+  { timeout: 15_000 },
+);
+await page.locator(inUi('.mic')).tap();
+for (let i = 0; i < 50 && !ended; i++) await page.waitForTimeout(100);
+assert.equal(ended, 1, 'the stop asks for the last phrase');
+await page.locator(inUi('[data-cancel]')).tap();
+await page.waitForTimeout(SLOW_MS + 1000);
+assert.equal(await page.locator(inUi('textarea')).inputValue(), '', "a cancelled note's last words go in no note");
+line = 'up';
 assert.deepEqual(errors, []);
 
 // ---- a mouse: the pin starts it, a drag draws (Shift a rectangle), and a click as the first mark still pins

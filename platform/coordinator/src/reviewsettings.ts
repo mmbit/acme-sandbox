@@ -15,6 +15,8 @@ export function reviewSettings() {
   return {
     rounds: { ...ROUNDS, ...r.rounds } as typeof ROUNDS,
     visual: (r.visual ?? []) as VisualCheck[],
+    // A description for reviewer judgment, never a path rule.
+    live: String(r.live ?? "Public sites and apps already in use, and HQ's own look."),
     drawWindowedChanges: r.drawWindowedChanges === true,
   };
 }

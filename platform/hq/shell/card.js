@@ -55,7 +55,8 @@ const pictured = c => ({
 });
 
 // Agents write a request as a short card (company/playbooks/board-requests.md): a line or two on what and why,
-// then optionally "Options: A | B" (tap to answer), "Choose:" (a list of choices, one bullet each), "Recommend:" (only with either),
+// then optionally "Options: A | B" (tap to answer) or "Choose:" (a list of choices, one bullet each), never both (cardcheck.js
+// refuses that), "Recommend:" (only with either),
 // "Steps:" (a numbered list: a checklist, with a copy button for every `value`), "Claude: yes" (a web task Claude in
 // Chrome can do with the board), and after a line of --- the details, folded away, ending in "Later:" (how to stop or
 // undo it later, laterOf) on a card with steps. A fenced block (``` lines) is text to paste, kept exactly. A step goes on

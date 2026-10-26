@@ -2,7 +2,7 @@
 // node --test src/sorting.test.ts   (HQ's own work from a template waits for its owner's sort: sorting.ts)
 import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('sorting', {
@@ -19,7 +19,7 @@ projects.createThread({
   goal: 'The first world can finish',
   slug: 'world',
 });
-beforeEach(() => db.exec("update jobs set status = 'done' where status != 'done'"));
+beforeEach(() => db.exec("update jobs set status = 'done' where status != 'done'; delete from messages"));
 
 const say = (from: Running, to: string, text: string) => h.agent('message', from.token, { to, text });
 // The open proposal that holds a job, as its owner's inbox lists it
@@ -37,7 +37,7 @@ for (const owner of ['juno', 'wren']) {
     const thread = owner === 'juno' ? h.dueThread({ deadline }) : 'game/world';
     if (owner === 'wren') set(projects.findThread(thread)!, { deadline, aim: deadline }, 'juno');
     const bolt = await h.start({ agent: 'bolt', thread });
-    const made = await say(bolt, owner, 'Draw the seat answer before the deadline.');
+    const made = await say(bolt, 'kit', 'Draw the seat answer before the deadline.');
     assert.equal(made.status, 200);
     assert.equal(made.body.state, 'job');
     const item = held(made.body.job)!;
@@ -49,7 +49,7 @@ for (const owner of ['juno', 'wren']) {
     assert.equal(h.job(planning[0].id).title, 'Sort new proposals into the plan');
     assert.equal(orderingSnapshot(Date.now()).jobs.find(j => j.id === planning[0].id)!.due, deadline);
     proposals.sweep();
-    assert.equal(h.jobs.listJobs().filter(j => j.agent === owner && j.status === 'queued').length, 2);
+    assert.equal(h.jobs.listJobs().filter(j => j.agent === owner && j.status === 'queued').length, 1);
     const code = owner === 'juno' ? 'SEATCEO' : 'SEATOWN';
     assert.deepEqual(proposals.accept(item.id, owner, { title: 'Draw the seat answer', code }), {
       job: made.body.job,
@@ -69,7 +69,7 @@ for (const owner of ['juno', 'wren']) {
       plan.setOwner('due', owner, { agent: 'juno', job: 0 }, agent => !!h.jobs.findAgent(agent));
     }
     const session = await h.start({ agent: owner, engine: 'claude' });
-    const planning = planningJob(owner);
+    const planning = planningJob(owner, 'due');
     const bolt = await h.start({ agent: 'bolt', thread });
     const made = await say(bolt, 'kit', 'Draw the seat answer before the deadline.');
     const item = held(made.body.job)!;
@@ -152,7 +152,7 @@ test("a message from a job on a windowed thread no pause holds gets its sort and
   for (const target of desks) pauses.pause({ ...target, why: 'Until both trials report', byHand: true }, ceo());
   try {
     const bolt = await h.start({ agent: 'bolt', thread: 'game/world' });
-    const made = await say(bolt, ceo(), 'The scope is bigger than its size: judge it.');
+    const made = await say(bolt, 'kit', 'The scope is bigger than its size: judge it.');
     const job = made.body.job as number;
     assert.equal(h.job(job).thread, 'game/world', "it takes its sender's thread");
     proposals.sweep();
@@ -162,9 +162,11 @@ test("a message from a job on a windowed thread no pause holds gets its sort and
     assert.deepEqual(play.find(j => j.id === job)!.dependencies, [{ job: sorter, until: 'done' }], 'after its sort');
     assert.equal(play.find(j => j.id === sorter)!.due, deadline, "the sort takes the thread's window");
     assert.equal(play.find(j => j.id === job)!.due, deadline);
-    pauses.pause({ thread: 'game/world', why: 'Wait', byHand: true }, ceo());
-    assert.equal(h.jobs.pausedOn(sorter), 'unsorted', 'with all it holds paused, the desk holds it again');
-    pauses.resume({ thread: 'game/world' }, ceo());
+    // the sort is game's, in a thread of its own there: game's pause holds it, the desk's never
+    assert.match(h.job(sorter).thread, /^game\//);
+    pauses.pause({ project: 'game', why: 'Wait', byHand: true }, ceo());
+    assert.equal(h.jobs.pausedOn(sorter), 'game', "with its project paused, the project's pause holds it");
+    pauses.resume({ project: 'game' }, ceo());
     assert.equal(await claimable(sorter), true);
     proposals.accept(held(job)!.id, 'wren', { title: 'Judge the bigger scope', code: 'SCOPE' });
     play = orderingSnapshot(Date.now()).jobs;
@@ -244,4 +246,38 @@ test("an ordinary proposal takes the accepter's title when given one", async () 
     thread: 'game/world',
   }) as { job: number };
   assert.equal(h.job(accepted.job).title, 'Doors on every level');
+});
+
+// The Front Desk is the CEO's own work alone: HQ's work in no thread is sorted into the project it's for, and only the
+// CEO's own may stay.
+test("HQ's work in no project is placed in its project's thread before it's sorted, but for the CEO's own", async () => {
+  const file = `${h.repo}/company/projects.yaml`;
+  writeFileSync(file, `requireThread: true\n${readFileSync(file, 'utf8')}`);
+  try {
+    const { ceo } = await import('./company.ts');
+    const lone = await h.start({ agent: 'bolt' });
+    const job = (await say(lone, 'kit', 'The lift is slow.')).body.job as number;
+    const item = held(job)!;
+    assert.equal(item.project, null, "the CEO's to sort");
+    const refused = String(proposals.accept(item.id, ceo(), { title: 'Make the lift quick', code: 'LIFT' }));
+    assert.match(refused, /belongs to the project its work is for.*hq job move/s);
+    assert.equal(await claimable(job), false);
+    const lead = await h.start({ agent: ceo() });
+    assert.equal((await h.hq(lead, 'job', 'move', String(job), 'game/world')).code, 0);
+    const sorted = proposals.accept(item.id, ceo(), { title: 'Make the lift quick', code: 'LIFT' });
+    assert.deepEqual(sorted, { job, code: 'LIFT', thread: 'game/world', sorted: true });
+    // A needed answer creates independent CEO work to sort.
+    const answer = await h.agent('message', lone.token, {
+      to: ceo(),
+      text: 'The intercom needs a reply during this run.',
+      needsAnswer: true,
+    });
+    assert.equal(answer.status, 200);
+    assert.equal(answer.body.state, 'job');
+    const own = answer.body.job as number;
+    const mine = proposals.accept(held(own)!.id, ceo(), { title: 'Answer the intercom', code: 'REPLY' });
+    assert.deepEqual(mine, { job: own, code: 'REPLY', thread: null, sorted: true });
+  } finally {
+    writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
+  }
 });

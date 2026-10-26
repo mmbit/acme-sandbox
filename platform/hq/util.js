@@ -69,6 +69,8 @@ export const picturesLoaded = () => Promise.all([...pictures.values()].map(p => 
 export const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 export const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+// A text as every search box finds in it: lower case, accents off, so "cafe" finds "Café's"
+export const fold = s => String(s ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 export const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 // A job as the board names it: its task's code, or its number while its agent hasn't named a task HQ made (hq code).
 export const jobName = (id, code) => code ?? `#${Number(id)}`;

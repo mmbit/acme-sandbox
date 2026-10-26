@@ -16,6 +16,11 @@
     outside = !OUTSIDE.startsWith('{{');
   // ...and whether they already sent their notes (then the tool is only its menu's Add more notes)
   const SENT = outside && '{{SENT}}' === '1';
+  // ...and for one the board invited into its book (sketchpeople.ts grant): their notes join the board's sheet as they
+  // write them (IN_BOOK), drawn in their own colour (INK, #rrggbb).
+  const IN_BOOK = outside && '{{IN_BOOK}}' === '1',
+    THEIRS = '{{INK}}',
+    INK = outside && /^#[0-9a-f]{6}$/i.test(THEIRS) ? THEIRS : null;
   // The menus' colours are the guest pages': the coordinator writes in the company's
   // (guests.ts palette); served as the file is, the guest pages' neutral ones
   const LOOK = '{{LOOK}}',
@@ -27,9 +32,8 @@
   // its notes go next to the script: /<slug>/__review/ for a shelf on the front's preview door (infra/products.py)
   const ROUTE = new URL('.', document.currentScript?.src || new URL('/__review/review.js', location.href));
   // A page that loads the tool itself (its script tag carries data-summoned: HQ, for the board's notes on HQ) hears its
-  // Send my notes as a 'review:send' event, and a 'review:notes' event (notes sent or discarded on that page) counts them
-  // again. A 'review:cover' event (detail true, then false) hides the tool while the page frames another page with its
-  // own pin.
+  // menu's Open the book as a 'review:book' event (detail: whose sheet). A
+  // 'review:cover' event (detail true, then false) hides the tool while the page frames another page with its own pin.
   const summoned = !!document.currentScript?.hasAttribute('data-summoned');
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book
   // (pencil.js).
@@ -48,6 +52,8 @@
     OUTSIDE,
     outside,
     SENT,
+    IN_BOOK,
+    INK,
     LOOK: LOOK.startsWith('{{') ? NEUTRAL : LOOK,
     ROUTE,
     summoned,
@@ -65,9 +71,14 @@
       if (e.source !== parent || e.origin !== HQ || e.data?.hq !== 'hq') return;
       start().then(ui => {
         if (e.data.pin) ui.toggle(); // the pin button in HQ's viewer bar
-        if (e.data.notes) ui.refresh(); // notes sent or discarded in HQ's Reviews
       });
       if (e.data.ask) toHq({ hello: 1 }); // HQ asks every page its frame loads
+      // the call's agent driving the preview (drive.js: HQ's calldrive.js).
+      if (e.data.drive)
+        import(new URL('drive.js', ROUTE).href)
+          .then(m => m.drive(e.data.drive))
+          .catch(err => ({ done: false, why: `The preview couldn't do it (${err?.message || err}).` }))
+          .then(answer => toHq({ driven: { ...answer, id: e.data.drive.id } }));
     });
     // HQ hides its pin button until the next page says hello (when it arrives: Chromium drops it.)
     addEventListener('pagehide', () => toHq({ bye: 1 }));

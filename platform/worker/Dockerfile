@@ -30,19 +30,22 @@ RUN curl -fsSL -o /tmp/agy.tar.gz https://storage.googleapis.com/antigravity-pub
     && tar -xzf /tmp/agy.tar.gz -C /tmp antigravity && install -m 755 /tmp/antigravity /usr/local/bin/agy \
     && rm -f /tmp/agy.tar.gz /tmp/antigravity
 # infra's tests' own tools, from their GitHub releases, checked against their sha256: age and versitygw for
-# test_backup.py, Caddy for test_caddy.sh, which skips without one. The worker sends its copies along to a lent machine's
-# tests helper (shared/gates/tests.ts TOOLS: the same list).
+# test_backup.py, Caddy for test_caddy.sh, and static jq for test_provision.py. The worker sends its copies along to a
+# lent machine's tests helper (shared/gates/tests.ts TOOLS: the same list).
 RUN curl -fsSL -o /tmp/age.tar.gz https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz \
     && curl -fsSL -o /tmp/vgw.tar.gz https://github.com/versity/versitygw/releases/download/v1.9.0/versitygw_v1.9.0_Linux_x86_64.tar.gz \
     && curl -fsSL -o /tmp/caddy.tar.gz https://github.com/caddyserver/caddy/releases/download/v2.11.7/caddy_2.11.7_linux_amd64.tar.gz \
+    && curl -fsSL -o /tmp/jq https://github.com/jqlang/jq/releases/download/jq-1.8.1/jq-linux-amd64 \
     && printf '%s  %s\n' cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10 /tmp/age.tar.gz \
          0c28ccda3452451d7c71a0427f6aa7d0db5cac5e2b98a8e4dd2970967e1aadc1 /tmp/vgw.tar.gz \
-         727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b /tmp/caddy.tar.gz | sha256sum -c - \
+         727b91701a392de6ebc5027509f548bf39979e5216340d0faed8fa5e69c84f8b /tmp/caddy.tar.gz \
+         020468de7539ce70ef1bceaf7cde2e8c4f2ca6c3afb84642aabc5c97d9fc2a0d /tmp/jq | sha256sum -c - \
     && tar -xzf /tmp/age.tar.gz -C /usr/local/bin --strip-components=1 age/age age/age-keygen \
     && tar -xzf /tmp/vgw.tar.gz -C /usr/local/bin --strip-components=1 versitygw_v1.9.0_Linux_x86_64/versitygw \
     && tar -xzf /tmp/caddy.tar.gz -C /usr/local/bin caddy \
+    && install -m 755 /tmp/jq /usr/local/bin/jq \
     && chown root:root /usr/local/bin/age /usr/local/bin/age-keygen /usr/local/bin/versitygw /usr/local/bin/caddy \
-    && rm -f /tmp/age.tar.gz /tmp/vgw.tar.gz /tmp/caddy.tar.gz
+    && rm -f /tmp/age.tar.gz /tmp/vgw.tar.gz /tmp/caddy.tar.gz /tmp/jq
 # Compose resolves deployment limits in infra/test_limits.py without a Docker daemon.
 RUN curl -fsSL -o /tmp/docker-compose https://github.com/docker/compose/releases/download/v2.39.4/docker-compose-linux-x86_64 \
     && echo "7af95166a730b87e172d4fc9aefea8725d3c6c7327d59149267b452114ddb7d4  /tmp/docker-compose" | sha256sum -c - \

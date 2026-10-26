@@ -16,10 +16,11 @@ import { jobNameLink } from '../../shell/prose.js';
 import { engineMark } from '../../shell/engine.js';
 import { icon } from '../../shell/icons.js';
 import { sides } from '../../shell/sides.js';
+import { moreKey } from '../../shell/more.js';
 import { fillSteps } from '../../shell/steplog.js';
 import { pageWidth } from '../../shell/page.js';
 import { brand, theme } from '../../shell/brand.js';
-import { pace } from './pace.js';
+import { pace, BARS } from './pace.js';
 // Slate's motion, the brand guide's too (shared/tactile).
 import { holdPresses, pressBriefly, PRESS_MIN_MS } from '../../../../shared/tactile/press.js';
 import { flip } from '../../../../shared/tactile/flip.js';
@@ -152,15 +153,7 @@ export function createScene({ canvas, world: w, shell: s, settings }) {
 // a phone the sound, music and tour keys fold behind one (More), so the board keeps the screen.
 function hud() {
   const plate = document.querySelector('#hud .brand'),
-    tools = document.querySelector('#hud .tools'),
-    more = Object.assign(document.createElement('button'), { id: 'btn-more', title: 'More' });
-  more.setAttribute('aria-expanded', 'false');
-  more.innerHTML = `${icon('more')}<span class="sr">More</span>`;
-  more.onclick = () => {
-    more.setAttribute('aria-expanded', String(tools.classList.toggle('more-open')));
-    keys.press();
-  };
-  tools?.append(more);
+    unfold = moreKey(() => keys.press());
   const drawn = logo(plate);
   const overAccent = e => {
     const o = plate.querySelector('.logo-accent')?.getBoundingClientRect();
@@ -180,8 +173,7 @@ function hud() {
   plate?.addEventListener('pointerleave', over);
   S.rain = store.get('wire.rain', false);
   return () => {
-    more.remove();
-    tools?.classList.remove('more-open');
+    unfold();
     plate?.removeEventListener('click', rain);
     plate?.removeEventListener('pointermove', over);
     plate?.removeEventListener('pointerleave', over);
@@ -658,12 +650,11 @@ function agent(el, t) {
     el.classList.toggle(cls, on);
   const job = run ? titleHtml(run) : titleHtml({ title: A.task || (working ? 'At work' : '') }),
     rate = p?.perMinute ? `<b>${compact(p.perMinute)}</b> tokens a minute` : '',
-    tokens = p?.bars.some(n => n > 0)
-      ? bars(
-          p.bars.map(n => n || undefined),
-          { width: 120, height: 22, stubs: false },
-        )
-      : '',
+    // (the row stands from the start: a stretch with nothing written, or nothing read yet, a stub.)
+    tokens = bars(
+      (p?.bars ?? Array(BARS).fill(0)).map(n => n || undefined),
+      { width: 120, height: 22 },
+    ),
     days = week.days.map(
       (n, i) =>
         `${i === week.days.length - 1 ? 'Today' : `${i - week.days.length + 1}d`}: ${n} job${n === 1 ? '' : 's'}`,
@@ -688,6 +679,7 @@ function agent(el, t) {
       working && A.since ? `<i></i>${STATE.working} · ${lasted(Date.now() - A.since)}` : esc(STATE[A.state] ?? A.state),
     );
   set(q('.doing'), job || '<span class="aside">Not on a job</span>');
+  opens(q('.doing'), run);
   logFill(el);
   set(
     q('.pace'),
@@ -696,12 +688,14 @@ function agent(el, t) {
       : '',
   );
   set(q('.last p'), last);
+  opens(q('.last p'), week.last);
   set(
     q('.next p'),
     next[0]
       ? titleHtml(next[0]) + (next.length > 1 ? `<span class="aside"> · ${next.length - 1} more</span>` : '')
       : '<span class="aside">Nothing queued</span>',
   );
+  opens(q('.next p'), next[0]);
   set(
     q('.week'),
     `${bars(week.days, { width: 140, height: 30, tips: days })}<p><b>${week.jobs}</b> job${week.jobs === 1 ? '' : 's'} · <b>${week.prs}</b> merged <span class="aside">this week</span></p>`,
@@ -709,6 +703,19 @@ function agent(el, t) {
   const dept = world.rooms.find(r => r.id === A.roomId)?.name;
   // (their engine's mark, then where they work and how they look, on one line)
   set(q('.who'), engineMark(A.data.engine) + [dept, A.data.look].filter(Boolean).map(esc).join(' · '));
+}
+// A task's title on the big key opens its thread (desk.js: a .job-title with its job), not the key's other face.
+function opens(el, job) {
+  const id = job?.id ? String(job.id) : '';
+  if ((el.dataset.job ?? '') === id) return;
+  el.classList.toggle('job-title', Boolean(id));
+  for (const [name, value] of [
+    ['data-job', id],
+    ['tabindex', '0'],
+    ['role', 'link'],
+  ])
+    if (id) el.setAttribute(name, value);
+    else el.removeAttribute(name);
 }
 // a line's words, changed only when they change
 function set(el, html) {

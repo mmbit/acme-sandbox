@@ -48,6 +48,11 @@ export function cardProblem(body, back = false) {
       'but offers nothing to choose: a recommendation goes with options (Choose: or Options:), next to them. Drop the Recommend: line, ' +
       'and say what to do in the steps'
     );
+  if (choices.length && c.options.length)
+    return (
+      'the card offers its answers twice, as a Choose: list and an Options: line: the desk phone shows the choices as ' +
+      'rows to tap. Drop the Options: line, and make any answer it adds a choice of its own'
+    );
   const shown = choices.map(ch => `"${ch.label.length > 60 ? `${ch.label.slice(0, 57)}...` : ch.label}"`).join(', ');
   const how = `A choice is one bullet under Choose:, "- Label: what it means", and the list ends at its first blank line`;
   if (choices.length > MAX_CHOICES)

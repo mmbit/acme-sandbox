@@ -109,8 +109,8 @@ test("hq job --lands: the landing job takes over the failed job's item and threa
   const run = (await h.claim(jobEngine(landing.body.id)))!;
   assert.equal(run.id, landing.body.id);
   await h.finish(run, { status: 'done', pr: 63, branch: `job/${run.id}` });
-  const handled = db.prepare('select status from call_items where id = ?').get(item) as { status: string };
-  assert.equal(handled.status, 'handled');
+  const ready = db.prepare('select status from call_items where id = ?').get(item) as { status: string };
+  assert.equal(ready.status, 'ready', "the landing job's end: ready for the board's yes");
   db.prepare("update prs set status = 'merged' where number = 63").run();
   assert.deepEqual(lateLines(Date.now() + 2 * HOUR), []);
 });
@@ -257,3 +257,63 @@ test("hq job --lands keeps the failed job's paused project until it resumes", as
   assert.equal((await h.agent('pauses/resume', chief.token, { project: 'game' })).status, 200);
   assert.equal((await h.claim(jobEngine(reply.body.id)))?.id, reply.body.id);
 });
+
+test('a stopped carrier stays open with its owner and stop reason, opens no PR, and can be landed', async () => {
+  reset();
+  const made = projects.createThread({ project: 'game', name: 'The stopped key', goal: 'The key works' });
+  if (typeof made === 'string') throw new Error(made);
+  const { item, wire } = await handedOut({ kind: 'task', what: 'Wire the shop key' }, made.id);
+  const chief = await h.start({ agent: 'juno', title: 'Stop the work' });
+  const why = 'Wait for the board to judge the trial';
+  assert.equal((await h.hq(chief, 'stop', String(wire.id), why)).code, 0);
+  assert.equal((await h.heartbeat(wire)).body.stop, `juno: ${why}`);
+  await h.finish(wire, { status: 'stopped', branch: `job/${wire.id}`, result: `Stopped by juno: ${why}` });
+  assert.equal(h.job(wire.id).status, 'stopped');
+  assert.equal(db.prepare('select count(*) n from prs').get()!.n, 0);
+  const open = await h.agent('items', chief.token);
+  const returned = open.body.find((i: { id: number }) => i.id === item);
+  assert.ok(returned, 'the item is still in the open list');
+  assert.equal(returned.owner, 'juno');
+  assert.equal(returned.why, undefined);
+  assert.equal(returned.stopped, wire.id);
+  const summary = await h.agent('summary', chief.token);
+  assert.match(summary.body.text, new RegExp(`returned by stopped job #${wire.id}`));
+  assert.ok(!summary.body.text.includes(why));
+  assert.deepEqual((await h.worker('ended', { ids: [wire.id, chief.id] })).body, [{ id: wire.id, kind: 'work' }]);
+  const owner = await h.start({ agent: 'bolt', title: 'Land the saved work' });
+  const landing = await lands(owner, wire.id);
+  assert.equal(landing.status, 200, JSON.stringify(landing.body));
+  assert.equal(db.prepare('select instead_of from jobs where id = ?').get(landing.body.id)!.instead_of, wire.id);
+  await h.finish(wire, { status: 'done', pr: 888, branch: `job/${wire.id}` });
+  assert.equal(h.job(wire.id).status, 'stopped', 'a repeated finish cannot mark stopped work done');
+  assert.equal(db.prepare('select count(*) n from prs').get()!.n, 0);
+  await h.finish(owner);
+  const run = await h.claim(jobEngine(landing.body.id));
+  assert.equal(run?.id, landing.body.id, 'the stopped task yields its place to its landing job');
+  await h.finish(run!, { status: 'done', pr: 889, branch: `job/${run!.id}` });
+  assert.equal(db.prepare('select status from call_items where id = ?').get(item)!.status, 'ready');
+});
+
+for (const status of ['handled', 'ready'])
+  test(`stopping a carrier returns an already ${status} ancestor item to its owner`, async () => {
+    reset();
+    const lead = await h.start({ agent: 'bolt', title: 'Lead the build' });
+    const { item } = agreed({
+      kind: 'promise',
+      status: status === 'ready' ? 'open' : status,
+      job: lead.id,
+      what: 'Build the key',
+    });
+    await h.finish(lead);
+    const run = await h.start({ agent: 'chime', item, title: 'Build the key' });
+    assert.equal((await h.hq(run, 'stop', String(run.id), 'The trial needs a judgment')).code, 0);
+    await h.finish(run, { status: 'stopped' });
+    const returned = db
+      .prepare('select owner, status, why, closed_at, ready_at from call_items where id = ?')
+      .get(item)!;
+    assert.equal(returned.status, 'open');
+    assert.equal(returned.owner, 'juno');
+    assert.equal(returned.closed_at, null);
+    assert.equal(returned.ready_at, null);
+    assert.equal(returned.why, 'stopped: chime: The trial needs a judgment');
+  });

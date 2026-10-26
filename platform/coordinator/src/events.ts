@@ -9,8 +9,10 @@ import * as secrets from './secrets.ts';
 // a customer's details, the step itself (the worker's steps.ts shown), for the board's own HQ session alone: the feed
 // gives it to HQ's pages, while the events table keeps text, the kind of step, like everything agents can read.
 export type Event = {
-  // (studio: the photo studio's darkroom, studio.ts office(), not kept in the events table either.)
-  ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio';
+  // (studio: the photo studio's darkroom, studio.ts office(), not kept in the events table either. book: a slip clipped
+  // onto a note in the board's book, ticked or opened again, so HQ reads the book again now (bookslips.ts): agent, who
+  // answered, and text 'slip', never the words; not kept either.)
+  ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio' | 'book';
   agent?: string; to?: string; text?: string; state?: string;
   // job: the run an agent's own status or lines come from; jobs: on a status from its queue, every job it has running
   job?: number; jobs?: RunningJob[];
@@ -77,8 +79,10 @@ function publishNow(event: Event & { ts: string }, by: Source) {
     const running = s?.jobs?.find(j => j.id === e.job);
     if (running) running.lines = s!.lines;
   } else if (e.type === 'tokens') {
-    if (s) s.tokens = [...(s.tokens ?? []).filter(([at]) => at > Date.parse(e.ts!) - TOKENS_KEPT_MS), [Date.parse(e.ts!), e.total ?? 0]];
-  } else if (e.type !== 'machines' && e.type !== 'studio') {
+    // (a new run of the job counts from nothing again: a total below the last reading's starts the readings over.)
+    const total = e.total ?? 0, now = Date.parse(e.ts!), kept = total < (s?.tokens?.at(-1)?.[1] ?? 0) ? [] : (s?.tokens ?? []);
+    if (s) s.tokens = [...kept.filter(([at]) => at > now - TOKENS_KEPT_MS), [now, total]];
+  } else if (e.type !== 'machines' && e.type !== 'studio' && e.type !== 'book') {   // (book)
     const row = Number(insert.run(e.ts, e.type, e.agent ?? null, e.to ?? null, e.text ?? null, e.state ?? null).lastInsertRowid);
     if (board) boardLines.set(row, board);
     if (boardLines.size > REPLAY) boardLines.delete(boardLines.keys().next().value!);

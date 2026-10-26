@@ -80,6 +80,9 @@ test('a call has its row from its start, a promise made on it lands there, and i
   assert.match(f.prompt, new RegExp(`This is call #${c.id}`));
   assert.match(f.prompt, /\[1\] Board: Kit, build the coming-soon page[\s\S]*\[3\] Board: Thanks\./, 'the transcript, numbered for the items\' lines');
   assert.match(f.prompt, /hq item add <kind> <owner>/);
+  // (its times in the board's own form, as windows.ts parse reads it)
+  assert.match(f.prompt, /--deadline with the board's own time, with its date and no zone \(2026-10-26 09:00/);
+  assert.match(f.prompt, /as its window, the board's own time with its date and no zone: `--by <when>`/);
 });
 
 test("Juno's call gets a work follow-up too; the reply it sets appears in the intercom and rides along with the next turn, its report doesn't", async () => {
@@ -290,7 +293,10 @@ test("a job linked to a customer call's item, and one reading its items, holds t
   const { id: unrelated } = jobs.createJob({ agent: 'rivet', title: 'Unrelated', prompt: 'x' });
   const { id: penny } = jobs.createJob({ agent: 'penny', title: 'Customer care', prompt: 'x' });
   const [ut, pt] = [await claim(unrelated), await claim(penny)];
-  assert.deepEqual(await goalFor(ut), { id: it, call: c.id, kind: 'task', owner: 'rivet', what: 'Refund the mug', job: null });
+  const unrelatedItem = await goalFor(ut);
+  assert.equal(unrelatedItem.id, it);
+  assert.equal(unrelatedItem.goal, undefined);
+  assert.equal(unrelatedItem.quote, undefined);
   assert.ok(!jobs.holdsCustomerData(unrelated), 'nothing of the customer reached it');
   assert.equal((await goalFor(pt)).goal, 'Make it right for Jan Jansen');
   assert.ok(jobs.holdsCustomerData(penny), 'read: it holds them');
@@ -306,6 +312,27 @@ test("a job linked to a customer call's item, and one reading its items, holds t
   assert.equal((await goalFor(lt)).goal, 'Make it right for Jan Jansen', 'it works for the call: the goal is its own');
   assert.ok(jobs.holdsCustomerData(linked), 'and reading it marks it');
   assert.equal((guests.write({ id: linked, agent: 'rivet' } as any, 'Sam', 'Your refund', {}) as unknown[])[0], 403);   // (its result's type includes the files)
+
+  const why = 'Customer Aster withdrew the refund';
+  assert.equal((await agent('stop', lt, { id: linked, why })).status, 200);
+  await finish(linked, { status: 'stopped' });
+  const returned = await goalFor(ut);
+  assert.equal(returned.stopped, linked);
+  assert.equal(returned.why, undefined);
+  assert.doesNotMatch(JSON.stringify(returned), /Aster|Jan Jansen/);
+  assert.equal((await agent(`items?call=${c.id}`, ut)).status, 404);
+  assert.ok(!jobs.holdsCustomerData(unrelated));
+  const chief = await h.start({ agent: 'juno', title: 'Check the returned item' });
+  for (const route of ['items', 'summary', 'followthrough']) {
+    const response = await agent(route, chief.token);
+    assert.equal(response.status, 200);
+    assert.doesNotMatch(JSON.stringify(response.body), /Customer Aster/);
+  }
+  assert.ok(!jobs.holdsCustomerData(chief.id));
+  db.prepare('update jobs set customers = 0 where id = ?').run(callRow(c.id).job);
+  const full = (await agent(`items?call=${c.id}`, t)).body.find((i: { id: number }) => i.id === it);
+  assert.equal(full.why, `stopped: rivet: ${why}`);
+  assert.ok(jobs.holdsCustomerData(callRow(c.id).job), 'reading the reason marks the authorized reader');
 });
 
 // A job refused its deliverable (it holds a customer's details) doesn't handle its item by ending done: the item stays open
@@ -345,13 +372,13 @@ test('a job refused the draft its item promised ends done: the item stays open a
   const tn = await claim(next);
   assert.equal((await agent('outbox', tn, mail)).status, 200);
   await finish(next, { status: 'done', result: 'Filed' });
-  assert.equal(item(passed).status, 'handled');
+  assert.equal(item(passed).status, 'ready');
 
   // a job never refused: handled as before; a 400 (a typo to fix) isn't a refusal
   const td = await claim(d);
   assert.equal((await agent('outbox', td, { ...mail, to: ['not an address'] })).status, 400);
   await finish(d, { status: 'done', result: 'Filed' });
-  assert.equal(item(fine).status, 'handled');
+  assert.equal(item(fine).status, 'ready');
 });
 
 // Work linked to an item while it's under way hears why the board wants it, once: in its brief if it hasn't started, as a
@@ -397,7 +424,7 @@ test("work linked while it's queued or running hears the item's goal once", asyn
   assert.match(job(viaJob.goalJob).prompt, new RegExp(`Your job #${codex} is linked to item #${d} \\("Check the copy"\\)[^]*${GOAL}`));
   assert.equal((await link(t, d, codex)).goalReached, undefined, 'linked again: nothing twice');
   await finish(codex, { status: 'done', result: 'The copy reads well.' });
-  assert.deepEqual([item(d).status, job(viaJob.goalJob).status], ['handled', 'queued']);
+  assert.deepEqual([item(d).status, job(viaJob.goalJob).status], ['ready', 'queued'], "a task: ready for the board's yes");
 
 });
 
@@ -775,7 +802,7 @@ test("a lead's item stays handled only if the colleague's PR it queued the work 
   const child = (await agent('job', await claim(lead), { agent: 'lark', title: 'Make the pin wiggle', prompt: 'x' })).body.id;
   assert.match(job(child).prompt, new RegExp(`^x\\n\\nWhy the board wants this \\(item #${x}, call #${c.id}\\): Players see the pin is live\\n`), 'the goal goes on with the item');
   await finish(lead, { status: 'done', result: 'Queued it for Lark' });
-  assert.deepEqual([item(x).status, item(x).job, job(child).item], ['handled', lead, x], 'the lead handled it; the colleague carries it');
+  assert.deepEqual([item(x).status, item(x).job, job(child).item], ['ready', lead, x], 'the lead ending done made it ready; the colleague carries it');
   await claim(child); await finish(child, { status: 'done', result: 'Made it', branch: `job/${child}` });
   assert.deepEqual(ledger.asked(`job/${child}`).map(i => i.id), [x], "the colleague's PR is reviewed against the item");
   assert.equal(ledger.reopen(`job/${child}`), 1);   // review.ts close(): the PR closed unmerged
@@ -796,7 +823,7 @@ test("an item whose work merged stays handled when a helper's PR, or a stale sib
   pr(9101, `job/${lead}`, 'merged');
   pr(9102, `job/${helper}`, 'closed');
   assert.equal(ledger.reopen(`job/${helper}`), 0, "the lead's own PR merged: the helper's closing leaves the item handled");
-  assert.equal(item(x).status, 'handled');
+  assert.equal(item(x).status, 'ready');
   // Handed out again after an earlier PR closed: the new job's PR merges, then a stale sibling's closes.
   const y = (await agent('item', t, { kind: 'task', owner: 'bolt', goal: 'g', what: 'The pin glows', quote: 'Board: Bolt, make the pin boing.' })).body.id;
   const first = (await agent('job', t, { agent: 'bolt', title: 'Glow', prompt: 'x', item: y })).body.id;
@@ -806,11 +833,11 @@ test("an item whose work merged stays handled when a helper's PR, or a stale sib
   assert.equal(ledger.reopen(`job/${first}`), 1);
   const again = (await agent('job', t, { agent: 'bolt', title: 'Glow, again', prompt: 'x', item: y })).body.id;
   await claim(again); await finish(again, { status: 'done', result: 'Glows', branch: `job/${again}` });
-  assert.equal(item(y).status, 'handled', "the first hand-out's closed PR reopened it already: it doesn't hold off the new job's finish");
+  assert.equal(item(y).status, 'ready', "the first hand-out's closed PR reopened it already: it doesn't hold off the new job's finish");
   pr(9104, `job/${again}`, 'merged');
   await claim(sibling); await finish(sibling, { status: 'done', result: 'Colours', branch: `job/${sibling}` });
   pr(9105, `job/${sibling}`, 'closed');
-  assert.deepEqual([ledger.reopen(`job/${sibling}`), item(y).status], [0, 'handled'], "the re-handed job's PR merged: the stale sibling's closing leaves it handled");
+  assert.deepEqual([ledger.reopen(`job/${sibling}`), item(y).status], [0, 'ready'], "the re-handed job's PR merged: the stale sibling's closing leaves it handled");
 });
 
 test("a ref or request doesn't handle the board's ask: it's the linking job's work, judged in its review; a question is answered now", async () => {
@@ -829,7 +856,7 @@ test("a ref or request doesn't handle the board's ask: it's the linking job's wo
   assert.deepEqual([early.status, item(spin).status, item(spin).job], [400, 'open', spinner]);
   db.prepare("insert into prs (number, branch, author, status) values (9131, ?, 'bolt', 'open')").run(`job/${f}`);   // (jobs.ts startReview(), before finished())
   await finish(f, { status: 'done', result: 'Followed up', branch: `job/${f}` });
-  assert.deepEqual([item(rename).status, item(card).status, item(spin).status], ['handled', 'handled', 'open'], 'handled once the linking job ends done with its PR');
+  assert.deepEqual([item(rename).status, item(card).status, item(spin).status], ['ready', 'ready', 'open'], 'ready once the linking job ends done with its PR');
   assert.deepEqual(ledger.asked(`job/${f}`).map(i => i.id), [rename, card], "the follow-up's PR is reviewed against them");
   const message = ledger.reached(c.id, { owner: 'bolt', what: 'Keep the pin blue', goal: 'g', words: 'Keep the pin blue', job: f, ref: 'passed on during the call' });
   db.prepare("update prs set status = 'closed' where number = 9131").run();
@@ -863,7 +890,7 @@ test("a helper's PR closing while the lead's is still open leaves the item handl
   const pr = (n: number, branch: string, status: string) => db.prepare('insert into prs (number, branch, author, status) values (?, ?, ?, ?)').run(n, branch, 'bolt', status);
   pr(9111, `job/${lead}`, 'open');
   pr(9112, `job/${helper}`, 'closed');
-  assert.deepEqual([ledger.reopen(`job/${helper}`), item(x).status], [0, 'handled'], "the lead's PR is still in review: it may merge yet");
+  assert.deepEqual([ledger.reopen(`job/${helper}`), item(x).status], [0, 'ready'], "the lead's PR is still in review: it may merge yet");
   db.prepare("update prs set status = 'closed' where number = 9111").run();
   assert.deepEqual([ledger.reopen(`job/${lead}`), item(x).status], [1, 'open'], 'nothing tied to the item merged or is pending');
 });
@@ -892,7 +919,7 @@ test("a child's PR closing while the lead is still running leaves the item open 
     pr(status === 'open' ? 9122 : 9124, `job/${a}`, 'closed');
     pr(status === 'open' ? 9123 : 9125, `job/${b}`, status);
     await finish(lead2, { status: 'done', result: 'Queued it for Lark' });
-    assert.equal(item(y).status, 'handled', `the other PR is ${status}`);
+    assert.equal(item(y).status, 'ready', `the other PR is ${status}`);
   }
 });
 
@@ -906,7 +933,7 @@ test('replacing an item that was handled: the jobs its done job queued are cance
   const send = (await agent('job', tb, { agent: 'moss', title: 'Send the film round', prompt: 'x' })).body.id;
   const post = (await agent('job', tb, { agent: 'moss', title: 'Post about the film', prompt: 'x' })).body.id;
   await finish(built, { status: 'done', result: 'Made it' });
-  assert.deepEqual([item(x).status, job(send).item, job(post).item], ['handled', x, x], 'handled, and its queued jobs carry it on');
+  assert.deepEqual([item(x).status, job(send).item, job(post).item], ['ready', x, x], 'handled, and its queued jobs carry it on');
   const tp = await claim(post);
   // a job handed out for an item isn't a call's follow-up: it replaces nothing
   const notMine = await agent('item', tp, { kind: 'task', owner: 'moss', goal: 'g', what: 'x', quote: 'y', replaces: x });
@@ -918,7 +945,7 @@ test('replacing an item that was handled: the jobs its done job queued are cance
   const y = await agent('item', t2, { kind: 'decision', owner: 'moss', goal: 'g', what: 'A poster, not the film', quote: 'Board: Change of plan: no film, a poster.', replaces: x });
   // the running one is on an engine without the hook (claim()'s own, as Codex): the correction is a job for moss now
   const m = db.prepare('select * from messages where job is null and became is not null order by id desc limit 1').get() as any;
-  assert.deepEqual(y.body, { id: y.body.id, call: second.id, kind: 'decision', owner: 'moss', replaced: x, replacedWhat: 'The brand film', was: 'handled', cancelled: [send], told: [{ job: post, message: m.id, became: m.became }], running: [] });
+  assert.deepEqual(y.body, { id: y.body.id, call: second.id, kind: 'decision', owner: 'moss', replaced: x, replacedWhat: 'The brand film', was: 'ready', cancelled: [send], told: [{ job: post, message: m.id, became: m.became }], running: [] });
   assert.deepEqual([job(m.became).agent, job(m.became).status], ['moss', 'queued']);
   assert.match(job(m.became).prompt, new RegExp(`^A correction to your job #${post}: item #${x} \\(call #${first.id}\\) was replaced on call #${second.id}`));
   assert.deepEqual([item(x).status, job(send).status, job(built).status], ['replaced', 'cancelled', 'done'], 'done work stays done');
@@ -1247,7 +1274,7 @@ test("the board's correction on a call: an open item is replaced while it's on t
   assert.equal((await agent('job', second.token, { agent: 'moss', title: 'Another', prompt: 'x', item: x })).status, 409, 'only its own call\'s items');
   await second.end();
   await claim(d); await finish(d, { status: 'done', result: 'D is done' });
-  assert.equal(item(y.body.id).status, 'handled');
+  assert.equal(item(y.body.id).status, 'ready');
 });
 
 // Pylon #2548 (PR #246's review, Quill): a correction noted on the live call has no job to send it from, so the running
@@ -1390,6 +1417,44 @@ test("another job acting on the call's items isn't its follow-up going through t
   assert.notEqual(callRow(c.id).job, f, 'sent again');
 });
 
+// Delivered means the board has seen it and said yes (charter, board, 25 Oct): a task or promise whose job ends done is
+// ready, stays on what the board asked for, and only the CEO's hq item done closes it.
+test("a promise whose job ends done is ready, stays on what the board asked for, and only the CEO's hq item done closes it", async () => {
+  const { agreements } = await import('./agreements.ts');
+  const c = await aCall('kit', TALK);
+  await c.end();
+  const t = await claim(callRow(c.id).job);
+  const add = async (kind: string, what: string) => (await agent('item', t, { kind, owner: 'kit', goal: 'g', what, ...quote(TALK[1]) })).body.id as number;
+  const [p, q, d] = [await add('promise', 'The trial results to the board'), await add('task', 'A second trial'), await add('decision', 'Trials run on the cheaper model')];
+  const handOut = async (it: number) => (await agent('job', t, { agent: 'kit', title: `Item ${it}`, prompt: 'x', item: it })).body.id as number;
+  const [jp, jq, jd] = [await handOut(p), await handOut(q), await handOut(d)];
+  for (const j of [jp, jq, jd]) { await claim(j); await finish(j, { status: 'done', result: 'The results are in the note' }); }
+  assert.deepEqual([item(p).status, item(q).status, item(d).status], ['ready', 'ready', 'handled'], "a decision is handled at its job's end; a task or promise waits for the board's yes");
+  assert.ok(item(p).ready_at && item(p).closed_at === null);
+  assert.deepEqual(agreements().filter(a => [p, q].includes(a.id)).map(a => a.status), ['ready', 'ready'], 'still on the list the hourly check starts from');
+  assert.ok(ledger.openItems().some(i => i.id === p), 'and among the open items (hq items)');
+  // nobody but the CEO records the board's yes: not the call's follow-up, the job that carried it, or a live call
+  const carrier = jobs.createJob({ agent: 'kit', title: 'x', prompt: 'x', item: p, queuedBy: 'kit' }).id;
+  for (const token of [t, await claim(carrier)]) {
+    const r = await agent('item-done', token, { id: p, said: 'Yes' });
+    assert.deepEqual([r.status, r.body.error], [403, "only the CEO records the board's yes on an item"]);
+  }
+  await finish(carrier, { status: 'done', result: 'x' });
+  assert.equal((await agent('item-done', (await aCall('kit', TALK)).token, { id: p, said: 'Yes' })).status, 403);
+  const tc = await claim(jobs.createJob({ agent: ceo(), title: 'Follow-through check', prompt: 'x' }).id);
+  assert.equal((await agent('item-done', tc, { id: p, said: '' })).status, 400, "the board's words, a line");
+  assert.match((await agent('item-done', tc, { id: d, said: 'Yes' })).body.error, /only a task or a promise/);
+  assert.deepEqual((await agent('item-done', tc, { id: p, said: 'The board read the results on the call: yes, that answers it' })).body, { ok: true });
+  assert.deepEqual([item(p).status, item(p).said], ['handled', 'The board read the results on the call: yes, that answers it']);
+  assert.equal(agreements().some(a => a.id === p), false, 'off the list once the board said yes');
+  assert.match((await agent('item-done', tc, { id: p, said: 'Yes' })).body.error, /isn't open or ready/);
+  // the CEO drops a ready one with the reason; a pull request closing unmerged reopens a ready item, never one the board said yes to
+  assert.equal((await agent('item-drop', tc, { id: q, why: 'The board wants no second trial' })).status, 200);
+  assert.equal(item(q).status, 'dropped');
+  h.storedPr(9301, jp, 'closed');
+  assert.deepEqual([ledger.reopen(`job/${jp}`), item(p).status], [0, 'handled']);
+});
+
 test('a promise whose job ended done before the follow-up got to it: the follow-up links it to say it went through it', async () => {
   for (const ack of [true, false]) {
     const c = await aCall('kit', TALK);
@@ -1399,7 +1464,7 @@ test('a promise whose job ended done before the follow-up got to it: the follow-
     await claim(j);
     await c.end();
     await finish(j, { status: 'done', result: 'Sent' });
-    assert.equal(item(p).status, 'handled');
+    assert.equal(item(p).status, 'ready');
     const f = callRow(c.id).job, t = await claim(f);
     assert.match(job(f).prompt, /notes that you did, and changes nothing/, 'the brief says how');
     if (ack) {
@@ -1407,8 +1472,8 @@ test('a promise whose job ended done before the follow-up got to it: the follow-
       for (const to of [{ job: 999999 }, { request: 999999 }, { ref: '' }]) assert.equal((await agent('item-link', t, { id: p, to })).status, 400);
       assert.equal(item(p).acted_at, null);
       const r = await agent('item-link', t, { id: p, to: { ref: 'checked: Juno has the note' } });
-      assert.deepEqual(r.body, { ok: true, status: 'handled', acknowledged: true, told: [], running: [] });
-      assert.deepEqual([item(p).status, item(p).ref, item(p).job], ['handled', null, j], 'nothing about it changed');
+      assert.deepEqual(r.body, { ok: true, status: 'ready', acknowledged: true, told: [], running: [] });
+      assert.deepEqual([item(p).status, item(p).ref, item(p).job], ['ready', null, j], 'nothing about it changed');
     }
     await finish(f, { status: 'done', result: 'The promise is handled' });
     assert.equal(!!callRow(c.id).processed_at, ack, ack ? 'gone through' : "the job ending done isn't the follow-up going through the call");
@@ -1719,7 +1784,7 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   const recorded = await agent('item-link', t, { id: record, to: { job: merged.id } });
   assert.equal(recorded.status, 200, JSON.stringify(recorded.body));
   assert.equal(recorded.body.deadline, undefined);
-  assert.equal(item(record).status, 'handled');
+  assert.equal(item(record).status, 'ready');
   assert.deepEqual(deadlineOf(shared), kept);
 });
 

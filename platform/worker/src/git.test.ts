@@ -141,9 +141,9 @@ test("a push's tests test the pushed commit, read and checked out from the mirro
     mkdirSync(`${tmp}/elsewhere.git`);
     writeFileSync(`${dir}/.git/commondir`, `${tmp}/elsewhere.git\n`);
 
-    job.settle(dir, { name: 'Knop agents', email: 'agents@knop.invalid' });
+    job.settle(dir, { name: 'Testco agents', email: 'agents@testco.invalid' });
     assert.ok(!existsSync(`${dir}/.git/commondir`));
-    assert.equal(job.ag(dir, 'config', 'user.name'), 'Knop agents');
+    assert.equal(job.ag(dir, 'config', 'user.name'), 'Testco agents');
     assert.throws(() => job.ag(dir, 'config', 'filter.planted.clean'));
     assert.equal(job.ag(dir, 'rev-parse', 'HEAD^'), main);
     job.ag(dir, 'add', '-A');

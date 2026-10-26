@@ -6,6 +6,9 @@ import { join } from 'node:path';
 import { unanswered } from '../quiet/quiet.ts';
 import { formats } from '../format/format.js';
 import { forget, visitors } from './visitors.ts';
+import { fetchedBy, loadSource, searchCampaign, SEARCH_CAMPAIGNS, type Headers } from './loads.ts';
+// An app imports everything of metrics from here, who loaded its pages included (README.md)
+export { aiReferral, crawlerName, fetchedBy, loadSource } from './loads.ts';
 
 const env = process.env;
 const URL_ = env.METRICS_URL ?? '',
@@ -21,7 +24,6 @@ export const day = (at: string | number | Date = Date.now()) => dayAt(new Date(a
 // The request being handled (serve()): its headers for visitors and visits, and whether its activity counts. A live
 // product doesn't count one through its preview door (X-Preview-Door), one of our own visits (X-Own-Device), or one
 // from HQ's watch (x-hq-watch with WATCH_MARK).
-type Headers = Record<string, string | string[] | undefined>;
 const handling = new AsyncLocalStorage<{ counted: boolean; headers: Headers }>();
 // The day's visitors on a live product with the switch on, its list on the data volume (the container's DATA_DIR).
 // With it off, a list an earlier run left is deleted at start.
@@ -43,22 +45,6 @@ const PUSH_MS = 5 * 60_000,
 const WORD = /^[a-z0-9-]{1,40}$/,
   COUNTRY = /^[A-Z]{2}$/,
   VARIANT = /^[a-z0-9-]{1,40}:[A-Z]$/;
-const SEARCH_HOSTS = new Map([
-  ['bing.com', 'bing'],
-  ['duckduckgo.com', 'duckduckgo'],
-  ['ecosia.org', 'ecosia'],
-  ['search.yahoo.com', 'yahoo'],
-  ['search.brave.com', 'brave'],
-  ['startpage.com', 'startpage'],
-  ['qwant.com', 'qwant'],
-  ['baidu.com', 'baidu'],
-  ['yandex.com', 'yandex'],
-  ['yandex.ru', 'yandex'],
-  ['search.aol.com', 'aol'],
-  ['search.naver.com', 'naver'],
-  ['search.seznam.cz', 'seznam'],
-]);
-const SEARCH_CAMPAIGNS = new Set(['search-google', ...[...SEARCH_HOSTS.values()].map(engine => `search-${engine}`)]);
 // Per-click ad IDs (charter rule 7): never read, kept or passed on. Anything ending in "clid" too (fbclid, gclid,
 // ttclid, msclkid's cousins), so a new network's ID is dropped without a change here.
 const CLICK_IDS = new Set([
@@ -131,7 +117,8 @@ let orders: (() => Order[]) | null = null;
 let searchReferrers = false,
   orderCampaigns = false;
 let tally = new Map<string, number>();
-let pending: { batch: string; counts: Count[]; orders?: ReturnType<typeof summarize> } | null = null;
+type Batch = { batch: string; counts: Count[]; orders?: ReturnType<typeof summarize> };
+let pending: Batch | null = null;
 let ordersSent = 0,
   timer: ReturnType<typeof setInterval> | null = null;
 // HQ out of reach for ten minutes of pushes or more.
@@ -214,11 +201,8 @@ export function summarize(list: Order[], now = Date.now(), from = day(now - (ORD
 export async function push(now = Date.now()) {
   if (!connected) return false;
   if (!pending) {
-    const sent = counts();
-    tally = new Map();
-    const summary = orders && now - ordersSent >= ORDERS_MS ? orderSummary(now) : null;
-    if (!sent.length && !summary) return true;
-    pending = { batch: randomBytes(16).toString('hex'), counts: sent, ...(summary ? { orders: summary } : {}) };
+    pending = newBatch(now);
+    if (!pending) return true;
   } else if (pending.orders) {
     const summary = orderSummary(now, pending.orders.from);
     if (!summary) return false;
@@ -242,17 +226,31 @@ export async function push(now = Date.now()) {
     pushes.answered();
     return true;
   }
+  await notTaken(r, pending, now);
+  return false;
+}
+
+// The counts since the last batch, and the order summary when one is due; null with neither
+function newBatch(now: number): Batch | null {
+  const sent = counts();
+  tally = new Map();
+  const summary = orders && now - ordersSent >= ORDERS_MS ? orderSummary(now) : null;
+  if (!sent.length && !summary) return null;
+  return { batch: randomBytes(16).toString('hex'), counts: sent, ...(summary ? { orders: summary } : {}) };
+}
+
+// HQ refused the batch itself (bad data, a wrong key): sending it again can't help, so it's dropped and said once.
+// Counts it refuses (days it no longer takes, after an outage) don't take the summary with them: it goes again alone,
+// from its first day, and is dropped only if HQ refuses that too. Busy, down or unreachable: it goes again next time.
+async function notTaken(r: Response | null, sent: Batch, now: number) {
   const why = r ? `${r.status} ${String((await r.json().catch(() => ({})))?.error ?? '').slice(0, 200)}` : 'no answer';
   await r?.body?.cancel().catch(() => {});
-  // HQ refused the batch itself (bad data, a wrong key): sending it again can't help, so it's dropped and said once.
-  // Counts it refuses (days it no longer takes, after an outage) don't take the summary with them: it goes again alone,
-  // from its first day, and is dropped only if HQ refuses that too. Busy, down or unreachable: it goes again next time.
-  if (r && r.status === 400 && pending.orders && pending.counts.length) {
-    pending.counts = [];
+  if (r && r.status === 400 && sent.orders && sent.counts.length) {
+    sent.counts = [];
     pushes.answered();
     warnOnce(`HQ refused a push (${why}): its counts dropped, its order summary goes again alone`);
   } else if (r && r.status >= 400 && r.status < 500 && r.status !== 429) {
-    if (pending.orders) ordersSent = 0;
+    if (sent.orders) ordersSent = 0;
     pending = null;
     pushes.answered();
     warnOnce(`HQ refused a push (${why}): dropped`);
@@ -264,7 +262,6 @@ export async function push(now = Date.now()) {
       now,
     );
   }
-  return false;
 }
 
 function orderSummary(now: number, from?: string) {
@@ -396,158 +393,3 @@ export const metrics = {
   // What's counted and not sent yet (tests, and a look on your own machine).
   snapshot: counts,
 };
-
-// The host of an http(s) referrer without credentials, minus a leading www; null for anything else.
-function referrerHost(referrer: unknown): string | null {
-  const url = typeof referrer === 'string' ? URL.parse(referrer) : null;
-  return url && ['http:', 'https:'].includes(url.protocol) && !url.username && !url.password
-    ? url.hostname.replace(/^www\./, '')
-    : null;
-}
-
-function searchCampaign(referrer: unknown): string | null {
-  const host = referrerHost(referrer);
-  if (!host) return null;
-  if (/^google\.(?:com|[a-z]{2}|(?:co|com)\.[a-z]{2})$/.test(host)) return 'search-google';
-  if (/^(?:[a-z]{2}\.)?search\.yahoo\.com$/.test(host)) return 'search-yahoo';
-  const engine = SEARCH_HOSTS.get(host);
-  return engine ? `search-${engine}` : null;
-}
-
-// ---- who loaded a page, and where from: a crawler or fetcher, a speculative load, or a person with the kind of page
-// that sent them. page() counts these itself; an app that counts per page calls them too. Only the returned name is
-// kept, never the user agent or referrer.
-// (other fetchers, Meta's, prefetches and loadSource)
-
-// The source of a load that isn't a person's, or null for a person's: agent-<name> for a crawler or fetcher
-// (crawlerName), else prefetch for a load made ahead of a tap that may never come (speculative).
-export function fetchedBy(headers: Headers): string | null {
-  const agent = crawlerName(headers['user-agent']);
-  if (agent) return `agent-${agent}`;
-  return speculative(headers) ? 'prefetch' : null;
-}
-
-// The crawlers and fetchers that say who they are, by the robots token each company documents for its user agent
-// (OpenAI's developers.openai.com/api/docs/bots, docs.perplexity.ai/guides/bots, Anthropic's support article 8896518,
-// Bing's and Google's crawler pages, Meta's developers.facebook.com/docs/sharing/webmasters/web-crawlers). Matched as a
-// whole word, case-insensitive: the full strings change with every version. A user agent is a claim anyone can make,
-// so these count what visitors say they are. The AI ones are OpenAI's, Perplexity's and Anthropic's; bingbot,
-// Googlebot and Applebot are search crawlers whose index the assistants also answer from (Copilot, Gemini, Siri), so
-// they're named too, and a report tells them apart by name. Meta's fetch a shared link's preview
-// (facebookexternalhit), review an ad's page (meta-externalads) and crawl for its AI and search.
-const CRAWLERS = [
-  'OAI-SearchBot',
-  'ChatGPT-User',
-  'GPTBot',
-  'PerplexityBot',
-  'Perplexity-User',
-  'Claude-SearchBot',
-  'Claude-User',
-  'ClaudeBot',
-  'bingbot',
-  'Googlebot',
-  'Applebot',
-  'facebookexternalhit',
-  'meta-externalads',
-  'meta-externalagent',
-  'meta-externalfetcher',
-  'meta-webindexer',
-];
-const CRAWLER_TOKEN = new RegExp(`(?<![a-z0-9-])(${CRAWLERS.join('|')})(?![a-z0-9])`, 'i');
-// Any other that says it's a bot: a name ending in bot, crawler or spider before its version or the end of its part
-// ('AhrefsBot/7.0', 'Bytespider;', 'SEO Spider/21'; not a phone named Cubot, which a space follows), or the link to
-// its own page that crawlers put in their user agent ('+https://…'), which no browser has
-const DECLARED_BOT = /(?<![a-z0-9])[a-z0-9_-]*(?:bot|crawler|spider)(?=[/;),]|$)|\+https?:\/\//i;
-// The HTTP libraries and headless browsers scripts fetch with, as the product token each puts in its user agent
-// ('curl/8.5.0', 'python-requests/2.32', 'Go-http-client/2.0', Node's fetch 'node')
-const LIBRARIES = [
-  'curl',
-  'Wget',
-  'python-requests',
-  'Python-urllib',
-  'python-httpx',
-  'aiohttp',
-  'Go-http-client',
-  'node',
-  'node-fetch',
-  'undici',
-  'axios',
-  'okhttp',
-  'Java',
-  'Apache-HttpClient',
-  'libwww-perl',
-  'Scrapy',
-  'GuzzleHttp',
-  'HeadlessChrome',
-  'PhantomJS',
-];
-const LIBRARY_TOKEN = new RegExp(`(?<![a-z0-9-])(?:${LIBRARIES.join('|')})(?:/|$)`, 'i');
-
-// The known crawler's or fetcher's name in lowercase ('gptbot', 'chatgpt-user'), other for any other bot or HTTP
-// library and for a request without a user agent (every browser sends one), or null for a browser.
-export function crawlerName(userAgent: unknown): string | null {
-  if (typeof userAgent !== 'string' || !userAgent.trim()) return 'other';
-  const agent = userAgent.slice(0, 1000),
-    m = CRAWLER_TOKEN.exec(agent);
-  if (m) return m[1].toLowerCase();
-  return DECLARED_BOT.test(agent) || LIBRARY_TOKEN.test(agent) ? 'other' : null;
-}
-
-// A load made ahead of a tap that may never come: a browser's prefetch or prerender (Sec-Purpose, or Purpose in older
-// ones), or Meta's apps loading an ad's page before it's tapped (X-Purpose: preview). A tap after one shows the page
-// the load fetched, without a load of its own.
-const PURPOSE_HEADERS = ['sec-purpose', 'purpose', 'x-purpose'];
-const SPECULATIVE = /(?<![a-z0-9-])(?:prefetch|prerender|preview)(?![a-z0-9-])/i;
-const speculative = (headers: Headers) => PURPOSE_HEADERS.some(name => SPECULATIVE.test(String(headers[name] ?? '')));
-
-// Where a person's page load came from, by the referrer's host (and on a shelf its path) alone: stall for the app's own
-// pages (a reload or a step inside it), shop for the shop's other pages on the same host, ai-<assistant> (aiReferral:
-// its referrer or the page's utm_source), search-<engine>, a social network by name (SOCIAL_HOSTS), other for any
-// other site, or none without a referrer. A shelf is the app at <shop host><X-Forwarded-Prefix> (infra/products.py).
-// ownPage: which paths on the host are the app's own, for one whose host has other apps' shelves under it (the shop's
-// front at the root); by default those under its prefix, or every path without one.
-export function loadSource(headers: Headers, url: URL | string, ownPage?: (path: string) => boolean): string {
-  const referrer = headers.referer,
-    host = referrerHost(referrer),
-    own = typeof headers.host === 'string' ? referrerHost(`http://${headers.host}`) : null;
-  if (host && host === own) {
-    const prefix = String(headers['x-forwarded-prefix'] ?? ''),
-      path = URL.parse(String(referrer))!.pathname,
-      ours = ownPage ?? ((p: string) => !prefix || p === prefix || p.startsWith(`${prefix}/`));
-    return ours(path) ? 'stall' : 'shop';
-  }
-  const assistant = aiReferral(referrer, url);
-  if (assistant) return assistant;
-  if (!host) return referrer ? 'other' : 'none';
-  return searchCampaign(referrer) ?? socialNetwork(host) ?? 'other';
-}
-
-// The social networks by their sites' domains, each with its subdomains (Facebook's link hosts l. and lm.)
-const SOCIAL_HOSTS = new Map([
-  ['facebook.com', 'meta'],
-  ['instagram.com', 'meta'],
-]);
-const socialNetwork = (host: string) => {
-  const labels = host.split('.');
-  return labels.map((_, i) => SOCIAL_HOSTS.get(labels.slice(i).join('.'))).find(Boolean) ?? null;
-};
-
-// The assistants whose links send people here, by the referrer host, or utm_source on the page's URL (ChatGPT adds
-// utm_source=chatgpt.com to the links it cites, and its app often sends no referrer).
-const AI_HOSTS = new Map([
-  ['chatgpt.com', 'chatgpt'],
-  ['perplexity.ai', 'perplexity'],
-  ['copilot.microsoft.com', 'copilot'],
-  ['gemini.google.com', 'gemini'],
-  ['claude.ai', 'claude'],
-]);
-
-// ai-<assistant> for a visit an AI assistant sent ('ai-chatgpt'), from the referrer or the page's URL; else null.
-export function aiReferral(referrer: unknown, url: URL | string): string | null {
-  const source = URL.parse(String(url), 'http://x')
-    ?.searchParams.get('utm_source')
-    ?.toLowerCase()
-    .replace(/^www\./, '');
-  const assistant = AI_HOSTS.get(referrerHost(referrer) ?? '') ?? AI_HOSTS.get(source ?? '');
-  return assistant ? `ai-${assistant}` : null;
-}

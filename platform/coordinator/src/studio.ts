@@ -1044,7 +1044,7 @@ export function watch() {
           develop_job = case when lapses >= ${MAX_LAPSES} then develop_job end, lapses = lapses + 1
           where status in ('new', 'edited', 'failed')
           and develop_job is not null and not exists (select 1 from jobs w where w.id in (${jobs.lineageFrom('select studio_photos.develop_job')})
-          and w.status not in ('done', 'failed', 'cancelled')) returning status, request`,
+          and w.status not in ('done', 'failed', 'stopped', 'cancelled')) returning status, request`,
         )
         .all(
           'Its developing jobs kept ending before it was done',

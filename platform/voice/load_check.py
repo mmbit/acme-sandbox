@@ -13,7 +13,7 @@ at once, so the times are the line's own: from the end of a caller's words to th
 of more than 0.1 s once a reply's audio has started (the listener hears a stutter or a pause the reply didn't have).
 Prints the process's memory (resident now and at its peak) and CPU (cores busy, on average and in the busiest second).
 """
-import asyncio, base64, json, os, sys, tempfile, time
+import asyncio, base64, functools, json, os, sys, tempfile, time
 from pathlib import Path
 from types import SimpleNamespace as NS
 
@@ -149,11 +149,8 @@ class AppSocket(PhoneSocket):
 
 class Board:
     """The CLI, standing in: answers each message with the English reply at once."""
-    voice, tz, seat, token, call, key, pin_shots, recap, opening, objected, who, kind = ('alba', 'UTC', None, '', 0, '', [],
-                                                                                       '', '', '', '', 'board')
-
-    def __init__(self, *args, **kwargs):
-        pass
+    voice, tz, seat, token, call, key, recap, opening, objected, who, kind = ('alba', 'UTC', None, '', 0, '', '', '', '', '',
+                                                                           'board')
 
     async def start(self):
         pass
@@ -204,7 +201,7 @@ def status(field):
 SPOKEN_IN = []  # each care call's caller's language, by its number in the phase
 
 
-async def phase(name, langs, seconds, voices):
+async def phase(name, langs, seconds, voices, phone_call, app_call):
     stats, tasks, until = [], [], time.monotonic() + seconds
     SPOKEN_IN[:] = langs
     cpu0, wall0, busiest, last = os.times(), time.monotonic(), 0.0, (sum(os.times()[:2]), time.monotonic())
@@ -213,13 +210,13 @@ async def phase(name, langs, seconds, voices):
         ws = PhoneSocket(s)
         ws.queue.put_nowait(json.dumps({'event': 'start', 'start': {'streamSid': f'MZ{i}', 'callSid': f'CA{i}',
                                                                     'customParameters': {'ticket': 't'}}}))
-        tasks.append(asyncio.create_task(server.phone_call(ws)))
+        tasks.append(asyncio.create_task(phone_call(ws)))
         tasks.append(asyncio.create_task(Caller(s, voices[lang], 0).run(ws.put, until, 14 + 3 * i)))
         stats.append(s)
         tasks.append(asyncio.create_task(close_at(ws, until)))
     s = Stats('board en')
     ws = AppSocket(s)
-    tasks.append(asyncio.create_task(server.app_call(ws)))
+    tasks.append(asyncio.create_task(app_call(ws)))
     tasks.append(asyncio.create_task(Caller(s, voices['en'], 0).run(ws.put, until, 2)))
     tasks.append(asyncio.create_task(close_at(ws, until)))
     stats.append(s)
@@ -251,21 +248,23 @@ async def main():
     print(f'models loaded: memory {status("VmRSS")} MB', flush=True)
     # (care, the deployment the tickets name by default, taking every care caller at once)
     care = care_service()
-    server.CARE_ENGINES['care'] = {'url': care.url, 'token': 'load-check', 'calls': max(len(langs), 2)}
-    server.hq = lambda method, path, body=None: (
+    care_engines = {'care': {'url': care.url, 'token': 'load-check', 'calls': max(len(langs), 2)}}
+    coordinator = lambda method, path, body=None: (
         {'agent': 'poppy', 'lang': 'nl', 'kind': 'care', 'langs': ['nl', 'en'], 'voice': 'bill_boerst',
-         'voices': {'nl': 'alex', 'de': 'thorsten'}} if path == 'call-ticket' else {})
-    server.Agent = Board
-    server.LIVE.mkdir(parents=True, exist_ok=True)
-    server.CALL_LOGS.mkdir(parents=True, exist_ok=True)
+         'voices': {'nl': 'alex', 'de': 'thorsten'}} if path == 'call-ticket' else {}) (the routes are given what the line is wired to, which they hand to their
+    # calls, and the board's route its call maker)
+    files = Path(tempfile.mkdtemp())  # (the line's /data, here)
+    wiring = server.Wiring(hq=coordinator, paths=server.Paths(calls=files, live=files), care_engines=care_engines)
+    make_board_call = lambda *args, **kwargs: server.Call(*args, **kwargs, brain=Board())
+    phone_call = functools.partial(server.phone_call, wiring=wiring)
+    app_call = functools.partial(server.app_call, make_call=make_board_call, wiring=wiring)
     voices = {lang: [synthesise(t, lang) for t in lines] for lang, lines in CALLERS.items()}
     print(f'callers synthesised: memory {status("VmRSS")} MB', flush=True)
-    await phase('a board call alone', [], min(60, seconds), voices)
-    await phase(f'care calls in {", ".join(langs)} and a board call at once', langs, seconds, voices)
+    await phase('a board call alone', [], min(60, seconds), voices, phone_call, app_call)
+    await phase(f'care calls in {", ".join(langs)} and a board call at once', langs, seconds, voices, phone_call, app_call)
     await asyncio.sleep(3)  # (the last sentences' synthesis stops)
     care.stop()
 
 
 if __name__ == '__main__':
-    server.CALL_LOGS = server.LIVE = Path(tempfile.mkdtemp())  # (the line's /data, here)
     asyncio.run(main())

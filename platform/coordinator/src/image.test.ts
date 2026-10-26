@@ -21,6 +21,7 @@ import { dirname } from 'node:path';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { harness } from './harness.ts';
+import { OWN } from '../../../shared/watchalong/mirrorpage.ts';
 
 const ROOT = new URL('../../../', import.meta.url).pathname;
 
@@ -122,4 +123,42 @@ test('the coordinator starts from its image alone, studio on and no key, and kee
   // (the start's CPU line names the busiest source files, studio.ts among them on a busy machine: not the studio speaking)
   const said = out.split('\n').filter(line => !line.startsWith("Coordinator: its start's CPU went to"));
   assert.doesNotMatch(said.join('\n'), /studio/i);
+});
+
+// The files the screen's mirror reads for its replay page as it serves them, not imports: one the image leaves out
+// stops nothing at the start, and every picture of a shared screen waits its STEP_MS and fails, each time
+test("the screen's mirror finds its replay page's own files in the image", () => {
+  for (const own of Object.values(OWN)) {
+    const file = own.url && own.url.pathname.slice(ROOT.length);
+    if (file) assert.ok(inImage(file), `${file} isn't in the image`);
+  }
+});
+
+// The voice line's image copies its Python modules one by one (platform/voice/Dockerfile, its COPY to /app/): a module
+// server.py imports that the list leaves out passes every test in the repo, and stops the line at each start
+test("the voice line's image has every module its server and the call agent's tools import", () => {
+  const voice = `${ROOT}platform/voice/`;
+  const copied = new Set(
+    [
+      ...readFileSync(`${voice}Dockerfile`, 'utf8')
+        .replace(/\\\n/g, ' ')
+        .matchAll(/^COPY (.+) \/app\/$/gm),
+    ].flatMap(([, sources]) => sources.split(/\s+/).map(s => s.replace(/^voice\//, ''))),
+  );
+  // from the two scripts the image runs (CMD server.py; guard.py starts hq_tools.py), through their own modules
+  const seen = new Set<string>(),
+    todo = ['server.py', 'hq_tools.py'];
+  for (let file; (file = todo.pop());) {
+    if (seen.has(file)) continue;
+    seen.add(file);
+    const code = readFileSync(`${voice}${file}`, 'utf8');
+    const names = [
+      ...[...code.matchAll(/^\s*from (\w+) import /gm)].map(m => m[1]),
+      ...[...code.matchAll(/^\s*import ([\w, ]+?)\s*(?:#.*)?$/gm)].flatMap(m => m[1].split(',').map(n => n.trim())),
+      ...[...code.matchAll(/with_name\('(\w+)\.py'\)/g)].map(m => m[1]),
+    ];
+    for (const name of names) if (existsSync(`${voice}${name}.py`)) todo.push(`${name}.py`);
+  }
+  assert.ok(seen.has('driving.py'), 'the walk found no voice modules');
+  for (const file of seen) assert.ok(copied.has(file), `platform/voice/${file} isn't in the voice image`);
 });

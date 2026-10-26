@@ -2,10 +2,12 @@
 // Each job's share of the worker: its processes counted together, its heavy run blocked past its share, never its CLI.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { once } from 'node:events';
+import { closeSync, existsSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { alive, procStat } from './detached.ts';
+import { sampleWrites } from './diskwrites.ts';
+import { alive, procStat, processesOfUids } from './detached.ts';
 import {
   cliProcesses,
   commandOf,
@@ -467,3 +469,229 @@ test('a snapshot has only the jobs asked for, and memory a fork shares counts on
     for (const p of pair) process.kill(p.pid);
   }
 });
+
+test('unavailable disk counters stop a warned over-share command explicitly, even without measurable growth', () => {
+  const before = [proc(10, 1501, 1, 0, { writeBytes: 0, writeCallBytes: 0 })];
+  const diskUse = { used: 8192, share: 4096, warned: true, grew: false };
+  for (const counters of [
+    { writeBytes: undefined, writeCallBytes: undefined },
+    { writeBytes: 1, writeCallBytes: undefined },
+  ]) {
+    const uses = tally([{ ...before[0], ...counters }], before, 1000);
+    const disk = new Map([[1501, diskUse]]);
+    const block = overShare(uses, new Set(), { ...opts, disk }).block!;
+    assert.equal(block.root.pid, 10);
+    assert.equal(block.measure, 'disk');
+    assert.match(block.accountingError!, /Disk accounting unavailable.*write counters/);
+    assert.equal(overShare(uses, new Set([10]), { ...opts, disk }).block, undefined, 'the CLI remains protected');
+    assert.equal(
+      overShare(uses, new Set(), { ...opts, disk: new Map([[1501, { ...diskUse, warned: false }]]) }).block,
+      undefined,
+    );
+    assert.equal(
+      overShare(uses, new Set(), { ...opts, disk: new Map([[1501, { ...diskUse, share: 8192 }]]) }).block,
+      undefined,
+    );
+  }
+});
+
+test('a live command that denies its slot access to counters is stopped with an accounting error', async context => {
+  const hidden = spawn('python3', [
+    '-u',
+    '-c',
+    [
+      'import ctypes, sys',
+      "print('ready')",
+      'for command in sys.stdin:',
+      '  ctypes.CDLL(None).prctl(4, 0)',
+      "  print('hidden')",
+    ].join('\n'),
+  ]);
+  context.after(() => hidden.kill('SIGKILL'));
+  await once(hidden.stdout, 'data');
+  const ids = { uid: process.getuid!(), gid: process.getgid!() };
+  const read = async () => (await processesFor([ids])).filter(process => process.pid === hidden.pid);
+  const before = await read();
+  const changed = once(hidden.stdout, 'data');
+  hidden.stdin.write('hide\n');
+  await changed;
+  const now = await read();
+  assert.equal(now.length, 1, 'the same live process is still sampled');
+  assert.equal(now[0].start, before[0].start);
+  assert.equal(now[0].writeBytes, undefined);
+  const disk = new Map([[ids.uid, { used: 8192, share: 4096, warned: true, grew: true }]]);
+  const block = overShare(tally(now, before, 1000), new Set(), { ...opts, disk }).block!;
+  assert.match(block.accountingError!, /Disk accounting unavailable/);
+});
+
+test('session growth and another writer do not attribute a pipe-only command as a disk writer', async context => {
+  const work = mkdtempSync('/dev/shm/disk-attribution-');
+  context.after(() => rmSync(work, { recursive: true, force: true }));
+  async function command(file?: string): Promise<ChildProcessWithoutNullStreams> {
+    const child = spawn(process.execPath, [
+      '-e',
+      `
+      const fs = require('node:fs');
+      const fd = process.argv[1] ? fs.openSync(process.argv[1], 'w') : undefined;
+      process.stdin.on('data', () => {
+        if (fd !== undefined) fs.writeSync(fd, Buffer.alloc(65536));
+        console.log('x'.repeat(65536));
+      });
+      console.log('ready');
+    `,
+      ...(file ? [file] : []),
+    ]);
+    context.after(() => child.kill('SIGKILL'));
+    await once(child.stdout, 'data');
+    return child;
+  }
+  const session = await command(`${work}/session`);
+  const writer = await command(`${work}/cache`);
+  const reader = await command();
+  const ids = { uid: process.getuid!(), gid: process.getgid!() };
+  const pids = new Set([session.pid, writer.pid, reader.pid]);
+  const snapshot = async () =>
+    (await sampleWrites(await processesFor([ids]), [ids])).filter(process => pids.has(process.pid));
+  const activity = async (...children: ChildProcessWithoutNullStreams[]) => {
+    await Promise.all(
+      children.map(async child => {
+        const output = once(child.stdout, 'data');
+        child.stdin.write('write\n');
+        await output;
+      }),
+    );
+  };
+  const disk = new Map([[ids.uid, { used: 131072, share: 4096, warned: true, grew: true }]]);
+  const cli = new Set([session.pid!]);
+  let before = await snapshot();
+  await activity(session, reader);
+  let now = await snapshot();
+  let uses = tally(now, before, 1000);
+  assert.ok(uses.get(ids.uid)!.processes.find(process => process.pid === reader.pid)!.writtenCallBytes! > 0);
+  assert.equal(
+    overShare(uses, cli, { ...opts, disk }).block,
+    undefined,
+    'protected session growth cannot implicate pipe output',
+  );
+  before = now;
+  await activity(writer, reader);
+  now = await snapshot();
+  uses = tally(now, before, 1000);
+  const measured = uses.get(ids.uid)!.processes.find(process => process.pid === writer.pid)!;
+  assert.equal(measured.writtenBytes, 0, 'tmpfs has no physical storage writes');
+  assert.equal(measured.storedWriteBytes, 65536, 'the writer advanced its own regular file and allocated blocks');
+  assert.equal(overShare(uses, cli, { ...opts, disk }).block!.root.pid, writer.pid);
+});
+
+test('a writable file shared with another process does not attribute shared offset changes to pipe output', () => {
+  const file = { inode: '1:99', position: 0, bytes: 0 };
+  const before = [
+    proc(10, 1501, 1, 0, { writeBytes: 0, writeCallBytes: 0, writableFiles: [file] }),
+    proc(11, 1501, 1, 0, { writeBytes: 0, writeCallBytes: 0, writableFiles: [file] }),
+  ];
+  const now = before.map(process => ({
+    ...process,
+    writeCallBytes: 65536,
+    writableFiles: [{ ...file, position: 65536, bytes: 65536 }],
+  }));
+  const disk = new Map([[1501, { used: 65536, share: 4096, warned: true, grew: true }]]);
+  assert.equal(overShare(tally(now, before, 1000), new Set([10]), { ...opts, disk }).block, undefined);
+});
+
+test('duplicated writable descriptors stay compact and preserve command write attribution', async context => {
+  const work = mkdtempSync(`${tmpdir()}/disk-descriptors-`);
+  context.after(() => rmSync(work, { recursive: true, force: true }));
+  const child = spawn('python3', [
+    '-u',
+    '-c',
+    `
+import os, resource, sys
+soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+resource.setrlimit(resource.RLIMIT_NOFILE, (min(hard, 30000), hard))
+fd = os.open(sys.argv[1], os.O_CREAT | os.O_WRONLY, 0o600)
+fds = [os.dup(fd) for _ in range(26000)]
+print('ready')
+for line in sys.stdin:
+  os.write(fd, b'x' * 65536)
+  print('wrote')
+`,
+    `${work}/cache`,
+  ]);
+  context.after(() => child.kill('SIGKILL'));
+  await once(child.stdout, 'data');
+  const ids = { uid: process.getuid!(), gid: process.getgid!() };
+  const snapshot = async () =>
+    sampleWrites(
+      (await processesFor([ids])).filter(p => p.pid === child.pid),
+      [ids],
+    );
+  const before = await snapshot();
+  assert.equal(before[0].writableFiles!.length, 1);
+  const wrote = once(child.stdout, 'data');
+  child.stdin.write('write\n');
+  await wrote;
+  const now = await snapshot();
+  assert.equal(now[0].diskAccountingError, undefined);
+  const disk = new Map([[ids.uid, { used: 65536, share: 4096, warned: true, grew: true }]]);
+  const block = overShare(tally(now, before, 1000), new Set(), { ...opts, disk }).block!;
+  assert.equal(block.root.pid, child.pid);
+  assert.equal(block.accountingError, undefined);
+});
+
+for (const interruption of ['SIGSTOP', 'SIGKILL'] as const)
+  test(`a ${interruption} writable-file sampler cannot hold another job's enforcement or hide its own accounting error`, async context => {
+    const ids = { uid: process.getuid!(), gid: process.getgid!() };
+    const rootWorker = ids.uid === 0;
+    const affectedIds = rootWorker ? { uid: 65003, gid: 65003 } : ids;
+    const otherIds = rootWorker ? { uid: 65004, gid: 65004 } : ids;
+    const jobs = rootWorker ? [affectedIds, otherIds] : [ids];
+    const affected = spawn('sleep', ['300'], affectedIds);
+    const other = spawn('sleep', ['300'], otherIds);
+    context.after(() => {
+      affected.kill('SIGKILL');
+      other.kill('SIGKILL');
+    });
+    await Promise.all([once(affected, 'spawn'), once(other, 'spawn')]);
+    const first = (await processesFor(jobs)).filter(p => p.pid === affected.pid || p.pid === other.pid);
+    const existing = new Set(processesOfUids(new Set(jobs.map(j => j.uid))).map(p => p.pid));
+    const sampling = sampleWrites(first, jobs);
+    const sampler = processesOfUids(new Set([affectedIds.uid])).find(
+      p => p.ppid === process.pid && !existing.has(p.pid),
+    )!;
+    assert.ok(sampler, 'the production writable-file sampler has started');
+    context.after(() => {
+      try {
+        process.kill(sampler.pid, 'SIGKILL');
+      } catch {
+        /* already ended */
+      }
+    });
+    process.kill(sampler.pid, interruption);
+    // This is the independent process-reading path used before writable-file sampling by the worker.
+    const current = (await processesFor([otherIds]))
+      .filter(p => p.pid === other.pid)
+      .map(p => ({ ...p, uid: rootWorker ? otherIds.uid : ids.uid + 1 }));
+    const uses = tally(current, current, 1000);
+    const memory = overShare(uses, new Set(), { ...opts, mostMb: 0 }).block!;
+    assert.equal(memory.measure, 'memory');
+    assert.equal(memory.root.pid, other.pid);
+    const crowded = overShare(uses, new Set(), { ...opts, processes: 0 }).block!;
+    assert.equal(crowded.measure, 'processes');
+    const hot = overShare(uses, new Set(), { ...opts, hot: new Set([current[0].uid]) }).block!;
+    assert.equal(hot.measure, 'cores');
+    const closed = once(other, 'close');
+    await stopRun(memory.run, otherIds, memory.root, async () => ({ text: 'Memory share exceeded' }));
+    assert.equal((await closed)[1], 'SIGKILL');
+    await sampling;
+    if (rootWorker) {
+      const healthy = first.find(p => p.pid === other.pid)!;
+      assert.equal(healthy.diskAccountingError, undefined);
+      assert.deepEqual(healthy.writableFiles, [], 'another job retains its descriptor reading');
+    }
+    const failed = first.filter(p => p.pid === affected.pid);
+    const disk = new Map([[affectedIds.uid, { used: 4096, share: 8192, warned: false, grew: false }]]);
+    const block = overShare(tally(failed, failed, 1000), new Set(), { ...opts, disk }).block!;
+    assert.equal(block.root.pid, affected.pid);
+    assert.match(block.accountingError!, /writable-file sampling failed/);
+    assert.equal(overShare(tally(failed, failed, 1000), new Set([affected.pid!]), { ...opts, disk }).block, undefined);
+  });

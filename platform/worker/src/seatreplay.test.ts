@@ -23,6 +23,16 @@ const account = {
           running: [{ job: 17, stage: 'first-review', remaining_ms: HOUR }],
         },
         { type: 'exhaustion', at: cutoff, started_at: null, quota: 'reported', until: null, running: [] },
+        {
+          type: 'exhaustion',
+          at: cutoff,
+          started_at: cutoff,
+          quota: 'reported',
+          until: cutoff + 2 * HOUR,
+          running_continues: true,
+          idle_ms: HOUR,
+          running: [{ job: 18, stage: null, remaining_ms: HOUR }],
+        },
       ],
     },
   ],
@@ -74,6 +84,8 @@ test('the extra-seat command prints usual-pace exhaustions, interrupted work, id
     assert.match(stdout, /claude-a:.*09:00 UTC, fiveHour, runs dry, return .*11:00 UTC, idle 2 h/);
     assert.match(stdout, /Job 17 \(first-review\): 1 h remaining/);
     assert.match(stdout, /hold active at cutoff, original start unknown, return unknown, idle unknown/);
+    assert.match(stdout, /work continues, then idle 1 h/);
+    assert.match(stdout, /Job 18: 1 h remaining/);
     assert.match(stdout, /Thread finishes: 4 earlier, 1 later, 3 unchanged, 2 unresolved/);
     assert.doesNotMatch(stdout, /slow-only/);
   } finally {

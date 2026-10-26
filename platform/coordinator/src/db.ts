@@ -122,7 +122,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - token: the running job's agent token (sha256 only).
 // - room_for: the ready work it last paused to make room for (jobs.ts makesRoom), which gets that room first.
 // - writes: the files a ruling may touch itself (JSON, review.ts touch-ups).
-// - stopping, suspending: who stopped it (hq stop) or paused it with its thread (suspendReview) and why, until it ends.
+// - stopping: who stopped it (hq stop) and why, kept when it ends stopped.
+// - suspending: who paused it with its thread (suspendReview) and why, until the run ends.
 // - off_worker: its suspending is HQ's, for the worker's room (offWorker), not a pause's.
 // - queued_by: the agent who queued it (null: the coordinator's own).
 // - customers: it was handed a customer's own details (charter rule 7), never spread.
@@ -243,7 +244,7 @@ db.exec(`
     kind text not null, title text not null, body text not null, urgency text not null default 'today',
     status text not null default 'open', answer text, seat text, secrets text, approves text, pr integer, photos text,
     documents text, zips text, address integer, questions text, customers integer not null default 0, answered text,
-    changed text, topic text, heard_by integer, closing text, hidden_until text);
+    changed text, topic text, heard_by integer, closing text, hidden_until text, walk integer not null default 0);
   create table if not exists prs (number integer primary key, branch text not null, author text not null,
     round integer not null default 0, status text not null default 'open', verdict text, sha text,
     since integer not null default 0, review_since integer not null default 0,
@@ -258,7 +259,7 @@ db.exec(`
   create table if not exists calls (id integer primary key, ts text not null, agent text not null, request integer,
     lines text not null, job integer, status text not null default 'ended', processed_at text,
     attempts integer not null default 0, lines_at text, resumes text, reply text,
-    customers integer not null default 0, line_times text);
+    customers integer not null default 0, line_times text, walk integer not null default 0);
   create table if not exists chat (id integer primary key, ts text not null, who text not null, text text not null,
     sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
     about_keys integer not null default 0);
@@ -341,8 +342,9 @@ db.exec('create table if not exists addresses (id integer primary key autoincrem
 redacted('prs', 'checks_note');
 // pushes: the files each of a pull request's pushed commits changes against main (review.ts), and the lines it adds or
 // alters per file (findings.ts ChangedLines, JSON; null for a touch-up commit, whose lines shift the later ones). `at`:
-// when that commit was first pushed (threats.ts, when work last moved).
-db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, at text, primary key (pr, sha))');
+// when that commit was first pushed (threats.ts, when work last moved). `checked`: 1 when its gates and tests both passed
+// on it, else 0 (null: pushed before it was kept): what an expedited merge needs (review.ts checksPassed).
+db.exec('create table if not exists pushes (pr integer not null, sha text not null, files text not null, lines text, at text, checked integer, primary key (pr, sha))');
 // What a pull request's pushes still owe before a review: work only one engine does that a run on another changed, to
 // restore from \`since\` and redo (engineonly.ts), and changed files people see whose previews no push recorded yet
 // (visual.ts).
@@ -419,17 +421,20 @@ db.exec(`create table if not exists call_tokens (hash text primary key, agent te
 // recorded, handed out, linked, dropped or acknowledged it (processed_at needs one since lines_at: ledger.ts recorded()).
 // due: the time the board was given for it (ms), which the thread of the job that carries it, or is linked to it, takes
 // as its window (ledger.ts link, server.ts hq job). goal: why the board wants it (its goal, or the problem it solves),
-// which the work is judged against; null on an item the board added itself, and on one recorded before it was asked for
+// which the work is judged against; null on an item the board added itself, and on one recorded before it was asked for.
+// A task or promise whose work ended done is 'ready' since ready_at, and handled only once the CEO records the board's
+// yes, in `said` (ledger.ts done).
 db.exec(`create table if not exists call_items (id integer primary key, call integer not null, kind text not null, owner text not null,
   what text not null, quote text not null, lines text, status text not null default 'open', job integer, request integer, ref text,
-  why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer, goal text)`);
+  why text, replaces integer, ts text not null, closed_at text, by integer, acted_at text, board integer, due integer, goal text,
+  ready_at text, said text)`);
 // (the open ones and their jobs, which the queue's every read asks for: jobs.ts BOARD_CALL)
 db.exec('create index if not exists call_items_open on call_items (status, job)');
 // The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL): a few rows, not every pull request's
 db.exec("create index if not exists prs_open on prs (branch) where status in ('open', 'stuck', 'board')");
 redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending', 'landing');
 redacted('requests', 'title', 'body', 'answer', 'topic', 'questions');
-redacted('calls', 'lines', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref'); redacted('events', 'text');
+redacted('calls', 'lines', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref', 'said'); redacted('events', 'text');
 // untold: a running job owed the message that its item (call_items.id) was dropped or replaced, until it's sent (ledger.ts
 // tell(): a live call's correction has nobody to send it; a refused send is tried again).
 db.exec('create table if not exists untold (job integer not null, item integer not null, primary key (job, item))');
@@ -456,12 +461,30 @@ redacted('note_routes', 'text');
 // Here rather than in that module, as note_routes: claim() reads it, since a sent sheet is the board's word (jobs.ts
 // BOARD_CALL). owner null: pages nobody owns, which go to the CEO's routing check. status: open, sending (its ten
 // seconds to undo, until send_at, in ms) or sent; or call: a call's page's notes, numbered there and never sent (the
-// agent on the call heard them: bookcalls.ts), one such sheet a call's page beside its owner's open one.
+// agent on the call heard them: bookcalls.ts), one such sheet a call's page beside its owner's open one. page: a free
+// page sent on its own, its one-off sheet (booksend.ts sendPage), never an owner's batch: an owner has one open or
+// sending batch (book_sheets_batch, below the columns added since). (page)
 db.exec(`create table if not exists book_sheets (id integer primary key autoincrement, who text not null default 'board',
-  owner text, status text not null default 'open', created text not null, send_at integer, sent text, job integer);
-  drop index if exists book_sheets_open;
-  create unique index if not exists book_sheets_owner on book_sheets (who, coalesce(owner, '')) where status in ('open', 'sending');
+  owner text, status text not null default 'open', created text not null, send_at integer, sent text, job integer,
+  page integer);
   create index if not exists book_sheets_job on book_sheets (job) where job is not null`);
+// The book's notes (booknotes.ts), each on a sheet and a page, here beside their sheets so every reader has them.
+// (by: who wrote it, the board or an invited person. review: its sent note on HQ, feedback.ts, once it went to a job.
+// asked: its question's quick run. answers: the slip it's a reply under.)
+db.exec(`create table if not exists book_notes (id integer primary key autoincrement, sheet integer not null,
+  page integer not null, n integer not null, by text not null, anchor text not null, words text not null default '',
+  said text, snip text, status text not null default 'open', created text not null, updated text not null,
+  review integer, asked integer, answers integer);
+  create index if not exists book_notes_sheet on book_notes (sheet, n);
+  create index if not exists book_notes_page on book_notes (page);
+  create index if not exists book_notes_review on book_notes (review) where review is not null;
+  create index if not exists book_notes_asked on book_notes (asked) where asked is not null`);
+redacted('book_notes', 'anchor', 'words', 'said');
+// A wiped note (booknotes.ts wipeNote) as it was, its row (note, JSON) and the owner of the sheet it was on, kept for its
+// Undo (restoreNote), then forgotten with its snip.
+db.exec(`create table if not exists book_wiped (id integer primary key, who text not null, owner text,
+  sheet integer not null, note text not null, wiped integer not null)`);
+redacted('book_wiped', 'note');
 // The jobs carrying a call item and their replacements, which the follow-through check reads every minute
 // (agreements.ts), and a thread's jobs: without these each read every job.
 db.exec(`create index if not exists jobs_item on jobs (item) where item is not null;
@@ -537,9 +560,9 @@ db.exec(`create table if not exists threads (id text primary key, project text n
 // or projects.yaml for one lifted from its old `projects:` list). done: when hq project done closed it. thread_needs: a
 // thread starts once every thread it needs is done and merged. plan_changes: every change to a plan, who made it and the
 // meeting it came from. code: the prefix of its tasks' codes (jobcodes.ts),
-// two or three capitals, unique.
+// two or three capitals, unique. goal: when the CEO marked it one of the company's goals (goals.ts), else null
 db.exec(`create table if not exists projects (id text primary key, name text not null, owner text not null, business text,
-    product text, status text not null default 'open', created text not null, by text not null, done text, code text);
+    product text, status text not null default 'open', created text not null, by text not null, done text, code text, goal text);
   create table if not exists thread_needs (thread text not null, needs text not null, primary key (thread, needs));
   create table if not exists plan_changes (id integer primary key, at text not null, project text not null, thread text,
     what text not null, by text not null, meeting integer)`);
@@ -587,14 +610,16 @@ export function meetingProjects(meeting: number) {
 // A paused project or thread (pauses.ts): thread null pauses the whole project. item: the board's call item it carries
 // out (hq item link <item> pause:<id>). decision: the board's decision it waits for (decisions.ts). until_time: the time
 // that wakes its owner (ISO). woken: the job HQ queued its owner once what it waits for (its time, its pause_until jobs
-// settled) was met, to judge what's next. resumed: when it ended, by its CEO or owner (resumed_by) or, null, by the
-// board's answer on its decision's card. pause_until.on_main: that job's commits reached main with its pull request
+// settled) was met, to judge what's next, until a re-pause puts it on new conditions; pause_wakes keeps every job that
+// woke an owner, which no pause holds (jobs.ts pauseLets). resumed: when it
+// ended, by its CEO or owner (resumed_by) or, null, by the board's answer on its decision's card. pause_until.on_main: that job's commits reached main with its pull request
 // closed (review.ts close). Here rather than in that module: claim() reads them.
 db.exec(`create table if not exists pauses (id integer primary key, project text not null, thread text, why text not null,
     by text not null, at text not null, item integer, resumed text, resumed_by text, decision integer, until_time text,
     woken integer);
   create table if not exists pause_until (pause integer not null, job integer not null, on_main integer not null default 0,
-    primary key (pause, job))`);
+    primary key (pause, job));
+  create table if not exists pause_wakes (job integer primary key, pause integer not null)`);
 redacted('pauses', 'why');
 // A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
 // it once there is one; answered, when the board answered that card; released, when the board let what it holds go in
@@ -602,6 +627,10 @@ redacted('pauses', 'why');
 db.exec(`create table if not exists decisions (id integer primary key, name text not null, by text not null, at text not null,
   request integer, answered text, released text)`);
 redacted('decisions', 'name');
+// A review's major visual changes share a decision within their thread. Only their merges wait for it.
+ db.exec(`create table if not exists decision_merges (pr integer primary key, decision integer not null,
+   sha text not null, scope text not null)`);
+
 // The board's pick of an agent's model on its page in HQ (models.ts): its main model and its one fallback, each a
 // model id from the company's list, null for none.
 db.exec('create table if not exists agent_models (agent text primary key, main text, fallback text, at text not null)');
@@ -697,6 +726,8 @@ once('2026-10-23-pushes-at', () => {
   db.exec(`alter table pushes add column at text;
     update pushes set at = (select min(created) from jobs where jobs.pr = pushes.pr and jobs.sha = pushes.sha)`);
 });
+// Whether a pushed commit passed its gates and tests (pushes.checked)
+once('2026-10-26-pushes-checked', () => lacks('pushes', 'checked') && db.exec('alter table pushes add column checked integer'));
 // Why a note came back to routing from the work it went to, in agents' words and the board's (note_routes.back,
 // board_why: routing.ts).
 once('2026-10-24-note-routes-back', () => {
@@ -720,6 +751,10 @@ once('2026-10-21-jobs-engine-only', () => {
 once('2026-10-21-task-codes', () => {
   db.exec('drop index if exists jobs_code');
   if (lacks('projects', 'code')) db.exec('alter table projects add column code text');
+});
+// A project the CEO marks a goal
+once('2026-10-26-project-goals', () => {
+  if (lacks('projects', 'goal')) db.exec('alter table projects add column goal text');
 });
 db.exec(`create index if not exists jobs_by_code on jobs (code);
   create unique index if not exists projects_code on projects (code)`);
@@ -749,12 +784,34 @@ once('2026-10-25-pauses-wake', () => {
   if (lacks('pauses', 'woken')) db.exec('alter table pauses add column woken integer');
   if (lacks('pause_until', 'on_main')) db.exec('alter table pause_until add column on_main integer not null default 0');
 });
+// Every job a pause woke its owner with, kept past a re-pause
+once('2026-10-26-pause-wakes', () =>
+  db.exec('insert or ignore into pause_wakes (job, pause) select woken, id from pauses where woken is not null'),
+);
 // A thread's last merge wakes its owner to judge it (threadjudge.ts)
 once('2026-10-26-threads-judge', () => lacks('threads', 'judge') && db.exec('alter table threads add column judge integer'));
 db.exec('create index if not exists threads_judge on threads (judge) where judge is not null');
 once('2026-10-24-calls-customers', () => {
   if (lacks('calls', 'customers')) db.exec('alter table calls add column customers integer not null default 0');
 });
+// A task or promise ready for the board's yes (ledger.ts done)
+once('2026-10-25-items-ready', () => {
+  if (lacks('call_items', 'ready_at')) db.exec('alter table call_items add column ready_at text');
+  if (lacks('call_items', 'said')) db.exec('alter table call_items add column said text');
+});
+// A card that offers its maker's walk-through (hq ask --walk), and a call that is one (walkthroughs.ts).
+once('2026-10-26-walk', () => {
+  if (lacks('requests', 'walk')) db.exec('alter table requests add column walk integer not null default 0');
+  if (lacks('calls', 'walk')) db.exec('alter table calls add column walk integer not null default 0');
+});
+// A free page sent on its own is a one-off sheet (book_sheets.page), apart from its owner's one open or sending batch.
+once('2026-10-26-book-sheets-page', () => lacks('book_sheets', 'page') && db.exec('alter table book_sheets add column page integer'));
+db.exec(`drop index if exists book_sheets_open;
+  drop index if exists book_sheets_owner;
+  create unique index if not exists book_sheets_batch on book_sheets (who, coalesce(owner, ''))
+    where status in ('open', 'sending') and page is null`);
+// A call about review pins (call_pins) went with HQ's waiting notes: the book took them.
+db.exec('drop table if exists call_pins');
 
 // A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.
 db.exec(`create table if not exists seat_readings (seat text not null, minute integer not null,

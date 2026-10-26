@@ -1,9 +1,8 @@
 // What a change to the queue (hq job, hq cancel, hq estimate set: moves.ts) or new work played into it (hq when) leaves
 // of each agreed deadline: every open thread's window (windows.ts, a time someone gave the board) with its finish before
 // and after, and its slack some hours ago as the prediction log has it, against the deadline as it is now. Facts only:
-// the board hears of a deadline when its finish passes it or it asks, and a tight or shrinking margin is the agent's to
-// plan with (the call's and the intercom's briefings); nothing records what was told: the agent reads that in the calls
-// and the intercom.
+// a deadline its finish passes is the agent's to move back first, the board hearing of it when nothing does or it asks,
+// and a tight or shrinking margin is the agent's to plan with (the call's and the intercom's briefings); nothing records what was told: the agent reads that in the calls and the intercom.
 import { findProject, findThread } from './projects.ts';
 import { threadAt } from './predictionlog.ts';
 import type { ThreadOutlook } from './forecast.ts';

@@ -80,7 +80,7 @@ test("a review's findings list in its reviewer's first sentence, each with what 
     by: [first.agent],
     from: [{ by: first.agent, finding: 0 }],
   };
-  await end(ruling, { decision: 'changes', blocking: [fee], nonblocking: [] });
+  await end(ruling, { decision: 'changes', major_visual: false, blocking: [fee], nonblocking: [] });
   assert.deepEqual(await listed(first.id), [
     { issue: 'The fee is counted twice.', blocking: true, fate: 'open' },
     // (one the ruling left out shows none: a ruling's entries don't say which findings they stand for)
@@ -90,7 +90,12 @@ test("a review's findings list in its reviewer's first sentence, each with what 
   await push(n);
   for (const run of await claim(n, 'review')) await end(run);
   const [again] = await claim(n, 'consolidate');
-  await end(again, { decision: 'merge', blocking: [], outcomes: [{ finding: id, outcome: 'fixed' }] });
+  await end(again, {
+    decision: 'merge',
+    major_visual: false,
+    blocking: [],
+    outcomes: [{ finding: id, outcome: 'fixed' }],
+  });
   const fixed = { issue: 'The fee is counted twice.', blocking: true, fate: 'fixed', round: 2 };
   assert.deepEqual((await listed(first.id))[0], fixed);
   assert.deepEqual(await listed(ruling.id), [fixed]);
@@ -115,6 +120,7 @@ test("a reviewer's finding shows a fate only where it is the one finding at one 
   const kept = (line: number, issue: string) => ({ file: FILE, line, issue, task: `Fix: ${issue}`, by: [first.agent] });
   await end(ruling, {
     decision: 'changes',
+    major_visual: false,
     blocking: [kept(10, 'The fee is counted twice.'), kept(40, 'A stale price.'), kept(60, 'A refund skips the fee.')],
   });
   assert.deepEqual(await listed(first.id), [
@@ -148,6 +154,7 @@ test('explicit sources give same-place findings separate fates and follow a move
   const [ruling] = await claim(n, 'consolidate');
   await end(ruling, {
     decision: 'changes',
+    major_visual: false,
     finding_sources: true,
     blocking: [
       {
@@ -172,7 +179,12 @@ test('explicit sources give same-place findings separate fates and follow a move
   await push(n);
   for (const run of await claim(n, 'review')) await end(run);
   const [again] = await claim(n, 'consolidate');
-  await end(again, { decision: 'merge', blocking: [], outcomes: [{ finding: id, outcome: 'fixed' }] });
+  await end(again, {
+    decision: 'merge',
+    major_visual: false,
+    blocking: [],
+    outcomes: [{ finding: id, outcome: 'fixed' }],
+  });
   assert.deepEqual(await listed(first.id), [
     { issue: 'The fee is counted twice.', blocking: true, fate: 'fixed', round: 2 },
     { issue: 'The total rounds down.', blocking: true, fate: 'dropped' },
@@ -187,7 +199,14 @@ test('an explicit ruling that retains no entries drops every reviewer finding', 
   await end(first, { findings: [reported(10, 'The total rounds down.', 'blocking')] });
   for (const run of rest) await end(run);
   const [ruling] = await claim(n, 'consolidate');
-  await end(ruling, { decision: 'merge', finding_sources: true, blocking: [], nonblocking: [], pre_existing: [] });
+  await end(ruling, {
+    decision: 'merge',
+    major_visual: false,
+    finding_sources: true,
+    blocking: [],
+    nonblocking: [],
+    pre_existing: [],
+  });
   assert.deepEqual(await listed(first.id), [{ issue: 'The total rounds down.', blocking: true, fate: 'dropped' }]);
 });
 
@@ -206,6 +225,7 @@ test("explicit sources count a reviewer's findings by their place in its report,
   const [ruling] = await claim(n, 'consolidate');
   await end(ruling, {
     decision: 'changes',
+    major_visual: false,
     finding_sources: true,
     blocking: [
       {
@@ -272,6 +292,7 @@ for (const [index, invalid] of invalidSources.entries()) {
     };
     await end(ruling, {
       decision: 'changes',
+      major_visual: false,
       finding_sources: true,
       blocking: [invalid.duplicate ? entry : { ...entry, from: [] }],
       [invalid.field]: [{ ...entry, from: invalid.from?.(first.agent) }],
@@ -289,6 +310,7 @@ for (const [index, invalid] of invalidSources.entries()) {
     assert.ok(replacement, 'the invalid ruling is retried');
     await end(replacement, {
       decision: 'changes',
+      major_visual: false,
       finding_sources: true,
       blocking: [entry],
       nonblocking: [{ ...entry, line: 100, from: [] }],
@@ -309,6 +331,7 @@ test('a rejected ruling keeps its own reports when its round restarts on the sam
   for (const run of rest) await end(run);
   const rejected = {
     decision: 'changes',
+    major_visual: false,
     finding_sources: true,
     blocking: [
       {
@@ -362,7 +385,7 @@ test('a rejected ruling keeps its own reports when its round restarts on the sam
   assert.deepEqual(queued(n, 'review'), [], 'a push of the commit its panel read leaves the round as it is');
   const [ruling] = await claim(n, 'consolidate');
   assert.ok(ruling, 'the new reports still need their own ruling');
-  await end(ruling, { decision: 'merge', finding_sources: true, blocking: [] });
+  await end(ruling, { decision: 'merge', major_visual: false, finding_sources: true, blocking: [] });
   assert.deepEqual(await listed(fresh.id), [
     { issue: 'The fee is counted twice.', blocking: true, fate: 'dropped' },
     { issue: 'The total rounds down.', blocking: true, fate: 'dropped' },
@@ -378,6 +401,7 @@ test('a fix round says what it fixes: the findings its ruling sent back', async 
   const [ruling] = await claim(n, 'consolidate');
   await end(ruling, {
     decision: 'changes',
+    major_visual: false,
     blocking: [{ file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' }],
   });
   // the round's fix, under the task its ruling named: the findings it sent back
@@ -406,8 +430,8 @@ test("a task drawn from the inbox says what it fixes: its findings, or its own n
     assert.equal(queued(n, 'work').length, 0); // (none drawn for it: the owner draws them)
   };
   const fee = { file: FILE, line: 11, issue: 'The fee is counted twice.', task: 'Count the fee once' };
-  await rule(85670, 'counted', { decision: 'changes', blocking: [fee] });
-  await rule(85671, 'touched', { decision: 'changes', blocking: [], nonblocking: [fee] });
+  await rule(85670, 'counted', { decision: 'changes', major_visual: false, blocking: [fee] });
+  await rule(85671, 'touched', { decision: 'changes', major_visual: false, blocking: [], nonblocking: [fee] });
   const [id] = (db.prepare('select id from findings where pr = 85670').all() as { id: number }[]).map(f => f.id);
   const owner = await h.start({ agent: 'moss', title: 'Draw the fixes' });
   const drawn = async (reply: Promise<{ status: number; body: { job?: number; id?: number } }>) => {

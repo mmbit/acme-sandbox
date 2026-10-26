@@ -84,8 +84,9 @@ export function owedRedo(pr: number, changed: string[], since: string | undefine
   const owed = db.prepare('select files, since from engine_redo where pr = ?').get(pr) as
     { files: string; since: string | null } | undefined;
   const before = owed ? (JSON.parse(owed.files) as string[]) : [];
+  // (the rule first: most pushes fall under none, and need no look at who pushed.)
   const rule = ruleFor([...before, ...changed]),
-    ranOn = pushedOn(branch);
+    ranOn = rule && pushedOn(branch);
   if (!rule || !ranOn) return undefined;
   const wrong = ranOn !== rule.engine,
     pushed = held(rule, changed);
@@ -99,12 +100,18 @@ export function owedRedo(pr: number, changed: string[], since: string | undefine
   return files.length ? { rule, files, ranOn, since: from } : undefined;
 }
 
-// The engine the last run that pushed to a branch ran on (its work or chat job, just ended when its push comes)
-export function pushedOn(branch: string) {
+// The engine the last run that pushed to a branch ran on (its work or chat job, just ended when its push comes). The jobs
+// that can be on the branch come by index first (its own, its thread's, the job it's named after: panel.ts authors),
+// then the rule decides: alone, it would read every done job's row, seconds with the file off the disk.
+function pushedOn(branch: string) {
   const row = db
     .prepare(
-      `select j.engine from jobs j left join threads t on t.id = j.thread
-      where j.kind in ('work', 'chat') and j.status = 'done' and coalesce(j.branch, t.branch, 'job/' || j.id) = ?
+      `with maybe as (
+        select id from jobs where branch = ?1
+        union select j.id from threads t cross join jobs j on j.thread = t.id where t.branch = ?1 and j.branch is null
+        union select id from jobs where ?1 like 'job/%' and id = cast(substr(?1, 5) as integer)
+      ) select j.engine from maybe cross join jobs j on j.id = maybe.id left join threads t on t.id = j.thread
+      where j.kind in ('work', 'chat') and j.status = 'done' and coalesce(j.branch, t.branch, 'job/' || j.id) = ?1
       order by j.finished desc, j.id desc limit 1`,
     )
     .get(branch) as { engine: string } | undefined;

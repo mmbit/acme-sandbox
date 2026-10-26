@@ -13,70 +13,148 @@ import { onEvent } from './events.js';
 import { devHooks } from './dev.js';
 import { initPanel, panelOpen, refreshAgent } from './panel.js';
 import { reloadGazette, paintNews, openGazette } from './news.js';
-import { initDesk, openPhone, openIntercom, openComputer, onRequests, refreshRequests, refreshWaitingNotes, toolOpen, cardTime, refreshIntercomCount, paintIntercomCount, openJob } from './desk.js';   // (the intercom's count; openJob)
-import { refreshSeen, seen, onSeen } from './seen.js';   // (seen, onSeen: job #7083)
+import {
+  initDesk,
+  openPhone,
+  openIntercom,
+  openComputer,
+  onRequests,
+  refreshRequests,
+  refreshComputerCount,
+  toolOpen,
+  cardTime,
+  refreshIntercomCount,
+  paintIntercomCount,
+  openJob,
+  bookAt,
+  closeTool,
+} from './desk.js'; // (the intercom's count; openJob; bookAt)
+import { refreshSeen, seen, onSeen } from './seen.js'; // (seen, onSeen: job #7083)
 import { registerWorker, syncPush } from './push.js';
 import { names, brand, theme } from './brand.js';
-import { initProjects, openProjects, readAhead } from './projects.js';   // (readAhead)
+import { initProjects, openProjects, readAhead } from './projects.js'; // (readAhead)
 import { initTalk } from './talk.js';
 import { initFinder } from './finder.js';
 import { initBook } from './book.js';
 import { refreshRail } from './bookrail.js';
+import { initPair } from './pair.js';
 
 const $ = s => document.querySelector(s);
-const REQUEST_POLL_MS = 20000;  // open board requests
-const ORG_POLL_MS = 60000;      // the org chart: new people, rooms and departments
-const HEALTH_POLL_MS = 60000;   // the deployed HQ version
+const REQUEST_POLL_MS = 20000; // open board requests
+const ORG_POLL_MS = 60000; // the org chart: new people, rooms and departments
+const HEALTH_POLL_MS = 60000; // the deployed HQ version
 const MEETINGS_POLL_MS = 20000; // the agents' meetings, live and planned
-const TALK_POLL_MS = 5000;      // while one is live: its talk, for the bubbles
+const TALK_POLL_MS = 5000; // while one is live: its talk, for the bubbles
 const q = new URLSearchParams(location.search);
-clock.init(q, brand.calendar); weather.init(q); mascots.init(brand.mascots);
+clock.init(q, brand.calendar);
+weather.init(q);
+mascots.init(brand.mascots);
 
+// The same addresses opened on a call by its agent (calldrive.js): done(whether HQ has that screen).
+function openedOnCall(tools, asked) {
+  const tool = tools[asked?.open];
+  asked.done?.(!!tool);
+  tool?.(asked);
+}
 async function boot() {
   brandApp();
   const { org, dev } = await loadOrg();
-  known = org; world.setOrg(org, dev);
+  known = org;
+  world.setOrg(org, dev);
   $('#dev').hidden = !dev;
   // the book beside the page, before the stage, so the building is framed in the room it leaves (a book that can't start
   // stops HQ's start, as the stage does), and its rail's faces drawn again once the look can draw them.
   await initBook();
+  // (a second screen, paired by the book's code, opening what this one opens.)
+  initPair({ phone: () => openPhone(), intercom: openIntercom, computer: app => openComputer(app), close: closeTool });
   await stage(q.get('intro') !== '0');
   refreshRail();
-  initFinder(); initPanel(); initDesk(); initProjects(); initTalk();   // (initFinder first: its Escape)
-  onRequests(showRequests); onSeen(paintDeskCount); onSeen(paintIntercomCount);   // (onSeen)
-  await Promise.all([reloadGazette(dev), refreshSeen()]);   // (seen)
+  initFinder();
+  initPanel();
+  initDesk();
+  initProjects();
+  initTalk(); // (initFinder first: its Escape)
+  onRequests(showRequests);
+  onSeen(paintDeskCount);
+  onSeen(paintIntercomCount); // (onSeen)
+  await Promise.all([reloadGazette(dev), refreshSeen()]); // (seen)
   setTimeout(() => paintNews());
   connectEvents(onEvent, dev, org);
-  bindInput(); bindHud(); updateStatus();
-  refreshRequests(); setInterval(refreshRequests, REQUEST_POLL_MS);
-  refreshWaitingNotes(); refreshIntercomCount(); setInterval(refreshCounts, REQUEST_POLL_MS); // the computer's count, the intercom's
-  setInterval(refreshOrg, ORG_POLL_MS);
-  checkHealth(); setInterval(checkHealth, HEALTH_POLL_MS);
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { if (renovated && !busy()) moveIn(); return; } // a new HQ moves in while nobody's looking
-    refreshRequests(); refreshCounts(); refreshOrg(); checkHealth(); refreshMeetings();
-  });
+  bindInput();
+  bindHud();
+  updateStatus();
+  keepCurrent();
   $('#loading').classList.add('gone');
   refreshMeetings().then(pollMeetings); // (once HQ is up: who's in a meeting walks there)
-  readAhead();   // (the projects view's first open paints at once)
+  readAhead(); // (the projects view's first open paints at once)
   setTimeout(() => $('#hint').classList.add('gone'), 7000);
-  // Notifications: the service worker, and what a tapped notification asks for. /?open=phone starts HQ with
-  // the phone open (/?open=phone&card=<id>: at that card, a ping's); /?open=jobs&job=<id>, the projects view at that job, its report in it (a link to it, as the CEO gives when work is ready). An HQ that's already running gets a message instead.
-  // /?open=notes&notes=<id>,<id>: Reviews at those notes, nothing ticked (review mode's Send my notes, in a tab of its
-
-  registerWorker(); if (!dev) syncPush();
-  const tools = { phone: ({ card }) => openPhone(card), intercom: openIntercom, computer: () => openComputer(), gazette: () => openGazette(q.get('board') === '1' || undefined),
-    settings: () => openComputer('settings', { section: 'sys:seats' }),
-    // (/?open=jobs&job=<id>: the projects view with that job open, its report in it.)
-    jobs: ({ job }) => Number(job) ? openJob(Number(job)) : openProjects(), onair: () => openComputer('onair'),
-    projects: () => openProjects(),   // (/?open=projects: HQ at the projects view)
-    notes: ({ notes }) => openComputer('notes', { notes: { ids: new Set(String(notes ?? '').split(',').map(Number).filter(id => id > 0)) } }) };
-  navigator.serviceWorker?.addEventListener('message', e => { if (tools[e.data?.open]) { refreshRequests(); tools[e.data.open](e.data); } });
-  if (tools[q.get('open')]) { tools[q.get('open')]({ job: q.get('job'), notes: q.get('notes'), card: q.get('card') }); q.delete('open'); q.delete('job'); q.delete('notes'); q.delete('card'); history.replaceState(null, '', location.pathname + (q.size ? `?${q}` : '')); }
-  // a new company's first visit opens on the intercom, which asks the language first.
-  else if (!dev) loadChat(dev).then(c => c.welcome && openIntercom(), () => toast(`<b>Could not reach the coordinator.</b> Open the ${esc(names.intercom)} to try again.`));
+  openAsked(dev);
   if (dev) window.hq = devHooks();
   requestAnimationFrame(loop);
+}
+// HQ kept current: the requests, the counts, the org and the deployed version on their polls, and all of them again
+// when the page shows (a new HQ moves in while nobody's looking). (Out of boot, its size)
+function keepCurrent() {
+  refreshRequests();
+  setInterval(refreshRequests, REQUEST_POLL_MS);
+  refreshComputerCount();
+  refreshIntercomCount();
+  setInterval(refreshCounts, REQUEST_POLL_MS); // the computer's count, the intercom's
+  setInterval(refreshOrg, ORG_POLL_MS);
+  checkHealth();
+  setInterval(checkHealth, HEALTH_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      if (renovated && !busy()) moveIn();
+      return;
+    } // a new HQ moves in while nobody's looking
+    refreshRequests();
+    refreshCounts();
+    refreshOrg();
+    checkHealth();
+    refreshMeetings();
+  });
+}
+// What HQ is asked to open, by a tapped notification, a call or its address. (Out of boot, its size)
+function openAsked(dev) {
+  // Notifications: the service worker, and what a tapped notification asks for. /?open=phone starts HQ with
+  // the phone open (/?open=phone&card=<id>: at that card, a ping's); /?open=jobs&job=<id>, the projects view at that job, its report in it (a link to it, as the CEO gives when work is ready). An HQ that's already running gets a message instead.
+  // /?open=book&owner=<agent>: the book at the sheet for that agent (review mode's Open the book, in a tab of its own).
+  registerWorker();
+  if (!dev) syncPush();
+  const tools = {
+    phone: ({ card }) => openPhone(card),
+    intercom: openIntercom,
+    computer: () => openComputer(),
+    gazette: () => openGazette(q.get('board') === '1' || undefined),
+    settings: () => openComputer('settings', { section: 'sys:seats' }),
+    // (/?open=jobs&job=<id>: the projects view with that job open, its report in it.)
+    jobs: ({ job }) => (Number(job) ? openJob(Number(job)) : openProjects()),
+    onair: () => openComputer('onair'),
+    projects: () => openProjects(), // (/?open=projects: HQ at the projects view)
+    book: ({ owner }) => bookAt(owner),
+  };
+  navigator.serviceWorker?.addEventListener('message', e => {
+    if (tools[e.data?.open]) {
+      refreshRequests();
+      tools[e.data.open](e.data);
+    }
+  });
+  addEventListener('hq:open', e => openedOnCall(tools, e.detail));
+  if (tools[q.get('open')]) {
+    tools[q.get('open')]({ job: q.get('job'), owner: q.get('owner'), card: q.get('card') });
+    q.delete('open');
+    q.delete('job');
+    q.delete('owner');
+    q.delete('card');
+    history.replaceState(null, '', location.pathname + (q.size ? `?${q}` : ''));
+  }
+  // a new company's first visit opens on the intercom, which asks the language first.
+  else if (!dev)
+    loadChat(dev).then(
+      c => c.welcome && openIntercom(),
+      () => toast(`<b>Could not reach the coordinator.</b> Open the ${esc(names.intercom)} to try again.`),
+    );
 }
 
 // The look: ?renderer=<name> for this page load only, else the one this viewer picked, else the company's. One that
@@ -84,10 +162,20 @@ async function boot() {
 // (wire, not a style of its own; the looks read from their folders)
 async function stage(intro) {
   const shipped = (await looks).map(l => l.name);
-  const tries = [...new Set([q.get('renderer') ?? store.get('renderer'), theme.renderer, 'wire'])].filter(n => shipped.includes(n));
+  const tries = [...new Set([q.get('renderer') ?? store.get('renderer'), theme.renderer, 'wire'])].filter(n =>
+    shipped.includes(n),
+  );
   for (const [i, name] of tries.entries()) {
-    try { await mount(name, intro); } catch (e) { console.error(`HQ could not start the ${name} view:`, e); continue; }
-    if (i) toast(`<b>${esc(await lookName(tries[0]))} didn't load on this device.</b> Showing ${esc(await lookName(look))} instead.`);
+    try {
+      await mount(name, intro);
+    } catch (e) {
+      console.error(`HQ could not start the ${name} view:`, e);
+      continue;
+    }
+    if (i)
+      toast(
+        `<b>${esc(await lookName(tries[0]))} didn't load on this device.</b> Showing ${esc(await lookName(look))} instead.`,
+      );
     return;
   }
   throw new Error(`No view of ${names.hq} would start here`);
@@ -97,7 +185,8 @@ async function stage(intro) {
 // local HQ has only the file; hud.js names the buttons). Colours and font go in a sheet of their own over style.css's,
 // so the page's nodes stay as they are.
 function brandApp() {
-  const { app, logo, font = {}, colours = {} } = brand, img = $('#hud .brand img');
+  const { app, logo, font = {}, colours = {} } = brand,
+    img = $('#hud .brand img');
   document.title = app.title;
   $('meta[name="description"]').content = app.description;
   $('meta[name="apple-mobile-web-app-title"]').content = names.hq;
@@ -110,14 +199,18 @@ function brandApp() {
     l.dataset.brandFont = '';
     $('link[rel=stylesheet]').before(l);
   }
-  const sheet = new CSSStyleSheet(), root = sheet.cssRules[sheet.insertRule(':root {}')].style;
+  const sheet = new CSSStyleSheet(),
+    root = sheet.cssRules[sheet.insertRule(':root {}')].style;
   for (const [k, v] of Object.entries(colours)) {
     if (/^#[\da-f]{3,8}$/i.test(v)) root.setProperty(`--${k}`, v);
     else console.warn(`[hq] brand.yaml: colours.${k} isn't a #hex colour, so HQ uses its own`);
   }
   if (font.family) root.setProperty('--font', font.family);
   // the logo on dark, for a look whose skin puts it on a dark plate (the name as the login page takes it, pages.ts darkLogo)
-  root.setProperty('--logo-dark', `url(/${/^[\w-]+\.svg$/.test(logo.svgDark ?? '') ? logo.svgDark : 'wordmark-dark.svg'})`);
+  root.setProperty(
+    '--logo-dark',
+    `url(/${/^[\w-]+\.svg$/.test(logo.svgDark ?? '') ? logo.svgDark : 'wordmark-dark.svg'})`,
+  );
   document.adoptedStyleSheets = [sheet];
 }
 
@@ -128,17 +221,21 @@ function brandApp() {
 // newsletter, seats and jobs refresh themselves elsewhere.
 // (one read at a time: a second call has the one under way, so an agent's panel waits for it; it tells whether the read
 // came in.)
-let orgRead = null, known = null; // known: the org as last read
+let orgRead = null,
+  known = null; // known: the org as last read
 export const refreshOrg = () => (orgRead ??= readOrg().finally(() => (orgRead = null)));
 async function readOrg() {
-  const asked = Date.now(), org = await fetchOrg(world.dev);
+  const asked = Date.now(),
+    org = await fetchOrg(world.dev);
   if (!org) return false;
   world.setMachines(org.machines);
   world.setStudio(org.studio);
   if (orgKey(org) !== orgKey(known)) {
-    known = org; world.setOrg(org);
+    known = org;
+    world.setOrg(org);
     updateStatus();
-    const p = panelOpen(); if (p?.kind === 'agent') refreshAgent(p.ref);
+    const p = panelOpen();
+    if (p?.kind === 'agent') refreshAgent(p.ref);
   }
   if (!world.dev) world.setStatuses(org, asked);
   return true;
@@ -147,7 +244,7 @@ async function readOrg() {
 // (null) until a read succeeds, and the room and its panel say so
 const refreshMeetings = () =>
   loadMeetings(world.dev).then(world.setMeetings, e => {
-    console.error('[hq] The meetings can\'t be read:', e);
+    console.error("[hq] The meetings can't be read:", e);
     world.setMeetings(null);
   });
 // read more often while a meeting is live, so its bubbles keep up with the talk
@@ -155,14 +252,20 @@ const pollMeetings = () =>
   setTimeout(() => refreshMeetings().then(pollMeetings), world.meetings?.live.length ? TALK_POLL_MS : MEETINGS_POLL_MS);
 // A new HQ version: a friendly toast to move in, saying what changed (the newest change, and how many more), or (only
 // while the app is in the background, with no overlay open and nothing being typed) an automatic reload.
-let commit = null, head = null, renovated = false;
+let commit = null,
+  head = null,
+  renovated = false;
 const busy = () => toolOpen() || !!document.activeElement?.matches?.('input, textarea');
 const moveIn = () => location.reload();
 export async function checkHealth() {
   const h = await loadHealth();
   const v = h?.hq || h?.commit; // HQ's own version (its files), not the repo's: the agents' work doesn't count
   if (!v || renovated) return;
-  if (commit == null) { commit = v; head = h.head; return; }
+  if (commit == null) {
+    commit = v;
+    head = h.head;
+    return;
+  }
   if (v === commit) return;
   renovated = true;
   if (document.hidden && !busy()) return moveIn();
@@ -173,15 +276,26 @@ export async function checkHealth() {
 }
 // The counts that hang on what the board has read (Mail's, the Gazette's, the intercom's), read again with the requests, so a read on
 // another device clears them here too
-const refreshCounts = () => refreshSeen().then(() => { paintNews(); refreshIntercomCount(); return refreshWaitingNotes(); });
+const refreshCounts = () =>
+  refreshSeen().then(() => {
+    paintNews();
+    refreshIntercomCount();
+    return refreshComputerCount();
+  });
 // Open board requests (see desk.js): refreshed every 20 s, when HQ comes back to the foreground and
 // when an agent asks the board something. The badge and the ringing desk phone follow the same list.
 // A card that changed (an agent rewrote it) rings and counts as unread like a new one: both go by cardTime.
-let cards = [], heard = '';   // heard: the newest card time HQ has rung for
+let cards = [],
+  heard = ''; // heard: the newest card time HQ has rung for
 function showRequests(list) {
-  const n = list.length, newest = list.map(cardTime).sort().at(-1) ?? '';
-  cards = list; paintDeskCount();
-  if (newest > heard) { if (audio.ready()) audio.sfx.ring(); heard = newest; }
+  const n = list.length,
+    newest = list.map(cardTime).sort().at(-1) ?? '';
+  cards = list;
+  paintDeskCount();
+  if (newest > heard) {
+    if (audio.ready()) audio.sfx.ring();
+    heard = newest;
+  }
   world.setRequests(n);
   (n ? navigator.setAppBadge?.(n) : navigator.clearAppBadge?.())?.catch(() => {}); // the Home Screen icon's count
   if (panelOpen()?.ref === 'board') refreshAgent('board');
@@ -189,9 +303,13 @@ function showRequests(list) {
 // The badge counts the open cards. It turns grey once the board has seen each of them on the desk phone, and red again
 // when a card is new or changed. Red until the marks have loaded.
 function paintDeskCount() {
-  const el = $('#desk-count'), seenUpTo = seen?.desk;
+  const el = $('#desk-count'),
+    seenUpTo = seen?.desk;
   countBadge(el, cards.length);
   el.classList.toggle('read', seenUpTo != null && cards.every(r => cardTime(r) <= seenUpTo));
 }
 
-boot().catch(e => { console.error(e); $('#loading').textContent = `${names.hq} could not load. Try again in a moment.`; });
+boot().catch(e => {
+  console.error(e);
+  $('#loading').textContent = `${names.hq} could not load. Try again in a moment.`;
+});

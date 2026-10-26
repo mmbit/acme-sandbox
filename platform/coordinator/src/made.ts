@@ -1,6 +1,6 @@
 // The jobs HQ makes itself, each on a one-task thread of its own: the project projects.yaml's `made:` names for its kind
-// and app (company.ts), and a repair's in the project its product declares (product.yaml `project:`). The owner's planning
-// job (proposals.ts) is in none.
+// and app (company.ts), and a repair's in the project its product declares (product.yaml `project:`). An owner's planning
+// job is in the project it sorts for, and one for no project's proposals (the CEO's) in none (planning.ts planningJob;
 import { db, planChange } from './db.ts';
 import { projects, type MadeKind } from './company.ts';
 import { manifest } from './manifests.ts';

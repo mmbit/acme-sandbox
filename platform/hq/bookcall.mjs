@@ -2,13 +2,15 @@
 // voice line played.
 // A call with the CEO: the Pencil down on the page makes the call small; a ring drawn while the board talks goes into
 // the call's page (not a sheet) with the words the call heard, and down the call's own socket to the line as the Pencil
-// stays up; the agent asks to see a page by name, the card waits with Show and Not now while the call goes on, and
-// Show starts the watch-along; the agent's ring lands on the page in its own ink, kept on the call's page with its
+// stays up; the agent asks to see a page by name, the card waits with Show and Not now while the call goes on, nothing
+// of the screen gone until Show, and Show starts the watch-along; the agent's ring lands on the page in its own ink, kept on the call's page with its
 // words, and a ring round words nowhere on screen comes back not drawn, with why; hung up, the call's page is offered
 // to throw away, and one tap does. Along the way: a private part under the ring is painted over in what the agent
 // gets; a line drawn while a mark goes in is drawn and makes the next note, with only the words said since its
-// pen-down; a mark the book didn't take stays, the board is told, and it goes in with the next line. The cards in the
-// look asked for (look: Wire's keys).
+// pen-down; a mark the book didn't take stays, the board is told, and it goes in with the next line, but one whose
+// connection dropped as the call ended isn't sent twice (a line drawn after it goes in on its own, also after one of
+// that mark's lines was undone, and the board is told the book may still have that one). The cards in the look asked
+// for (look: Wire's keys).
 import assert from 'node:assert/strict';
 
 const SETTLE_MS = 1500; // (callnotes.js)
@@ -20,7 +22,9 @@ export async function callStory(c) {
   const line = await playLine(c.context);
   await c.open(`/?intro=0&open=intercom${c.look ? `&renderer=${c.look}` : ''}`);
   const page = c.page(),
-    s = { ...c, page, line, named: name => `${name}${c.look ? `-${c.look}` : ''}` };
+    s = { ...c, page, line, named: name => `${name}${c.look ? `-${c.look}` : ''}`, shown: 0 };
+  // (the screen goes to the agent only as a watch-along: counted, to know it starts at Show and not before.)
+  page.on('request', r => r.url().endsWith('/api/watchalong/start') && s.shown++);
   await page.click('#call');
   await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled, null, { timeout: 15_000 });
   await noteOnTheCall(s);
@@ -29,11 +33,14 @@ export async function callStory(c) {
   await notTaken(s);
   await askToSee(s);
   await theirInk(s);
+  await lostAtTheEnd(s);
   await thrownAway(s);
+  await drawnAfterTheLoss(s);
+  await drawnAfterTheLoss(s, 'undo');
 }
 
 // The call's microphone (a quiet tone: Linux's headless WebKit has none) and its voice line: what HQ sends it, kept
-async function playLine(context) {
+export async function playLine(context) {
   await context.addInitScript(() => {
     navigator.mediaDevices.getUserMedia = async () => {
       const ac = new AudioContext(),
@@ -53,6 +60,7 @@ async function playLine(context) {
       const e = JSON.parse(m);
       if (e.agent) {
         line.ws = ws;
+        line.hello = e; // (bookwalk.mjs: the call's request and walk)
         ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9, key: 'k' }));
         ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
       } else if (e.type !== 'ping') line.said.push(e);
@@ -62,7 +70,7 @@ async function playLine(context) {
   return line;
 }
 // What the line heard from HQ of a type, waited for
-async function heard(s, type, has = () => true) {
+export async function heard(s, type, has = () => true) {
   for (let i = 0; i < 60; i++) {
     const e = s.line.said.find(x => x.type === type && has(x));
     if (e) return e;
@@ -219,9 +227,13 @@ async function askToSee(s) {
   assert.equal(await page.locator('.callbubble').isVisible(), true, 'the call goes on beside it');
   await keys(s, card, 'the ask');
   await s.shot(s.named('book-call-ask'), page);
+  // (nothing of the screen has gone yet: the notes went as the Pencil lifted, each its own snip.)
+  assert.equal(s.shown, 0, 'the screen shown before Show');
+  assert.equal(await page.locator('.callbubble .cb-eye').isVisible(), false, 'the bubble says it watches before Show');
   await card.locator('[data-show]').click();
   assert.deepEqual(await heard(s, 'asked'), { type: 'asked', id: 1, answer: 'show' });
   await page.waitForSelector('.callbubble .cb-eye:not([hidden])', { timeout: 5000 });
+  assert.equal(s.shown, 1, 'Show shows the screen');
   assert.equal(await card.count(), 0);
 }
 
@@ -263,11 +275,86 @@ async function inkedAt(s, [x, y], color) {
   return false;
 }
 
+// The connection dropped as the call's last mark goes in, and the call hung up: the book may have it, so it isn't sent
+// again, and the board is told where to look
+async function lostAtTheEnd(s) {
+  const { page } = s,
+    sent = [];
+  const count = q => q.method() === 'POST' && new URL(q.url()).pathname === '/api/book/note' && sent.push(q);
+  page.on('request', count);
+  await once(page, r => r.abort());
+  await s.pen(s.ring(220, 460, 70, 30));
+  await page.waitForTimeout(SETTLE_MS + 800);
+  await page.click('.callbubble .cb-hangup');
+  await page
+    .locator(s.ui('.tip.show'))
+    .getByText(/connection dropped/)
+    .waitFor({ timeout: 5000 });
+  await page.waitForTimeout(500);
+  page.off('request', count);
+  assert.equal(sent.length, 1, 'the mark whose connection dropped went once, not again as the call ended');
+}
+
+// A call again: the connection dropped as a ring goes in (undo: with an arrow, undone after), a line drawn after it,
+// and the call hung up before that settles: the line goes in on its own, the ring not again (undo: the board told the
+// book may still have the arrow)
+async function drawnAfterTheLoss(s, undo) {
+  const { page } = s,
+    sent = [];
+  await page.click('#call');
+  await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled, null, { timeout: 15_000 });
+  const count = q =>
+    q.method() === 'POST' && new URL(q.url()).pathname === '/api/book/note' && sent.push(q.postDataJSON());
+  page.on('request', count);
+  await once(page, r => r.abort());
+  await s.pen(s.ring(220, 460, 70, 30));
+  if (undo) await s.pen(Array.from({ length: 12 }, (_, i) => [300 + i * 8, 470 + i * 4]));
+  await page.waitForTimeout(SETTLE_MS + 800);
+  if (undo) await twoFingerTap(page);
+  const after = Array.from({ length: 10 }, (_, i) => [230 + i * 6, 520 + i * 3]);
+  await s.pen(after);
+  // (at once: a click waits out the bubble's move, past SETTLE_MS)
+  await page.locator('.callbubble .cb-hangup').dispatchEvent('click');
+  for (let i = 0; i < 50 && sent.length < 2; i++) await page.waitForTimeout(100);
+  await page.waitForTimeout(500);
+  page.off('request', count);
+  assert.deepEqual(
+    sent.map(b => b.anchor.ink.length),
+    [undo ? 2 : 1, 1],
+    'the lost mark once, then the line drawn after it on its own as the call ended',
+  );
+  // (its shape: a line joining an open mark is kept where its element was at the mark's first line, marks.js)
+  const pts = sent[1].anchor.ink[0].points,
+    [dx, dy] = [0, 1].map(k => pts.at(-1)[k] - pts[0][k] - (after.at(-1)[k] - after[0][k]));
+  assert.ok(Math.hypot(dx, dy) < 2, 'the note that went is the line drawn after');
+  if (undo)
+    await page
+      .locator(s.ui('.tip.show'))
+      .getByText(/may still have the lines you undid/)
+      .waitFor();
+}
+// Two fingers tapped together: undo (book-check's scribble story: WebKit on Linux has no Touch to make)
+const twoFingerTap = async page => {
+  await page.evaluate(() => {
+    const t = (id, x) => ({ identifier: id, target: document.body, clientX: x, clientY: 600 });
+    const fire = (type, touches, changed) =>
+      document.body.dispatchEvent(
+        Object.defineProperties(new Event(type, { bubbles: true, composed: true }), {
+          touches: { value: touches },
+          changedTouches: { value: changed },
+        }),
+      );
+    const two = [t(1, 300), t(2, 400)];
+    fire('touchstart', two, two);
+    fire('touchend', [], two);
+  });
+  await page.waitForTimeout(150);
+};
+
 // Hung up: the call's page stays in the day unless thrown away, in one tap
 async function thrownAway(s) {
   const { page } = s;
   const callPage = s.pages.findLast(p => p.kind === 'call');
-  await page.click('.callbubble .cb-hangup');
   const kept = page.locator('#call-cards [data-card="page"]');
   await kept.waitFor({ timeout: 15_000 });
   await page.waitForTimeout(500); // (a toast's way in)

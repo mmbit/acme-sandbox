@@ -17,7 +17,7 @@ const WHEEL_REST_MS = 160;
 // a wheel's line is this many px (Firefox's deltaMode 1)
 const LINE_PX = 16;
 
-// Returns { stop() }: the table stops where it is (the pen came down)
+// Returns { stop(), release() }: the table stops where it is (the pen came down)
 export function panning(desk, book, { bare, drawing }) {
   const table = { desk, book, drag: null, glide: 0, wheelRest: 0 };
   table.stop = () => {
@@ -47,7 +47,8 @@ export function panning(desk, book, { bare, drawing }) {
     e => [...e.changedTouches].some(t => t.touchType === 'stylus') && e.preventDefault(),
     { passive: false },
   );
-  return { stop: table.stop };
+  // release(): a finger's pan ends where it began (it held a note still, which lifts instead: booknotegrip.js.
+  return { stop: table.stop, release: () => putBack(table) };
 }
 
 // A pen, or a second finger, coming down ends a finger's pan and puts the table back: that finger was the hand resting

@@ -13,6 +13,7 @@ import {
   placeIn,
   rowOf,
   settleX,
+  showsBox,
   shownAt,
   tilesIn,
 } from './bookrow.js';
@@ -52,6 +53,13 @@ test('the page shown is the one filling most of the paper', () => {
   assert.equal(shownAt(row, { x: -1000, y: 0 }, view), -1);
 });
 
+test('a box written on a page shows while any of it is on the paper', () => {
+  const box = { x0: 100, x1: 200, y0: 900, y1: 1000 };
+  assert.equal(showsBox(row[1], box, { x: row[1].x, y: 0 }, view), false, 'below the paper');
+  assert.equal(showsBox(row[1], box, { x: row[1].x, y: 350 }, view), true);
+  assert.equal(showsBox(row[1], box, { x: row[1].x + 150, y: 350 }, view), true, 'half of it off the left edge');
+});
+
 test('a page grows by half the paper when written near its foot, and not elsewhere', () => {
   assert.equal(grownHeight(700, 600, 700), 1050);
   assert.equal(grownHeight(700, 300, 700), 700);
@@ -85,6 +93,18 @@ test('in the spread, the page shown faces the next across the middle, and open a
   const open = rowOf(pages);
   assert.equal(panTo(open, 1, view, false), open[1].x);
   assert.deepEqual(newPageSize(spread, true), { w: 532, h: 700 });
+  // a page wider than half the paper: its left edge at the paper's, its head
+  // and notes in view
+  const narrow = { w: 332, h: 844 },
+    wide = rowOf(
+      [
+        { w: 390, h: 844 },
+        { w: 166, h: 844 },
+      ],
+      true,
+    );
+  assert.equal(panTo(wide, 0, narrow, true), wide[0].x);
+  assert.equal(panTo(wide, 1, narrow, true), wide[1].x + wide[1].w - narrow.w / 2, 'a page that fits still faces');
 });
 
 test('a remembered page opens where it was left, and a page gone or none remembered opens the last', () => {

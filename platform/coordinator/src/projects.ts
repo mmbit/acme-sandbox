@@ -7,6 +7,7 @@ import { deskLets, loopBranch, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts'
 import { shedRefusal } from './pauses.ts';
 import { publish } from './events.ts';
 import { anyProject, checkThreadName, noProject, taskClash, threadClash } from './names.ts';
+import { whereWorkGoes } from './wherework.ts';
 
 // The threads table is in db.ts: the claim reads it.
 db.exec(
@@ -173,9 +174,8 @@ function ownedProject(job: { agent: string; thread: string | null }) {
 
 // The thread a job an agent queues serves (hq job --thread): one named (open), or else the queuing job's (createJob's
 // from). A thread drawn for it is handled by newthread.ts jobThread.
-// Where the company asks for threads, a job with no open one to inherit is refused, with the open ones listed, except on
-// a live call: the board isn't kept waiting on the line. A call's job with a time still needs a thread (server.ts hq
-// job). A refusal carries its HTTP status.
+// Where the company asks for threads, a job with no open one to inherit is refused, with the open ones listed, but the
+// CEO's own (the desk's), a call's too. A refusal carries its HTTP status.
 // A title the thread or its project has is refused (taskClash).
 export type JobThreadAsk = {
   thread?: unknown;
@@ -183,7 +183,7 @@ export type JobThreadAsk = {
   agent?: unknown;
   title?: unknown;
 };
-export type Queuer = { agent: string; job?: number; onCall: boolean };
+export type Queuer = { agent: string; job?: number };
 export function threadForJob(
   ask: JobThreadAsk,
   queuer: Queuer,
@@ -207,9 +207,10 @@ export function threadForJob(
   const open = inherited ? findThread(inherited) : undefined;
   const clashes = open?.status === 'open' && titled(open);
   if (clashes) return { status: 400, refusal: clashes };
-  // (the CEO's own work in no thread is the desk's: listProjectBoard.)
+  // (the CEO's own work in no thread is the desk's: listProjectBoard. A call's work for anyone else names its thread, as
+  // any hand-off does.)
   const desk = queuer.agent === ceo() && ask.agent === ceo();
-  const refused = !queuer.onCall && !desk && !(inherited && isOpen(inherited)) && noThreadRefusal(inherited, own);
+  const refused = !desk && !(inherited && isOpen(inherited)) && noThreadRefusal(inherited, own);
   return refused ? { status: 409, refusal: refused } : own === inherited ? { from: queuer.job } : {};
 }
 
@@ -222,7 +223,7 @@ function noThreadRefusal(inherited: string | null, own: string | null) {
     : own
       ? `its thread ${own} is HQ's one-task thread, which holds only that task`
       : 'it has no open thread to inherit';
-  return `name the thread this job serves, since ${why}: ${threadChoices()}`;
+  return `name the thread this job serves, since ${why}. ${whereWorkGoes()}\n${threadChoices()}`;
 }
 
 // hq item link <item> job:<id> --thread <project>/<slug>: one job's work in no open thread (in none, or in one that's

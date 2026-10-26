@@ -13,6 +13,7 @@ const h = await harness('followthrough', {
 const { db } = h;
 const { followThroughSweep, read, recordVerdict, START_MS, FINISH_MS, RETELL_MS } = await import('./followthrough.ts');
 const { ceo, roles } = await import('./company.ts');
+const { writePad } = await import('./pad.ts');
 const { MIN, HOUR, t0, reset, agreed, checks, alarm, told, startCheck } = await followthroughFixture(h);
 
 test('with nothing the board agreed still standing, no check is queued', async () => {
@@ -26,6 +27,29 @@ test('with nothing the board agreed still standing, no check is queued', async (
   agreed({ status: 'dropped' });
   followThroughSweep(t0);
   assert.deepEqual(checks(), []);
+});
+
+// Delivered means the board said yes
+test("a promise whose work ended and merged stands while it's ready: the check is queued, and hq followthrough says since when", async () => {
+  reset();
+  const merged = await h.start({ agent: 'bolt' });
+  await h.finish(merged, { status: 'done', pr: 42, branch: `job/${merged.id}` });
+  h.mergedPr(42);
+  const { item } = agreed({
+    status: 'ready',
+    kind: 'promise',
+    job: merged.id,
+    what: 'The trial results to the board',
+    ready: t0 - 2 * HOUR,
+  });
+  followThroughSweep(t0);
+  assert.equal(checks().length, 1, 'its work ending is no delivery');
+  assert.match(
+    read({ id: 0, agent: ceo() }),
+    new RegExp(
+      `- item #${item} \\(call \\d+, promise for ${ceo()}, ready \\d+ h, open until the board says yes \\(hq item done\\)\\): The trial results to the board · job #${merged.id} done, PR #42 merged`,
+    ),
+  );
 });
 
 test("work the CEO queues from a check doesn't take the check's own thread and window", async () => {
@@ -90,12 +114,28 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   assert.match(prompt(), /The scheduler acted and capacity is short[^]*That is no scheduler\s+fault/);
   assert.doesNotMatch(prompt(), /one of two causes/);
   assert.doesNotMatch(prompt(), /cut what's in the way/);
-  // It judges whether the board gets what it asked for, delivered only once the board said yes, and a pause whose
-  // condition is met or whose work ended is off track that hour (board, 25 Oct).
-  assert.match(prompt(), /is the board getting what it asked for, and if not, why\s+not and what do you do now\?/);
+  // It judges whether the board gets what it asked for, delivered as org.yaml's followThrough.delivered says (else the
+  // platform's own, never one company's rule), and a pause whose condition is met or whose work ended is off track that
+  // hour, its owner lifting it, keeping it on for what's missing, or making it wait for the board's decision.
+  // Two questions, each judged on real state: the board's asks, and each goal's number moving toward its target in time;
+  // a goal is fine only on facts, and short seats or a queue never make it so (board, call #233).
   assert.match(
     prompt(),
-    /the board has seen it and said yes, this is what I want\. Not a job ending, merging or\s+deploying/,
+    /is the board getting what it asked for, and is each of our goals' numbers moving toward its\s+target in time\? Where the answer is no: why not, and what do you do now\?/,
+  );
+  assert.match(prompt(), /Delivered means what the board asked for is in its hands: the thing itself/);
+  assert.match(prompt(), /does the board have it, delivered as that says\?/);
+  assert.doesNotMatch(prompt(), /said yes/);
+  assert.match(
+    prompt(),
+    /A goal is fine only when a bet is in motion whose read lands before its window, and no number since says\s+otherwise/,
+  );
+  assert.match(prompt(), /Short seats, a review queue or a wait never make a goal fine: they are causes/);
+  assert.match(prompt(), /A number that moved is acted on this hour/);
+  assert.match(prompt(), /rewrite your page whole \(`hq pad write -`/);
+  assert.match(
+    prompt(),
+    /make the pause wait for its answer, which lifts it: `hq decision "<what the board decides>" --blocks/,
   );
   assert.match(
     prompt(),
@@ -103,13 +143,25 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
   );
   assert.match(prompt(), /A result the board asked for first [^]* promised and not in its hands/);
   try {
-    writeFileSync(orgFile, `${orgChart}\nfollowThrough:\n  prompt: |\n    Only ever this board's words.\n`);
+    writeFileSync(
+      orgFile,
+      `${orgChart}\nfollowThrough:\n  delivered: the board said yes.\n  prompt: |\n    Only ever this board's words.\n`,
+    );
     assert.deepEqual(recordVerdict(checks().at(-1)!.job, 'ok', ''), { ok: true });
     followThroughSweep(t0 + HOUR + MIN);
     assert.match(
       prompt(),
-      /all is on track\.\n\nOur own additions:\nOnly ever this board's words\.\n\nThe summary as this check/,
+      /all is on track\.\n\nOur own additions:\nOnly ever this board's words\.\n\nYour page \(hq pad\): none yet\. Write it in this check[^\n]*\n\nThe summary as this check/,
     );
+    // The CEO's page, the heartbeat's own half, comes last, as the CEO last wrote it.
+    assert.ok(typeof writePad('Goal: first customers.\nNext: read the walk.', { agent: ceo(), job: 1 }) === 'object');
+    assert.deepEqual(recordVerdict(checks().at(-1)!.job, 'ok', ''), { ok: true });
+    followThroughSweep(t0 + 2 * HOUR + MIN);
+    assert.match(
+      prompt(),
+      /Only ever this board's words\.\n\nYour page \(hq pad\), as you wrote it at [\d-]+ [\d:]+ UTC:\nGoal: first customers\.\nNext: read the walk\.\n\nThe summary as this check/,
+    );
+    assert.match(prompt(), /Delivered means the board said yes\.\n/, "the company's own delivery rule");
   } finally {
     writeFileSync(orgFile, orgChart);
   }

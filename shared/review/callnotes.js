@@ -6,17 +6,21 @@
 // The agent draws too: a ring in its own ink round what it names on the board's screen, or round one of the call's
 // notes, with its words beside it in its hand, kept on the call's page as its note (marks.js draws it, so a
 // watch-along records it as the board's ink is).
-//   call:on    { call, agent, name, color }   a call is on: its calls row, its agent, its name and its ink
+//   call:on    { call, agent, name, color, walk }  a call is on: its calls row, its agent, its name and its ink; walk:
+//                                                  a walk-through, whose page opens at once
 //   call:off   { done }                       it ended; done() once a mark still settling is in the book
 //   call:heard { text }                       words the call heard the board say
 //   call:ink   { ring | note, words, reply, taken }  the agent asks to draw: taken() at once, reply({ drawn, why }) once
 //                                                    it's drawn or can't be
 import { anchorOf, isPrivate } from './anchor.js';
+import { named } from './drive.js';
+import { ringAround } from './ring.js';
 import { viewNow } from './mark.js';
 import { reset } from './tool.js';
 import { say } from './dock.js';
 import { lifted, toBook } from './pencil.js';
 import * as marks from './marks.js';
+import { callPage } from './markpage.js';
 
 // The Pencil up this long and the mark goes: about a breath, so a circle and the arrow after it stay one note
 const SETTLE_MS = 1500;
@@ -24,10 +28,6 @@ const SETTLE_MS = 1500;
 const HEARD_MS = 60_000;
 // How long the Pencil's tip says a mark couldn't go into the book
 const TOLD_MS = 8000;
-// The agent's ring: this far round its target, a hand-drawn loop that overshoots its start a little
-const RING_PAD = 10,
-  RING_POINTS = 56,
-  RING_MS = 14; // (between its points, as a hand draws it: about 0.8 s)
 
 export function setupCall(r) {
   Object.assign(r, {
@@ -38,11 +38,14 @@ export function setupCall(r) {
     callNextAt: 0,
     callTimer: 0,
     callFiling: null,
+    callUnheard: null,
   });
   document.addEventListener('call:on', e => {
     r.call = e.detail;
     r.callHeard = [];
     marks.load(r).catch(err => console.error("The Pencil: the call's page", err));
+    // (a walk-through opens its page as it starts.)
+    if (r.call.walk) callPage(r).catch(err => console.error("The Pencil: the walk-through's page", err));
   });
   document.addEventListener('call:off', e => ended(r).finally(() => e.detail?.done?.()));
   document.addEventListener('call:heard', e => {
@@ -78,7 +81,9 @@ export function setupCall(r) {
 
 // The mark into the call's page with the words heard since its first line; whether it went in. Lines drawn meanwhile
 // (pencil.js holds them in r.callLines, drawn) are the next mark's once it's in. If the book didn't take it, the mark
-// stays, those lines with it, and the board is told: the next line drawn tries again as it settles.
+// stays, those lines with it, and the board is told: the next line drawn tries again as it settles. callUnheard: the
+// mark whose last try never heard back, so it may be in the book already, with the lines that try carried and when it
+// went (lines drawn since aren't in the book; one undone since may be. callUnheard)
 function file(r) {
   if (!r.call || r.mode !== 'note' || !r.mark) return;
   const words = r.callHeard
@@ -89,9 +94,11 @@ function file(r) {
   Object.assign(r, { spoken: !!words, typed: false });
   r.text.value = words;
   r.mode = 'sending';
+  const tried = { mark: r.mark, sent: [...r.strokes], at: performance.now() };
   return (r.callFiling = toBook(r).then(
     () => {
       const next = r.callLines.splice(0);
+      r.callUnheard = null;
       reset(r);
       r.callMarkAt = r.callNextAt; // (a pen still down now lifts into the next mark: its words count from its pen-down)
       if (next.length) {
@@ -103,6 +110,7 @@ function file(r) {
     err => {
       console.error('The Pencil: a note on the call', err);
       r.mode = 'note';
+      r.callUnheard = err?.status ? null : tried;
       for (const line of r.callLines.splice(0)) lifted(r, line);
       const why = err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.';
       say(r, `${why} The mark stays here, and goes in with your next line.`, TOLD_MS);
@@ -111,16 +119,32 @@ function file(r) {
   ));
 }
 
-// The call ended: a mark going in, then one still settling (one the book didn't take, tried once more), then the page
-// shows its sheet's marks again. One the book still won't take is gone with the call, and the board is told.
+// The call ended: a mark going in, then one still settling (one the book said no to, tried once more), then the page
+// shows its sheet's marks again. One the book still won't take is gone with the call, and the board is told. One whose
+// last try never heard back isn't sent again: the book may have it, and a second try would make it twice. Lines drawn
+// after that try go in on their own, with the words heard since it, and the board is told the book may still have the
+// lines it undid since. (One whose last try never heard back)
 async function ended(r) {
   clearTimeout(r.callTimer);
   await r.callFiling;
-  if ((await file(r)) === false) {
+  const unheard = r.mark && r.callUnheard?.mark === r.mark ? r.callUnheard : null;
+  const undone = unheard?.sent.some(l => !r.strokes.includes(l));
+  if (unheard) {
+    r.strokes = r.strokes.filter(l => !unheard.sent.includes(l));
+    r.callMarkAt = unheard.at;
+  }
+  const lost =
+    "The connection dropped as the call's last mark went in: look for the mark on the call's page in the book" +
+    (undone ? ', where it may still have the lines you undid since.' : '.');
+  if (unheard && !r.strokes.length) {
+    say(r, lost, TOLD_MS);
+    reset(r);
+  } else if ((await file(r)) === false) {
     say(r, "The call's last mark couldn't go into the book, so it isn't kept.", TOLD_MS);
     reset(r);
-  }
+  } else if (unheard) say(r, lost, TOLD_MS);
   r.call = null;
+  r.callUnheard = null;
   r.callHeard = [];
   marks.load(r).catch(err => console.error("The Pencil: the book's marks", err));
 }
@@ -144,7 +168,12 @@ async function draw(r, d) {
     snip: null,
     by: r.call.agent,
   });
-  return { drawn: true, ...(target.off ? { why: "It's off their screen just now: they'd scroll to see it." } : {}) };
+  // (the line tells the agent where it is)
+  const kept = "It stays on this call's page in the book.";
+  return {
+    drawn: true,
+    ...(target.off ? { why: `It's off their screen just now: they'd scroll to see it. ${kept}` } : {}),
+  };
 }
 
 // One of the call's marks on this page, by its number
@@ -155,64 +184,6 @@ function noted(r, n) {
   return { el: m.live?.isConnected ? m.live : null, box: b.w ? b : { ...b, w: 24, h: 24 } };
 }
 
-// What the agent names on the board's screen: the innermost visible element whose words (or label) hold them, one on
-// screen first, the smallest of those. Never inside private parts or the call's own controls.
-const flat = s =>
-  String(s ?? '')
-    .toLowerCase()
-    .replace(/[‘’]/g, "'")
-    .replace(/[“”]/g, '"')
-    .replace(/\s+/g, ' ')
-    .trim();
-const SKIP = new Set(['script', 'style', 'template', 'noscript', 'head']);
-function named(words) {
-  const want = flat(words);
-  if (!want) return { why: 'Name what to ring by the words they can see on it.' };
-  const says = el =>
-    flat(`${el.textContent} ${el.getAttribute('aria-label') ?? ''} ${el.getAttribute('alt') ?? ''}`).includes(want);
-  const hits = [...document.body.querySelectorAll('*')].filter(
-    el => !SKIP.has(el.localName) && !el.closest('[data-watchalong-hide]') && says(el),
-  );
-  const shown = hits
-    .filter(el => !hits.some(o => o !== el && el.contains(o)) && !isPrivate(el))
-    .map(el => ({ el, box: el.getBoundingClientRect() }))
-    .filter(({ el, box }) => box.width && box.height && getComputedStyle(el).visibility !== 'hidden');
-  if (!shown.length)
-    return { why: `Nothing on their screen says “${words}”: they're on ${location.pathname}${location.search}.` };
-  const onScreen = ({ box }) => box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth;
-  const best = (shown.some(onScreen) ? shown.filter(onScreen) : shown).sort(
-    (a, b) => a.box.width * a.box.height - b.box.width * b.box.height,
-  )[0];
-  const b = best.box;
-  return { el: best.el, box: { x: b.left, y: b.top, w: b.width, h: b.height }, off: !onScreen(best) };
-}
-
-// A ring round a box (screen px) as a hand draws one: a loop a little out of round, starting top left, overshooting
-// where it began, lighter at its ends. seed: its wobble, so no two rings are alike
-function ringAround(b, color, seed) {
-  let s = seed >>> 0 || 1;
-  const rand = () => (s = (s * 1664525 + 1013904223) >>> 0) / 2 ** 32;
-  const cx = b.x + b.w / 2,
-    cy = b.y + b.h / 2,
-    rx = b.w / 2 + RING_PAD,
-    ry = b.h / 2 + RING_PAD,
-    from = -2.4 + rand() * 0.5,
-    turn = 2 * Math.PI + 0.35 + rand() * 0.25,
-    [p, q] = [rand() * 6, rand() * 6];
-  const points = [];
-  for (let i = 0; i <= RING_POINTS; i++) {
-    const f = i / RING_POINTS,
-      a = from + turn * f,
-      k = (1 + 0.04 * Math.sin(2 * a + p) + 0.025 * Math.sin(3 * a + q)) * (1 + 0.07 * f);
-    points.push([
-      Math.round((cx + rx * k * Math.cos(a)) * 10) / 10,
-      Math.round((cy + ry * k * Math.sin(a)) * 10) / 10,
-      Math.round((0.35 + 0.4 * Math.sin(Math.PI * f)) * 100) / 100,
-      i * RING_MS,
-    ]);
-  }
-  return { color, size: 4, points };
-}
 // The ring drawn as a hand would, over the page's marks, before it's kept
 function unroll(r, stroke) {
   const end = stroke.points.at(-1)[3],

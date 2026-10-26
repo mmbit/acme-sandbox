@@ -600,7 +600,7 @@ export function call(id: unknown, reader: Reader) {
   const by = c.heard_by && `job #${c.job}, ${who(c.heard_by)}'s`;
   const none = c.reported ? '' : !c.job ? 'nobody has followed this call up yet'
     : c.heard_kind === 'chat' ? `The CEO's intercom chat heard this call: what came of it is in that conversation, not a report`
-    : c.heard_status !== 'done' ? `its follow-up (${by}) is ${['failed', 'cancelled'].includes(c.heard_status) ? c.heard_status : 'not done yet'}`
+    : c.heard_status !== 'done' ? `its follow-up (${by}) is ${['failed', 'stopped', 'cancelled'].includes(c.heard_status) ? c.heard_status : 'not done yet'}`
     : `its follow-up (${by}) ended without a report`;
   return { ...base, lines: JSON.parse(c.lines), summary: c.reported ? c.summary : null, ...(none ? { summary_left_out: none } : {}) };
 }

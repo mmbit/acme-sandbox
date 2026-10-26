@@ -134,6 +134,24 @@ test('the earliest without making any window miss: ahead of work whose window ca
   assert.match(out, /\(Played \d+ ways on the queue as it is, in \d+\.\d s\.\)/);
 });
 
+test('a quote that plays the queue many ways leaves room for other requests: they are answered first', async () => {
+  // six of moss's two-day jobs on a thread due on day 7: no deadline holds before the end of the play's reach, so the
+  // search plays a deadline in every span between them
+  const thread = h.dueThread({ deadline: T0 + 7 * 24 * HOUR });
+  h.cancelQueued();
+  for (let i = 0; i < 6; i++)
+    h.queue({ agent: 'moss', title: `Catalogue the letters, box ${i}`, engine: 'claude', queuedBy: 'juno', thread });
+  const { token } = await reader();
+  const answered: string[] = [];
+  // the other request goes once the quote has reached HQ
+  const sent = new Promise<unknown>(resolve =>
+    h.server!.once('request', () => resolve(h.agent('jobs', token).then(() => answered.push('jobs')))),
+  );
+  const quote = ask({ q: 'paint the harbour map' }).then(() => answered.push('quote'));
+  await Promise.all([quote, sent]);
+  assert.deepEqual(answered, ['jobs', 'quote']);
+});
+
 test("each agreed deadline as the answer's play leaves it, against the plan without the work: facts, no verdict", async () => {
   const thread = spring(5 * 60);
   const { earliest, free } = (await ask({ q: 'paint the harbour map' })).body;
@@ -148,7 +166,7 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
   const out = await hqWhen();
   assert.match(
     out,
-    /\nAgreed deadlines \(thread windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nThe board hears of an agreed deadline when its finish passes it or the board asks; a tight or shrinking margin is yours to plan with/,
+    /\nAgreed deadlines \(thread windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nAn agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
   );
   assert.doesNotMatch(out, /\b(safe|tight|moving):/, 'the facts, never a verdict');
 });
@@ -269,7 +287,8 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
     /Not by .* even with the windows ahead of it giving way: done about .*\.\nNot by .* with one more claude seat and every window held: done about .*\./,
   );
   assert.doesNotMatch(await hqWhen('--by', utc(T0 + 20 * MIN)), /RED FLAG/);
-  // on a call, a finish past the board's time comes with what to check and do before the board hears it
+  // on a call, a finish past the board's time comes with what to check and do before the board hears it: one
+  // instruction with the agreed deadline the play misses
   const onCall = await h.hq(
     { ...(await reader()), call: true },
     'when',
@@ -283,7 +302,7 @@ test('--by: whether it makes the time, and only if not, what would, as played: w
   );
   assert.match(
     onCall.out,
-    /RED FLAG, not news for the board: this work lands \d.* past the time asked for \(.*\)\. Before you say a time/,
+    /RED FLAG, not news for the board: this work lands \d.* past the time asked for \([^)]*\); Due's Thread \d+ misses its deadline\. Before you say a time/,
   );
   assert.match(
     onCall.out,

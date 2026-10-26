@@ -9,7 +9,7 @@ import * as reviewroom from './reviewroom.ts';
 import * as redraws from './redraws.ts';
 import { lastPlayed } from './forecast.ts';
 import { deadlinePressure, pacedTakes, spareOnly, type Order } from './planner.ts';
-import { measuredMb, plannerCapacity } from './room.ts';
+import { measuredMb, plannerCapacity, pauseBudget } from './room.ts';
 import { db, inOneStep, mergePending, once, planChange, prepared, scrub } from './db.ts';
 import { codeIn, codeOf, numbered } from './jobcodes.ts';
 import { publish, redact, redactJob, status, type RunningJob } from './events.ts';
@@ -34,6 +34,7 @@ import { languageName } from './language.ts';
 import { stylePrompt } from './style.ts';
 import { REPO_DIR } from './config.ts';
 import {
+  visualDecided,
   startReview,
   reviewFinished,
   boardDecided,
@@ -55,6 +56,7 @@ import * as zips from './zips.ts';
 import * as pictures from './pictures.ts'; // the board's pictures with a card's answer
 import { ended as chatEnded, hear, intercom, parked } from './chat.ts';
 import { jobEnded } from './messages.ts';
+import { oneLine } from './agreements.ts';
 import { finished, cancelled, mine } from './ledger.ts';
 import { recordUsage } from './usage.ts';
 import { recordSeatReading } from './headroom.ts';
@@ -67,6 +69,7 @@ import * as owed from './owed.ts';
 import * as later from './later.ts';
 import { shownCard } from './shown.ts';
 import * as decisions from './decisions.ts';
+import * as visualapproval from './visualapproval.ts';
 import * as wakes from './wakes.ts';
 import * as meetingseats from './meetingseats.ts';
 import * as meetingroom from './meetingroom.ts';
@@ -107,6 +110,7 @@ type Job = {
   thread: string | null;
   is_check: number;
   suspending: string | null;
+  stopping: string | null;
 };
 
 const now = () => Date.now();
@@ -391,7 +395,7 @@ export function hasReplacement(job: string) {
 // its branch has an open pull request. Neither holds its
 // thread (threadorder.ts tasksOf, prerequisites' task order).
 export function failedAside(j: string) {
-  return `(${j}.status = 'failed' and (${hasReplacement(`${j}.id`)}
+  return `(${j}.status in ('failed', 'stopped') and (${hasReplacement(`${j}.id`)}
     or exists (select 1 from prs p where p.branch = ${workBranch(j)} and p.status in ${OPEN_PRS})))`;
 }
 // The jobs standing for the jobs `roots` selects (an SQL select of ids, which may name the outer query's columns): those,
@@ -592,6 +596,47 @@ function openStatus(j: OpenJob) {
   holds.push(...j.wakes);
   return ['queued', holds.join(', and ')].filter(Boolean).join(' ');
 }
+// What still keeps a queued or parked job from starting even expedited, in openStatus's words: READY's own terms (its
+// after, its further waits with a redraw's, its cards, its wakes and its time), never a pause or a run's hold, which
+// expedite passes. Null once it starts on the next free seat (hq expedite: review.ts expedite).
+export function stillHolds(id: number) {
+  const j = prepared(
+    redraws.query(
+      `select j.status, j.after, j.request, j.not_before, ${READY} ready, ${AFTER_MET} after_met,
+    (select json_group_array(id) from (${outstanding('j.id')})) waits,
+    (select json_group_array(request) from (${openCards('j.id')})) cards
+    from jobs j where j.id = $id`,
+      '$id',
+    ),
+  ).get({ id, now: now() }) as {
+    status: string;
+    after: number | null;
+    request: number | null;
+    not_before: number;
+    ready: number;
+    after_met: number;
+    waits: string;
+    cards: string;
+  };
+  if (j.ready) return null;
+  if (j.status === 'blocked') return `until the board answers card #${j.request}, which it's parked on`;
+  const work = [...(j.after_met ? [] : [j.after!]), ...(JSON.parse(j.waits) as number[])],
+    cards = JSON.parse(j.cards) as number[];
+  const named = (
+    db
+      .prepare(
+        'select id, code, agent, title, step, round from jobs where id in (select value from json_each(?)) order by id',
+      )
+      .all(JSON.stringify(work)) as ({ id: number; code: string | null; agent: string } & Named)[]
+  ).map(w => `${numbered(w)} (${w.agent}: ${nameOf(w)})`);
+  const holds = [
+    ...(named.length ? [`until ${named.join(' and ')} ${named.length > 1 ? 'are' : 'is'} done and merged`] : []),
+    ...(cards.length ? [untilAnswered(cards)] : []),
+    ...wakes.pending(id),
+    ...(j.not_before > now() ? [`not before ${wakes.clock(j.not_before)}`] : []),
+  ];
+  return holds.join(', and ') || null;
+}
 function untilMerged(waits: number[]) {
   const ids = waits.map(id => `#${id}`);
   const verb = ids.length > 1 ? 'are' : 'is';
@@ -675,12 +720,13 @@ type Claimable = { id: number; kind: string; downtime: number; board: number | b
 // the job's own item), and a meeting's seat when work carrying one waits for any of that meeting's seats (--after or hq
 // waits: seats take no items). The carriers are one list, read once a statement from the open items and the jobs' item
 // index (never the jobs' wide rows).
-// An item is handled once its job ends done with a pull request open (ledger.ts finished()), so the jobs on that pull
+// An item is handled (or ready, a task or promise) once its job ends done with a pull request open (ledger.ts finished()), so the jobs on that pull
 // request's branch carry it on until it merges or closes: its reviews, rulings, fixes and up-to-date merges. That's a
 // branch with an open pull request (open, stuck, with the board) whose work (the job it's named for, or a fix on it)
 // carries an item not dropped or replaced, or was handed one (ledger.ts tied). Read from the open pull requests, a few
 // jobs each, through db.ts prs_open, jobs_work_branch and jobs_branch.
-const LIVE_ITEMS = "('open', 'handled')";
+// (ready)
+const LIVE_ITEMS = "('open', 'handled', 'ready')";
 const CARRIERS = `select i.job from call_items i where i.status = 'open' and i.job is not null
   union select w.id from jobs w indexed by jobs_item where w.item is not null
     and w.item in (select i.id from call_items i where i.status = 'open')
@@ -717,7 +763,7 @@ export function outstandingWaitsByJob(jobIds: number[]) {
 // The shared checks each return why a change is refused, or nothing when it may go ahead.
 // (add, and the shared checks)
 function whyNotYours(job: number, by: string, waitsFor: number | null) {
-  const anyQueuedJob = by === ceo() || by === roles().process;
+  const anyQueuedJob = by === ceo() || inProcess(by);
   const yours = db
     .prepare(
       `select 1 from jobs j where j.id = $job and j.kind = 'work' and j.status = 'queued'
@@ -791,20 +837,21 @@ function dependencyEdges(unfinished: string) {
       union ${redraws.dependencies()}
     )`;
 }
-// Only a job an agent queued takes one more wait, like hq cancel and hq extend. One HQ made (a pull request's fix, the
-// board's answer, a schedule's job) isn't held back. Its waits that are there can still be moved or dropped.
-export function addWait(job: number, on: number, by: string) {
-  const refused = whyNotYours(job, by, null) ?? whyMadeByHq(job) ?? whyCantMeet(job, on, `#${job} can wait for`);
+// An agent adds waits to work they queued. The CEO or Process may also hold HQ-made work, with a reason on the feed.
+export function addWait(job: number, on: number, by: string, why = '') {
+  why = oneLine(why);
+  const refused =
+    whyNotYours(job, by, null) ?? whyMadeByHq(job, by, why) ?? whyCantMeet(job, on, `#${job} can wait for`);
   if (refused) return refused;
   return redraws.writePlan(() => {
-    holdForMerge(job, on, by);
+    holdForMerge(job, on, by, why);
     return { ok: true };
   });
 }
 // Trusted plan operations also use these waits after their caller has authorized the plan change.
-export function holdForMerge(job: number, on: number, by: string) {
+export function holdForMerge(job: number, on: number, by: string, why = '') {
   if (db.prepare('insert or ignore into waits (job, on_job) values (?, ?)').run(job, on).changes)
-    recordWaitChange(job, by, `#${job} waits for #${on} too now`);
+    recordWaitChange(job, by, `#${job} waits for #${on} too now${why ? `: ${why}` : ''}`);
 }
 export function redirectWaits(from: number[], on: number, by: string) {
   const ids = JSON.stringify(from);
@@ -829,28 +876,29 @@ function recordWaitChange(job: number, by: string, text: string) {
   if (thread) planChange({ project: thread.split('/')[0], thread, what: text, by });
   publishWaitChange(job, by, text);
 }
-function whyMadeByHq(job: number) {
+function whyMadeByHq(job: number, by?: string, why = '') {
   const made = db.prepare('select 1 from jobs where id = ? and queued_by is null').get(job);
+  if (made && by && (by === ceo() || inProcess(by)) && why) return;
   if (made)
     return (
       `job #${job} was made by HQ (a pull request's fix, the board's answer or a schedule's job), and HQ's jobs ` +
-      `don't take another wait: queue the work that must wait as a job of your own, --after the work it waits for`
+      `take another wait only from the CEO or Process with --why "reason": otherwise queue your own step --after the work it waits for`
     );
 }
-export function moveWait(job: number, from: number, to: number, by: string) {
+export function moveWait(job: number, from: number, to: number, by: string, why = '') {
   const refused = whyNotYours(job, by, from) ?? whyCantMeet(job, to, `can replace #${from}'s`);
   if (refused) return refused;
   return redraws.writePlan(() => {
     db.prepare('update or replace waits set on_job = ? where job = ? and on_job = ?').run(to, job, from);
-    publishWaitChange(job, by, `#${job} waits for #${to} now, in place of #${from}`);
+    publishWaitChange(job, by, `#${job} waits for #${to} now, in place of #${from}${why ? `: ${oneLine(why)}` : ''}`);
     return { ok: true };
   });
 }
-export function dropWait(job: number, from: number, by: string) {
+export function dropWait(job: number, from: number, by: string, why = '') {
   const refused = whyNotYours(job, by, from);
   if (refused) return refused;
   db.prepare('delete from waits where job = ? and on_job = ?').run(job, from);
-  publishWaitChange(job, by, `#${job} no longer waits for #${from}`);
+  publishWaitChange(job, by, `#${job} no longer waits for #${from}${why ? `: ${oneLine(why)}` : ''}`);
   return { ok: true };
 }
 
@@ -858,19 +906,21 @@ export function dropWait(job: number, from: number, by: string) {
 // board's answer waits for it, and the work before that goes on to review. The card's answer goes into the job's prompt
 // (tellWaiting), so the job must not have started. Nothing moves a card wait: a card taken off the desk phone releases
 // its jobs, and each reads why and can ask again.
-export function addCardWait(job: number, request: number, by: string) {
-  const refused = whyNotYours(job, by, null) ?? whyMadeByHq(job) ?? whyStarted(job) ?? whyNotAgentCard(request, by);
+export function addCardWait(job: number, request: number, by: string, why = '') {
+  why = oneLine(why);
+  const refused =
+    whyNotYours(job, by, null) ?? whyMadeByHq(job, by, why) ?? whyStarted(job) ?? whyNotAgentCard(request, by);
   if (refused) return refused;
   holdForCard(job, request);
-  publishWaitChange(job, by, `#${job} waits for card #${request} too now`);
+  publishWaitChange(job, by, `#${job} waits for card #${request} too now${why ? `: ${why}` : ''}`);
   return { ok: true };
 }
-export function dropCardWait(job: number, request: number, by: string) {
+export function dropCardWait(job: number, request: number, by: string, why = '') {
   const refused = whyNotYours(job, by, null);
   if (refused) return refused;
   const dropped = db.prepare('delete from request_waits where job = ? and request = ?').run(job, request);
   if (!dropped.changes) return `job #${job} doesn't wait for card #${request}`;
-  publishWaitChange(job, by, `#${job} no longer waits for card #${request}`);
+  publishWaitChange(job, by, `#${job} no longer waits for card #${request}${why ? `: ${oneLine(why)}` : ''}`);
   return { ok: true };
 }
 // A change by the CEO or the process role on someone else's job also reaches its agent and queuer,
@@ -957,10 +1007,12 @@ export function strandedWaits(prior: Named & { id: number; agent: string }, how:
 // phone (openCards), and the events it waits for have happened (wakes.ts). A push held for its thread's next task
 // (review.ts heldForThread) is in review too: its pull request opens with the thread's last push.
 // Wrap statements using this predicate in redraws.query().
-const READY = `j.status = 'queued' and j.not_before <= $now
-  and (j.after is null or exists (select 1 from jobs a where a.id = j.after and a.status in ('done', 'failed', 'cancelled')
+// (AFTER_MET: its after's part, which stillHolds reads too)
+const AFTER_MET = `(j.after is null or exists (select 1 from jobs a where a.id = j.after and a.status in ('done', 'failed', 'stopped', 'cancelled')
     and not exists (select 1 from prs where branch = a.branch and status in ('open', 'stuck', 'board'))
-    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id))))
+    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id))))`;
+const READY = `j.status = 'queued' and j.not_before <= $now
+  and ${AFTER_MET}
   and not exists (${outstanding('j.id')}) and not exists (${openCards('j.id')})
   and not exists (select 1 from wakes w where w.job = j.id and w.met is null)`; // (wakes.ts)
 
@@ -1035,12 +1087,13 @@ export function pausedWith(thread: string) {
 export function heldWith(j: string) {
   return `(case when ${pauseLets(j)} then null else ${pausedWith(`${j}.thread`)} end)`;
 }
-// Work no pause holds: the intercom, what the desk's pause lets go, the job a pause woke its owner with to judge
-// it (pauses.ts wake), the job a thread's merge woke its owner with (threadjudge.ts wake), and the CEO's hourly
-// follow-through check, which judges the holds themselves, whichever project made() puts it in.
+// Work no pause holds: the intercom, what the desk's pause lets go, a job a pause woke its owner with to judge it
+// (pausewake.ts wake), even once the pause is on new conditions, the job a
+// thread's merge woke its owner with (threadjudge.ts wake), and the CEO's hourly follow-through check, which judges the
+// holds themselves, whichever project made() puts it in.
 export function pauseLets(j: string) {
   return `(${j}.kind = 'chat' or ${j}.thread is null and ${deskLets(j)}
-    or exists (select 1 from pauses woke where woke.woken = ${j}.id)
+    or exists (select 1 from pause_wakes woke where woke.job = ${j}.id)
     or exists (select 1 from threads judged where judged.judge = ${j}.id) or ${FOLLOW_THROUGH(j)})`;
 }
 export const pausedOn = (job: number) =>
@@ -1120,7 +1173,7 @@ export const listJobs = (t = now()) =>
   jobRows(
     `j.id in (select id from jobs where status in ${OPEN_JOBS}
     union select * from (select id from jobs where status not in ${OPEN_JOBS} and not ${loop()} order by id desc limit ${FINISHED})
-    union select * from (select id from jobs where +status in ('done', 'failed') and ${loop()} order by id desc limit ${FINISHED}))`,
+    union select * from (select id from jobs where +status in ('done', 'failed', 'stopped') and ${loop()} order by id desc limit ${FINISHED}))`,
     t,
   );
 // One job as listJobs words it, however old (null if there's none): the projects view opening a job asked for by its
@@ -1407,7 +1460,7 @@ function claimable(
   // The jobs it could take, then the first of them in the shared order (ordering.claimOrder).
   const candidates = db
     .prepare(
-      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${BOARD_CALL('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
+      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${READY} ready, ${BOARD_CALL('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
       j.status = 'running' yielding
     from jobs j where (j.status = 'queued' or j.status = 'running' and j.id in (select value from json_each($yielding)))
     and j.not_before <= $now
@@ -1433,13 +1486,13 @@ function claimable(
       fallbacks: JSON.stringify(models.fallingBackTo(engine, cli)),
       readyRunners: JSON.stringify(ready.map(r => r.runner)),
       readySeats: JSON.stringify(ready.map(r => r.id)),
-    }) as (Claimable & { spare: number; yielding: number })[];
+    }) as (Claimable & { spare: number; yielding: number; ready: number })[];
   return candidates;
 }
 
 // Spare downtime work only on a seat with spare room, and only when nothing else can start.
 function inClaimOrder(
-  fits: (Claimable & { spare: number })[],
+  fits: (Claimable & { spare: number; ready: number })[],
   seat: string,
   engine: string,
   kind?: string,
@@ -1449,7 +1502,7 @@ function inClaimOrder(
 ) {
   // An expedited job starts before anything else, whatever the plan, pacing or room freed for another says (the board,
   // call 118).
-  const expedited = fits.filter(j => j.expedite).sort((a, b) => a.id - b.id);
+  const expedited = fits.filter(j => j.expedite && j.ready).sort((a, b) => a.id - b.id);
   if (expedited.length) return expedited;
   const plan = ordering.current();
   const ordered = claimOrderOn(
@@ -1498,11 +1551,13 @@ function claimOrderOn(
   > & { id: number })[];
   const limit = plannerCapacity()?.seatRuns[engine] ?? Infinity;
   const base = ordering.claimOrder(plan.timings);
-  return (fits: (Claimable & { spare: number })[], yielding: number | null = null) => {
-    const expedited = fits.filter(j => j.expedite).sort((a, b) => a.id - b.id);
+  // (a run that would yield started already, what it needed first met: an expedited one keeps its place, so it never
+  // makes room for other work)
+  return (fits: (Claimable & { spare: number; ready: number; yielding?: number })[], yielding: number[] = []) => {
+    const expedited = fits.filter(j => j.expedite && (j.ready || j.yielding)).sort((a, b) => a.id - b.id);
     if (expedited.length) return expedited;
     const order = reviewroom.claimOrder<Claimable>(
-      running.filter(r => r.id !== yielding),
+      running.filter(r => !yielding.includes(r.id)),
       limit,
       base,
       j => key(j).latestStart !== null,
@@ -1701,14 +1756,14 @@ export const jobAgent = (id: number) =>
 export const runsOn = (id: number, seat: unknown) =>
   !!db.prepare("select 1 from jobs where id = ? and status = 'running' and seat = ?").get(id, String(seat));
 
-// Of the given jobs, the ones that have ended (done, failed or cancelled), with their kind: their folders can go (the
+// Of the given jobs, the ones that have ended (done, failed, stopped or cancelled), with their kind: their folders can go (the
 // worker's sweepEnded). A done work job whose pull request can still merge keeps its, as a fix round on it goes on in
 // its session (resumes); one with no pull request has none to wait for (coalesce: its status reads null).
 export const ended = (ids: number[]) =>
   ids.length
     ? db
         .prepare(
-          `select id, kind from jobs j where status in ('done', 'failed', 'cancelled')
+          `select id, kind from jobs j where status in ('done', 'failed', 'stopped', 'cancelled')
   and id in (${ids.map(() => '?').join(',')}) and not coalesce(kind = 'work' and ${mergePending('j')}, 0)`,
         )
         .all(...ids)
@@ -1814,8 +1869,15 @@ function roomFor(room: InTheWay, t: number): Map<number, number> {
   const ahead = waiting
     .map(w => ({ ...w, ...key(w), created: Date.parse(w.created) }))
     .sort(ordering.claimOrder(plan.timings));
-  return roomVictims(ahead, running, room, t, (w, v) =>
-    w.seats.some(s => (s === v.seat || !room.capped.includes(s)) && claims.order(s, v.id)[0]?.id === w.id),
+  return roomVictims(ahead, running, room, t, (w, selected) =>
+    w.seats.some(
+      s =>
+        (selected.some(v => s === v.seat) || !room.capped.includes(s)) &&
+        claims.order(
+          s,
+          selected.map(v => v.id),
+        )[0]?.id === w.id,
+    ),
   );
 }
 
@@ -1823,7 +1885,7 @@ function roomRuns(plan: ReturnType<typeof ordering.current>) {
   return (
     db
       .prepare(
-        `select j.id, j.kind, j.downtime, j.engine, j.seat, ${BOARD_CALL('j')} board, ${FOLLOW_THROUGH('j')} followThrough
+        `select j.id, j.kind, j.downtime, j.engine, j.seat, j.expedite, ${BOARD_CALL('j')} board, ${FOLLOW_THROUGH('j')} followThrough
         from jobs j where j.status = 'running'`,
       )
       .all() as {
@@ -1834,13 +1896,14 @@ function roomRuns(plan: ReturnType<typeof ordering.current>) {
       seat: string;
       board: number;
       followThrough: number;
+      expedite: number;
     }[]
   ).map(v => ({ ...v, ...ordering.key(v.id, v.board, plan.timings) }));
 }
 
 // Read the same candidates and order as a normal claim after freeing capacity. A proposed victim joins the queue
 // and leaves its seat's running set, so a review preference cannot give the place straight back to it. Each ready
-// seat's candidates (with every run that might yield) and its order's reads are read once; a seat's order with one run
+// seat's candidates (with every run that might yield) and its order's reads are read once; a seat's order with a group
 // yielding (none: as it stands) is played when asked, once.
 function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielders: number[]) {
   const freed = freedRoom(plan);
@@ -1854,23 +1917,24 @@ function roomClaims(t: number, plan: ReturnType<typeof ordering.current>, yielde
         {
           fits,
           order: claimOrderOn(s.id, s.engine, s.pacedUntil ?? undefined, plan, freed),
-          played: new Map<number | null, Claimable[]>(),
+          played: new Map<string, Claimable[]>(),
         },
       ] as const;
     }),
   );
-  const order = (seat: string, yielding: number | null = null): Claimable[] => {
+  const order = (seat: string, yielding: number[] = []): Claimable[] => {
     const s = onSeat.get(seat);
     if (!s) return [];
-    if (!s.played.has(yielding))
+    const key = yielding.join(',');
+    if (!s.played.has(key))
       s.played.set(
-        yielding,
+        key,
         s.order(
-          s.fits.filter(j => !j.yielding || j.id === yielding),
+          s.fits.filter(j => !j.yielding || yielding.includes(j.id)),
           yielding,
         ),
       );
-    return s.played.get(yielding)!;
+    return s.played.get(key)!;
   };
   return { seats: [...onSeat.keys()], order };
 }
@@ -1907,27 +1971,38 @@ function readySeats(t: number) {
   }));
 }
 
-// An expedited job waiting for room takes it from the latest-started work in its way, one run at a time; that run yields
-// back to the queue in its session and resumes after (the board, call 118).
+// An expedited job takes its room from the latest-started work, retaining each paused session.
 function expeditedRoom(room: InTheWay, t: number) {
   if (!room.short && !room.capped.length) return undefined;
   const seats = (db.prepare('select id from seats').all() as { id: string }[]).map(s => s.id);
   const waiter = (
     db
-      .prepare("select id from jobs where status = 'queued' and expedite = 1 and not_before <= ? order by id")
-      .all(t) as { id: number }[]
+      .prepare(redraws.query(`select j.id from jobs j where ${READY} and j.expedite = 1 order by j.id`))
+      .all({ now: t }) as { id: number }[]
   )
     .map(w => ({ ...w, seats: seats.filter(s => seatReadyFor(w.id, t, s)) }))
     .find(w => w.seats.length && (room.short || w.seats.every(s => room.capped.includes(s))));
   if (!waiter) return undefined;
   const open = waiter.seats.some(s => !room.capped.includes(s));
-  const run = db
-    .prepare(
-      `select id from jobs where status = 'running' and kind = 'work' and expedite = 0
-    and (? or seat in (select value from json_each(?))) order by started desc, id desc limit 1`,
-    )
-    .get(open ? 1 : 0, JSON.stringify(waiter.seats)) as { id: number } | undefined;
-  return run && new Map([[run.id, waiter.id]]);
+  const running = db
+    .prepare("select id, seat, kind, expedite from jobs where status = 'running' order by started desc, id desc")
+    .all() as { id: number; seat: string; kind: string; expedite: number }[];
+  const budget = pauseBudget(
+    running.map(r => r.id),
+    t,
+  );
+  const candidates = running.filter(r => r.kind === 'work' && !r.expedite);
+  const selected = reviewroom.pauseGroup(
+    candidates,
+    (remaining, chosen) => remaining.find(r => open || chosen.length || waiter.seats.includes(r.seat)),
+    chosen =>
+      chosen.length > 0 &&
+      budget.fits(
+        waiter.id,
+        chosen.map(r => r.id),
+      ),
+  );
+  return new Map(selected.map(r => [r.id, waiter.id]));
 }
 
 function roomVictims(
@@ -1935,36 +2010,46 @@ function roomVictims(
   running: RoomRun[],
   room: InTheWay,
   t: number,
-  startsAfterYield: (waiter: RoomWaiter, victim: RoomRun) => boolean,
+  startsAfterYield: (waiter: RoomWaiter, victims: RoomRun[]) => boolean,
 ) {
   const victims = new Map<number, number>();
-  const reviewSeats = new Set<string>();
+  const budget = pauseBudget(
+    running.map(r => r.id),
+    t,
+  );
   for (const w of waiting) {
-    // (with a seat of its own free, any run's pause frees the slot or memory it waits for; else only one on its seat)
     const open = w.seats.some(s => !room.capped.includes(s));
-    const candidates = running.filter(
-      r => !victims.has(r.id) && (open || w.seats.includes(r.seat)) && startsAfterYield(w, r),
-    );
+    const candidates = running.filter(r => !victims.has(r.id) && !r.expedite);
     const limit = plannerCapacity(t)?.seatRuns[w.engine] ?? Infinity;
-    const reviewSeat = w.seats.find(
-      s =>
-        !reviewSeats.has(s) &&
-        reviewroom.needsRoom(
-          w,
-          running.filter(r => r.seat === s),
-          limit,
-        ),
+    const reviewSeat = w.seats.find(s =>
+      reviewroom.needsRoom(
+        w,
+        candidates.filter(r => r.seat === s),
+        limit,
+      ),
     );
-    const v = reviewroom.roomVictim(
-      w,
-      !open && reviewSeat ? candidates.filter(r => r.seat === reviewSeat) : candidates,
-      t,
-      { limit, capped: !open, needsReview: !!reviewSeat },
+    const selected = reviewroom.pauseGroup(
+      candidates,
+      (remaining, chosen) => {
+        const constrained = !open && !chosen.length;
+        const eligible = constrained
+          ? remaining.filter(r => (reviewSeat ? r.seat === reviewSeat : w.seats.includes(r.seat)))
+          : remaining;
+        const victim = reviewroom.roomVictim(w, eligible, t, { limit, capped: !open, needsReview: !!reviewSeat });
+        return victim && remaining.find(r => r.id === victim.id);
+      },
+      chosen =>
+        chosen.length > 0 &&
+        budget.fits(
+          w.id,
+          chosen.map(v => v.id),
+        ) &&
+        startsAfterYield(w, [...running.filter(r => victims.has(r.id)), ...chosen]),
     );
-    if (v) {
-      victims.set(v.id, w.id);
-      if (!open && reviewSeat) reviewSeats.add(reviewSeat);
-    }
+    if (!selected.length) continue;
+    const released = selected.map(v => v.id);
+    for (const id of released) victims.set(id, w.id);
+    budget.reserve(w.id, released);
   }
   return victims;
 }
@@ -2026,8 +2111,8 @@ export function heartbeat(
   return spare ? { ok: true, yield: 'window' } : { ok: true };
 }
 
-// hq stop <job> "why": a running job ends now, as if it had stopped there, instead of polling on for hours. Its run's
-// commits are kept and its pull request opens as for any job that ends (none if there's nothing). One paused mid-run
+// hq stop <job> "why": a running job ends stopped. Its commits stay on its branch without opening a pull request.
+// Its item returns open to its owner for judgment. One paused mid-run
 // (a limit, a restart) is stopped as it starts again. Its own agent or the CEO; the reason is logged, and the worker hears
 // it with the run's next heartbeat, within a minute. A job that never ran is cancelled instead (hq cancel). A review or
 // ruling on a paused thread pauses instead (suspendReview).
@@ -2104,7 +2189,7 @@ export function finish(id: number, r: Parameters<typeof finishJob>[1]) {
 // Outcomes a worker reports when a run ends.
 // (gates; tests)
 type RunEnd = {
-  status: 'done' | 'failed' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'snagged';
+  status: 'done' | 'failed' | 'stopped' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'snagged';
   result?: string;
   landing?: { summary: string; result: string }; // (snagged)
   session?: string;
@@ -2154,7 +2239,7 @@ type RunEnd = {
 function finishJob(id: number, r: RunEnd) {
   const job = db.prepare('select * from jobs where id = ?').get(id) as Job | undefined;
   if (!job) return 404;
-  if (['done', 'failed', 'cancelled'].includes(job.status)) return { ok: true }; // reported twice: hand-offs happen once
+  if (['done', 'failed', 'stopped', 'cancelled'].includes(job.status)) return { ok: true }; // reported twice: hand-offs happen once
   // Snagged: the worker couldn't reach GitHub (the mirror's fetch at the run's start, or the push or pull request after
   // a run that ended well), never the agent's doing. Like a run a restart cut
   // off, the job goes back in the queue, a few runs in a row; then, or an intercom turn (retryChat), it failed.
@@ -2270,7 +2355,7 @@ function parkOnCard(job: Job, request: NonNullable<RunEnd['request']>) {
             "an approval grants live:<slug> or site:<slug> only, and asks for no keys; keys a company tool is done with (a closed credential grant's) can't be asked for again; " +
             "--address goes on a credential card asking for four of a company tool's own keys (name, street, postcode, city); " +
             '--product and --back name products (products/<slug>), on a card that asks for no keys; a --topic is 1 to 40 characters; ' +
-            "--visible-from is a day (2026-10-13) or a UTC time (2026-10-13T08:00Z), within a year; --decides names a decision of the CEO's still awaited. Fix it and ask again.",
+            '--visible-from is a day (2026-10-13) or a UTC time (2026-10-13T08:00Z), within a year; --decides names an awaited CEO decision or your review-assigned visual decision. Fix it and ask again.',
       job.id,
     );
     return false;
@@ -2324,18 +2409,17 @@ function fileParkedCard(job: Job, request: NonNullable<RunEnd['request']>, body:
   });
 }
 
-// A run that ended: done or failed, its stop done with.
+// A run that ended. A stopped run keeps who stopped it and why.
 function recordEnd(job: Job, r: RunEnd) {
-  // (stopping: an hq stop is done with once the job has ended)
   db.prepare(
-    'update jobs set status = ?, seat = null, result = ?, finished = ?, note = null, stopping = null, landing = null where id = ?',
-  ).run(r.status, r.result ?? null, new Date().toISOString(), job.id);
+    "update jobs set status = ?, seat = null, result = ?, finished = ?, note = null, stopping = case when ? = 'stopped' then stopping end, landing = null where id = ?",
+  ).run(r.status, r.result ?? null, new Date().toISOString(), r.status, job.id);
   settle(job, 'idle');
   // (the feed shows the opening; the whole report stays on the job, for the projects view and the call notes)
   publish({
     type: 'log',
     agent: job.agent,
-    text: `${r.status === 'done' ? 'Finished' : 'Failed'} #${job.id}: ${preview(r.result ?? job.title, 300)}`,
+    text: `${r.status === 'done' ? 'Finished' : r.status === 'stopped' ? 'Stopped' : 'Failed'} #${job.id}: ${preview(r.result ?? job.title, 300)}`,
   });
 }
 
@@ -2345,7 +2429,10 @@ function handOn(job: Job, r: RunEnd) {
   // thread's merge (threadorder.ts.)
   const later = r.status === 'done' && threadorder.onThreadBranch(job, r.branch);
   if (job.kind === 'work' && (r.status === 'failed' || !r.pr) && !later)
-    strandedWaits(job, r.status === 'failed' ? 'failed' : 'ended done with no pull request');
+    strandedWaits(
+      job,
+      r.status === 'stopped' ? 'stopped' : r.status === 'failed' ? 'failed' : 'ended done with no pull request',
+    );
   // (one that pushed nothing, or failed, ends its thread, once all of it is in: threadends.ts endedEmpty.)
   const ended = r.status === 'failed' || (r.status === 'done' && !r.sha);
   if ((job.kind === 'work' || job.kind === 'meeting') && ended && !r.pr && !later && job.thread)
@@ -2627,13 +2714,21 @@ type NewCard = {
   decides?: unknown;
   holds?: string[];
   files?: cardFiles.CardFile[];
+  walk?: unknown;
 };
 export function createRequest(r: NewCard) {
   const topic = topicOf(r.topic);
   if (!topic.ok) return 400;
-  // the board's decision it asks (decisions.ts): one still awaited, on a card of the CEO's
+  // A decision still awaited, filed by the CEO or its review-assigned card author.
   const decides = r.decides == null ? null : Number(r.decides);
-  if (decides !== null && (r.agent !== ceo() || !decisions.isOpen(decides))) return 400;
+  if (
+    decides !== null &&
+    (!decisions.canLink(decides, r.agent!) ||
+      !decisions.isOpen(decides) ||
+      (decisions.mergeDecision(decides) && !decisions.canFile(decides)))
+  )
+    return 400;
+  if (decides !== null && decisions.mergeDecision(decides)) r = { ...r, questions: decisions.mergeQuestions };
   // a card for later (later.ts): off the desk phone, and silent, until then. holds: the work it waits for to go live,
   // the same way (later.ts holdsFor)
   const hidden = later.hiddenUntil(r.visibleFrom);
@@ -2714,8 +2809,8 @@ function insertCard(
   // r.customers: a card a gated tool writes about one customer, with their details in it (customerCard)
   const { lastInsertRowid } = db
     .prepare(
-      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, customers, topic, hidden_until, address, questions)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, customers, topic, hidden_until, address, questions, walk)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       new Date().toISOString(),
@@ -2737,7 +2832,8 @@ function insertCard(
       hiddenUntil,
       r.address === true ? 1 : null,
       box.questions,
-    ); // (hidden_until, address, questions)
+      r.walk === true ? 1 : 0, // its maker's walk-through offered (walkthroughs.ts)
+    ); // (hidden_until, address, questions, walk)
   if (r.files?.length) cardFiles.keep(Number(lastInsertRowid), r.files);
   for (const work of r.holds ?? [])
     db.prepare('insert into request_holds (request, work) values (?, ?)').run(lastInsertRowid, work);
@@ -3030,6 +3126,7 @@ function answerRecorded(req: any, answer: string, asked: Asked[] | null, picture
     new Date().toISOString(),
     req.id,
   );
+  visualapproval.answered(req.id, asked, answer);
   // the board's decision this card asks (decisions.ts): what waits for it goes on
   db.prepare('update decisions set answered = ? where request = ? and answered is null').run(
     new Date().toISOString(),
@@ -3041,6 +3138,10 @@ function answerRecorded(req: any, answer: string, asked: Asked[] | null, picture
 
 // Who hears the answer: the asker, the jobs waiting for the card, the panel, or a parked job resuming
 function answerHeard(req: any, answer: string, gotIt: boolean) {
+  if (decisions.mergeCard(req.id)) {
+    void visualDecided(req.id).catch(err => console.error('Could not resume visual merges:', err));
+    return;
+  }
   const id = req.id;
   // the asking job may read the answer itself (hq wait), whether or not tell() runs; the intercom's chat job hears it as a
   // chat line (tell())

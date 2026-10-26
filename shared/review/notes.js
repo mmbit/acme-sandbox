@@ -1,7 +1,7 @@
-// My notes: every note not sent yet as one scrolling list, each with its screenshot as it went with the note (the spot
-// marked on it, framed on the mark as the polaroid was; a tap shows the whole screen), its words in full and its page,
-// and Change and Delete (two taps: the board's is discarded as in HQ, an outsider's is gone). The screenshots come from
-// HQ's host (mine?shots), for the session this browser holds there, each loaded as it scrolls into view.
+// My notes, an outside reviewer's: every note not sent yet as one scrolling list, each with its screenshot as it went with
+// the note (the spot marked on it, framed on the mark as the polaroid was; a tap shows the whole screen), its words in
+// full and its page, and Change and Delete (two taps). The screenshots come from HQ's host (mine?shots), for the session
+// this browser holds there, each loaded as it scrolls into view. (The board's notes are in its book, menu.js.)
 // The words are the reviewer's: text only, never HTML.
 import { ACCENT, button, line, post } from './base.js';
 import { frameMark } from './frame.js';
@@ -136,7 +136,7 @@ function enlarge(r, url, what) {
   r.zoom.setAttribute('aria-label', `${what}, bigger`);
   r.zoom.hidden = false;
 }
-// notes sent or discarded elsewhere (HQ's Reviews) leave an open sidebar too
+// notes gone elsewhere (sent from another tab, a share that ended) leave an open sidebar too
 export function dropGone(r) {
   if (r.side.hidden) return;
   for (const li of r.sideList.querySelectorAll(':scope > li'))

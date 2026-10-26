@@ -21,7 +21,7 @@ names:
 # The order of the computer's home screen, beside appGroups under the same computer: groups of app ids, one after the
 # other (an app's id: its kit's name, or HQ's own, as in platform/hq/shell/desk.js's APPS). The apps it doesn't name come
 # after them, and Settings is always last. Left out, HQ groups them by what they're for (theme/hq.yaml's apps).
-# computer: { apps: [[projects, notes, artifacts], [calls, mail]] }
+# computer: { apps: [[notes, artifacts], [calls, mail]] }
 # The brand's one colour, its logo's (#rrggbb): theme/hq.yaml's Wire colourways that set no accent wear it (their lip a
 # shade darker, their letters black or white), and it is app.themeColour and the guest page's accent unless they say
 # otherwise. Onboarding takes it from the logo it draws (company/playbooks/intake.md).

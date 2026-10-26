@@ -2,6 +2,7 @@
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
+import { takeRead, takeReading } from '../../worker/src/downtime.ts';
 
 const h = await harness('seatobservations');
 const { snapshot } = await import('./backlog.ts');
@@ -95,4 +96,55 @@ test('conflicting readings at the same timestamp keep the latest report and late
   const { windowReadings } = await import('./seatobservations.ts');
   assert.equal(windowReadings('claude-revision', 'week', at - 1, at)[0].used, 0.1);
   assert.equal(windowReadings('claude-revision', 'week', at - 1, at + 1000)[0].used, 0.3);
+});
+
+test('a fresh worker account read keeps both window histories at their own observation times', async () => {
+  const at = T0 + 9 * HOUR;
+  const seat = {
+    state: 'draining',
+    until: at + 4 * HOUR,
+    resets: 0,
+    weekResets: 0,
+    util: undefined as number | undefined,
+    week: undefined as number | undefined,
+    fiveHourObservedAt: undefined as number | undefined,
+    weekObservedAt: undefined as number | undefined,
+  };
+  const send = () =>
+    report('codex-account', {
+      engine: 'codex',
+      state: seat.state,
+      util: seat.util,
+      resets: seat.resets,
+      week: seat.week,
+      weekResets: seat.weekResets,
+      fiveHourObservedAt: seat.fiveHourObservedAt ?? null,
+      weekObservedAt: seat.weekObservedAt ?? null,
+    });
+  mock.timers.setTime(at);
+  takeReading(seat, { at, util: 0.95, resets: at + 4 * HOUR, week: 0.95, weekResets: at + 24 * HOUR }, false);
+  await send();
+  mock.timers.setTime(at + HOUR);
+  takeRead(seat, { at: Date.now(), util: 0.5, resets: seat.resets, week: 0.5, weekResets: seat.weekResets });
+  await send();
+  const fresh = snapshot(Date.now()).seats.find(seat => seat.id === 'codex-account')!;
+  assert.equal(fresh.fiveHourObservedAt, at + HOUR);
+  assert.equal(fresh.weekObservedAt, at + HOUR);
+  assert.equal(fresh.fiveHourSource, 'reported');
+  assert.equal(fresh.weekSource, 'reported');
+  const { windowReadings } = await import('./seatobservations.ts');
+  for (const quota of ['five', 'week'] as const)
+    assert.deepEqual(
+      windowReadings('codex-account', quota, at - 1, Date.now()).map(r => [r.at, r.used]),
+      [
+        [at, 0.95],
+        [at + HOUR, 0.5],
+      ],
+    );
+  mock.timers.setTime(at + HOUR + 1000);
+  takeRead(seat, undefined);
+  await send();
+  const retained = snapshot(Date.now()).seats.find(seat => seat.id === 'codex-account')!;
+  assert.equal(retained.weekObservedAt, at + HOUR);
+  assert.equal(retained.weekSource, 'prior');
 });

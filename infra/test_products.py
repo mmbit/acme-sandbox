@@ -287,7 +287,6 @@ check("...and its shelf sends page loads there too, path and query kept; the res
       and 'header Sec-Fetch-Mode navigate' in moved and 'not path /api/* /__care/*' in moved
       and 'reverse_proxy product-sprout:8080' in moved and 'header_up X-Forwarded-Prefix /sprout' in moved
       and 'sprout' in compose['services']['product-front']['environment']['SHELVES'].split(','))
-# what the retiring worker does in a browser: products/carrel/app/domain-check.mjs
 check("...and every worker script asked for there gets the retiring worker, at any scope its app gave it, "
       "where an app's own shelf and the door keep the app's",
       '@worker header Service-Worker script' in moved and 'handle @worker {' in moved and 'header Service-Worker-Allowed /' in moved

@@ -47,7 +47,8 @@ const HISTORY = anyOf(
   /\b(jobs?|cards?|PRs?|pull requests?|requests?|rounds?|items?)\s+#\d+|\bcalls?\s+#?\d+/,
   /\(#\d+\)/,
 );
-const FOUNDATION_TAG = /company: job #\d+, not upstream yet/;
+// The foundation's tag, wrapped onto the next comment line or not
+const FOUNDATION_TAG = /company:[\s/#*]+job[\s/#*]+#\d+,[\s/#*]+not[\s/#*]+upstream[\s/#*]+yet/g;
 const READS_SOURCE = anyOf(
   '',
   /\b(readFileSync|readFile|open)\([^;\n]*\.(ts|js|mjs|cjs|py|sh|html|css)['"`]/,
@@ -135,7 +136,8 @@ function countFile(path: string): FileCount {
 
   if (lines.length > FILE_LIMIT) add('longFiles', 1, `${lines.length} lines`);
   const source = SCRIPT.test(path) ? parseScript(path, text) : null;
-  const comments = source ? scriptShape(source, text, add) : hashCommentLines(lines, add);
+  const untagged = text.replace(FOUNDATION_TAG, tag => tag.replace(/[^\n]/g, ' '));
+  const comments = source ? scriptShape(source, text, untagged, add) : hashCommentLines(lines, untagged, add);
   const python = path.endsWith('.py') ? pythonShape(path) : null;
   for (const { line, length, name } of python?.functions ?? []) add('longFunctions', line, `${length} lines: ${name}`);
   if (source) count.copyLines = tokenLines(scriptTokens(source));
@@ -169,7 +171,13 @@ function parseScript(path: string, text: string) {
 }
 
 // Functions, squeezed blocks and comments in a script; returns the lines that hold only a comment, each with its text
-function scriptShape(source: SourceFile, text: string, add: (m: Measure, line: number, text: string) => void) {
+// (`untagged` is the text with the foundation's tag blanked, for the history count)
+function scriptShape(
+  source: SourceFile,
+  text: string,
+  untagged: string,
+  add: (m: Measure, line: number, text: string) => void,
+) {
   const lineOf = (pos: number) => source.getLineAndCharacterOfPosition(pos).line + 1;
   const comments = new Map<number, string>();
   const seen = new Set<number>();
@@ -187,7 +195,7 @@ function scriptShape(source: SourceFile, text: string, add: (m: Measure, line: n
       const first = lineOf(range.pos);
       for (let pos = range.pos; pos < range.end; pos++) if (text[pos] !== '\n') codeWithoutComments[pos] = ' ';
       for (let line = first; line <= lineOf(range.end - 1); line++) comments.set(line, comment);
-      if (HISTORY.test(comment) && !FOUNDATION_TAG.test(comment)) add('history', lineOf(range.pos), comment);
+      if (HISTORY.test(untagged.slice(range.pos, range.end))) add('history', lineOf(range.pos), comment);
     }
     const start = lineOf(node.getStart(source));
     const end = lineOf(node.end);
@@ -232,12 +240,13 @@ function openingLines(source: SourceFile, text: string, lineOf: (pos: number) =>
 
 // ---- Python and shell, by their # comments
 
-function hashCommentLines(lines: string[], add: (m: Measure, line: number, text: string) => void) {
+function hashCommentLines(lines: string[], untagged: string, add: (m: Measure, line: number, text: string) => void) {
+  const untaggedLines = untagged.split('\n');
   const comments = new Map<number, string>();
   for (const [i, line] of lines.entries())
     if (/^\s*#(?!!)/.test(line)) {
       comments.set(i + 1, line);
-      if (HISTORY.test(line) && !FOUNDATION_TAG.test(line)) add('history', i + 1, line);
+      if (HISTORY.test(untaggedLines[i])) add('history', i + 1, line);
     }
   const firstCode = lines.findIndex((line, i) => line.trim() && !comments.has(i + 1) && !line.startsWith('#!'));
   const opening = [...comments.keys()].filter(line => line <= firstCode).length;
@@ -265,7 +274,10 @@ tokens = [
     if token.type not in layout
 ]
 print(json.dumps({"functions": functions, "tokens": tokens}))`;
-  return JSON.parse(execFileSync('python3', ['-c', script, join(root, path)], { encoding: 'utf8' }));
+  // (a long test file's tokens run past the default 1 MB of output: read them whole)
+  return JSON.parse(
+    execFileSync('python3', ['-c', script, join(root, path)], { encoding: 'utf8', maxBuffer: Infinity }),
+  );
 }
 
 // ---- the lines the copy count compares

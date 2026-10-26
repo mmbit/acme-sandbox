@@ -116,7 +116,7 @@ def silence(sec):
 class Brain:
     def __init__(self):
         self.asked, self.busy, self.token, self.voice, self.respell = [], False, '', 'alba', {}
-        self.tz, self.seat, self.pin_shots = 'UTC', None, []
+        self.tz, self.seat = 'UTC', None
 
     def moved(self):
         return False
@@ -137,8 +137,9 @@ class Brain:
         pass
 
 
-async def case(lang, sound, at, phone, played=None, earlier=None):
-    """The board asks, and `at` s after the reply is first heard, makes `sound` over it. played: what HQ played over
+async def case(wiring, lang, sound, at, phone, played=None, earlier=None):
+    """The board asks, and `at` s after the reply is first heard, makes `sound` over it (on a call wired to `wiring`: the
+    line's files). played: what HQ played over
     `sound` (an echo case: `sound` holds it as the microphone heard it); earlier: the echo of earlier replies and what
     played then, which the call's canceller has heard already."""
     events, cut, heard = [], [], []
@@ -152,7 +153,7 @@ async def case(lang, sound, at, phone, played=None, earlier=None):
     async def audio(x):
         heard.append(heard[0] if heard else time.monotonic())
 
-    call = server.Call(audio, event, clear, 'ceo', lang)
+    call = server.Call(audio, event, clear, 'ceo', lang, wiring=wiring)
     call.brain = brain = Brain()
     if earlier:
         for i in range(0, len(earlier[0]) - 319, 320):
@@ -212,7 +213,7 @@ def recorded_as_is(path):
 
 
 async def main(phone, clips):
-    server.CALL_LOGS = Path(tempfile.mkdtemp())
+    wiring = server.Wiring(paths=server.Paths(calls=Path(tempfile.mkdtemp())))
     en = lambda t: voice('en', t)
     cases = [('en', 'a lone "okay"', en('Okay.'), 1.5), ('en', '"mhm"', en('Mhm.'), 1.5), ('en', '"okay, okay"', en('Okay, okay.'), 1.5),
              ('en', '"yeah, right, sure"', en('Yeah, right, sure.'), 1.5), ('en', 'footsteps', footsteps(), 1.5),
@@ -228,13 +229,13 @@ async def main(phone, clips):
              ('en', 'carrying on as it starts', en('and the invoices from last week too, please.'), 0.2)]
     cases = [('en', Path(clip).name, recorded(clip), 1.5) for clip in clips] or cases
     for lang, name, sound, at in cases:
-        print(f'{lang} {name:26s} {await case(lang, sound, at, phone)}', flush=True)
+        print(f'{lang} {name:26s} {await case(wiring, lang, sound, at, phone)}', flush=True)
 
 
 async def main_echo(folder, later):
-    server.CALL_LOGS = Path(tempfile.mkdtemp())
+    wiring = server.Wiring(paths=server.Paths(calls=Path(tempfile.mkdtemp())))
     for lang, name, sound, played, earlier in echoes(folder, later):
-        print(f'{lang} {name:30s} {await case(lang, sound, 0.2, False, played, earlier)}', flush=True)
+        print(f'{lang} {name:30s} {await case(wiring, lang, sound, 0.2, False, played, earlier)}', flush=True)
 
 
 if __name__ == '__main__':

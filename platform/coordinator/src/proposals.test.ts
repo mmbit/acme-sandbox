@@ -48,12 +48,13 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
     proposed.out,
     /^Proposal #\d+ is in wren's inbox \(game's owner\)\. Nothing is queued until it's accepted/,
   );
-  // wren runs nothing: one planning job for wren, on the Front Desk (no thread), takes it and what follows
+  // wren runs nothing: one planning job for wren, in game's plan (a one-task thread of its own, not the CEO's desk),
+  // takes it and what follows
   const [planning, ...none] = queuedWork();
   assert.deepEqual(none, [], 'nothing else queued');
   assert.deepEqual(
     [planning.agent, planning.title, planning.thread],
-    ['wren', 'Sort new proposals into the plan', null],
+    ['wren', 'Sort new proposals into the plan', `game/job-${planning.id}`],
   );
   const second = await h.agent('proposals', bolt.token, {
     title: 'A boss rush',
@@ -216,7 +217,7 @@ test("the owner's one planning job takes what arrives while it runs, on any engi
   const first = await h.agent('proposals', kit.token, { title: 'A style guide', brief: 'Tone.', project: 'reviews' });
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const [planning] = queuedWork();
-  assert.deepEqual([planning.agent, planning.thread], ['nib', null]);
+  assert.deepEqual([planning.agent, planning.thread], ['nib', `reviews/job-${planning.id}`]);
   const running = await h.claim('codex');
   assert.equal(running?.id, planning.id, 'the planning job runs, on Codex');
   const second = await h.agent('proposals', kit.token, { title: 'A word list', brief: 'Words.', project: 'reviews' });
@@ -228,6 +229,8 @@ test("the owner's one planning job takes what arrives while it runs, on any engi
   assert.deepEqual(queuedWork(), [], 'nothing follows while it runs');
   // it ends with both still open: the one it had at its start was its to leave, the one that came later gets a job
   assert.equal((await h.finish(running!)).status, 200);
+  const ended = db.prepare('select status from threads where id = ?').get(planning.thread) as { status: string };
+  assert.equal(ended.status, 'done', 'its thread ends with it, with nothing to merge');
   proposals.sweep();
   const [next, ...none] = queuedWork();
   assert.deepEqual([next.agent, next.title, none], ['nib', 'Sort new proposals into the plan', []]);
@@ -269,7 +272,7 @@ const project = async (juno: { token: string }, id: string, owner: string) => {
     assert.equal((await h.agent('projects/new', juno.token, { id, name: id, owner })).status, 200);
 };
 
-test("an owner's running planning job stays theirs when the proposals it was made for go to a new owner", async () => {
+test("an owner's running planning job stays theirs when the proposals it was made for go to a new owner, and takes no other project's", async () => {
   const juno = await h.start({ agent: 'juno', title: 'The follow-through check' });
   await project(juno, 'style', 'nib');
   await project(juno, 'audits', 'nib');
@@ -281,14 +284,15 @@ test("an owner's running planning job stays theirs when the proposals it was mad
   assert.equal(h.job(running!.id).status, 'running');
   const later = await h.agent('proposals', kit.token, { title: 'An audit list', brief: 'Checks.', project: 'audits' });
   assert.equal(later.status, 200);
+  const [flint, nib, ...none] = queuedWork();
   assert.deepEqual(
-    queuedWork().map(j => j.agent),
-    ['flint'],
-    "nib's running planning job takes it: no second one for nib",
+    [flint.agent, flint.thread, nib.agent, nib.thread, none],
+    ['flint', `style/job-${flint.id}`, 'nib', `audits/job-${nib.id}`, []],
+    "nib's running planning job is style's: audits gets one of its own",
   );
 });
 
-test('a proposal handed on to an owner whose planning job is under way gets their next one once it ends', async () => {
+test('a proposal handed on to an owner whose planning job for another project is under way gets one in its own project', async () => {
   levels();
   const juno = await h.start({ agent: 'juno', title: 'The follow-through check' });
   await project(juno, 'craft', 'flint');
@@ -299,17 +303,73 @@ test('a proposal handed on to an owner whose planning job is under way gets thei
   const running = await h.claim('codex');
   assert.equal(h.job(running!.id).agent, 'flint');
   try {
-    // older than flint's planning job, it reaches flint after that job read its inbox
     assert.equal((await h.agent('projects/owner', juno.token, { id: 'game', owner: 'flint' })).status, 200);
-    assert.deepEqual(queuedWork(), [], "flint's running planning job takes it");
+    const [game, ...none] = queuedWork();
+    assert.deepEqual([game.agent, game.thread, none], ['flint', `game/job-${game.id}`, []], "not craft's running one");
     assert.equal((await h.finish(running!)).status, 200);
     const proposals = await import('./proposals.ts');
     proposals.sweep();
-    const [next, ...none] = queuedWork();
-    assert.deepEqual([next.agent, none], ['flint', []]);
+    assert.deepEqual(
+      queuedWork().map(j => j.id),
+      [game.id],
+    );
   } finally {
     await h.agent('projects/owner', juno.token, { id: 'game', owner: 'wren' });
   }
+});
+
+// An owner of two projects sorts each in a planning job of its own: a pause on one holds only its sorting, and each
+// job's inbox is its project's.
+test("an owner's two projects get a planning job each, and a pause on one holds only its own", async () => {
+  levels();
+  const juno = await h.start({ agent: 'juno', title: 'The follow-through check' });
+  await project(juno, 'privacy', 'wren');
+  const kit = await h.start({ agent: 'kit', title: 'Ads' });
+  await h.agent('proposals', kit.token, { title: 'A consent screen', brief: 'Opt in.', project: 'privacy' });
+  await h.agent('proposals', kit.token, { title: 'A boss rush', brief: 'All bosses.', project: 'game' });
+  const [privacy, game, ...none] = queuedWork();
+  assert.deepEqual(
+    [privacy.thread, game.thread, none],
+    [`privacy/job-${privacy.id}`, `game/job-${game.id}`, []],
+    'one planning job per project',
+  );
+  const pauses = await import('./pauses.ts');
+  assert.equal(
+    typeof pauses.pause({ project: 'privacy', why: 'No privacy work tonight', byHand: true }, 'juno'),
+    'object',
+  );
+  const engine = h.job(game.id).engine;
+  const running = await h.claim(engine);
+  assert.equal(running?.id, game.id, "game's sorting runs");
+  assert.equal(await h.claim(engine), null, "privacy's waits for its pause");
+  const listed = (await h.hq(running!, 'inbox')).out;
+  assert.match(listed, /A boss rush/);
+  assert.doesNotMatch(listed, /A consent screen/, "game's planning job reads game's inbox alone");
+  // a finding for privacy with a deadline doesn't go to game's running planning job, though it's wren's Claude session:
+  // privacy's queued planning job holds it, behind privacy's pause
+  assert.equal(h.job(game.id).engine, 'claude');
+  const windows = await import('./windows.ts');
+  projects.createThread({ project: 'privacy', name: 'Consent', goal: 'Users opt in', slug: 'consent' });
+  const deadline = Date.now() + 3_600_000;
+  windows.set(projects.findThread('privacy/consent')!, { deadline, aim: deadline }, 'juno');
+  const author = h.queue({ agent: 'bolt', title: 'The consent screen', thread: 'privacy/consent' });
+  h.storedPr(81, author, 'open', ['consent.ts'], { round: 1 });
+  const proposals = await import('./proposals.ts');
+  proposals.deliverFindings({
+    pr: 81,
+    round: 1,
+    branch: `job/${author}`,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'The screen needs fixes',
+    findings: [{ id: 21, domain: 'ui', files: ['consent.ts'], issue: 'No opt out', task: 'Add an opt out' }],
+  });
+  const finding = db.prepare("select heard_by from proposals where title = 'Review changes on PR #81'").get() as {
+    heard_by: number;
+  };
+  assert.equal(finding.heard_by, privacy.id, "privacy's planning job hears it");
+  assert.doesNotMatch((await h.hq(running!, 'inbox')).out, /PR #81/, "not in game's inbox");
+  assert.equal((db.prepare("select count(*) n from messages where recipient = 'wren'").get() as { n: number }).n, 0);
 });
 
 test('a project handed on is all or nothing: a notice refused part way publishes none of it', async () => {

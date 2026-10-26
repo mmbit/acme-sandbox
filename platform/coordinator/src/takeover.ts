@@ -70,7 +70,7 @@ export function requeue(checkJob: number, failed: number, said: string) {
   return { ok: true, id, agent };
 }
 
-// hq job --lands <job>: the failed job's commits stay on the mirror's refs/outgoing/<branch> (worker git.ts push), and the
+// hq job --lands <job>: the failed or stopped job's commits stay on the mirror's refs/outgoing/<branch> (worker git.ts push), and the
 // job landing them replaces it, carrying its call and item. Its agent is the failed job's own, who worked for
 // that call already; only that agent, whoever queued the failed job, the CEO or the process role queues it. Work with a
 // pull request goes on there (review.ts decide), unless a thread task saved nothing of its own. The answer supplies
@@ -79,10 +79,11 @@ export function landing(failed: number, agent: string, by: string) {
   const job = db
     .prepare(
       `select agent, queued_by, coalesce(branch, 'job/' || id) branch, call, prompt, thread, pr, started, finished from jobs
-      where id = ? and kind = 'work' and status = 'failed'`,
+      where id = ? and kind = 'work' and status in ('failed', 'stopped')`,
     )
     .get(failed) as LandingJob | undefined;
-  if (!job) return `job #${failed} isn't work that failed: --lands names a failed job whose saved work this one lands`;
+  if (!job)
+    return `job #${failed} isn't failed or stopped work: --lands names a failed or stopped job whose saved work this one lands`;
   const pr = db
     .prepare(`select number, status in ${jobs.OPEN_PRS} as open from prs where branch = ? order by number desc limit 1`)
     .get(job.branch) as { number: number; open: number } | undefined;

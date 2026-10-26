@@ -26,17 +26,19 @@ const DESK = `
                                                      a call's follow-up and expedited work go on)`;
 const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<project>');
 
+// (--until-time's forms, the board's own time with its date and no zone among them)
 export const help = (kind: Kind) => `
    hq ${kind} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
                                                      pause the ${kind === 'thread' ? 'thread' : 'project, every thread of it'}: nothing queued on it starts
                                                      (work, reviews, fixes) until it's resumed. What it waits for wakes
                                                      you, never lifts it: --until jobs once they're all merged or ended,
-                                                     --until-time a time (2h, 14:30, 2026-10-26T08:00Z), both once both
-                                                     are met; HQ queues you a job to judge: resume, tell the board, or
-                                                     pause it again on what's still missing (paused already, the same
-                                                     command keeps it on with new conditions). --by-hand: nothing wakes
-                                                     you. Work already running goes on (stop it, or let it finish: hq
-                                                     stop pauses a review or ruling). The CEO or the project's owner. A
+                                                     --until-time a time (2h, 90m or 1h30m from now; 2026-10-26 09:00
+                                                     with no zone, on the company's clock; one with Z or a time of day
+                                                     alone, 14:30, is UTC), both once both are met; HQ queues you a job
+                                                     to judge: resume, tell the board, or pause it again on what's still
+                                                     missing (paused already, the same command keeps it on with new
+                                                     conditions). --by-hand: nothing wakes you. Work already running goes
+                                                     on (stop it, or let it finish: hq stop pauses a review or ruling). The CEO or the project's owner. A
                                                      hold the board agreed goes in as a pause, then hq item link <item>
                                                      pause:<${kind}>${kind === 'project' ? DESK : ''}
    ${`hq ${kind} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
@@ -50,7 +52,10 @@ export async function pause(kind: Kind, given: string[]) {
   for (let i = 0; i < given.length; i++) {
     if (given[i] === '--until-time') {
       untilTime = given[++i];
-      if (!untilTime) stop('Nothing was paused: --until-time takes a time (2h, 14:30, 2026-10-26T08:00Z)');
+      if (!untilTime)
+        stop(
+          "Nothing was paused: --until-time takes a time (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)",
+        );
     } else if (given[i] === '--by-hand') byHand = true;
     else if (given[i] !== '--until') args.push(given[i]);
     else {
@@ -72,7 +77,8 @@ export async function pause(kind: Kind, given: string[]) {
           `${paused.until.map(u => `#${u.id} (${text(u.agent)}, ${text(u.state)})`).join(' and ')} ${paused.until.length > 1 ? 'have' : 'has'} merged or ended`,
         ]
       : []),
-    ...(paused.untilTime ? [`${text(paused.untilTime).slice(0, 16).replace('T', ' ')} UTC has come`] : []),
+    // (on the run's clock, its zone named)
+    ...(paused.untilTime ? [`${minute(text(paused.untilTime))} has come`] : []),
   ];
   const resumes = waits.length
     ? `Once ${waits.join(' and ')}, HQ queues you a job to judge it; only hq ${kind} resume ${text(paused.target)} lifts it.`
@@ -116,9 +122,11 @@ export const decision = {
                                                      direction"), before its card exists, and pauses what depends on it:
                                                      its queued work, reviews and fixes wait. Only the board's answer on
                                                      its card (hq ask ... --decides <id>) lets it go
+   hq decision show <id>                             the assigned card author reads its waiting pull requests
    hq decision link <id> <card>                      the open card that asks it, filed already or in place of another`,
 
   async run(given: string[]) {
+    if (given[0] === 'show') return show(given.slice(1));
     if (given[0] === 'link') return link(given.slice(1));
     const blocks: string[] = [],
       args: string[] = [];
@@ -146,4 +154,20 @@ async function link([id, card, ...rest]: string[]) {
   const answer = await api.change('decisions/link', { body: { id: Number(id), card: Number(card) } });
   if (!api.isSuccess(answer.status)) stop(`Not tied: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Card #${card} asks decision #${id}: the board's answer on it lets the work go.`);
+}
+
+async function show([id, ...rest]: string[]) {
+  if (!/^[0-9]+$/.test(id ?? '') || rest.length) stop('usage: hq decision show <id>');
+  const answer = await api.call(`decisions/show?id=${id}`);
+  if (!api.isSuccess(answer.status)) stop(api.errorIn(answer.body, 'no answer'));
+  const decision = api.parseOrNull(answer.body) as {
+    name: string;
+    request: number | null;
+    merges: { number: number; branch: string; author: string; sha: string }[];
+  };
+  print(
+    `Decision #${id}: ${decision.name}`,
+    decision.request ? `Card #${decision.request}` : 'No card yet',
+    ...decision.merges.map(pr => `PR #${pr.number}: ${pr.branch} at ${pr.sha}, by ${pr.author}`),
+  );
 }

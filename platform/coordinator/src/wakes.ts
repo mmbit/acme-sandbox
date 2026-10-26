@@ -26,9 +26,10 @@ type Deploy = {
 
 const MAX_DEPLOYS = 50;
 const SERVICE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
+// (a time's forms as windows.ts parse reads them)
 export const FORMS =
   'deploy, deploy:<n> (the next n deploys), recreated:<service> (a deploy that recreates that container), ' +
-  'deployed:<job> or deployed:pr:<n> (that work merged and deployed), or a time ahead (2h, 90m, 14:30, 2026-10-14T08:00Z, UTC)';
+  "deployed:<job> or deployed:pr:<n> (that work merged and deployed), or a time ahead (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)";
 
 // --when's text as a wake, or why it can't be read
 export function parse(text: string, now = Date.now()): Wake | string {
@@ -184,7 +185,8 @@ export function readDeploys(dir = `${DATA_DIR}/deploys`) {
   }
 }
 
-const clock = (t: number | string) => {
+// (exported for jobs.ts stillHolds)
+export const clock = (t: number | string) => {
   const s = new Date(t).toISOString();
   return `${s.slice(0, 10)} ${s.slice(11, 16)} UTC`;
 };
@@ -235,7 +237,11 @@ function prOf(arg: string): PullRequestRow | { never: string } | undefined {
     .prepare('select number, status, merged_at from prs where branch = ? order by number desc limit 1')
     .get(branch) as PullRequestRow | undefined;
   if (pr?.status === 'closed') return { never: `#${job.id}'s pull request #${pr.number} was closed without merging` };
-  if (!pr && ['done', 'failed', 'cancelled'].includes(job.status) && !(job.status === 'done' && toCome(branch)))
+  if (
+    !pr &&
+    ['done', 'failed', 'stopped', 'cancelled'].includes(job.status) &&
+    !(job.status === 'done' && toCome(branch))
+  )
     return { never: `#${job.id} ended (${job.status}) without a pull request` };
   return pr;
 }

@@ -1,12 +1,13 @@
 // The board's names in plain words: a small model reads each project's, project sentence's, thread's (and its "done
 // when"), task's and meeting's name the board's views show, open or done, as its agent wrote it, with the brief or context beside
-// it, and writes the version the board reads (boardnames.ts), by the naming guide (worker/hq/levels.ts with the
-// company's company/levels.json). It needs no hook where names are written: whatever the board can read with words not
+// it, and a finished task's report with its brief, and writes the version the board reads (boardnames.ts): the name, or
+// what the task did in two or three sentences, by the naming guide (worker/hq/levels.ts with the company's
+// company/levels.json). It needs no hook where names are written: whatever the board can read with words not
 // yet put plainly is due (a new name or a changed one, from hq job, hq plan, the inbox, HQ's own tasks, a call or a
 // meeting alike), open work first. The worker runs the model on a Claude seat, one short call with no tools (worker.ts
 // namesLoop). It claims a thread's or a project's names due at a time, with the prompt, and hands back the answer.
 // Nothing waits for it: until it answers well, the board's view says the name is being made, or why it failed.
-import { db } from './db.ts';
+import { db, once } from './db.ts';
 import { projects } from './company.ts';
 import { OPEN_JOBS } from './jobs.ts';
 import { namedTask, type Kind } from './boardnames.ts';
@@ -18,14 +19,24 @@ import { redact } from './secrets.ts';
 
 // A name whose call failed, went unanswered or answered it wrongly (none, or too long) is due again RETRY_MS after the
 // call went out, as often as it takes, the failure kept for the board's view meanwhile. A call takes at most GROUP_MOST
-// names, each task's brief up to BRIEF_CHARS (its start, where a brief says what the task does), a thread's context up
-// to CONTEXT_TASKS of its tasks' titles.
+// names, each task's brief up to BRIEF_CHARS (its start, where a brief says what the task does) and a finished one's
+// report up to REPORT_CHARS (its start, where a report says what was done), a thread's context up to CONTEXT_TASKS of
+// its tasks' titles.
 const RETRY_MS = 10 * 60_000,
   GROUP_MOST = 10,
   BRIEF_CHARS = 2_000,
+  REPORT_CHARS = 4_000,
   CONTEXT_TASKS = 12;
-// The longest each is, in characters, as the board's views have room for
-const MOST: Record<Kind, number> = { project: 60, sentence: 400, thread: 80, goal: 240, task: 100, meeting: 100 };
+// The longest each is, in characters, as the board's views have room for (did: a finished task's card front)
+const MOST: Record<Kind, number> = {
+  project: 60,
+  sentence: 400,
+  thread: 80,
+  goal: 240,
+  task: 100,
+  meeting: 100,
+  did: 400,
+};
 // How the prompt calls each
 const LEVEL: Record<Kind, string> = {
   project: "a project's name",
@@ -34,6 +45,7 @@ const LEVEL: Record<Kind, string> = {
   goal: 'a thread\'s "done when"',
   task: "a task's title",
   meeting: "a meeting's topic, what the agents meet about",
+  did: "what a finished task did: the agents' words are its report (the start)",
 };
 
 export const SCHEMA = {
@@ -90,9 +102,9 @@ const dueSql = (words: string, n = 'n') =>
 // Every name due of those the board's views show, as it stands: those of open work first, then those of work done, each
 // newest first. Tasks are work (not a review's seats, whose names HQ writes, and never one holding customer details: house
 // rule 7), running, waiting, done or awaiting review alike; threads with their "done when", open and done; projects open,
-// with their sentences, and done. SQL leaves out the names written already: a claim comes every 15 s, nearly always with
-// none due, and the tasks' titles, nearly every name, come from their own index (db.ts jobs_named), never a job's
-// prompt and output.
+// with their sentences, and done; last, what each finished task did. SQL leaves out the names written already: a claim
+// comes every 15 s, nearly always with none due, and the tasks' titles, nearly every name, come from their own index
+// (db.ts jobs_named), never a job's prompt and output.
 function dueNames(before: number): Named[] {
   const tasks = taskNames(before);
   const done = db.prepare("select id, name from projects where status = 'done' order by done desc").all() as {
@@ -128,6 +140,7 @@ function dueNames(before: number): Named[] {
     ...meetingNames(true, before),
     ...threadNames(false, before),
     ...done.map(project).filter(isDue),
+    ...didNames(before),
   ];
 }
 // The tasks' titles due, newest first, each with whether its task is open
@@ -180,6 +193,33 @@ function threadNames(open: boolean, before: number): Named[] {
     ...(t.goal_due ? [{ kind: 'goal' as const, id: t.id, words: t.goal, group: `thread:${t.id}` }] : []),
   ]);
 }
+// What each finished task did, due newest first: work done with a report. A done task's report is written once, as it
+// ends (jobs.ts recordEnd), so what it did stands once made: only one never made is due, found through db.ts jobs_named
+// before any report is read. Work that failed isn't named: its card's front keeps its report's opening, which says why it
+// stopped (jobsheet.js summaryOf).
+function didNames(before: number): Named[] {
+  const done = db
+    .prepare(
+      `select j.id, j.thread, substr(j.result, 1, ${REPORT_CHARS}) report from jobs j where j.id in (select k.id from
+      jobs k indexed by jobs_named left join board_names n on n.kind = 'did' and n.id = cast(k.id as text)
+      where ${namedTask('k')} and k.status = 'done' and (n.kind is null or n.plain is null and (n.claimed is null or
+      n.claimed <= :before))) and trim(j.result) <> '' order by j.id desc`,
+    )
+    .all({ before }) as { id: number; thread: string | null; report: string }[];
+  return done.map(t => ({
+    kind: 'did',
+    id: String(t.id),
+    words: redact(t.report),
+    group: t.thread ? `thread:${t.thread}` : 'tasks',
+  }));
+}
+// Tasks done before HQ wrote what they did aren't named: each is a call on a seat for a card the board rarely opens
+// again. Each has a row made with nothing to say (plain ''), never due, and its card keeps its report's opening
+once(
+  '2026-10-26-did-from-now-on',
+  `insert or ignore into board_names (kind, id, words, plain) select 'did', cast(id as text), '', '' from jobs k
+  where ${namedTask('k')} and k.status = 'done'`,
+);
 const key = (n: { kind: string; id: string }) => `${n.kind}:${n.id}`;
 
 // The prompt: the task, the guide with its examples and terms, then the names with what's around them (outside input to the model:
@@ -187,7 +227,7 @@ const key = (n: { kind: string; id: string }) => `${n.kind}:${n.id}`;
 function promptFor(names: Named[]) {
   const own = levelsOf();
   const head = [
-    "You write the names a company's board reads for its work. The board is the person the company works for: it reads",
+    "You write the names a company's board reads for its work, and what each finished task did. The board is the person the company works for: it reads",
     "each project, thread, task and meeting in the company's HQ on a tablet, at a glance, often without having followed the work.",
     "The agents doing the work name it for each other, often in their own shorthand; you write the board's version.",
     '',
@@ -209,6 +249,9 @@ function promptFor(names: Named[]) {
     '- A task made from review findings says briefly what kind of problem its findings are and what they touch, so its',
     '  size and seriousness show ("Fix a broken order path", "Tidy two labels"): read the findings in its brief.',
     "- A task's title is its step alone, never with its thread's or project's name in front.",
+    `- What a finished task did is two or three short sentences, at most ${MOST.did} characters, in the past tense: what`,
+    '  it delivered, changed or found, and what that means for the board, read from its report with its brief beside it.',
+    '  Only what the report says was done, never what the brief asked for alone, and never the steps, files or checks.',
     `- Short but complete: a project's name at most ${MOST.project} characters, a thread's ${MOST.thread}, a task's`,
     `  ${MOST.task}, a meeting's ${MOST.meeting}, a "done when" one sentence of at most ${MOST.goal}, a project's sentence at most ${MOST.sentence}.`,
     "- In the board's language: English, unless the guide says otherwise.",
@@ -269,7 +312,9 @@ const nameLines = (n: Named) =>
     `<name ref="${key(n)}">`,
     `What it is: ${LEVEL[n.kind]}`,
     `The agents' words: ${unfenced(n.words)}`,
-    ...(n.kind === 'task' ? ['Its brief (the start):', unfenced(briefOf(Number(n.id)).slice(0, BRIEF_CHARS))] : []),
+    ...(n.kind === 'task' || n.kind === 'did'
+      ? ['Its brief (the start):', unfenced(briefOf(Number(n.id)).slice(0, BRIEF_CHARS))]
+      : []),
     ...(n.kind === 'meeting' && agendaOf(Number(n.id))
       ? ['Its brief (the start):', unfenced(agendaOf(Number(n.id))!.slice(0, BRIEF_CHARS))]
       : []),

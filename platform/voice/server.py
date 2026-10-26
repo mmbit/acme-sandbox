@@ -20,6 +20,7 @@ import asyncio, base64, functools, hashlib, http.client, itertools, json, loggin
 import threading, time, uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable, NamedTuple
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -32,7 +33,8 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from aloud import DAYS, aloud, number, respelt
-from drawing import ASK_WORDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
+from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
+from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -47,17 +49,34 @@ MODELS = Path(os.environ.get('VOICE_MODELS', '/models'))  # (replay.py runs the 
 # and the log says so (the transcript still reaches the agent after the call).
 # (add)
 print(f'Call tools (job, add, reach, promise, replace): {"on" if hq_tools_work() else "OFF (hq_tools.py did not start): calls work, with nothing queued or noted during them"}', flush=True)
-SEAT = Path('/seat/token')  # a Claude seat's token, kept here by the worker (its keeper), never the seats themselves
 # The model and effort come from the coordinator with each call (company/models.yaml `calls`: Opus, the model that runs
 # the company, as the board asked); these are only for a coordinator that doesn't send them yet.
 MODEL, EFFORT = os.environ.get('VOICE_MODEL', 'claude-opus-5-5'), os.environ.get('VOICE_EFFORT', 'low')
 PICK = re.compile(r'[a-z0-9][a-z0-9.\-\[\]]{0,63}')  # a model id or alias, an effort level: nothing that reads as a flag
-REPO = '/repo'  # the server's checkout of main, mounted read only
-CALL_LOGS = Path('/data/calls')
-# A file per call that's on: a deploy waits while there is one (infra/sync.sh on_call), as recreating this container ends
-# every call on it.
-LIVE = Path('/data/live')
-SESSIONS = Path('/data/claude/projects')  # the call agents' session records (guard.agent_env's CLAUDE_CONFIG_DIR)
+
+
+class Paths(NamedTuple):
+    """Where the line keeps and finds its files: these, unless a test gives its own."""
+    seat: Path = Path('/seat/token')  # a Claude seat's token, kept here by the worker (its keeper), never the seats themselves
+    repo: Path = Path('/repo')  # the server's checkout of main, mounted read only
+    calls: Path = Path('/data/calls')  # each call's transcript so far (Call.file)
+    # A file per call that's on: a deploy waits while there is one (infra/sync.sh on_call), as recreating this container
+    # ends every call on it.
+    live: Path = Path('/data/live')
+    cli_config: Path = Path('/data/claude')  # the call agents' CLI config (guard.agent_env's CLAUDE_CONFIG_DIR)
+    work: Path = Path('/data/call')  # the line's working folder: the CLI's (and its HOME), where there's no repo
+
+    @property
+    def sessions(self):
+        """The call agents' session records, in their CLI config."""
+        return self.cli_config / 'projects'
+
+    @property
+    def screen_socket(self):
+        """The screen tool's way to the line (SCREENS), in work."""
+        return self.work / 'screen.sock'
+
+
 # The CLI keeps a copy of every picture a session is sent, /tmp/claude-<uid>/<its folder>/<session>/images/<n>.jpg (the
 # environment it gets has no TMPDIR): they go with the session's records
 PICTURE_COPIES = Path('/tmp')
@@ -77,7 +96,7 @@ AGAIN = 1.0    # a sound over the reply that was let go counts again if the boar
 # answering: none once the board sounds finished (endpoint.py: Smart Turn hears it in the voice, not in the recogniser's
 # full stop, which comes at almost every pause), as the model takes over a second to speak and words the board adds
 # before that take the reply back (cut_in); mid-thought, long enough that a thinking pause rarely outlasts it
-WAIT = {'done': 0, 'open': 1.5}
+WAIT_SECONDS = {'done': 0, 'open': 1.5}
 TAKE_BACK = 1.2  # the board carries on before hearing this much of the reply: it was one message
 # HQ pings the line twice a second beside the microphone's frames, and the line answers each as it reads it. On a weak
 # connection the frames back up and come late, in a burst (nothing is lost on the way): the line is behind while a ping
@@ -106,10 +125,9 @@ PICTURE_TYPES = {'image/jpeg': b'\xff\xd8', 'image/png': b'\x89PNG'}  # (what th
 # coordinator before the caller waits on it. Screen pictures share SESSION_BYTES with shared ones, and a call has at most
 # SCREEN_PICTURES of them, the screen tool's included (the walk-through brief's 40): each is about 1,000 tokens, sent
 # again with every turn, so a full call's turns carry about 40,000 tokens of them. The agent's screen tool
-# (hq_tools.py) asks through the line's own socket (SCREEN_SOCKET, 0600), by its session's key (SCREENS), so the line
+# (hq_tools.py) asks through the line's own socket (Paths.screen_socket, 0600), by its session's key (SCREENS), so the line
 # keeps the budget and its token.
 SCREEN_TURN_SECONDS, SCREEN_PICTURES = 1.5, 40
-SCREEN_SOCKET = Path('/data/call/screen.sock')
 SCREENS = {}  # each live session's screen key, to its Call
 SCREEN_WORDS = {
     'lines': 'Their screen since your last turn:',
@@ -210,37 +228,29 @@ class Unanswered(Exception):
         self.why, self.until = why, until
 
 
-def seat_token():
-    """The token the worker keeps here now ('' once every seat is signed out: it removes the file)."""
+def seat_token(seat):
+    """The token the worker keeps at `seat` now ('' once every seat is signed out: it removes the file)."""
     try:
-        return SEAT.read_text().strip()
+        return seat.read_text().strip()
     except OSError:
         return ''
 
 
 def now_ms():
+    """The server's clock (ms since the epoch, the coordinator's clock too): the one a call is given unless a test gives
+    its own (Call's now)."""
     return datetime.now(timezone.utc).timestamp() * 1000
 
 
-def wall_ms(mono=None):
-    """A moment on the line's own clock (time.monotonic()) on the server's (ms since the epoch, the coordinator's clock
-    too), or now: when each transcript line was said."""
-    return round(now_ms() - (0 if mono is None else (time.monotonic() - mono) * 1000))
-
-
-def heard_at(turn):
-    """When a reply started being heard (wall_ms), or None: not heard (now, then)."""
-    return wall_ms(turn['heard']) if turn.get('heard') else None
-
-
-def clock(ms, tz, lang='en'):
+def clock(ms, tz, lang='en', now=now_ms):
     """A time as the line says it: on the company's clock (company.timeZone), or in UTC, said so, without one; with the
-    day when it isn't today (tomorrow, a weekday within the week, else the date)."""
+    day when it isn't today (tomorrow, a weekday within the week, else the date), today by the clock `now` (the
+    server's unless given)."""
     try:
         zone, utc = ZoneInfo(tz), ''
     except Exception:
         zone, utc = timezone.utc, ' UTC'
-    at, today = (datetime.fromtimestamp(t / 1000, zone) for t in (ms, now_ms()))
+    at, today = (datetime.fromtimestamp(t / 1000, zone) for t in (ms, now()))
     time_of_day, days = at.strftime('%H:%M') + utc, (at.date() - today.date()).days
     words = DAYS.get(lang, DAYS['en'])
     if days < 1:
@@ -270,9 +280,9 @@ CANT = {
 }
 
 
-def cant_answer(name, why, until=0, tz='UTC', lang='en', again=False):
+def cant_answer(name, why, until=0, tz='UTC', lang='en', again=False, now=now_ms):
     words = CANT.get(lang, CANT['en'])
-    reason = words['until'].format(t=clock(until, tz, lang)) if why == 'limit' and until else words.get(why, words['error'])
+    reason = words['until'].format(t=clock(until, tz, lang, now)) if why == 'limit' and until else words.get(why, words['error'])
     return words['again' if again else 'first'].format(name=name, why=reason)
 
 
@@ -333,7 +343,7 @@ def hq(method, path, body=None):
 
 
 def takes(picture, kind=None):
-    """Whether a picture from the coordinator ({type, data}: a pin's, a shared one, a screen's or a sketch's) is one the
+    """Whether a picture from the coordinator ({type, data}: a shared one, a screen's or a sketch's) is one the
     model can take: a JPEG or PNG (`kind`, when given) whose data decodes as one. All the data is decoded, not only its
     start: the model's API refuses a whole turn for an image whose base64 breaks further on, so such a picture is
     dropped here instead (a picture of a few MB decodes in milliseconds, once)."""
@@ -348,23 +358,17 @@ def takes(picture, kind=None):
         return False
 
 
-def shot(pin):
-    """Whether a pin's screenshot or picture from the coordinator (call-context's pins) is a JPEG or PNG the model can
-    take."""
-    return isinstance(pin, dict) and type(pin.get('id')) is int and takes(pin)
-
-
-def fetch_picture(picture_id, call):
+def fetch_picture(hq, picture_id, call):
     """A picture the board shared on this live call (the coordinator's pictures.ts), or None if it isn't a JPEG or PNG
-    whose data decodes as one. Raises if the coordinator refuses it."""
+    whose data decodes as one. Raises if the coordinator (hq) refuses it."""
     picture = hq('GET', f'picture?id={picture_id}&call={call}')
     return {'id': picture_id, 'type': picture['type'], 'data': picture['data']} if takes(picture) else None
 
 
-def fetch_note(note_id, call):
+def fetch_note(hq, note_id, call):
     """A note the board drew on this live call (the coordinator's note route): an entry for the call's pictures, its
     number on the call's page, words and page under 'note', and its picture (the page around it) if it has one. None if
-    the note or its picture is unreadable. Raises if the coordinator refuses it."""
+    the note or its picture is unreadable. Raises if the coordinator (hq) refuses it."""
     got = hq('GET', f'note?id={note_id}&call={call}')
     picture = got.get('picture') if isinstance(got, dict) else None
     if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
@@ -402,8 +406,8 @@ async def serve_screens(path):
 
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
-# (ask_to_see and draw)
-ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS}
+# (ask_to_see and draw; open_work and drive)
+ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS}
 
 
 async def screen_asked(reader, writer):
@@ -413,7 +417,8 @@ async def screen_asked(reader, writer):
         kind = next((k for k in ASKED_WORDS if isinstance(asked, dict) and k in asked), 'screen')
         call = SCREENS.get(asked.get('key')) if isinstance(asked, dict) and isinstance(asked.get('key'), str) else None
         tool = call and {'screen': call.screen_tool, 'sketch': call.sketch_tool, 'ask_to_see': call.drawing.ask_tool,
-                         'draw': call.drawing.ink_tool}[kind]
+                         'draw': call.drawing.ink_tool, 'open_work': call.driving.open_tool,
+                         'drive': call.driving.drive_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
@@ -447,249 +452,7 @@ def ulaw_encode(x):
     return (~(sign | (exp << 4) | mant) & 0xFF).astype(np.uint8).tobytes()
 
 
-# ---- the agent: a warm Claude session for the whole call, answering in streamed text ----
-def spent(usage, step, thinking, thought):
-    """The end of a reply's timing line: where its first seconds went. The tool
-    a step before the words ran, the turn's first request's tokens (a first reply writes the briefing to the cache, a
-    later one reads it), and how long the model thought before its first words. Numbers and names only: nothing said."""
-    out = f'; step {step}' if step else ''
-    if usage is None:  # (no message_start: stopped before the model answered, or a stream without one)
-        return f'{out}; tokens unknown'
-    fields = (('in', 'input_tokens'), ('cache read', 'cache_read_input_tokens'),
-              ('cache write', 'cache_creation_input_tokens'))
-    tokens = ', '.join(f'{name} {int(usage.get(field) or 0)}' for name, field in fields)
-    return f'{out}; tokens {tokens}; ' + (f'thought {thought:.1f} s from {thinking:.1f} s' if thinking is not None
-                                          else 'no thinking')
-
-
-class Agent:
-    """The call's brain: who answers. Call (the speech) talks to it only through this surface, so another brain can
-    take its place:
-    - start(): get ready for the call (and again for a fresh session mid-call: recap then holds the call so far, and
-      goes in front of the next message).
-    - ask(text, pictures): an async iterator over the reply, for one message: its text as it's written, a Step as a tool
-      step starts and Used once its input is whole, DELIVERED once the brain has the message and RESPONSE as each later
-      response in the turn starts. It raises Unanswered when the brain can't answer (in its own signals, never its words).
-    - interrupt() stops the reply being written; kill() stops the session for a restart; close() ends it for good.
-    - moved(): whether a restart would now find room it didn't have (here: the worker put another seat's token in).
-    - The call's settings, read after start(): voice (the TTS voice), tz (the company's clock), seat (whether the
-      brain has room, said at pickup), token and call (the coordinator's, for the hand-over and pictures), key and
-      pin_shots (HQ's screen only), and on a call out opening and objected (the
-      company's fixed words) and who (the other side, for the transcript).
-    This one is the Claude CLI on a seat, briefed by the coordinator (call-context). The second is Care: a stranger's call on the shop's number, answered by the care service, whose words care
-    keeps (kind 'care': the line keeps no transcript, says the opening and the language's words care gives it)."""
-    kind = 'board'
-    def __init__(self, agent, lang, request=0, phone=False, pins=(), callout=0):
-        self.agent, self.lang, self.request, self.busy, self.token, self.call = agent, lang, request, False, '', 0
-        self.phone = phone  # on the phone line: no screen, so no pictures
-        # a call out: its number, and from call-context the fixed words and the other side's name
-        self.callout, self.opening, self.objected, self.who = callout, '', '', ''
-        # the review notes the board rang about (HQ's Reviews), and their screenshots, which go with the session's first
-        # message (a restarted session's too: start() gets them again).
-        self.pins, self.pin_shots = list(pins), []
-        self.key = ''  # the call's key for HQ's picture uploads (pictures.ts)
-        self.screen = None  # the line's screen socket and this session's key, on a call with a screen (Call.screen_key)
-        self.voice = VOICE
-        self.respell = {}  # the company's words respelt for the speech engines, by language (brand.yaml speech.respell)
-        self.recap = ''  # a restarted session's first message carries the call so far (Call.answer)
-        # whether a Claude seat has room (the coordinator's reading, said at pickup: Call.greet), the company's clock, and
-        # the seat token this session signed in with (the worker may move the line to another: moved)
-        self.seat, self.tz, self.signed = None, 'UTC', ''
-        # when the seat's window resets, as the session last read it: a later turn the CLI turns away itself (it knows it's
-        # limited) sends no request and gets no rate_limit_event, only the error
-        self.resets = 0
-        self.closed = False  # the call ended (close()): no session starts after it
-
-    async def start(self):
-        if self.closed:
-            return
-        # (a restart mid-call sends the call's token: the coordinator goes on with the same call, and what was promised
-        # on it)
-        asked = {'agent': self.agent, 'lang': self.lang, 'request': self.request, 'token': self.token, 'phone': self.phone,
-                 'pins': self.pins, **({'callout': self.callout} if self.callout else {})}  # (pins)
-        ctx = await asyncio.to_thread(hq, 'POST', 'call-context', asked)
-        if self.closed:  # (hung up while the coordinator answered: Call.end handed the token over already)
-            return
-        prompt, self.token, self.call = ctx['prompt'], ctx.get('token', ''), int(ctx.get('call') or 0)
-        self.key = str(ctx.get('key') or '')
-        self.pin_shots = [p for p in ctx.get('pins') or [] if shot(p)]
-        self.voice = v if isinstance(v := ctx.get('voice'), str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', v) else VOICE
-        self.respell = ctx.get('respell') or {}
-        model, effort = (v if isinstance(v, str) and PICK.fullmatch(v) else d for v, d in ((ctx.get('model'), MODEL), (ctx.get('effort'), EFFORT)))
-        words = lambda key, most: ' '.join(str(ctx.get(key) or '').split())[:most]  # (one line)
-        self.opening, self.objected, self.who = words('opening', 600), words('objected', 300), words('who', 60)
-        partner = self.callout or ctx.get('tools') == 'partner'  # (the partner tools)
-        # (the briefing's size: the whole of it is the first reply's prompt to write to the cache)
-        print(f'call: {self.agent} on {model} ({effort} effort), briefing {len(prompt.encode())} bytes', flush=True)
-        self.seat, self.tz = ctx.get('seat'), ctx.get('timeZone') if isinstance(ctx.get('timeZone'), str) else 'UTC'
-        # (no token: every seat signed out; the CLI then fails its first turn as signed out, and the line says so)
-        self.signed, self.resets = seat_token(), 0  # (maybe another seat's: the last session's reset isn't this one's)
-        session = str(uuid.uuid4())  # (its records go when it ends: watch)
-        signs = sign_in_pipe(self.signed)  # (on a pipe, not in its env: guard.py)
-        try:
-            # (self.tz: the call's company.timeZone, for hq's times)
-            env = agent_env(os.environ, HQ, signs, self.token, self.agent, self.screen, self.tz)
-            # It can read the company's files (main, read only) and hand work on with hq; nothing else (guard.TOOLS).
-            self.proc = await asyncio.create_subprocess_exec(
-                'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
-                '--include-partial-messages', '--model', model, '--effort', effort, '--session-id', session,
-                *(PARTNER if partner else TOOLS),
-                '--system-prompt', prompt, cwd=REPO if Path(REPO).is_dir() else '/data/call', env=env, pass_fds=(signs,),
-                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
-                limit=1 << 22)
-        finally:
-            os.close(signs)
-        if self.closed:  # (hung up while it launched: close() didn't see this one; Call.end runs in a thread)
-            self.kill()  # (watched all the same, so its records go once it has ended)
-        asyncio.create_task(self.watch(self.proc, session))
-
-    async def watch(self, proc, session):
-        """What the call agent says on stderr, and how it ends, go to the voice line's log (keys blanked). Then its
-        session's records go (forget)."""
-        n = 0
-        while line := await proc.stderr.readline():
-            if (n := n + 1) <= 30:
-                print('call agent:', re.sub(r'sk-[\w-]{8,}', '[redacted]', line.decode(errors='replace').rstrip())[:300], flush=True)
-        code = await proc.wait()
-        if code not in (0, -9):
-            print(f'call agent ({self.agent}) exited with {code}', flush=True)
-        await asyncio.to_thread(forget, session)
-
-    def moved(self):
-        """The worker has put another seat's token here since this session started (one with room: worker.ts voiceSeat)."""
-        return seat_token() != self.signed
-
-    async def ask(self, text, pictures=()):
-        """Yields the reply's text as it's written, until the turn ends, a Step as each tool step starts and RESPONSE as
-        each later model response starts (DELIVERED for the first). Pictures
-        (fetch_picture's) go in the same message, before the words. A turn the CLI ends in an error raises Unanswered,
-        from its own signals (outcome.ts in the worker reads the same ones)."""
-        if self.pin_shots:  # (the pins' screenshots and pictures, once a session)
-            shots, self.pin_shots = self.pin_shots, []
-            pictures = [*shots, *pictures]
-            numbers = ', '.join(f"#{p['id']} {p['kind']}" for p in shots)
-            text = f'(The pins\' screenshots and pictures, in order: {numbers}.)\n\n{text}'
-        if self.recap:
-            text, self.recap = f'{self.recap}\n\n{text}', ''
-        images = [{'type': 'image', 'source': {'type': 'base64', 'media_type': p['type'], 'data': p['data']}} for p in pictures]
-        msg = {'type': 'user', 'message': {'role': 'user', 'content': [*images, {'type': 'text', 'text': text}]}}
-        if self.proc.returncode is not None:
-            raise RuntimeError(f'the call agent is gone (exit {self.proc.returncode})')
-        self.proc.stdin.write((json.dumps(msg) + '\n').encode())
-        await self.proc.stdin.drain()
-        self.busy, t0, first, tool = True, time.monotonic(), None, None
-        # Where the first seconds go: the turn's first request's tokens (input,
-        # cache read, cache write: message_start), and the thinking before the first words (when it began, how long
-        # it ran)
-        usage, named, thinking, thought, since = None, '', None, 0.0, None
-        rejected, error = None, None  # the CLI's own: a usage window that turned the request away (its reset), its error
-        steps = {}  # each tool step's name and input so far, by its block's index (Used)
-        while True:
-            # silence for 90 s (not even a tool step or a keep-alive) means it's stuck: the caller restarts it
-            line = await asyncio.wait_for(self.proc.stdout.readline(), 90)
-            if not line:
-                raise RuntimeError(f'the call agent ended mid-reply (exit {await self.proc.wait()})')
-            try:
-                e = json.loads(line)
-            except ValueError:
-                continue
-            if e.get('type') == 'stream_event':
-                ev = e.get('event', {})
-                d, block = ev.get('delta', {}), ev.get('content_block', {})
-                if ev.get('type') == 'message_start' and usage is None:
-                    usage = ev.get('message', {}).get('usage') or {}
-                    yield DELIVERED
-                elif ev.get('type') == 'message_start':
-                    yield RESPONSE
-                elif (ev.get('type') == 'content_block_start' and first is None
-                      and block.get('type') in ('thinking', 'redacted_thinking')):
-                    since = time.monotonic() - t0
-                    thinking = since if thinking is None else thinking
-                elif ev.get('type') == 'content_block_stop' and since is not None:  # (blocks never overlap in a stream)
-                    thought, since = thought + time.monotonic() - t0 - since, None
-                if d.get('type') == 'text_delta':
-                    if first is None:
-                        first = time.monotonic() - t0
-                    yield d['text']
-                elif ev.get('type') == 'content_block_start' and block.get('type') == 'tool_use':
-                    # (the model starts writing the tool's input: a job's whole brief comes before the tool runs)
-                    if first is None and tool is None:
-                        tool, named = time.monotonic() - t0, str(block.get('name') or '')
-                    steps[ev.get('index')] = {'name': str(block.get('name') or ''), 'json': ''}
-                    yield Step(str(block.get('name') or ''))
-                elif d.get('type') == 'input_json_delta' and ev.get('index') in steps:
-                    steps[ev['index']]['json'] += str(d.get('partial_json') or '')
-                elif ev.get('type') == 'content_block_stop' and ev.get('index') in steps:
-                    step = steps.pop(ev['index'])
-                    try:
-                        tool_input = json.loads(step['json'] or '{}')
-                    except ValueError:
-                        tool_input = None
-                    yield Used(step['name'], tool_input if isinstance(tool_input, dict) else {})
-            elif e.get('type') == 'rate_limit_event' and (e.get('rate_limit_info') or {}).get('status') == 'rejected':
-                reset = e['rate_limit_info'].get('resetsAt')
-                rejected = self.resets = int(reset * 1000) if isinstance(reset, (int, float)) and reset > 0 else 0
-            elif e.get('type') == 'assistant' and not e.get('parent_tool_use_id'):
-                error = str(e['error']) if e.get('error') else None  # (the session's last message decides, as in outcome.ts)
-            elif e.get('type') == 'system' and e.get('subtype') == 'init':
-                if [s for s in e.get('mcp_servers', []) if s.get('status') != 'connected']:
-                    print(f'call agent ({self.agent}): hand-on tools not connected: {e["mcp_servers"]}', flush=True)
-            elif e.get('type') == 'result':
-                self.busy = False
-                if e.get('is_error') and e.get('subtype') != 'error_during_execution':  # (that one is an interrupt)
-                    print(f'call agent ({self.agent}): {e.get("subtype")}: {str(e.get("result"))[:200]}', flush=True)
-                # a turn stopped before its first words has no first-words time: it says so, so it isn't counted as one
-                # a tool step before the first words says when it started: its time isn't the model's time to speak
-                step = f' (after a tool step at {tool:.1f} s)' if tool is not None else ''
-                words = f', first words after {first:.1f} s{step}' if first is not None else ' with no words'
-                done = time.monotonic() - t0
-                thought += done - since if since is not None else 0  # (stopped while thinking)
-                tail = (step if first is None else '') + spent(usage, named, thinking, thought)
-                print(f'call: {self.agent} replied{words}, done after {done:.1f} s{tail}', flush=True)
-                if e.get('is_error') and e.get('subtype') != 'error_during_execution':
-                    status = e.get('api_error_status')
-                    why = ('limit' if error == 'rate_limit' or status == 429 or rejected is not None else
-                           'signin' if error == 'authentication_failed' or status == 401 else 'error')
-                    # (a turn the CLI turned away itself has no rate_limit_event: the reset it last read, if still ahead)
-                    until = rejected or (self.resets if self.resets > now_ms() else 0)
-                    raise Unanswered(why, until if why == 'limit' else 0)
-                return
-
-    def interrupt(self):
-        """Stops the reply being written (the session keeps what it heard)."""
-        if self.busy:
-            self.proc.stdin.write((json.dumps({'type': 'control_request', 'request_id': f'stop-{time.monotonic()}',
-                                               'request': {'subtype': 'interrupt'}}) + '\n').encode())
-
-    def kill(self):
-        """Stops the session, for a restart: the call goes on."""
-        if getattr(self, 'proc', None) and self.proc.returncode is None:
-            self.proc.kill()
-
-    def close(self):
-        """The call ended: the session stops, and none starts again."""
-        self.closed = True
-        self.kill()
-
-
-def forget(session='*'):
-    """A call agent's session records (its every word, and the pictures it saw), gone once its CLI has ended: at the
-    hang-up, or at a restart mid-call, whose new session starts afresh from the call so far. The transcript HQ has is the
-    only copy then, under HQ's own rules (audit 2026-10-04, P19). Each turn's numbers stay, in the log (turns.py, kept by
-    infra/call-times.sh). '*': every session a crash or restart left behind."""
-    for path in SESSIONS.glob(f'*/{session}.jsonl'):
-        try:
-            for stamp, line in turns.turns(path):
-                print(stamp, line, flush=True)
-        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:  # (a record of another shape)
-            print(f'turns: {path.name}: {error!r}', flush=True)
-        path.unlink(missing_ok=True)
-        shutil.rmtree(path.with_suffix(''), ignore_errors=True)  # (the CLI's folder for the session: big tool results)
-    for folder in PICTURE_COPIES.glob(f'claude-*/*/{session}'):  #.
-        shutil.rmtree(folder, ignore_errors=True)
-
-
-# ---- A care call: a stranger's call, answered by the care service ----
+# ---- the line's outside parts: the care deployments, and what the line is wired to ----
 # The care deployments' phone routes: CARE_ENGINES, infra's map of each deployment's name (its product's slug) to its
 # internal address (url) and the most of its calls on at once (calls, 2 when it says none: measured with two and a board
 # call, the README), each behind its own token only the line and that deployment hold (in the variable its `token`
@@ -719,6 +482,265 @@ def care_engines(listed, env):
 
 
 CARE_ENGINES = care_engines(os.environ.get('CARE_ENGINES'), os.environ)
+
+
+# (the line's outside parts given to each route and call, so a test's line is given its own)
+class Wiring(NamedTuple):
+    """What the line is wired to: the coordinator it talks to (hq), its files, its clocks (now: ms since the epoch, when
+    each transcript line was said; monotonic: its own seconds), how a session's CLI starts and the care deployments. A
+    route hands its own to the calls it makes, so they read the coordinator from one place: these, unless a test gives
+    its own."""
+    hq: Callable = hq
+    paths: Paths = Paths()
+    now: Callable = now_ms
+    monotonic: Callable = time.monotonic
+    start_cli: Callable = asyncio.create_subprocess_exec
+    care_engines: dict = CARE_ENGINES
+
+
+# ---- the agent: a warm Claude session for the whole call, answering in streamed text ----
+def spent(usage, step, thinking, thought):
+    """The end of a reply's timing line: where its first seconds went. The tool
+    a step before the words ran, the turn's first request's tokens (a first reply writes the briefing to the cache, a
+    later one reads it), and how long the model thought before its first words. Numbers and names only: nothing said."""
+    out = f'; step {step}' if step else ''
+    if usage is None:  # (no message_start: stopped before the model answered, or a stream without one)
+        return f'{out}; tokens unknown'
+    fields = (('in', 'input_tokens'), ('cache read', 'cache_read_input_tokens'),
+              ('cache write', 'cache_creation_input_tokens'))
+    tokens = ', '.join(f'{name} {int(usage.get(field) or 0)}' for name, field in fields)
+    return f'{out}; tokens {tokens}; ' + (f'thought {thought:.1f} s from {thinking:.1f} s' if thinking is not None
+                                          else 'no thinking')
+
+
+class Agent:
+    """The call's brain: who answers. Call (the speech) talks to it only through this surface, so another brain can
+    take its place:
+    - start(): get ready for the call (and again for a fresh session mid-call: recap then holds the call so far, and
+      goes in front of the next message).
+    - ask(text, pictures): an async iterator over the reply, for one message: its text as it's written, a Step as a tool
+      step starts and Used once its input is whole, DELIVERED once the brain has the message and RESPONSE as each later
+      response in the turn starts. It raises Unanswered when the brain can't answer (in its own signals, never its words).
+    - interrupt() stops the reply being written; kill() stops the session for a restart; close() ends it for good.
+    - moved(): whether a restart would now find room it didn't have (here: the worker put another seat's token in).
+    - The call's settings, read after start(): voice (the TTS voice), tz (the company's clock), seat (whether the
+      brain has room, said at pickup), token and call (the coordinator's, for the hand-over and pictures), key (HQ's
+      screen only), and on a call out opening and objected (the
+      company's fixed words) and who (the other side, for the transcript).
+    This one is the Claude CLI on a seat, briefed by the coordinator (call-context). The second is Care: a stranger's call on the shop's number, answered by the care service, whose words care
+    keeps (kind 'care': the line keeps no transcript, says the opening and the language's words care gives it)."""
+    kind = 'board'
+    def __init__(self, agent, lang, request=0, phone=False, callout=0, walk=False, wiring=Wiring()):
+        self.agent, self.lang, self.request, self.busy, self.token, self.call = agent, lang, request, False, '', 0
+        self.walk = walk  # a walk-through of the request's work (call-context)
+        self.wiring = wiring  # what the call is wired to (Call's)
+        self.phone = phone  # on the phone line: no screen, so no pictures
+        # a call out: its number, and from call-context the fixed words and the other side's name
+        self.callout, self.opening, self.objected, self.who = callout, '', '', ''
+        self.key = ''  # the call's key for HQ's picture uploads (pictures.ts)
+        self.screen = None  # the line's screen socket and this session's key, on a call with a screen (Call.screen_key)
+        self.voice = VOICE
+        self.respell = {}  # the company's words respelt for the speech engines, by language (brand.yaml speech.respell)
+        self.recap = ''  # a restarted session's first message carries the call so far (Call.answer)
+        # whether a Claude seat has room (the coordinator's reading, said at pickup: Call.greet), the company's clock, and
+        # the seat token this session signed in with (the worker may move the line to another: moved)
+        self.seat, self.tz, self.signed = None, 'UTC', ''
+        # when the seat's window resets, as the session last read it: a later turn the CLI turns away itself (it knows it's
+        # limited) sends no request and gets no rate_limit_event, only the error
+        self.resets = 0
+        self.closed = False  # the call ended (close()): no session starts after it
+
+    async def start(self):
+        if self.closed:
+            return
+        # (a restart mid-call sends the call's token: the coordinator goes on with the same call, and what was promised
+        # on it, and keeps whether it's a walk-through on the call's row: walk)
+        # (a call about review pins went with HQ's waiting notes)
+        asked = {'agent': self.agent, 'lang': self.lang, 'request': self.request, 'token': self.token, 'phone': self.phone,
+                 **({'callout': self.callout} if self.callout else {}),
+                 **({'walk': True} if self.walk and not self.token else {})}
+        ctx = await asyncio.to_thread(self.wiring.hq, 'POST', 'call-context', asked)
+        if self.closed:  # (hung up while the coordinator answered: Call.end handed the token over already)
+            return
+        prompt, self.token, self.call = ctx['prompt'], ctx.get('token', ''), int(ctx.get('call') or 0)
+        self.key = str(ctx.get('key') or '')
+        self.voice = v if isinstance(v := ctx.get('voice'), str) and re.fullmatch(r'[a-z][a-z0-9_-]{0,31}', v) else VOICE
+        self.respell = ctx.get('respell') or {}
+        model, effort = (v if isinstance(v, str) and PICK.fullmatch(v) else d for v, d in ((ctx.get('model'), MODEL), (ctx.get('effort'), EFFORT)))
+        words = lambda key, most: ' '.join(str(ctx.get(key) or '').split())[:most]  # (one line)
+        self.opening, self.objected, self.who = words('opening', 600), words('objected', 300), words('who', 60)
+        partner = self.callout or ctx.get('tools') == 'partner'  # (the partner tools)
+        # (the briefing's size: the whole of it is the first reply's prompt to write to the cache)
+        print(f'call: {self.agent} on {model} ({effort} effort), briefing {len(prompt.encode())} bytes', flush=True)
+        self.seat, self.tz = ctx.get('seat'), ctx.get('timeZone') if isinstance(ctx.get('timeZone'), str) else 'UTC'
+        # (no token: every seat signed out; the CLI then fails its first turn as signed out, and the line says so. Maybe
+        # another seat's: the last session's reset isn't this one's)
+        paths = self.wiring.paths
+        self.signed, self.resets = seat_token(paths.seat), 0
+        session = str(uuid.uuid4())  # (its records go when it ends: watch)
+        signs = sign_in_pipe(self.signed)  # (on a pipe, not in its env: guard.py)
+        try:
+            # (self.tz: the call's company.timeZone, for hq's times)
+            env = agent_env(os.environ, HQ, signs, self.token, self.agent, self.screen, self.tz, work=paths.work,
+                            cli_config=paths.cli_config)
+            # It can read the company's files (main, read only) and hand work on with hq; nothing else (guard.TOOLS).
+            self.proc = await self.wiring.start_cli(
+                'claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
+                '--include-partial-messages', '--model', model, '--effort', effort, '--session-id', session,
+                *(PARTNER if partner else TOOLS),
+                '--system-prompt', prompt, cwd=paths.repo if paths.repo.is_dir() else paths.work, env=env, pass_fds=(signs,),
+                stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                limit=1 << 22)
+        finally:
+            os.close(signs)
+        if self.closed:  # (hung up while it launched: close() didn't see this one; Call.end runs in a thread)
+            self.kill()  # (watched all the same, so its records go once it has ended)
+        asyncio.create_task(self.watch(self.proc, session))
+
+    async def watch(self, proc, session):
+        """What the call agent says on stderr, and how it ends, go to the voice line's log (keys blanked). Then its
+        session's records go (forget)."""
+        n = 0
+        while line := await proc.stderr.readline():
+            if (n := n + 1) <= 30:
+                print('call agent:', re.sub(r'sk-[\w-]{8,}', '[redacted]', line.decode(errors='replace').rstrip())[:300], flush=True)
+        code = await proc.wait()
+        if code not in (0, -9):
+            print(f'call agent ({self.agent}) exited with {code}', flush=True)
+        await asyncio.to_thread(forget, self.wiring.paths.sessions, session)
+
+    def moved(self):
+        """The worker has put another seat's token here since this session started (one with room: worker.ts voiceSeat)."""
+        return seat_token(self.wiring.paths.seat) != self.signed
+
+    async def ask(self, text, pictures=()):
+        """Yields the reply's text as it's written, until the turn ends, a Step as each tool step starts and RESPONSE as
+        each later model response starts (DELIVERED for the first). Pictures
+        (fetch_picture's) go in the same message, before the words. A turn the CLI ends in an error raises Unanswered,
+        from its own signals (outcome.ts in the worker reads the same ones)."""
+        if self.recap:
+            text, self.recap = f'{self.recap}\n\n{text}', ''
+        images = [{'type': 'image', 'source': {'type': 'base64', 'media_type': p['type'], 'data': p['data']}} for p in pictures]
+        msg = {'type': 'user', 'message': {'role': 'user', 'content': [*images, {'type': 'text', 'text': text}]}}
+        if self.proc.returncode is not None:
+            raise RuntimeError(f'the call agent is gone (exit {self.proc.returncode})')
+        self.proc.stdin.write((json.dumps(msg) + '\n').encode())
+        await self.proc.stdin.drain()
+        self.busy, t0, first, tool = True, self.wiring.monotonic(), None, None
+        # Where the first seconds go: the turn's first request's tokens (input,
+        # cache read, cache write: message_start), and the thinking before the first words (when it began, how long
+        # it ran)
+        usage, named, thinking, thought, since = None, '', None, 0.0, None
+        rejected, error = None, None  # the CLI's own: a usage window that turned the request away (its reset), its error
+        steps = {}  # each tool step's name and input so far, by its block's index (Used)
+        while True:
+            # silence for 90 s (not even a tool step or a keep-alive) means it's stuck: the caller restarts it
+            line = await asyncio.wait_for(self.proc.stdout.readline(), 90)
+            if not line:
+                raise RuntimeError(f'the call agent ended mid-reply (exit {await self.proc.wait()})')
+            try:
+                e = json.loads(line)
+            except ValueError:
+                continue
+            if e.get('type') == 'stream_event':
+                ev = e.get('event', {})
+                d, block = ev.get('delta', {}), ev.get('content_block', {})
+                if ev.get('type') == 'message_start' and usage is None:
+                    usage = ev.get('message', {}).get('usage') or {}
+                    yield DELIVERED
+                elif ev.get('type') == 'message_start':
+                    yield RESPONSE
+                elif (ev.get('type') == 'content_block_start' and first is None
+                      and block.get('type') in ('thinking', 'redacted_thinking')):
+                    since = self.wiring.monotonic() - t0
+                    thinking = since if thinking is None else thinking
+                elif ev.get('type') == 'content_block_stop' and since is not None:  # (blocks never overlap in a stream)
+                    thought, since = thought + self.wiring.monotonic() - t0 - since, None
+                if d.get('type') == 'text_delta':
+                    if first is None:
+                        first = self.wiring.monotonic() - t0
+                    yield d['text']
+                elif ev.get('type') == 'content_block_start' and block.get('type') == 'tool_use':
+                    # (the model starts writing the tool's input: a job's whole brief comes before the tool runs)
+                    if first is None and tool is None:
+                        tool, named = self.wiring.monotonic() - t0, str(block.get('name') or '')
+                    steps[ev.get('index')] = {'name': str(block.get('name') or ''), 'json': ''}
+                    yield Step(str(block.get('name') or ''))
+                elif d.get('type') == 'input_json_delta' and ev.get('index') in steps:
+                    steps[ev['index']]['json'] += str(d.get('partial_json') or '')
+                elif ev.get('type') == 'content_block_stop' and ev.get('index') in steps:
+                    step = steps.pop(ev['index'])
+                    try:
+                        tool_input = json.loads(step['json'] or '{}')
+                    except ValueError:
+                        tool_input = None
+                    yield Used(step['name'], tool_input if isinstance(tool_input, dict) else {})
+            elif e.get('type') == 'rate_limit_event' and (e.get('rate_limit_info') or {}).get('status') == 'rejected':
+                reset = e['rate_limit_info'].get('resetsAt')
+                rejected = self.resets = int(reset * 1000) if isinstance(reset, (int, float)) and reset > 0 else 0
+            elif e.get('type') == 'assistant' and not e.get('parent_tool_use_id'):
+                error = str(e['error']) if e.get('error') else None  # (the session's last message decides, as in outcome.ts)
+            elif e.get('type') == 'system' and e.get('subtype') == 'init':
+                if [s for s in e.get('mcp_servers', []) if s.get('status') != 'connected']:
+                    print(f'call agent ({self.agent}): hand-on tools not connected: {e["mcp_servers"]}', flush=True)
+            elif e.get('type') == 'result':
+                self.busy = False
+                if e.get('is_error') and e.get('subtype') != 'error_during_execution':  # (that one is an interrupt)
+                    print(f'call agent ({self.agent}): {e.get("subtype")}: {str(e.get("result"))[:200]}', flush=True)
+                # a turn stopped before its first words has no first-words time: it says so, so it isn't counted as one
+                # a tool step before the first words says when it started: its time isn't the model's time to speak
+                step = f' (after a tool step at {tool:.1f} s)' if tool is not None else ''
+                words = f', first words after {first:.1f} s{step}' if first is not None else ' with no words'
+                done = self.wiring.monotonic() - t0
+                thought += done - since if since is not None else 0  # (stopped while thinking)
+                tail = (step if first is None else '') + spent(usage, named, thinking, thought)
+                print(f'call: {self.agent} replied{words}, done after {done:.1f} s{tail}', flush=True)
+                if e.get('is_error') and e.get('subtype') != 'error_during_execution':
+                    status = e.get('api_error_status')
+                    why = ('limit' if error == 'rate_limit' or status == 429 or rejected is not None else
+                           'signin' if error == 'authentication_failed' or status == 401 else 'error')
+                    # (a turn the CLI turned away itself has no rate_limit_event: the reset it last read, if still ahead)
+                    until = rejected or (self.resets if self.resets > self.wiring.now() else 0)
+                    raise Unanswered(why, until if why == 'limit' else 0)
+                return
+
+    def interrupt(self):
+        """Stops the reply being written (the session keeps what it heard)."""
+        if self.busy:
+            self.proc.stdin.write((json.dumps({'type': 'control_request', 'request_id': f'stop-{time.monotonic()}',
+                                               'request': {'subtype': 'interrupt'}}) + '\n').encode())
+
+    def kill(self):
+        """Stops the session, for a restart: the call goes on."""
+        if getattr(self, 'proc', None) and self.proc.returncode is None:
+            self.proc.kill()
+
+    def close(self):
+        """The call ended: the session stops, and none starts again."""
+        self.closed = True
+        self.kill()
+
+
+def forget(sessions, session='*'):
+    """A call agent's session records (its every word, and the pictures it saw), gone once its CLI has ended: at the
+    hang-up, or at a restart mid-call, whose new session starts afresh from the call so far. The transcript HQ has is the
+    only copy then, under HQ's own rules (audit 2026-10-04, P19). Each turn's numbers stay, in the log (turns.py, kept by
+    infra/call-times.sh). sessions: the folder of their records (Paths.sessions); '*': every session a crash or
+    restart left behind."""
+    for path in sessions.glob(f'*/{session}.jsonl'):
+        try:
+            for stamp, line in turns.turns(path):
+                print(stamp, line, flush=True)
+        except (KeyError, TypeError, ValueError, AttributeError, IndexError) as error:  # (a record of another shape)
+            print(f'turns: {path.name}: {error!r}', flush=True)
+        path.unlink(missing_ok=True)
+        shutil.rmtree(path.with_suffix(''), ignore_errors=True)  # (the CLI's folder for the session: big tool results)
+    for folder in PICTURE_COPIES.glob(f'claude-*/*/{session}'):  #.
+        shutil.rmtree(folder, ignore_errors=True)
+
+
+# ---- A care call: a stranger's call, answered by the care service ----
+# (CARE_ENGINES, the care deployments' phone routes: with the line's outside parts, Wiring)
 CARE_CALL_SECONDS = 600
 CARE_LIVE = {}  # the CallSids of the care calls on now, to the deployment each is on
 # care's names for the two steps the line acts on, as the CLI's
@@ -773,7 +795,7 @@ class Care:
         self.respell = respell or {}
         self.conversation, self.words, self.langs = None, {}, []
         # Agent's settings that a care call has none of
-        self.busy, self.token, self.call, self.key, self.pin_shots, self.seat, self.tz = False, '', 0, '', [], None, 'UTC'
+        self.busy, self.token, self.call, self.key, self.seat, self.tz = False, '', 0, '', None, 'UTC'
         self.opening = self.objected = self.who = self.recap = ''
         self.ended = 'caller'  # how the call ended, for /phone/end: the line sets it when it ends the call itself
         # the languages the caller has been informed in so far (their notice heard whole), with each turn and the end:
@@ -1035,17 +1057,33 @@ def transcribe(seg):
 
 
 # ---- one call ----
+class Limits(NamedTuple):
+    """What one call may hold, how long it waits on the board and HQ, and how long a care call may last: the line's are
+    these defaults (each one's comment at the top; drawing.py's INK_SECONDS); a test gives its call smaller ones."""
+    session_bytes: int = SESSION_BYTES
+    screen_turn_seconds: float = SCREEN_TURN_SECONDS
+    screen_pictures: int = SCREEN_PICTURES
+    ink_seconds: float = INK_SECONDS
+    wait_seconds: dict = WAIT_SECONDS
+    hang_up_wait_seconds: float = HANG_UP_WAIT_SECONDS
+    care_call_seconds: float = CARE_CALL_SECONDS
+
+
 class Call:
-    def __init__(self, send_audio, send_event, clear, agent, lang, request=0, phone=False, pins=(), hang_up=None, callout=0,
-                 speakers=None, brain=None):
+    def __init__(self, send_audio, send_event, clear, agent, lang, request=0, phone=False, hang_up=None, callout=0,
+                 speakers=None, brain=None, walk=False, limits=Limits(), wiring=Wiring()):
         self.send_audio, self.send_event, self.clear = send_audio, send_event, clear
+        # What it may hold and how long it waits (Limits) and what it's wired to: the coordinator, the line's files, its
+        # clocks and how its session's CLI starts (Wiring)
+        self.limits, self.wiring = limits, wiring
         self.hang_up = hang_up  # how the line ends the call when the agent hangs up (HANG_UP_TOOL): HQ's or the phone's
         self.agent, self.lang, self.request, self.lines = agent, lang, request, []
         # when each line was said (wall_ms), beside it: the turn's start for the board's words and the agent's reply, so a
         # walk-through's recording lines up with them.
         self.times = []
-        self.file = CALL_LOGS / f'{secrets.token_hex(6)}.json'  # the transcript so far, in case the line crashes
-        self.brain = brain or Agent(agent, lang, request, phone, pins, callout)  # (pins; the brain: Agent's docstring)
+        self.file = self.wiring.paths.calls / f'{secrets.token_hex(6)}.json'  # the transcript so far, in case the line crashes
+        # (the brain: Agent's docstring; walk)
+        self.brain = brain or Agent(agent, lang, request, phone, callout, walk, wiring=wiring)
         self.vad = listener()  #.
         # the agent's voice taken out of HQ's microphone (a phone's handset takes out its own, a room each person's: room.py).
         self.echo = None if phone or speakers else Echo()
@@ -1106,6 +1144,8 @@ class Call:
         # last screen-turn the screen was on (screen['on']); away: HQ's connection dropped and it hasn't come back yet.
         self.screen['on'], self.away = False, False
         self.drawing = Drawing(self)
+        # The agent driving a piece of work on the board's screen (driving.py)
+        self.driving = Driving(self)
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -1126,7 +1166,7 @@ class Call:
             self.brain.informed = self.informed
 
     async def start(self):
-        live = LIVE / self.file.stem  # (live while it's set up too)
+        live = self.wiring.paths.live / self.file.stem  # (live while it's set up too)
         live.touch()
         self.new_screen_key()  #.
         try:
@@ -1134,7 +1174,6 @@ class Call:
         except BaseException:
             live.unlink(missing_ok=True)
             raise
-        self.picture_bytes += sum(len(p['data']) for p in self.brain.pin_shots)
         if self.callout:
             self.them = self.brain.who or 'Partner'
         await self.send_event({'type': 'state', 'state': 'listening'})
@@ -1171,7 +1210,7 @@ class Call:
         words = self.brain.opening
         print(f'call: {self.agent} said the opening on call out {self.callout}', flush=True)
         await self.say(words, stop, turn)
-        self.write(f'{self.agent.capitalize()}: {words}' + (' (interrupted)' if stop.is_set() else ''), heard_at(turn))
+        self.write(f'{self.agent.capitalize()}: {words}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
         self.keep()
         answered = f' They picked up and said: "{greeting}"' if greeting else ' They picked up'
         over = ', and they talked over it' if stop.is_set() else ''
@@ -1226,7 +1265,7 @@ class Call:
     def informed(self):
         """The languages whose AI and transcript lines (the AI line alone once they objected) the caller has heard played
         whole by now, for care, which keeps their words only once their reply's language is one of them."""
-        now = time.monotonic()
+        now = self.wiring.monotonic()
         return [lang for lang in self.brain.words if not self.missed(lang, now)]
 
     async def care_first(self, text, before):
@@ -1234,7 +1273,7 @@ class Call:
         kept here, not sent to care, while the line says what of it they missed and it plays out; then they go as the
         first turn. Talked over again, their words so far go with what they say next."""
         if before and not before.done():
-            self.last.setdefault('cut', time.monotonic())
+            self.last.setdefault('cut', self.wiring.monotonic())
             self.speaking.set()
             self.until = 0
             await asyncio.gather(before, return_exceptions=True)
@@ -1256,7 +1295,7 @@ class Call:
                         turn['ends'][(lang, key)] = self.until
             self.write(f'{self.agent.capitalize()}: ' + ' '.join(self.brain.words[lang][key] for lang, key in missed)
                        + (' (interrupted)' if stop.is_set() else ''))
-        while not stop.is_set() and not self.ended and time.monotonic() < self.until:  # (heard: played out)
+        while not stop.is_set() and not self.ended and self.wiring.monotonic() < self.until:  # (heard: played out)
             await asyncio.sleep(0.05)
         if stop.is_set() or self.ended or missing():
             return
@@ -1280,7 +1319,7 @@ class Call:
             self.replies[lang] = self.replies.get(lang, 0) + 1
         missed = self.missed(lang) if self.care and not self.settled else []
         # (settled by what has played by now: a notice still queued or playing isn't heard yet)
-        self.settled = self.settled or self.care and not self.missed(lang, time.monotonic()) and self.replies[lang] >= 2
+        self.settled = self.settled or self.care and not self.missed(lang, self.wiring.monotonic()) and self.replies[lang] >= 2
         if missed and turn not in self.notices:
             turn.setdefault('ends', {})
             self.notices.append(turn)
@@ -1316,7 +1355,7 @@ class Call:
             print(f'call: {self.agent} can\'t answer ({why}): the line ends the call, HQ plays its message', flush=True)
             return await self.drop('error')
         name, until = self.agent.capitalize(), until if isinstance(until, (int, float)) and until > 0 else 0
-        words = cant_answer(name, why, until, self.brain.tz, self.lang, again=self.noticed == why)
+        words = cant_answer(name, why, until, self.brain.tz, self.lang, again=self.noticed == why, now=self.wiring.now)
         self.noticed = why
         at = f", until {datetime.fromtimestamp(until / 1000, timezone.utc).strftime('%H:%M')} UTC" if until else ''
         print(f'call: {self.agent} can\'t answer ({why}{at}): the line says so', flush=True)
@@ -1340,7 +1379,6 @@ class Call:
         self.screen['heard'].clear()  # (the new session has heard none of it, nor the coordinator's briefing)
         self.new_screen_key()
         await self.brain.start()
-        self.picture_bytes += sum(len(p['data']) for p in self.brain.pin_shots)
 
     async def hear(self, samples, voice=None):
         """Audio from the board, 16 kHz float32, and the agent's voice as it played over the same samples on HQ's side
@@ -1355,7 +1393,7 @@ class Call:
             self.pending = self.pending[512:]
             talking = self.vad.is_speech_detected()
             self.voiced, self.quiet = (self.voiced + 1, 0) if talking else (0, self.quiet + 1)
-            now = time.monotonic()
+            now = self.wiring.monotonic()
             if self.voiced == 1 and self.kept:  # carrying on right after a sound that was let go: it counts after all
                 if now - self.kept['at'] < AGAIN:
                     self.over = {**self.kept, 'held': self.on(), 'from': self.n - 512 - int(ONSET * RATE)}
@@ -1383,14 +1421,14 @@ class Call:
             # (the turn's last 8 s up to TRAIL s after its words: Smart Turn learnt on a short quiet after the voice)
             upto = len(self.recent) - (self.n - self.vad.front.start - len(seg)) + int(TRAIL * RATE)
             self.vad.pop()
-            ended = time.monotonic()
+            ended = self.wiring.monotonic()
             text, finish_chance = await asyncio.gather(asyncio.to_thread(self.transcribe, seg),
-                                                       asyncio.to_thread(turn_end.finished, self.recent[:max(0, upto)]))
+                                                       asyncio.to_thread(self.finish_chance, self.recent[:max(0, upto)]))
             if over := self.over:
                 self.over, text = None, f"{over['text']} {text}".strip()
                 if not over.get('in') and not (over['held'] and not self.playing()):  # (played out since: a normal turn)
                     if over['held'] and not self.speaking.is_set() and stray(text, self.lang):  # a footstep, an "okay": it plays on
-                        self.kept = text and {'since': over['since'], 'text': text, 'at': time.monotonic()}
+                        self.kept = text and {'since': over['since'], 'text': text, 'at': self.wiring.monotonic()}
                         print(f'call: {self.agent} talked on over a short sound ({len(text.split())} words)', flush=True)
                         continue
                     if over['held'] or len(text) > 1:  # (not held: a sound with no words takes nothing back)
@@ -1400,7 +1438,7 @@ class Call:
                 self.sounded_finished = finish_chance > 0.5
                 self.pauses = [self.pauses[0] + self.sounded_finished, self.pauses[1] + 1]
                 if not self.draft:  # (the words began about as long before their last sound as they lasted)
-                    self.draft_at = wall_ms(self.spoke - len(seg) / RATE)
+                    self.draft_at = self.wall_ms(self.spoke - len(seg) / RATE)
                 self.draft.append(self.labelled(text, len(seg)))
                 self.keep()  # (each piece as it's heard)
                 await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang)})
@@ -1421,12 +1459,16 @@ class Call:
     def transcribe(self, seg):
         return transcribe(seg)  #.
 
+    def finish_chance(self, audio):
+        return turn_end.finished(audio)  # (endpoint.py)
+
     def schedule(self, since=None):
         """Answer once the board sounds finished: at once when its voice says so, later mid-thought (counted from since,
         when its last words ended)."""
         if self.waiting:
             self.waiting.cancel()
-        wait = WAIT['done' if self.sounded_finished else 'open'] - (time.monotonic() - since if since else 0)
+        waited = self.wiring.monotonic() - since if since else 0
+        wait = self.limits.wait_seconds['done' if self.sounded_finished else 'open'] - waited
         self.waiting = asyncio.create_task(self.commit(max(0, wait)))
 
     async def commit(self, wait):
@@ -1453,7 +1495,7 @@ class Call:
         line, against the quickest ping so far (the two clocks' difference and the network's own delay). Both clocks
         are monotonic, so setting either changes nothing; the baseline creeps up 10 ms a second, so their drift never
         adds up."""
-        now = time.monotonic()
+        now = self.wiring.monotonic()
         delay = now * 1000 - sent
         base = min(self.ping[1] + 10 * (now - self.ping[0]), delay) if self.ping else delay
         self.ping, self.late = (now, base, self.n), (delay - base) / 1000
@@ -1463,12 +1505,12 @@ class Call:
         """How many seconds of the board's audio are still on their way at most: as late as the last ping came, and
         the time since it, less what the line has heard since."""
         at, _, heard = self.ping
-        return self.late + time.monotonic() - at - (self.n - heard) / RATE
+        return self.late + self.wiring.monotonic() - at - (self.n - heard) / RATE
 
     def behind(self):
         """The board's audio is reaching the line late, or HQ's pings have stopped coming: what it said since is still
         on its way. (No pings at all: a phone or a room, or an older HQ.)"""
-        return bool(self.ping) and (self.late > LATE or time.monotonic() - self.ping[0] > SILENT)
+        return bool(self.ping) and (self.late > LATE or self.wiring.monotonic() - self.ping[0] > SILENT)
 
     def lateness(self):
         """The hang-up line on how late the board's audio came (HQ's pings): numbers only."""
@@ -1487,11 +1529,11 @@ class Call:
         or was heard only just now. (While the agent is still thinking, turns work as before.)"""
         last = self.last
         return bool(self.speaking) and not self.speaking.is_set() and bool(last and last['heard']) and (
-            self.playing() or time.monotonic() < last['heard'] + TAKE_BACK)
+            self.playing() or self.wiring.monotonic() < last['heard'] + TAKE_BACK)
 
     def playing(self):
         """The reply is still on its way or still playing (as far as the line can tell)."""
-        return not self.turn.done() or time.monotonic() < self.until
+        return not self.turn.done() or self.wiring.monotonic() < self.until
 
     def reconnected(self):
         """HQ came back on a new connection: it dropped the audio it had queued, so none of it is still to play. The
@@ -1514,7 +1556,7 @@ class Call:
         picture = {'id': picture_id, 'type': None, 'data': None}  # (no data: still on its way)
         self.pictures.append(picture)
         try:
-            fetched = await asyncio.to_thread(fetch_picture, picture_id, self.brain.call)
+            fetched = await asyncio.to_thread(fetch_picture, self.wiring.hq, picture_id, self.brain.call)
         except Exception as err:
             print(f'call: {self.agent} could not fetch picture #{picture_id}: {err}', flush=True)
             fetched = None
@@ -1526,7 +1568,7 @@ class Call:
             self.copies.setdefault(first, []).append(picture_id)
             self.told[picture_id] = {**self.told[first], 'id': picture_id}
             await self.send_event(self.told[picture_id])
-        elif fetched is None or self.picture_bytes + len(fetched['data']) > SESSION_BYTES:
+        elif fetched is None or self.picture_bytes + len(fetched['data']) > self.limits.session_bytes:
             self.pictures.remove(picture)  # (the pictures after it go without it)
             await self.tell(picture_id, 'failed', 'too many' if fetched else 'unreadable')
         else:
@@ -1558,7 +1600,7 @@ class Call:
         entry = {'id': None, 'note': None, 'type': None, 'data': None}  # (no note: still on its way)
         self.pictures.append(entry)
         try:
-            fetched = await asyncio.to_thread(fetch_note, note_id, self.brain.call)
+            fetched = await asyncio.to_thread(fetch_note, self.wiring.hq, note_id, self.brain.call)
         except Exception as err:
             print(f'call: {self.agent} could not fetch note {note_id}: {err}', flush=True)
             fetched = None
@@ -1568,7 +1610,7 @@ class Call:
             self.pictures.remove(entry)
             await self.tell_note(note_id, 'failed', 'unreadable')
         else:
-            if fetched['data'] and self.picture_bytes + len(fetched['data']) > SESSION_BYTES:
+            if fetched['data'] and self.picture_bytes + len(fetched['data']) > self.limits.session_bytes:
                 fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
             entry.update(fetched)
             self.picture_bytes += len(entry['data'] or '')
@@ -1590,23 +1632,27 @@ class Call:
         """Pictures shared with nothing said: once the line has been quiet for SHOWN_SECONDS (no reply on its way or
         playing, the board not talking, nothing waiting to be answered), they go to the agent in a turn of their own. If
         the board talks first, they go with its words instead (answer)."""
-        calm = time.monotonic()
+        calm = self.wiring.monotonic()
         while True:
             await asyncio.sleep(0.1)
-            if self.ended or not (self.pictures or self.drawing.answered):  # (they went with the board's words)
+            if self.ended or not (self.pictures or self.answers()):  # (they went with the board's words)
                 return
-            if not self.idle() or not (self.ready() or self.drawing.answered):
-                calm = time.monotonic()
-            elif time.monotonic() - calm >= SHOWN_SECONDS:
+            if not self.idle() or not (self.ready() or self.answers()):
+                calm = self.wiring.monotonic()
+            elif self.wiring.monotonic() - calm >= SHOWN_SECONDS:
                 self.turn = asyncio.create_task(self.answer('', self.turn))
                 return
+
+    def answers(self):
+        """Whether the board has answered the agent's asks or suggestions since its last turn (drawing.py, driving.py.)."""
+        return bool(self.drawing.answered or self.driving.answered)
 
     def idle(self):
         """Nothing going on. The board's words count until it has been quiet for a second: its last words may still be
         on their way to the draft (the recogniser's pause, then the transcription)."""
         replying = self.turn is not None and not self.turn.done()
         talking = self.quiet * WINDOW < 1
-        return not (replying or time.monotonic() < self.until or talking or self.draft or self.waiting)
+        return not (replying or self.wiring.monotonic() < self.until or talking or self.draft or self.waiting)
 
     async def seen(self, shown):
         """The session's request started: the model has the turn's pictures, and those of turns that stopped before
@@ -1652,6 +1698,7 @@ class Call:
         for picture_id in list(self.told):
             await self.send_event(self.told[picture_id])  # (read as it's sent: no newer word on it goes out first)
         await self.drawing.retell()
+        await self.driving.retell()
 
     # ---- a walk-through's screen (SCREEN_TURN_SECONDS)
     def watched(self):
@@ -1670,7 +1717,7 @@ class Call:
         self.screen_key = '' if self.phone else secrets.token_urlsafe(24)
         if self.screen_key:
             SCREENS[self.screen_key] = self
-        self.brain.screen = (str(SCREEN_SOCKET), self.screen_key) if self.screen_key else None
+        self.brain.screen = (str(self.wiring.paths.screen_socket), self.screen_key) if self.screen_key else None
 
     async def screen_turn(self):
         """What the caller's screen adds to their turn (the coordinator's screen-turn): the coordinator's briefing while
@@ -1685,11 +1732,11 @@ class Call:
             return look
         heard = self.screen['heard']
         # (past the call's count, no picture is made for it)
-        full = self.screen['pictures'] >= SCREEN_PICTURES
+        full = self.screen['pictures'] >= self.limits.screen_pictures
         asked = {'purpose': watched[0], 'ref': watched[1], 'after': self.screen['after'], 'seen': self.screen['seen'],
                  'briefed': 'brief' in heard, 'picture': not full}
         try:
-            got = await asyncio.wait_for(asyncio.to_thread(hq, 'POST', 'screen-turn', asked), SCREEN_TURN_SECONDS)
+            got = await asyncio.wait_for(asyncio.to_thread(self.wiring.hq, 'POST', 'screen-turn', asked), self.limits.screen_turn_seconds)
         except Exception as err:  # (TimeoutError: no answer in time)
             print(f'call: {self.agent}: no screen with this turn: {err!r}', flush=True)
             # (a call nobody has shown a screen on hears nothing of it)
@@ -1707,7 +1754,7 @@ class Call:
             picture = None if paused else picture_as(got.get('picture'), 'image/jpeg')
             told = {'paused'} if paused else set()
         changed = not paused and got.get('version') != self.screen['seen']
-        if (picture and self.picture_bytes + len(picture['data']) > SESSION_BYTES) or (full and changed):
+        if (picture and self.picture_bytes + len(picture['data']) > self.limits.session_bytes) or (full and changed):
             picture = None
             told.add('full')
         told -= heard
@@ -1746,10 +1793,10 @@ class Call:
             return {'error': SCREEN_WORDS['paused']}
         since = asked.get('since')
         wanted = {'since': since} if isinstance(since, str) else {k: asked[k] for k in ('at', 'region') if k in asked}
-        if 'since' not in wanted and self.screen['pictures'] >= SCREEN_PICTURES:
+        if 'since' not in wanted and self.screen['pictures'] >= self.limits.screen_pictures:
             return {'error': SCREEN_WORDS['full']}
         try:
-            got = await asyncio.to_thread(hq, 'POST', 'screen', {'purpose': watched[0], 'ref': watched[1], **wanted})
+            got = await asyncio.to_thread(self.wiring.hq, 'POST', 'screen', {'purpose': watched[0], 'ref': watched[1], **wanted})
         except HTTPError as err:
             if err.code not in (400, 404, 409):
                 raise
@@ -1759,7 +1806,7 @@ class Call:
             return {'lines': screen_lines(got)}
         if not (picture := picture_as(got.get('picture'), 'image/jpeg')):
             raise ValueError('the coordinator sent no JPEG of the screen')
-        if self.picture_bytes + len(picture['data']) > SESSION_BYTES:
+        if self.picture_bytes + len(picture['data']) > self.limits.session_bytes:
             return {'error': SCREEN_WORDS['full']}
         self.screen['pictures'] += 1
         self.picture_bytes += len(picture['data'])
@@ -1771,17 +1818,17 @@ class Call:
         Refused on a call out (its partner's words could steer a look-up: house rule 9) and past the budget."""
         if self.callout or not self.brain.call or not isinstance(asked.get('sketch'), str):
             return {'error': SKETCH_WORDS['none']}
-        if self.picture_bytes >= SESSION_BYTES:
+        if self.picture_bytes >= self.limits.session_bytes:
             return {'error': SKETCH_WORDS['full']}
         try:
-            got = await asyncio.to_thread(hq, 'POST', 'sketch', {'call': self.brain.call, 'sketch': asked['sketch']})
+            got = await asyncio.to_thread(self.wiring.hq, 'POST', 'sketch', {'call': self.brain.call, 'sketch': asked['sketch']})
         except HTTPError as err:
             if err.code not in (400, 404, 409):
                 raise
             return {'error': refusal(err) or "That sketch couldn't be found."}
         if not (picture := picture_as(got.get('picture'), 'image/png')):
             raise ValueError('the coordinator sent no PNG of the sketch')
-        if self.picture_bytes + len(picture['data']) > SESSION_BYTES:
+        if self.picture_bytes + len(picture['data']) > self.limits.session_bytes:
             return {'error': SKETCH_WORDS['full']}
         self.picture_bytes += len(picture['data'])
         return {'picture': picture, 'line': ' '.join(str(got.get('line') or '').split())}
@@ -1802,12 +1849,12 @@ class Call:
                 self.draft.insert(0, last['text'])
                 self.draft_at = last.get('at') or self.draft_at  # (said when they were first said)
             self.again = True
-            # (shown without its "um"s)
-            await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang) + ' …'})
+            # (shown without its "um"s; back: HQ's transcript writes it over the turn's line, which the reply had closed.
+            await self.send_event({'type': 'heard', 'text': unhesitating(self.so_far(), self.lang) + ' …', 'back': True})
 
     async def interrupt(self):
         if self.last is not None:  # (when: a care call's opening counts as heard up to there)
-            self.last.setdefault('cut', time.monotonic())
+            self.last.setdefault('cut', self.wiring.monotonic())
         self.speaking.set()
         self.until = 0  # (the reply's audio still to play is cleared)
         self.brain.interrupt()
@@ -1817,7 +1864,7 @@ class Call:
     async def answer(self, text, before, again=False, at=None):
         if before and not before.done():
             if self.last is not None:  # (a care call's opening counts as heard up to here)
-                self.last.setdefault('cut', time.monotonic())
+                self.last.setdefault('cut', self.wiring.monotonic())
             self.speaking.set()  # the board moved on: the reply before this one ends unspoken
             self.until = 0
             self.brain.interrupt()
@@ -1836,7 +1883,7 @@ class Call:
         for note in notes:
             self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
-        spoke, asked, worded_at = self.spoke, time.monotonic(), None  # (the reply's timing line: timed())
+        spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
         text = unhesitating(text, self.lang)
         if text:
@@ -1856,7 +1903,9 @@ class Call:
         if shared and not ask:
             ask = f"(I've shared {'a picture' if len(shared) == 1 else f'{len(shared)} pictures'} on screen.)"
         # (the board's answers to the agent's asks first, then the screen's words, then the notes' before the words)
-        ask, answered = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask))), self.drawing.told()
+        # (driving)
+        ask = '\n\n'.join(filter(None, ('\n'.join(map(note_said, notes)), ask)))
+        answered = '\n'.join(filter(None, (self.drawing.told(), self.driving.told())))
         delivered = False  # the model has the message: its first request started
         earlier = self.lines[:turn['n']]  # (the call so far, for a fresh session: this message goes as its own)
         try:
@@ -1869,7 +1918,7 @@ class Call:
             pictures = [*(picture for picture in shown if picture['data']), *look['pictures']]
             if look['line'] and not self.objected:
                 self.lines.insert(turn['n'], look['line'])
-                self.times.insert(turn['n'], wall_ms())  #.
+                self.times.insert(turn['n'], self.wall_ms())  #.
                 turn['n'] += 1
                 self.keep()
             for retry in (False, True):
@@ -1919,7 +1968,7 @@ class Call:
                             step.update(on=True, wait=False)
                             continue
                         step['on'] = False
-                        worded_at = worded_at or (time.monotonic() if delta.strip() else None)
+                        worded_at = worded_at or (self.wiring.monotonic() if delta.strip() else None)
                         buf, worded = buf + delta, worded or bool(delta.strip())
                         while (m := SENTENCE.match(buf) or (not said and CLAUSE.match(buf))) and not stop.is_set():
                             sentence, buf = m.group(1), buf[m.end():]
@@ -1936,7 +1985,7 @@ class Call:
                         await self.restart(earlier, pictures, resent=pictures)  #.
                         continue
                     if said.strip() and not turn['back']:
-                        self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off)', heard_at(turn))
+                        self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off)', self.heard_at(turn))
                     buf, said = '', ''
                     if not stop.is_set():
                         await self.unanswered(err.why, err.until, stop, turn)
@@ -1946,7 +1995,7 @@ class Call:
             step['on'] = False
             turn['bye'] = False
             if said.strip() and not turn['back']:  # what the board already heard stays in the transcript, marked
-                self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off: the call agent stopped)', heard_at(turn))
+                self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off: the call agent stopped)', self.heard_at(turn))
             buf, said = '', ''
             self.brain.kill()
             # It stopped because the board hung up: no new session for an ended call
@@ -1976,7 +2025,7 @@ class Call:
             self.noticed = None
             await self.send_event({'type': 'notice', 'text': ''})
         if said.strip() and not turn['back']:
-            self.write(f'{self.agent.capitalize()}: {said.strip()}' + (' (interrupted)' if stop.is_set() else ''), heard_at(turn))
+            self.write(f'{self.agent.capitalize()}: {said.strip()}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
         self.keep()
         if self.care and spoke is not None and turn['heard']:
             self.timed(turn, spoke, asked, worded_at)
@@ -2012,13 +2061,13 @@ class Call:
             if board_spoke():
                 print(f'call: {self.agent} hung up, but the board spoke before the line did: the call stays open', flush=True)
                 return
-            gone_quiet = time.monotonic() >= self.until + GOODBYE_QUIET_SECONDS
+            gone_quiet = self.wiring.monotonic() >= self.until + GOODBYE_QUIET_SECONDS
             if not self.over and gone_quiet and self.quiet * WINDOW >= GOODBYE_QUIET_SECONDS:
                 break
         if self.hang_up:
             sound = hang_up_tone()
             tone_seconds = len(sound) / RATE
-            self.until = time.monotonic() + tone_seconds
+            self.until = self.wiring.monotonic() + tone_seconds
             await self.send_event({'type': 'tick'})  # (HQ counts it as it does the tick: a start of its own, not the voice)
             await self.send_audio(sound)
             await asyncio.sleep(tone_seconds + TONE_TAIL_SECONDS)
@@ -2043,7 +2092,7 @@ class Call:
         the board carrying on over it wasn't finished, and the reply is taken back as before."""
         while not stop.is_set():
             await asyncio.sleep(0.1)
-            now = time.monotonic()
+            now = self.wiring.monotonic()
             hushed = self.quiet * WINDOW + PAUSE >= HUSH  # (the VAD's quiet starts PAUSE s in)
             if step['on'] and hushed and not stop.is_set() and now >= self.until + QUIET:
                 if not step['wait']:
@@ -2077,7 +2126,7 @@ class Call:
             for x in SAID[kept]:
                 if stop.is_set():
                     return
-                now = time.monotonic()
+                now = self.wiring.monotonic()
                 turn['heard'] = turn['heard'] or now
                 self.until = max(self.until, now) + len(x) / RATE
                 await self.send_audio(x)
@@ -2107,7 +2156,7 @@ class Call:
         while (x := await q.get()) is not None:
             pieces.append(x)
             if not stop.is_set():
-                now = time.monotonic()
+                now = self.wiring.monotonic()
                 turn['heard'] = turn['heard'] or now
                 self.until = max(self.until, now) + len(x) / RATE
                 await self.send_audio(x)
@@ -2128,15 +2177,24 @@ class Call:
             if self.callout:  # (on a call out, the agent's notes too: all that's kept once they objected)
                 record.update(callout=self.callout, notes=self.notes, objected=self.objected)
             else:  # (a call with the board: when each line was said.)
-                record['times'] = [] if self.objected else self.times + [self.draft_at or wall_ms()] * len(heard)
+                record['times'] = [] if self.objected else self.times + [self.draft_at or self.wall_ms()] * len(heard)
             self.file.write_text(json.dumps(record))
+
+    def wall_ms(self, mono=None):
+        """A moment on the line's own clock (self.wiring.monotonic()) on the call's wall clock (now), or now: when each
+        transcript line was said."""
+        return round(self.wiring.now() - (0 if mono is None else (self.wiring.monotonic() - mono) * 1000))
+
+    def heard_at(self, turn):
+        """When a reply started being heard (wall_ms), or None: not heard (now, then)."""
+        return self.wall_ms(turn['heard']) if turn.get('heard') else None
 
     def write(self, line, at=None):
         """A line of the transcript, unless the other side asked for none (object), and when it was said (wall_ms; now
         unless given)."""
         if not self.objected:
             self.lines.append(line)
-            self.times.append(at or wall_ms())
+            self.times.append(at or self.wall_ms())
 
     def heard_lines(self, text):
         """The other side's words as the transcript's lines: the board's, the partner's, or in a room each speaker's."""
@@ -2186,17 +2244,19 @@ class Call:
         SCREENS.pop(self.screen_key, None)  # (its key answers nothing from now)
         self.pictures = []
         self.drawing.end()
+        self.driving.end()
         if self.speaking:
             self.speaking.set()
         if self.brain.token:
             self.keep(last=True)  # (a call where nobody spoke still hands its token back)
-        (LIVE / self.file.stem).unlink(missing_ok=True)
+        (self.wiring.paths.live / self.file.stem).unlink(missing_ok=True)
         if not self.care:
-            hand_over(self.file)
+            hand_over(self.file, self.wiring.hq)
 
 
-def hand_over(file):
-    """The transcript goes to the coordinator; the file stays until it's there (a crash or restart hands it over later)."""
+def hand_over(file, hq):
+    """The transcript goes to the coordinator (hq); the file stays until it's there (a crash or restart hands it over
+    later)."""
     try:
         call = json.loads(file.read_text())
         if call['lines'] or call.get('token') or call.get('callout'):  # (a silent call still ends its token, a call out itself)
@@ -2315,7 +2375,9 @@ def timeline(agent, events, live_at):
     return f'call: {agent} playback, timed: ' + '; '.join(out) if out else ''
 
 
-async def app_call(ws):
+# (each route is given its call maker and what the line is wired to, which it hands
+# to the calls it makes, so a test's line is given its own; room.join is given them the same way)
+async def app_call(ws, make_call=Call, wiring=Wiring()):
     if ws.request.headers.get('Origin') != ORIGIN:  # a preview page is the same site: only HQ itself may call
         return await ws.close(1008, 'origin')
     first = json.loads(await ws.recv())
@@ -2340,27 +2402,30 @@ async def app_call(ws):
         pcm = lambda x: (np.clip(x, -1, 1) * 32767).astype('<i2').tobytes()
         line = Line(ws)
         print(f'call: {agent} ({lang}) dialled from {device(ws.request.headers.get("User-Agent", ""))}', flush=True)
-        # pins: the review notes the board rang about from HQ's Reviews
-        pins = [n for n in first.get('pins') or [] if type(n) is int and n > 0][:50] if isinstance(first.get('pins'), list) else []
         cid = secrets.token_urlsafe(9)
 
         async def hang_up():
             """The agent ended the call: HQ hangs up as its button does (and says how the voice played, 'bye'). An HQ
-            that doesn't within HANG_UP_WAIT_SECONDS (an older page, or away reconnecting) is told the call is gone."""
+            that doesn't within the call's hang_up_wait_seconds (an older page, or away reconnecting) is told the call is
+            gone."""
             await line.send(json.dumps({'type': 'hangup'}))
-            await asyncio.sleep(HANG_UP_WAIT_SECONDS)
+            await asyncio.sleep(call.limits.hang_up_wait_seconds)
             if (e := CALLS.get(cid)) and e['call'] is call:
                 CALLS.pop(cid)
                 if e['timer']:
                     e['timer'].cancel()
                 await asyncio.to_thread(call.end)
                 await line.ws.close(4000, 'gone')
-        call = Call(lambda x: line.send(pcm(x)), lambda e: line.send(json.dumps(e)), lambda: line.send(json.dumps({'type': 'clear'})),
-                    agent, lang, int(first.get('request') or 0), pins=pins, hang_up=hang_up)
+        # walk: HQ calls about a card's work to walk the board through it
+        request = int(first.get('request') or 0)
+        walk = first.get('walk') is True and request > 0
+        call = make_call(lambda x: line.send(pcm(x)), lambda e: line.send(json.dumps(e)),
+                         lambda: line.send(json.dumps({'type': 'clear'})), agent, lang, request, hang_up=hang_up,
+                         walk=walk, wiring=wiring)
         CALLS[cid] = {'call': call, 'line': line, 'timer': None}
         await call.start()
         print(f'call: {agent} picked up in {time.monotonic() - t0:.1f} s', flush=True)
-    call.live_at = call.live_at or time.time()
+    call.live_at = call.live_at or call.wiring.now() / 1000
     # id: the line's, to reconnect; call: HQ's calls row; key: HQ's picture uploads for that call carry it; heard: the
     # board's samples the line has (HQ sends the rest again)
     await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}))
@@ -2394,6 +2459,11 @@ async def app_call(ws):
                 call.drawing.asked(e['id'], e.get('answer'))
             elif kind == 'inked' and isinstance(e.get('id'), int):
                 call.drawing.inked(e)
+            # (opened, driven)
+            elif kind == 'opened' and isinstance(e.get('id'), int):
+                call.driving.opened(e)
+            elif kind == 'driven' and isinstance(e.get('id'), int):
+                call.driving.driven(e)
             elif kind == 'bye':
                 if line_heard := played(call.agent, e.get('played')):
                     print(line_heard, flush=True)
@@ -2418,21 +2488,21 @@ async def app_call(ws):
 
 
 # ---- the phone line: Twilio's media stream (8 kHz mu-law), admitted with a one-time ticket from HQ ----
-async def phone_call(ws):
+async def phone_call(ws, make_call=Call, wiring=Wiring()):
     sid, call, care_sid, limit = None, None, None, None
     try:
         async for m in ws:
             e = json.loads(m)
             if e.get('event') == 'start':
                 sid, params = e['start']['streamSid'], e['start'].get('customParameters', {})
-                ok = await asyncio.to_thread(hq, 'POST', 'call-ticket', {'ticket': params.get('ticket', '')})
+                ok = await asyncio.to_thread(wiring.hq, 'POST', 'call-ticket', {'ticket': params.get('ticket', '')})
                 if not ok or not ok.get('agent'):
                     return await ws.close(1008, 'ticket')
                 send = lambda x: ws.send(json.dumps({'event': 'media', 'streamSid': sid,
                                                      'media': {'payload': base64.b64encode(ulaw_encode(resample(x, RATE, 8000))).decode()}}))
                 if ok.get('kind') == 'care':  # a stranger, for the care deployment the ticket names (else care)
                     engine = ok.get('engine', 'care')
-                    care = CARE_ENGINES.get(engine) if isinstance(engine, str) else None
+                    care = wiring.care_engines.get(engine) if isinstance(engine, str) else None
                     on = list(CARE_LIVE.values()).count(engine)
                     if not care or not care['url'] or not care['token'] or on >= care['calls']:
                         why = ('no such deployment' if not care else 'no url or token' if not care['url'] or
@@ -2442,7 +2512,7 @@ async def phone_call(ws):
                     care_sid = str(e['start'].get('callSid') or sid)
                     CARE_LIVE[care_sid] = engine
                     clear = lambda: ws.send(json.dumps({'event': 'clear', 'streamSid': sid}))
-                    call, limit = await care_call(ws, send, clear, ok, care_sid, care)
+                    call, limit = await care_call(ws, send, clear, ok, care_sid, care, make_call, wiring)
                     if not call:
                         return
                     continue
@@ -2450,8 +2520,9 @@ async def phone_call(ws):
                 # <Connect>, and there is none: phone.ts)
                 # (a call we placed: the ticket says which call out)
                 callout = ok.get('callout') if type(ok.get('callout')) is int and ok['callout'] > 0 else 0
-                call = Call(send, lambda ev: asyncio.sleep(0), lambda: ws.send(json.dumps({'event': 'clear', 'streamSid': sid})),
-                            ok['agent'], language(ok.get('lang')), phone=True, hang_up=ws.close, callout=callout)
+                call = make_call(send, lambda ev: asyncio.sleep(0), lambda: ws.send(json.dumps({'event': 'clear', 'streamSid': sid})),
+                                 ok['agent'], language(ok.get('lang')), phone=True, hang_up=ws.close, callout=callout,
+                                 wiring=wiring)
                 await call.start()
                 await call.greet()
             elif e.get('event') == 'media' and call:
@@ -2466,7 +2537,7 @@ async def phone_call(ws):
         CARE_LIVE.pop(care_sid, None)
 
 
-async def care_call(ws, send, clear, ticket, call_sid, deployment):
+async def care_call(ws, send, clear, ticket, call_sid, deployment, make_call, wiring):
     """A care call on the phone line: the care brain, the opening, and the call's
     ends. The care agent's hang_up tells HQ (phone-done) before the stream closes, so HQ hangs up; every other end closes the stream
     alone, and HQ plays its recorded message (care refused the start, a turn care can't answer, the time limit). Returns
@@ -2479,7 +2550,7 @@ async def care_call(ws, send, clear, ticket, call_sid, deployment):
     async def hang_up():
         brain.ended = 'hung_up'
         try:
-            await asyncio.to_thread(hq, 'POST', 'phone-done', {'call': call_sid})
+            await asyncio.to_thread(wiring.hq, 'POST', 'phone-done', {'call': call_sid})
         except Exception as err:
             print(f'call: {brain.agent}: HQ did not take phone-done: {err!r}', flush=True)
         await ws.close()
@@ -2489,13 +2560,13 @@ async def care_call(ws, send, clear, ticket, call_sid, deployment):
         await ws.close()
 
     async def time_limit():
-        await asyncio.sleep(CARE_CALL_SECONDS)
-        print(f'call: {brain.agent}: a care call reached {CARE_CALL_SECONDS} s: the line ends it, HQ plays its message',
-              flush=True)
+        seconds = call.limits.care_call_seconds
+        await asyncio.sleep(seconds)
+        print(f'call: {brain.agent}: a care call reached {seconds} s: the line ends it, HQ plays its message', flush=True)
         await drop('limit')
 
-    call = Call(send, lambda ev: asyncio.sleep(0), clear,
-                brain.agent, brain.lang, phone=True, hang_up=hang_up, brain=brain)
+    call = make_call(send, lambda ev: asyncio.sleep(0), clear, brain.agent, brain.lang, phone=True, hang_up=hang_up, brain=brain,
+                     wiring=wiring)
     call.drop = drop
     try:
         await call.start()
@@ -2513,43 +2584,45 @@ def language(lang):
     return lang if lang in ('en', 'nl', 'de') else 'en'
 
 
-async def room_call(ws):
+async def room_call(ws, make_call=Call, wiring=Wiring()):
     """The join link's page: one person in a call out's room (room.py). The page
     is on HQ's host (the coordinator serves it), and the link's token is the gate."""
     if ws.request.headers.get('Origin') != ORIGIN:
         return await ws.close(1008, 'origin')
-    def make_call(send_audio, send_event, clear, ticket, hang_up, speakers):
-        call = Call(send_audio, send_event, clear, ticket['agent'], language(ticket.get('lang')), hang_up=hang_up,
-                    callout=ticket['callout'], speakers=speakers)
+    def make_room_call(send_audio, send_event, clear, ticket, hang_up, speakers):
+        call = make_call(send_audio, send_event, clear, ticket['agent'], language(ticket.get('lang')), hang_up=hang_up,
+                         callout=ticket['callout'], speakers=speakers, wiring=wiring)
         call.opening_quiet = ROOM_OPENING_QUIET_SECONDS
         return call
-    await room.join(ws, lambda token: hq('POST', 'join-ticket', {'token': token}), make_call)
+    await room.join(ws, lambda token: wiring.hq('POST', 'join-ticket', {'token': token}), make_room_call)
 
 
-async def route(ws):
+async def route(ws, make_call=Call, wiring=Wiring()):
     path = ws.request.path
     if path == '/voice/ws':
-        return await app_call(ws)
+        return await app_call(ws, make_call, wiring)
     if path == '/voice/twilio':
-        return await phone_call(ws)
+        return await phone_call(ws, make_call, wiring)
     if path == '/voice/join':
-        return await room_call(ws)
+        return await room_call(ws, make_call, wiring)
     # review mode's notes, from the coordinator only (dictate.py).
-    if path.split('?')[0] == '/voice/dictate':
-        return await dictate.dictation(ws, TOKEN, listener, transcribe, unhesitating)
+    if path.split('?')[0] == '/voice/dictate':  # (its clock the line's)
+        return await dictate.dictation(ws, TOKEN, listener, transcribe, unhesitating, monotonic=wiring.monotonic)
     await ws.close(1008, 'path')
 
 
 async def main():
     logging.basicConfig(level=logging.WARNING)  # a failing call shows up in the logs
-    Path('/data/call').mkdir(parents=True, exist_ok=True)
-    CALL_LOGS.mkdir(parents=True, exist_ok=True)
-    shutil.rmtree(LIVE, ignore_errors=True)  # (the calls a crash or restart cut off are over.)
-    LIVE.mkdir(parents=True)
-    forget()
-    for f in CALL_LOGS.glob('*.json'):  # calls a crash or restart cut off: their transcripts still count
-        await asyncio.to_thread(hand_over, f)
-    async with await serve_screens(SCREEN_SOCKET), serve(route, '0.0.0.0', 8080, max_size=1 << 20, ping_interval=20):
+    wiring = Wiring()
+    paths = wiring.paths
+    paths.work.mkdir(parents=True, exist_ok=True)
+    paths.calls.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(paths.live, ignore_errors=True)  # (the calls a crash or restart cut off are over.)
+    paths.live.mkdir(parents=True)
+    forget(paths.sessions)
+    for f in paths.calls.glob('*.json'):  # calls a crash or restart cut off: their transcripts still count
+        await asyncio.to_thread(hand_over, f, wiring.hq)
+    async with await serve_screens(paths.screen_socket), serve(functools.partial(route, wiring=wiring), '0.0.0.0', 8080, max_size=1 << 20, ping_interval=20):
         print('Voice line ready', flush=True)
         await asyncio.Future()
 

@@ -4,8 +4,8 @@ import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
 import type { DatabaseSync } from 'node:sqlite';
 
-// The foundation's own paths in a company's repo (AGENTS.md, "The platform is shared"), the review panel's foundation
-// keeper's too (review.ts keeperFor)
+// The foundation's own paths in a company's repo (AGENTS.md, "The platform is shared"), the review's foundation
+// question's too (reviewlenses.ts)
 export const FOUNDATION = [
   'platform',
   'infra',

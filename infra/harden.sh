@@ -1,6 +1,7 @@
 #!/bin/bash
 # Server hardening. Idempotent; runs on every deploy via sync.sh.
-# Network: the Hetzner cloud firewall "web" (provision.sh) only lets in 80, 443 and ping.
+# Network: the Hetzner cloud firewall named SERVER_NAME (provision.sh; "web" on a server provisioned before job #8519)
+# only lets in 80, 443 and ping.
 set -euo pipefail
 here=$(dirname "$0")
 . "$here/infra-env.sh"   # SERVER_NAME: the server's name for its folders and services

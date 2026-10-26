@@ -13,14 +13,13 @@ export const DIR = `${DATA_DIR}/book`;
 // own resize, sketchscraps.js). MAX_SCRAPS on a page: HQ holds
 // each decoded, up to 16 MB at 2,000 px, twice while it draws the page: 40 stays inside what Safari lets an iPad's tab
 // hold. MAX_SCRAP_FILES a page, placed or not: disk, at most pictures.MAX_BYTES each and kept SWEEP_MS once nothing
-// names them (undo can place one again), about 210 MB a page a day. WAITING_MAX from review mode, not placed yet: what
-// a product page's own script can post while the board views it (feedback.ts); one cap for the book, since 'new' makes
-// a page each time and a cap per page would bound nothing.
+// names them (undo can place one again), about 210 MB a page a day. WAITING_MAX not placed yet (book.ts fromReview):
+// one cap for the book, since 'new' makes a page each time and a cap per page would bound nothing.
 export const MAX_SCRAPS = 40,
   WAITING_MAX = 12;
 const MAX_SCRAP_FILES = 60;
-const SWEEP_MS = 24 * 3600_000,
-  SCRAP_XY = { min: -4000, max: 24_000 },
+export const SWEEP_MS = 24 * 3600_000;
+const SCRAP_XY = { min: -4000, max: 24_000 },
   SCRAP_SIDE = { min: 4, max: 12000 },
   TILT = 180;
 

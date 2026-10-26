@@ -184,12 +184,13 @@ function inThreads(
   });
   // A task whose thread's next task follows it with nothing else to wait for opens no round: its push waits for that
   // task's (review.ts heldForThread, threadorder.ts nextReady), so the thread plays one review, after its last task. A
-  // follower waiting for a time, a card, a deploy or other work lets the push go to review at once.
+  // follower waiting for a time, a card, a deploy or other work lets the push go to review at once, and so does a fix
+  // for a round's findings or the board's notes (origin 'fix').
   const onCue = (job: QueuedJob) =>
     !job.wakes.length && !job.cards.length && !job.waitsFor.length && !job.needs?.length && job.notBefore <= now;
   const followed = new Set(queued.flatMap(job => (job.follows !== undefined && onCue(job) ? [job.follows] : [])));
   for (const job of queued)
-    if (followed.has(job.id)) {
+    if (followed.has(job.id) && job.origin !== 'fix') {
       job.reviewPlan = undefined;
       job.opensReview = false;
     }
@@ -248,8 +249,10 @@ function queuedJob(row: Row, c: Context): QueuedJob {
   if (row.sorter !== null && row.sorter !== row.id && c.open.has(row.sorter))
     job.dependencies = [{ job: row.sorter, until: 'done' }];
   holdForPauses(job, row, c);
-  // (a planning job: the earliest window of the findings it holds, inbox.ts heldWindows.)
-  job.due = row.thread ? (c.due.get(row.thread) ?? null) : (c.held.get(row.id) ?? null);
+  // (the earliest of its thread's window and, for a planning job, the windows of the findings it holds: inbox.ts
+  // heldWindows.)
+  const dues = [row.thread ? c.due.get(row.thread) : undefined, c.held.get(row.id)].filter(d => d !== undefined);
+  job.due = dues.length ? Math.min(...dues) : null;
   if (row.status === 'done') job.review = reviewOf(job, row, c);
   return job;
 }
@@ -346,7 +349,7 @@ function reviewOf(job: QueuedJob, row: Row, c: Context): QueuedJob['review'] {
 
 // Terminal jobs release their own --after edge. An unresolved PR keeps the branch merge edge.
 const released = (id: number) =>
-  !!prepared("select 1 from jobs where id = ? and status in ('done', 'failed', 'cancelled')").get(id);
+  !!prepared("select 1 from jobs where id = ? and status in ('done', 'failed', 'stopped', 'cancelled')").get(id);
 
 // A time wakes it then, and a call's follow-up or end at once (end). A deploy comes the median lag from a merge to its deploy after
 // now (each of the next n deploys), and a job's or pull request's work deployed that long after it merges in the play.

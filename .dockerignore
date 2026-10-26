@@ -26,6 +26,10 @@
 # and what the call's agent sees of it: its moments and the live mirror in Chromium.
 !shared/watchalong/moments.ts
 !shared/watchalong/mirror.ts
+# (its replay's page)
+!shared/watchalong/mirrorpage.ts
+# and the pen's ink that page reads and draws, with shared/review/ink.js below
+!shared/watchalong/strokes.js
 # the one headless Chromium driver, which the mirror and a company's print renders start.
 !shared/chromium/chromium.ts
 # the platform's formats, which a company's kits may import
@@ -57,6 +61,8 @@
 !platform/hq/shell/order.js
 # a review mark's anchor, which feedback.ts migrates the stored marks with
 !shared/review/anchor.js
+# the book's Search matching, which HQ's dev mode shares (platform/coordinator/src/booksearch.ts).
+!platform/hq/shell/booksearchwords.js
 !kits
 **/node_modules
 **/*.test.ts

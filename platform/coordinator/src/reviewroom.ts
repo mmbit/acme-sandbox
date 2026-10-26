@@ -58,3 +58,21 @@ export function roomVictim(
 function victim<T extends Order & Pausable>(running: T[], now: number) {
   return running.filter(run => pausable(run) && !deadlinePressure(run, now)).sort(victimOrder)[0];
 }
+
+// A pause group is useful only if its whole release admits the waiter. Keep the usual victim order, and abandon
+// the group when even every eligible run cannot supply enough room.
+export function pauseGroup<T>(
+  running: T[],
+  choose: (remaining: T[], selected: T[]) => T | undefined,
+  enough: (selected: T[]) => boolean,
+): T[] {
+  const remaining = [...running],
+    selected: T[] = [];
+  while (!enough(selected)) {
+    const victim = choose(remaining, selected);
+    if (!victim) return [];
+    selected.push(victim);
+    remaining.splice(remaining.indexOf(victim), 1);
+  }
+  return selected;
+}

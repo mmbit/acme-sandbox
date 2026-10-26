@@ -10,6 +10,8 @@ import { boardJobs, boardNames, boardThread, type BoardNames } from './boardname
 import { withFindings } from './reviewrows.ts';
 import { meetingSeats } from './meetingboard.ts';
 import { findThread, ownerOf, sentenceOf, type Thread } from './projects.ts';
+import { pad } from './pad.ts';
+import { isGoal } from './goals.ts';
 
 // GET /api/projects: the businesses the projects are grouped under and the side groups (company.ts projects), then
 // projects with their owner's latest sentence and threads. A thread is ongoing while it has work that can still merge
@@ -28,6 +30,7 @@ import { findThread, ownerOf, sentenceOf, type Thread } from './projects.ts';
 // Each thread has its lines (tallies.ts linesOf), and the projects come in the board's order (projectorder.ts).
 // A project carries its cover where projects.yaml names one, in its business's style (company.ts coverOf).
 // Its projects', sentences', threads' and jobs' names are the board's (boardnames.ts).
+// The CEO's page (pad.ts) comes with it, at the view's top, and a project the CEO marked a goal says so (goals.ts).
 export function listProjectBoard(t = Date.now()) {
   const threads = db.prepare('select * from threads order by created').all() as Thread[];
   const pending = pendingThreads();
@@ -46,6 +49,7 @@ export function listProjectBoard(t = Date.now()) {
       ...names.project(project),
       ...coverOf(project),
       ...(schedules.has(project.id) && { schedule: schedules.get(project.id) }),
+      ...(isGoal(project.id) && { goal: true }),
       sentence: sentence
         ? { ...names.sentence(project.id, sentence), since: doneSince(project.id, sentence.at) }
         : null,
@@ -63,7 +67,9 @@ export function listProjectBoard(t = Date.now()) {
     placed = new Set([...listed, ...completed].map(p => p.id));
   const known = new Set(threads.filter(th => placed.has(th.project)).map(th => th.id));
   const loose = [...rows.filter(j => isOpenJob(j) && !(j.thread && known.has(j.thread))), ...recentLoose(known, t)];
+  const page = pad();
   return {
+    page: page && { text: page.text, at: page.at },
     businesses: projects().businesses,
     groups: projects().groups,
     projects: inBoardOrder(listed),

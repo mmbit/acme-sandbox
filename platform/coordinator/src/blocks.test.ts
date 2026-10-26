@@ -65,7 +65,7 @@ test("a blocked run hears where to run it instead, from HQ's machines as they ar
   machines.removeMachine(id);
 
   assert.equal((await blocked(999_999)).status, 400, 'no such job');
-  assert.equal((await blocked(job.id, { measure: 'disk' })).status, 400);
+  assert.equal((await blocked(job.id, { measure: 'unknown' })).status, 400);
 });
 
 test("a review blocked a third time goes back to the queue, to go on in its session, and a job that ended isn't said stopped", async () => {
@@ -307,4 +307,55 @@ test('a valid long command records one strike across repeated endpoint delivery'
   assert.equal((h.db.prepare('select count(*) n from blocks where job = ?').get(job.id) as { n: number }).n, 1);
   assert.equal(stopping(job.id), null);
   assert.equal((await h.worker('room', { command })).status, 400, 'other worker endpoints keep their body budget');
+});
+
+test('disk warnings keep the grace free of strikes and zero-room stops keep command-free idempotent receipts', async () => {
+  const job = await h.start({ agent: 'bolt' });
+  const warning = await blocked(job.id, { measure: 'disk', used: 2 ** 30, share: 0, warning: true });
+  assert.equal(warning.status, 200);
+  assert.match(warning.body.text, /Continued writing/);
+  assert.match(warning.body.text, /Cleanup commands may run/);
+  await blocked(job.id, { measure: 'disk', used: 2 ** 30, share: 0, warning: true });
+  assert.equal((h.db.prepare('select count(*) n from blocks where job = ?').get(job.id) as { n: number }).n, 0);
+  const event = randomUUID();
+  const body = { event, measure: 'disk', used: 2 ** 30, share: 0, command: 'fixture-disk-writer' };
+  const first = await blocked(job.id, body);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.count, 1);
+  assert.match(first.body.text, /1.00 GiB of disk/);
+  assert.match(first.body.text, /Clear disposable caches/);
+  assert.deepEqual(await blocked(job.id, body), first);
+  const rows = h.db.prepare('select * from blocks where job = ?').all(job.id);
+  assert.equal(rows.length, 1);
+  assert.ok(!JSON.stringify(rows).includes('fixture-disk-writer'));
+});
+
+test('an unavailable disk counter stop reports the accounting error and preserves its receipt', async () => {
+  const job = await h.start({ agent: 'bolt' });
+  const event = randomUUID();
+  const body = { event, measure: 'disk', used: 65536, share: 0, accountingError: true };
+  const first = await blocked(job.id, body);
+  assert.equal(first.status, 200);
+  assert.match(first.body.text, /Disk accounting is unavailable/);
+  assert.match(first.body.text, /Restore readable process counters/);
+  assert.deepEqual((await blocked(job.id, body)).body, first.body);
+  assert.equal(first.body.count, 1);
+});
+
+test('unknown disk usage remains explicit and an accounting-error receipt is idempotent', async () => {
+  const job = await h.start({ agent: 'bolt' });
+  const body = { event: randomUUID(), measure: 'disk', used: null, share: 4096, accountingError: true };
+  const first = await blocked(job.id, body);
+  assert.equal(first.status, 200);
+  assert.match(first.body.text, /Disk accounting is unavailable/);
+  assert.doesNotMatch(first.body.text, /this job used/);
+  const again = await blocked(job.id, body);
+  assert.deepEqual(again.body, first.body);
+  const receipts = h.db.prepare('select used from blocks where job = ?').all(job.id) as { used: number | null }[];
+  assert.deepEqual(
+    receipts.map(receipt => receipt.used),
+    [null],
+  );
+  for (const invalid of [{ measure: 'memory' }, { accountingError: false }, { warning: true }])
+    assert.equal((await blocked(job.id, { ...body, ...invalid, event: randomUUID() })).status, 400);
 });

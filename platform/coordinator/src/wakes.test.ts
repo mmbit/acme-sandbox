@@ -154,6 +154,19 @@ test('--when deployed:<job> or deployed:pr:<n> waits for that work to merge and 
   await h.finish(lark);
 });
 
+test('a deployment wake starts with the reason when its source ends stopped without a PR', async () => {
+  const source = await running('lark'),
+    owner = await running('bolt');
+  const waiting = await queue(owner, '--when', `deployed:${source.id}`, 'bolt', 'Read it live');
+  assert.equal(waiting.code, 0, waiting.out);
+  assert.equal(ready(waiting.id), false);
+  assert.equal((await h.hq(source, 'stop', String(source.id), 'The trial needs judgment')).code, 0);
+  await h.finish(source, { status: 'stopped' });
+  assert.equal(ready(waiting.id), true);
+  assert.match(await starts(waiting.id), /ended \(stopped\) without a pull request/);
+  await h.finish(owner);
+});
+
 test('two --when: it waits for both', async () => {
   const bolt = await running('bolt');
   const { id } = await queue(bolt, '--when', 'deploy', '--when', '1h', 'bolt', 'Both');
@@ -182,7 +195,7 @@ test('hq stop: its own agent or the CEO ends a running job, which hears it with 
   const own = await h.hq(lark, 'stop', String(lark.id), 'the reading is handed over (hq job --when)');
   assert.equal(own.code, 0, own.out);
   assert.deepEqual(await beat(lark), { ok: true, stop: 'lark: the reading is handed over (hq job --when)' });
-  assert.equal((await h.finish(lark, { result: 'Stopped by lark' })).status, 200);
+  assert.equal((await h.finish(lark, { status: 'stopped', result: 'Stopped by lark' })).status, 200);
 
   assert.equal((await h.hq(juno, 'stop', String(wren.id), 'polling for a day')).code, 0, 'the CEO');
   assert.equal((await beat(wren)).stop, 'juno: polling for a day');
@@ -191,7 +204,8 @@ test('hq stop: its own agent or the CEO ends a running job, which hears it with 
   const again = await h.claim(h.job(wren.id).engine);
   assert.equal(again?.id, wren.id);
   assert.equal(again?.stopping, 'juno: polling for a day');
-  await h.finish(again!);
+  await h.finish(again!, { status: 'stopped' });
+  assert.equal(h.job(wren.id).status, 'stopped');
   const paused = await h.start({ agent: 'juno', title: 'Paused' });
   await h.finish(paused, { status: 'limited', session: 'sess-2', resetAt: Date.now() + 3600e3 });
   assert.match(

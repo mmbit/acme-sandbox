@@ -29,13 +29,17 @@ export function lines(now: number) {
       : `ended ${clock(live.at, now)} with nothing to deploy`;
     return [
       {
-        line: `item #${i.id} (call ${i.call}, ${i.kind} for ${i.owner}): ${words(i)}. Its work (${work}) ${when}`,
+        line: `item #${i.id} (call ${i.call}, ${i.kind} for ${i.owner}): ${words(i)}. Its work (${work}) ${when}${i.status === 'ready' ? YES : ''}`,
         board: true,
       },
     ];
   });
   return [...threads, ...items];
 }
+
+// Finished isn't delivered: a ready item stays on what the board asked for until the CEO records its yes (ledger.ts
+// done)
+const YES = ". It's ready, not delivered: open until the board has it and says yes (hq item done)";
 
 // Done threads appear once their remaining work is live and nothing is open (windows.ts).
 // Their items must still be handled: closing work reopens its items (ledger.ts reopen).
@@ -73,7 +77,10 @@ function threadsDone(since: number, now: number, moved: Set<number>) {
     if (!live || at <= since) return [];
     const { items, cards } = carried(kept.map(j => j.id));
     const carries = [
-      ...items.map(i => `item #${i.id} (call ${i.call}, ${i.kind}): ${words(i)}`),
+      ...items.map(
+        i =>
+          `item #${i.id} (call ${i.call}, ${i.kind}${i.status === 'ready' ? ', ready for the board to say yes' : ''}): ${words(i)}`,
+      ),
       ...cards.map(c => `card #${c.id} "${c.title}"`),
     ];
     const deployed = live.deployed ? `its work deployed ${clock(live.at, now)}` : 'nothing of it to deploy';
@@ -120,7 +127,7 @@ function movedSince(since: number) {
   return new Set([...ended.map(j => j.id), ...named.map(j => j.id), ...own]);
 }
 
-// The board's handled items and answered cards that work (its kept jobs' ids) carries, through each job's replacements:
+// The board's handled and ready items and answered cards that work (its kept jobs' ids) carries, through each job's replacements:
 // the jobs and every job they replaced read once (`line`), then each item and card against them, not against each job
 function carried(ids: number[]) {
   const json = JSON.stringify(ids);
@@ -128,11 +135,11 @@ function carried(ids: number[]) {
     union select r.replaces from line join job_replacement_links r on r.job = line.id)`;
   const items = db
     .prepare(
-      `${line} select id, call, kind, what from call_items i where status = 'handled' and (i.job in (select id from line)
+      `${line} select id, call, kind, what, status from call_items i where status in ('handled', 'ready') and (i.job in (select id from line)
       or i.id in (select item from jobs indexed by jobs_item where item is not null and id in (select value from json_each($ids))))
       order by id`,
     )
-    .all({ ids: json }) as { id: number; call: number; kind: string; what: string }[];
+    .all({ ids: json }) as { id: number; call: number; kind: string; what: string; status: string }[];
   const cards = db
     .prepare(
       `${line} select id, title from requests where customers = 0 and id in (select answers from jobs

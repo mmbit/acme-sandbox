@@ -202,13 +202,6 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
   list as a message item, handled, so the follow-up doesn't send it again: it checks the words against the
   transcript, and corrects or withdraws them if they were misheard. A job this call queued takes `add`; one not
   running, on Codex, or on a customer's call is the follow-up's.
-- `pin_words(pin, words)` and `pin_sent(pin, job | answered)`: on a call the board rang from HQ's Reviews about the notes
-  it ticked (`pins` in HQ's hello, then call-context's body; the briefing lists them, and their screenshots and the
-  pictures added to them, each named by its kind, go with the session's first message, a restarted one's too
- ): new words for a pin, or the pin sent with the job queued for it or as
-  answered on the call. The answer tells the agent to say plainly which of the board's notes went to which work, by what
-  they are. Starting the call sends no pin; one left
-  waits in HQ.
 - `manage(command)`: run one of hq's management commands as its words (`["cancel", "123", "why"]`).
   `hq_tools.py`'s `MANAGE` defines the commands and subcommands. Others are refused before hq runs.
   The coordinator opens their routes to the call token (`server.ts` `MANAGE_ROUTES`) and applies its
@@ -242,15 +235,16 @@ The call agent's tools (`hq_tools.py`), each of which puts something on a list a
 - `waiting()`: every tool above waits for the coordinator's real answer while the coordinator is alive, never a fixed
   cutoff (board, call 127: a slow coordinator is still there, and a cutoff left hand-offs unconfirmed that had gone
   through); `hq` itself waits too (`api.ts` request: no time-out unless a command gives one). While `hq` waits,
-  `hq_tools.py` looks at the coordinator's `/health` every `PROBE` (5 s), on its own `ALIVE` (5 s) time-out. A
+  `hq_tools.py` looks at the coordinator's `/health` every `probe` (5 s), on its own `alive` (5 s) time-out. A
   coordinator that answers neither is down: `hq` is stopped and the agent hears plainly that the coordinator is down
   and the hand-off is unconfirmed (it may have gone through before it stopped answering: checked after the call). One
-  that stays alive but never answers meets `CEILING` (3 minutes, a few times the slowest real hand-off in the call
+  that stays alive but never answers meets `ceiling` (3 minutes, a few times the slowest real hand-off in the call
   logs): "Not confirmed", check before doing it again (board, call 128). A refused connection still says at once, for
   certain, that nothing was handed on, a reset or a server error that it may have been. So the call isn't silent for
-  long, a tool that hasn't heard back in `STILL` (20 s) answers that it's still on its way and carries on in the
-  background (what's under way at hang-up still lands); `waiting` waits up to `STILL` again and gives each one's own
-  answer, or says it's still waiting. It says "slow, not down" only when `/health` answered in the last `STILL`.
+  long, a tool that hasn't heard back in `still` (20 s) answers that it's still on its way and carries on in the
+  background (what's under way at hang-up still lands); `waiting` waits up to `still` again and gives each one's own
+  answer, or says it's still waiting. It says "slow, not down" only when `/health` answered in the last `still`. The waits
+  are the call's own `Waits`, which a test makes with short ones.
 
 - `hang_up()`: ends the call, only once the board has clearly wrapped up (a goodbye, asking to end it, or a thank-you that
   closes the business, not one mid-business), with a short goodbye of the agent's own that fits the call ("Thank you, talk
@@ -410,11 +404,11 @@ company does (`seeds`: the line's `seeds` in brand.yaml, a take it heard read ba
 Measured on a 4-core CPU: first audio about 2.5 to 3 s after the board stops talking (0.65 to 0.85 s to hear the
 pause and transcribe, about 1.5 to 2 s for the model's first words, 0.2 s to start speaking; the phone adds its own
 network's). The line asks the model at the pause once the board sounds finished: the model takes over a second to
-speak, and if the board carries on before then, the reply is taken back (`WAIT`, counted from the end of the words, so
+speak, and if the board carries on before then, the reply is taken back (`WAIT_SECONDS`, counted from the end of the words, so
 the transcription is part of it). Whether it sounds finished is Pipecat's Smart Turn v3.2 (`endpoint.py`, BSD-2-Clause,
 8 MB, about 90 ms a pause on one core, beside the transcription): it hears the turn's last 8 s up to 0.2 s after its
 words (`TRAIL`), the voice trailing off mid-thought or ending, where the recogniser writes a full stop at almost every
-pause. Mid-thought, the line waits 1.5 s more before it asks (`WAIT['open']`). On Pipecat's test set (one of its nine
+pause. Mid-thought, the line waits 1.5 s more before it asks (`WAIT_SECONDS['open']`). On Pipecat's test set (one of its nine
 files: 873 English, 160 Dutch, 142 German clips, cut at Silero's pause as the line does) it calls a mid-thought pause
 finished 10, 13 and 15 times in 100, and a finished turn mid-thought 4, 2 and 1 times in 100; through 8 kHz (the phone
 line's band) it calls 14, 22 and 31 mid-thought pauses in 100 finished. On a

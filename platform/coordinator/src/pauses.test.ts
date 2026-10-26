@@ -1,7 +1,7 @@
 // node --test src/pauses.test.ts   (a paused project or thread, held by the claim; throwaway DATA_DIR and REPO_DIR)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { followthroughFixture } from './followthrough.fixture.ts';
 import { projectsHarness } from './projects.fixture.ts';
 import type { Pause } from './pauses.ts';
@@ -15,10 +15,11 @@ const { agreements } = await import('./agreements.ts');
 const { snapshot } = await import('./backlog.ts');
 const { ceo } = await import('./company.ts');
 const { moveJob } = await import('./regroup.ts');
+const decisions = await import('./decisions.ts');
 const { agreed } = await followthroughFixture(h);
 
 const reset = () =>
-  db.exec(`delete from jobs; delete from prs; delete from threads; delete from pauses; delete from pause_until;
+  db.exec(`delete from jobs; delete from prs; delete from threads; delete from pauses; delete from pause_until; delete from pause_wakes; delete from decisions;
     delete from calls; delete from call_items; delete from followthrough_checks; delete from settings where key = 'company.paused'`);
 // (with no condition named, by hand: nothing wakes its owner)
 const pause = (ask: Parameters<typeof pauses.pause>[0], agent = ceo()) => {
@@ -110,12 +111,21 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   );
   await merge(first, 71);
   await h.finish(second, { status: 'done', pr: 72, branch: `job/${second.id}` });
+  h.jobs.handedCustomerData(second.id);
   assert.equal(pauses.open()[0].until[1].state, 'in review (PR #72)');
   pausewake.sweep();
   assert.equal(pauses.open()[0].woken, null, 'one still in review: nothing wakes yet');
   db.prepare("update prs set status = 'closed' where number = 72").run();
   db.prepare("insert into settings (key, value) values ('company.paused', ?)").run(JSON.stringify({ by: 'board' }));
-  pausewake.sweep();
+  // (the hourly check's own orders stay the CEO's: the woken owner reads only what counts as delivered)
+  const orgFile = `${h.repo}/company/org.yaml`,
+    orgChart = readFileSync(orgFile, 'utf8');
+  writeFileSync(orgFile, `${orgChart}\nfollowThrough:\n  prompt: |\n    Cancel what isn't worth its cost.\n`);
+  try {
+    pausewake.sweep();
+  } finally {
+    writeFileSync(orgFile, orgChart);
+  }
   const [still] = pauses.open();
   assert.ok(still.woken, 'both ended, one merged and one closed unmerged: its owner is woken');
   assert.deepEqual(
@@ -134,10 +144,23 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
     /The pause on game\/levels \(paused by wren, .*\): Until the view and the desktop are done/,
   );
   assert.match(woke.prompt, new RegExp(`#${first.id} moss: .*It ended merged[.]`));
-  assert.match(woke.prompt, new RegExp(`#${second.id} moss: .*It ended done without merged work[.]\\n {2}Its report:`));
+  assert.match(
+    woke.prompt,
+    new RegExp(`#${second.id} moss: .*It ended done without merged work[.]\\n {2}Its report: \\(it holds a customer's`),
+    "a report with a customer's details stays with its job",
+  );
   assert.match(woke.prompt, /nothing lifts it but a resume/);
+  assert.match(woke.prompt, /Delivered means what the board asked for is in its hands: the thing itself/);
+  assert.doesNotMatch(woke.prompt, /Cancel what isn't worth its cost/, "never the hourly check's orders");
   assert.match(woke.prompt, /hq thread resume game\/levels/);
   assert.match(woke.prompt, /hq thread pause game\/levels "why" --until <that job>/);
+  assert.match(
+    woke.prompt,
+    new RegExp(
+      `Only the board can judge it: ask the CEO \\(${ceo()}, \`hq say\`\\), .* to make the pause wait for its answer, which lifts it: \`hq decision "<what the board decides>" --blocks game/levels\`.*\`hq ask ... --decides <its id>\``,
+    ),
+    'the third way waits for the board, through the CEO',
+  );
   assert.equal(h.jobs.pausedOn(woke.id), null, 'no pause holds the job that judges it');
   assert.equal((await h.claim(engineOf(woke.id)))?.id, woke.id, "nor the company's pause");
   db.prepare("delete from settings where key = 'company.paused'").run();
@@ -395,6 +418,38 @@ test('a pause of the work in no thread holds it, a fix round and review there to
   for (const id of [work, fix, review]) assert.equal((await h.claim(engineOf(id)))?.id, id, `#${id} starts`);
 });
 
+test('a wake job stays free of its pause once the pause is on new conditions, back in the queue too', async () => {
+  reset();
+  const work = h.queue({ agent: 'kit' });
+  const gate = await h.start({ agent: 'moss', thread: thread('gates', 'shop') });
+  pause({ project: 'unsorted', why: 'No new start without a deadline', until: [gate.id] });
+  await merge(gate, 91);
+  pausewake.sweep();
+  const woke = pauses.open()[0].woken!;
+  const judging = await h.claim(engineOf(woke));
+  assert.equal(judging?.id, woke, 'its owner judges it, in no thread under the pause of that work');
+  pause({ project: 'unsorted', why: 'Held by hand until the deadline is set' });
+  assert.equal(pauses.open()[0].woken, null, 'kept on by hand: nothing wakes its owner again');
+  await h.finish(judging!, { status: 'limited', resetAt: 0 });
+  assert.equal(h.job(woke).status, 'queued', 'a limit sends the judging job back to the queue');
+  assert.equal(h.jobs.pausedOn(woke), null, 'still free of the pause it judged');
+  assert.equal((await h.claim(engineOf(woke)))?.id, woke, 'and it starts again');
+  assert.equal(await h.claim(engineOf(work)), null, 'while the pause holds the rest');
+});
+
+test("a paused target the CEO blocks on the board's decision waits for its answer", async () => {
+  reset();
+  const levels = thread('levels');
+  const held = h.queue({ agent: 'kit', thread: levels });
+  pause({ thread: levels, why: 'Until the trial has reported' });
+  const named = decisions.create('Which art direction', [levels], ceo());
+  assert.equal(typeof named, 'object', typeof named === 'string' ? named : '');
+  const [p] = pauses.open();
+  assert.equal(p.decision?.name, 'Which art direction', 'the pause now waits for the decision');
+  assert.match(String(pauses.resume({ thread: levels }, ceo())), /only the board's answer on its card lets it go/);
+  assert.equal(await h.claim(engineOf(held)), null, 'and still holds its work');
+});
+
 test('a pause of the work in no thread waits only for work that can run and merge under it', async () => {
   reset();
   const gates = thread('gates', 'shop');
@@ -526,6 +581,11 @@ test('the follow-through read flags a pause whose waited-on work ended, and one 
   assert.match(
     read({ id: check.id, agent: ceo() }),
     new RegExp(`Met: what it waited for is met and its owner judges it in #${woken} `),
+  );
+  assert.match(
+    read({ id: woken, agent: ceo() }),
+    /Met: what it waited for is met, and this job judges it/,
+    'the wake reading it is told it judges it, not that it ended',
   );
   db.prepare("update jobs set status = 'done' where id = ?").run(woken);
   assert.match(

@@ -1,8 +1,10 @@
 #!/usr/bin/env node
-// A work link in a real browser, on the mocks: wherever it is (a machine's key out big in Wire, an agent's panel in
-// Brownstone, a card on the desk phone), a tap closes what it's in and opens the projects view on the job's own thread,
-// its card in front; while the projects load the thread's skeleton shows, not a blank view; closing the card leaves the
-// board on that thread. The card gives one finish time, its work live, and a job at work what it has left.
+// A work link in a real browser, on the mocks: wherever it is (a machine's key out big in Wire, a task's title on an
+// agent's, an agent's panel in Brownstone, a card on the desk phone), a tap (and Enter on a title) closes what it's in
+// and opens the projects view on the job's own thread, its card in front; while the projects load the thread's skeleton
+// shows, not a blank view, and projects arriving late leave the card open;
+// closing the card leaves the board on that thread. The card gives one finish time, its work live, and a job at work
+// what it has left.
 //   node platform/hq/worklink-check.mjs  (screenshots go to a temp folder, printed at the end)
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync } from 'node:fs';
@@ -29,17 +31,22 @@ const requests = mock('requests.json').map((r, i) => (i ? r : { ...r, title: `${
 const shot = (page, name) =>
   page.screenshot({ path: `${out}/${name}.png`, clip: { x: 0, y: 0, width: 820, height: 1180 }, timeout: 90_000 });
 const text = (page, sel) => page.$eval(sel, e => e.textContent.replace(/\s+/g, ' ').trim());
+// each page's projects, held until let go (HQ reads them ahead at start: one that has come in paints at once)
+const projects = new WeakMap();
 
-async function openHq(look) {
-  const page = await browser.newPage({ viewport: { width: 820, height: 1180 }, hasTouch: true });
+async function openHq(look, options = {}) {
+  const page = await browser.newPage({ viewport: { width: 820, height: 1180 }, hasTouch: true, ...options });
   const errors = errorsOf(page);
   page.setDefaultTimeout(90_000);
-  await page.route('**/mock/org.json', r => r.fulfill({ path: join(ROOT, 'platform/hq/mock/org.json') }));
+  // (the platform's crew and their jobs, over a company's own mocks.)
+  for (const name of ['org', 'jobs'])
+    await page.route(`**/mock/${name}.json`, r => r.fulfill({ path: join(ROOT, `platform/hq/mock/${name}.json`) }));
   await page.route('**/mock/machines.json', r => r.fulfill({ json: machines }));
   await page.route('**/mock/requests.json', r => r.fulfill({ json: requests }));
-  // (the projects slow to load, as the board's are: the skeleton shows meanwhile)
+  // (the projects slow to load, as the board's can be: the skeleton shows meanwhile.)
+  const held = new Promise(go => projects.set(page, go));
   await page.route('**/mock/projects.json', async r => {
-    await new Promise(go => setTimeout(go, 1500));
+    await held;
     await r.continue();
   });
   await page.goto(`${base}/?intro=0&renderer=${look}`);
@@ -49,8 +56,9 @@ async function openHq(look) {
 }
 
 // After a tap on the link: the skeleton, nothing left over the view, then the thread with the job's card, and the
-// thread once the card is closed
-async function lands(page, at, { job, thread, title }) {
+// thread once the card is closed. late: the projects held that long, as on a slow real load, and the card still in
+// front past the view's next refresh
+async function lands(page, at, { job, thread, title, late = 0 }) {
   await page.waitForSelector('#projects .pj-skeleton', { state: 'attached', timeout: 1400 });
   await page.waitForTimeout(500); // (the view's flight in)
   assert.ok(await page.$('#projects .pj-skeleton'), `${at}: the skeleton while the projects load`);
@@ -61,8 +69,11 @@ async function lands(page, at, { job, thread, title }) {
     big: Boolean(document.querySelector('.alone')),
   }));
   assert.deepEqual(over, { tool: false, panel: false, big: false }, `${at}: what the link was in closes`);
+  await page.waitForTimeout(late);
+  projects.get(page)();
   await page.waitForSelector(`#projects .pj-card[data-job-open="${job}"]`, { timeout: 30_000 });
-  await page.waitForTimeout(600);
+  await page.waitForTimeout(late ? 21_000 : 600); // (REFRESH_MS, and a second)
+  assert.ok(await page.$(`#projects .pj-card[data-job-open="${job}"]`), `${at}: the card stays in front`);
   await shot(page, `${at}-card`);
   assert.equal(await page.$eval('#projects', e => e.dataset.level), 'thread', `${at}: on its thread`);
   assert.equal(await text(page, '#projects .pj-head h1'), thread, at);
@@ -92,7 +103,33 @@ async function lands(page, at, { job, thread, title }) {
   assert.deepEqual(errors, [], 'wire');
   await page.close();
 }
-// Brownstone: an agent's panel, a job in its recent activity
+// Wire: Wren's key out big, on its back (at rest), the title of what's next: a tap on it, and Enter on it, open its
+// thread, and the key isn't turned over on the way (motion reduced, so a turn shows at once).
+for (const how of ['tap', 'enter']) {
+  const at = `wire-agent-${how}`,
+    title = '.alone .key.big .next p.job-title[data-job="54"]';
+  const { page, errors } = await openHq('wire', { reducedMotion: 'reduce' });
+  await page.locator('.wire .board .key.agent', { hasText: 'Wren' }).click();
+  await page.waitForSelector(title);
+  await shot(page, at);
+  await page.evaluate(() => {
+    const key = document.querySelector('.alone .key.big');
+    window.turned = false;
+    new MutationObserver(() => (window.turned ||= !key.classList.contains('flipped'))).observe(key, {
+      attributeFilter: ['class'],
+    });
+  });
+  if (how === 'tap') await page.tap(title);
+  else {
+    await page.focus(title);
+    await page.keyboard.press('Enter');
+  }
+  await lands(page, at, { job: 54, thread: 'Gift wrap', title: 'Gift wrap at checkout: the ribbon picker' });
+  assert.equal(await page.evaluate(() => window.turned), false, `${at}: the key isn't turned over`);
+  assert.deepEqual(errors, [], at);
+  await page.close();
+}
+// Brownstone: an agent's panel, a job in its recent activity, the projects arriving 30 s after the tap
 {
   const { page, errors } = await openHq('brownstone');
   await page.evaluate(async () => {
@@ -109,6 +146,7 @@ async function lands(page, at, { job, thread, title }) {
     job: 54,
     thread: 'Gift wrap',
     title: 'Gift wrap at checkout: the ribbon picker',
+    late: 30_000,
   });
   assert.deepEqual(errors, [], 'brownstone');
   await page.close();
@@ -128,6 +166,7 @@ async function lands(page, at, { job, thread, title }) {
 // the load comes back or fails: the view stays where the move took it, saying nothing.
 {
   const { page, errors } = await openHq('wire');
+  projects.get(page)();
   await page.evaluate(() => import('/shell/projects.js').then(m => m.openProjects()));
   await page.waitForSelector('#projects .pj-head h1');
   await page.waitForTimeout(600);

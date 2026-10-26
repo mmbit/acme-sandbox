@@ -5,7 +5,9 @@
 // miss, or there is none in the play's reach. With --by, whether it makes that time, with a sooner deadline if need be;
 // only when it doesn't, what would, as played: the windows ahead of it giving way, each against its deadline then, and
 // one more seat like one HQ has with measured rates, searched the same way. Unmeasured prices and their conditional finishes are
-// named. Nothing is kept: the plays are no forecast, and the answer is a time and the window to set (hq window).
+// named. Nothing is kept: the plays are no forecast, and the answer is a time and the window to set (hq window). Each
+// play gives the server back first: a search can play the queue a few hundred times, and no other request waits for
+// more than one play.
 import { oneMoreSeat } from './seatcapacity.ts';
 import * as seatreplay from './seatreplay.ts';
 import { db } from './db.ts';
@@ -45,9 +47,9 @@ type Trial = {
   deadlines: Deadline[];
 };
 // The plays on one queue: the work given a deadline (null: none), and the crossings between two deadlines.
-type QueueTrials = { trial: (due: number | null) => Trial; crossings: (lo: number, hi: number) => number[] };
+type QueueTrials = { trial: (due: number | null) => Promise<Trial>; crossings: (lo: number, hi: number) => number[] };
 
-export function when(ask: Ask, asker: string, now = Date.now()) {
+export async function when(ask: Ask, asker: string, now = Date.now()) {
   if (ask.extra_seat !== undefined) {
     if (ask.q || ask.size || ask.agent || ask.after || ask.by)
       return [400, 'extra_seat replays the live plan. Omit new work and its flags.'] as const;
@@ -57,9 +59,9 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
   if (typeof given === 'string') return [400, given] as const;
   const t0 = performance.now();
   const planned = plannedWork(given, asker, now);
-  const { snapshot, trialsFor, relaxedTrial, plays } = trials(planned, now);
+  const { snapshot, trialsFor, relaxedTrial, plays } = await trials(planned, now);
   const original = trialsFor(snapshot);
-  const free = original.trial(null);
+  const free = await original.trial(null);
   const seated = () => {
     const more = oneMoreSeat(snapshot, planned.engine);
     return more && trialsFor(more);
@@ -78,8 +80,8 @@ export function when(ask: Ask, asker: string, now = Date.now()) {
     },
     free,
     ...(given.by === undefined
-      ? { earliest: earliest(free, original, now) }
-      : { by: byTime(given.by, free, original, relaxedTrial, seated, now) }),
+      ? { earliest: await earliest(free, original, now) }
+      : { by: await byTime(given.by, free, original, relaxedTrial, seated, now) }),
     horizon_days: HORIZON_DAYS,
     played: { plays: plays(), ms: Math.round(performance.now() - t0) },
   };
@@ -152,28 +154,23 @@ function plannedWork(given: Given, asker: string, now: number) {
 // crossings between two deadlines: where the work's place in the order the play runs work in changes (playOrder), as a
 // latest start that moves with its deadline (its own, its review stages', work it waits for) meets one that doesn't.
 // Between two crossings, that order is the same.
-function trials(planned: ReturnType<typeof plannedWork>, now: number) {
+async function trials(planned: ReturnType<typeof plannedWork>, now: number) {
   const { snapshot, sizes } = predictions.prepared(now, [planned], ['usual']);
   let plays = 0;
-  const played = (queue: Snapshot) => {
+  const played = async (queue: Snapshot) => {
     plays++;
+    await new Promise(setImmediate);
     const usual = play(queue, sizes.usual, { pace: 'usual' });
     return { usual, threads: threadOutlooks(queue, usual, usual, sizes.usual) };
   };
-  const base = played({ ...snapshot, jobs: snapshot.jobs.filter(j => j.id !== PLANNED) }).threads;
+  const base = (await played({ ...snapshot, jobs: snapshot.jobs.filter(j => j.id !== PLANNED) })).threads;
   const trialsFor = (queue: Snapshot): QueueTrials => ({
-    trial: due => trialOutcome(snapshot, base, played(withDue(queue, due))),
-    crossings: (lo, hi) => {
-      const { moving, fixed } = orderAt(queue, sizes.usual, lo);
-      const dues = moving
-        .flatMap(m => fixed.map(f => f.latestStart + lo - m.latestStart))
-        .filter(due => due > lo && due < hi);
-      return [...new Set(dues)].sort((a, b) => a - b);
-    },
+    trial: async due => trialOutcome(snapshot, base, await played(withDue(queue, due))),
+    crossings: (lo, hi) => crossings(queue, sizes.usual, lo, hi),
   });
   // The work due at `by` played ahead of the windows whose work the play runs before any of its own rows, those windows
   // moved later, and how each of their threads then ends against its window as it is (widen).
-  const relaxedTrial = (by: number) => {
+  const relaxedTrial = async (by: number) => {
     const { moving, fixed } = orderAt(snapshot, sizes.usual, by);
     const last = Math.max(...moving.map(p => p.latestStart));
     const before = new Set(
@@ -181,13 +178,23 @@ function trials(planned: ReturnType<typeof plannedWork>, now: number) {
         row.thread && row.due !== null && latestStart < last ? [row.thread] : [],
       ),
     );
-    const relaxedPlay = played(withDue(relaxed(snapshot, by, before), by));
+    const relaxedPlay = await played(withDue(relaxed(snapshot, by, before), by));
     return {
       ...trialOutcome(snapshot, base, relaxedPlay),
       widen: [...before].map(t => giveOf(relaxedPlay.threads.get(t)!)),
     };
   };
   return { snapshot, trialsFor, relaxedTrial, plays: () => plays };
+}
+
+// The deadlines between lo and hi where one of the work's rows (its own, its review stages', work it waits for) meets one
+// that doesn't move with it in the play's order.
+function crossings(queue: Snapshot, sizes: ReadonlyMap<number, Size>, lo: number, hi: number) {
+  const { moving, fixed } = orderAt(queue, sizes, lo);
+  const dues = moving
+    .flatMap(m => fixed.map(f => f.latestStart + lo - m.latestStart))
+    .filter(due => due > lo && due < hi);
+  return [...new Set(dues)].sort((a, b) => a - b);
 }
 
 // The queue with the work due then.
@@ -236,9 +243,9 @@ const holds = (t: Trial, due: number | null) =>
 // The earliest it's done with every window held: the first deadline that holds, up to the end of the play's reach (or
 // to its finish with no window, when that holds); else with no window at all, when that holds. found false: none holds,
 // and the play at the latest deadline shows why.
-function earliest(free: Trial, queueTrials: QueueTrials, now: number) {
+async function earliest(free: Trial, queueTrials: QueueTrials, now: number) {
   const plain = holds(free, null) ? { ...free, due: null as number | null } : null;
-  const { found, last } = firstHolding(queueTrials, now, plain ? free.finish! : now + HORIZON_DAYS * DAY_MS);
+  const { found, last } = await firstHolding(queueTrials, now, plain ? free.finish! : now + HORIZON_DAYS * DAY_MS);
   if (found) return { found: true, ...found };
   return plain ? { found: true, ...plain } : { found: false, ...last };
 }
@@ -247,23 +254,23 @@ function earliest(free: Trial, queueTrials: QueueTrials, now: number) {
 // tried. The play's order changes only at the crossings; between two, a later deadline holds the work back by no more
 // than it moves and pushes no window further, so a span that fails at its end fails throughout. Each span is tried at
 // its end, and only the first that holds is narrowed down.
-function firstHolding({ trial, crossings }: QueueTrials, lo: number, hi: number, lastTrial = trial(hi)) {
-  const last = { ...lastTrial, due: hi };
+async function firstHolding({ trial, crossings }: QueueTrials, lo: number, hi: number, lastTrial?: Trial) {
+  const last = { ...(lastTrial ?? (await trial(hi))), due: hi };
   for (const edge of [...crossings(lo, hi), hi]) {
     const due = edge === hi ? hi : edge - 1;
-    const tried = edge === hi ? last : { ...trial(due), due };
-    if (holds(tried, due)) return { found: narrowed(trial, lo, tried), last };
+    const tried = edge === hi ? last : { ...(await trial(due)), due };
+    if (holds(tried, due)) return { found: await narrowed(trial, lo, tried), last };
     lo = edge;
   }
   return { found: null, last };
 }
 
 // The earliest deadline after `lo` that holds, from one that does, on whole minutes.
-function narrowed(trial: QueueTrials['trial'], lo: number, best: Trial & { due: number }) {
+async function narrowed(trial: QueueTrials['trial'], lo: number, best: Trial & { due: number }) {
   for (;;) {
     const mid = Math.ceil((lo + best.due) / 2 / MINUTE_MS) * MINUTE_MS;
     if (mid >= best.due) return best;
-    const tried = { ...trial(mid), due: mid };
+    const tried = { ...(await trial(mid)), due: mid };
     if (holds(tried, mid)) best = tried;
     else lo = mid;
   }
@@ -274,19 +281,19 @@ function narrowed(trial: QueueTrials['trial'], lo: number, best: Trial & { due: 
 // the play runs before it moved later (relaxed); and one more seat of its engine, searched the same way (seat: its play,
 // makes when one holds; null when HQ has no seat of the engine with measured rates and reported slots to copy). The play
 // with the windows giving is the answer's own (finish, gives).
-function byTime(
+async function byTime(
   by: number,
   free: Trial,
   original: QueueTrials,
-  relaxedTrial: (by: number) => Trial & { widen: Give[] },
+  relaxedTrial: (by: number) => Promise<Trial & { widen: Give[] }>,
   oneMore: () => QueueTrials | null,
   now: number,
 ) {
-  const { tried, held } = heldBy(by, original, now, () => free);
+  const { tried, held } = await heldBy(by, original, now, free);
   if (held) return { at: by, makes: true, ...held };
-  const ahead = tried.finish !== null && tried.finish <= by ? { ...tried, widen: tried.gives } : relaxedTrial(by);
+  const ahead = tried.finish !== null && tried.finish <= by ? { ...tried, widen: tried.gives } : await relaxedTrial(by);
   const more = oneMore();
-  const seated = more && heldBy(by, more, now);
+  const seated = more && (await heldBy(by, more, now));
   return {
     at: by,
     makes: false,
@@ -298,13 +305,13 @@ function byTime(
 
 // Whether the work is done by `by` with every window held on one queue: with that deadline, a sooner one (due), or no
 // window at all (due null) when a deadline moves it ahead of work whose windows then miss (pushed). held null: none
-// does, and tried is the play with that deadline.
-function heldBy(by: number, queueTrials: QueueTrials, now: number, free = () => queueTrials.trial(null)) {
-  const tried = { ...queueTrials.trial(by), due: by };
+// does, and tried is the play with that deadline. free: the play with no window, when the caller has it already.
+async function heldBy(by: number, queueTrials: QueueTrials, now: number, free?: Trial) {
+  const tried = { ...(await queueTrials.trial(by)), due: by };
   if (holds(tried, by)) return { tried, held: tried };
-  const { found } = firstHolding(queueTrials, now, by, tried);
+  const { found } = await firstHolding(queueTrials, now, by, tried);
   if (found) return { tried, held: found };
-  const plain = free();
+  const plain = free ?? (await queueTrials.trial(null));
   return { tried, held: holds(plain, by) ? { ...plain, due: null, pushed: tried.gives } : null };
 }
 

@@ -71,6 +71,8 @@ const server = createServer((req, res) => {
       const a = new URL(u, 'http://x').searchParams.get('agent');
       return res.end(JSON.stringify(a ? open[a] ?? [] : Object.values(open).flat()));
     }
+    if (u === '/api/agent/pauses')
+      return res.end(JSON.stringify({ target: 'shop/checkout', why: JSON.parse(b).why, until: [], untilTime: '2026-10-26T08:00:00.000Z', held: 1, running: [] }));
     if (u === '/api/agent/room') { res.statusCode = roomStatus; return res.end(JSON.stringify({ line: roomLine })); }
     if (u.startsWith('/api/agent/orders')) return res.end(JSON.stringify(ordersReply));
     if (u === '/api/agent/owed') return res.end(JSON.stringify(owedList));
@@ -120,6 +122,7 @@ const server = createServer((req, res) => {
       return res.end(JSON.stringify(ok ? { ok: true, at: '2026-10-16T20:00:00.000Z' } : { error: 'only its owner (moss) or the CEO' }));
     }
     if (u === '/api/agent/item-drop') return res.end('{"ok":true,"cancelled":[7],"told":[{"job":8,"message":31},{"job":9,"message":32,"became":40}],"running":[10]}');
+    if (u === '/api/agent/item-done') return res.end('{"ok":true}');
     if (u.startsWith('/api/agent/requests')) {
       const id = Number(new URL(u, 'http://x').searchParams.get('id'));
       return res.end(JSON.stringify(id ? requestList.filter((r: any) => r.id === id) : requestList));
@@ -497,6 +500,8 @@ test('the call ledger: item add takes the goal and the words on stdin, never in 
   }
   const bare = await new Promise<{ code: number; err: string }>(resolve => execFile('bash', [HQ, 'item', 'link', '3', '12'], { env }, (e, _o, err) => resolve({ code: (e as any)?.code ?? 0, err })));
   assert.deepEqual([bare.code, /job or a request\?/.test(bare.err)], [1, true], 'a bare number could be either: it asks');
+  assert.equal(await hq('item', 'done', '3', 'Yes, on the call'), 'Item #3 is handled: the board said yes (Yes, on the call).\n');
+  assert.deepEqual(last().body, { id: 3, said: 'Yes, on the call' });
   assert.match(await hq('item', 'drop', '3', 'The board changed its mind'), /dropped[^]*Cancelled \(never ran\): #7\.\nTold #8:[^\n]*message #31[^]*#9 can't take a message mid-job[^\n]*job #40 for its agent now[^]*Running and not told yet \(the message was refused[^)]*\): #10\. It's kept: the coordinator sends it once it can/);
   assert.match(await hq('job', 'rivet', 'Build it', `${tmp}/body.md`, '--item', '3', '--new'), /Queued job #42 TOMAK for rivet: Build it\nIt carries item #3[^\n]*\nTold #13: the correction is queued for its session[^\n]*message #33/);
   assert.equal(last().body.item, 3);
@@ -610,6 +615,15 @@ test('request parks with its grant in request.json', async () => {
   await hq('request', 'approval', 'today', 'Site?', `${tmp}/body.md`, 'site:hello', '--topic', 'shop', '--park');   // (--topic)
   assert.deepEqual(JSON.parse(readFileSync(`${tmp}/.hq/request.json`, 'utf8')),
     { kind: 'approval', urgency: 'today', title: 'Site?', body: 'Please decide.', approves: 'site:hello', topic: 'shop' });
+});
+
+test("ask --walk offers the maker's walk-through on finished work; a parked request can't", async () => {
+  await hq('ask', 'notice', 'today', 'Done: gift wrap', `${tmp}/body.md`, '--walk', '--topic', 'shop');
+  assert.equal(last().url, '/api/agent/request');
+  assert.equal(last().body.walk, true);
+  await hq('ask', 'notice', 'today', 'Done: an icon', `${tmp}/body.md`, '--topic', 'shop');
+  assert.equal(last().body.walk, undefined, 'none unless asked');
+  await assert.rejects(hq('request', 'notice', 'today', 'Done?', `${tmp}/body.md`, '--walk', '--topic', 'shop', '--park'), /--walk offers a walk-through of finished work/);
 });
 
 test('ask and request carry the products a card is about and brings back', async () => {
@@ -822,6 +836,10 @@ test('hq answer clips an answer onto a note, with a picture read from its file a
   assert.equal((await hq('answer', '#57', 'Done: the header is bigger now', '--picture', `${tmp}/shot.png`, '--link', 'https://x.preview.example')).trim(),
     'Answer clipped onto note #57.');
   assert.deepEqual(last().body, { note: 57, text: 'Done: the header is bigger now', picture: 'data:image/png;base64,iVBORw==', link: 'https://x.preview.example' });
+  // (--artifact: something new that runs, by its id in HQ's artifacts.)
+  await hq('answer', '57', 'Made: the gift card page', '--artifact', 'tide/films/trailer');
+  assert.deepEqual(last().body, { note: 57, text: 'Made: the gift card page', artifact: 'tide/films/trailer' });
+  await assert.rejects(hq('answer', '57', 'Yes', '--artifact'), /usage: hq answer <note>/);
   await assert.rejects(hq('answer', '57'), /usage: hq answer <note>/);
   await assert.rejects(hq('answer', '57', 'Yes', '--colour', 'red'), /usage: hq answer <note>/);
   await assert.rejects(hq('answer', '57', 'Yes', '--picture', `${tmp}/none.png`), /can't read/);
@@ -1126,7 +1144,7 @@ test('meeting listen --wait delivers the next line and returns when the meeting 
     seats: [...quiet.seats, { agent: 'moss', chair: false, handed: true, changed: 'moved shop/checkout after game/levels' }] }];
   const said = await run(['meeting', 'listen', '--wait', '150']);
   assert.equal(said.code, 0);
-  assert.match(said.out, /14:03 juno to wren: Levels first 14:04 moss: agreed/);
+  assert.match(said.out, /2026-10-19 14:03 UTC juno to wren: Levels first 14:04 moss: agreed/);
   assert.match(said.out, /In it: wren \(changing\); juno \(chair\); moss \(handed in: moved shop\/checkout after game\/levels\)/);
   assert.deepEqual([last().url, last().body], ['/api/agent/meetings/read', { lines: [41] }]);   // printed: read now
   heard = [{ ...quiet, status: 'done', seated: [] }];
@@ -1233,6 +1251,14 @@ test('wait and mail use the agent routes too; the worker token is never sent', a
   assert.ok(seen.every(r => !r.body || (r.body.agent === undefined || r.url === '/api/agent/job') && (r.body.job === undefined || r.url === '/api/agent/message' && r.body.to !== undefined)));
 });
 
+test("a pause's --until-time confirms on hq's clock, the board's on a run that speaks to it", async () => {
+  const pause = (zone?: string) => new Promise<string>((resolve, reject) =>
+    execFile('bash', [HQ, 'thread', 'pause', 'shop/checkout', 'Waits for the price list', '--until-time', '2026-10-26 09:00'],
+      { env: zone ? { ...env, HQ_TIME_ZONE: zone } : env }, (e, out, err) => e ? reject(new Error(err)) : resolve(out)));
+  assert.match(await pause(), /once 2026-10-26 08:00 UTC has come, HQ queues you a job/i);
+  assert.match(await pause('Europe/Amsterdam'), /once 2026-10-26 09:00 CET has come, HQ queues you a job/i);
+});
+
 test("hq's times are UTC, and on a run that speaks to the board (HQ_TIME_ZONE) its own, either side of winter time", async () => {
   const estimate = (zone?: string) => new Promise<string>((resolve, reject) =>
     execFile('bash', [HQ, 'estimate', 'queue transport'], { env: zone ? { ...env, HQ_TIME_ZONE: zone } : env },
@@ -1250,4 +1276,13 @@ test("hq's times are UTC, and on a run that speaks to the board (HQ_TIME_ZONE) i
   } finally {
     comparisons.seats.engines = engines;
   }
+});
+
+test('inbox --hook: disk warnings reach the session as HQ instructions and acknowledge only after printing', async () => {
+  const disk = '11391000-0000-4000-8000-000000000001';
+  inbox = [{ disk, text: "HQ's worker: clear disposable caches before further writing." }];
+  const output = JSON.parse((await run(['inbox', '--hook'], '{"hook_event_name":"PostToolUse"}')).out);
+  assert.match(output.hookSpecificOutput.additionalContext, /^HQ's worker: clear disposable caches/);
+  assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /from a colleague/);
+  assert.deepEqual([last().url, last().body], ['/api/agent/inbox-ack', { ids: [], disk: [disk] }]);
 });

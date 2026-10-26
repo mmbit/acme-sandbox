@@ -7,9 +7,9 @@
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
 import { loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
   loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
-  loadReviewProducts, uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
+  uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
-  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, setPersonSketchbook, guestColleagues, loadLanguage, setLanguage } from './data.js'; // (setPersonSketchbook)
+  loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage } from './data.js';
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
@@ -22,7 +22,7 @@ import { record, canRecord, MAX_SECONDS, TRANSCRIBER } from './voice.js';
 import { pushState, enablePush, disablePush, testPush } from './push.js';
 import { makeAgeKey } from './agekey.js';
 import { names, brand, theme, runs } from './brand.js';
-import { countBadge, paintComputerCount } from './hud.js';   // (a company app's count on its icon; the notes waiting)
+import { countBadge, paintComputerCount } from './hud.js';   // (a company app's count on its icon; the computer's)
 import { numbers, numbersBack, numbersFor } from './numbers.js';
 import { artifactList } from './artifacts.js';
 import { openProjects } from './projects.js';
@@ -44,7 +44,8 @@ import { prose, fencedLines, linked, bare, BOLD, covered, jobNameLink, jobsIn, w
 import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in its steps)
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
-import { notes, openReviews, holdReviews } from './reviews.js';
+import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
+import { openBook } from './book.js';   // (review mode's Open the book: bookAt.)
 
 const $ = s => document.querySelector(s);
 // The company's own HQ apps: theme/hq.yaml's apps, each kits/<name>/hq/app.js at /kits/<name>/app.js
@@ -96,14 +97,17 @@ export function initDesk() {
     const a = e.target.closest('a[href]');
     if (a && !a.dataset.external && PREVIEW.test(a.href)) { e.preventDefault(); openLink(a.href); }
   });
-  // a job's number in HQ's words is a link to it (prose.js jobLink): a plain tap opens it here, before the tap target
-  // under it hears it
-  document.addEventListener('click', e => {
-    const link = e.target.closest?.('a.job-link[data-job]');
+  // a job's number in HQ's words is a link to it (prose.js jobLink), and so is a job's title that a look marks
+  // (.job-title): a plain tap or Enter opens it here, before the tap target under
+  // it hears it
+  const jobLinked = e => {
+    const link = e.target.closest?.('a.job-link[data-job], .job-title[data-job]');
     if (!link || e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     e.preventDefault(); e.stopPropagation();
     openJob(Number(link.dataset.job));
-  }, true);
+  };
+  document.addEventListener('click', jobLinked, true);
+  document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.matches?.('.job-title[data-job]')) jobLinked(e); }, true);
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
   loadPin();
@@ -117,10 +121,16 @@ function show(kind, html, force = false) {
   el.innerHTML = `<div class="device ${kind}" role="dialog" aria-modal="true">${html}</div>`;
   if (!was) sfx.open(); else sfx.blip();
   clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
+  opened(kind);
   return true;
 }
+// What's open on HQ's page told on the document (hq:open: { open, app }), for a second screen to follow (pair.js).
+const opened = kind => document.dispatchEvent(new CustomEvent('hq:open', { detail: { open: kind, ...(kind === 'computer' && { app: tab }) } }));
 export const toolOpen = () => !!open;
-const PREVIEW = /^https:\/\/[a-z0-9-]+\.preview\.[a-z0-9.-]+(\/|$)/;
+export const PREVIEW = /^https:\/\/[a-z0-9-]+\.preview\.[a-z0-9.-]+(\/|$)/;   // (exported for calldrive.js)
+// The origin of the page in the viewer while review mode runs there (it said hello), or none: what calldrive.js sends to
+// and hears from, and no other page the frame may have gone on to.
+export const viewerOrigin = () => viewing?.review ?? null;
 export const openLink = url => PREVIEW.test(url) ? openViewer(url) : window.open(url, '_blank', 'noopener');
 const PIN = icon('pin');
 // A preview in a frame of its own origin: it can't reach HQ's page, and it can't navigate HQ away. Both the
@@ -132,33 +142,31 @@ const PIN = icon('pin');
 // A deck's "try the preview" button opens its preview here as well, with a way back to the deck.
 // Chrome shows no PDF in a sandboxed frame, so the preview hosts answer a PDF the frame loads as a download, which the
 // frame allows (infra/products.py, PDF_IN_FRAME): it saves, and the page stays.
-// While the board has notes waiting on the product in the frame, a Send button opens the send step: sendStep.
 // Share makes a link for an outside person to leave notes on this preview, or only see it: shareBox.
 // The bar is one slim row, the page's room before all: Back and Close as quiet glyphs, the address as the link that
-// opens it in the browser, and the two things review mode does filled, Note and Send N.
-let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, pinned: the numbers of the board's notes waiting on the product there, as its review mode lists them, pinnedOn: their product, link: the outside link } (heard)
+// opens it in the browser, and what review mode does filled: Note. Review mode's notes go into the board's book, which
+// its menu opens beside the viewer (bookAt).
+let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
 async function openViewer(url, back = null) {
-  const v = $('#viewer'), kept = v.hidden ? null : viewing; // the count lasts while the viewer's open
-  const me = viewing = { url, back, review: null, pinned: kept?.pinned ?? new Set(), pinnedOn: kept?.pinnedOn ?? null, link: null };
-  root().classList.remove('over-viewer'); // a preview opened from the send step's computer comes to the front
+  const v = $('#viewer');
+  const me = viewing = { url, back, review: null, link: null };
   v.innerHTML = `<div class="bar">${back ? '<button class="glyph" data-back aria-label="Back">‹</button>' : ''}
     <a class="where" target="_blank" rel="noopener" data-external="1" title="Open in the browser">${where(url)}</a>
-    <button class="pin" hidden aria-label="Pin a note on this page">${PIN}<span>Note</span></button><button class="send" hidden></button>
+    <button class="pin" hidden aria-label="Pin a note on this page">${PIN}<span>Note</span></button>
     <button class="share" aria-label="Share with an outside person">${SHARE}<span>Share</span></button>
     <button class="glyph" data-close aria-label="Close">×</button></div>
     <div class="sharebox" hidden></div>
     <iframe title="Preview" allow="autoplay; fullscreen; clipboard-write"
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>`;
-  if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true); coverPin(true); }   // (cover)
+  if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
   const frame = v.querySelector('iframe'), out = v.querySelector('.bar .where');
-  v.querySelector('[data-close]').onclick = () => { viewing = null; v.hidden = true; v.innerHTML = ''; hush(false); cover(false); coverPin(false); };
+  v.querySelector('[data-close]').onclick = () => { viewing = null; v.hidden = true; v.innerHTML = ''; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
   v.querySelector('.pin').onclick = () => me.review && frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review);
   frame.addEventListener('load', () => {
     frame.style.background = ''; // a backdrop lasts until the next page is there: backdropOf
     askReview(me, frame);
   });
-  v.querySelector('.bar .send').onclick = () => sendStep(me);
   v.querySelector('.bar .share').onclick = () => shareBox(me);
   paintPin();
   // The outside link signs in once, within two minutes: a used or older one is replaced as it's tapped (the new tab
@@ -197,27 +205,14 @@ function where(url) {
   return `<b>${esc(name)}</b><span>${rest.length ? `.${esc(rest.join('.'))}` : ''}</span><i aria-hidden="true">↗</i>`;
 }
 function paintPin() {
-  const b = $('#viewer .pin'), send = $('#viewer .bar .send'); if (!b || !viewing) return;
+  const b = $('#viewer .pin'); if (!b || !viewing) return;
   b.hidden = !viewing.review;
-  const n = viewing.pinned.size;
-  send.hidden = !n; send.innerHTML = `Send <i>${n}</i>`; // (the count, quietly)
-  send.setAttribute('aria-label', `Send the ${n === 1 ? 'note' : 'notes'} waiting on this product`);
 }
-// notes discarded in Reviews no longer count on the viewer's Send.
-export function unpin(ids) {
-  if (viewing) { ids.forEach(id => viewing.pinned.delete(id)); paintPin(); }
-}
-// review mode in the frame lists its notes again after a send or discard here
-// notes sent or discarded in Reviews: review mode in the viewer's frame and HQ's own pin count again
-export const toldReview = () => {
-  const f = $('#viewer iframe');
-  if (viewing?.review && f) f.contentWindow?.postMessage({ hq: 'hq', notes: 1 }, viewing.review);
-  dispatchEvent(new Event('review:notes'));
-};
 // The review tool (shared/review) on HQ's own screens, for the board's notes on HQ itself, loaded once at start: the
-// coordinator serves the real one only behind the board's sign-in (feedback.ts). Its Send my notes opens Reviews at them.
+// coordinator serves the real one only behind the board's sign-in (feedback.ts). Its menu's Open the book opens the
+// book at the sheet its notes join.
 function loadPin() {
-  addEventListener('review:send', e => openComputer('notes', { notes: { ids: new Set(e.detail) } }));
+  addEventListener('review:book', e => bookAt(e.detail));
   const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
   script.dataset.summoned = '';
   script.dataset.book = '';   // the Pencil writes on HQ's pages, its notes in the board's book.
@@ -227,24 +222,17 @@ function loadPin() {
 // HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
 // closes and only one pin ever shows
 const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: on }));
-// The send step: the computer's Reviews over the viewer, at the product the board's notes wait on, from the bar's Send
-// or review mode's own Send my notes. Nothing is ticked: the page in the frame can post notes (and ask for this step)
-// too, so only the board's own ticks in Reviews choose what's sent. Closing the computer goes back to the preview, and so
-// does a send from that product. The notes it sent no longer count here: the others keep their Send.
-// A tool left open under the viewer (the deck's link was on a card, in the Library) gives way to it, unless something is
-// being typed or said there, which it would wipe: then that tool comes up as it is, to finish or close first (the bar has
-// no room on a phone for a reason in words).
-const slugOf = origin => /^https:\/\/([a-z0-9-]+)\.preview\./.exec(origin)?.[1] ?? null;
-function sendStep(me) {
-  if (viewing !== me || !me.pinnedOn) return;
+// The book open beside the page (and the viewer over it), at the sheet for an owner: review mode's Open the book, in the
+// viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows what's
+// on the sheet before anything goes.
+export function bookAt(owner) {
+  if (typeof owner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(owner)) return;
   sfx.blip();
-  root().classList.add('over-viewer');
-  if (open && typing()) return;
-  openComputer('notes', { notes: { slug: me.pinnedOn, ids: new Set(me.pinned), sent: (ids, count, owner) => {   // (ids)
-    if (viewing !== me) return;
-    ids.forEach(id => me.pinned.delete(id)); paintPin(); closeTool();
-    flashBar(`Sent ${count} ${count === 1 ? 'note' : 'notes'} to ${owner}`);
-  } } });
+  // (faced once the book has opened and its pages are laid out for the paper's new width: a slide to the sheet before
+  // that would be undone by the row laid out again)
+  document.addEventListener('book:layout', () => requestAnimationFrame(() => requestAnimationFrame(() =>
+    document.dispatchEvent(new CustomEvent('book:face', { detail: { owner } })))), { once: true });
+  openBook();
 }
 // Share for outside notes: the people
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
@@ -385,14 +373,6 @@ export function wireShare(el, s, o) {
       for (const p of [...s.people, ...recent]) if (sameName(p.name, name)) p.title = saved.title;
       o.redraw(s, '');
     }),
-    book: (name, on) => busy(async () => {
-      const saved = await setPersonSketchbook(world.dev, name, on);
-      for (const p of [...s.people, ...recent]) if (sameName(p.name, name)) p.sketchbook = saved.sketchbook;
-      const said = saved.sketchbook ? `${esc(name)} has a Sketchbook of their own now: it opens from their link’s page, and you see theirs in yours.`
-        : `${esc(name)}’s Sketchbook is closed. What they drew stays in yours.`;
-      o.redraw(s, said);
-      return said;
-    }),
   });
   const end = el.querySelector('[data-end]'), msg = () => el.querySelector('.invites .msg');
   if (end) end.onclick = async () => {
@@ -403,14 +383,8 @@ export function wireShare(el, s, o) {
     sfx.blip(); o.redraw(null, `Ended: ${went(done)}.`);
   };
 }
-// a few seconds of news in the bar's address line (HQ's toasts sit under the viewer)
-function flashBar(text) {
-  const b = $('#viewer .bar .where'), me = viewing; if (!b) return;
-  b.textContent = text; b.classList.add('flash');
-  setTimeout(() => { if (viewing === me && b.isConnected) { b.innerHTML = where(me.url); b.classList.remove('flash'); } }, 4000);
-}
-// Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, the notes waiting on the
-// product, or asking for the send step), a deck's button asking for a preview, a deck saying hello (it gets the look's
+// Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, or asking for the book
+// at a sheet: bookAt), a deck's button asking for a preview, a deck saying hello (it gets the look's
 // slides.css), or a page asking for a backdrop (backdropOf). Anything else, or from anywhere else, is ignored.
 function fromViewer(e) {
   const frame = $('#viewer iframe'), d = e.data, me = viewing;
@@ -421,12 +395,9 @@ function fromViewer(e) {
   if (tag === 'review') {
     if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq' }, e.origin); }   // (heard)
     else if (d.bye && me.review === e.origin) me.review = null;
-    // every note of the board's waiting on the product, as review mode lists them: a cue only (the page could send it
-    // too), the Notes tab has the real list
-    else if (Array.isArray(d.waiting) && me.review === e.origin) { me.pinned = new Set(d.waiting.filter(id => Number.isInteger(id) && id > 0).slice(0, 200)); me.pinnedOn = slugOf(e.origin); }
-    // review mode's Send my notes: the send step, which ticks nothing, whatever HQ has open under the viewer. Only
-    // review mode asks, so the asking page runs it, and its notes are the product's.
-    else if (d.send) { me.review = e.origin; me.pinnedOn = slugOf(e.origin); sendStep(me); }
+    // (from the viewer's page whatever its hello: a goodbye that came late, the page before's, mustn't lose the way to
+    // the book, which only opens HQ's own.)
+    else if (d.book) bookAt(d.book);
     paintPin();
   } else if (tag === 'backdrop') {
     frame.style.background = backdropOf(d) ?? '';
@@ -459,12 +430,13 @@ function backTo(path, origin) {
   const url = new URL(path, origin);
   return url.origin === origin ? url.href : null;
 }
-function closeTool() {
+export function closeTool() {   // (exported for calldrive.js and a second screen's page closed)
   if (!open) return;
   forgetAge();   // (a call goes on: it's a layer of its own, call.js)
   open = null; clearInterval(timer); timer = null; homeFit?.disconnect(); homeFit = null;   // (homeFit)
   if (voice) { voice.rec.cancel(); voice = null; }
   const el = root(); el.hidden = true; el.innerHTML = ''; sfx.close();
+  opened(null);
 }
 // Nothing re-renders an overlay while the board is typing in it (an answer on the phone, a directive on
 // the intercom, anything on the computer), or while the intercom records or transcribes: that would wipe the
@@ -558,6 +530,9 @@ function shown(r) {
   const all = store.list, upTo = seen?.desk;
   if (all.every(x => (seenCards.get(x.id) ?? '') >= cardTime(x) || (upTo != null && cardTime(x) <= upTo))) markSeen('desk', all.map(cardTime).sort().at(-1));
 }
+// Finished work its maker offers to walk the board through (hq ask --walk): the card's call is that walk-through, in
+// those words.
+const walkButton = r => `<div class="row btns walk"><button class="talk" id="call-about" title="${esc(who(r.agent))} walks you through it, on a call">${PHONE}<span>Walk me through it</span></button></div>`;
 function renderPhone() {
   if (openingCard != null) return;
   const el = $('#phone-screen'), reqs = store.list; if (!el) return;
@@ -603,7 +578,7 @@ function renderPhone() {
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
       <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
-      <div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode ? `<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="w">Call </span><span class="name">${esc(who(r.agent))}</span>`}</button>` : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
+      ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="w">Call </span><span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
     </article>`;
   el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { idx += +b.dataset.step; forgetAge(); sfx.blip(); renderPhone(); });
   el.querySelector('[data-list]').onclick = () => {
@@ -626,7 +601,7 @@ function renderPhone() {
   if (pics) wireTray(el, pics);
   fields.forEach(f => f.onblur = () => { if (stale && !typing()) renderPhone(); });
   if (canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call) $('#answer-mic').onclick = () => dictate($('#answer'), $('#answer-mic'), $('#answer-msg'));
-  $('#call-about')?.addEventListener('click', () => callAgent(r.agent, who(r.agent), r.id));
+  $('#call-about')?.addEventListener('click', () => callAgent(r.agent, who(r.agent), r.id, false, !!r.walk));
   // The Share button (r.share, at the end of the button row above) and its tap.
   // The tap sends the Share part as the server has it now (the latest poll), not as it was when the card was drawn: the
   // phone may have held off a re-render while the board types. One withdrawn since sends nothing, and the button goes.
@@ -903,14 +878,12 @@ const nameHtml = p => {
   const badge = !p.title ? '' : `<button type="button" class="badge" data-title="${esc(p.name)}" data-was="${esc(p.title)}" aria-label="${esc(p.name)}’s title: ${esc(p.title)}. Change it">${esc(p.title)}</button>`;
   return `<b class="named">${esc(p.name)}${plus}</b>${badge}`;
 };
-// A person's own Sketchbook, on or off: a sketch's pen they keep, sent to the CEO from their link's page (sketches.ts).
-const bookHtml = p => `<button type="button" class="book" data-book="${esc(p.name)}" aria-pressed="${!!p.sketchbook}" title="${p.sketchbook ? `${esc(p.name)} has a Sketchbook of their own: tap to close it` : `Give ${esc(p.name)} a Sketchbook of their own`}">✎ Their own Sketchbook<small>${p.sketchbook ? 'On' : 'Off'}</small></button>`;
 const againHtml = list => list.length ? `<p class="again">${list.map(r => `<button type="button" data-again="${esc(r.name)}">${esc(r.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}</button>`).join('')}</p>` : '';
 // open: Remove on each; o.invite: the Invite form (open, unless the share only reopens)
 function peopleHtml(list, open, o = {}) {
   const invite = o.invite ?? open;
-  // (bookHtml, where the company has the Sketchbook)
-  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${o.titled && p.address && sketchbookOn ? bookHtml(p) : ''}${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
+  // (no switch for their own Sketchbook: every invited person has one, and their notes join the board's book.)
+  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
       <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
   // (Recent atop the form)
   return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
@@ -930,11 +903,6 @@ function wirePeople(el, on) {
     try { say(await on.invite(b.dataset.again)); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
   });
   box.querySelectorAll('[data-title]').forEach(b => b.onclick = () => titleField(b, on.title, () => say('That didn’t go through. Try again.')));
-  // (a person's own Sketchbook)
-  box.querySelectorAll('[data-book]').forEach(b => b.onclick = async () => {
-    b.disabled = true;
-    try { say(await on.book(b.dataset.book, b.getAttribute('aria-pressed') !== 'true')); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
-  });
   box.querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
     if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Tap again to remove'; sfx.blip(); return; }
     b.disabled = true;
@@ -1334,8 +1302,11 @@ const inline = s => {
     ? (DOC_CODE.test(p) ? docLink(p) : `<button type="button" class="copy" data-copy="${esc(p)}" title="Copy">${esc(p)}</button>`)
     : linked(p, t => bare(t, q => docParts(q).map((u, k) => k % 2 ? docLink(u) : words(u)).join('')), esc).replace(BOLD, '<b>$1</b>').replace(/\n/g, '<br>')).join('');
 };
+// An older card can carry both a Choose: list and an Options: line: an option that repeats a choice shows once, as its
+// row
 function cardHtml(r, c, clips = '') {
   const done = new Set(saved.get(`steps.${r.id}`, []));
+  const options = c.options.filter(o => !c.choices.some(ch => ch.label === o));
   return `${textHtml(c.summary[0])}${clips}
     ${shownRecommend(c) ? `<p class="rec"><b>Recommended</b> ${inline(c.recommend)}</p>` : ''}
     ${c.choices.length ? `<div class="choices" role="radiogroup" aria-label="Your choice">${c.choices.map((ch, i) => `<label class="choice${chosen.get(choiceKey(r)) === i ? ' on' : ''}"><input type="radio" name="choice-${r.id}" value="${i}"${chosen.get(choiceKey(r)) === i ? ' checked' : ''}><span class="cl"><b>${esc(ch.label)}</b>${ch.rec ? '<em>Recommended</em>' : ''}</span>${ch.desc ? `<span class="cd">${inline(ch.desc)}</span>` : ''}</label>`).join('')}</div>` : ''}
@@ -1343,7 +1314,7 @@ function cardHtml(r, c, clips = '') {
     ${c.steps.length ? `<ol class="steps">${c.steps.map((s, i) => `<li${done.has(i) ? ' class="done"' : ''}><label class="tick"><input type="checkbox" data-tick="${i}"${done.has(i) ? ' checked' : ''}><span class="sr">Done</span></label><div class="step prose">${prose(s, inline)}</div></li>`).join('')}</ol>` : ''}
     ${textHtml(c.afterSteps)}
     ${c.claude ? '<button type="button" class="claude-task" data-claude>Copy task for Claude</button>' : ''}
-    ${c.options.length ? `<div class="opts">${c.options.map(o => `<button type="button" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+    ${options.length ? `<div class="opts">${options.map(o => `<button type="button" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
     ${c.details || c.later ? `<details class="more"><summary>More</summary>${textHtml(c.details)}${laterHtml(c)}</details>` : ''}`;
 }
 // How to stop or undo it later (card.js laterOf), under More: never part of what the board does now
@@ -2023,7 +1994,7 @@ export function openIntercom() {
   });
   device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
-  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), 0, [], true));
+  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), 0, true));
   const poll = () => loadChat(world.dev).then(paintChat, () => {});
   poll(); timer = setInterval(poll, 3000);
   if (!canRecord) return;
@@ -2216,7 +2187,7 @@ const apps = () => [...APPS, ...own.map(k => [k.id, esc(k.mod.app.name), esc(k.m
 // team and the machine (Settings last). The home screen reads them in HOME_GROUPS' order (homeGroups).
 // (the projects view is the HUD's own key, not an app)
 const APPS = [
-  ['notes', 'Reviews', 'Your notes on previews', icon('app-notes'), 'work'],
+  ['notes', 'Reviews', 'The sheets you sent, and what you shared', icon('app-notes'), 'work'],
   ['artifacts', 'Artifacts', 'Everything you’ve been shown', icon('app-artifacts'), 'work'],
   ['calls', 'Calls', 'Notes from your calls', icon('app-calls'), 'talk'],
   ['mail', 'Mail', 'The company inbox', icon('app-mail'), 'talk'],
@@ -2236,8 +2207,7 @@ export function openJob(id) {
   if (scene?.carded?.()) scene.focus({ kind: 'home' });   // (a look’s key out big)
   openProjects({ job: id });
 }
-// (opts.mail opens Mail at that message; opts.call Calls at that call; opts.notes opens Reviews at a product's notes, see
-// openReviews; opts.section opens Settings at a section, opts.page at a page in it, a seat's or a machine's; opts.force
+// (opts.mail opens Mail at that message; opts.call Calls at that call; opts.section opens Settings at a section, opts.page at a page in it, a seat's or a machine's; opts.force
 // moves on from a field with text in it, which the app saved first)
 export function openComputer(which = 'home', opts = {}) {
   if (open === 'computer' && typing() && !opts.force) return;
@@ -2247,7 +2217,7 @@ export function openComputer(which = 'home', opts = {}) {
   mailWanted = tab === 'mail' ? opts.mail ?? null : null;
   if (mailWanted != null) mailGroup = 'all';   // (the message is in All, whichever group it's in)
   callWanted = tab === 'calls' ? opts.call ?? null : null;
-  if (tab === 'notes') openReviews(opts.notes);
+  if (tab === 'notes') openReviews();
   section = tab === 'settings' ? opts.section ?? null : null;
   pageWanted = opts.page ?? null;
   show('computer', `<header>${app ? '<button class="home" data-home aria-label="Home" title="Home">◂</button>' : ''}<b>${esc(names.os)}${app ? `<span> › ${app[1]}</span>` : ''}</b><button class="x" data-close aria-label="Close">×</button></header>
@@ -2312,7 +2282,7 @@ function home(el) {
   for (const k of own) if (k.mod.count) Promise.resolve().then(() => k.mod.count(world.dev))
     .then(c => iconCount(el, k.id, Number(c) || 0, k.mod.app.name), () => { /* no count: the icon shows none */ });
   homeShown = el;   // Mail's icon follows each refresh of its count
-  refreshWaitingNotes().then(n => iconCount(el, 'notes', n, 'Reviews'));
+  refreshComputerCount();
 }
 // An icon's count, drawn again when it changes: none at 0 (redrawn, not added)
 function iconCount(el, id, n, name) {
@@ -2434,7 +2404,8 @@ async function lookSettings(el, box) {
 // Calls with the team: what came of each (the reply its follow-up set for the board), what we heard on it
 // (the call ledger: one plain line per item, and where it stands), and a box for what the team missed. Never the
 // transcript, nor the words an item quotes: the board is never shown its own calls' words (the coordinator doesn't send them).
-const HEARD = { handled: ['handled', '✓', 'handled'], open: ['open', '○', 'open'], dropped: ['dropped', '✗', 'dropped'], replaced: ['changed', '↻', 'changed'] };
+// (ready: its work is done and waits for the board's yes, which the CEO records)
+const HEARD = { handled: ['handled', '✓', 'handled'], ready: ['open', '◔', 'ready for your yes'], open: ['open', '○', 'open'], dropped: ['dropped', '✗', 'dropped'], replaced: ['changed', '↻', 'changed'] };
 const MISSED_MAX = 200; // one plain line (ledger.ts WHAT): longer is refused, never cut
 const handledOf = c => `${Number(c.handled)} of ${Number(c.total)} handled`;
 // Where the follow-up stands: its reply once it's through, as the agent wrote it (prose.js), else in our words, never
@@ -2455,7 +2426,7 @@ function followUpWords(c) {
 export function heardLine(i) {
   const [cls, mark, word] = HEARD[i.status] ?? ['open', '○', i.status];
   const by = i.status === 'handled' ? (i.job ? `${esc(who(i.agent ?? i.owner))} · job ${jobNameLink(i.job, i.job_code)}` : esc(i.request ? `your answer · request #${Number(i.request)}` : who(i.owner)))
-    : i.status === 'open' ? `${esc(who(i.owner))}${i.job ? ` · job ${jobNameLink(i.job, i.job_code)}` : ''}` : withJobLinks(i.why ?? '');
+    : ['open', 'ready'].includes(i.status) ? `${esc(who(i.owner))}${i.job ? ` · job ${jobNameLink(i.job, i.job_code)}` : ''}` : withJobLinks(i.why ?? '');
   const line = i.status === 'replaced' && by ? by : `${esc(word)}${by ? ` · ${by}` : ''}`; // a correction's why says "changed on a later call" itself
   return `<li class="heard-${esc(cls)}"><span class="mark" title="${esc(word)}">${mark}</span><span>${withJobLinks(i.what)}${i.board ? ' <em>(you added this)</em>' : ''}<span class="by">${line}</span></span></li>`;
 }
@@ -2620,25 +2591,18 @@ async function inbox(el) {
   if (want) { want.open = true; requestAnimationFrame(() => want.scrollIntoView({ block: 'start' })); }
   else el.insertAdjacentHTML('afterbegin', '<p class="why">That message isn’t among the latest mail shown here.</p>');
 }
-// The notes waiting on the board, every product's: the Reviews icon, and with the company apps' own counts (Care's, say)
-// the computer's HUD badge, refreshed with the requests (main.js) and by this tab. Null when the coordinator can't say.
-// (the badge sums every app's count, not the notes alone)
-// (Mail's new mail too, which keeps its last count when the coordinator can't say)
-let notesWaiting = 0, appsWaiting = 0, mailWaiting = 0, homeShown = null;   // homeShown: the screen home() last drew on
-const waitingTotal = () => notesWaiting + appsWaiting + mailWaiting;
-export async function refreshWaitingNotes() {
-  const [products, counts, mail] = await Promise.all([loadReviewProducts(world.dev).catch(() => null),
-    ownLoaded.then(() => Promise.all(own.filter(k => k.mod.count).map(k => Promise.resolve().then(() => k.mod.count(world.dev)).then(Number, () => 0)))),
+// What waits on the board in the computer's apps: the company apps' own counts (Care's, say) and Mail's new mail (which
+// keeps its last count when the coordinator can't say), summed on the computer's HUD badge, refreshed with the requests
+// (main.js) and by the home screen. (Review notes don't count: they go in the book.)
+let appsWaiting = 0, mailWaiting = 0, homeShown = null;   // homeShown: the screen home() last drew on
+const waitingTotal = () => appsWaiting + mailWaiting;
+export async function refreshComputerCount() {
+  const [counts, mail] = await Promise.all([ownLoaded.then(() => Promise.all(own.filter(k => k.mod.count).map(k => Promise.resolve().then(() => k.mod.count(world.dev)).then(Number, () => 0)))),
     loadMail(world.dev).catch(() => null)]);
   appsWaiting = counts.reduce((sum, c) => sum + (c || 0), 0);
   if (mail) mailWaiting = newMail(mail);   // counted now: Mail may have been opened while it loaded
   if (homeShown) iconCount(homeShown, 'mail', mailWaiting, 'Mail');   // (no Mail icon on screen: nothing drawn)
-  return products ? paintWaiting(products) : (paintComputerCount(waitingTotal()), null);
-}
-export function paintWaiting(products) {
-  notesWaiting = products.reduce((sum, p) => sum + (Number(p.pending) || 0), 0);
   paintComputerCount(waitingTotal());
-  return notesWaiting;
 }
 // The directory: every department with its people (their engine's mark, role, what they're doing now) and its mascots,
 // the board with its own, and the alumni. Tapping someone flies the camera to them and opens their panel.

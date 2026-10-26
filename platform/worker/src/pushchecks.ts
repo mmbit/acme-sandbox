@@ -9,8 +9,10 @@ import { whole } from './outcome.ts';
 import { redact } from './safety.ts';
 
 // passed: exit 0; failed: exit 1, a finding; null: it couldn't run (any other end: no tools, a crash). unreached: it
-// ended because HQ couldn't be reached (exit UNREACHED_EXIT), so it runs again (runCheck).
-export type CheckOutcome = { passed: boolean | null; report: string; unreached?: boolean };
+// ended because HQ couldn't be reached (exit UNREACHED_EXIT), so it runs again (runCheck). platform: it couldn't complete
+// only because the worker couldn't measure its disk use, the platform's fault and not the change's (review.ts
+// heldForChecks).
+export type CheckOutcome = { passed: boolean | null; report: string; unreached?: boolean; platform?: boolean };
 // A check's exit when it lost HQ (shared/gates/lent.ts UNREACHED_EXIT): a deploy restarted HQ for longer than its own
 // tries ride out. Nothing of the change failed, so it isn't the author's: the check waits until HQ answers again
 // (CheckOptions.reachable) and runs again on the same commit, up to UNREACHED_TRIES times in a row before it counts as
@@ -35,7 +37,7 @@ export type CheckOptions<Name extends string = string> = {
   runs: string;
   signal?: AbortSignal;
   keep: (checks: Checks) => void;
-  watch: (pid: number, stopped: string[]) => void;
+  watch: (pid: number, check: CheckRun) => void;
   unwatch: (pid: number) => void;
   said: (name: Name, words: string) => void;
   wait?: (ms: number) => Promise<unknown>;
@@ -134,7 +136,7 @@ async function watchLaunch<Name extends string>(
     o.said(name, 'could not start');
     return { passed: null, report: 'It could not start.' };
   }
-  o.watch(l.pid, check.stopped);
+  o.watch(l.pid, check);
   const limit =
     check.ms === undefined
       ? undefined
@@ -179,8 +181,9 @@ function outcomeOf<Name extends string>(
   if (!stopped.length && how.exit === 0) passed = true;
   else if (!stopped.length && how.exit === 1) passed = false;
   const unreached = !stopped.length && how.exit === UNREACHED_EXIT;
+  const platform = stopped.length > 0 && check.platformStops === stopped.length;
   o.said(name, `${endWords(stopped, unreached, passed)} in ${Math.round((Date.now() - check.began!) / 1000)} s`);
-  return { passed, report, unreached };
+  return { passed, report, unreached, ...(platform && { platform }) };
 }
 
 // How a check ended, for the worker's log
