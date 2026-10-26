@@ -96,6 +96,18 @@ export function fit(shapes, { W, H, pad = 0.08, focus = [0, 0], zoom = 1 }) {
   return { k, ox: W / 2 - ((x0 + x1) / 2) * k + focus[0] * W, oy: H / 2 - ((y0 + y1) / 2) * k + focus[1] * H };
 }
 
+// Whether a point on the view lies inside a flat shape: a polygon, or an ellipse's outline (a cylinder's side by its
+// foot's)
+export function inside([x, y], shape) {
+  if (!shape.pts) return ((x - shape.cx) / shape.rx) ** 2 + ((y - shape.cy) / shape.ry) ** 2 < 1;
+  let odd = false;
+  shape.pts.forEach(([x0, y0], i) => {
+    const [x1, y1] = shape.pts.at(i - 1);
+    if (y0 > y !== y1 > y && x < ((x1 - x0) * (y - y0)) / (y1 - y0) + x0) odd = !odd;
+  });
+  return odd;
+}
+
 // A shape's outline as SVG path data, placed by { k, ox, oy } (the view's own units without one), to two decimals.
 export function pathOf(shape, { k = 1, ox = 0, oy = 0 } = {}) {
   const n = v => +v.toFixed(2);

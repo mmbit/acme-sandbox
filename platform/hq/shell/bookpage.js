@@ -15,7 +15,11 @@ export function pageView(page, title) {
   const el = document.createElement('div');
   el.className = 'bk-page';
   el.dataset.kind = page.kind;
-  el.innerHTML = `${title ? `<div class="bk-title">${esc(title)}</div>` : ''}${
+  // (a page with a head is a region by its title, "For Kit", to whoever reads the book aloud.)
+  if (title) Object.assign(el, { role: 'region', ariaLabel: title });
+  // (a sheet's and a free page's head has a place for its plane beside the title: booksheet.js, booksendpage.js.
+  const plane = page.kind === 'sheet' || page.kind === 'free' ? '<span class="bk-send" data-slot="plane"></span>' : '';
+  el.innerHTML = `${title || plane ? `<div class="bk-title"${title ? '' : ' data-bare'}>${esc(title)}${plane}</div>` : ''}${
     page.kind === 'sheet' ? '<div class="bk-notes" data-slot="notes"></div>' : ''
   }<p class="bk-refusal" role="status" hidden></p>`;
   const refusal = el.querySelector('.bk-refusal'),

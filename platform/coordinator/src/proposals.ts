@@ -12,7 +12,7 @@ import * as jobs from './jobs.ts';
 import * as messages from './messages.ts';
 import { ceo, reviewSettings } from './company.ts';
 import { findProject, findThread, ownerOf, threadForJob, type JobThreadAsk } from './projects.ts';
-import { openPlanning, planningJob } from './planning.ts';
+import { openPlanning, planningJob, planningProject } from './planning.ts';
 import * as sorting from './sorting.ts';
 import { newThread } from './plan.ts';
 import { refusal } from './threadorder.ts';
@@ -161,8 +161,8 @@ export function untold<T>(change: () => T): T | [number, string] {
 }
 
 // hq project owner (plan.ts setOwner): the project's open proposals go to its new owner, told as a new one is (by: the
-// CEO's job, which sends any line), and the old owner's planning job that hasn't started stands down when nothing is
-// left for it. Throws OwnerNotificationError, for the owner change to be undone with it.
+// CEO's job, which sends any line), and the old owner's planning job for the project that hasn't started stands down
+// when nothing is left for it. Throws OwnerNotificationError, for the owner change to be undone with it.
 export function ownerChanged(project: string, by: { agent: string; job: number }) {
   const moved = db
     .prepare(
@@ -182,6 +182,9 @@ export function ownerChanged(project: string, by: { agent: string; job: number }
 // go on as soon as it stops running (ended, yielded back to the queue, parked on a card), their notice withdrawn.
 // Review changes a later round or the merge has left behind close first: nobody has anything left to decide on them
 export function sweep() {
+  inOneStep(() => {
+    for (const item of reviewinbox.reopenUndrawn()) tell(ownerOf(item), item);
+  });
   const stale = db
     .prepare(
       `select q.id, r.round, p.round now, p.status from review_inbox r join proposals q on q.id = r.proposal
@@ -214,8 +217,9 @@ export function sweep() {
 }
 
 // hq inbox: the open proposals waiting for the agent (each project it owns, and for the CEO those no owner has), then
-// its own latest with what became of them. all: the CEO's every open proposal, whoever's it is.
-export function list(agent: string, all = false) {
+// its own latest with what became of them. all: the CEO's every open proposal, whoever's it is. A planning job (`job`)
+// reads its project's alone, and what it holds from before planning jobs had one.
+export function list(agent: string, all = false, job?: number) {
   const open = (db.prepare("select * from proposals where status = 'open' order by id").all() as Proposal[]).map(p => ({
     ...p,
     owner: ownerOf(p),
@@ -226,7 +230,10 @@ export function list(agent: string, all = false) {
       return { ...fields, id: reviewinbox.externalId(id) };
     });
   if (all && agent === ceo()) return display(open);
-  const mine = open.filter(p => p.owner === agent);
+  const sorts = job === undefined ? undefined : planningProject(job);
+  const mine = open.filter(
+    p => p.owner === agent && (sorts === undefined || p.project === sorts || p.heard_by === job),
+  );
   const own = (db.prepare('select * from proposals where agent = ? order by id desc limit 20').all(agent) as Proposal[])
     .filter(p => !mine.some(m => m.id === p.id))
     .map(p => ({ ...p, owner: ownerOf(p) }));
@@ -287,7 +294,7 @@ function acceptedIn(
   o: { by: string; inherited: number | undefined; code: unknown },
 ): { thread: string } | { from?: number } | string {
   if (ask.newThread == null || ask.thread != null) {
-    const found = threadForJob({ ...ask, title: p.title }, { agent: o.by, job: o.inherited, onCall: false });
+    const found = threadForJob({ ...ask, title: p.title }, { agent: o.by, job: o.inherited });
     return 'refusal' in found ? found.refusal : found;
   }
   const project = String(ask.newThread.project ?? '');
@@ -355,11 +362,12 @@ function openProposal(id: number): Proposal | string {
 const notTheirs = (p: Proposal, by: string) =>
   [ownerOf(p), ceo()].includes(by) ? undefined : `proposal #${p.id} is ${ownerOf(p)}'s to decide (or the CEO's)`;
 
-// The owner hears of a proposal: through its planning job (the one open, queued, running or blocked, which reads the
-// inbox at its start and again before it ends), else in its running Claude session at its next step, else through a
+// The owner hears of a proposal: through its planning job for the proposal's project (the one open, queued, running or
+// blocked, which reads the project's inbox at its start and again before it ends), else in its running Claude session at its next step, else through a
 // new planning job. A proposal holding a thread's window (inbox.ts) reaches the running session first and stays with
-// it while it runs (then the sweep). Only non-urgent CEO proposals wait for the summary (summary.ts).
-// A refused line throws OwnerNotificationError.
+// it while it runs (then the sweep). A running planning job for another project is no such session: the proposal goes
+// to its own project's planning job, the open one or a new one. Only non-urgent CEO proposals wait for the summary
+// (summary.ts). A refused line throws OwnerNotificationError.
 export function tell(
   owner: string,
   p: { id: number; agent: string; title: string; project: string | null },
@@ -371,8 +379,10 @@ export function tell(
       .run(job, job === null ? null : new Date().toISOString(), p.id);
   const urgent = windowed(p.id);
   if (owner === ceo() && !urgent) return heardBy(null);
-  const planning = openPlanning(owner);
-  const running = (by || urgent) && messages.runningSession(owner);
+  const planning = openPlanning(owner, p.project);
+  const session = (by || urgent) && messages.runningSession(owner);
+  const sorts = session ? planningProject(session.id) : undefined;
+  const running = sorts === undefined || sorts === p.project ? session : undefined;
   if (planning && !(urgent && running)) return heardBy(planning.id);
   if (running) {
     const label = reviewinbox.externalId(p.id);
@@ -383,5 +393,5 @@ export function tell(
     } else messages.notice(owner, line, running.id, p.id);
     return heardBy(urgent ? running.id : null);
   }
-  heardBy(planningJob(owner));
+  heardBy(planningJob(owner, p.project));
 }

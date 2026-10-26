@@ -1,8 +1,9 @@
 // What a change to the queue did (the coordinator's moves.ts), as hq job, hq cancel, hq estimate set and hq when say
 // it: each agreed deadline's facts first (the coordinator's deadlines.ts), then the other threads it moved, in one
 // line, as the agent's to plan with: "Other threads it moves, for your planning only: The shop's checkout by +1 h 40
-// min, to Sat 17 Oct, 23:10 UTC", or "It moves no other thread." The board hears of a deadline when its finish passes
-// it or it asks; a tight or shrinking margin is the agent's to plan with (its briefing).
+// min, to Sat 17 Oct, 23:10 UTC", or "It moves no other thread." A deadline its finish passes is the agent's to move
+// back first, on a call with what to check (lateLines); a tight or shrinking margin is the agent's to plan with (its
+// briefing).
 import { at, duration } from './estimate.ts';
 import { plural } from './output.ts';
 
@@ -35,18 +36,47 @@ export function changeLines(
 }
 // (said once after the facts: the call's and the intercom's briefings say how to judge them)
 const JUDGED =
-  'The board hears of an agreed deadline when its finish passes it or the board asks; a tight or shrinking margin is ' +
-  "yours to plan with, and other threads' shifts are not news for the board unless it asks.";
+  'An agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it ' +
+  "asks. A tight or shrinking margin is yours to plan with, and other threads' shifts are not news for the board " +
+  'unless it asks.';
 function movesWords(moves: Move[]) {
   const named = moves.slice(0, MOVES_SHOWN).map(moveWords).join(', ');
   return named + (moves.length > MOVES_SHOWN ? ` and ${plural(moves.length - MOVES_SHOWN, 'more thread')}` : '');
 }
 
 // Each agreed deadline: who gave it, the finish against it, what `it` did to that, and the slack hours ago; then who
-// judges them.
-export function deadlineLines(deadlines: Deadline[], it: string) {
-  if (!deadlines.length) return ['No thread has an agreed deadline.'];
-  return ['Agreed deadlines (thread windows):', ...deadlines.map(d => deadlineLine(d, it)), JUDGED];
+// judges them, and on a call what to do about those it misses, with what else is `late` (hq when's --by).
+export function deadlineLines(deadlines: Deadline[], it: string, late: string[] = []) {
+  const flag = lateLines([
+    ...late,
+    ...missWords(deadlines.filter(d => d.finish === null || d.finish > d.deadline).map(threadWords)),
+  ]);
+  if (!deadlines.length) return ['No thread has an agreed deadline.', ...flag];
+  return ['Agreed deadlines (thread windows):', ...deadlines.map(d => deadlineLine(d, it)), JUDGED, ...flag];
+}
+// ["The shop's checkout misses its deadline"], or none.
+export const missWords = (threads: string[]) =>
+  threads.length
+    ? [`${threads.join(', ')} ${threads.length > 1 ? 'miss their deadlines' : 'misses its deadline'}`]
+    : [];
+
+// On a call (the voice line sets HQ_CALL), a finish past the board's time or a window's deadline comes with what to do
+// about it, at the moment it matters. An instruction for the agent's judgment, never a refusal: the board may name two
+// times or a soft preference.
+export function lateLines(late: string[]) {
+  if (!process.env.HQ_CALL || !late.length) return [];
+  return [
+    '',
+    `RED FLAG, not news for the board: ${late.join('; ')}. Before you say a time, judge whether this one makes sense, and check the likely causes:`,
+    '- the size: compare clean past jobs (estimate); work sized wrong plays wrong;',
+    '- the plan: what it waits on, and whether that should hold it at all (a fault in the scheduler is worth naming);',
+    '- other work ahead of it, slowing it, that could be paused or wait;',
+    "- the window: none set, or one later than the board's time (manage's window), then play it again.",
+    'If one moves it forward, do that now, on the call, and check again. If none does, tell the board plainly what you ' +
+      "looked at and that the time can't be made, and ask whether that's acceptable or whether to look further after the call. " +
+      "If the board has already heard of this miss (this call, an earlier one or the intercom) and it hasn't moved, it isn't " +
+      "news: don't raise it again.",
+  ];
 }
 function deadlineLine(d: Deadline, it: string) {
   const aim = d.aim !== null && d.aim !== d.deadline ? `, aim ${at(d.aim)}` : '';

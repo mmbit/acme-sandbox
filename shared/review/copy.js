@@ -87,6 +87,9 @@ export function copy(r, node, waits, v) {
   if (pinned) {
     const at = lift ? v.top : v.cb;
     s += `position:absolute;left:${x - at.x}px;top:${y - at.y}px;right:auto;bottom:auto;margin:0;transform:none;`;
+    // (fixed and sticky boxes always stack what's in them on their own, an absolute one only with a z-index: so a
+    // child's z-index stays inside it, as on screen, and doesn't climb over a later box.)
+    if (cs.zIndex === 'auto') s += 'isolation:isolate;';
     if (lift) v.top.kids.push(out);
   }
   // holds: a fixed box inside is positioned and painted in it; paints: its own stacking or compositing

@@ -2,16 +2,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as world from '../../world/world.js';
-import { buildLayout, MAX_WING, roomAt, standBeside } from './layout.js';
+import { buildLayout, MAX_WING, roomAt, standBeside, wallHidden, clearOf } from './layout.js';
 import { inWell } from './iso.js';
 
-// departments: [id, headcount, room kind]
+// departments: [id, headcount, room kind, room size]
 const org = (...departments) => ({
   board: { members: [{ id: 'board', name: 'The Board', human: true }] },
   commons: [{ id: 'lobby', room: { kind: 'lobby' } }],
-  departments: departments.map(([id, n, kind = 'office']) => ({
+  departments: departments.map(([id, n, kind = 'office', size]) => ({
     id,
-    room: { kind },
+    room: { kind, size },
     agents: Array.from({ length: n }, (_, k) => ({ id: `${id}-${k}`, name: `${id} ${k}`, engine: 'claude' })),
   })),
 });
@@ -159,4 +159,34 @@ test("the basement fills the street side's wing on under the street first; under
   const big = layout(org(['studio', 9, 'lab'], ['ops', 2, 'dock'], ['process', 12, 'server'], ['finance', 9, 'vault'])),
     side = big.rooms.filter(r => r.level < 0 && r.wing === (big.street === 'x' ? 'y' : 'x'));
   assert.ok(side.length && side.every(r => !r.auto), side.map(r => r.id).join());
+});
+
+test("an empty room's notice always hangs, clear of the fire escape at its wing's end", () => {
+  // small and medium empty departments (3 and 4 tiles) fill the floors up to the park end's fire escape
+  const ends = [];
+  for (const size of ['s', 'm'])
+    for (let n = 1; n <= 14; n++) {
+      const L = layout(
+        org(['lab', 3, 'lab', 'l'], ...Array.from({ length: n }, (_, k) => [`d${k}`, 0, 'office', size])),
+      );
+      for (const r of L.rooms.filter(r => r.dept && !r.agents.length && r.level > 0)) {
+        const X = r.wing !== 'y',
+          len = X ? r.x1 - r.x0 : r.y1 - r.y0,
+          atEscape = (L.street !== 'x') === X && (X ? r.x1 === L.X1 : r.y1 === L.Y1);
+        // backWall's notice: 22 px, from 2 px into the wall to 4 short of its end, in the first pass with a spot
+        const spots = wallHidden(r, L).map(h => clearOf(h, { X, len }, 8, 22, 2, len * 16 - 4));
+        assert.ok(
+          spots.some(u => u !== null),
+          `${r.id} has a spot for its notice`,
+        );
+        if (!atEscape || r.level === L.nUp) continue;
+        ends.push(`${len}@${r.level}${r.level === L.nUp - 1 ? ' top' : ''}`);
+        // past the escape's iron: three tiles end the wing only where its flight comes down away from the wall's end (odd
+        // floors), so the notice has room before it
+        assert.ok(spots[0] !== null, `${r.id}, ${len} tiles on floor ${r.level}: ${spots}`);
+      }
+    }
+  for (const end of ['3@1', '4@1', '4@2', '4@2 top'])
+    assert.ok(ends.includes(end), `a ${end} wall at the escape among ${ends}`);
+  assert.ok(!ends.some(end => /^3@[2468]/.test(end)), `no three tiles at the escape on an even floor among ${ends}`);
 });

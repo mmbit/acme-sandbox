@@ -5,8 +5,9 @@
 // The pages are the store's (bookdata.js), their ink drawn with review mode's ink.js, as small as they show.
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
-import { picture, esc, DAYS, MONTHS } from '../util.js';
+import { picture, esc } from '../util.js';
 import { loadDay, loadPage } from './bookdata.js';
+import { dayName } from './bookhead.js';
 
 // the views, nearest first: the page itself (bookpages.js), the day, the week
 const LEVELS = ['page', 'day', 'week'];
@@ -147,7 +148,7 @@ async function show(z, by = 0) {
     const row = document.createElement('div');
     row.className = 'bk-far-day';
     row.setAttribute('role', 'listitem');
-    row.innerHTML = `<b>${esc(dayName(book, days[i]))}</b><div class="bk-far-row"></div>`;
+    row.innerHTML = `<b>${esc(dayName(days[i], book.today))}</b><div class="bk-far-row"></div>`;
     far.append(row);
     const strip = row.lastChild,
       tallest = Math.max(1, ...pages.map(shownHeight)),
@@ -228,11 +229,11 @@ const shownHeight = page => Math.min(page.h, page.w * TALLEST);
 async function pagesOf(book, day) {
   if (day === book.day) return book.views.map(v => v.page).filter(p => p.id);
   if (!book.days.includes(day)) return [];
-  return (await loadDay(book.dev, day)).pages;
+  return (await loadDay(book.dev, day, book.who)).pages; // (an invited person's too)
 }
 // A page with its ink: as the book holds it, or read from the store
 async function inked(z, page) {
-  return page.ink ? page : loadPage(z.book.dev, page.id);
+  return page.ink ? page : loadPage(z.book.dev, page.id, z.book.who);
 }
 // The week up to the book's day: it and the six before it, the latest first
 function weekOf(book) {
@@ -240,9 +241,4 @@ function weekOf(book) {
   return Array.from({ length: 7 }, (_, i) =>
     new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() - i)).toISOString().slice(0, 10),
   );
-}
-function dayName(book, day) {
-  if (day === book.today) return 'Today';
-  const d = new Date(`${day}T12:00:00Z`);
-  return `${DAYS[d.getUTCDay()]} ${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]}`;
 }

@@ -164,8 +164,8 @@ async def main(tmp):
 
 
 async def run(fake, data, log, phone_port, token):
-    # (care, the one deployment)  #.
-    deployment = server.CARE_ENGINES['care'] = {'url': f'http://127.0.0.1:{phone_port}', 'token': token, 'calls': 2}
+    # (care, the one deployment, given to the brain)
+    deployment = {'url': f'http://127.0.0.1:{phone_port}', 'token': token, 'calls': 2}
     for _ in range(100):  # care up: its phone port answers (401 without the token)
         try:
             urlopen(Request(f"{deployment['url']}/phone/start", method='POST', data=b'{}'), timeout=1)

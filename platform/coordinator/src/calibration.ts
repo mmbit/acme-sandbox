@@ -101,7 +101,7 @@ function givenSizes(sized: Sized[], measured: Sized[]) {
   return { given_sizes: spread(given.map(pairOf)), given_sizes_corrected: spread(corrected) };
 }
 
-// The folder (its first two levels: platform/coordinator, products/carrel) the job's pull request changed most files
+// The folder (its first two levels: platform/coordinator, products/acme) the job's pull request changed most files
 // in, the first by name of equals; work with no pull request is its own area.
 export function areaOf(j: Pick<PastJob, 'pr' | 'files'>) {
   if (j.pr === null) return '(no pull request)';

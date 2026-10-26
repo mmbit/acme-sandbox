@@ -31,16 +31,31 @@ export function expand<T extends OrderingSnapshot>(
   pace: 'usual' | 'slow' = 'usual',
   keepLoops = false,
 ) {
+  const expansion = expandRows(snapshot, keepLoops);
+  return { ...expansion, sizes: sized(expansion, sizes, pace) };
+}
+
+// The review stages as rows of their own, the same at every size and pace: a play expands its queue once for its order
+// and both paces (simulation.ts playOrder), each taking the stages' sizes at its pace (sized).
+export type Expansion<T extends OrderingSnapshot = OrderingSnapshot> = {
+  snapshot: T;
+  terminals: Map<number, number>;
+  stages: Map<number, number[]>;
+  sources: Map<number, { owner: number; stage: string }>;
+  // each added row's pooled time at both paces, in the order they were added
+  pooled: { id: number; usualMs: number; slowMs: number }[];
+};
+export function expandRows<T extends OrderingSnapshot>(snapshot: T, keepLoops = false): Expansion<T> {
   const rows = snapshot.jobs.map(row => ({
     ...row,
     reasons: [...row.reasons],
     dependencies: [...(row.dependencies ?? [])],
   }));
   const byId = new Map(rows.map(row => [row.id, row]));
-  const expandedSizes = new Map(sizes),
-    terminals = new Map<number, number>(),
+  const terminals = new Map<number, number>(),
     stages = new Map<number, number[]>(),
-    sources = new Map<number, { owner: number; stage: string }>();
+    sources = new Map<number, { owner: number; stage: string }>(),
+    pooled: Expansion['pooled'] = [];
   let nextId = Math.min(0, ...rows.map(row => row.id)) - 1;
   let orderId = Math.max(0, ...rows.map(row => row.orderId ?? row.id));
   for (const owner of snapshot.jobs) {
@@ -57,8 +72,7 @@ export function expand<T extends OrderingSnapshot>(
         sources.set(id, { owner: owner.id, stage: stage.key });
         rows.push(row);
         byId.set(id, row);
-        const pooledMs = pace === 'slow' ? stage.slowMs : stage.usualMs;
-        expandedSizes.set(id, { agent_ms: pooledMs });
+        pooled.push({ id, usualMs: stage.usualMs, slowMs: stage.slowMs });
       }
       row.dependencies.push(...dependencies.filter(job => job !== id).map(job => ({ job, until: 'done' as const })));
     }
@@ -67,12 +81,20 @@ export function expand<T extends OrderingSnapshot>(
       endpoint = nextId--;
       sources.set(endpoint, { owner: owner.id, stage: 'resolution' });
       rows.push(pendingResolution(owner, endpoint));
-      expandedSizes.set(endpoint, { agent_ms: 0 });
+      pooled.push({ id: endpoint, usualMs: 0, slowMs: 0 });
     }
     if (endpoint !== null) mapTerminal(owner, endpoint, snapshot.jobs, terminals);
   }
   if (!keepLoops) unloop(rows, terminals);
-  return { snapshot: { ...snapshot, jobs: rows }, sizes: expandedSizes, terminals, stages, sources };
+  return { snapshot: { ...snapshot, jobs: rows }, terminals, stages, sources, pooled };
+}
+
+// The sizes of an expansion's rows at a pace: the jobs' own, and each added stage's pooled time.
+export function sized(expansion: Expansion, sizes: ReadonlyMap<number, Size>, pace: 'usual' | 'slow') {
+  const expanded = new Map(sizes);
+  for (const { id, usualMs, slowMs } of expansion.pooled)
+    expanded.set(id, { agent_ms: pace === 'slow' ? slowMs : usualMs });
+  return expanded;
 }
 
 function mapTerminal(owner: QueuedJob, terminal: number, jobs: QueuedJob[], terminals: Map<number, number>) {

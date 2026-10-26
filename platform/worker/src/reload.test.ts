@@ -26,6 +26,8 @@ const timeout = Number(
 for (const [measure, mode] of [
   ['memory', 'reply'],
   ['processes', 'reply'],
+  ['disk', 'reply'],
+  ['disk', 'deadline-request'],
   ['cores', 'reply'],
   ['cores', 'deadline-delay'],
   ['memory', 'deadline-request'],

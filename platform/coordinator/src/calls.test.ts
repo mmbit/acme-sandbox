@@ -359,6 +359,15 @@ test("the notes of a call about a customer card, and the CEO's replies after hea
   assert.match(other.prompt, /Juno: \(a reply that holds a customer's details/);
 });
 
+test("a call with the CEO has its heartbeat at hand, its page and our goals; a colleague's call doesn't", async () => {
+  fresh();
+  const { writePad } = await import('./pad.ts');
+  writePad('Goal: first paying customers.\nWatching: payments tried.', { agent: 'juno', job: 1 });
+  const ceo = await context('juno');
+  assert.match(ceo.prompt, /Your page \(hq pad\), the plan you run the company by, as you last wrote it:\nGoal: first paying customers\.\nWatching: payments tried\.\nOur goals:\n- none marked yet/);
+  assert.doesNotMatch((await context('bolt')).prompt, /Your page|Our goals/);
+});
+
 test("a call's briefing lists the board's earlier lines today by their first words, and says the whole intercom is there to look up", async () => {
   fresh();
   await say('Should make sure you have the intercom available when we call, and the rest of this long line is cut off.');

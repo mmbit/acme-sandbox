@@ -10,6 +10,7 @@ import { hologram, flightEnds, PARCEL_S, ART } from './draw.js';
 import { drawLabels, loadFont, portrait as picture } from './labels.js';
 import { makeLook, spriteFrame } from '../brownstone/sprites.js';
 import { cam, view, reset, setScreen, step as camStep, matrices, project, ray, focus as frame, camera } from './camera.js';
+import { moreKey } from '../../shell/more.js';
 
 export const info = { id: 'holo', name: 'Holo deck', context: 'webgl2', label: 'The company as a hologram over a radar table' };
 // The look's style (pixel, line or any), which picks its icons.
@@ -36,12 +37,14 @@ export function createScene({ canvas: cv, world: w, brand, settings, shell: s })
   const bg = document.body.style.background;
   cv.addEventListener('webglcontextlost', onLost); cv.addEventListener('webglcontextrestored', onRestored);
   const offs = listen(), own = gl; // (its own: a swap to a new deck has made the new one's by the time this one goes)
+  const unfold = moreKey(() => shell.sound.play('blip'));
   return {
     update, draw, hit, focus, resize, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase, controls: [],
     // its signals stop, its GPU memory goes back now (not whenever the collector gets to it), and its colour leaves the
     // page, unless the next scene (made before this one goes) has put its own there
     dispose() {
       for (const off of offs) off();
+      unfold();
       cv.removeEventListener('webglcontextlost', onLost); cv.removeEventListener('webglcontextrestored', onRestored);
       own.getExtension('WEBGL_lose_context')?.loseContext();
       if (document.body.style.background === bg) document.body.style.background = '';

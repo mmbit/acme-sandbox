@@ -101,10 +101,12 @@ export async function launch(abort?: AbortSignal): Promise<Browser> {
   return { tab, close, closed, pid: chromium.pid };
 }
 
-// Browser.tab(): a new tab over this connection
+// Browser.tab(): a new tab over this connection, in a window of its own: tabs sharing a window are hidden behind the
+// newest, and a hidden tab never paints, so anything waiting on its next frame waits for good (a live mirror behind
+// another)
 function tabOpener(devtools: DevTools) {
   return async (answer: (asked: Asked) => Promise<Answer>, listen?: Listener): Promise<Tab> => {
-    const { targetId } = await devtools.send(undefined, 'Target.createTarget', { url: 'about:blank' });
+    const { targetId } = await devtools.send(undefined, 'Target.createTarget', { url: 'about:blank', newWindow: true });
     const { sessionId } = await devtools.send(undefined, 'Target.attachToTarget', { targetId, flatten: true });
     const send = (method: string, params: Record<string, unknown> = {}) => devtools.send(sessionId, method, params);
     devtools.listen(sessionId, (method, params) => {

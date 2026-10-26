@@ -13,6 +13,8 @@
 //            baskets }, metrics.ts home()): one or a list of { id, name, about?, icon?, tile?, figures, daily?, bars?,
 //            targets? } (template/kits/README.md has the shape); hq numbers prints them under its list. Numbers are
 //            always figures, charts and tables, never a sentence with a few of them in bold
+//   heartbeat()  its own parts of the CEO's summary, which the hourly check carries (summary.ts): one or a list of
+//            { head, lines }, plain text the company wants its CEO to steer by (its stats, a funnel), read live each time
 //   start()  its timers, once the coordinator is up
 // The coordinator's image copies kits/ next to the platform (Dockerfile), as in the repo, so a part imports the platform by its
 // path there (../../platform/coordinator/src/db.ts) and gets the modules the coordinator runs, never a second copy. It imports
@@ -28,7 +30,9 @@ export type Part = {
   service?: Record<string, Route>; board?: Record<string, Route>; agent?: Record<string, (body: any, me: any) => unknown>;
   numbers?: (app: any) => Record<string, unknown> | null | undefined; start?: () => void;
   dashboard?: (r: any) => Dashboard | Dashboard[] | null | undefined;
+  heartbeat?: () => HeartbeatPart | HeartbeatPart[] | null | undefined;
 };
+export type HeartbeatPart = { head: string; lines: string[] };
 // A dashboard of a company's own, as HQ's Numbers draws it (template/kits/README.md, "Numbers")
 type Dashboard = { id: string; name: string; [field: string]: unknown };
 
@@ -87,5 +91,17 @@ function home(r: any) {
   return dashboards.length ? { ...r, dashboards } : r;
 }
 for (const { name, part } of parts) if ('home' in part) console.error(`kits/${name}: home() is gone: the Numbers home takes dashboard() (template/kits/README.md)`);
+
+// The parts' own parts of the CEO's summary. One that fails says so in its place, so the CEO knows what it's missing.
+export function heartbeat(): HeartbeatPart[] {
+  return parts.flatMap(({ name, part }) => {
+    try {
+      return [part.heartbeat?.() ?? []].flat();
+    } catch (e) {
+      console.error(`kits/${name}: its heartbeat part failed:`, e);
+      return [{ head: `kits/${name}'s part`, lines: [`couldn't be read: ${(e as Error).message}`] }];
+    }
+  });
+}
 
 export const start = () => { for (const { name, part } of parts) try { part.start?.(); } catch (e) { console.error(`kits/${name}: start failed:`, e); } };

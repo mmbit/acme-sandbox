@@ -105,11 +105,11 @@ test("a call followed up and its job failed: the check hands the work to the cal
   });
   assert.equal(on.status, 200, JSON.stringify(on.body));
   assert.equal((db.prepare('select item from jobs where id = ?').get(on.body.id) as { item: number }).item, item);
-  // ended done, the item is handled and the failure finished
+  // ended done, the item is ready for the board's yes and the failure finished
   await h.finish(takeover!);
   assert.equal(
     (db.prepare('select status from call_items where id = ?').get(item) as { status: string }).status,
-    'handled',
+    'ready',
   );
   assert.match(read(check), new RegExp(`job #${wire.id} failed, taken over by #${id}`));
   // and once the check has recorded its verdict, it requeues nothing more
@@ -214,7 +214,7 @@ test("a review's retry of a failed fix takes its work over while queued, and giv
   assert.equal((await cancelled.requeue(cancelled.fix)).status, 200);
 });
 
-test("a review's retry that fails too is the one to take over, on its thread; merged, it finishes the agreement", async () => {
+test("a review's retry that fails too is the one to take over, on its thread; merged, it's ready for the board's yes", async () => {
   const failed = await failedFix();
   await h.finish(await failed.run(), { status: 'failed' });
   const shown = `job #${failed.fix} failed[^;]*, taken over by #${failed.retry}; job #${failed.retry} failed[^;]*, nobody`;
@@ -237,8 +237,14 @@ test("a review's retry that fails too is the one to take over, on its thread; me
   const merged = await failedFix();
   await h.finish(await merged.run(), { status: 'done', pr: 61, branch: merged.branch });
   const { status } = db.prepare('select status from call_items where id = ?').get(merged.item) as { status: string };
-  assert.equal(status, 'handled');
-  db.prepare("update prs set status = 'merged' where number = 61").run();
+  assert.equal(status, 'ready');
+  h.mergedPr(61);
+  assert.match(
+    read(merged.check),
+    /ready \d+ min, open until the board says yes \(hq item done\)\): Build the projects view/,
+    "merged isn't delivered",
+  );
+  assert.equal((await h.agent('item-done', merged.check.token, { id: merged.item, said: 'Yes' })).status, 200);
   assert.doesNotMatch(read(merged.check), /Build the projects view/);
 });
 

@@ -30,6 +30,27 @@ How high the bar is follows what the change is (review.ts tells the panel which)
 - **The platform**, and kit code that runs in the coordinator or on HQ's origin: no leeway; one reviewer reviews it, the
   whole panel only what's security-critical.
 
+## Major visual changes before they go live
+
+Round 1 also judges whether the diff and previews make a major visual change to something live that people see:
+a public site or app, or HQ's own look. A new layout, palette, type, illustration or style that the board would
+notice counts. A bug fix, copy edit or single button does not. Reviewers report `major_visual: true` or `false`,
+and the consolidator settles the judgment. File patterns never decide it. Later rounds judge newly introduced
+visual changes too. `review.live` in `company/org.yaml` may describe the company's own live products and looks.
+It is a description for the reviewer, not a path filter.
+
+A major change holds the merge with the existing board-decision mechanism. Ordinary review, fixes and the author's
+card preparation can continue. The author gets a job to file one card with `hq ask --decides <decision>`.
+It shows before/after pictures of the changed pages on phone and desktop, with **Go live** (recommended) and
+**Changes first**. Pictures must be available before the visual change merges. One card covers the thread's visual
+changes waiting together. If more join after the card is filed, HQ closes it and asks for a replacement covering
+the whole waiting set.
+
+The saved merge ruling, merge checks, kept touch-ups and retries all wait for the answer. **Go live** releases the
+hold, and a clean review can merge. **Changes first** retires the old ruling and queues the author's feedback job.
+The next push gets review again and a fresh visual decision when it still makes a major change. A visual card never
+replaces the code review or a launch approval.
+
 ## Steps
 
 1. **Automated checks first:** tests, typecheck, dependency audit and secret scan. A failure goes straight back.

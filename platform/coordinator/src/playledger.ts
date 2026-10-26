@@ -29,6 +29,7 @@ export type SeatAccount = {
 export type Account = {
   seats: SeatAccount[];
   active: Map<string, Event>;
+  idleSince: Map<string, number>;
   suspended: Map<number, { seat: string; at: number }>;
 };
 
@@ -58,7 +59,7 @@ export function create(snapshot: Snapshot): Account {
       support: seat.mix[kind] ?? null,
     })),
   }));
-  const account: Account = { seats, active: new Map(), suspended: new Map() };
+  const account: Account = { seats, active: new Map(), idleSince: new Map(), suspended: new Map() };
   for (const seat of capacity.seatsOf(snapshot)) recordHold(account, seat, snapshot.now, null);
   return account;
 }
@@ -95,6 +96,8 @@ export function exhaust(account: Account, play: Play, now: number) {
     const exhausted = recordHold(account, seat, now, now);
     if (!exhausted) continue;
     const running = play.started.filter(r => r.state === 'running' && r.seat === seat);
+    if (seat.engine !== 'claude' && running.length) account.idleSince.delete(seat.id);
+    else if (!account.idleSince.has(seat.id)) account.idleSince.set(seat.id, now);
     if (!exhausted.running!.length) {
       exhausted.running = running.map(run => work(run, now));
       // (only work still running goes on through the hold: an empty seat sits idle)
@@ -149,7 +152,8 @@ export function reset(account: Account, seat: capacity.Seat, now: number) {
 export function release(account: Account, seat: capacity.Seat, now: number) {
   const exhausted = account.active.get(seat.id);
   if (!exhausted || capacity.drained(seat, now)) return;
-  if (!exhausted.running_continues) exhausted.idle_ms = now - exhausted.at;
+  exhausted.idle_ms = now - (account.idleSince.get(seat.id) ?? now);
+  account.idleSince.delete(seat.id);
   own(account, seat.id).events.push({ at: now, type: 'release', quota: exhausted.quota });
   account.active.delete(seat.id);
 }

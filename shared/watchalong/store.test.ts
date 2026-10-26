@@ -23,6 +23,11 @@ test("a session's batches come back in order, its file only the app's, and only 
   assert.equal(store.add(kept, id, other.key, batch(event(3, now))), 404);
   assert.equal(store.add(kept, id, `${key}x`, batch(event(3, now))), 404);
   assert.equal(store.add(kept, 999, key, batch(event(3, now))), 404);
+  // an empty batch (a quiet page asking how its session is) is answered and keeps nothing
+  const bytes = store.find(kept, id)!.bytes;
+  assert.equal(store.add(kept, id, key, batch()), 200);
+  assert.equal(store.find(kept, id)!.bytes, bytes);
+  assert.equal(store.add(kept, id, other.key, batch()), 404);
   const recording = store.read(kept, id)!;
   assert.deepEqual(
     recording.events.map(e => e.type),
@@ -62,6 +67,7 @@ test('a session ends with its thing: its page hears 409, its recording stays unt
   store.end(kept, 'call', '10');
   assert.equal(store.add(kept, first.id, first.key, batch(event(3, 2))), 409);
   assert.equal(store.add(kept, second.id, second.key, batch(event(3, 2))), 409);
+  assert.equal(store.add(kept, first.id, first.key, batch()), 409, 'a quiet page hears it too');
   assert.equal(store.add(kept, later.id, later.key, batch(event(2, 1))), 200);
   assert.deepEqual(
     store.sessionsOf(kept, 'call', '10').map(s => s.id),

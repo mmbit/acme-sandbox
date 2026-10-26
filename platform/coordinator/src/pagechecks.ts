@@ -12,8 +12,9 @@ import { noKeys } from '../../../shared/review/anchor.js';
 // pass it is refused whole (FULL), and the page says to start a new page.
 export const MAX_POINTS = 120_000;
 // A page grows downward as it's written on (the book), to GROWN_MAX; a new one is a screen or so.
-const PAGE = { min: 100, max: 4000 },
-  GROWN_MAX = 20_000,
+// (PAGE: a new page's sides, exported for the sheet pages the coordinator makes: book.ts sheetPageFor.)
+export const PAGE = { min: 100, max: 4000 };
+const GROWN_MAX = 20_000,
   SIZE = { min: 0.5, max: 200 },
   LABEL_MAX = 80;
 // A save's JSON: the ink and the scraps (the picture is drawn by the coordinator: bookrender.ts). ink.js writes a

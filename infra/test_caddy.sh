@@ -219,7 +219,7 @@ if [ -f "$tmp/repo/infra/generated/products.caddy" ]; then
     "$(at www.example.test /shop/api/orders/1 -H 'Sec-Fetch-Mode: cors') | $(at www.example.test /shop/app.js -H 'Sec-Fetch-Mode: no-cors')" \
     'product www.example.test/api/orders/1 200 | product www.example.test/app.js 200'
   # a worker its shelf installed before answers page loads from its cache, so the browser's next ask for its script
-  # gets the retiring worker, from a browser that marks it or not (what it does: products/carrel/app/domain-check.mjs)
+  # gets the retiring worker, from a browser that marks it or not
   retiring() {
     local responseBody contentType allowedScope statusCode
     responseBody=$(at www.example.test "$@" -H 'Service-Worker: script' -D "$tmp/head")

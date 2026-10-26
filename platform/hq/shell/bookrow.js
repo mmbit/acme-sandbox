@@ -15,10 +15,10 @@ export const GROWN_MAX = 20_000;
 // a page's dry ink is drawn in strips this tall, so a long page never needs one canvas taller than a browser allows
 export const TILE_PX = 512;
 
-// The pages' places on the table: [{ x, y, w, h }] in the row's order. In the spread they lie edge to edge, facing
-// pages meeting at the paper's middle.
-export function rowOf(pages, spread = false) {
-  const gap = spread ? 0 : GAP;
+// The pages' places on the table: [{ x, y, w, h }] in the row's order. Facing, they lie edge to edge, two pages
+// meeting at the paper's middle.
+export function rowOf(pages, facing = false) {
+  const gap = facing ? 0 : GAP;
   let x = 0;
   return pages.map(p => {
     const place = { x, y: 0, w: p.w, h: p.h };
@@ -26,11 +26,13 @@ export function rowOf(pages, spread = false) {
     return place;
   });
 }
-// The pan's x that shows page i: filling the book open; in the spread, its right edge at the paper's middle with the
-// next page facing it, or (right: true) its left edge there with the page before facing it
-export function panTo(row, i, view, spread, { right = false } = {}) {
+// The pan's x that shows page i: filling the paper; facing, its right edge at the paper's middle with the next page
+// facing it, or (right: true) its left edge there with the page before facing it. A page wider than half the paper (a
+// sheet as wide as the screen it was written on) starts at the paper's left edge instead, where its head and a sheet's
+// notes are.
+export function panTo(row, i, view, facing, { right = false } = {}) {
   const r = row[i];
-  if (!spread) return r.x;
+  if (!facing || r.w > view.w / 2) return r.x;
   return right ? r.x - view.w / 2 : r.x + r.w - view.w / 2;
 }
 // The row's size on the table
@@ -48,10 +50,10 @@ export function clampPan(pan, row, view) {
   };
 }
 
-// The pan's x at rest: a page's left edge within SNAP_PX of the paper's lands on it, or in the spread a page's edge
-// within SNAP_PX of the paper's middle
-export function settleX(x, row, view, spread = false) {
-  const rests = spread ? row.flatMap(r => [r.x - view.w / 2, r.x + r.w - view.w / 2]) : row.map(r => r.x);
+// The pan's x at rest: a page's left edge within SNAP_PX of the paper's lands on it, or facing a page's edge within
+// SNAP_PX of the paper's middle
+export function settleX(x, row, view, facing = false) {
+  const rests = facing ? row.flatMap(r => [r.x - view.w / 2, r.x + r.w - view.w / 2]) : row.map(r => r.x);
   const near = rests.find(rest => Math.abs(rest - x) <= SNAP_PX);
   return near ?? x;
 }
@@ -66,6 +68,10 @@ export function placeIn(ids, place) {
 // The page under a point on the table, or -1 on the bare table
 export const pageAt = (row, x, y) => row.findIndex(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
 
+// Whether the paper shows any of a box on page r (the box in the page's px)
+export const showsBox = (r, box, pan, view) =>
+  r.x + box.x1 > pan.x && r.x + box.x0 < pan.x + view.w && r.y + box.y1 > pan.y && r.y + box.y0 < pan.y + view.h;
+
 // The page that fills most of the paper, or -1 when only the table shows
 export function shownAt(row, pan, view) {
   let best = -1,
@@ -79,9 +85,8 @@ export function shownAt(row, pan, view) {
   return best;
 }
 
-// A new page: as wide as the paper (one side of it in the spread) and as tall as it shows, whole px within the
-// store's sides
-export const newPageSize = (view, spread = false) => ({ w: side(spread ? view.w / 2 : view.w), h: side(view.h) });
+// A new page: as wide as the paper (one side of it facing) and as tall as it shows, whole px within the store's sides
+export const newPageSize = (view, facing = false) => ({ w: side(facing ? view.w / 2 : view.w), h: side(view.h) });
 const side = v => Math.min(SIDE.max, Math.max(SIDE.min, Math.round(v)));
 
 // A page's height after a stroke whose lowest ink is at `lowest`: within half the paper's height of its foot, it

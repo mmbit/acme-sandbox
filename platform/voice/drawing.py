@@ -6,7 +6,9 @@ note's words in front of the board's). The agent asks to see the board's screen 
 ink on the board's page (draw): both tools ask through the line's screen socket, as the sketch tool does, and only on
 the board's own calls. HQ shows the ask as a card with Show and Not now, which blocks nothing, and draws the ring; it
 answers both on the call's WebSocket (server.py app_call: 'asked', 'inked')."""
-import asyncio, itertools
+import itertools
+
+from answers import Answers
 
 # What the agent's words may hold: what it asks to see and what it rings, as HQ's card and the ring's label show them,
 # and the few words it writes beside a ring
@@ -44,7 +46,9 @@ ASK_WORDS = {
 }
 # What the agent hears about its rings on the board's page
 INK_WORDS = {
-    'drawn': 'Drawn: {ring} on their page, in your ink{beside}. It stays on this call\'s page in the book.',
+    'drawn': 'Drawn: {ring} on their page, in your ink{beside}. {told}',
+    # (what HQ says of a ring it drew, or this: HQ says a ring in a preview isn't kept.)
+    'kept': "It stays on this call's page in the book.",
     'ring': 'a ring round “{ring}”',
     'note': 'a ring round their note {note}',
     'beside': ', with “{words}” beside it',
@@ -97,6 +101,16 @@ def ink_asked(draw):
     return {'ring': ring, 'note': note, 'words': words}
 
 
+def refused(call, words):
+    """Why the agent can't ask, draw or drive on this call now (in `words`), or None. Only the board's own HQ call: on
+    a call out the partner's words could steer it (house rule 9), and the phone has no page. (Shared with driving.py.)"""
+    if call.callout or call.phone or not call.brain.call:
+        return words['none']
+    if call.ended:
+        return words['gone']
+    return words['away'] if call.away else None
+
+
 class Drawing:
     """A call's asks to see the board's screen and its rings on the board's page: what's still waiting for HQ's answer,
     and the board's answers the agent hasn't had yet. The board's notes go with the call's pictures (Call.note)."""
@@ -105,24 +119,14 @@ class Drawing:
         self.ids = itertools.count(1)  # (asks and rings: HQ dedupes a resent ask by its id)
         self.waiting = None  # the ask the board hasn't answered yet ({id, what}): one at a time
         self.answered = []   # the agent's words on the board's taps, for its next turn
-        self.inks = {}       # each ring HQ hasn't answered yet, by its id: the future its answer settles
-
-    def refusal(self, words):
-        """Why the agent can't ask or draw on this call now (in `words`), or None. Only the board's own HQ call: on a
-        call out the partner's words could steer it (house rule 9), and the phone has no page."""
-        call = self.call
-        if call.callout or call.phone or not call.brain.call:
-            return words['none']
-        if call.ended:
-            return words['gone']
-        return words['away'] if call.away else None
+        self.inks = Answers(INK_WORDS)  # each ring HQ hasn't answered yet
 
     async def ask_tool(self, asked):
         """The agent's ask_to_see tool (hq_tools.py, through the line's socket): HQ shows the ask, and the tool answers
-        at once. Refused where the line can't ask (refusal), with the screen shown already and not paused, and with an
+        at once. Refused where the line can't ask (refused), with the screen shown already and not paused, and with an
         ask still waiting for the board."""
-        if refused := self.refusal(ASK_WORDS):
-            return {'error': refused}
+        if refusal := refused(self.call, ASK_WORDS):
+            return {'error': refusal}
         if not (what := what_asked(asked.get('ask_to_see'))):
             return {'error': ASK_WORDS['shape']}
         if self.call.screen['on'] and not self.call.screen['paused']:
@@ -149,32 +153,24 @@ class Drawing:
 
     async def ink_tool(self, asked):
         """The agent's draw tool (hq_tools.py, through the line's socket): HQ draws the ring on the board's page and says
-        it did, or why not; the tool waits for that up to INK_SECONDS. Refused where the line can't draw (refusal)."""
-        if refused := self.refusal(INK_WORDS):
-            return {'error': refused}
+        it did, or why not; the tool waits for that up to its call's ink_seconds (INK_SECONDS). Refused where the line
+        can't draw (refused)."""
+        if refusal := refused(self.call, INK_WORDS):
+            return {'error': refusal}
         if not (ink := ink_asked(asked.get('draw'))):
             return {'error': INK_WORDS['shape']}
-        ink_id = next(self.ids)
-        drawn = self.inks[ink_id] = asyncio.get_running_loop().create_future()
-        try:
-            await self.call.send_event({'type': 'ink', 'id': ink_id, **ink})
-            answer = await asyncio.wait_for(drawn, INK_SECONDS)
-        except TimeoutError:
-            return {'error': INK_WORDS['late']}
-        finally:
-            self.inks.pop(ink_id, None)
+        answer = await self.inks.ask(self.call, {'type': 'ink', 'id': next(self.ids), **ink}, self.call.limits.ink_seconds)
         if 'error' in answer:
             return answer
         ring = INK_WORDS['ring'].format(ring=ink['ring']) if ink['ring'] else INK_WORDS['note'].format(note=ink['note'])
         beside = INK_WORDS['beside'].format(words=ink['words']) if ink['words'] else ''
-        return {'ok': INK_WORDS['drawn'].format(ring=ring, beside=beside)}
+        told = answer['said'] or INK_WORDS['kept']
+        return {'ok': INK_WORDS['drawn'].format(ring=ring, beside=beside, told=told)}
 
     def inked(self, event):
-        """HQ's answer to a ring: drawn, or why not, in HQ's words. One for a ring that isn't waiting is let be."""
-        drawn = self.inks.get(event.get('id'))
-        if drawn and not drawn.done():
-            why = one_line(event.get('why')) or INK_WORDS['failed'] + '.'
-            drawn.set_result({} if event.get('drawn') is True else {'error': why})
+        """HQ's answer to a ring: drawn (with what HQ says of it), or why not, in HQ's words. One for a ring that isn't
+        waiting is let be."""
+        self.inks.answer(event.get('id'), event.get('drawn') is True, one_line(event.get('why')))
 
     async def retell(self):
         """A resumed connection hears the ask still waiting again (HQ dedupes it by its id)."""
@@ -183,6 +179,4 @@ class Drawing:
 
     def end(self):
         """The call ended: the rings still waiting for HQ get their answer now. (From any thread: Call.end runs in one.)"""
-        for drawn in list(self.inks.values()):
-            drawn.get_loop().call_soon_threadsafe(lambda drawn=drawn: drawn.done() or drawn.set_result(
-                {'error': INK_WORDS['ended']}))
+        self.inks.end()

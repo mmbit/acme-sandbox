@@ -31,8 +31,9 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
     } else if (flag === '--deadline') {
       if (command === 'job')
         stop("No job was queued: hq job takes no --deadline. Its time is its thread's window: --by <when>");
-      // (hq_tools.py reads "Nothing recorded" as a refusal)
-      if (!value) stop('Nothing recorded: --deadline needs a time (2h, 90m, 14:30 UTC)');
+      // (hq_tools.py reads "Nothing recorded" as a refusal; the time's forms)
+      if (!value)
+        stop("Nothing recorded: --deadline needs a time (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)");
       flags.deadline = value;
       i++;
     } else if (flag === '--goal' && command === 'item') {

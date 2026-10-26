@@ -7,7 +7,7 @@ import os, re, subprocess
 PAGE = 60_000
 FOOTER = 200  # (the room a page keeps for its last line, which says what it holds and where the rest starts)
 # The worker's mirror of the company's repository, every branch and a job's unpushed commits (refs/outgoing), mounted
-# read-only (infra/compose.yaml's voice service); a test points it elsewhere.
+# read-only (infra/compose.yaml's voice service); a test gives git its own.
 MIRROR = os.environ.get('HQ_TOOLS_MIRROR', '/mirror')
 # A revision as a job would name it: main, job/1234, origin/job/1234, outgoing/job/1234, a sha, HEAD~2, v1^. Never
 # one that starts with '-' (git would read it as an option) or holds ':' (show builds rev:path itself).
@@ -110,9 +110,9 @@ def report(a, hq_env):
     return paged('\n'.join(line for h, ls in kept for line in [h, *ls]), start, offset)
 
 
-def git_env():
+def git_env(mirror):
     """git's environment: the mirror, no system or global config (nothing there can name a command), no prompt."""
-    return {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8', 'GIT_DIR': MIRROR,
+    return {'PATH': os.environ.get('PATH', '/usr/bin:/bin'), 'LANG': 'C.UTF-8', 'GIT_DIR': mirror,
             'GIT_CONFIG_NOSYSTEM': '1', 'GIT_CONFIG_GLOBAL': '/dev/null', 'GIT_TERMINAL_PROMPT': '0',
             'GIT_OPTIONAL_LOCKS': '0', 'GIT_NO_REPLACE_OBJECTS': '1'}
 
@@ -162,15 +162,15 @@ def git_argv(a):
     }[command]
 
 
-def git(a):
-    """(ok, text): one read of the company's git, from an argument list git_argv built, in a page."""
+def git(a, mirror=MIRROR):
+    """(ok, text): one read of the company's git (the mirror), from an argument list git_argv built, in a page."""
     argv = git_argv(a)
     if isinstance(argv, str):
         return False, argv
     start, offset, refused = place(a)
     if refused:
         return False, refused
-    r = subprocess.run([argv[0], '-c', f'safe.directory={MIRROR}', *argv[1:]], env=git_env(),
+    r = subprocess.run([argv[0], '-c', f'safe.directory={mirror}', *argv[1:]], env=git_env(mirror),
                        stdin=subprocess.DEVNULL, capture_output=True, text=True, errors='replace')
     if a.get('command') == 'grep' and r.returncode == 1 and not r.stderr.strip():
         return True, 'No line has it.'

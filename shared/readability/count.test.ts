@@ -141,6 +141,9 @@ test('comments that tell history and long openings count, the foundation tag doe
     'platform/hq/ids.ts': '// job 3 ends\n// round 4 checks the merge\n// what the board said meanwhile\n',
     'products/shop/mixed.ts': '/* Prices */ /* Euros */ export const price = c => `€${(c / 100).toFixed(2)}`;\n',
     'platform/hq/b.ts': '// What b is for\n//\nexport const b = 1;\n',
+    // a wrapped tag is the tag
+    'platform/hq/c.ts': '// What c is for (company:\n// job #12, not upstream yet)\nexport const c = 1;\n',
+    'platform/hq/d.sh': '# What d is for (company: job #12,\n# not upstream yet)\ntrue\n',
   });
   const comments = row(output, 'Comments', 'platform/hq');
   assert.equal(comments['openings past 3 lines'], '1');

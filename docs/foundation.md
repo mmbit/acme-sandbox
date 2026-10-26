@@ -1,7 +1,7 @@
 # The foundation's design notes
 
-The page every company's foundation keeper (`company/org.yaml`'s `roles.foundation`) and the Overseer read before
-judging a change to the foundation's paths. The rule is CODE_STYLE.md's "Platform and product"; this page is what
+The page every company's foundation keeper (`company/org.yaml`'s `roles.foundation`), the Overseer and the reader a
+review's triage gives the foundation question read before judging a change to the foundation's paths. The rule is CODE_STYLE.md's "Platform and product"; this page is what
 follows from it in practice: where a company's part plugs in, what the companies have settled, and what is still open.
 
 A keeper changes it like any foundation file: a pull request at home marked `company: job #<n>, not upstream yet`,
@@ -27,7 +27,11 @@ where it suffices.
   carry, or Wire falls back to its own Day and Night.
 - **Shows**: `company/shows.yaml`.
 - **Covers**: each artifact's `picture` (artifact.yaml, product.yaml or a company/artifacts.yaml entry), shot from the
-  company's own list by `node platform/hq/covers.mjs <list.json>`.
+  company's own list by `node platform/hq/covers.mjs <list.json>`. The list is a JSON array kept in the company's
+  folders, one entry per cover: its `picture` (a path from the repo's root) and what to shoot, a product's `preview`
+  and `page`, a repo `page`, HQ's own `hq` address or a `url` with the `start` command that serves it, framed with
+  `at`, `hide` and the other fields the tool's header lists. A declared picture that isn't there fails HQ's Artifacts
+  list.
 
 ## Settled
 
@@ -47,3 +51,8 @@ where it suffices.
 
 - `platform/hq/shell/desk.js`: decks built before 4 October tag their messages `{ onlyonery: 'deck' }`, so the desk
   still answers to one company's name. Generic form: rebuild those decks, then drop the old tag.
+- Review mode's notes into the board's book: the board's notes on any product
+  preview land on its open sheet for the product's owner, guests the board invites into its book (Reviews' people
+  rows) write on that sheet in their colour, and the board's Send and Discard (review mode, HQ's viewer) and Reviews'
+  waiting notes are gone, for every company, with no setting. Before it carries, Knop's agreement is asked through the
+  Overseer; a switch only if Knop asks for one.

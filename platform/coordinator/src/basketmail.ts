@@ -1,62 +1,26 @@
 // The basket's one confirmation email: once a basket's Checkout Session is paid, the address it was paid with gets one
-// email for the whole basket, in the basket owner's words, with the files they name (the terms as they stand).
-//
-// - The words are the front's (approvals.ts FRONT, the payments caller that owns baskets):
-//   products/<front>/care/basket-email.yaml, the language as the key (the session's locale, if the file has it, else en),
-//   each with a subject, a body, the `voucher` and `saved` phrases ({amount}), `delivery` words per country, and
-//   `attachments` the way order-emails.yaml names them (ordermail.ts files()). The body's slots, filled here from the
-//   paid lines:
-//     {number}    the basket's order number (payments.ts, shared/ordernumber), as it's read out: 482 9173
-//     {items}     one receipt row per item (mailpage.ts rows): its picture, description, detail and price paid; in the
-//                 text part its shop (manifest name), description, detail and price paid
-//     {total}     what the checkout charged for the basket (vouchers not counted)
-//     {saved}     the `saved` phrase with the postage saved, or nothing when none was
-//     {ship_by}   the latest day a line should leave the printer, written out in the language
-//     {delivery}  the `delivery` words for the parcel's country
-//     {order_page} the basket's one order page: the words' `order_page` address (`test_order_page` for a test-mode
-//                 payment) with #<number>.<key> (history.ts orderKey), the shop's page that shows the whole order
-//                 and links each item's own page
-//     {notes}     the company's own sentences for this order (notes, below: the phrases its hooks name, from the words'
-//                 `notes`), one a line, or nothing. A hook that can't tell yet (the parcel isn't placed, say) holds
-//                 the email, at most HOLD_MS after the payment; then it goes without that hook's phrases
-//     {again}     each shop in the basket once, with the page the words' `again` names for it (the product's slug as
-//                 the key), to make another; a shop it doesn't name is left out.
-//     {signoff}   the company's own closing line as the email goes (signoffs, below), or nothing
-// - The body is plain text with mailpage.ts's little markup (headings, lists, small print). With the front's look,
-//   products/<front>/care/email-look.yaml, the email gets an HTML part set in it beside the text.
+// email for the whole basket, in the basket owner's words (basketwords.ts), with the files they name (the terms as
+// they stand).
+// - A notes hook that can't tell yet (the parcel isn't placed, say) holds the email, at most HOLD_MS after the payment;
+//   then it goes without that hook's phrases.
 // - Once per basket session, the way ordermail.ts sends: the mark is written before the send, so a session seen paid
 //   twice (the hook and the timer) sends one email. One the service refused, or may have taken without answering, goes
 //   again on the timer; after TRIES nothing more goes, and the log asks a person to write.
 // - The address is Stripe's customer_details.email on the session, never stored or logged here.
 //
-// The basket's shipped email: once its parcel has shipped (parcels.ts: Print API's
-// Shipped, its shipped_at and tracking link), the same address gets the news, once per parcel (one a basket: a parcel
-// placed again in a new round is still the one parcel), sent and marked the same way, with no files.
-// - The words are the front's too: products/<front>/care/shipped-email.yaml, the kind, then the language (the session's
-//   locale, if the file has it, else en), each with a subject and a body. Two kinds, never both for one parcel:
-//   `shipped` once the tracking link is in, `shipped_untracked` when none has come a day after Shipped (UNTRACKED_MS),
-//   fixed at its first try. The body's slots:
-//     {items}     one line per thing in the parcel, then the shop's own paid lines going with it (parcels.linesIn): its
-//                 shop and description, no prices
-//     {tracking}  Print API's tracking link (shipped only), linked whole or behind a button the words make of it
-//     {notes}     the company's own sentences for this parcel (shippedNotes, below: the phrases its hooks name, from the
-//                 words' `notes`), one a line, or nothing
-//     {delivery}  the confirmation's `delivery` words for the parcel's country (basket-email.yaml), not a copy of them
-//     {number}, {order_page}, {signoff}  the confirmation's
-//   The same markup as the confirmation's, and the same look.
-// - Only for parcels shipped since it came in (shipped_emails_from), and only in their first week: older news isn't sent.
+// The basket's shipped email: once its parcel has shipped (parcels.ts: Print API's Shipped, its shipped_at and tracking
+// link), the same address gets the news, once per parcel (one a basket: a parcel placed again in a new round is still
+// the one parcel), sent and marked the same way, with no files. Two kinds, never both for one parcel: `shipped` once
+// the tracking link is in, `shipped_untracked` when none has come a day after Shipped (UNTRACKED_MS), fixed at its
+// first try. Only for parcels shipped since it came in (shipped_emails_from), and only in their first week: older news
+// isn't sent.
 import * as payments from './payments.ts';
-import { manifest } from './manifests.ts';
 import { FRONT } from './approvals.ts';
-import { companyFormats, yamlFile } from './company.ts';
 import { db, remember, setting } from './db.ts';
 import * as mailout from './mailout.ts';
-import * as mailpage from './mailpage.ts';
-import { files } from './ordermail.ts';
+import type * as mailpage from './mailpage.ts';
 import * as parcels from './parcels.ts';
-import { orderKey } from './history.ts';
-import { spaced } from '../../../shared/ordernumber/ordernumber.js';
-import { copiesOf } from '../../../shared/format/format.js';
+import * as words from './basketwords.ts';
 
 db.exec(`create table if not exists basket_emails (session text primary key, mode text not null, status text not null,
   tries integer not null, rendered integer not null, updated text not null)`); // rendered: test mode without the service, never sent
@@ -73,32 +37,6 @@ const LOOK_BACK_MS = 3 * 86_400_000; // paid sessions the sweep looks for withou
 const HOLD_MS = 30 * 60_000; // a notes hook that can't tell yet holds the email this long after the payment
 const UNTRACKED_MS = 86_400_000; // a parcel shipped this long ago without a tracking link gets shipped_untracked
 const SHIPPED_FRESH_MS = 7 * 86_400_000; // the shipped email goes only this long after the parcel shipped
-const slotsOf = (names: string[]) => ({
-  slot: new RegExp(`\\{(${names.join('|')})\\}`, 'g'),
-  notSlot: new RegExp(`\\{(?!(${names.join('|')})\\})[a-z_]+\\}`),
-});
-const { slot: SLOT, notSlot: NOT_SLOT } = slotsOf([
-  'number',
-  'items',
-  'total',
-  'saved',
-  'ship_by',
-  'delivery',
-  'order_page',
-  'notes',
-  'again',
-  'signoff',
-]);
-const { slot: SHIPPED_SLOT, notSlot: NOT_SHIPPED_SLOT } = slotsOf([
-  'number',
-  'items',
-  'tracking',
-  'notes',
-  'delivery',
-  'order_page',
-  'signoff',
-]);
-const UNFINISHED = /<<[\s\S]*?>>/;
 const told = new Set<string>();
 
 type Status = 'waiting' | 'sending' | 'sent' | 'unsure' | 'refused';
@@ -109,14 +47,12 @@ type Row = {
   tries: number;
   rendered: number;
   updated: string;
-  kind?: Kind;
+  kind?: words.Kind;
 };
 type Answer = {
   status: Status;
   test_email?: { to: string; subject: string; text: string; html?: string; attachments?: string[] };
 };
-type Kind = 'shipped' | 'shipped_untracked';
-type Mail = { subject: string; text: string; html?: string; attachments: NonNullable<mailout.Mail['attachments']> };
 
 // a company's own sentences for one order (a gift in its parcel, say). Each hook
 // answers the names of its phrases for the paid session (none: an empty list), or null while it can't tell yet; the words
@@ -195,7 +131,7 @@ const once = (table: 'basket_emails' | 'shipped_emails') => {
     mark,
     spent,
     all: () => db.prepare(`select * from ${table} where status != 'sent'`).all() as Row[],
-    waiting: (session: string, mode: string, kind?: Kind) =>
+    waiting: (session: string, mode: string, kind?: words.Kind) =>
       db
         .prepare(
           `insert or ignore into ${table} (session, mode, ${kind ? 'kind, ' : ''}status, tries, rendered, updated)
@@ -226,7 +162,7 @@ export async function deliver(pay: any, s: any, lines: payments.Line[]): Promise
   if (!ready(mode, what)) return { status: 'waiting' };
   const named = notesFor(pay, lines);
   if (!named) return { status: 'waiting' }; // no try counted: the timer asks the hooks again
-  const mail = render(langOf(s, yamlFile(WORDS)), pay, s, lines, mode, named);
+  const mail = words.confirmation(pay, s, lines, { notes: named, signoff: signoffOf });
   return sendOnce(confirmations, session, mode, what, s, mail);
 }
 
@@ -259,7 +195,7 @@ export async function sweepShipped(now = Date.now()) {
   }
 }
 
-function kindOf(parcel: { tracking: string | null; shipped_at: string }, now: number): Kind | null {
+function kindOf(parcel: { tracking: string | null; shipped_at: string }, now: number): words.Kind | null {
   if (parcel.tracking) return 'shipped';
   const waited = now - Date.parse(parcel.shipped_at);
   return waited >= UNTRACKED_MS ? 'shipped_untracked' : null;
@@ -272,14 +208,8 @@ export async function deliverShipped(pay: any, s: any, tracking: string | null):
   const before = shippings.spent(session, what, shippings.row(session));
   if (!before?.kind || !sends(before)) return { status: before?.status ?? 'waiting' };
   if (!ready(mode, what)) return { status: 'waiting' };
-  const mail = renderShipped(
-    before.kind,
-    langOf(s, yamlFile(SHIPPED_WORDS)?.[before.kind]),
-    pay,
-    parcels.linesIn(session),
-    tracking,
-    mode,
-  );
+  const own = { notes: shippedNotesFor(session), signoff: signoffOf };
+  const mail = words.shipped(before.kind, pay, s, parcels.linesIn(session), tracking, own);
   return sendOnce(shippings, session, mode, what, s, mail);
 }
 
@@ -290,18 +220,13 @@ function ready(mode: 'test' | 'live', what: string) {
   tellOnce(`${mode}:service`, `NEEDS A PERSON: basket emails (${mode}) wait for the email service: ${what} is one.`);
   return false;
 }
-// The session's language, if the words have it, else en
-const langOf = (s: any, words: any) => {
-  const asked = String(s.locale ?? '').slice(0, 2);
-  return /^[a-z]{2}$/.test(asked) && words?.[asked] ? asked : 'en';
-};
 async function sendOnce(
   emails: Once,
   session: string,
   mode: 'test' | 'live',
   what: string,
   s: any,
-  mail: Mail | string,
+  mail: words.Mail | string,
 ): Promise<Answer> {
   if (typeof mail === 'string') {
     // the words or files need a fix on main: no try counted
@@ -361,180 +286,14 @@ function notesFor(pay: any, lines: payments.Line[]) {
   return answers.flatMap(named => named ?? []);
 }
 
-// ---- the words, filled in (or what's wrong with them)
-const WORDS = `products/${FRONT}/care/basket-email.yaml`;
-const LOOK = `products/${FRONT}/care/email-look.yaml`; // the HTML part's look (mailpage.ts), if the front has one
-const SHIPPED_WORDS = `products/${FRONT}/care/shipped-email.yaml`;
-const shop = (line: payments.Line) => {
-  const name = manifest(line.product)?.name;
-  return typeof name === 'string' ? name : line.product;
-};
-// The basket's number as read out, and its one order page (the words' address for the payment's mode, the number and
-// its key in the fragment), or what's missing of what the words use
-function orderOf(pay: any, lang: string, words: string): { number: string; order_page: string } | string {
-  const field = pay.mode === 'test' ? 'test_order_page' : 'order_page';
-  const number = payments.orderNumber(String(pay.id)),
-    page = yamlFile(WORDS)?.[lang]?.[field];
-  const uses = (slot: string) => words.includes(`{${slot}}`);
-  if (!number && (uses('number') || uses('order_page'))) return 'the basket has no order number';
-  const pageOk = typeof page === 'string' && /^https:\/\/\S+$/.test(page) && !page.includes('#');
-  if (!pageOk && uses('order_page')) return `${WORDS}, ${lang}: no ${field} address`;
-  return {
-    number: number ? spaced(number) : '',
-    order_page: number && pageOk ? `${page}#${number}.${orderKey(String(pay.id))}` : '',
-  };
-}
-// The same for an agent who answers its customer (hq parcel), in the language the basket was paid in
-export function orderPage(session: string) {
-  const pay = db.prepare('select id, locale, mode from payments where id = ?').get(session) as
-    { id: string; locale: string | null; mode: string } | undefined;
-  const order = pay ? orderOf(pay, langOf(pay, yamlFile(WORDS)), '{number} {order_page}') : null;
-  return order && typeof order !== 'string' ? order : null;
-}
-// An item's picture, on its product's own address
-const pictureOf = (line: payments.Line) =>
-  line.picture ? (payments.ownUrl(line.picture, line.product)?.href ?? null) : null;
-function render(lang: string, pay: any, s: any, lines: payments.Line[], mode: string, named: string[]) {
-  const t = yamlFile(WORDS)?.[lang];
-  if (!t || typeof t.subject !== 'string' || typeof t.body !== 'string')
-    return `${WORDS} has no ${lang} subject and body`;
-  if (typeof t.voucher !== 'string' || typeof t.saved !== 'string')
-    return `${WORDS}, ${lang}: the voucher and saved phrases`;
-  const unknown = `${t.subject}\n${t.body}`.match(NOT_SLOT)?.[0];
-  if (unknown) return `${unknown} in ${WORDS} isn't a slot HQ fills`;
-  const marker = mode === 'live' ? `${t.subject}\n${t.body}`.match(UNFINISHED)?.[0] : undefined;
-  if (marker) return `${WORDS}, ${lang}, still holds ${marker}: its words aren't final yet`;
-  if (!lines.length) return 'the session has no paid lines';
-  const country = String(pay.country ?? ''),
-    delivery = t.delivery?.[country];
-  if (typeof delivery !== 'string')
-    return `${WORDS}, ${lang}: no delivery words for the parcel's country (${country.slice(0, 2) || 'none'})`;
-  const attachments = files(FRONT, t.attachments, `${WORDS}, ${lang}.attachments`);
-  if (typeof attachments === 'string') return attachments;
-
-  // the email's language (English as written in Europe: Friday 9 October), with plain spaces
-  const formats = companyFormats(String(s.currency ?? 'eur').toUpperCase(), { [lang]: lang === 'en' ? 'en-GB' : lang });
-  const money = (cents: number) => formats.money(cents, lang).replace(/[\u00a0\u202f]/g, ' ');
-  // a tester's order: their voucher paid every line in full
-  const tester = payments.isTesterOrder(pay.id);
-  const items: mailpage.Row[] = lines.map(line => {
-    // a line of copies: all of them, as one row
-    const whole = line.amount * line.quantity,
-      name = `${copiesOf(line)}${line.description}`;
-    const paid = whole - (line.saved ?? 0),
-      voucher = tester ? whole : (line.voucher_value ?? 0);
-    const note = voucher ? t.voucher.replace('{amount}', money(voucher)) : '';
-    const detail = line.detail ? ` (${line.detail})` : '';
-    return {
-      text: `- ${shop(line)}: ${name}${detail}, ${money(paid)}${note ? ` (${note})` : ''}`,
-      picture: pictureOf(line),
-      name,
-      details: [line.detail ?? '', note].filter(Boolean),
-      amount: money(paid),
-    };
-  });
-  const firstOfShop = lines.filter((line, i) => lines.findIndex(other => other.product === line.product) === i);
-  const again = firstOfShop
-    .filter(line => typeof t.again?.[line.product] === 'string')
-    .map(line => `- ${shop(line)}: ${t.again[line.product]}`);
-  const saved = lines.reduce((n, line) => n + (line.saved ?? 0), 0);
-  const shipBy = lines
-    .map(line => payments.shipBy(line))
-    .sort()
-    .at(-1)!;
-  const day = formats.day(shipBy, lang, { weekday: true });
-  const missing = named.find(name => typeof t.notes?.[name] !== 'string');
-  if (missing !== undefined) return `${WORDS}, ${lang}: no notes.${String(missing).slice(0, 40)} phrase`;
-  const order = orderOf(pay, lang, `${t.subject}\n${t.body}`);
-  if (typeof order === 'string') return order;
-  const values: Record<string, string> = {
-    ...order,
-    items: items.map(row => row.text).join('\n'),
-    total: money(lines.reduce((n, line) => n + (line.card ?? 0), 0)),
-    saved: saved ? t.saved.replace('{amount}', money(saved)) : '',
-    ship_by: day,
-    delivery,
-    notes: named.map(name => t.notes[name]).join('\n'),
-    again: again.join('\n'),
-    signoff: '',
-  };
-  const signoff = signoffOf(lang);
-  const look = mailpage.readLook(LOOK);
-  if (typeof look === 'string') return look;
-  const subject = t.subject
-    .replace(SLOT, (_: string, slot: string) => values[slot])
-    .replace(/\s+/g, ' ')
-    .trim();
-  return {
-    subject,
-    ...mailpage.fill(t.body, values, look, { lang, subject }, ['order_page'], { items }, signoff ? { signoff } : {}),
-    attachments,
-  };
-}
-
-// The shipped email: what's in the parcel, no prices, and how to follow it
-function renderShipped(
-  kind: Kind,
-  lang: string,
-  pay: any,
-  lines: payments.Line[],
-  tracking: string | null,
-  mode: string,
-): Mail | string {
-  const t = yamlFile(SHIPPED_WORDS)?.[kind]?.[lang];
-  if (!t || typeof t.subject !== 'string' || typeof t.body !== 'string')
-    return `${SHIPPED_WORDS} has no ${kind} subject and body in ${lang}`;
-  const unknown = `${t.subject}\n${t.body}`.match(NOT_SHIPPED_SLOT)?.[0];
-  if (unknown) return `${unknown} in ${SHIPPED_WORDS} isn't a slot HQ fills`;
-  const marker = mode === 'live' ? `${t.subject}\n${t.body}`.match(UNFINISHED)?.[0] : undefined;
-  if (marker) return `${SHIPPED_WORDS}, ${kind}.${lang}, still holds ${marker}: its words aren't final yet`;
-  if (!lines.length) return 'its parcel holds no lines';
-  if (kind === 'shipped' && !tracking) return 'its parcel has no tracking link';
-  const named = shippedNotes.flatMap(hook => {
+// The phrases the shipped notes hooks name for this parcel's basket session
+function shippedNotesFor(session: string) {
+  return shippedNotes.flatMap(hook => {
     try {
-      return hook(String(pay.id));
+      return hook(session);
     } catch (err) {
-      console.error(`Shipped email ${pay.id}: a notes hook failed:`, err);
+      console.error(`Shipped email ${session}: a notes hook failed:`, err);
       return [];
     }
   });
-  const missing = named.find(name => typeof t.notes?.[name] !== 'string');
-  if (missing !== undefined)
-    return `${SHIPPED_WORDS}, ${kind}.${lang}: no notes.${String(missing).slice(0, 40)} phrase`;
-  const country = String(pay.country ?? ''),
-    delivery = yamlFile(WORDS)?.[lang]?.delivery?.[country];
-  if (typeof delivery !== 'string')
-    return `${WORDS}, ${lang}: no delivery words for the parcel's country (${country.slice(0, 2) || 'none'})`;
-  const order = orderOf(pay, lang, `${t.subject}\n${t.body}`);
-  if (typeof order === 'string') return order;
-  const values: Record<string, string> = {
-    ...order,
-    items: lines
-      .map(line => `- ${shop(line)}: ${copiesOf(line)}${line.description}${line.detail ? ` (${line.detail})` : ''}`)
-      .join('\n'),
-    tracking: tracking ?? '',
-    notes: named.map(name => t.notes[name]).join('\n'),
-    delivery,
-    signoff: '',
-  };
-  const signoff = signoffOf(lang);
-  const look = mailpage.readLook(LOOK);
-  if (typeof look === 'string') return look;
-  const subject = t.subject
-    .replace(SHIPPED_SLOT, (_: string, slot: string) => values[slot])
-    .replace(/\s+/g, ' ')
-    .trim();
-  return {
-    subject,
-    ...mailpage.fill(
-      t.body,
-      values,
-      look,
-      { lang, subject },
-      ['tracking', 'order_page'],
-      {},
-      signoff ? { signoff } : {},
-    ),
-    attachments: [],
-  };
 }

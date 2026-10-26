@@ -9,6 +9,8 @@ import { db, inOneStep, planChange } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
 import { findThread, type JobThreadAsk } from './projects.ts';
+import { whereWorkGoes } from './wherework.ts';
+import { ceo, projects } from './company.ts';
 import { taskClash } from './names.ts';
 import { oneTask, oneTaskName } from './made.ts';
 import { claim, codeOf } from './jobcodes.ts';
@@ -70,7 +72,7 @@ export function settle() {
   db.prepare(
     `update proposals set status = 'dropped', decided = ?, why = 'its job ended before it was sorted'
     where status = 'open' and id in (select s.proposal from sorts s join jobs j on j.id = s.job
-      where j.status in ('done', 'failed', 'cancelled'))`,
+      where j.status in ('done', 'failed', 'stopped', 'cancelled'))`,
   ).run(new Date().toISOString());
 }
 
@@ -126,6 +128,13 @@ export function accept(
   const to = ask.newThread != null ? 'new' : ask.thread == null ? thread : findThread(String(ask.thread))?.id;
   if (to !== thread)
     return `job #${job} is in ${thread ?? 'no thread'}: move it there first (hq job move ${job} <thread>)`;
+  // (the desk is the CEO's own work alone: anyone else's goes to its project first.)
+  if (
+    !thread &&
+    projects().requireThread &&
+    (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string }).agent !== ceo()
+  )
+    return `job #${job} is in no thread. ${whereWorkGoes()} Move it to that project's thread first (hq job move ${job} <project>/<slug>)`;
   const had = codeOf(job);
   const named = ask.code == null && had ? { code: had } : claim(ask.code, thread);
   if ('refused' in named) return named.refused;
@@ -149,16 +158,18 @@ export function accept(
   });
 }
 
-// The owner's planning job's prompt (planning.ts), the one sort step per owner, which reads the whole inbox when it
-// starts. It ends with the levels each name shows, in the company's lines (levels.ts), and how its plans look ahead.
+// The owner's planning job's prompt (planning.ts), the one sort step per owner and project (null: no project's), which
+// reads that project's inbox when it starts (proposals.ts list). It ends with the
+// levels each name shows, in the company's lines (levels.ts), and how its plans look ahead.
 // (HQ's own to sort)
 // Needed colleague answers.
 export const planning = (
+  project: string | null,
   own = levelsOf(),
-) => `Proposals, review findings and HQ's own work to sort for the projects you own arrive here: it waits in your inbox, out of the queue, until you decide it.
+) => `Proposals, review findings and HQ's own work to sort for ${project ? `the project ${project}` : 'no project, yours as the CEO'} arrive here: it waits in your inbox, out of the queue, until you decide it.
 
-1. Read the inbox: \`hq inbox\` lists what waits for you, \`hq inbox <id>\` shows one in full.
-2. Read the plan it would go in: \`hq plan <project>\` (its threads, their "done when", needs and tasks in order).
+1. Read the inbox: \`hq inbox\` lists what waits for you here, \`hq inbox <id>\` shows one in full.
+2. Read the plan it would go in: \`hq plan ${project ?? '<project>'}\` (its threads, their "done when", needs and tasks in order).
 3. Decide each one:
    - review findings: read their domains and files, then draw one fix task per discipline with
      \`hq inbox accept findings:<pr> --for <agent> --findings <id,id,...>\`, or
@@ -172,7 +183,13 @@ export const planning = (
      first). Unrelated parts are tasks of their own: queue each (\`hq job\`, with its part of the brief), then accept
      it as the part left, or drop it saying where its parts went, which cancels it.
      A message marked \`--needs-answer\` needs its answer during the caller's run. HQ gives it an independent thread.
-     Keep it independent of the caller's completion when sorting or splitting it.
+     Keep it independent of the caller's completion when sorting or splitting it.${
+       projects().requireThread
+         ? `
+     Place it first: ${whereWorkGoes()} One in no thread goes to the thread of its project it serves (\`hq job
+     move <job> <project>/<slug>\`, a thread drawn for it there if none fits), unless it's the CEO's own.`
+         : ''
+     }
    - part of a thread's "done when": \`hq inbox accept <id> --thread <project>/<slug>\`, then \`hq plan move\` it to its
      place among the thread's tasks if it isn't last;
    - beyond every thread: a thread of its own, \`hq inbox accept <id> --thread new:<project> "name" "done when"\`, with

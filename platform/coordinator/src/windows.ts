@@ -8,7 +8,7 @@
 // the CEO's call.
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
-import { companyFormats } from './company.ts';
+import { companyFormats, companyMoment, timeZone } from './company.ts';
 import { findProject, findThread, type Thread } from './projects.ts';
 import { standing, type Forecast } from './forecast.ts';
 import type { OrderingSnapshot } from './playtypes.ts';
@@ -20,12 +20,15 @@ const DEPTH = 5; // re-lands followed this far
 type WorkEnd = 'finished' | 'dropped';
 
 // When a deadline given as text falls, counted from `now`, or why it can't be read: '2h', '90m' or '1h30m' from now;
-// '14:30', the next 14:30 UTC; or a whole UTC time, '2026-10-06T14:30Z'. A time already past is refused,
+// '14:30', the next 14:30 UTC; a whole UTC time, '2026-10-06T14:30Z'; or one on the company's clock without a zone,
+// '2026-10-06 16:30', at the offset of its own date, so a time the board said needs no converting across a clock change.
+// A time already past is refused,
 // unless `allowPast` (an agreed time recorded after it passed: a call item's time or hq window's --aim).
 export function parse(text: string, now = Date.now(), allowPast = false, field = 'the deadline'): number | string {
   const given = text.trim();
   const relative = /^(?:(\d{1,3})h)?(?:(\d{1,4})m)?$/i.exec(given),
-    daily = /^(\d{1,2}):(\d{2})$/.exec(given);
+    daily = /^(\d{1,2}):(\d{2})$/.exec(given),
+    local = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})$/i.exec(given);
   let at = NaN;
   if (relative && (relative[1] || relative[2]))
     at = now + Number(relative[1] ?? 0) * HOUR_MS + Number(relative[2] ?? 0) * MINUTE_MS;
@@ -36,11 +39,16 @@ export function parse(text: string, now = Date.now(), allowPast = false, field =
     at = Date.parse(given.replace(' ', 'T'));
     // Date.parse moves a day that doesn't exist (31 February) on into the next month: that's a typo, not a deadline.
     if (!Number.isNaN(at) && new Date(at).toISOString().slice(0, 10) !== given.slice(0, 10)) at = NaN;
+  } else if (local) {
+    const [y, m, d, hour, minute] = local.slice(1).map(Number);
+    // (the same typo check, on the date as given)
+    const real = new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) === given.slice(0, 10);
+    if (real && hour < 24 && minute < 60) at = companyMoment(y, m, d, hour, minute);
   }
   if (Number.isNaN(at))
     return (
-      `can't read ${field} "${given.slice(0, 40)}": give a time from now (2h, 90m, 1h30m) or a UTC time ` +
-      '(14:30, 2026-10-06T14:30Z)'
+      `can't read ${field} "${given.slice(0, 40)}": give a time from now (2h, 90m, 1h30m), a UTC time ` +
+      `(14:30, 2026-10-06T14:30Z) or one on the company's clock (2026-10-06 16:30, ${timeZone()})`
     );
   return at > now || allowPast ? at : `${field} ${when(at)} has passed already`;
 }

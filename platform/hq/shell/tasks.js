@@ -86,7 +86,7 @@ function rowWords(j, s, t) {
 }
 // Each row state's mark over its face's corner: done a tick, the board's its desk phone, after other work an hourglass;
 // planned has its hollow look and working its bars instead
-const ROW_MARKS = {
+export const ROW_MARKS = {
   done: `<span class="pj-row-mark">${icon('tick', '', 'Done')}</span>`,
   board: `<span class="pj-row-mark">${icon('phone', '', 'Waits for you')}</span>`,
   after: `<span class="pj-row-mark">${icon('hourglass', '', 'Waits on other work')}</span>`,

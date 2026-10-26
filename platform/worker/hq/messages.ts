@@ -27,8 +27,9 @@ export const say = {
    hq [--as id] say <agent> "message"                a message to a colleague (an agent in company/org.yaml, or an alumnus;
                                                      teammates in your own session: use SendMessage). HQ keeps it and says
                                                      what happened: queued for their running job, whose session gets it at
-                                                     its next step (if that job ends first, it becomes a new job), or a
-                                                     new job for them right away (added to the one your earlier message
+                                                     its next step. CEO messages stay for the next run, even while a
+                                                     pause holds work. Other idle recipients, or those whose job ends
+                                                     unread, get a new job (added to the one your earlier message
                                                      made, if that hasn't started yet). A message's job starts once its
                                                      project's owner (else the CEO) has sorted it into the plan, named for
                                                      what it does. "-" as the message reads it from stdin.
@@ -105,10 +106,13 @@ async function sayOnCall(args: string[]) {
   );
 }
 
-type Said = { id: number; state: string; job: number; why?: string; added?: number; chain_full?: boolean };
+type Said = { id: number; state: string; job?: number; why?: string; added?: number; chain_full?: boolean };
 
 function said(to: string, { id, state, job, why, added, chain_full }: Said) {
   const check = `Check: hq sent ${id}`;
+  if (why === 'next-run') {
+    return `Kept for ${to}: ${job ? `job #${job} reads it at its next step` : 'the next run reads it'}, even while a pause holds work. If unread, it stays for the following run. ${check}`;
+  }
   if (state === 'job' && present(added)) {
     return `${to} has no running job that can read it now: it's added to job #${job}, which your message #${added} became and which hasn't started yet, so it runs with that one (message #${id}). ${check}`;
   }
@@ -227,6 +231,7 @@ function whatBecameOf(message: SentMessage) {
   if (present(message.offered) && message.job_status === 'running') {
     return `offered to job #${job}'s session at ${minute(message.offered)}, not confirmed yet: if it didn't arrive, a later step gets it again`;
   }
+  if (job == null) return 'kept for the next run, even while a pause holds work';
   if (message.job_status === 'running') {
     return `waiting for job #${job}, which is running: its session gets it at its next step`;
   }
@@ -261,10 +266,14 @@ export const inbox = {
     // (a meeting's lines by their line ids: HQ marks them read only now.)
     const ids = messages.map(message => message.message).filter(present);
     const lines = messages.filter(message => present(message.meeting)).map(message => message.line);
-    if (ids.length === 0 && lines.length === 0) return;
+    const disk = messages.map(message => message.disk).filter(present);
+    if (ids.length === 0 && lines.length === 0 && disk.length === 0) return;
     // A lost ack is fine: HQ offers the messages and lines again at a later step.
     await api.orNoAnswer(
-      api.call('inbox-ack', { body: { ids, ...(lines.length ? { lines } : {}) }, timeoutMs: 10_000 }),
+      api.call('inbox-ack', {
+        body: { ids, ...(lines.length ? { lines } : {}), ...(disk.length ? { disk } : {}) },
+        timeoutMs: 10_000,
+      }),
     );
   },
 };
@@ -274,6 +283,7 @@ export const inbox = {
 type InboxMessage = {
   message?: number;
   memory?: number;
+  disk?: string;
   text?: string;
   guest?: unknown;
   call?: unknown;
@@ -306,10 +316,14 @@ function hookOutput(event: string, messages: InboxMessage[]) {
   const guests = messages.filter(message => present(message.guest));
   const additions = messages.filter(message => present(message.call));
   const meetingLines = messages.filter(message => present(message.meeting));
-  const memory = messages.filter(message => present(message.memory));
+  const memory = messages.filter(message => present(message.memory) || present(message.disk));
   const colleagues = messages.filter(
     message =>
-      !present(message.guest) && !present(message.call) && !present(message.meeting) && !present(message.memory),
+      !present(message.guest) &&
+      !present(message.call) &&
+      !present(message.meeting) &&
+      !present(message.memory) &&
+      !present(message.disk),
   );
   const block = (group: InboxMessage[], head: string, last: boolean) =>
     head +

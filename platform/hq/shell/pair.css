@@ -1,0 +1,113 @@
+/* A second screen (pair.js): the card at the book's foot (the code, then who's paired), the rail's swap, and the other
+   screen's ink over HQ's page (pairink.js). In the book's own look (booklook.css). */
+#book .pair-card {
+  position: absolute;
+  left: 40px;
+  right: 18px;
+  bottom: 18px;
+  z-index: 7;
+  font: 400 14px/1.35 var(--bk-font);
+  color: var(--bk-night);
+}
+#book .pair-card[data-state='code'] {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1.5px #e8dcc4,
+    0 4px 12px rgba(29, 26, 47, 0.12);
+}
+#book .pair-ask,
+#book .pair-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 0 0 1.5px #e8dcc4;
+  font: inherit;
+  color: inherit;
+}
+#book .pair-ask {
+  cursor: pointer;
+}
+#book .pair-line {
+  justify-content: space-between;
+}
+#book .pair-line span {
+  flex: 1;
+}
+#book .pair-ask svg,
+#book .pair-line svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
+}
+#book .pair-line button,
+#book .pair-join button {
+  border: 0;
+  border-radius: 14px;
+  padding: 5px 12px;
+  background: var(--bk-night);
+  color: #fff;
+  font: 700 13px var(--bk-font);
+  cursor: pointer;
+}
+#book .pair-qr {
+  flex: none;
+  width: 108px;
+  height: 108px;
+}
+#book .pair-words {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+#book .pair-words > b {
+  font-size: 17px;
+}
+#book .pair-digits {
+  white-space: nowrap;
+  letter-spacing: 0.06em;
+}
+#book .pair-join {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+#book .pair-join input {
+  min-width: 0;
+  flex: 1;
+  padding: 5px 9px;
+  border: 1.5px solid #e8dcc4;
+  border-radius: 10px;
+  font: 16px var(--bk-font); /* (16 px: Safari zooms into a smaller field) */
+  color: inherit;
+  background: var(--bk-paper);
+}
+#book .pair-x {
+  align-self: start;
+  border: 0;
+  background: none;
+  font: 22px/1 var(--bk-font);
+  color: #5a5478;
+  cursor: pointer;
+}
+#book .bk-swap[hidden] {
+  display: none;
+}
+.pair-ink {
+  position: fixed;
+  left: 0;
+  top: 0;
+  width: calc(100vw - var(--book-room, 0px));
+  height: 100vh;
+  z-index: 39;
+  pointer-events: none;
+}

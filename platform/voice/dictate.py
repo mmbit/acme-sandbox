@@ -18,16 +18,17 @@ AT_ONCE = 2
 dictating = set()
 
 
-async def dictation(ws, token, vad, transcribe, written):
+async def dictation(ws, token, vad, transcribe, written, limit_seconds=LIMIT_SECONDS, monotonic=time.monotonic):
     """One dictation on its WebSocket, from the coordinator with the line's token. vad() makes a VAD as calls use it,
-    transcribe(samples) gives the words in them, written(text, lang) the words as they're written down."""
+    transcribe(samples) gives the words in them, written(text, lang) the words as they're written down; limit_seconds:
+    its length, and monotonic() the clock it's timed on, the line's unless a test gives its own."""
     if not hmac.compare_digest(ws.request.headers.get('Authorization', '').encode(), f'Bearer {token}'.encode()):
         return await ws.close(1008, 'token')
     if len(dictating) >= AT_ONCE:
         return await ws.close(1013, 'busy')
     lang = (parse_qs(urlsplit(ws.request.path).query).get('lang') or [''])[0]
     # (an outside reviewer has no language of ours: their words stay as heard, never cleaned up as another language's)
-    d = Dictation(ws, vad(), transcribe, (lambda text: written(text, lang)) if lang else (lambda text: text))
+    d = Dictation(ws, vad(), transcribe, (lambda text: written(text, lang)) if lang else (lambda text: text), limit_seconds, monotonic)
     dictating.add(d)
     try:
         await d.run()
@@ -38,9 +39,10 @@ async def dictation(ws, token, vad, transcribe, written):
 class Dictation:
     """The VAD cuts the board's words into phrases, each written down as it ends, with looks at the one still being
     spoken. Every heard event has all the words so far."""
-    def __init__(self, ws, vad, transcribe, written):
-        self.ws, self.vad, self.transcribe, self.written = ws, vad, transcribe, written
-        self.began, self.limited = time.monotonic(), False
+    def __init__(self, ws, vad, transcribe, written, limit_seconds=LIMIT_SECONDS, monotonic=time.monotonic):
+        self.ws, self.vad, self.transcribe, self.written, self.limit_seconds = ws, vad, transcribe, written, limit_seconds
+        self.monotonic = monotonic
+        self.began, self.limited = monotonic(), False
         self.pending = np.zeros(0, np.float32)  # what the VAD hasn't heard yet: less than a window
         self.n = 0  # the samples the VAD has heard
         # the audio since LEAD before the phrase being spoken (or before now), and where it starts
@@ -63,7 +65,7 @@ class Dictation:
                 if len(message) % 2:
                     how = 'refused'
                     return await self.ws.close(1003, '16-bit samples')
-                # (what comes past LIMIT_SECONDS of audio isn't heard, however fast it came)
+                # (what comes past its limit of audio isn't heard, however fast it came)
                 await self.hear(np.frombuffer(message[:2 * self.room()], '<i2').astype(np.float32) / 32768)
             if message is None:
                 self.limited, how = True, 'cut at the limit'
@@ -77,8 +79,8 @@ class Dictation:
             print(f'dictation: {how} after {self.n / RATE:.0f} s, {len(self.phrases)} phrases', flush=True)
 
     async def next_message(self):
-        """The next frame, or None once the dictation has run LIMIT_SECONDS or taken in that much audio."""
-        left = self.began + LIMIT_SECONDS - time.monotonic()
+        """The next frame, or None once the dictation has run its limit or taken in that much audio."""
+        left = self.began + self.limit_seconds - self.monotonic()
         if not self.room():
             return None
         try:
@@ -88,7 +90,7 @@ class Dictation:
 
     def room(self):
         """The samples still to be taken in."""
-        return RATE * LIMIT_SECONDS - self.n - len(self.pending)
+        return RATE * self.limit_seconds - self.n - len(self.pending)
 
     async def hear(self, samples):
         self.chunks.append(samples)

@@ -11,7 +11,7 @@
 // At the top and scrolled, each spot of the note's screenshot must be the colour the browser shows there. Scrolled, the
 // note is pinned on the chat's panel: the note's element must be the panel, inside its shadow root. Then the same on
 // two more pages: a sticky header with sticky rows and a sticky band, and pages that scroll their own boxes (HEADER and
-// SCROLLER below say what's on them), and pages with popups open (POPUP, POPUP_FIRST and POPUP_NESTED: the note pinned inside them).
+// SCROLLER below say what's on them), and pages with popups open (POPUP, POPUP_FIRST and POPUP_NESTED: the note pinned inside them), and a fixed box over another one's band (STACKED).
 //   node shared/review/snapshot-check.mjs [--shots dir]
 // Exit 1 on any failure.
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -218,11 +218,24 @@ const POPUP_NESTED = `<!doctype html><html><head><meta name="viewport" content="
 <dialog id="outer"><dialog id="inner"><button id="deep"></button></dialog><div id="tip" popover="manual"></div></dialog>
 <script>addEventListener('load', () => setTimeout(() => { outer.showModal(); inner.showModal(); tip.showPopover(); }, 50));</script>
 <script src="/__review/review.js" defer></script></body></html>`;
+// A screen-sized fixed box (an app's board) whose ::after band has a z-index, and a later fixed box over the band (its
+// status line, moved by a transform): the band stacks inside its fixed box, so the later box paints over it (copy.js's
+// isolation).
+const STACKED = `<!doctype html><html><head><meta name="viewport" content="width=device-width">
+<style>
+  body { margin: 0; background: ${C.page}; }
+  .board { position: fixed; inset: 0; }
+  .board::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 200px; z-index: 1; background: ${C.cover}; }
+  .foot { position: fixed; left: 20px; top: 600px; width: 200px; height: 60px; transform: translateY(-100%); background: ${C.box}; }
+</style></head><body>
+<div class="board"></div><div class="foot"></div>
+<script src="/__review/review.js" defer></script></body></html>`;
 const FILES = {
   '/': ['text/html', PAGE],
   '/popup': ['text/html', POPUP],
   '/popup-first': ['text/html', POPUP_FIRST],
   '/popup-nested': ['text/html', POPUP_NESTED],
+  '/stacked': ['text/html', STACKED],
   '/header': ['text/html', HEADER],
   '/scroller': ['text/html', SCROLLER],
   '/slim.css': ['text/css', '@font-face { font-family: Slim; src: local("Liberation Sans Narrow"), local("DejaVu Sans Condensed"), local("Arial Narrow"); }'],
@@ -291,6 +304,8 @@ const CASES = {
   // the outer dialog's backdrop, the outer dialog, the inner one, the popover alone and over the inner one, the button
   popupNested: { path: '/popup-nested', y: 0, tap: [100, 240], pinned: 'button#deep', open: '#inner', spots: [[10, 600, 'strip'],
     [40, 100, 'box'], [100, 350, 'cover'], [300, 180, 'awning'], [240, 225, 'awning'], [180, 245, 'panel']] },
+  // the later fixed box over the band, the band beside it, the page above the band
+  stacked: { path: '/stacked', y: 0, tap: [100, 150], spots: [[120, 570, 'box'], [300, 570, 'cover'], [300, 300, 'page']] },
 };
 
 const browser = await chromium.launch();

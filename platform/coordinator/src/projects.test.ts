@@ -714,6 +714,24 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   assert.equal(own.code, 0, own.out);
   assert.equal(thread(Number(/Queued job #(\d+)/.exec(own.out)![1])), null);
   assert.notEqual((await h.hq(ceo, 'job', 'moss', 'Loose work too', '--new')).code, 0, "others' still need one");
+  // on a call too: the CEO's own follow-up is the desk's, anyone else's work names the thread of the project it's for,
+  // told where work goes (the Front Desk is the CEO's call and meeting work alone).
+  const call = (await h.voice('call-context?agent=juno')).body.token as string;
+  const onCall = (agent: string, title: string) => h.agent('job', call, { agent, title, prompt: 'From the call.' });
+  const followUp = await onCall('juno', 'Write up the call');
+  assert.equal(followUp.status, 200, JSON.stringify(followUp.body));
+  assert.equal(thread(followUp.body.id), null);
+  const loose = await onCall('moss', 'A recurring check on the shop');
+  assert.equal(loose.status, 409);
+  assert.match(
+    loose.body.error,
+    /belongs to the project its work is for.*holds only the CEO's own work.*game\/boss-fight/s,
+  );
+  assert.equal(
+    (db.prepare('select count(*) n from jobs where title = ?').get('A recurring check on the shop') as { n: number }).n,
+    0,
+  );
+  await h.voice('call-end', { agent: 'juno', lines: [], token: call });
   // (a thread started for a job is drawn in its project's plan: shop's is moss's or the CEO's.)
   const payment = ['job', 'moss', 'The payment form', '--thread', 'new:shop', 'The checkout', 'A buyer pays', '--new'];
   assert.match((await hq(...payment)).out, /No job was queued: The shop's plan is moss's .* hq propose --project shop/);

@@ -8,8 +8,8 @@
 // that runs this tool covers (company/org.yaml review.visual, its paths but not its except), a kind's own file
 // (meeting.js) that kind and any other every kind. A change to none of them previews nothing. The org is company/org.yaml, the states theme/hq/room-previews.yaml (its header has
 // the format). HQ runs in dev mode on that org as mock data, with a seeded Math.random and a paused clock (harness.mjs),
-// a minute and a half of it before each shot so everyone has walked to where the state puts them. Each shot is a PNG of
-// the room alone, 2 screen pixels to a pixel of the art; the sheet puts them in a grid, a state a row and a look, setting
+// a minute and a half of it before each shot so everyone has walked to where the state puts them, and the Sketchbook
+// folded under its rail. Each shot is a PNG of the room alone, framed on the stage, 2 screen pixels to a pixel of the art; the sheet puts them in a grid, a state a row and a look, setting
 // (its date and hour) and place a column, and index.md under --out lists every file. --record writes what was shot into the branch,
 // with a section for what the author saw.
 // Open every sheet and look at each picture: the room lit as it should be by day and in the dark, nothing hanging in
@@ -27,6 +27,7 @@ import { playwright } from '../../shared/browser/browser.mjs';
 import { HOLIDAYS, holidaysOn } from '../../shared/holidays/holidays.js';
 import * as world from './world/world.js';
 import { buildLayout } from './renderers/brownstone/layout.js';
+import { RAIL, shapeOf } from './shell/booklayout.js';
 
 const arg = k => {
   const i = process.argv.indexOf(k);
@@ -208,10 +209,10 @@ function* variants(room) {
       yield { org: { ...org, commons: [...commons.slice(0, ahead), ...spacers, ...commons.slice(ahead)] }, how };
     }
 }
-// Where the room stands in an org's building (the page checks it stands there too)
+// Where the room stands in an org's building on HQ's page beside the folded book (the page checks it stands there too).
 function placeIn(o, room) {
   world.setOrg({ ...o, machines }, true);
-  const r = buildLayout(world, VIEW.width, VIEW.height).rooms.find(x => x.src === room.id),
+  const r = buildLayout(world, VIEW.width - RAIL, VIEW.height).rooms.find(x => x.src === room.id),
     last = r.lv.rooms.filter(x => x.wing === r.wing).at(-1);
   return placeName({ wing: r.wing, end: last === r });
 }
@@ -319,6 +320,9 @@ async function shoot(room, job) {
     await context.route(/\/mock\/org\.json$/, r => r.fulfill({ json: job.org }));
     await context.route(/\/mock\/meetings\.json$/, r => r.fulfill({ json: job.meetings }));
     await pin(context, clockOf(job.setting));
+    // the Sketchbook folded under its rail, as the board puts it away to look at the building (remembered per shape).
+    const book = `hq.book.${shapeOf(VIEW.width, VIEW.height)}`;
+    await context.addInitScript(key => localStorage.setItem(key, '{"mode":"folded"}'), book);
     const page = track(await context.newPage()),
       errors = [];
     page.on('pageerror', e => errors.push(e.message));
@@ -338,18 +342,22 @@ async function shoot(room, job) {
   }
 }
 
-// In the page: the look's time run on (the world's and the scene's steps, without drawing), then one frame with the
-// room in the middle, and the part of the screen to keep. Brownstone: the room's art at the zoom; Holo: the middle of its
-// own framing of the room
+// In the page: the scene sized to HQ's page, the look's time run on (the world's and the scene's steps, without
+// drawing), then one frame with the room in the middle of the stage, and the part of the screen to keep. Brownstone: the
+// room's art at the zoom; Holo: the middle of its own framing of the room.
 // (and where the room stands: its wing, and which room ends that wing on its floor)
 async function still({ look, id, walk, step, zoom, at }) {
   const [stage, world] = await Promise.all([import('/shell/stage.js'), import('/world/world.js')]);
+  const { pageWidth } = await import('/shell/page.js');
   if (stage.look !== look) throw new Error(`${look} didn't start: HQ shows ${stage.look}`);
+  // (the scene follows the page's width on a timer the paused clock may hold: sized here, every shot's is the same)
+  stage.resize();
   for (let t = 0; t < walk; t += step) {
     world.tick(step);
     stage.scene.update(step);
   }
-  const cv = document.querySelector('#world');
+  const cv = document.querySelector('#world'),
+    [w, h] = [pageWidth(), innerHeight]; // the stage, from the page's top left, as resize gave it the scene
   let box,
     stands = {};
   if (look === 'brownstone') {
@@ -360,12 +368,12 @@ async function still({ look, id, walk, step, zoom, at }) {
     Object.assign(cam, { x: Math.round(a.cx + a.c.width / 2), y: Math.round(a.cy + a.c.height / 2), z: zoom, t: null });
     window.hq.frame(at);
     const k = cam.z / devicePixelRatio; // (CSS px a pixel of the art: the canvas is the art at 1:1, scaled up by CSS)
-    box = { x: (a.cx - cam.x) * k + innerWidth / 2, y: (a.cy - cam.y) * k + innerHeight / 2 };
+    box = { x: (a.cx - cam.x) * k + w / 2, y: (a.cy - cam.y) * k + h / 2 };
     Object.assign(box, { width: a.c.width * k, height: a.c.height * k });
   } else {
     if (!stage.scene.focus({ kind: 'room', id }, { instant: true })) throw new Error(`${look} has no room ${id}`);
     window.hq.frame(at);
-    box = { x: innerWidth / 3, y: innerHeight / 3, width: innerWidth / 3, height: innerHeight / 3 };
+    box = { x: w / 3, y: h / 3, width: w / 3, height: h / 3 };
   }
   // the page as a viewer sees it (the sky is the page's background), without the shell's buttons and panels
   for (const el of document.body.querySelectorAll('*')) if (!el.contains(cv)) el.style.visibility = 'hidden';
@@ -375,8 +383,8 @@ async function still({ look, id, walk, step, zoom, at }) {
   const clip = {
     x,
     y,
-    width: Math.min(innerWidth, Math.round(box.x + box.width)) - x,
-    height: Math.min(innerHeight, Math.round(box.y + box.height)) - y,
+    width: Math.min(w, Math.round(box.x + box.width)) - x,
+    height: Math.min(h, Math.round(box.y + box.height)) - y,
   };
   return { clip, ...stands };
 }

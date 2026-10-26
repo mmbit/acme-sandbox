@@ -1,6 +1,6 @@
-// Tiles a sideways swipe steps through (Wire's big key, the projects view's levels) show it: a small filled triangle
-// just outside each side, in the look's own icon style, and a tap or click on one is the swipe's step. Both step round,
-// so with two tiles or more each side has one to go to, and with fewer neither shows. Its place is style.css's .sides.
+// Tiles a sideways swipe steps through (Wire's big key) show it: a small filled triangle just outside each side, in the
+// look's own icon style, and a tap or click on one is the swipe's step. Both step round, so with two tiles or more each
+// side has one to go to, and with fewer neither shows. Its place is style.css's .sides.
 import { icon } from './icons.js';
 
 // The two triangles as markup, for a box laid over the tile (cls: the place's own class); data-side: the step, as a

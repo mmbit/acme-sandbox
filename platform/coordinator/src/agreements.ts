@@ -5,6 +5,7 @@ import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
 import * as memory from './memory.ts';
 import { ceo } from './company.ts';
+import * as threats from './threats.ts';
 
 const QUOTE_MAX = 600;
 
@@ -17,10 +18,12 @@ type Agreement = {
   what: string;
   quote: string;
   status: string;
+  ready_at: string | null;
   request: number | null;
   ceo_call: number;
   carriers: string;
   pause: string | null;
+  stopped: number | null;
 };
 
 // The jobs carrying item i: the one handed it (call_items.job), every job carrying it on (jobs.item, hq job passes it
@@ -36,47 +39,49 @@ const CARRIERS = jobs.lineageFrom(
 );
 const UNFINISHED = `exists (select 1 from (${CARRIERS}) c cross join jobs u indexed by jobs_state on u.id = c.id where (u.status in ('queued', 'running', 'blocked')
   or u.status = 'done' and exists (select 1 from prs p where p.branch = coalesce(u.branch, 'job/' || u.id) and p.status in ('open', 'stuck', 'board'))
-  or u.status = 'failed' and not ${jobs.hasReplacement('u.id')}))`;
+  or u.status in ('failed', 'stopped') and not ${jobs.hasReplacement('u.id')}))`;
 
 // A pause carrying item i that still stands for the board: it holds, or it was resumed by hand before the jobs it waits
 // for merged (pauses.ts).
 const PAUSE_STANDS = `exists (select 1 from pauses p where p.item = i.id and (${jobs.pauseHolds('p')}
   or exists (select 1 from pause_until u join jobs prior on prior.id = u.job where u.pause = p.id and not ${jobs.merged('prior')})))`;
 
-// Open tasks, promises and decisions, whenever they were said; handled ones while a job carrying them is unfinished or a
-// pause carrying them stands; and the board's decisions until a later call replaces or drops them (a decision such as a
-// hold binds after its job has ended). The same list decides whether a check is queued.
+// Open tasks, promises and decisions, whenever they were said; ready ones (their work ended, the board's yes still to
+// come: ledger.ts done); handled ones while a job carrying them is unfinished or
+// a pause carrying them stands; and the board's decisions until a later call replaces or drops them (a decision such as
+// a hold binds after its job has ended). The same list decides whether a check is queued.
 export function agreements() {
   return db
     .prepare(
-      redraws.query(`select i.id, i.call, i.kind, i.owner, i.what, i.quote, i.status, i.request, c.agent = $ceo ceo_call,
+      redraws.query(`select i.id, i.call, i.kind, i.owner, i.what, i.quote, i.status, i.ready_at, i.request, c.agent = $ceo ceo_call,
+        (select j.id from jobs j where j.id = i.job and j.status = 'stopped') stopped,
         (select json_group_array(id) from (select distinct id from (${CARRIERS}) order by id)) carriers,
         (select coalesce(p.thread, p.project) || iif(p.resumed is null, '', ', resumed') from pauses p where p.item = i.id
           order by p.id desc limit 1) pause
       from call_items i join calls c on c.id = i.call
-      where i.kind in ('task', 'promise', 'decision') and (i.status = 'open'
+      where i.kind in ('task', 'promise', 'decision') and (i.status in ('open', 'ready')
         or i.status = 'handled' and (i.kind = 'decision' or ${UNFINISHED} or ${PAUSE_STANDS}))
       order by i.id`),
     )
     .all({ ceo: ceo() }) as Agreement[];
 }
 
-// The board's tasks and promises handled whose work has ended: jobs carried them and none is unfinished (a pull request
-// closed unmerged opened the item again: review.ts unmerged). The summary's finished part reads when that work went live
-// (finished.ts).
+// The board's tasks and promises whose work has ended: ready for the board's yes, or handled (said yes, or from before
+// that was asked), jobs carried them and none is unfinished (a pull request closed unmerged opened the item again:
+// review.ts unmerged). The summary's finished part reads when that work went live (finished.ts).
 export function ended() {
   const rows = db
     .prepare(
-      `select i.id, i.call, i.kind, i.owner, i.what,
+      `select i.id, i.call, i.kind, i.owner, i.what, i.status,
         (select json_group_array(id) from (select distinct id from (${CARRIERS}) order by id)) carriers
-      from call_items i where i.kind in ('task', 'promise') and i.status = 'handled' and not ${UNFINISHED} order by i.id`,
+      from call_items i where i.kind in ('task', 'promise') and i.status in ('handled', 'ready') and not ${UNFINISHED} order by i.id`,
     )
-    .all() as (Pick<Agreement, 'id' | 'call' | 'kind' | 'owner' | 'what'> & { carriers: string })[];
+    .all() as (Pick<Agreement, 'id' | 'call' | 'kind' | 'owner' | 'what' | 'status'> & { carriers: string })[];
   return rows.map(r => ({ ...r, carriers: JSON.parse(r.carriers) as number[] })).filter(r => r.carriers.length);
 }
 
 // The list for the CEO's job `reader`: the board's words only from a call hq call would show it.
-export function agreedPart(open: OpenByID, reader: jobs.Reader) {
+export function agreedPart(open: OpenByID, reader: jobs.Reader, now = Date.now()) {
   const shown = callsShown(reader);
   const lines = agreements().map(a => {
     if (a.status !== 'open' && !shown(a.call))
@@ -90,10 +95,16 @@ export function agreedPart(open: OpenByID, reader: jobs.Reader) {
         : a.request
           ? `card #${a.request}`
           : 'no job';
-    return `- item #${a.id} (call ${a.call}, ${a.kind} for ${a.owner}, ${a.status}): ${a.what} · ${work}${words}`;
+    return `- item #${a.id} (call ${a.call}, ${a.kind} for ${a.owner}, ${readyFor(a, now)}): ${a.what} · ${work}${words}`;
   });
   return `What the board agreed and still stands:\n${lines.join('\n') || '- nothing'}`;
 }
+
+// An item's status, and a ready one's wait for the board's yes since its work ended (hq item done records it)
+export const readyFor = (a: Pick<Agreement, 'status' | 'ready_at'>, now: number) =>
+  a.status === 'ready' && a.ready_at
+    ? `ready ${threats.age(now - Date.parse(a.ready_at))}, open until the board says yes (hq item done)`
+    : a.status;
 
 // Whether hq call would show a call to the CEO's job `reader` (memory.ts callAccess: not a live call's, one carried from
 // a card for keys or one about a customer it may not read), each call read once however many items it has; a customer

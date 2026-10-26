@@ -437,12 +437,15 @@ body.touring #card {
     height: 38px;
     padding: 0 7px;
   }
+  /* (across the page, centred, its three pills wrapping where they don't fit: a 360 px phone, a page beside the open
+     book.) */
   #status {
-    left: 50%;
+    left: max(12px, var(--sal));
+    right: max(12px, var(--sar));
     top: calc(var(--app-h, 100dvh) - max(8px, var(--sab) - 16px)); /* (low, beside the home bar) */
-    transform: translate(-50%, -100%);
-    max-width: calc(100cqw - 24px);
-    flex-wrap: nowrap;
+    transform: translateY(-100%);
+    max-width: none;
+    justify-content: center;
     gap: 5px;
   }
   #status > span {
@@ -1445,6 +1448,10 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   display: block;
   height: 20px;
 }
+/* (and its rate's line, before there is one, so the mark stays below the bars.) */
+.wire .big .pace small:empty {
+  height: 20px;
+}
 .wire .big .head {
   gap: 14px;
   padding-right: 52px; /* (the close button's) */
@@ -1538,6 +1545,23 @@ body.wire-dark #panel:has(> #panel-body > .masthead) {
   font-size: 18px;
   line-height: 1.25;
   font-weight: 650;
+}
+/* a task's title on the big key opens its thread (scene.js opens): under the pointer a quiet ground, its padding taken
+   back by the margin so the words stay where they are. */
+.wire .big .job-title {
+  margin: -3px -8px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.wire .big .job-title:focus-visible {
+  outline: 2px solid var(--k-ink);
+  outline-offset: 0;
+}
+@media (hover: hover) {
+  .wire .big .job-title:hover {
+    background: color-mix(in srgb, var(--k-ink) 6%, transparent);
+  }
 }
 .wire .week {
   display: grid;

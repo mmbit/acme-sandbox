@@ -111,7 +111,7 @@ function untriaged(slug: string, kind: string, seen: ServerKind) {
     )
     .get(slug, kind) as { status: string | null; finished: string | null } | undefined;
   if (!triage) return true;
-  const ended = triage.status && ['done', 'failed', 'cancelled'].includes(triage.status);
+  const ended = triage.status && ['done', 'failed', 'stopped', 'cancelled'].includes(triage.status);
   return !!ended && Date.parse(seen.last) - Date.parse(triage.finished!) >= FIX_DAYS * DAY_MS;
 }
 

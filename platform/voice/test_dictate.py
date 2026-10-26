@@ -46,7 +46,6 @@ from dictate import ConnectionClosed  # noqa: E402
 
 TOKEN = 'line-token'
 CLOCK = [100.0]
-dictate.time = NS(monotonic=lambda: CLOCK[0])
 
 
 class Vad:
@@ -153,12 +152,12 @@ class Dictation(unittest.IsolatedAsyncioTestCase):
         return bytes(int(seconds * 16000) * 2)
 
     @contextlib.asynccontextmanager
-    async def line(self, token=TOKEN, lang='en'):
-        """A dictation on the voice line, from the coordinator with this token."""
+    async def line(self, token=TOKEN, lang='en', limit=dictate.LIMIT_SECONDS):
+        """A dictation on the voice line, from the coordinator with this token, of at most `limit` seconds."""
         up, down = asyncio.Queue(), asyncio.Queue()
         line = End(up, down, {'Authorization': f'Bearer {token}'}, f'/voice/dictate?lang={lang}')
         ws = Coordinator(line, down, up, {}, '')
-        task = asyncio.create_task(dictate.dictation(line, TOKEN, Vad, self.transcribe, self.written))
+        task = asyncio.create_task(dictate.dictation(line, TOKEN, Vad, self.transcribe, self.written, limit, lambda: CLOCK[0]))
         await asyncio.sleep(0)
         try:
             yield ws
@@ -233,8 +232,8 @@ class Dictation(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_dictation_takes_in_five_minutes_of_audio_at_most_however_fast_it_comes(self):
         out = io.StringIO()
-        with unittest.mock.patch.object(dictate, 'LIMIT_SECONDS', 3), contextlib.redirect_stdout(out):
-            async with self.line() as ws:
+        with contextlib.redirect_stdout(out):
+            async with self.line(limit=3) as ws:
                 await ws.send(self.phrase('Say it again.', 1.0) + self.quiet(1.0) + self.phrase('And again.', 2.0))
                 events = [json.loads(m) async for m in ws]
         self.assertEqual(events[-2:], [{'type': 'heard', 'text': 'en: Say it again. And', 'partial': False},

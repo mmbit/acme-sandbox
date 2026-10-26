@@ -460,6 +460,7 @@
        "request": null,
        "request_title": null,
        "result": "Built the gift wrap option: a checkbox at checkout, a note field, and the wrap shown in the order summary. Tested with the card test numbers.",
+       "did": "A buyer can now have an order gift-wrapped, with a note for whoever receives it. The wrap shows in the order summary before paying.",
        "kind": "work",
        "pr": 12,
        "round": null,

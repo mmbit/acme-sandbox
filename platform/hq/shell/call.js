@@ -4,17 +4,28 @@
 // The call's audio is callaudio.js's, shared with the join link's page: the voice through an <audio> element for the
 // echo canceller, the screen kept on, the microphone brought back after the screen went off.
 // The call is a layer of its own over whatever HQ shows, and minimises into a bubble while it goes on (callscreen.js).
-// The Pencil writes on HQ during a call, and the agent asks to see and draws in its own ink (calldraw.js).
+// The Pencil writes on HQ during a call, and the agent asks to see and draws in its own ink (calldraw.js), and opens
+// a piece of work on the board's screen and drives it (calldrive.js).
 import { esc } from '../util.js';
 import { loadLanguage } from './data.js';
-import { hush } from './audio.js';
+import { hush, cue, cueRepeating } from './audio.js';
 import { CallAudio } from './callaudio.js';
 import * as world from '../world/world.js';
 import { toast } from './hud.js';
 import { names } from './brand.js';
-import { openLayer, closeLayer, minimise, expand, shareKey } from './callscreen.js';
+import {
+  openLayer,
+  closeLayer,
+  minimise,
+  expand,
+  shareKey,
+  transcribe,
+  turnEnded,
+  turnTakenBack,
+} from './callscreen.js';
 import { startPictures, picturesLive, pictureState, stopPictures } from './callpictures.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './calldraw.js';
+import { FROM_LINE as DRIVING, stopDriving } from './calldrive.js';
 import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
@@ -25,17 +36,18 @@ export const callInFront = () => !!call && !call.small;
 export const minimiseCall = () => call && minimise(call);
 
 // Call someone: the call opens over whatever is on screen (their panel, a card, Reviews, the intercom), which is there
-// again when it ends. request: the card it's about; pins: the review notes a call from Reviews is about (its Call,
-// next to Send). onIntercom: started from the intercom, which shows why it ended, if not by hanging up.
+// again when it ends. request: the card it's about. onIntercom: started from the intercom, which shows why it ended, if
+// not by hanging up.
+// walk: from a card's Walk me through it (calldraw.js).
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
   request = 0,
-  pins = [],
   onIntercom = false,
+  walk = false,
 ) {
   if (call) return expand(call);
-  const c = (call = { agent, name, request, pins, onIntercom, voiced: [], kept: [], keptFrom: 0 });
+  const c = (call = { agent, name, request, onIntercom, walk, voiced: [], kept: [], keptFrom: 0 });
   c.hangUp = () => endCall();
   c.audio = new CallAudio({
     worklet: 'shell/mic-worklet.js',
@@ -50,6 +62,8 @@ export async function callAgent(
   });
   openLayer(c);
   hush(true, 'call');
+  // it rings from the tap until the line picks up, as a phone does, and the handset clacks then (FROM_LINE.call)
+  c.stopRinging = cueRepeating('ringing', 5);
   if (onIntercom) say(''); // (the last call's "the line dropped" goes)
   $('#call-skip').onclick = () => {
     stopPlayback(c);
@@ -57,7 +71,7 @@ export async function callAgent(
   };
   $('#call-end').onclick = () => endCall();
   startPictures(c);
-  callSay('Starting the microphone…', '');
+  callSay('Starting the microphone…');
   c.audio.keepAwake(); // (first, still in the tap: Safari grants the first lock only seconds after one)
   try {
     await c.audio.start();
@@ -72,7 +86,7 @@ export async function callAgent(
   c.ring = setTimeout(() => {
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
-  connect(c, { agent, lang: l.lang, request, ...(pins?.length ? { pins } : {}) }); // (pins)
+  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}) }); // (walk)
 }
 
 const microphoneFix = err =>
@@ -131,6 +145,11 @@ const FROM_LINE = {
     c.key = String(ev.key ?? '') || c.key;
     c.live = true;
     c.tries = 0;
+    if (c.stopRinging) {
+      c.stopRinging();
+      c.stopRinging = null;
+      cue('pickUp');
+    }
     resend(c, ev.heard);
     picturesLive(c);
     shareKey(c); // (Show my screen, once picked up)
@@ -139,15 +158,23 @@ const FROM_LINE = {
   state(c, ev) {
     callSay({ listening: 'Listening…', thinking: 'Thinking…', speaking: c.name }[ev.state] ?? '');
     c.bubble?.state(ev.state ?? '');
+    c.face?.state(ev.state ?? ''); // (the call screen's own little screen)
+    if (ev.state === 'thinking') {
+      // (a turn answered: the agent's reply starts its own line, as the board's next words do)
+      c.said = '';
+      turnEnded(c);
+    }
   },
+  // the board's turn so far, and the agent's sentences as they come: the call's transcript
   heard(c, ev) {
     c.said = '';
-    callSay(null, `“${ev.text}”`);
+    if (ev.back) turnTakenBack(c); // (the board went on before the reply was heard: the turn's line is open again)
+    transcribe(c, 'board', ev.text);
     DRAWING.heard(c, ev);
   },
   said(c, ev) {
     c.said = `${c.said ?? ''} ${ev.text}`.trim();
-    callSay(null, c.said);
+    transcribe(c, 'agent', c.said);
     c.audio.startSentence('voice');
     c.ticking = false;
   },
@@ -168,6 +195,8 @@ const FROM_LINE = {
   note: DRAWING.note,
   ask: DRAWING.ask,
   ink: DRAWING.ink,
+  open: DRIVING.open,
+  drive: DRIVING.drive,
   // the agent hung up once the board had said goodbye: as the Hang up button does
   hangup: () => endCall(),
 };
@@ -228,7 +257,8 @@ function onAir(c) {
   const speaking = c.voiced[0]?.[0] <= t,
     on = !!c.live && moving && (performance.now() - (c.loudAt ?? -1e9) < 400 || speaking);
   for (const header of document.querySelectorAll('.intercom header')) header.classList.toggle('on-air', on);
-  if (c.small) c.bubble.voice(c.live && moving && speaking ? Math.min(1, c.audio.voiceLevel() * 6) : 0);
+  // (the bubble's face, or the call screen's own little screen)
+  (c.small ? c.bubble : c.face)?.voice(c.live && moving && speaking ? Math.min(1, c.audio.voiceLevel() * 6) : 0);
 }
 // The line running behind. On a weak connection the microphone's frames back up and reach the line late, in a burst
 // (nothing is lost on the way, nor with a dropped connection: sendFrame), and the line waits for them before it answers
@@ -287,10 +317,9 @@ function showSoundNote(text) {
     n.hidden = !text;
   }
 }
-function callSay(state, said) {
+function callSay(state) {
   const s = $('#call-state');
-  if (s && state != null) s.textContent = state;
-  if (said != null) $('#call-said').textContent = said;
+  if (s) s.textContent = state;
 }
 function endCall(why) {
   const c = call;
@@ -298,6 +327,7 @@ function endCall(why) {
   call = null;
   c.over = true;
   clearTimeout(c.ring);
+  c.stopRinging?.();
   // (how the voice played here, numbers only, and its timeline in seconds after the line picked up)
   const { played, timeline } = c.audio.report(c.t0);
   if (c.ws?.readyState === 1) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));
@@ -305,6 +335,7 @@ function endCall(why) {
   c.voiced = [];
   stopPictures(c);
   stopDrawing(c);
+  stopDriving();
   c.audio.close();
   c.watch?.stop();
   c.bubble?.close();

@@ -174,7 +174,8 @@ const byOf = (r: Request, i: Item) => i.person ?? r.guest;
 // golden angle, so any number of people each have their own and a colour stays with its person. All share one lightness
 // and chroma, which reads on a light page and a dark one, with a white tick on it.
 const GOLDEN = 137.508, LIGHTNESS = 0.56, CHROMA = 0.13, FIRST_HUE = 20;
-const colourOf = (n: number) => n ? oklch(LIGHTNESS, CHROMA, (FIRST_HUE + (n - 1) * GOLDEN) % 360) : accent();
+// (exported: an invited person's ink in the board's book, sketchpeople.ts colourOf.)
+export const colourOf = (n: number) => n ? oklch(LIGHTNESS, CHROMA, (FIRST_HUE + (n - 1) * GOLDEN) % 360) : accent();
 // An OKLCH colour as #rrggbb (Björn Ottosson's matrices), each channel clipped to sRGB
 function oklch(l: number, c: number, hue: number) {
   const a = c * Math.cos(hue * Math.PI / 180);
@@ -499,6 +500,7 @@ export function setEmail(id: number, email: unknown) {
   const g = guest(r.guest)!;
   if (g.revoked) return 409;
   readdress(g, a);
+  for (const welcome of welcomes) welcome(g.name);
   return { ok: true };
 }
 // A new address ends the sessions the old one verified, and the codes sent to it: a code still unused would open the
@@ -519,6 +521,10 @@ function readdress(g: Guest, address: string) {
 // its own does.
 const holders: ((guest: string) => boolean)[] = [];
 export const addHolder = (holds: (guest: string) => boolean) => { holders.push(holds); };
+// What another module gives every guest the board (or a guest it lets) invites, once they're invited at their address,
+// or given one on their card (sketchpeople.ts: a book of their own).
+const welcomes: ((guest: string) => void)[] = [];
+export const addWelcome = (welcome: (guest: string) => void) => { welcomes.push(welcome); };
 // A guest nothing opens for any more: every request they were on withdrawn from or kept past its time, and nothing of
 // another module's held. The board may give their name a new address (it removed them, and invites them again at the
 // right one): the old address opens nothing of theirs, so nobody is locked out and no one else's page moves.
@@ -545,6 +551,7 @@ export function invite(name: unknown, email: unknown) {
   if (!known) db.prepare('insert into guests (name, created) values (?, ?)').run(n, new Date().toISOString());
   const g = guest(n)!;
   if (!g.email || moved) readdress(g, address);
+  for (const welcome of welcomes) welcome(g.name);
   return { name: g.name, address: masked(moved ? address : (g.email ?? address)) };
 }
 

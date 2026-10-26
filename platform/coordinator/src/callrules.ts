@@ -1,7 +1,6 @@
 // When and where a call out may go (callouts.ts): the calling hours, a time on the company's clock, and a number as Twilio
 // dials it.
-import { brand, timeZone } from './company.ts';
-import { companyMoment } from './later.ts';
+import { brand, companyMoment, timeZone } from './company.ts';
 import { international } from './phonelines.ts';
 import { secret } from './secrets.ts';
 

@@ -88,11 +88,16 @@ export function limitsReading(result: any, now = Date.now()) {
 // log (held). A job's line may give one window and leave the seat's other as it was; the worker's read replaces both, so
 // it never confirms a week only a job's log gave.
 type Reading = NonNullable<ReturnType<typeof codexReading>>;
-type Taking = Windows & { measured?: number; hasCredits?: boolean; useCredits?: boolean; creditsLeft?: number; confirmed?: boolean };
+type Taking = Windows & { measured?: number; hasCredits?: boolean; useCredits?: boolean; creditsLeft?: number; confirmed?: boolean;
+  fiveHourObservedAt?: number; weekObservedAt?: number };
 export function takeReading(seat: Taking, r: Reading, confirmed: boolean) {
   seat.util = r.util; seat.resets = r.resets ?? 0; seat.measured = r.at; seat.hasCredits = r.credits;
   seat.creditsLeft = r.creditsLeft; seat.confirmed = confirmed; spendCredits(seat);
-  if (confirmed || r.week !== undefined) { seat.week = r.week; seat.weekResets = r.weekResets ?? 0; }
+  seat.fiveHourObservedAt = r.util === undefined ? undefined : r.at;
+  if (confirmed || r.week !== undefined) {
+    seat.week = r.week; seat.weekResets = r.weekResets ?? 0;
+    seat.weekObservedAt = r.week === undefined ? undefined : r.at;
+  }
 }
 // The worker's own read on a held seat (readLimits, limitsReading's reading): it replaces the jobs', and a seat asleep at
 // its limit wakes, for its drain to hold it again by that reading or not. With no reading (readFailed), the seat keeps

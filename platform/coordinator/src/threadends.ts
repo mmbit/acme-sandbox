@@ -10,7 +10,9 @@ import * as threadjudge from './threadjudge.ts';
 
 // A pull request merged (review.ts pullRequestMerged): the thread starts its next task on a new branch. Each thread
 // whose work it held stays open with nothing in it open or still to merge, and its owner judges it (threadjudge.ts
-// wake): they close it (hq plan done) or draw its next task. A judge's own thread closes once all of it is in.
+// wake): they close it (hq plan done) or draw its next task. HQ's one-task threads (made.ts oneTask: a routine's run,
+// a check, a note's job) and a judge's own thread close once all of it is in: no owner draws a next task there, and
+// judging a judge would wake its owner without end.
 export function merged(pr: number) {
   const row = db.prepare('select branch from prs where number = ?').get(pr) as { branch: string } | undefined;
   if (!row) return;
@@ -26,13 +28,8 @@ export function settled(branch: string) {
       )
       .all(original) as { thread: string }[];
     for (const { thread } of threads)
-      if (threadjudge.judges(thread)) closeIfDone(thread);
-      else
-        try {
-          threadjudge.wake(thread);
-        } catch (err) {
-          console.error(`${thread}'s owner not woken to judge it:`, err);
-        }
+      if (oneTask(thread) || threadjudge.judges(thread)) closeIfDone(thread);
+      else threadjudge.wake(thread);
   }
 }
 

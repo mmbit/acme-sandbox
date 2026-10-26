@@ -4,9 +4,10 @@ from concurrent.futures import ThreadPoolExecutor, wait
 
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
+from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_* (HQ_TIME_ZONE: the
-# board's clock for hq's times, guard.py agent_env)
+# board's clock for hq's times, guard.py agent_env). The call's Waits runs hq in it.
 HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL', 'HQ_TIME_ZONE')
           if k in os.environ}
 # The screen tool (and the sketch tool) asks the voice line itself, on its
@@ -15,20 +16,9 @@ HQ_ENV = {k: os.environ[k] for k in ('PATH', 'LANG', 'HQ_URL', 'HQ_TOKEN', 'HQ_A
 SCREEN_SOCKET, SCREEN_KEY = os.environ.get('SCREEN_SOCKET', ''), os.environ.get('SCREEN_KEY', '')
 # (the coordinator refuses longer ones from a call too: server.ts, ledger.ts, messages.ts)
 TITLE, BRIEF, WHAT, GOAL, ADD = 140, 8000, 200, 300, 8000
-PIN_WORDS = 4000  # a pin's words, as long as the note box takes (feedback.ts)
 UNSURE = "{} Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."
 UNNOTED = "{} Don't note it again: the follow-up goes through the whole call afterwards and records it if it's missing."
-# A tool waits for the coordinator's real answer while the coordinator is alive: a slow coordinator is still there, and
-# a fixed cutoff would leave hand-offs unconfirmed that went through. While hq waits, a look at the coordinator's
-# /health every PROBE s, on its own ALIVE s, tells slow from down: a coordinator that answers neither is down, and the
-# tool gives up within seconds. One that's alive but never answers this request meets CEILING, a few times the slowest
-# real hand-off in the call logs (under a minute), so a call never hangs. A refused connection or a reset still ends it
-# at once (hq). The agent hears back within STILL s all the same, so the call is never silent for long: a tool still
-# waiting then says so and carries on in the background (WORK: what's under way at hang-up still lands), and the
-# waiting tool hears it.
-STILL, PROBE, ALIVE, CEILING = 20, 5, 5, 180
-WORK, PENDING = ThreadPoolExecutor(), []  # (PENDING: each tool still waiting, as (what it is, its future))
-UP = [None]  # (when the coordinator last answered a look at /health, time.monotonic())
+WORK = ThreadPoolExecutor()  # (the tools under way, every call's: what's under way at hang-up still lands)
 STILL_WAITING = ("Still waiting for the coordinator's answer to {}: it's slow, not down (it answered a check that it's "
                  "alive moments ago), and this is still going through, not lost. Never use the tool again for it. Tell "
                  "the board in a few words that it's still on its way, then use waiting to hear how it went.")
@@ -37,8 +27,8 @@ STILL_CHECKING = ("Still waiting for the coordinator's answer to {}. Whether the
                   "few words that it's still on its way, then use waiting to hear how it went.")
 DOWN = "The coordinator is down: it doesn't answer at all, not even a check that it's alive. Tell the board so plainly."
 DOWN_HANDED = ' ' + UNSURE.format("The hand-off may or may not have gone through before it stopped answering.")
-NO_ANSWER = f"No answer in {CEILING // 60} minutes, though the coordinator is up, so the wait ended."
-# The board's call tools answer in numbers (jobs, items, pins, calls) the agent needs for its next tool, and the agent
+NO_ANSWER = "No answer in {} minutes, though the coordinator is up, so the wait ended."
+# The board's call tools answer in numbers (jobs, items, calls) the agent needs for its next tool, and the agent
 # speaks right after reading them: every answer but hang_up's carries this as a part of its own (answer()), the moment
 # the agent turns it into words. Text keeps its numbers.
 ALOUD = ('The numbers here are for your tools only. Never say one aloud (a job, card, pull request, call, item or '
@@ -55,9 +45,11 @@ GOALS = {'type': 'string', 'minLength': 1, 'maxLength': GOAL,
          'description': "why the board wants it: the goal it serves or the problem it solves, in the board's own "
          f'terms from what it said on this call, never your plan for it. One plain line, at most {GOAL} characters. '
          'The team judges the work, and any rule made from it, against this'}
-# a promise's time, for work new or already under way (a review, a running job)
+# a promise's time, for work new or already under way (a review, a running job): the board's own with its date and
+# no zone, as windows.ts reads it
 WHEN = {'type': 'string', 'pattern': DEADLINE.pattern, 'description': 'when you told the board it will be done, at our '
-        'pace: 2h, 90m or 1h30m from now, or a UTC time (14:30; the board says its own local time, so convert). Give '
+        'pace: 2h, 90m or 1h30m from now; the board\'s own time as it said it, with its date and no zone (2026-10-26 '
+        "09:00, on the company's clock); a time with Z, or a time of day alone (14:30), is UTC. Give "
         'it whenever you tell the board a time, also for work already under way (a review, a running job): with job, '
         "the promise is that work\'s, and its thread takes the time at once; the job tool\'s with its item takes it as "
         "it\'s queued"}
@@ -141,8 +133,10 @@ TOOLS = [
 # Adding to a job the call queued (hq extend on a call: call.ts addToJob), when the board adds or corrects something
 # after the job tool answered: into its brief while it hasn't started, else to its running session at its next step.
 TOOLS += [
+    # (once what it waits for is met)
     {'name': 'expedite', 'description': "The CEO's only: a structural fix to HQ itself goes first (hq expedite). A "
-     'queued or running job starts ahead of everything and merges on its checks; one that has pushed, its pull request '
+     'queued or running job starts ahead of everything, once what it waits for is met (the answer says what), and merges '
+     'on its checks; one that has pushed, its pull request '
      'still in review, merges now if its last push passed them. Its review follows on what merged. A thread\'s task '
      'that hasn\'t started leaves its thread as its own job; a refusal says why and what to do instead.',  #.
      'inputSchema': {'type': 'object', 'required': ['job'], 'additionalProperties': False, 'properties': {
@@ -182,24 +176,7 @@ TOOLS += [
                   'characters: the board reads it'},
          'goal': GOALS}}},
 ]
-# A call about the board's pins (review notes it rang about from HQ's Reviews; the briefing lists them): their words,
-# and marking one sent (hq pin). The board said a pin is sent only when the agent queues work for it or answers it on
-# the call, and it must hear which: the answer tells the agent to say so.
-PIN = {'type': 'integer', 'minimum': 1, 'description': "the pin's number (#n in your briefing)"}
-TOOLS += [
-    {'name': 'pin_words', 'description': "On a call about the board's pins: when you and the board land on better "
-     'words for a pin, rewrite it. HQ shows the new words; the pin still waits there, not sent.',
-     'inputSchema': {'type': 'object', 'required': ['pin', 'words'], 'additionalProperties': False, 'properties': {
-         'pin': PIN,
-         'words': {'type': 'string', 'minLength': 1, 'maxLength': PIN_WORDS,
-                   'description': 'the whole note as it reads now'}}}},
-    {'name': 'pin_sent', 'description': "On a call about the board's pins: mark a pin sent, either with the job you "
-     'queued for it (its number, from the job tool) or as answered on this call (it needed no work, like a question). '
-     "Starting the call sent none: a pin you don't mark stays waiting in HQ for later.",
-     'inputSchema': {'type': 'object', 'required': ['pin'], 'additionalProperties': False, 'properties': {
-         'pin': PIN, 'job': {'type': 'integer', 'minimum': 1, 'description': 'the job queued for it'},
-         'answered': {'type': 'boolean', 'description': 'true: answered on this call, no job'}}}},
-]
+# (A call about review pins and its pin_words and pin_sent went with HQ's waiting notes)
 # Looking things up (hq search, hq history, hq call, hq intercom; the coordinator's memory.ts and intercom.ts): the
 # Handbook, knowledge, the board's calls with everyone (with their summaries), the intercom, and the agent's own jobs
 # and requests, so a call about past work, or something the board asked on the intercom, finds it.
@@ -231,7 +208,7 @@ TOOLS += [
      'inputSchema': {'type': 'object', 'required': ['query'], 'additionalProperties': False, 'properties': {
          'query': {'type': 'string', 'minLength': 1, 'maxLength': 500,
                    'description': "a day, days, a day's hours, or words"}}}},
-    # (a thread past its window, or when past by, answers with what to check first: worker/hq when.ts lateLines)
+    # (a thread past its window, or when past by, answers with what to check first: worker/hq deadlines.ts lateLines)
     {'name': 'eta', 'description': 'Where planned work stands now, before you tell the board when it will be done: for '
      "a project or a thread by its name or a few words ('The checkout', 'the game's levels'), each open thread's "
      'ETA, the agent time it has left, its window (the time agreed with the board) with its planned finish and the slack '
@@ -266,7 +243,9 @@ TOOLS += [
          'agent': {'type': 'string', 'description': "who would do it (its id; yours if left out)"},
          'size': SIZE,
          'after': {'type': 'integer', 'minimum': 1, 'description': 'the job that must merge before this work starts'},
-         'by': {'type': 'string', 'description': "the board's time in UTC: 14:30 or 2026-10-06T14:30Z"},
+         # (the same time forms as WHEN)
+         'by': {'type': 'string', 'description': "the board's own time as it said it, with its date and no zone "
+                  "(2026-10-26 09:00, on the company's clock); a time with Z, or a time of day alone (14:30), is UTC"},
          'extra_seat': {'type': 'string', 'enum': ['5x', '20x']}}}},
 ]
 # What a job's agent reads off the call (reads.py): the server's status report
@@ -408,15 +387,45 @@ TOOLS += [
      'answer comes with a later turn, and once they tap Show their screen comes with each turn.',
      'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
          'what': {**WORDS, 'description': 'the one thing you want to see, in a few words'}}}},
+    # (a ring in a preview)
     {'name': 'draw', 'description': "Draw on the board's page in your own ink: a ring round something it can see, named "
      "by its visible words (a button's label, a heading, a price), or round its note N on this call's page; words go "
-     "beside the ring in your hand (a few words, or none). It's kept on the call's page in the book. Use it to point, "
+     "beside the ring in your hand (a few words, or none). On HQ's own pages it's kept on the call's page in the book; in "
+     "a preview they have open it rings words there, until the call ends. Use it to point, "
      "the way you'd point at a screen.",
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'ring': {**WORDS, 'description': 'the words on their screen to ring, as they show there (or note, not both)'},
          'note': {'type': 'integer', 'minimum': 1, 'description': "the board's note to ring, by its number on this "
                   "call's page (or ring, not both)"},
          'words': {'type': 'string', 'maxLength': BESIDE_MOST, 'description': 'a few words beside the ring, or none'}}}},
+]
+# The agent driving a piece of work on the board's screen: it suggests opening
+# something and moves the board's screen while it talks, through the line too (driving.py: HQ shows the suggestion and
+# moves the screen, and the line keeps what waits for HQ's answer).
+TOOLS += [
+    {'name': 'open_work', 'description': "Suggest opening a piece of work on the board's screen, to show it rather than "
+     "describe it: something you or a colleague made (its preview page), or one of HQ's own screens (a job and its "
+     "report, a card on the phone, review notes). Use it when the conversation is about something they'd understand "
+     'faster by seeing, above all when they want to be walked through finished work. HQ shows a card, “<your name> '
+     'suggests opening <what>”, with Open and Not now. It blocks nothing, so carry on talking: their answer comes with a '
+     "later turn. Once it's open, talk them through it as you would beside them: drive scrolls to what you're talking "
+     'about and points at it, draw rings what matters. The screen stays theirs: they can scroll, draw or take over at '
+     'any moment, and when they do, follow where they go.',
+     'inputSchema': {'type': 'object', 'required': ['what', 'address'], 'additionalProperties': False, 'properties': {
+         'what': {**WORDS, 'description': "what it is, in a few words, as the card shows it (“the teacup shop's new "
+                  'product page”)'},
+         'address': {'type': 'string', 'minLength': 1, 'description': 'a preview page, https://<name>.preview.<zone>/... '
+                     "as its link gives it, or one of HQ's screens: /?open=jobs&job=<id>, /?open=phone&card=<id>, "
+                     '/?open=book&owner=<agent>, /?open=projects, /?open=computer, /?open=gazette, /?open=intercom'}}}},
+    {'name': 'drive', 'description': "Move the board's screen while you talk them through what's on it: scroll the "
+     "words you're about to talk about into view (to), scroll a screen down or up or to the top or bottom of the page "
+     '(by), or put your pointer on something (point), named by the words it shows (a heading, a label, a price). One '
+     "move at a time, with exactly one of to, by and point; HQ answers once it has moved, or why not. They're moving "
+     "it too: if they've scrolled or gone somewhere else, go with them rather than pulling them back.",
+     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
+         'to': {**WORDS, 'description': 'the words on their page to scroll into view, as they show there'},
+         'by': {'type': 'string', 'enum': list(BY), 'description': 'a screen down or up, or to the top or bottom'},
+         'point': {**WORDS, 'description': 'the words on their screen to point at, as they show there'}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -447,10 +456,88 @@ PARTNER_TOOLS = [
 ]
 
 
+class Waits:
+    """One call's hq: the environment it runs in (HQ_ENV), its waits on the coordinator and the tools still waiting.
+
+    A tool waits for the coordinator's real answer while the coordinator is alive: a slow coordinator is still there,
+    and a fixed cutoff would leave hand-offs unconfirmed that went through. While hq waits, a look at the coordinator's
+    /health every `probe_seconds`, on its own `alive_seconds`, tells slow from down: a coordinator that answers neither
+    is down, and the tool gives up within seconds. One that's alive but never answers this request meets
+    `ceiling_seconds`, a few times the slowest real hand-off in the call logs (under a minute), so a call never hangs. A
+    refused connection or a reset still ends it at once (hq). The agent hears back within `still_seconds` all the same,
+    so the call is never silent for long: a tool still waiting then says so and carries on in the background (WORK), and
+    the waiting tool hears it."""
+
+    def __init__(self, env, still_seconds=20, probe_seconds=5, alive_seconds=5, ceiling_seconds=180):
+        self.env, self.still_seconds, self.probe_seconds = env, still_seconds, probe_seconds
+        self.alive_seconds, self.ceiling_seconds = alive_seconds, ceiling_seconds
+        self.up = None  # when the coordinator last answered a look at /health, time.monotonic()
+        self.pending = []  # each tool still waiting, as (what it is, its future)
+
+    def ran(self, argv, words=None):
+        """hq's (exit code, stdout, stderr), however long the coordinator takes while it's alive. GaveUp once it's down
+        or past the ceiling, with hq stopped."""
+        ends = time.monotonic() + self.ceiling_seconds
+        with subprocess.Popen(argv, env=self.env, stdin=subprocess.DEVNULL if words is None else subprocess.PIPE,
+                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True) as p:
+            while True:
+                try:  # (hq that answered during a look gives its answer, past the ceiling too)
+                    out, err = p.communicate(words, timeout=None if p.poll() is not None else
+                                             max(0, min(self.probe_seconds, ends - time.monotonic())))
+                    return p.returncode, out.strip(), err.strip()
+                except subprocess.TimeoutExpired:
+                    words = None  # (sent: communicate takes it once)
+                why = 'ceiling' if time.monotonic() >= ends else None if self.alive() else 'down'
+                if why and p.poll() is None:
+                    os.killpg(p.pid, signal.SIGKILL)
+                    p.communicate()
+                    raise GaveUp(why)
+
+    def alive(self):
+        """Whether the coordinator answers a look at its /health within `alive_seconds` (noted in `up`)."""
+        try:
+            with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
+                    f"{self.env['HQ_URL']}/health", timeout=self.alive_seconds) as r:
+                if r.status != 200:
+                    return False
+        except (OSError, http.client.HTTPException):
+            return False
+        self.up = time.monotonic()
+        return True
+
+    def awaited(self, name, a):
+        """(ok, text) of the board's tool, as soon as the coordinator answers, or within `still_seconds` that it's
+        still waiting."""
+        future = WORK.submit(used, self, name, a)
+        if wait([future], self.still_seconds).done:
+            return future.result()
+        what = next((f'{name} ({a[k]})' for k in ('title', 'what', 'query', 'words') if isinstance(a.get(k), str)), name)
+        self.pending.append((what, future))
+        return True, self.on_its_way(what)
+
+    def on_its_way(self, what):
+        """The answer for a tool still waiting: slow, not down, only when the coordinator answered a look at /health
+        within `still_seconds`."""
+        up = self.up is not None and time.monotonic() - self.up < self.still_seconds
+        return (STILL_WAITING if up else STILL_CHECKING).format(what)
+
+    def waiting(self):
+        """(ok, text): the answers that came for the tools still waiting, within `still_seconds`, and what's still
+        waiting."""
+        if not self.pending:
+            return True, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'
+        # (one look: one landing between two would be lost)
+        done = wait([future for _, future in self.pending], self.still_seconds).done
+        came = [(what, outcome(future)) for what, future in self.pending if future in done]
+        self.pending[:] = [(what, future) for what, future in self.pending if future not in done]
+        lines = [f'{what}: {text}' for what, (_, text) in came] + [self.on_its_way(what) for what, _ in self.pending]
+        return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
+
+
 LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')  # (eta)
 
 
-def look(name, a):
+def look(waits, name, a):
     """(ok, text): runs `hq search|history|call|intercom` (or `hq projects` for eta, `hq now` for eta with no query)
     from an argument list, in the allowlisted environment."""
     extra = a.get('extra_seat')
@@ -479,10 +566,10 @@ def look(name, a):
                 *(['--extra-seat', extra] if extra else [])] if query.strip() or extra else ['hq', 'now'],
         'history': ['hq', 'history'] + ([query] if query.strip() else []),
     }
-    return looked(name, commands[name])
+    return looked(waits, name, commands[name])
 
 
-def when(a):
+def when(waits, a):
     """(ok, text): runs `hq when` from an argument list: the work, its size, whose it is, its prerequisite and the
     board's time, each checked so none reads as another's flag."""
     if 'extra_seat' in a:
@@ -490,7 +577,7 @@ def when(a):
             return False, 'extra_seat takes 5x or 20x'
         if any(k in a for k in ('what', 'agent', 'size', 'by', 'after')):
             return False, 'extra_seat replays the existing plan: omit new work and its flags'
-        return looked('when', ['hq', 'when', '--extra-seat', a['extra_seat']])
+        return looked(waits, 'when', ['hq', 'when', '--extra-seat', a['extra_seat']])
     what, agent, size, by = (a.get(k, '') for k in ('what', 'agent', 'size', 'by'))
     if not isinstance(what, str) or not what.strip() or what.startswith('-'):
         return False, 'when needs what the work is'
@@ -499,65 +586,33 @@ def when(a):
     if not valid_size(size):
         return False, 'size is agent time: 90m, 2h or 1h30m'
     if not isinstance(by, str) or (by and not re.fullmatch(r'[0-9:TZ -]{4,20}', by)):
-        return False, 'by is a UTC time: 14:30 or 2026-10-06T14:30Z'
+        return False, ("by is the board's own time with its date and no zone (2026-10-26 09:00, on the company's "
+                       'clock), or a UTC time: 14:30 or 2026-10-26T08:00Z')
     after = a.get('after')
     if 'after' in a and (type(after) is not int or after < 1):
         return False, 'after is a job number, like 123'
     argv = ['hq', 'when', what, '--size', size, *(['--agent', agent] if agent else []),
             *(['--after', str(after)] if after is not None else []), *(['--by', by] if by else [])]
-    return looked('when', argv)
+    return looked(waits, 'when', argv)
 
 
-def looked(name, argv):
+def looked(waits, name, argv):
     """Run a lookup and return (ok, text)."""
-    code, out, err = ran(argv)
+    code, out, err = waits.ran(argv)
     if code:
         return False, f'hq {name} failed: {(err or out)[:300] or "the coordinator refused it"}'
     # Successful lookups return every line so long transcripts remain complete.
     return True, out
 
 
-def run(args, words):
+def run(waits, args, words):
     """hq, from an argument list in the allowlisted environment, with the words on stdin: (exit code, stdout, stderr).
     Never the words in argv: any uid can read /proc/<pid>/cmdline."""
-    return ran(['hq', *args], words)
+    return waits.ran(['hq', *args], words)
 
 
 class GaveUp(Exception):
-    """hq stopped waiting: the coordinator is down ('down'), or alive with no answer past CEILING ('ceiling')."""
-
-
-def ran(argv, words=None):
-    """hq's (exit code, stdout, stderr), however long the coordinator takes while it's alive. GaveUp once it's down or
-    past CEILING, with hq stopped (STILL's comment)."""
-    ends = time.monotonic() + CEILING
-    with subprocess.Popen(argv, env=HQ_ENV, stdin=subprocess.DEVNULL if words is None else subprocess.PIPE,
-                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True) as p:
-        while True:
-            try:  # (hq that answered during a look gives its answer, past CEILING too)
-                out, err = p.communicate(words, timeout=None if p.poll() is not None else
-                                         max(0, min(PROBE, ends - time.monotonic())))
-                return p.returncode, out.strip(), err.strip()
-            except subprocess.TimeoutExpired:
-                words = None  # (sent: communicate takes it once)
-            why = 'ceiling' if time.monotonic() >= ends else None if alive() else 'down'
-            if why and p.poll() is None:
-                os.killpg(p.pid, signal.SIGKILL)
-                p.communicate()
-                raise GaveUp(why)
-
-
-def alive():
-    """Whether the coordinator answers a look at its /health within ALIVE s (noted in UP)."""
-    try:
-        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(
-                f"{HQ_ENV['HQ_URL']}/health", timeout=ALIVE) as r:
-            if r.status != 200:
-                return False
-    except (OSError, http.client.HTTPException):
-        return False
-    UP[0] = time.monotonic()
-    return True
+    """hq stopped waiting: the coordinator is down ('down'), or alive with no answer past its ceiling ('ceiling')."""
 
 
 def plain(what):
@@ -588,26 +643,24 @@ def on_stdin(goal, words):
     return json.dumps({'goal': goal, 'words': words})
 
 
-def hq(name, a):
+def hq(waits, name, a):
     """(ok, text): runs hq for a valid call. Too long is refused, never cut; every answer says it's on a list, not with
     anyone yet."""
     if name == 'job':
-        return job(a)
+        return job(waits, a)
     if name == 'add':
-        return add(a)
+        return add(waits, a)
     if name == 'expedite':
         n = a.get('job')
         if type(n) is not int or n < 1:
             return False, 'job is a job number, like 123'
-        return answered(run(['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
+        return answered(run(waits, ['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
     if name == 'hang_up':
         return True, HANG_UP_ANSWER
-    if name in ('pin_words', 'pin_sent'):
-        return pin(name, a)
     if name == 'reach':
-        return reach(a)
+        return reach(waits, a)
     if name == 'manage':
-        return manage(a.get('command'))
+        return manage(waits, a.get('command'))
     if name not in ('promise', 'replace'):
         return False, f'no tool {name}: hand work on with job, note a promise with promise'
     what, item, owner = str(a.get('what', '')).strip(), a.get('item'), str(a.get('owner', ''))
@@ -630,11 +683,11 @@ def hq(name, a):
     flags = ['--goal', '-', *(['--deadline', deadline] if deadline else []), *(['--job', str(work)] if work else []),
              *(['--thread', thread] if thread else [])]
     args = ['item', 'add', 'promise', owner] if name == 'promise' else ['item', 'replace', str(item)]
-    r = run([*args, what, '-', *flags], on_stdin(goal, what))
+    r = run(waits, [*args, what, '-', *flags], on_stdin(goal, what))
     return answered(r, 'Nothing recorded', 'it may or may not be on the list', UNNOTED)
 
 
-def job(a):
+def job(waits, a):
     agent = str(a.get('agent', ''))
     if not COLLEAGUE.fullmatch(agent):
         return False, 'agent must be a colleague id, like ada'
@@ -676,7 +729,7 @@ def job(a):
     flags = [*(['--item', str(item)] if item else []), *(['--thread', thread] if thread else []),
              *(['--now'] if now else []), *(['--expedite'] if a.get('expedite') is True else []), '--code', code, '--size', size, '--why', why,
              *(['--refs', ','.join(map(str, refs))] if refs else [])]
-    r = run(['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags], brief)
+    r = run(waits, ['job', *(['--after', str(after)] if after else []), agent, title, '-', *flags], brief)
     ok, text = answered(r, 'No job was queued', 'the job may or may not be queued', by='hq job')
     return ok, f"{text}\nNot started yet: it's on {agent}'s list, and nobody is on it until it runs." if ok else text
 
@@ -686,7 +739,7 @@ def valid_size(size):
     return isinstance(size, str) and bool(re.fullmatch(r'(\d+h)?(\d+m)?', size)) and any(c in '123456789' for c in size)
 
 
-def add(a):
+def add(waits, a):
     """add: hq extend <job> -, the words on stdin. Its answer says where they went (the brief, or the running job)."""
     n, words, goal = a.get('job'), str(a.get('words', '')).strip(), str(a.get('goal', '')).strip()
     if type(n) is not int or n < 1:
@@ -699,10 +752,10 @@ def add(a):
     if len(words) > ADD:
         return False, (f'too long ({len(words):,} > {ADD:,}, the goal counted): keep the addition short; the '
                        'follow-up has the whole call')
-    return answered(run(['extend', str(n), '-'], words), 'Nothing was added', 'it may or may not have been added')
+    return answered(run(waits, ['extend', str(n), '-'], words), 'Nothing was added', 'it may or may not have been added')
 
 
-def reach(a):
+def reach(waits, a):
     """reach: hq say <agent> - --job <n> --what "line" --goal -, the goal and the words on stdin. Its answer says
     where they went."""
     agent, n = str(a.get('agent', '')), a.get('job')
@@ -719,11 +772,11 @@ def reach(a):
                        'the whole call')
     if refused := plain(what) or goal_refusal(goal):
         return False, refused
-    reply = run(['say', agent, '-', '--job', str(n), '--what', what, '--goal', '-'], on_stdin(goal, words))
+    reply = run(waits, ['say', agent, '-', '--job', str(n), '--what', what, '--goal', '-'], on_stdin(goal, words))
     return answered(reply, 'Nothing was sent', 'it may or may not have gone')
 
 
-def manage(command):
+def manage(waits, command):
     """manage: one of hq's management commands (MANAGE), from an argument list. Its answer is hq's, or why not."""
     if not (isinstance(command, list) and command and all(type(w) is str and w for w in command)):
         return False, 'command is the hq command\'s words, one per item, like ["cancel", "123", "why"]'
@@ -739,7 +792,7 @@ def manage(command):
         return False, f'on a call, hq {name} takes {shown}'
     # hq's management commands (api.ts change): 1 is a refusal or a wrong command, so nothing changed; 6 and 7 reached
     # no HQ; anything else may have come after HQ made the change
-    code, out, err = run(command, '')
+    code, out, err = run(waits, command, '')
     if code == 0:
         return True, out
     if code == 1:
@@ -767,35 +820,8 @@ def answered(reply, refusal, unconfirmed, again=UNSURE, by='hq'):
 def readable(deadline):
     """The refusal for a deadline the coordinator can't read (windows.ts), or None."""
     if deadline is not None and not (type(deadline) is str and DEADLINE.fullmatch(deadline)):
-        return 'deadline must be a time from now (2h, 90m) or a UTC time (14:30)'
-
-
-def pin(name, a):
-    """pin_words and pin_sent: hq pin, the words on stdin. The answer says what the board must hear."""
-    n, words, job_id, answered = a.get('pin'), a.get('words'), a.get('job'), a.get('answered')
-    if type(n) is not int or n < 1:
-        return False, 'pin must be its number from your briefing'
-    if name == 'pin_words':
-        if not isinstance(words, str) or not words.strip():
-            return False, 'words needs the whole note as it reads now'
-        if len(words) > PIN_WORDS:
-            return False, f'words too long ({len(words):,} > {PIN_WORDS:,}): make it shorter'
-        args, stdin = ['pin', 'words', str(n), '-'], words.strip()
-    else:
-        bad_job = job_id is not None and (type(job_id) is not int or job_id < 1)
-        if (job_id is None) == (answered is not True) or bad_job:
-            return False, 'pin_sent needs either the job number you queued for it, or answered: true'
-        args, stdin = ['pin', 'sent', str(n), f'job:{job_id}' if job_id else 'answered'], ''
-    r = run(args, stdin)
-    code, out, err = r
-    if code != 0 or not out:
-        return False, err or out or f'hq pin failed (exit {code})'
-    if name == 'pin_words':
-        return True, out
-    say = ('Tell the board plainly which of its notes went to which work, and whether that work is queued or already '
-           'under way.' if job_id
-           else 'Tell the board plainly which of its notes you answered here, with no work queued for it.')
-    return True, f'{out}\n{say}'
+        return ("deadline must be a time from now (2h, 90m), the board's own with its date and no zone "
+                "(2026-10-26 09:00, on the company's clock), or a UTC time (14:30)")
 
 
 def partner(name, a):
@@ -858,6 +884,26 @@ def draw(a):
     return said(line_asked({'draw': ink}))
 
 
+def open_work(a):
+    """(ok, content) of the open_work tool: the voice line's answer on its socket (suggested, or why not).
+"""
+    if not (work := work_asked(a)):
+        return False, [{'type': 'text', 'text': OPEN_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': OPEN_WORDS['none']}]
+    return said(line_asked({'open_work': work}))
+
+
+def drive(a):
+    """(ok, content) of the drive tool: the voice line's answer on its socket once HQ has moved the board's screen (or
+    why not)."""
+    if not (move := move_asked(a)):
+        return False, [{'type': 'text', 'text': DRIVE_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': DRIVE_WORDS['none']}]
+    return said(line_asked({'drive': move}))
+
+
 def said(got):
     """(ok, content) of the line's answer in words: what it did ({ok}), or its refusal ({error})."""
     return 'error' not in got, [{'type': 'text', 'text': str(got.get('error', got.get('ok')))}]
@@ -880,48 +926,21 @@ def shown(got):
                   *([{'type': 'text', 'text': line}] if line else [])]
 
 
-def awaited(name, a):
-    """(ok, text) of the board's tool, as soon as the coordinator answers, or within STILL s that it's still waiting."""
-    future = WORK.submit(used, name, a)
-    if wait([future], STILL).done:
-        return future.result()
-    what = next((f'{name} ({a[k]})' for k in ('title', 'what', 'query', 'words') if isinstance(a.get(k), str)), name)
-    PENDING.append((what, future))
-    return True, still(what)
-
-
-def used(name, a):
+def used(waits, name, a):
     """(ok, text) of the board's tool, or why hq stopped waiting for the coordinator (GaveUp)."""
     if name == 'report':
-        return reads.report(a, HQ_ENV)
+        return reads.report(a, waits.env)
     if name == 'git':
         return reads.git(a)
     looking = name == 'when' or name in LOOK_UPS
     try:
-        return when(a) if name == 'when' else (look if looking else hq)(name, a)
+        return when(waits, a) if name == 'when' else (look if looking else hq)(waits, name, a)
     except GaveUp as e:
         if e.args[0] == 'down':
             return False, DOWN if looking else DOWN + DOWN_HANDED
-        return False, f'{NO_ANSWER} Try again later.' if looking else UNSURE.format(
-            f'Not confirmed: {NO_ANSWER} It may or may not have gone through: check it before you do it again.')
-
-
-def still(what):
-    """The answer for a tool still waiting: slow, not down, only when the coordinator answered a look at /health
-    within STILL s."""
-    up = UP[0] is not None and time.monotonic() - UP[0] < STILL
-    return (STILL_WAITING if up else STILL_CHECKING).format(what)
-
-
-def waiting():
-    """(ok, text): the answers that came for the tools still waiting, within STILL s, and what's still waiting."""
-    if not PENDING:
-        return True, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'
-    done = wait([future for _, future in PENDING], STILL).done  # (one look: one landing between two would be lost)
-    came = [(what, outcome(future)) for what, future in PENDING if future in done]
-    PENDING[:] = [(what, future) for what, future in PENDING if future not in done]
-    lines = [f'{what}: {text}' for what, (_, text) in came] + [still(what) for what, _ in PENDING]
-    return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
+        ended = NO_ANSWER.format(waits.ceiling_seconds // 60)
+        return False, f'{ended} Try again later.' if looking else UNSURE.format(
+            f'Not confirmed: {ended} It may or may not have gone through: check it before you do it again.')
 
 
 def outcome(future):
@@ -932,8 +951,13 @@ def outcome(future):
         return False, f'failed: {str(e)[:200]}'
 
 
-def answer(msg, offered=TOOLS):
-    """The reply to one JSON-RPC message, or None for a notification. offered: the call's tool set."""
+# The board's tools that the voice line answers, in words or a picture, by name
+LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive}
+
+
+def answer(msg, waits, offered=TOOLS):
+    """The reply to one JSON-RPC message, or None for a notification. waits: the call's (Waits); offered: its tool
+    set."""
     method, mid = msg.get('method'), msg.get('id')
     if mid is None:
         return None
@@ -945,18 +969,18 @@ def answer(msg, offered=TOOLS):
     elif method == 'tools/call':
         p = msg.get('params', {})
         name, arguments = p.get('name'), p.get('arguments') or {}
-        # (its own content: a picture and its line, or the line's words; ask_to_see and draw)
-        if name == 'screen' or (name in ('sketch', 'ask_to_see', 'draw') and offered is TOOLS):
-            ok, content = {'screen': screen, 'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw}[name](arguments)
+        # (its own content: a picture and its line, or the line's words; ask_to_see and draw; open_work and drive:
+        if name == 'screen' or (name in LINE_TOOLS and offered is TOOLS):
+            ok, content = {'screen': screen, **LINE_TOOLS}[name](arguments)
             return {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': not ok}}
         if offered is PARTNER_TOOLS:
             ok, text = partner(name, arguments)
         elif name == 'waiting':
-            ok, text = waiting()
+            ok, text = waits.waiting()
         elif name == 'hang_up':
-            ok, text = hq(name, arguments)
+            ok, text = hq(waits, name, arguments)
         else:
-            ok, text = awaited(name, arguments)
+            ok, text = waits.awaited(name, arguments)
         aloud = [] if offered is PARTNER_TOOLS or name == 'hang_up' else [{'type': 'text', 'text': ALOUD}]
         result = {'content': [{'type': 'text', 'text': text}, *aloud], 'isError': not ok}
     elif method == 'ping':
@@ -968,11 +992,12 @@ def answer(msg, offered=TOOLS):
 
 if __name__ == '__main__':
     tool_set = PARTNER_TOOLS if sys.argv[1:] == ['partner'] else TOOLS
+    waits = Waits(HQ_ENV)
     for line in sys.stdin:
         msg = None
         try:
             msg = json.loads(line)
-            reply = answer(msg, tool_set)
+            reply = answer(msg, waits, tool_set)
         except Exception as e:  # (a bad line or a stuck hq: the agent hears it failed, the server carries on)
             mid = msg.get('id') if isinstance(msg, dict) else None
             reply = {'jsonrpc': '2.0', 'id': mid, 'error': {'code': -32603, 'message': str(e)[:200]}}

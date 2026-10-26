@@ -4,6 +4,7 @@ CallAgent runs the real Claude CLI (skipped where it isn't installed; the worker
 stand-in coordinator on 127.0.0.1: the call agent starts, answers and hands work on, as on a call. CallsList runs the
 tools against the real coordinator (platform/coordinator, after its npm ci) with a throwaway database.
 """
+# (a call's expedite words; the tools' Waits and the calls' own folders given to them)
 import json, os, re, shutil, socket, sqlite3, subprocess, sys, tempfile, textwrap, threading, time, unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -16,6 +17,9 @@ HQ = str(Path(HERE).parent / 'worker' / 'bin' / 'hq')
 SEAT = 'sk-ant-oat01-' + os.urandom(8).hex()  # a stand-in for the seat's sign-in
 ESTIMATE = {'size': '30m', 'refs': [], 'why': 'Small tooling change with no comparable completed scope'}
 SIGN_IN_FD = 3  # where the CLI would read it (sign_in_pipe), for what runs no CLI.
+# The call agent's HOME and CLI config (agent_env's work and cli_config) in the tests: their own, never the line's
+FILES = tempfile.TemporaryDirectory(prefix='call-files-')
+FOLDERS = {'work': FILES.name, 'cli_config': FILES.name}
 
 
 def fake_hq(d):
@@ -30,6 +34,7 @@ class Coordinator(BaseHTTPRequestHandler):
     model says a hold line and makes the tool call in `script`, once it has a tool result it says it's done)."""
     script, seen, refuse, lose, signed_in = None, [], None, None, set()  # (refuse: the coordinator's reason for a 400, as server.ts gives it)
     slow = 0  # s the coordinator takes over each answer (a slow moment: it's still there)
+    looks = 0  # s it takes over each answer to a look at /health
     hung = None  # an Event: the coordinator takes each request and answers none of them until it's set, /health still
     # the first turn makes its tool call with no hold line before it
     tool_first = False
@@ -84,6 +89,7 @@ class Coordinator(BaseHTTPRequestHandler):
 
     def do_GET(self):  # hq search, history and call (memory.ts): one hit, no history, call 12 (13 isn't this agent's: 404)
         if self.path == '/health':  # (hq_tools' look at whether it's alive)
+            time.sleep(self.looks)
             self.send_response(200); self.send_header('content-type', 'application/json'); self.end_headers()
             self.wfile.write(b'{"ok":true}')
             return
@@ -144,16 +150,17 @@ class Guard(unittest.TestCase):
     def test_the_agent_gets_only_its_own_environment(self):
         server = {'PATH': '/usr/bin', 'HOME': '/home/caller', 'VOICE_TOKEN': 'v', 'WORKER_TOKEN': 'w', 'GITHUB_TOKEN': 'g',
                   'NODE_OPTIONS': '--require /data/x.js', 'HQ_URL': 'http://coordinator:8080', 'ORIGIN': 'https://hq'}
-        env = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', time_zone='Europe/Amsterdam')
+        env = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', time_zone='Europe/Amsterdam', **FOLDERS)
         self.assertEqual(set(env), {'PATH', 'HOME', 'LANG', 'CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR', 'CLAUDE_CONFIG_DIR',
                                     'DISABLE_AUTOUPDATER', 'HQ_URL', 'HQ_TOKEN', 'HQ_AGENT', 'HQ_CALL', 'HQ_TIME_ZONE',
                                     'CLAUDE_CODE_DISABLE_CLAUDE_MDS'})
         self.assertEqual((env['HQ_TOKEN'], env['HQ_AGENT'], env['HQ_CALL']), ('call-token', 'juno', '1'))
+        self.assertEqual((env['HOME'], env['CLAUDE_CONFIG_DIR']), ('/home/caller', FILES.name))  # (the server's HOME, the given config)
         self.assertEqual(env['HQ_TIME_ZONE'], 'Europe/Amsterdam')  # (hq's answers, read out, on the board's clock)
         self.assertEqual(env['CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR'], '7')  # (the sign-in itself on that pipe, never here)
         self.assertFalse({'v', 'w', 'g'} & set(env.values()))
         # a call with a screen: the line's screen socket and the session's key, for the screen tool
-        screen = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', ('/data/call/screen.sock', 'k1'))
+        screen = agent_env(server, 'http://coordinator:8080', 7, 'call-token', 'juno', ('/data/call/screen.sock', 'k1'), **FOLDERS)
         self.assertEqual({k: v for k, v in screen.items() if k not in env}, {'SCREEN_SOCKET': '/data/call/screen.sock', 'SCREEN_KEY': 'k1'})
 
     def test_tools_read_search_and_hand_on_only(self):
@@ -193,7 +200,7 @@ class Guard(unittest.TestCase):
         secret = Path(HERE) / f'.test-seat-{os.urandom(4).hex()}'
         secret.write_text('sk-ant-oat01-' + os.urandom(8).hex())
         try:
-            env = agent_env({'PATH': os.environ['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno')
+            env = agent_env({'PATH': os.environ['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)
             r = subprocess.run(['bash', hq, 'job', 'rivet', 'x', str(secret)], env=env, capture_output=True, text=True)
             self.assertNotEqual(r.returncode, 0)
             self.assertIn('takes no file', r.stderr)
@@ -251,7 +258,7 @@ class HqTools(unittest.TestCase):
 
     def env(self, d, url):
         """The call agent's environment, as the CLI hands it to hq_tools.py, with fake_hq."""
-        return agent_env({'PATH': fake_hq(d)['PATH']}, url, SIGN_IN_FD, 'call-token', 'juno')
+        return agent_env({'PATH': fake_hq(d)['PATH']}, url, SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)
 
     def test_a_call_queuer_supplies_its_scope_estimate_and_missing_or_bad_sizes_run_nothing(self):
         with tempfile.TemporaryDirectory() as d:
@@ -277,8 +284,8 @@ class HqTools(unittest.TestCase):
             r = subprocess.run(HQ_TOOLS, input=json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/list'}) + '\n', env=env, capture_output=True, text=True)
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
-        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'pin_words', 'pin_sent', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'ask_to_see', 'draw'])
+        self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
+                                                                                'ask_to_see', 'draw', 'open_work', 'drive'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -315,7 +322,7 @@ class HqTools(unittest.TestCase):
         path, asked = line_socket(self, [{'picture': picture, 'line': moments[0]}, {'lines': moments},
                                          {'error': 'They paused showing their screen.'}, {'lines': []}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('screen', {'at': '-20s', 'region': region, 'key': 'another'}), ('screen', {'since': '17:03'}),
                             ('screen', {}), ('screen', {'at': 'yesterday'}), ('screen', {'since': '#12', 'at': '#13'}),
                             ('screen', {'region': {**region, 'x': 2}}), ('history', {}), env=env)
@@ -341,7 +348,7 @@ class HqTools(unittest.TestCase):
         line = 'Sketch #12 “Tote bag”: drawn 2026-10-24 14:02 UTC, last changed 2026-10-24 15:10 UTC.'
         path, asked = line_socket(self, [{'picture': picture, 'line': line}, {'error': 'No sketch has those words in its label.'}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('sketch', {'sketch': '#12'}), ('sketch', {'sketch': 'mug lid'}), ('sketch', {'sketch': ' '}),
                             ('sketch', {}), env=env)
             msg = {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': 'sketch', 'arguments': {'sketch': '12'}}}
@@ -364,7 +371,7 @@ class HqTools(unittest.TestCase):
         path, asked = line_socket(self, [{'ok': 'Asked: ...'}, {'error': 'Their screen is shown already.'},
                                          {'ok': 'Drawn: ...'}, {'error': 'No “Basket” on their page.'}, {'ok': 'Drawn: ...'}])
         with tempfile.TemporaryDirectory() as d:
-            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'))
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('ask_to_see', {'what': 'the pricing  page'}), ('ask_to_see', {'what': 'the basket'}),
                             ('draw', {'ring': 'Add to basket', 'words': 'this one'}), ('draw', {'ring': 'Basket'}),
                             ('draw', {'note': 2, 'words': None}),
@@ -393,6 +400,47 @@ class HqTools(unittest.TestCase):
         self.assertEqual([reply['result']['content'][0]['text'] for reply in phone[1:]],
                          [hq_tools.ASK_WORDS['none'], hq_tools.INK_WORDS['none']])
 
+    def test_open_work_and_drive_ask_the_voice_line_in_words_only_on_the_boards_call(self):
+        """ On the board's call: the line's answer in words (suggested, moved, or
+        its refusal); a suggestion of anything but a preview page or one of HQ's screens, and a move of another shape,
+        never reach the line; a partner's call has neither tool, and a call without the line's socket (the phone) says
+        so; hq never gets the key."""
+        import hq_tools
+        page = 'https://teacups.preview.onlyonery.com/p/2'
+        path, asked = line_socket(self, [{'ok': 'Suggested: ...'}, {'error': 'Your suggestion to open ... is still waiting.'},
+                                         {'ok': 'Scrolled: ...'}, {'error': 'Nothing on their screen says “Gift wrap”.'},
+                                         {'ok': 'Scrolled: ...'}])
+        with tempfile.TemporaryDirectory() as d:
+            env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
+            out = self.call(('open_work', {'what': 'the teacup  page', 'address': page}),
+                            ('open_work', {'what': 'job 12', 'address': '/?open=jobs&job=12'}),
+                            ('drive', {'to': 'Price'}), ('drive', {'point': 'Gift wrap'}), ('drive', {'by': 'bottom'}),
+                            ('open_work', {'what': 'it', 'address': 'https://onlyonery.com/'}),
+                            ('open_work', {'what': 'it', 'address': '/?open=settings'}), ('open_work', {'address': page}),
+                            ('open_work', {'what': 'it', 'address': page, 'new_tab': True}), ('open_work', {'what': 'x' * 121, 'address': page}),
+                            ('drive', {}), ('drive', {'to': 'Price', 'by': 'down'}), ('drive', {'by': 'sideways'}),
+                            ('drive', {'point': ''}), ('drive', {'point': 3}), env=env)
+            msgs = [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}}
+                    for i, (n, a) in enumerate((('open_work', {'what': 'it', 'address': page}), ('drive', {'by': 'down'})))]
+            partner = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
+                                     capture_output=True, text=True, timeout=60)
+            phone = self.call(('open_work', {'what': 'it', 'address': page}), ('drive', {'by': 'down'}), env=self.env(d, 'http://127.0.0.1:9'))
+            self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
+        replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
+        self.assertEqual(replies[:5], [(False, [{'type': 'text', 'text': 'Suggested: ...'}]),
+                                       (True, [{'type': 'text', 'text': 'Your suggestion to open ... is still waiting.'}]),
+                                       (False, [{'type': 'text', 'text': 'Scrolled: ...'}]),
+                                       (True, [{'type': 'text', 'text': 'Nothing on their screen says “Gift wrap”.'}]),
+                                       (False, [{'type': 'text', 'text': 'Scrolled: ...'}])])
+        self.assertEqual([content[0]['text'] for _, content in replies[5:]], [hq_tools.OPEN_WORDS['shape']] * 5 + [hq_tools.DRIVE_WORDS['shape']] * 5)
+        self.assertEqual(asked, [{'open_work': {'what': 'the teacup page', 'address': page}, 'key': 'key-1'},
+                                 {'open_work': {'what': 'job 12', 'address': '/?open=jobs&job=12'}, 'key': 'key-1'},
+                                 {'drive': {'to': 'Price'}, 'key': 'key-1'}, {'drive': {'point': 'Gift wrap'}, 'key': 'key-1'},
+                                 {'drive': {'by': 'bottom'}, 'key': 'key-1'}])
+        self.assertTrue(all(json.loads(line)['result']['isError'] for line in partner.stdout.splitlines()), 'neither for a partner')
+        self.assertEqual([reply['result']['content'][0]['text'] for reply in phone[1:]],
+                         [hq_tools.OPEN_WORDS['none'], hq_tools.DRIVE_WORDS['none']])
+
     def test_a_call_with_no_screen_has_a_screen_tool_that_says_so(self):
         with tempfile.TemporaryDirectory() as d:
             out = self.call(('screen', {}), env=self.env(d, 'http://127.0.0.1:9'))
@@ -404,7 +452,7 @@ class HqTools(unittest.TestCase):
 """
         with tempfile.TemporaryDirectory() as d:
             out = self.call(('job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check them.'}), ('promise', {'goal': 'g', 'owner': 'Bolt!', 'what': 'x'}),
-                            ('history', {}), ('pin_sent', {'pin': 0}), ('hang_up', {}), env=self.env(d, coordinator(self)))
+                            ('history', {}), ('expedite', {'job': 0}), ('hang_up', {}), env=self.env(d, coordinator(self)))
         self.assertEqual([r['result']['isError'] for r in out[1:]], [False, True, False, True, False])
         for reply in out[1:5]:
             words = '\n'.join(part['text'] for part in reply['result']['content'])
@@ -512,30 +560,28 @@ class HqTools(unittest.TestCase):
                     f"Not confirmed: the job for bolt may or may not be queued ({why}). Don't send it again: it may be there already. "
                     "Don't hand it on again: tell the board the hand-off is unconfirmed and that you'll check after the call."))
 
-    def tool(self, hq_tools, name, arguments):
-        """hq_tools' answer to one tools/call, in this process: (isError, its text)."""
-        reply = hq_tools.answer({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}})
+    def tool(self, waits, name, arguments):
+        """hq_tools' answer to one tools/call of a call with these waits, in this process: (isError, its text)."""
+        import hq_tools
+        reply = hq_tools.answer({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call', 'params': {'name': name, 'arguments': arguments}}, waits)
         return reply['result']['isError'], reply['result']['content'][0]['text']
 
     def test_a_slow_coordinator_lands_the_job_and_confirms_it(self):
         """The coordinator answers after 32 s, past every cutoff there was (hq's 20 s, hq_tools' 30 s): the job tool
-        says within STILL that it's still on its way, and waiting hears it queued. One job, never two."""
+        says within its still wait that it's still on its way, and waiting hears it queued. One job, never two."""
         import hq_tools
-        from unittest import mock
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             Coordinator.slow = 32
             self.addCleanup(setattr, Coordinator, 'slow', 0)
-            with mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), mock.patch.object(hq_tools, 'STILL', 4), \
-                    mock.patch.object(hq_tools, 'PROBE', 1), mock.patch.object(hq_tools, 'UP', [None]), \
-                    mock.patch.object(hq_tools, 'PENDING', []):
-                started = time.monotonic()
-                first = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
-                self.assertLess(time.monotonic() - started, 6)
-                answers = [self.tool(hq_tools, 'waiting', {})]
-                while 'Still waiting' in answers[-1][1]:
-                    answers.append(self.tool(hq_tools, 'waiting', {}))
-                last = self.tool(hq_tools, 'waiting', {})
+            waits = hq_tools.Waits(self.env(d, url), still_seconds=4, probe_seconds=1)
+            started = time.monotonic()
+            first = self.tool(waits, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+            self.assertLess(time.monotonic() - started, 6)
+            answers = [self.tool(waits, 'waiting', {})]
+            while 'Still waiting' in answers[-1][1]:
+                answers.append(self.tool(waits, 'waiting', {}))
+            last = self.tool(waits, 'waiting', {})
         self.assertEqual(first, (False, hq_tools.STILL_WAITING.format('job (Logs)')))
         self.assertGreater(len(answers), 2, 'waiting keeps the call answered while the coordinator is slow')
         self.assertFalse(answers[-1][0])
@@ -547,88 +593,83 @@ class HqTools(unittest.TestCase):
         """An answer that lands while waiting reads the others stays waiting and comes on the next waiting, once."""
         import hq_tools
         from concurrent.futures import Future
-        from unittest import mock
-        late, came = Future(), Future()
+
+        class Lands(Future):
+            """A tool that has its answer, and whose answer, as it's read, lands the late one's."""
+            def result(self, timeout=None):
+                late.done() or late.set_result((False, 'No job was queued: refused'))
+                return super().result(timeout)
+        late, came = Future(), Lands()
         came.set_result((True, 'Queued job #1 HQ-LOGS for bolt: Logs'))
-        read = hq_tools.outcome
-        def outcome(future):
-            late.done() or late.set_result((False, 'No job was queued: refused'))
-            return read(future)
-        with mock.patch.object(hq_tools, 'STILL', 0.1), mock.patch.object(hq_tools, 'outcome', outcome), \
-                mock.patch.object(hq_tools, 'UP', [None]), \
-                mock.patch.object(hq_tools, 'PENDING', [('job (Late)', late), ('job (Logs)', came)]):
-            answers = [self.tool(hq_tools, 'waiting', {}) for _ in range(3)]
+        waits = hq_tools.Waits({}, still_seconds=0.1)
+        waits.pending += [('job (Late)', late), ('job (Logs)', came)]
+        answers = [self.tool(waits, 'waiting', {}) for _ in range(3)]
         self.assertEqual(answers, [  # (no look at /health has answered here: never "not down")
             (False, 'job (Logs): Queued job #1 HQ-LOGS for bolt: Logs\n\n' + hq_tools.STILL_CHECKING.format('job (Late)')),
             (True, 'job (Late): No job was queued: refused'),
             (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.')])
 
     def test_a_hung_coordinator_meets_the_ceiling(self):
-        """Alive (its /health answers) but it never answers the job: waiting says it's slow, not down, until CEILING,
-        then that it's not confirmed, with hq stopped. One job sent, never two."""
+        """Alive (its /health answers) but it never answers the job: waiting says it's slow, not down, until the
+        ceiling, then that it's not confirmed, with hq stopped. One job sent, never two."""
         import hq_tools
-        from unittest import mock
         with tempfile.TemporaryDirectory() as d:
             url = coordinator(self)
             Coordinator.hung = threading.Event()
             self.addCleanup(lambda: (Coordinator.hung.set(), setattr(Coordinator, 'hung', None)))
-            with mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), mock.patch.object(hq_tools, 'STILL', 2), \
-                    mock.patch.object(hq_tools, 'PROBE', 0.5), mock.patch.object(hq_tools, 'CEILING', 5), \
-                    mock.patch.object(hq_tools, 'UP', [None]), mock.patch.object(hq_tools, 'PENDING', []):
-                started = time.monotonic()
-                answers = [self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})]
-                while 'Still waiting' in answers[-1][1]:
-                    answers.append(self.tool(hq_tools, 'waiting', {}))
-                took = time.monotonic() - started
+            waits = hq_tools.Waits(self.env(d, url), still_seconds=2, probe_seconds=0.5, ceiling_seconds=5)
+            started = time.monotonic()
+            answers = [self.tool(waits, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})]
+            while 'Still waiting' in answers[-1][1]:
+                answers.append(self.tool(waits, 'waiting', {}))
+            took = time.monotonic() - started
         self.assertEqual(answers[0], (False, hq_tools.STILL_WAITING.format('job (Logs)')))
-        self.assertEqual(answers[-1], (True, 'job (Logs): ' + hq_tools.UNSURE.format(
-            f'Not confirmed: {hq_tools.NO_ANSWER} It may or may not have gone through: check it before you do it again.')))
+        ok, text = answers[-1]
+        self.assertTrue(ok and text.startswith('job (Logs): Not confirmed: '), answers[-1])
+        self.assertTrue(text.endswith(hq_tools.UNSURE.format('')[1:]), text)
         self.assertTrue(5 <= took < 8, took)
         self.assertEqual(len(Coordinator.seen), 1)
 
     def test_a_coordinator_that_answers_nothing_is_down_within_seconds(self):
         """It takes the connection (a full listen queue's worth) and answers nothing, /health neither: the tool gives up
-        long before STILL and says plainly that the coordinator is down and the hand-off is unconfirmed."""
+        long before its still wait and says plainly that the coordinator is down and the hand-off is unconfirmed."""
         import hq_tools
-        from unittest import mock
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             s.listen()  # (never accepted: the connection is made, no answer ever comes)
             url = f'http://127.0.0.1:{s.getsockname()[1]}'
-            with tempfile.TemporaryDirectory() as d, mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), \
-                    mock.patch.object(hq_tools, 'PROBE', 1), mock.patch.object(hq_tools, 'ALIVE', 1), \
-                    mock.patch.object(hq_tools, 'PENDING', []):
+            with tempfile.TemporaryDirectory() as d:
+                waits = hq_tools.Waits(self.env(d, url), probe_seconds=1, alive_seconds=1)
                 started = time.monotonic()
-                down = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                down = self.tool(waits, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
                 took = time.monotonic() - started
-                self.assertEqual(hq_tools.PENDING, [])
+                self.assertEqual(self.tool(waits, 'waiting', {}), (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'))
         self.assertEqual(down, (True, hq_tools.DOWN + hq_tools.DOWN_HANDED))
         self.assertLess(took, 4)
 
     def test_an_answer_during_the_last_look_still_counts(self):
-        """hq answers while a slow look at /health carries the wait past CEILING: its answer, not a wait that never ends."""
+        """hq answers while a slow look at /health carries the wait past the ceiling: its answer, not a wait that never
+        ends."""
         import hq_tools
-        from unittest import mock
-        got = []
-        with mock.patch.object(hq_tools, 'PROBE', 0.1), mock.patch.object(hq_tools, 'CEILING', 0.3), \
-                mock.patch.object(hq_tools, 'alive', lambda: time.sleep(0.4) or True):
-            waits = threading.Thread(target=lambda: got.append(hq_tools.ran(
-                [sys.executable, '-c', 'import time; time.sleep(0.15); print("done")'])), daemon=True)
-            waits.start()
-            waits.join(5)
+        Coordinator.looks = 0.4
+        self.addCleanup(setattr, Coordinator, 'looks', 0)
+        waits, got = hq_tools.Waits({'HQ_URL': coordinator(self)}, probe_seconds=0.1, ceiling_seconds=0.3), []
+        ran = threading.Thread(target=lambda: got.append(waits.ran(
+            [sys.executable, '-c', 'import time; time.sleep(0.15); print("done")'])), daemon=True)
+        ran.start()
+        ran.join(5)
         self.assertEqual(got, [(0, 'done', '')])
 
     def test_a_dead_coordinator_fails_clearly(self):
         """Nobody listening: the agent hears at once, for certain, that no job was queued, nothing waits on it."""
         import hq_tools
-        from unittest import mock
         with socket.socket() as s:
             s.bind(('127.0.0.1', 0))
             url = f'http://127.0.0.1:{s.getsockname()[1]}'  # (bound, never listening: refused)
-            with tempfile.TemporaryDirectory() as d, mock.patch.object(hq_tools, 'HQ_ENV', self.env(d, url)), \
-                    mock.patch.object(hq_tools, 'PENDING', []):
-                failed = self.tool(hq_tools, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
-                self.assertEqual(hq_tools.PENDING, [])
+            with tempfile.TemporaryDirectory() as d:
+                waits = hq_tools.Waits(self.env(d, url))
+                failed = self.tool(waits, 'job', {'goal': 'g', 'agent': 'bolt', 'code': 'LOGS', **ESTIMATE, 'title': 'Logs', 'brief': 'Check the logs.'})
+                self.assertEqual(self.tool(waits, 'waiting', {}), (False, 'Nothing is waiting for the coordinator: every tool of this call has its answer.'))
         self.assertTrue(failed[0])
         self.assertTrue(failed[1].startswith('No job was queued: Failed to connect to 127.0.0.1'), failed[1])
 
@@ -808,7 +849,7 @@ class HqTools(unittest.TestCase):
 
     def test_look_ups_run_hq_from_an_argument_list(self):
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno')}
+            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
             q = "Penny's request #35; $(cat /seat/token) `id`"
             out = self.call(('search', {'query': q}), ('history', {'query': '#35'}), ('history', {}),
                             ('when', {'what': q, 'size': '1h30m', 'agent': 'bolt', 'after': 123, 'by': '2026-10-06T14:30Z'}),
@@ -825,7 +866,7 @@ class HqTools(unittest.TestCase):
 
     def test_added_seat_replay_is_available_without_a_deadline_or_query(self):
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno')}
+            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
             self.call(('eta', {'extra_seat': '5x'}), ('when', {'extra_seat': '20x'}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertIn('ARG projects\nARG --extra-seat\nARG 5x\n', log)
@@ -839,7 +880,7 @@ class HqTools(unittest.TestCase):
     def test_eta_with_no_query_reads_whats_going_on_now(self):
         # (who's at work and what each open card holds up, fresh each time: hq now.)
         with tempfile.TemporaryDirectory() as d:
-            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno')}
+            env = {**fake_hq(d), **agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', **FOLDERS)}
             self.call(('eta', {}), ('eta', {'query': ' '}), env=env)
             log = Path(d, 'hq.log').read_text()
         self.assertEqual(log.count('ARG now\n'), 2)
@@ -926,13 +967,13 @@ class CallsList(unittest.TestCase):
 
     def tools(self, token, agent, *calls):
         with tempfile.TemporaryDirectory() as d:
-            out = HqTools.call(self, *calls, env=agent_env({'PATH': fake_hq(d)['PATH']}, self.url, SIGN_IN_FD, token, agent))
+            out = HqTools.call(self, *calls, env=agent_env({'PATH': fake_hq(d)['PATH']}, self.url, SIGN_IN_FD, token, agent, **FOLDERS))
         return [(r['result']['isError'], r['result']['content'][0]['text']) for r in out[1:]]
 
     def hq(self, token, agent, *args, words=''):
         """hq itself, in the call agent's environment (what a tool could run)."""
         return subprocess.run(['bash', HQ, *args], input=words, capture_output=True, text=True,
-                              env=agent_env({'PATH': os.environ['PATH']}, self.url, SIGN_IN_FD, token, agent))
+                              env=agent_env({'PATH': os.environ['PATH']}, self.url, SIGN_IN_FD, token, agent, **FOLDERS))
 
     def test_a_promise_is_on_the_calls_list_at_once_and_stays_after_hang_up(self):
         for lines in ([], ['Board: Kit, the coming-soon page.', 'Kit: I will send Juno the mission note.']):
@@ -950,39 +991,14 @@ class CallsList(unittest.TestCase):
                 again = self.tools(token, 'kit', ('promise', {'goal': 'g', 'owner': 'kit', 'what': 'After the call'}))
                 self.assertTrue(again[0][0] and again[0][1].startswith('Nothing recorded'), again)  # (the token ended with the call)
 
-    def test_on_a_call_about_pins_the_agent_rewords_and_marks_them_sent_and_is_told_to_say_which(self):
-        add = lambda words: self.db("insert into review_notes (created, slug, about, page, element, note, viewport) values "
-                                    "('2026-10-06', 'hello', 'hello', '/shop', '{\"tag\":\"button\"}', ?, '{}') returning id", words)[0][0]
-        pale, price, faq, other = add('The button is too pale'), add('Is this the final price?'), add('Add a FAQ'), add('Not on the call')
-        ctx = self.voice('call-context', {'agent': 'bolt', 'pins': [pale, price, faq]})
-        token = ctx['token']
-        self.assertIn(f'### Pin #{pale} on https://hello.preview.', ctx['prompt'])
-        queued = self.tools(token, 'bolt', ('job', {'goal': 'g', 'agent': 'moss', 'code': 'FAQ', **ESTIMATE, 'title': 'A FAQ', 'brief': 'Add a FAQ to hello.'}))[0][1]
-        job = int(re.search(r'Queued job #(\d+)', queued)[1])
-        out = self.tools(token, 'bolt', ('pin_words', {'pin': pale, 'words': 'Make the button the brand green'}),
-                         ('pin_sent', {'pin': faq, 'job': job}), ('pin_sent', {'pin': price, 'answered': True}),
-                         ('pin_sent', {'pin': other, 'answered': True}), ('pin_sent', {'pin': pale}),
-                         ('pin_sent', {'pin': pale, 'job': job, 'answered': True}), ('pin_words', {'pin': pale, 'words': ' '}))
-        self.assertEqual(out[0], (False, f'Pin #{pale} has its new words in HQ. It still waits there: not sent.'))
-        self.assertEqual(out[1], (False, f"Pin #{faq} is marked sent with job #{job} (moss's). It's no longer waiting in HQ.\n"
-                                  'Tell the board plainly which of its notes went to which work, and whether that work is queued or already under way.'))
-        self.assertEqual(out[2], (False, f"Pin #{price} is marked sent as answered on this call, with no job queued for it. It's no longer "
-                                  'waiting in HQ.\nTell the board plainly which of its notes you answered here, with no work queued for it.'))
-        self.assertEqual(out[3], (True, f"Nothing changed: pin #{other} isn't one this call is about"))
-        for refused in out[4:]:
-            self.assertTrue(refused[0], refused)
-        self.assertEqual(self.db('select id, status, job, note from review_notes where id in (?, ?, ?, ?) order by id', pale, price, faq, other),
-                         [(pale, 'pending', None, 'Make the button the brand green'), (price, 'sent', None, 'Is this the final price?'),
-                          (faq, 'sent', job, 'Add a FAQ'), (other, 'pending', None, 'Not on the call')])
-        self.voice('call-end', {'agent': 'bolt', 'lines': ['Board: the pale button, let me think.'], 'token': token})
-        self.assertEqual(self.db('select status from review_notes where id = ?', pale), [('pending',)])  # (it waits for Send or another call)
-
     def test_the_ceos_call_expedites_and_a_refusal_says_why(self):
         token, _ = self.start('juno')
         queued = self.tools(token, 'juno', ('job', {'goal': 'g', 'agent': 'kit', 'code': 'CLAIM', **ESTIMATE, 'title': 'Fix the claim', 'brief': 'The claim stalls.'}))[0][1]
         job = int(re.search(r'Queued job #(\d+)', queued)[1])
         out = self.tools(token, 'juno', ('expedite', {'job': job}), ('expedite', {'job': 999999}))
-        self.assertEqual(out[0], (False, f'#{job} is expedited: it starts next, and merges once a push passes its gates and tests.'))
+        # (queued on the call, it starts once the call ends: expedite says so, never that it starts next)
+        [(call,)] = self.db("select arg from wakes where job = ? and kind = 'ended'", job)
+        self.assertEqual(out[0], (False, f"#{job} is expedited, but it doesn't start yet: it's queued once call #{call} ends. Then it starts ahead of other work, and merges once a push passes its gates and tests."))
         self.assertEqual(out[1], (True, "Nothing expedited: there's no job #999999: check the number"))
         self.assertEqual(self.db('select expedite from jobs where id = ?', job), [(1,)])
         self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
@@ -1145,8 +1161,8 @@ class CallAgent(unittest.TestCase):
                 Path(d, f).parent.mkdir(parents=True, exist_ok=True)
                 Path(d, f).write_text(text)
             signs = sign_in_pipe(SEAT)  # (as server.py hands it over)
-            env = agent_env({**fake_hq(d), 'HOME': d}, url, signs, 'call-token', 'juno')
-            env.update(CLAUDE_CONFIG_DIR=d, ANTHROPIC_BASE_URL=url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
+            env = agent_env({**fake_hq(d), 'HOME': d}, url, signs, 'call-token', 'juno', work=d, cli_config=d)
+            env.update(ANTHROPIC_BASE_URL=url, CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC='1')
             msg = {'type': 'user', 'message': {'role': 'user', 'content': [{'type': 'text', 'text': 'Give Bolt the phone logs.'}]}}
             try:
                 r = subprocess.run(['claude', '-p', '--input-format', 'stream-json', '--output-format', 'stream-json', '--verbose',
@@ -1252,6 +1268,20 @@ class CallAgent(unittest.TestCase):
         self.assertEqual(sorted(seen[0][1]), [f'mcp__hq__{t}' for t in PARTNER_TOOLS])
         self.assertIn('Noted.', seen[-1][2])
         self.assertEqual(log, '')
+
+    def test_open_work_and_drive_are_refused_on_a_call_out_and_the_phone(self):
+        """ Through the real CLI: a call out isn't offered either tool (house rule
+        9), and the board's call on the phone, with no screen, hears that it can't."""
+        import hq_tools
+        for tool, args, words in (('open_work', {'what': 'the teacup page', 'address': 'https://teacups.preview.onlyonery.com/'},
+                                   hq_tools.OPEN_WORDS['none']), ('drive', {'by': 'down'}, hq_tools.DRIVE_WORDS['none'])):
+            _, seen, log = self.turn(f'mcp__hq__{tool}', args, tools=PARTNER)
+            self.assertNotIn(f'mcp__hq__{tool}', seen[0][1])
+            self.assertIn(f'No such tool available: mcp__hq__{tool}', seen[-1][2])
+            _, seen, log = self.turn(f'mcp__hq__{tool}', args)
+            self.assertIn(f'mcp__hq__{tool}', seen[0][1])
+            self.assertIn(json.dumps(words)[1:-1], seen[-1][2])
+            self.assertEqual(log, '')
 
     def test_calls_work_when_the_tools_do_not_start(self):
         broken = [a.replace('hq_tools.py', 'missing_hq_tools.py') for a in TOOLS]

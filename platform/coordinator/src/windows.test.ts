@@ -65,19 +65,24 @@ beforeEach(async () => {
   );
 });
 
-test('a deadline reads as a time from now or a UTC time, and anything else is refused', () => {
+test("a deadline reads as a time from now, a UTC time or one on the company's clock, and anything else is refused", () => {
   const at = Date.parse('2026-10-06T08:00:00Z');
   assert.equal(windows.parse('2h', at), at + 2 * HOUR);
   assert.equal(windows.parse('1h30m', at), at + 1.5 * HOUR);
   assert.equal(windows.parse('14:30', at), Date.parse('2026-10-06T14:30:00Z'), 'later today');
   assert.equal(windows.parse('07:00', at), Date.parse('2026-10-07T07:00:00Z'), 'gone today: tomorrow');
   assert.equal(windows.parse('2026-10-06T10:00Z', at), Date.parse('2026-10-06T10:00:00Z'));
+  // The fixture's clock is Europe/Amsterdam: each time at its own date's offset, either side of 25 October's change
+  assert.equal(windows.parse('2026-10-06 12:00', at), Date.parse('2026-10-06T10:00:00Z'), 'summer time');
+  assert.equal(windows.parse('2026-10-26T09:00', at), Date.parse('2026-10-26T08:00:00Z'), 'winter time');
   for (const bad of [
     'soon',
     '2 hours',
     '25:00',
-    '2026-10-06T10:00',
     '2027-02-31T10:00Z',
+    '2027-02-31 10:00',
+    '2026-10-06 24:00',
+    '2026-10-06 09:00',
     '-2h',
     '',
     '2026-10-06T07:00Z',

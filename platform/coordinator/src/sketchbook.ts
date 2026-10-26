@@ -34,12 +34,12 @@ export function getSketch(id: number, who = BOARD, base = HQ_BASE) {
   if (typeof p === 'number') return p;
   return { ...sketchOf(book.row(id, who)!, base), ink: p.ink, scraps: p.scraps, waiting: p.waiting };
 }
-// POST /api/sketches/create { label?, w, h }, save { id, ink, scraps, picture }, label { id, label }, archive
-// { id, archived }: the book's, a free page, answered as a sketch
+// POST /api/sketches/create { label?, w, h }, save { id, ink, scraps, picture, since? }, label { id, label }, archive
+// { id, archived }: the book's, a free page, answered as a sketch (since: book.ts savePage's.)
 export const createSketch = (b: any, who = BOARD, base = HQ_BASE) =>
   asSketch(book.createPage({ kind: 'free', w: b?.w, h: b?.h, label: b?.label }, who), who, base);
 export const saveSketch = (b: any, who = BOARD, base = HQ_BASE) =>
-  asSketch(book.savePage({ id: b?.id, ink: b?.ink, scraps: b?.scraps }, who), who, base);
+  asSketch(book.savePage({ id: b?.id, ink: b?.ink, scraps: b?.scraps, since: b?.since }, who), who, base);
 export const labelSketch = (b: any, who = BOARD, base = HQ_BASE) => asSketch(book.labelPage(b, who), who, base);
 export const archiveSketch = (b: any, who = BOARD, base = HQ_BASE) => asSketch(book.archivePage(b, who), who, base);
 // POST /api/sketches/send { id }: the sketch to the CEO, as the board's line on the intercom with a copy of its picture

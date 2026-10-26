@@ -1,15 +1,19 @@
 // Messages between colleagues (hq say). Each one is a row, so it can be checked: queued for the recipient's running
 // Claude job, whose hook (hq inbox --hook, from the worker's --settings) hands it to the session at its next step; or,
 // when nobody can take it in (no running job, a Codex job, a job that ends before it looked), a job of its own.
-// Delivery is at least once, in two steps: take() offers the waiting messages to the hook, and only the hook's ack
-// (after it printed them) marks them delivered. One offered but never acknowledged is offered again at a later step,
-// or becomes a job if the run ends first. So a lost ack can mean a message reaches the session twice, or reaches it
-// and also becomes a job; never neither. Nothing is called delivered before the hook says the session has it.
+// Delivery to a session is at least once, in two steps: take() offers the waiting messages to the hook, and only the
+// hook's ack (after it printed them) marks them delivered. One offered but never acknowledged is offered again at a
+// later step, or becomes a job if the run ends first. So a lost ack can mean a message reaches the session twice, or
+// reaches it and also becomes a job; never neither. No message for a session is called delivered before the hook says
+// the session has it. The one other delivery: an item's goal or correction for a job that hasn't started and that
+// no message made goes into that job's brief, and is delivered as it goes in (toJob).
 // A chain of messages (a job started by a message, messaging an idle colleague, whose job does the same...) may
 // start CHAIN jobs; past that, a message only reaches a running job, and hq say says so (refused, or no job if unread).
 // A guest's step on the guest page (guests.ts: a tick, an answer, a question) travels the same way, as outside data: fromGuest.
+// An idle CEO's ordinary colleague messages stay in the inbox for the next run, without starting work held by a pause.
 import { columnsOf, db, inOneStep, once, redacted } from './db.ts';
 import { publish, redact } from './events.ts';
+import { ceo } from './company.ts';
 import { createJob, holdsCustomerData, handedCustomerData, threadOf } from './jobs.ts';
 import { findThread } from './projects.ts';
 import * as sorting from './sorting.ts';
@@ -26,12 +30,13 @@ import { oneTaskThread } from './made.ts';
 // customers: the words come from a customer's call, so every job they reach holds the customer's details.
 // held: the owner's notice of this proposal, which its inbox holds on the job (proposals.ts tell): unread when the job
 // stops running, it lapses, and the inbox's minute sweep tells the owner again.
+// next_run: send chose delivery to the next CEO run, rather than one specific job or independent work.
 // goal: the call item whose goal it carries (ledger.ts goalTo): whichever job it is in, or became or joined, hears when
 // that item is replaced or dropped (ledger.ts goalHeard). corrects: the call item whose change it tells (ledger.ts tell).
 db.exec(`create table if not exists messages (id integer primary key, created text not null, sender text not null,
   sender_job integer, recipient text not null, text text not null, job integer, delivered text, became integer,
   offered text, depth integer not null default 0, lapsed text, joined integer, guest integer, title text, call integer,
-  customers integer not null default 0, held integer, needs_answer integer not null default 0, goal integer, corrects integer)`);
+  customers integer not null default 0, held integer, needs_answer integer not null default 0, goal integer, corrects integer, next_run integer not null default 0)`);
 redacted('messages', 'text');
 once('2026-10-22-messages-held', () => {
   if (!columnsOf('messages').includes('held')) db.exec('alter table messages add column held integer');
@@ -43,6 +48,9 @@ once('2026-10-24-messages-goal', () => {
   if (!columnsOf('messages').includes('goal')) db.exec('alter table messages add column goal integer');
   if (!columnsOf('messages').includes('corrects')) db.exec('alter table messages add column corrects integer');
 });
+once('2026-10-26-messages-next-run', () => {
+  if (!columnsOf('messages').includes('next_run')) db.exec('alter table messages add column next_run integer not null default 0');
+});
 db.exec('create index if not exists messages_goal on messages (goal) where goal is not null');
 
 export const MAX = 8000;        // characters; a longer text is refused (hq say tells the sender), never cut
@@ -53,7 +61,7 @@ export const OFFER_AGAIN = 60e3; // ms before an unacknowledged message is offer
 type Message = { id: number; created: string; sender: string; sender_job: number | null; recipient: string; text: string;
   job: number | null; delivered: string | null; became: number | null; offered: string | null; depth: number; lapsed: string | null;
   joined: number | null; guest: number | null; title: string | null; call: number | null; customers: number; held: number | null;
-  needs_answer: number; goal: number | null; corrects: number | null };
+  needs_answer: number; goal: number | null; corrects: number | null; next_run: number };
 // agent: who speaks (the job's agent or a team member of it). A live call's agent has no job: only its addition to a job
 // it queued (call.ts addToJob), keyed by its call. A follow-up's guidance correction keeps its transcript out of events.
 // customers: the words come from a customer's call (a job's too: an item's goal or correction, ledger.ts). goal and
@@ -82,17 +90,18 @@ export function send(from: From, to: string, text: string, only?: number, held?:
   // The sender's job came from a message (it's what that message became): this one is a link further down the chain.
   const born = from.job ? db.prepare('select depth from messages where became = ?').get(from.job) as { depth: number } | undefined : undefined;
   const depth = born ? born.depth + 1 : 0, full = depth >= CHAIN;
-  if (full && job?.engine !== 'claude') return 409;
+  const nextRun = to === ceo() && from.job !== null && only === undefined && held === undefined && !needsAnswer;
+  if (full && job?.engine !== 'claude' && !nextRun) return 409;
   const call = from.job === null ? from.call : null, customers = !!from.customers;
   const ledgered = from.job === null ? null : from.goal ?? from.corrects ?? null;
   const reads = job?.engine === 'claude' && !(ledgered != null && job.status === 'queued' && job.session == null);
   // (one that becomes a job is kept with it or not at all: createJob refuses an agent no seat runs)
   const { id, made } = inOneStep(() => {
     const [goal, corrects] = from.job === null ? [null, null] : [from.goal ?? null, from.corrects ?? null];
-    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, customers, held, needs_answer, goal, corrects) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, customers ? 1 : 0, held ?? null, Number(needsAnswer), goal, corrects);
+    const { lastInsertRowid } = db.prepare('insert into messages (created, sender, sender_job, recipient, text, job, depth, call, customers, held, needs_answer, goal, corrects, next_run) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(new Date().toISOString(), from.agent, from.job, to, redact(text)!, reads ? job.id : null, depth, call, customers ? 1 : 0, held ?? null, Number(needsAnswer), goal, corrects, Number(nextRun));
     const id = Number(lastInsertRowid);
-    return { id, made: reads ? undefined : toJob(id, only) };
+    return { id, made: reads || nextRun ? undefined : toJob(id, only) };
   });
   // HQ's bubble (the events log keeps it): a call's addition by its number only, as the board's words stay with the job
   const guidance = from.job === null ? undefined : from.guidance;
@@ -100,7 +109,11 @@ export function send(from: From, to: string, text: string, only?: number, held?:
     : call ? `Message #${id}: sent on call #${call}` : text;
   publish({ type: 'chat', agent: from.agent, to, text: shown });
   // its session reads them at its next step
-  if (customers && !made) handedCustomerData(job!.id);
+  if (customers && reads) handedCustomerData(job!.id);
+  if (nextRun) {
+    publish({ type: 'log', agent: to, text: 'Message kept for the CEO: the next run reads it, even while a pause holds work' });
+    return { id, state: reads ? 'queued' : 'pending', job: reads ? job.id : undefined, why: 'next-run' };
+  }
   if (!made) return { id, state: 'queued', job: job!.id, ...(full ? { chain_full: true } : {}) };
   reconcile([id]);
   if (made.job === only && !reads) return { id, state: 'brief', job: made.job };
@@ -255,6 +268,10 @@ function prompt(all: Message[]) {
 // its hook. Offered isn't delivered: the hook acknowledges what it printed (ack). Until then no other hook of this
 // job gets them (two at once, after parallel tool calls); after OFFER_AGAIN, a later step's hook gets them again.
 export function take(job: number) {
+  db.prepare(`update messages set job = ?, offered = null where recipient = ? and delivered is null
+    and (job is null or job != ? and not exists (select 1 from jobs where id = messages.job and status = 'running'))
+    and became is null and lapsed is null and next_run = 1
+    and exists (select 1 from jobs where id = ? and agent = ? and status = 'running')`).run(job, ceo(), job, job, ceo());
   const now = new Date(), again = new Date(now.getTime() - OFFER_AGAIN).toISOString();
   const waiting = db.prepare(`select * from messages where job = ? and delivered is null and became is null and lapsed is null
     and (offered is null or offered < ?) order by id`).all(job, again) as Message[];
@@ -295,7 +312,10 @@ export function jobEnded(job: number) {
   const made: number[] = [];
   for (const m of db.prepare('select * from messages where job = ? and delivered is null and became is null and lapsed is null').all(job) as Message[]) {
     const unread = m.offered ? `was offered to job #${job} but not confirmed read before it ended` : `wasn't read before job #${job} ended`;
-    if (m.held !== null) lapseHeld(m);
+    if (m.next_run) {
+      db.prepare('update messages set job = null, offered = null where id = ?').run(m.id);
+      publish({ type: 'log', agent: m.recipient, text: 'Unread message kept for the CEO: the next run reads it, even while a pause holds work' });
+    } else if (m.held !== null) lapseHeld(m);
     else if (m.depth >= CHAIN) {
       db.prepare('update messages set lapsed = ? where id = ?').run(new Date().toISOString(), m.id);
       publish({ type: 'log', agent: m.recipient, text: `Message #${m.id} to ${m.recipient} ${unread}. Its chain of messages had started ${CHAIN} jobs already, so it didn't start another.` });
@@ -330,7 +350,8 @@ export function sweep() {
   for (const { job } of db.prepare(`select distinct job from messages where delivered is null and became is null and lapsed is null
     and (select status from jobs where id = messages.job) not in ('running', 'queued')`).all() as { job: number }[])
     try { jobEnded(job); } catch (err) { console.error(`Messages of job #${job}:`, err); }
-  for (const { id } of db.prepare('select id from messages where job is null and delivered is null and became is null and lapsed is null').all() as { id: number }[])
+  for (const { id } of db.prepare(`select id from messages where job is null and delivered is null and became is null and lapsed is null
+    and next_run = 0`).all() as { id: number }[])
     try { toJob(id); reconcile([id]); } catch (err) { console.error(`Message #${id}:`, err); }
 }
 

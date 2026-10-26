@@ -4,11 +4,17 @@ import { db, redacted, once, lacks } from './db.ts'; // (lacks)
 // agent, job: the proposer and its job; for_agent: who it proposes does the work (the proposer when null); thread: the
 // thread it proposes; project: the project whose owner decides it (null: the CEO); heard_by: the owner's planning job
 // that takes it, since heard_at (when it reached that job's owner); status: open, accepted (accepted: the job it became)
-// or dropped (why). planning_jobs: each owner's planning jobs, the open one taking what arrives until it ends.
+// or dropped (why). planning_jobs: each owner's planning jobs by project (null: no project's), the open one taking what
+// arrives for it until it ends.
 db.exec(`create table if not exists proposals (id integer primary key, created text not null, agent text not null,
   job integer, title text not null, brief text not null, for_agent text, thread text, status text not null default 'open',
   decided text, accepted integer, why text, project text, heard_by integer, heard_at text);
-  create table if not exists planning_jobs (job integer primary key, agent text not null)`);
+  create table if not exists planning_jobs (job integer primary key, agent text not null, project text)`);
+// (planning jobs from before have no project: they keep what they hold.)
+once(
+  '2026-10-25-planning-jobs-project',
+  () => lacks('planning_jobs', 'project') && db.exec('alter table planning_jobs add column project text'),
+);
 db.exec('create index if not exists proposals_accepted on proposals (accepted) where accepted is not null');
 redacted('proposals', 'title', 'brief', 'why');
 

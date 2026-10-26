@@ -18,8 +18,12 @@
 import { execFile, spawn } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import type { Ids } from './slots.ts';
-import { CLI_PROGRAMS, WRAPPERS, procStat, processesOfUids, type ProcStat } from './detached.ts';
+import { WRAPPERS, procStat, processesOfUids, type ProcStat } from './detached.ts';
+import type { DiskUse } from './disk.ts';
+import { storedWrites, sharedWritableFiles, diskWrites, diskAccountingError, type WritableFile } from './diskwrites.ts';
 import { redact } from './safety.ts';
+import { runsOf } from './runs.ts';
+export { cliProcesses, runsOf } from './runs.ts';
 
 // memoryMb: its proportional share of mapped memory (PSS), or resident memory (RSS) when PSS cannot be read.
 // memoryMeasure identifies which measure was available. RSS counts shared memory in full.
@@ -31,6 +35,13 @@ export type ProcessSnapshot = ProcStat & {
   memoryMb: number;
   memoryMeasure: MemoryMeasure;
   rssMb?: number;
+  writeBytes?: number;
+  writtenBytes?: number;
+  writeCallBytes?: number;
+  writtenCallBytes?: number;
+  writableFiles?: WritableFile[];
+  storedWriteBytes?: number;
+  diskAccountingError?: string;
   group?: Autogroup;
   cores?: number; // (the cores it used since the look before, in a job's use: tally)
 };
@@ -53,7 +64,9 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
       ),
     ),
   );
-  const pss = new Map(read.flatMap(m => [...m]));
+  const pss = new Map(read.flatMap(m => [...m.pss]));
+  const written = new Map(read.flatMap(m => [...m.written]));
+  const calls = new Map(read.flatMap(m => [...m.calls]));
   return stats.flatMap(p => {
     const rssMb = residentOf(p),
       memoryMb = pss.get(p.pid) ?? rssMb;
@@ -62,6 +75,8 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
       {
         ...p,
         rssMb,
+        writeBytes: written.get(p.pid),
+        writeCallBytes: calls.get(p.pid),
         memoryMb,
         memoryMeasure: pss.has(p.pid) ? ('pss' as const) : ('rss' as const),
         group: autogroupOf(p),
@@ -70,18 +85,30 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
   });
 }
 
-// Each process's PSS in MB. Only its own uid may read it (the worker has no CAP_SYS_PTRACE), so it's read as the job's
+// Each process's PSS in MB and storage writes in bytes. Only its own uid may read them (the worker has no CAP_SYS_PTRACE), so it's read as the job's
 // slot, with nothing of the worker's environment. grep goes on past a file it can't read (exit 2).
 function pssOf(pids: number[], ids: Required<Ids>) {
-  if (!pids.length) return Promise.resolve(new Map<number, number>());
-  const files = pids.map(pid => `/proc/${pid}/smaps_rollup`);
+  if (!pids.length)
+    return Promise.resolve({
+      pss: new Map<number, number>(),
+      written: new Map<number, number>(),
+      calls: new Map<number, number>(),
+    });
+  const files = pids.flatMap(pid => [`/proc/${pid}/smaps_rollup`, `/proc/${pid}/io`]);
   const options = { ...ids, env: PLAIN_ENV, timeout: 10_000 };
-  return new Promise<Map<number, number>>((resolve, reject) =>
-    execFile('grep', ['-H', '^Pss:', ...files], options, (err, stdout) => {
-      if (err && typeof err.code !== 'number') return reject(err);
-      const rows = stdout.matchAll(/^\/proc\/(\d+)\/smaps_rollup:Pss:\s+(\d+) kB$/gm);
-      resolve(new Map([...rows].map(m => [Number(m[1]), Number(m[2]) / 1024])));
-    }),
+  return new Promise<{ pss: Map<number, number>; written: Map<number, number>; calls: Map<number, number> }>(
+    (resolve, reject) =>
+      execFile('grep', ['-HE', '^(Pss|write_bytes|wchar):', ...files], options, (err, stdout) => {
+        if (err && typeof err.code !== 'number') return reject(err);
+        const rows = stdout.matchAll(/^\/proc\/(\d+)\/smaps_rollup:Pss:\s+(\d+) kB$/gm);
+        const writes = stdout.matchAll(/^\/proc\/(\d+)\/io:write_bytes:\s+(\d+)$/gm);
+        const calls = stdout.matchAll(/^\/proc\/(\d+)\/io:wchar:\s+(\d+)$/gm);
+        resolve({
+          calls: new Map([...calls].map(m => [Number(m[1]), Number(m[2])])),
+          pss: new Map([...rows].map(m => [Number(m[1]), Number(m[2]) / 1024])),
+          written: new Map([...writes].map(m => [Number(m[1]), Number(m[2])])),
+        });
+      }),
   );
 }
 
@@ -97,7 +124,8 @@ function residentOf(p: ProcStat & { pid: number }) {
       return undefined;
     throw err;
   }
-  if (procStat(p.pid)?.start !== p.start) return undefined;
+  const current = procStat(p.pid);
+  if (current?.start !== p.start || current.state === 'Z') return undefined;
   const kb = (field: string) => Number(status.match(new RegExp(`^${field}:\\s+(\\d+) kB$`, 'm'))?.[1] ?? 0);
   // (a process exiting meanwhile has no memory left, and no lines for it)
   return kb('VmRSS') / 1024;
@@ -116,8 +144,10 @@ function autogroupOf(p: { pid: number; uid: number }): Autogroup | undefined {
 // Each uid's memory now, and the cores its processes used since the look before (ms earlier)
 export function tally(now: ProcessSnapshot[], before: ProcessSnapshot[], ms: number) {
   const had = new Map(before.map(p => [`${p.pid}:${p.start}`, p.ticks]));
+  const prior = new Map(before.map(p => [`${p.pid}:${p.start}`, p]));
   const sampledUids = new Set(before.map(p => p.uid));
   const uses = new Map<number, JobUse>();
+  const sharedFiles = sharedWritableFiles(now, before);
   for (const p of now) {
     const u = uses.get(p.uid) ?? { uid: p.uid, memoryMb: 0, cores: 0, processes: [] };
     u.memoryMb += p.memoryMb;
@@ -126,65 +156,34 @@ export function tally(now: ProcessSnapshot[], before: ProcessSnapshot[], ms: num
       ? (p.ticks - (had.get(`${p.pid}:${p.start}`) ?? 0)) / CPU_TICKS_PER_SECOND / (ms / 1000)
       : 0;
     u.cores += cores;
-    u.processes.push({ ...p, cores });
+    const previous = prior.get(`${p.pid}:${p.start}`);
+    const delta = (current: number | undefined, earlier: number | undefined) =>
+      current === undefined ? undefined : Math.max(0, current - (earlier ?? (sampledUids.has(p.uid) ? 0 : current)));
+    const process = {
+      ...p,
+      cores,
+      writtenBytes: delta(p.writeBytes, previous?.writeBytes),
+      writtenCallBytes: delta(p.writeCallBytes, previous?.writeCallBytes),
+    };
+    u.processes.push({ ...process, storedWriteBytes: storedWrites(process, previous, sharedFiles) });
     uses.set(p.uid, u);
   }
   return uses;
 }
 
-// A job's CLI as /proc has it now: the launch running (pid and start) and, under it, the CLI's own programs (a Node
-// launcher's native agent and that agent's helpers), never the commands they run. Empty once the launch has ended.
-export function cliProcesses(processes: ProcessSnapshot[], launch: { pid: number; start: string }) {
-  const own = new Set<number>();
-  if (!processes.some(p => p.pid === launch.pid && p.start === launch.start)) return own;
-  own.add(launch.pid);
-  for (let grew = true; grew;) {
-    grew = false;
-    for (const p of processes)
-      if (!own.has(p.pid) && own.has(p.ppid) && CLI_PROGRAMS.has(p.comm)) {
-        own.add(p.pid);
-        grew = true;
-      }
-  }
-  return own;
-}
-
-// What a run is blocked for: its job's memory (MB), its number of processes, or its cores kept up past the share.
-export type Measure = 'memory' | 'processes' | 'cores';
+// A block measures memory (MiB), process count, sustained cores, or allocated disk bytes.
+export type Measure = 'memory' | 'processes' | 'cores' | 'disk';
 // A run to block: its job (uid), what the job is past (its use and its share, in the measure's unit), and the run: its
 // first process (root, the command the CLI started) and every process under it.
 export type Block = {
   uid: number;
   measure: Measure;
-  used: number;
+  used: number | null;
   share: number;
   root: ProcessSnapshot;
   run: ProcessSnapshot[];
+  accountingError?: string;
 };
-
-// A job's runs, each by its first process: a command its CLI started (its parent is the CLI's, or none of the job's
-// processes: a push's checks, run after the CLI has ended, or one left behind) with every process under it, the first
-// one first. The CLI's own processes are in none.
-function runsOf(processes: ProcessSnapshot[], cli: Set<number>) {
-  const byPid = new Map(processes.map(p => [p.pid, p]));
-  const rootOf = (p: ProcessSnapshot) => {
-    const seen = new Set([p.pid]);
-    let root = p;
-    for (let up = byPid.get(root.ppid); up && !cli.has(up.pid) && !seen.has(up.pid); up = byPid.get(up.ppid)) {
-      seen.add(up.pid);
-      root = up;
-    }
-    return root;
-  };
-  const runs = new Map<ProcessSnapshot, ProcessSnapshot[]>();
-  for (const p of processes) {
-    if (cli.has(p.pid)) continue;
-    const root = rootOf(p);
-    if (!runs.has(root)) runs.set(root, [root]);
-    if (p !== root) runs.get(root)!.push(p);
-  }
-  return runs;
-}
 
 // Select the run to block, the processes to slow down, and one writable process per session group to slow down.
 // Busy jobs' groups stay pending until they reach nice 10 or disappear, even after the job stops being busy.
@@ -195,42 +194,12 @@ function runsOf(processes: ProcessSnapshot[], cli: Set<number>) {
 export function overShare(
   uses: Map<number, JobUse>,
   cli: Set<number>,
-  limits: {
-    mostMb: number;
-    shareMb: number;
-    cores: number;
-    processes: number;
-    starved: boolean;
-    hot?: Set<number>;
-    workerSessionId: number;
-  },
+  limits: ShareLimits,
   pending = new Set<string>(),
 ) {
   const jobs = [...uses.values()];
   const others = (u: JobUse) => u.processes.filter(p => !cli.has(p.pid));
-  const blockOf = (u: JobUse, measure: Measure, used: number, share: number, weigh: (p: ProcessSnapshot) => number) => {
-    const weight = (run: ProcessSnapshot[]) => run.reduce((sum, p) => sum + weigh(p), 0);
-    const [root, run] = [...runsOf(u.processes, cli)].sort((a, b) => weight(b[1]) - weight(a[1]))[0];
-    return { uid: u.uid, measure, used, share, root, run };
-  };
-  const heaviestPast = (memoryMb: number) =>
-    jobs.filter(u => u.memoryMb > memoryMb && others(u).length).sort((a, b) => b.memoryMb - a.memoryMb)[0];
-  const memory = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb) : undefined);
-  const crowded = jobs.find(u => others(u).length > limits.processes);
-  const hot = jobs.find(u => limits.hot?.has(u.uid) && others(u).length);
-  const block: Block | undefined = memory
-    ? blockOf(
-        memory,
-        'memory',
-        memory.memoryMb,
-        memory.memoryMb > limits.mostMb ? limits.mostMb : limits.shareMb,
-        p => p.memoryMb,
-      )
-    : crowded
-      ? blockOf(crowded, 'processes', others(crowded).length, limits.processes, () => 1)
-      : hot
-        ? blockOf(hot, 'cores', hot.cores, limits.cores, p => p.cores ?? 0)
-        : undefined;
+  const block = selectBlock(jobs, cli, limits);
   const busy = jobs.filter(u => u.cores > limits.cores).flatMap(others);
   const slow = busy.filter(p => p.nice < 10);
   const wanted = new Set([...pending, ...busy.flatMap(p => (p.group ? [p.group.id] : []))]);
@@ -241,6 +210,77 @@ export function overShare(
   // processes it may write for now stays pending, for a look when one may.)
   const groups = [...new Map(members.filter(p => p.group!.writable).map(p => [p.group!.id, p])).values()];
   return { block, slow, groups, pending: new Set(members.map(p => p.group!.id)) };
+}
+
+type ShareLimits = {
+  mostMb: number;
+  shareMb: number;
+  cores: number;
+  processes: number;
+  starved: boolean;
+  hot?: Set<number>;
+  workerSessionId: number;
+  disk?: Map<number, DiskUse>;
+};
+
+function selectBlock(jobs: JobUse[], cli: Set<number>, limits: ShareLimits): Block | undefined {
+  const others = (u: JobUse) => u.processes.filter(p => !cli.has(p.pid));
+  const heaviestPast = (memoryMb: number) =>
+    jobs.filter(u => u.memoryMb > memoryMb && others(u).length).sort((a, b) => b.memoryMb - a.memoryMb)[0];
+  const memory = heaviestPast(limits.mostMb) ?? (limits.starved ? heaviestPast(limits.shareMb) : undefined);
+  const crowded = jobs.find(u => others(u).length > limits.processes);
+  const disk = jobs.find(u => {
+    const use = limits.disk?.get(u.uid);
+    return (
+      others(u).length > 0 &&
+      (use?.accountingError ||
+        (use && others(u).some(p => p.diskAccountingError)) ||
+        (use?.warned && use.used !== null && use.used > use.share && others(u).some(p => diskWrites(p, use) !== 0)))
+    );
+  });
+  const hot = jobs.find(u => limits.hot?.has(u.uid) && others(u).length);
+  return memory
+    ? weightedBlock(
+        memory,
+        cli,
+        'memory',
+        memory.memoryMb,
+        memory.memoryMb > limits.mostMb ? limits.mostMb : limits.shareMb,
+        p => p.memoryMb,
+      )
+    : crowded
+      ? weightedBlock(crowded, cli, 'processes', others(crowded).length, limits.processes, () => 1)
+      : disk
+        ? weightedBlock(
+            disk,
+            cli,
+            'disk',
+            limits.disk!.get(disk.uid)!.used,
+            limits.disk!.get(disk.uid)!.share,
+            p =>
+              limits.disk!.get(disk.uid)!.accountingError || p.diskAccountingError
+                ? Infinity
+                : (diskWrites(p, limits.disk!.get(disk.uid)!) ?? Infinity),
+            limits.disk!.get(disk.uid)!.accountingError,
+          )
+        : hot
+          ? weightedBlock(hot, cli, 'cores', hot.cores, limits.cores, p => p.cores ?? 0)
+          : undefined;
+}
+
+function weightedBlock(
+  u: JobUse,
+  cli: Set<number>,
+  measure: Measure,
+  used: number | null,
+  share: number,
+  weigh: (p: ProcessSnapshot) => number,
+  scanError?: string,
+): Block {
+  const weight = (run: ProcessSnapshot[]) => run.reduce((sum, p) => sum + weigh(p), 0);
+  const [root, run] = [...runsOf(u.processes, cli)].sort((a, b) => weight(b[1]) - weight(a[1]))[0];
+  const accountingError = measure === 'disk' ? (scanError ?? diskAccountingError(run)) : undefined;
+  return { uid: u.uid, measure, used, share, root, run, accountingError };
 }
 
 // Lowers the priority of what overShare picked, as each process's slot. The kernel takes one group's change in 100 ms
@@ -310,15 +350,15 @@ export function commandOf(run: ProcessSnapshot[]) {
 // returns), opened as the job's own user and appended to (root opening another's descriptor could write where the job may
 // not). A run whose stderr isn't there to open (closed, a socket) loses them; HQ's log keeps them.
 export function tellRun(ids: Required<Ids>, root: { pid: number }, words: string) {
-  return new Promise<void>(resolve => {
+  return new Promise<boolean>(resolve => {
     const c = spawn('sh', ['-c', 'cat >> "/proc/$1/fd/2"', 'sh', String(root.pid)], {
       ...ids,
       env: PLAIN_ENV,
       stdio: ['pipe', 'ignore', 'ignore'],
       timeout: 5_000,
     });
-    c.on('error', () => resolve());
-    c.on('close', () => resolve());
+    c.on('error', () => resolve(false));
+    c.on('close', code => resolve(code === 0));
     c.stdin.on('error', () => {});
     c.stdin.end(`\n${words}\n`);
   });

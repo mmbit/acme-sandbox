@@ -58,7 +58,9 @@ board.projects[2].pause = {
   why: 'Hold the newsletter until the shop opens',
   by: 'wren',
   at: '2026-10-17T06:00:00.000Z',
-  until: [{ id: 41, agent: 'kit', title: 'Pick a domain for the sticker shop', state: 'waiting for the board' }],
+  until: [
+    { id: 41, agent: 'kit', title: 'Pick a domain for the sticker shop', state: 'waiting for the board', ended: false },
+  ],
 };
 board.projects[1].threads[0].pause = {
   why: 'Backups wait for the new disk',
@@ -86,6 +88,26 @@ threads['news/proofs'] = {
   id: 'news/proofs',
   name: 'The proofs',
   jobs: [{ ...launched.jobs[0], id: 36, title: 'Proofs read', check: 1, thread: 'news/proofs', result: 'Two typos' }],
+};
+// a project completed (hq project done) with the thread that delivered it, finished half a day before the check
+// starts: done in the last day
+const stall = {
+  ...board.projects[2].done[0],
+  id: 'popup/stall',
+  project: 'popup',
+  name: 'The market stall',
+  goal: 'The stall sold its first stickers.',
+  jobs: 1,
+  done: 1,
+  finished: new Date(Date.now() - 12 * 3600e3).toISOString(),
+};
+board.completed = [
+  { id: 'popup', name: 'The pop-up', owner: 'juno', business: 'shopfront', done: stall.finished, threads: [stall] },
+];
+threads[stall.id] = {
+  ...launched,
+  ...stall,
+  jobs: [{ ...launched.jobs[0], id: 37, title: 'Stall set up', thread: stall.id }],
 };
 threads[banners.id] = {
   ...banners,
@@ -162,6 +184,30 @@ for (const look of RENDERERS)
           })
           .map(e => e.className),
       );
+    // a level's head, once in: is its close on top where the board taps it, and what in it runs off the screen
+    const headFits = async () => {
+      await page.waitForFunction(
+        () =>
+          !document
+            .querySelector('#projects .pj-head')
+            .getAnimations({ subtree: true })
+            .some(a => a.playState === 'running'),
+      );
+      return page.evaluate(() => {
+        const close = document.querySelector('#projects .pj-head .pj-close').getBoundingClientRect();
+        return {
+          close: !!document
+            .elementFromPoint(close.left + close.width / 2, close.top + close.height / 2)
+            ?.closest('.pj-close'),
+          over: [...document.querySelectorAll('#projects .pj-head *')]
+            .filter(e => {
+              const r = e.getBoundingClientRect();
+              return r.width && (r.left < 0 || r.right > innerWidth);
+            })
+            .map(e => (e.className.baseVal ?? e.className) || e.tagName.toLowerCase()),
+        };
+      });
+    };
     // calm: nothing in the look's red, whatever the state
     const reds = () =>
       page.evaluate(() => {
@@ -202,18 +248,24 @@ for (const look of RENDERERS)
     // a level's keys are in once its entrance is over
     const level = name =>
       page.waitForFunction(n => document.querySelector('.pj-head h1')?.firstChild.textContent === n, name);
-    // a sideways drag on the level, as a finger's
-    const swipe = async dx => {
-      // (the last one's entrance, however long it takes on a loaded machine)
-      await page.waitForFunction(
+    // the view at rest: a level's entrance over, however long it takes on a loaded machine
+    const settled = () =>
+      page.waitForFunction(
         () =>
           !document
             .querySelector('#projects')
             .getAnimations({ subtree: true })
             .some(a => a.playState === 'running' && a.effect.getTiming().iterations !== Infinity),
       );
-      // (and a measured level: right after a screenshot holo's can read as all zeros once), pressed off its keys, where
-      // the drag stays on the screen: a press on one that a loaded machine holds still past the sort's hold lifts it
+    // a sideways drag on the level, as a finger's swipe
+    const swipe = async dx => {
+      // (the mouse off the keys first: one it rests on from a drag stands raised under it, and settles back over the
+      // point once the mouse moves on.)
+      await page.mouse.move(0, 0);
+      await settled();
+      // (on a measured level: right after a screenshot holo's can read as all zeros once), pressed off its keys, where
+      // the drag stays on the screen: a press on one that a loaded machine holds still past the sort's hold lifts it,
+      // and a mouse's lifts it at once
       const { x, y } = await (
         await page.waitForFunction(dx => {
           const r = document.querySelector('.pj-level').getBoundingClientRect();
@@ -228,6 +280,10 @@ for (const look of RENDERERS)
         }, dx)
       ).jsonValue();
       await page.mouse.move(x, y);
+      assert.ok(
+        await page.evaluate(([x, y]) => !document.elementFromPoint(x, y).closest('[data-sort], button, a'), [x, y]),
+        `${at}: the swipe pressed clear of the keys`,
+      );
       await page.mouse.down();
       for (let i = 1; i <= 6; i++) await page.mouse.move(x + (dx * i) / 6, y + 2);
       await page.mouse.up();
@@ -344,7 +400,7 @@ for (const look of RENDERERS)
     assert.deepEqual(await offScreen(), [], at);
     assert.deepEqual(await reds(), [], at);
     assert.deepEqual(await plain(), { numbers: [], underlined: [] }, at);
-    assert.ok(await page.$eval('.pj-sides', e => e.hidden), `${at}: no sides at home`);
+    assert.ok(!(await page.$('#projects .sides')), `${at}: no sides`);
     await shot('home');
 
     // a business: its projects' keys drop in under its head
@@ -398,13 +454,39 @@ for (const look of RENDERERS)
     // the board sorts them by dragging one held still, and a drag opens nothing (the order kept: the coordinator's
     // projects test)
     const drag = async (from, to, hold = true) => {
+      // (measured at rest, both keys' middles on the screen: a level's entrance still moving its keys, or a key not laid
+      // out yet, measures elsewhere or not at all, and the book open beside a tablet's page stacks its tall keys in one
+      // column past the screen's foot.)
+      await page.locator(from).waitFor();
+      await settled();
+      await page.evaluate(
+        ([from, to]) => {
+          const a = document.querySelector(from).getBoundingClientRect(),
+            b = document.querySelector(to).getBoundingClientRect(),
+            board = document.querySelector('.pj-board'),
+            v = board.getBoundingClientRect();
+          board.scrollTop += (a.top + a.bottom + b.top + b.bottom) / 4 - (v.top + Math.min(v.bottom, innerHeight)) / 2;
+        },
+        [from, to],
+      );
       const a = await page.locator(from).boundingBox(),
         b = await page.locator(to).boundingBox();
       await page.mouse.move(a.x + a.width / 2, a.y + a.height / 2);
       await page.mouse.down();
       if (hold) await page.waitForSelector('.pj-lifted');
-      for (let i = 1; i <= 8; i++)
-        await page.mouse.move(a.x + a.width / 2 + ((b.x - a.x) * i) / 8, a.y + a.height / 2 + ((b.y - a.y) * i) / 8);
+      for (let i = 1; i <= 8; i++) {
+        const x = a.x + a.width / 2 + ((b.x - a.x) * i) / 8,
+          y = a.y + a.height / 2 + ((b.y - a.y) * i) / 8;
+        await page.mouse.move(x, y);
+        // (the lifted key under the finger at once, not eased behind it.)
+        if (hold) {
+          const k = await page.locator('.pj-lifted').boundingBox();
+          assert.ok(
+            x > k.x && x < k.x + k.width && y > k.y && y < k.y + k.height,
+            `${at}: the lifted key under the finger (${JSON.stringify({ x, y, k })})`,
+          );
+        }
+      }
       await page.mouse.up();
     };
     await drag('[data-project=news]', '[data-project=shop]');
@@ -430,34 +512,13 @@ for (const look of RENDERERS)
         `${at}: and back again`,
       );
     }
-    // a swipe brings the next business in, and a business of one project opens at its tiles too
+    // a sideways drag steps to nothing: the drag is the sort's alone
     await swipe(-140);
-    await level('The office');
-    assert.deepEqual(await texts(page, '[data-project] b'), ['The office'], `${at}: a business of one, at its tiles`);
-    await swipe(140);
-    await level('The shopfront');
-    // a short drag is neither a swipe nor a tap
-    await swipe(-30);
-    assert.equal(await title(), 'The shopfront', at);
-    // the sides: a small triangle outside the view on each side, on top where it is, and a tap on one the swipe's step;
-    // none at home, where nothing is beside
-    const sides = await page.evaluate(() => {
-      const view = document.querySelector('.pj-modal').getBoundingClientRect();
-      return [...document.querySelectorAll('.pj-sides svg')].map(svg => {
-        const r = svg.getBoundingClientRect(),
-          on = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
-        return { outside: r.right <= view.left || r.left >= view.right, onTop: Boolean(on?.closest('.pj-sides')) };
-      });
-    });
-    assert.deepEqual(
-      sides,
-      Array(2).fill({ outside: true, onTop: true }),
-      `${at}: the sides (${JSON.stringify(sides)})`,
-    );
-    await tap(page, '.pj-sides [data-side="1"]');
-    await level('The office');
-    await tap(page, '.pj-sides [data-side="-1"]');
-    await level('The shopfront');
+    // (once whatever the release set off has had its frames to start: a step it began is still running then, never
+    // read as at rest before it starts.)
+    await page.evaluate(() => new Promise(done => requestAnimationFrame(() => requestAnimationFrame(done))));
+    await settled();
+    assert.equal(await title(), 'The shopfront', `${at}: no swipe`);
 
     // a project: its owner, its threads, each a deliverable with more than the project's tile said of it: who's on it,
     // what it's for, what runs and comes next, what it waits on, its tasks as a strip, its lines and when it's done with
@@ -678,8 +739,18 @@ for (const look of RENDERERS)
     // back up a level, and the next thread's sums a tap away
     await tap(page, '[data-up]');
     await level('The sticker shop');
-    await tap(page, '[data-thread="shop/wrap"]');
-    await level('Gift wrap');
+    // a level keeps where it was scrolled to: down into a thread starts at its top, and back up it's there again
+    const scrolled = await page.$eval('.pj-board', b => ((b.scrollTop = b.scrollHeight), b.scrollTop));
+    const into = async () => {
+      await tap(page, '[data-thread="shop/wrap"]');
+      await level('Gift wrap');
+      assert.equal(await page.$eval('.pj-board', b => b.scrollTop), 0, `${at}: a level down starts at its top`);
+    };
+    await into();
+    await tap(page, '[data-up]');
+    await level('The sticker shop');
+    assert.equal(await page.$eval('.pj-board', b => b.scrollTop), scrolled, `${at}: back where it was`);
+    await into();
     await tap(page, '.pj-eta summary');
     assert.match(
       (await texts(page, '.pj-eta'))[0],
@@ -692,20 +763,14 @@ for (const look of RENDERERS)
     // view as it was
     const agentCard = () =>
       page.evaluate(() => Boolean(document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])')));
-    const sidesShow = () => page.$eval('.pj-sides', e => !e.hidden),
-      sided = await sidesShow();
     await tap(page, '.pj-level [data-job="58"]');
     await page.waitForFunction(() => document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await page.$('#projects .pj-card')), `${at}: no sheet of its own for a job at work`);
     // (and from here it steps to no other agent's: the board's note.)
     assert.equal(await page.$('.wire .solo .sides'), null, `${at}: no sides to agents of other work`);
-    // (nor the view's beside it, until it's gone)
-    if (await page.$('.wire .solo:not([hidden])'))
-      assert.ok(!(await sidesShow()), `${at}: no view's sides by the card`);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
     assert.ok(!(await agentCard()), at);
-    assert.equal(await sidesShow(), sided, `${at}: the view's sides back as they were`);
     // (and as well after a teammate's card from the computer's Team list replaces the task's)
     if (look === 'wire') {
       // (the agents with a key on the board, before the card's out: the card's agent alone hangs one after)
@@ -723,7 +788,6 @@ for (const look of RENDERERS)
         return Boolean(scene.anchor({ kind: 'agent', id }));
       }, keyed);
       assert.ok(second, `${at}: a teammate's card out in the task's agent's place`);
-      assert.ok(!(await sidesShow()), `${at}: no view's sides by the second card`);
       // (Escape closes the teammate's panel first, where it's out, then the card)
       if (await page.$('#panel:not([hidden])')) {
         await page.keyboard.press('Escape');
@@ -731,12 +795,12 @@ for (const look of RENDERERS)
       }
       await page.keyboard.press('Escape');
       await page.waitForFunction(() => !document.querySelector('#panel:not([hidden]), .wire .solo:not([hidden])'));
-      assert.equal(await sidesShow(), sided, `${at}: the view's sides back after a second card`);
     }
     assert.equal(await title(), 'Gift wrap', `${at}: the view where it was`);
 
-    // any other opens as a big key over the view, under the HUD: its code, never a number or a breadcrumb, on its front;
-    // turned over, its reviews, its report, what follows it and its steps
+    // any other opens as a big key over the view, under the HUD: its code, never a number or a breadcrumb, and what it
+    // did in the board's words on its front, never its report; turned over, its reviews, its report, what follows it
+    // and its steps
     await tap(page, '[data-job="50"]');
     await page.waitForSelector('.pj-pop .pj-card');
     assert.match(
@@ -745,11 +809,19 @@ for (const look of RENDERERS)
       `${at}: the task's code, no breadcrumbs`,
     );
     assert.deepEqual(await texts(page, '.pj-card .pj-front h2'), ['Gift wrap at checkout'], at);
+    assert.deepEqual(await texts(page, '.pj-card .pj-front h4'), ['What it did'], at);
+    assert.match(
+      (await texts(page, '.pj-card .pj-front .pj-summary'))[0],
+      /^A buyer can now have an order gift-wrapped/,
+      at,
+    );
+    assert.equal(await page.$('.pj-card .pj-front .pj-report'), null, `${at}: the report only on its back`);
+    await shot('job-front');
     await tap(page, '.pj-card [data-turn]');
     await page.waitForSelector('.pj-card.flipped');
     assert.deepEqual(
       await texts(page, '.pj-card .pj-back h4'),
-      ['Its reviews and fixes', 'What it did', 'Then, once it’s merged', 'Its steps'],
+      ['Its reviews and fixes', 'Its report', 'Then, once it’s merged', 'Its steps'],
       at,
     );
     assert.ok(
@@ -759,6 +831,63 @@ for (const look of RENDERERS)
       at,
     );
     await page.waitForFunction(() => !document.querySelector('.pj-card').getAnimations({ subtree: true }).length); // (its flight in and its turn)
+    // a refresh brings the open card up to date as it stands: turned over, its steps still shown, the same key focused,
+    // and its veil not fading in again (it flashed)
+    const retitle = to =>
+      page.evaluate(async to => {
+        const { loadProjects } = await import('/shell/data.js');
+        const p = (await loadProjects(true)).projects.find(x => x.id === 'shop');
+        p.threads.flatMap(t => t.jobs).find(j => j.id === 50).title = to;
+        document.dispatchEvent(new Event('visibilitychange'));
+      }, to);
+    await page.waitForSelector('.pj-card .pj-back .steplog li[data-k]');
+    await page.focus('.pj-card [data-turn]');
+    await page.$eval('.pj-card-faces', f => (f.scrollTop = f.scrollHeight / 3));
+    const asItStands = () =>
+      page.evaluate(() => ({
+        flipped: Boolean(document.querySelector('.pj-card.flipped')),
+        steps: [...document.querySelectorAll('.pj-card .steplog li[data-k]')].map(li => li.textContent),
+        focused: document.activeElement.matches('.pj-card [data-turn]'),
+        veil: document.querySelector('.pj-pop').getAnimations().length,
+      }));
+    const stood = await asItStands();
+    await retitle('Gift wrap at checkout, refreshed');
+    await page.waitForFunction(() => document.querySelector('.pj-card h2').textContent.endsWith(', refreshed'));
+    assert.deepEqual(await asItStands(), { ...stood, veil: 0 }, `${at}: a refresh in place`);
+    await retitle('Gift wrap at checkout');
+    await page.waitForFunction(() => document.querySelector('.pj-card h2').textContent === 'Gift wrap at checkout');
+    // an open card follows its running job's steps, and once the job ends reads them once more and stops (once, the
+    // follower is the same in every look: a tick is 5 s).
+    if (look === RENDERERS[0] && device === 'phone') {
+      let reads = 0;
+      const counted = r => r.url().endsWith('/mock/log.json') && reads++;
+      page.on('request', counted);
+      const ran = (status, to) =>
+        page.evaluate(
+          async ([status, to]) => {
+            const { loadProjects } = await import('/shell/data.js');
+            const p = (await loadProjects(true)).projects.find(x => x.id === 'shop');
+            Object.assign(
+              p.threads.flatMap(t => t.jobs).find(j => j.id === 50),
+              { status, title: to },
+            );
+            document.dispatchEvent(new Event('visibilitychange'));
+          },
+          [status, to],
+        );
+      await ran('running', 'Gift wrap at checkout, running');
+      await page.waitForFunction(() => document.querySelector('.pj-card h2').textContent.endsWith(', running'));
+      await page.waitForTimeout(6000);
+      assert.ok(reads >= 2, `${at}: a running job's open card follows its steps (${reads} reads in a tick)`);
+      await ran('done', 'Gift wrap at checkout');
+      await page.waitForFunction(() => document.querySelector('.pj-card h2').textContent === 'Gift wrap at checkout');
+      const ended = reads;
+      await page.waitForTimeout(6000);
+      assert.equal(reads - ended, 1, `${at}: a job that ended has its steps read once more, within a tick`);
+      await page.waitForTimeout(6000);
+      assert.equal(reads - ended, 1, `${at}: and its open card reads them no more`);
+      page.off('request', counted);
+    }
     const under = await page.evaluate(() => ({
       hud: document.querySelector('#hud').getBoundingClientRect().bottom,
       job: document.querySelector('.pj-card').getBoundingClientRect().top,
@@ -773,10 +902,53 @@ for (const look of RENDERERS)
     assert.deepEqual(await offScreen(), [], at);
     await shot('job');
     // a job it leads to opens in its place, on its front; Escape closes the job, then goes up a level at a time
+    // (the ribbon picker as if started, so its card has steps of its own, and a gift tag beside it of the same shape.
+    const started = on =>
+      page.evaluate(async on => {
+        const { loadProjects } = await import('/shell/data.js');
+        const jobs = (await loadProjects(true)).projects
+          .find(x => x.id === 'shop')
+          .threads.find(t => t.id === 'shop/wrap').jobs;
+        const picker = jobs.find(j => j.id === 54);
+        picker.status = on ? 'blocked' : 'queued';
+        if (on) jobs.push({ ...picker, id: 61, title: 'Gift wrap at checkout: the gift tag' });
+        else
+          jobs.splice(
+            jobs.findIndex(j => j.id === 61),
+            1,
+          );
+      }, on);
+    await started(true);
     await tap(page, '.pj-card .pj-rows [data-job="54"]');
     await page.waitForFunction(() =>
       document.querySelector('.pj-card:not(.flipped) .pj-front h2')?.textContent.includes('ribbon picker'),
     );
+    // and a card's steps are its own: the last one's, still loading, never land in it
+    await page.waitForSelector('.pj-card[data-job-open="54"] .steplog li[data-k]', { state: 'attached' });
+    let answerLog;
+    const logHeld = new Promise(r => (answerLog = r));
+    await page.route('**/mock/log.json', r => logHeld.then(() => r.fulfill({ json: ['The gift tag’s own step'] })), {
+      times: 1,
+    });
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.pj-card'));
+    // (each by a link to it, which opens a job in the card's place)
+    const open = job => page.evaluate(async job => (await import('/shell/projects.js')).openProjects({ job }), job);
+    await open(61);
+    await page.waitForSelector('.pj-card[data-job-open="61"] [data-turn]');
+    await tap(page, '.pj-card [data-turn]');
+    await page.waitForSelector('.pj-card.flipped');
+    await open(54);
+    await page.waitForSelector('.pj-card[data-job-open="54"] [data-turn]');
+    await tap(page, '.pj-card [data-turn]');
+    await page.waitForSelector('.pj-card[data-job-open="54"].flipped');
+    const replied = page.waitForResponse('**/mock/log.json');
+    answerLog();
+    await replied;
+    await page.waitForTimeout(300);
+    const own = await texts(page, '.pj-card[data-job-open="54"] .steplog li[data-k]');
+    assert.ok(own.length && !own.some(t => t.includes('gift tag’s own')), `${at}: its own steps (${own})`);
+    await started(false);
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => !document.querySelector('.pj-card'));
     await page.keyboard.press('Escape');
@@ -899,6 +1071,35 @@ for (const look of RENDERERS)
         1,
       );
     });
+    // (a failed task's front says why it stopped, its report's opening, where no summary is made)
+    await page.evaluate(async () => {
+      const t = (await (await import('/shell/data.js')).loadProjects(true)).projects[0].threads[0],
+        landing = t.jobs.find(j => j.id === 43);
+      t.jobs.push({
+        ...landing,
+        id: 39,
+        status: 'failed',
+        did: undefined,
+        result:
+          'Stopped: the printer’s price list never came, so the shipping costs have no numbers yet. The page is drafted.',
+      });
+      await (await import('/shell/projects.js')).openProjects({ job: 39 });
+    });
+    await page.waitForSelector('.pj-pop .pj-card[data-job-open="39"]');
+    assert.match(
+      (await texts(page, '.pj-card .pj-front .pj-summary'))[0] ?? '',
+      /^Stopped: the printer’s price list never came/,
+      `${at}: a failed task's front says why it stopped`,
+    );
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.pj-card'));
+    await page.evaluate(async () => {
+      const t = (await (await import('/shell/data.js')).loadProjects(true)).projects[0].threads[0];
+      t.jobs.splice(
+        t.jobs.findIndex(j => j.id === 39),
+        1,
+      );
+    });
     await page.keyboard.press('Escape');
     await level('The sticker shop');
     await page.keyboard.press('Escape');
@@ -913,6 +1114,49 @@ for (const look of RENDERERS)
       ['Paused, to be judged once “Pick a domain for the sticker shop” ends'],
       at,
     );
+    if (device === 'phone')
+      assert.ok(
+        await page.$eval('.pj-head .pj-marks .pj-note', e => e.getBoundingClientRect().right <= innerWidth + 1),
+        `${at}: the head's pause mark wraps inside the phone`,
+      );
+    // Only the tasks still to end count. A wake means its owner's decision is due, even after that job ends.
+    const pausedAs = async pause => {
+      await page.keyboard.press('Escape');
+      await level('The shopfront');
+      await page.evaluate(async pause => {
+        const p = (await (await import('/shell/data.js')).loadProjects(true)).projects.find(x => x.id === 'news');
+        Object.assign(p.pause, pause);
+      }, pause);
+      await tap(page, '[data-project=news]');
+      await level('The newsletter');
+      return texts(page, '.pj-head .pj-marks .pj-note');
+    };
+    const domain = board.projects[2].pause.until[0],
+      task = (id, title, ended) => ({ id, agent: 'kit', title, state: ended ? 'merged' : 'queued', ended });
+    assert.deepEqual(
+      await pausedAs({ until: [{ ...domain, ended: true }, task(42, 'Print', false), task(43, 'Post', false)] }),
+      ['Paused, to be judged once 2 tasks end'],
+      `${at}: a task that ended no longer counts`,
+    );
+    assert.deepEqual(
+      await pausedAs({ until: [{ ...domain, ended: true }], woken: true }),
+      ['Paused until its owner decides what’s next'],
+      `${at}: a wake leaves the pause awaiting its owner's decision`,
+    );
+    // a time and a task: the sentence wraps beside the keys on a tablet, the head's close key on its row
+    assert.match(
+      (await pausedAs({ until: [domain], untilTime: '2026-11-05T08:00:00.000Z', woken: false }))[0],
+      /^Paused, to be judged once it's [A-Z][a-z]{2} 5 Nov, \d\d:\d\d and “Pick a domain for the sticker shop” ends$/,
+      at,
+    );
+    const head = await page.evaluate(() => {
+      const box = s => document.querySelector(`.pj-head ${s}`).getBoundingClientRect();
+      return { close: box('.pj-close').top, where: box('.pj-where').bottom, note: box('.pj-note').right };
+    });
+    if (device !== 'phone') assert.ok(head.close < head.where, `${at}: the close key stays on the head's row`);
+    assert.ok(head.note <= w + 1, `${at}: the pause mark inside the view (${JSON.stringify(head)})`);
+    await shot('paused-head');
+    await pausedAs({ until: [domain], untilTime: null });
     assert.ok(
       !(await page.$eval('#projects', e => e.textContent.includes('Hold the newsletter'))),
       `${at}: no pause's reason on its tiles or head`,
@@ -931,6 +1175,22 @@ for (const look of RENDERERS)
     await shot('ongoing');
     await tap(page, '[data-thread="news/banners"]');
     await level('Banners for the posts');
+    // on the narrowest phone a thread's marks (its face, its pause and its 'Done about' key, which never breaks) wrap:
+    // none runs off the screen
+    if (device === 'phone') {
+      const outlook = o =>
+        page.evaluate(async o => {
+          const { loadProjects } = await import('/shell/data.js');
+          (await loadProjects(true)).projects.find(p => p.id === 'news').threads[0].outlook = o;
+          await (await import('/shell/projects.js')).openProjects();
+        }, o);
+      await outlook(care.outlook);
+      await page.setViewportSize({ width: 360, height: h });
+      assert.match((await texts(page, '.pj-head .pj-eta summary'))[0], /^Done about/, at);
+      assert.deepEqual(await headFits(), { close: true, over: [] }, `${at}: a thread's head at 360 px`);
+      await page.setViewportSize({ width: w, height: h });
+      await outlook(null);
+    }
     assert.match((await texts(page, '.pj-level .pj-task.lit'))[0], /^Pebblet’s test posters.*On your desk phone/, at);
     await tap(page, '.pj-level [data-card="96"]');
     await page.waitForFunction(() => document.querySelector('#phone-screen')?.textContent.includes('Pebblet'));
@@ -1121,6 +1381,8 @@ for (const look of RENDERERS)
     await tap(page, '[data-project=hardening]');
     await level('Weekly hardening scan');
     assert.deepEqual(await texts(page, '.pj-head .pj-schedule'), ['Fridays 03:00 · next Fri 2 Oct 03:00'], at);
+    // a head too full for a line: the close is on top where the board taps it, and nothing runs off the screen
+    assert.deepEqual(await headFits(), { close: true, over: [] }, `${at}: the routine's head`);
     assert.deepEqual(await texts(page, `.pj-level ${box('[data-thread]')} b`), ['Weekly hardening scan, 2 Oct'], at);
     await tap(page, '[data-done=completed]');
     await tap(page, '[data-thread="hardening/job-39"]');
@@ -1503,15 +1765,145 @@ for (const look of RENDERERS)
       }),
       `${at}: the hint clears the throughput`,
     );
+    // Each opens the view at the threads behind it, across the projects. At work and waiting: the running threads, then
+    // the waiting ones, each with its project; a row opens its thread. Done: those finished in the last day, the latest
+    // first, each with what it delivered and when, like a changelog
     const opened = () => page.waitForFunction(() => !document.querySelector('#projects').hidden);
+    const threadRows = () =>
+      page.$$eval('#projects .pj-threads .covered', rows =>
+        rows.map(r => ({
+          working: r.classList.contains('working'),
+          lit: r.classList.contains('lit'),
+          name: r.querySelector('b').textContent,
+          says: r.querySelector('small').textContent,
+          when: r.querySelector('.pj-when')?.textContent ?? '',
+        })),
+      );
+    // the lists' keys, each with its count, the open one pressed and without a list to switch to
+    const listKeys = () =>
+      page.$$eval('#projects .pj-head .pj-keys .pj-key', k =>
+        k.map(e => [e.dataset.group ?? null, e.textContent, e.getAttribute('aria-pressed')]),
+      );
+    // (Banners at work, and waiting on the board again: an earlier step put its thread back without its card)
+    await page.evaluate(async () => {
+      const { loadProjects } = await import('/shell/data.js');
+      const news = (await loadProjects(true)).projects.find(p => p.id === 'news'),
+        thread = news.threads.find(t => t.id === 'news/banners');
+      thread.jobs.push({ ...thread.jobs[0], id: 61, status: 'blocked', request: 96, finished: null });
+    });
+    // a row opens its thread, and back from it returns to the list, as its back key says
+    const backToList = async (id, name, list) => {
+      await tap(page, `#projects .pj-threads [data-thread="${id}"]`);
+      await level(name);
+      assert.ok(await page.$('#projects .pj-tasks:not(.pj-threads) [data-job]'), `${at}: a row opens its thread`);
+      assert.equal(await page.getAttribute('.pj-head [data-up]', 'aria-label'), `Back to ${list}`, at);
+      await tap(page, '.pj-head [data-up]');
+      await level(list);
+    };
+    for (const pile of ['active', 'waiting']) {
+      await tap(page, `#status [data-jobs=${pile}]`);
+      await opened();
+      await level('Running and waiting');
+      const rows = await threadRows();
+      assert.ok(rows.length > 1 && rows[0].working, `${at}: running threads first (${JSON.stringify(rows)})`);
+      assert.ok(
+        rows.findIndex(r => !r.working) > 0 && !rows.slice(rows.findIndex(r => !r.working)).some(r => r.working),
+        `${at}: then the waiting ones`,
+      );
+      assert.ok(
+        rows.some(r => r.name === 'Gift wrap' && r.says.includes('The sticker shop') && r.when),
+        `${at}: a thread's project, what it's doing and its time`,
+      );
+      assert.ok(
+        rows.some(r => r.name === 'Banners for the posts' && r.working && r.lit),
+        `${at}: at work and waiting for you, among the running and lit`,
+      );
+      assert.ok(!rows.some(r => r.name === 'The first issue'), `${at}: no finished thread`);
+      const working = rows.filter(r => r.working).length;
+      assert.deepEqual(
+        await texts(page, '#projects .pj-list-head'),
+        [`At work ${working}`, `Waiting ${rows.length - working}`],
+        `${at}: those at work and those waiting apart, each counted`,
+      );
+      assert.deepEqual(
+        await texts(page, '#projects .pj-where small'),
+        ['Threads'],
+        `${at}: counted in threads, it says`,
+      );
+      assert.deepEqual(await offScreen(), [], at);
+      if (pile === 'active') await shot('running-list');
+      await backToList('shop/wrap', 'Gift wrap', 'Running and waiting');
+      await tap(page, pile === 'active' ? '#projects' : '#projects .pj-head [data-leave]');
+      await shut();
+    }
+    // (the newsletter's done threads finished an hour, three and thirty ago, and back after)
+    const finishedAt = times =>
+      page.evaluate(async times => {
+        const { loadProjects } = await import('/shell/data.js');
+        const done = (await loadProjects(true)).projects[2].done;
+        return done.map((t, i) => [t.finished, (t.finished = times[i])][0]);
+      }, times);
+    const was = await finishedAt([1, 3, 30].map(h => new Date(Date.now() - h * 3600e3).toISOString()));
     await tap(page, '#status [data-jobs=done]');
     await opened();
-    await tap(page, '#projects');
-    await shut();
-    await tap(page, '#status [data-jobs=waiting]');
-    await opened();
+    await level('Done in 24 h');
+    const delivered = await threadRows();
+    assert.deepEqual(
+      delivered.map(r => r.name),
+      ["Old card: the newsletter's sign-up line", 'The first issue', 'The market stall'],
+      `${at}: the threads done in a day, a completed project's too, the latest first`,
+    );
+    assert.ok(
+      delivered.every(
+        (r, i) =>
+          r.says.includes(['The newsletter', 'The newsletter', 'The pop-up'][i]) &&
+          r.says.includes(['The board answered the card.', 'The first issue is out.', stall.goal][i]) &&
+          r.when,
+      ),
+      `${at}: each with its project, what it delivered and when (${JSON.stringify(delivered)})`,
+    );
+    assert.deepEqual(await texts(page, '#projects .pj-where small'), ['Threads'], `${at}: counted in threads, it says`);
+    await shot('done-list');
+    await backToList('news/launch', 'The first issue', 'Done in 24 h');
+    await backToList(stall.id, stall.name, 'Done in 24 h');
+    // the projects' own head has a key to each list, with its count; at a list both keys are there, its own pressed, and
+    // the other switches to it
+    await tap(page, '#projects .pj-head [data-group=running]');
+    await level('Running and waiting');
+    const running = (await threadRows()).length;
+    const named = { running: `Running and waiting · ${running}`, finished: `Done in 24 h · ${delivered.length}` };
+    assert.deepEqual(
+      await listKeys(),
+      [
+        [null, named.running, 'true'],
+        ['finished', named.finished, 'false'],
+      ],
+      `${at}: a list's keys, its own pressed`,
+    );
+    await tap(page, '#projects .pj-head [data-group=finished]');
+    await level('Done in 24 h');
+    assert.deepEqual(
+      (await listKeys()).map(k => k[2]),
+      ['false', 'true'],
+      `${at}: the other list's key switches to it`,
+    );
+    await tap(page, '.pj-head [data-up]');
+    await level('Projects');
+    assert.deepEqual(
+      await listKeys(),
+      [
+        ['running', named.running, null],
+        ['finished', named.finished, null],
+      ],
+      `${at}: the projects' head has a key to each list`,
+    );
+    assert.deepEqual((await headFits()).over, [], `${at}: the projects' head on the screen`);
+    await shot('list-keys');
+    await tap(page, '#projects .pj-head [data-group=running]');
+    await level('Running and waiting');
     await tap(page, '#projects .pj-head [data-leave]');
     await shut();
+    await finishedAt(was);
 
     // A busy review keeps every colleague visible, the owner crowned, on project and thread tiles.
     await page.evaluate(async () => {

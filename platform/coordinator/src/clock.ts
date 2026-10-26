@@ -21,6 +21,32 @@ export function zoneOf(org: any) {
   return zones.get(tz)!;
 }
 
+// A time on a zone's clock, in ms, at the zone's offset on that date (company.ts companyMoment)
+export function momentIn(zone: string, y: number, m: number, d: number, hour: number, minute: number) {
+  const local = Date.UTC(y, m - 1, d, hour, minute);
+  let at = local;
+  for (let i = 0; i < 2; i++) at = local - offset(zone, at); // twice: the offset may differ on either side of a clock change
+  return at;
+}
+function offset(zone: string, at: number) {
+  const clock = new Intl.DateTimeFormat('en-US', {
+    timeZone: zone,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+  });
+  const numericParts = clock.formatToParts(at).map(p => [p.type, Number(p.value)]);
+  const parts = Object.fromEntries(numericParts);
+  return (
+    Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second) -
+    Math.floor(at / 1000) * 1000
+  );
+}
+
 // A broken or missing org.yaml throws, so the deploy stops before any product gets a clock.
 if (import.meta.main) {
   const file = `${DATA_DIR}/time-zone`;

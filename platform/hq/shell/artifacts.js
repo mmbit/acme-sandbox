@@ -1,5 +1,5 @@
 // HQ's searchable artifact tiles: the company's heroes on top, one row to pick a line of business or the archive.
-import { esc } from '../util.js';
+import { esc, fold } from '../util.js'; // (fold)
 import { icon } from './icons.js';
 import { loadArtifacts } from './data.js';
 import { appTile, inkPictures } from './tiles.js';
@@ -87,8 +87,6 @@ function tile(a) {
   return appTile(a, { href: a.open, lines: line, after: site, pic, newTab: true });
 }
 const day = shown => (shown ? companyFormats().day(shown, 'en', { short: true }) : '');
-// lower case, without accents, so "cafe" finds "Café"
-const fold = s => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 // Show what the pick and the search keep: the archive alone, or everything else, all of it or one place's
 function narrow(box, all) {

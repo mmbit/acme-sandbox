@@ -11,7 +11,7 @@ import {
   spareOnly,
   type Timing,
 } from './planner.ts';
-import { expand } from './rounds.ts';
+import { expandRows, sized, type Expansion } from './rounds.ts';
 import * as capacity from './playseats.ts';
 import * as playclaims from './playclaims.ts';
 import * as reviewroom from './reviewroom.ts';
@@ -31,8 +31,12 @@ export type Run = {
   // (its place among the play's runs: the order the play goes through them in)
   index: number;
   needs: ReturnType<typeof precedence>;
-  // the run each of its needs' edges waits for (none outside the play), with the edge's lag
+  // the run each of its needs' edges waits for (none outside the play), with the edge's lag; how many of them, in order,
+  // are done and past their lag (they stay so: ready); and the ones whose done and lag can still give a moment to come
+  // (a lag, or done after the play's start: playevents.ts nextEvent)
   priors: { run: Run | undefined; lag: number }[];
+  priorsMet: number;
+  timedPriors: { run: Run; lag: number }[];
   // the moments that may start it while it waits that never move (its needs' readyAt, the board's room delay, its
   // latest start's pause), in order, and the first of them still to come
   fixed: number[];
@@ -52,6 +56,7 @@ export type Run = {
   active: Span[];
   held: { since: number; by: Wait } | null;
   reviewSeat: string | null;
+  roomFor: { waiter: Run; seat: capacity.Seat } | null;
   queueWait: Wait;
   nextHold: Wait | null;
 };
@@ -63,6 +68,7 @@ export type Play = {
   // not every unfinished run
   started: Run[];
   resolutions: Set<Run>;
+  // the runs that may claim a seat, in their order: none whose needs are blocked, which never starts (ready)
   claimants: Set<Run>;
   timings: ReadonlyMap<number, Timing>;
   seats: capacity.Seat[];
@@ -76,8 +82,13 @@ export type Play = {
 // expanded, at the planning sizes. With the snapshot's own planning sizes it is the same for both paces' plays.
 export type PlayOrder = ReturnType<typeof playOrder>;
 export function playOrder(snapshot: Snapshot, sizes: ReadonlyMap<number, Size>) {
-  const pass = expand(snapshot, new Map(snapshot.planningSizes ?? sizes), 'slow');
-  return { timings: backward(pass.snapshot, pass.sizes, pass.terminals), rows: pass.snapshot.jobs };
+  const expansion = expandRows(snapshot),
+    planning = sized(expansion, new Map(snapshot.planningSizes ?? sizes), 'slow');
+  return {
+    timings: backward(expansion.snapshot, planning, expansion.terminals),
+    rows: expansion.snapshot.jobs,
+    expansion,
+  };
 }
 
 export function playPlan(
@@ -135,8 +146,9 @@ function preparedPlay(
   order?: PlayOrder,
 ) {
   for (const row of snapshot.jobs) if (!sizes.has(row.id)) throw new Error(`The play has no size for job #${row.id}`);
-  const expanded = expand(snapshot, sizes, pace);
-  const { timings } = order ?? playOrder(snapshot, sizes);
+  // (its rows as its order expanded them: the same for both paces)
+  const { timings, expansion } = order ?? playOrder(snapshot, sizes);
+  const expanded = { ...expansion, sizes: sized(expansion, sizes, pace) };
   const runs = runsOf(snapshot, expanded, timings);
   const unfinished = [...runs.values()].filter(run => run.state !== 'done');
   const play: Play = {
@@ -147,7 +159,9 @@ function preparedPlay(
     started: unfinished.filter(run => run.state === 'running'),
     resolutions: new Set(unfinished.filter(run => run.row.kind === 'resolution')),
     claimants: new Set(
-      unfinished.filter(run => run.row.kind !== 'resolution').sort((a, b) => compare(a.order, b.order)),
+      unfinished
+        .filter(run => run.row.kind !== 'resolution' && !run.needs.blocked)
+        .sort((a, b) => compare(a.order, b.order)),
     ),
     seats: capacity.seatsOf(snapshot),
     terminals: expanded.terminals,
@@ -160,7 +174,11 @@ function preparedPlay(
   return play;
 }
 
-function runsOf(snapshot: Snapshot, expanded: ReturnType<typeof expand>, timings: ReadonlyMap<number, Timing>) {
+function runsOf(
+  snapshot: Snapshot,
+  expanded: Expansion<Snapshot> & { sizes: Map<number, Size> },
+  timings: ReadonlyMap<number, Timing>,
+) {
   const runs = new Map(
     expanded.snapshot.jobs.map(row => [
       row.id,
@@ -181,6 +199,10 @@ function runsOf(snapshot: Snapshot, expanded: ReturnType<typeof expand>, timings
       run: runs.get(dependencyRun(edge, expanded.terminals)),
       lag: edge.lag ?? 0,
     }));
+    // (a prior is done at or before the moment it's read, so without a lag only one done after the start gives one)
+    run.timedPriors = run.priors.filter(
+      (p): p is { run: Run; lag: number } => !!p.run && (p.lag > 0 || (p.run.done ?? -Infinity) > snapshot.now),
+    );
   }
   return runs;
 }
@@ -195,6 +217,8 @@ function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLag
     index: 0,
     needs,
     priors: [],
+    priorsMet: 0,
+    timedPriors: [],
     fixed: [
       needs.readyAt,
       ...(row.board ? [row.created + ROOM_AFTER_MS] : []),
@@ -223,6 +247,7 @@ function runOf(row: QueuedJob, size: Size, order: Timing, now: number, deployLag
     active: [],
     held: null,
     reviewSeat: null,
+    roomFor: null,
     queueWait: { on: 'queue', engine: row.engine, minutes: 0 },
     nextHold: null,
   };
@@ -238,16 +263,19 @@ function resolve(play: Play, now: number) {
     }
 }
 
-// (planner.ts readyAfter, on the runs its edges wait for)
+// (planner.ts readyAfter, on the runs its edges wait for). A play's moments only go forward, so a prior met stays met
 function ready(run: Run, now: number) {
   if (run.readyAt > now || run.needs.blocked || run.needs.readyAt > now) return false;
-  for (const { run: prior, lag } of run.priors)
+  for (; run.priorsMet < run.priors.length; run.priorsMet++) {
+    const { run: prior, lag } = run.priors[run.priorsMet];
     if (prior?.state !== 'done' || prior.done === null || prior.done + lag > now) return false;
+  }
   return true;
 }
 
 function start(play: Play, now: number) {
-  const waiting = [...play.claimants].filter(r => r.state === 'waiting' && ready(r, now));
+  const waiting: Run[] = [];
+  for (const r of play.claimants) if (r.state === 'waiting' && ready(r, now)) waiting.push(r);
   // Started claims join this list. Runs paused by makeRoom stay in it until they stop.
   const running = [...play.started];
   const seats = capacity.at(play.seats, now);
@@ -259,31 +287,25 @@ function start(play: Play, now: number) {
   const busy = new Map<string, number>(),
     limits = play.snapshot.seatRuns ?? {};
   for (const r of running) if (r.seat) busy.set(r.seat.id, (busy.get(r.seat.id) ?? 0) + 1);
+  const use = inUse(play, running, waiting, now);
   // (the seats' choices hold until a claim starts and fills one)
   let choose = capacity.choices(seats, busy, limits);
   while (claims.pending.size) {
-    if (holdFullRoom(play, claims.pending, running, seats, busy)) break;
+    if (holdFullRoom(play, claims.pending, running, seats, busy, use.room)) break;
     const run = playclaims.take(claims, seats, limits, choose, seat => reviewOccupants(running, seat));
     if (!(run.row.engine in play.snapshot.slots)) {
       hold(run, now, unreported(run));
       continue;
     }
-    const engineFull =
-      running.filter(r => r.row.engine === run.row.engine).length >= (play.snapshot.slots[run.row.engine] ?? 0);
-    const memoryFull = !memory.canStart(
-      play.snapshot,
-      running.map(r => r.row),
-      run.row,
-      now,
-    );
-    const others = waiting.some(
-      r => r !== run && r.state === 'waiting' && !spareOnly(r.row, r.order) && r.row.engine === run.row.engine,
-    );
+    const engineFull = (use.onEngine.get(run.row.engine) ?? 0) >= (play.snapshot.slots[run.row.engine] ?? 0);
+    const memoryFull = !memory.canStart(use.room, run.row);
+    // (another ordinary claim on its engine still waits: the run itself is one while it's ordinary)
+    const others = (use.waitingOn.get(run.row.engine) ?? 0) > Number(!spareOnly(run.row, run.order));
     const { seat, roomSeat } = choose(run.row, run.order, others);
     if ((engineFull || memoryFull || (!('id' in seat) && seat.on === 'queue')) && 'id' in roomSeat) {
       const pressure = memoryFull ? 'memory' : engineFull ? 'engine' : roomSeat;
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : pressure;
-      const pausing = makeRoom(play, run, running, now, resource, roomSeat);
+      const pausing = makeRoom(play, run, running, now, resource, roomSeat, use.room);
       hold(run, now, { on: 'queue', engine: run.row.engine, minutes: 0, ...(pausing ? { pausing: true } : {}) });
       continue;
     }
@@ -292,9 +314,35 @@ function start(play: Play, now: number) {
       continue;
     }
     begin(play, run, seat, now, running, busy);
+    took(use, run);
     choose = capacity.choices(seats, busy, limits);
   }
 }
+
+// The moment's room in use, and per engine its running runs and its ordinary claims still waiting: counted once, then
+// kept as claims start (took), not counted again for every claim.
+function inUse(play: Play, running: Run[], waiting: Run[], now: number) {
+  const use = {
+    room: memory.room(
+      play.snapshot,
+      running.map(r => r.row),
+      now,
+    ),
+    onEngine: new Map<string, number>(),
+    waitingOn: new Map<string, number>(),
+  };
+  for (const r of running) add(use.onEngine, r.row.engine, 1);
+  for (const r of waiting) if (!spareOnly(r.row, r.order)) add(use.waitingOn, r.row.engine, 1);
+  return use;
+}
+
+function took(use: ReturnType<typeof inUse>, run: Run) {
+  memory.join(use.room, run.row);
+  add(use.onEngine, run.row.engine, 1);
+  if (!spareOnly(run.row, run.order)) add(use.waitingOn, run.row.engine, -1);
+}
+
+const add = (counts: Map<string, number>, key: string, by: number) => counts.set(key, (counts.get(key) ?? 0) + by);
 
 function begin(play: Play, run: Run, seat: capacity.Seat, now: number, running: Run[], busy: Map<string, number>) {
   if (play.account) ledger.resume(play.account, run, seat, now);

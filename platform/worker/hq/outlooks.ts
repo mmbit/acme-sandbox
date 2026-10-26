@@ -1,8 +1,9 @@
 // hq projects and hq thread <id>: each thread's live estimate from HQ's forecast (the coordinator's forecast.ts and
 // outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its planned finish
 // against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of the status report.
-import { lateLines, when } from './when.ts';
+import { when } from './when.ts';
 import * as api from './api.ts';
+import { lateLines, missWords } from './deadlines.ts';
 import { at, duration, waitWords, type Wait } from './estimate.ts';
 import { print, stop, text } from './output.ts';
 import { liftWords, type Lift } from './pauses.ts';
@@ -89,13 +90,8 @@ export async function projects(args: string[]) {
   );
 }
 
-// What to do about threads that miss their deadlines (when.ts lateLines: on a call only).
-const missLines = (missing: string[]) =>
-  missing.length
-    ? lateLines(
-        `${missing.map(text).join(', ')} ${missing.length > 1 ? 'miss their deadlines' : 'misses its deadline'}`,
-      )
-    : [];
+// What to do about threads that miss their deadlines (deadlines.ts lateLines: on a call only).
+const missLines = (missing: string[]) => lateLines(missWords(missing.map(text)));
 
 export async function now(args: string[]) {
   if (args.length) stop('usage: hq now');

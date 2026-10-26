@@ -71,11 +71,13 @@ type Meeting = {
 // How often listen --wait asks again while nothing new is said
 const POLL_MS = 2000;
 
+// (--by's forms, the board's own time with its date and no zone among them)
 export const meeting = {
   help: `
    hq meeting ask "what to settle" --with <agent>... [--by <time>]
                                                      ask the CEO for a meeting with those agents (--with repeats, or
-                                                     takes a comma list), held by --by (2h, 14:30, an ISO time) if given
+                                                     takes a comma list), held by --by if given (2h, 90m,
+                                                     2026-10-26 09:00 on the company's clock, 14:30 UTC)
    hq meeting asks                                   the CEO: the open asks, each with the live or planned meetings
                                                      already holding any of its agents
    hq meeting set <ask>... "topic" --code WORD [--at <time>]
@@ -376,9 +378,9 @@ function seatLine(seat: Meeting['seats'][number]) {
   return `  ${seat.agent} (job #${seat.job})${handed}${changed}`;
 }
 
-// A line said in the meeting, kept to one line so it can't pass for another agent's
+// A line said in the meeting, kept to one line so it can't pass for another agent's, its time with its zone named
 const spoken = (line: Line) =>
-  `${minute(line.at).slice(11, 16)} ${line.agent}${line.to?.length ? ` to ${line.to.join(', ')}` : ''}: ${oneLine(line.text, ' ')}`;
+  `${minute(line.at)} ${line.agent}${line.to?.length ? ` to ${line.to.join(', ')}` : ''}: ${oneLine(line.text, ' ')}`;
 
 const seatList = (seats: Seat[]) => seats.map(seat => `${seat.agent} (job #${seat.job})`).join(', ');
 

@@ -38,9 +38,13 @@ export function show(kind, html, ref, quiet) {
   current = { kind, ref };
   hushSounds();
   body.innerHTML = html;
+  // an agent's panel is theirs: a mark the Pencil makes on it goes on their sheet (shared/review/marks.js).
+  if (kind === 'agent') body.dataset.owner = ref;
+  else delete body.dataset.owner;
   panel.hidden = false;
   panel.dataset.kind = kind;
-  requestAnimationFrame(() => panel.classList.add('open'));
+  // (unless it closed before the next frame: a slow device's frame comes after closePanel.)
+  requestAnimationFrame(() => current && panel.classList.add('open'));
   if (quiet) return;
   if (!wasOpen) sfx.open();
   else sfx.blip();

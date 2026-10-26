@@ -1,7 +1,7 @@
 // Work handed on as jobs (hq job), and the queue around it: open jobs, adding to one, cancelling one, and sending a
 // stuck pull request back to review.
 import * as api from './api.ts';
-import { changeLines, moveWords, threadWords, type Deadline, type Move } from './deadlines.ts';
+import { changeLines, lateLines, missWords, moveWords, threadWords, type Deadline, type Move } from './deadlines.ts';
 import { at } from './estimate.ts';
 import { isReadable, readText, readTextOrStdin } from './files.ts';
 import { takeItemFlags, takeThread, takeValues, takeWhen } from './flags.ts';
@@ -77,7 +77,7 @@ export const job = {
                                                      fold in the projects view. --item <item>: the job
                                                      carries an item from a call (hq items), with the words from the call;
                                                      the item is handled when the job ends done. One open job per item.
-                                                     --lands <job>: replace that failed job for its own agent, landing
+                                                     --lands <job>: replace that failed or stopped job for its own agent, landing
                                                      its saved work or retrying a thread task that saved nothing.
                                                      It keeps its place, code, call and item. No brief file is needed:
                                                      HQ reuses the failed job's brief. Work on a PR continues there.
@@ -95,8 +95,10 @@ export const job = {
                                                      (repeat it: all of them). deploy or deploy:<n>, the next n deploys from
                                                      now; recreated:<service>, a deploy that recreates that container
                                                      (worker, coordinator, caddy, product-<slug>...); deployed:<job> or
-                                                     deployed:pr:<n>, that work merged and deployed; or a time (2h, 90m,
-                                                     14:30, 2026-10-14T08:00Z, UTC). Never wait in your session for a later
+                                                     deployed:pr:<n>, that work merged and deployed; or a time: 2h, 90m
+                                                     or 1h30m from now; the board's own with its date and no zone
+                                                     (2026-10-26 09:00, on the company's clock); one with Z or a time of
+                                                     day alone (14:30) is UTC. Never wait in your session for a later
                                                      event: queue that step with --when, its brief saying what you found
                                                      so far, and stop. On a call, a job waits for the call to end,
                                                      so what the board adds on it goes into its brief.
@@ -112,7 +114,8 @@ export const job = {
                                                      tests it merges and deploys, and its review comes after (hq expedite)
    hq job move <job id> <project>/<slug>             move work still going on into another thread, its pull request's
                                                      reviews and fix rounds with it (its agent, its thread's owner, the CEO
-                                                     or Process), naming threads that need the old one for their owners to decide`,
+                                                     or Process), naming threads that need the old one for their owners to decide.
+                                                     Out of a pause: its owner or the CEO, with --why "reason" on the feed`,
   // (--when; move: --now)
 
   async run(given: string[]) {
@@ -315,9 +318,13 @@ type OpenJob = { line: string };
 const openJobLine = (open: OpenJob) => text(open.line);
 
 // hq job move: the work and its review loop onto another thread (the coordinator's regroup.ts)
-async function moveJob([id, thread, ...rest]: string[]) {
+async function moveJob(given: string[]) {
+  const {
+    values: { why },
+    args: [id, thread, ...rest],
+  } = takeValues(given, ['--why'], 'Nothing moved');
   if (!/^[0-9]+$/.test(id ?? '') || !thread || rest.length) stop('usage: hq job move <job id> <project>/<slug>');
-  const answer = await api.change('jobs/move', { body: api.withSpeaker({ id: Number(id), thread }) });
+  const answer = await api.change('jobs/move', { body: api.withSpeaker({ id: Number(id), thread, why }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing moved: ${api.errorIn(answer.body, 'no answer')}`);
   const moved = JSON.parse(answer.body) as { thread: string; jobs: number[]; notices?: string[] };
   print(`${moved.jobs.map(n => `#${n}`).join(', ')} on ${text(moved.thread)} now.`, ...(moved.notices ?? []).map(text));
@@ -326,10 +333,11 @@ async function moveJob([id, thread, ...rest]: string[]) {
 export const expedite = {
   help: `
    hq expedite <job id>                              (the CEO only) a structural fix to HQ itself goes first: a queued or
-                                                     running job starts ahead of everything and merges on its gates and
-                                                     tests; one that has pushed, its pull request still in review, merges
-                                                     now if its last push passed them. Its review follows on what merged,
-                                                     and anything blocking is its author's next job. A thread's task
+                                                     running job starts ahead of everything (once what it waits for is
+                                                     met) and merges on its gates and tests; one that has pushed, its
+                                                     pull request still in review, merges now if its last push passed
+                                                     them. Its review follows on what merged, and anything blocking is
+                                                     its author's next job. A thread's task
                                                      that hasn't started leaves its thread as its own job; one that ran
                                                      stays (queue the fix with hq job --expedite). Never ordinary work`,
 
@@ -340,10 +348,13 @@ export const expedite = {
     const done = api.parseOrNull(answer.body);
     if (shown(done?.ok) !== 'true') stop(`Nothing expedited: ${api.errorIn(answer.body, 'HQ refused it')}`);
     const left = done.from !== undefined ? ` It left ${shown(done.from)} and runs on its own branch from main.` : '';
+    // (waits: what it still needs first, which expedite never passes)
     print(
       done.merged !== undefined
         ? `PR #${shown(done.merged)} merged expedited; it deploys within a minute, and its review follows on what merged.`
-        : `#${id} is expedited: it starts ${shown(done.starts)}, and merges once a push passes its gates and tests.${left}`,
+        : done.waits !== undefined
+          ? `#${id} is expedited, but it doesn't start yet: it's queued ${shown(done.waits)}. Then it starts ahead of other work, and merges once a push passes its gates and tests.${left}`
+          : `#${id} is expedited: it starts ${shown(done.starts)}, and merges once a push passes its gates and tests.${left}`,
     );
   },
 };
@@ -351,9 +362,9 @@ export const expedite = {
 export const stopJob = {
   help: `
    hq stop <job id> "why"                            end a running job of yours now (the CEO: anyone's), instead of it
-                                                     polling or going on with work that's no longer wanted. It ends as if
-                                                     it had stopped there: its commits are kept and its pull request opens
-                                                     as for any job (none if there's nothing). Within a minute; a paused
+                                                     polling or going on with work that's no longer wanted. It ends stopped,
+                                                     keeps its commits on its branch and opens no pull request. Its item
+                                                     stays open for its owner to judge. Within a minute; a paused
                                                      job stops as it starts again. The reason is logged. A job that never
                                                      ran: hq cancel. A review or ruling on a paused thread pauses at its
                                                      next step instead, and goes on once the pause lifts`,
@@ -369,7 +380,7 @@ export const stopJob = {
       paused
         ? `#${id} pauses at its next step, within a few minutes, and goes on in its session once ${paused} resumes.`
         : shown(stopping.running) === 'true'
-          ? `#${id} stops within a minute; its work is kept and its pull request opens as for any job that ends.`
+          ? `#${id} stops within a minute; it ends stopped, its work kept without opening a pull request.`
           : `#${id} is paused: it stops as it starts again, its work kept.`,
     );
   },
@@ -397,7 +408,8 @@ export const waits = {
    hq waits <job id> move <waited for> <replacement> --after and its other waits), for the replacement's instead, or
    hq waits <job id> drop <waited for>               no longer for it. Yours or one you queued (the CEO and Process:
                                                      any queued job's). A job HQ made (a pull request's fix, the board's
-                                                     answer) takes no added wait. Refused when that job ended without
+                                                     answer) takes an added wait from the CEO or Process with --why
+                                                     "reason", shown on the feed. Refused when that job ended without
                                                      work that merged or still can, or waits for this one. HQ sends you a
                                                      job when work it waits for ends without merging
    hq waits <job id> add|drop request:<id>           a queued job that hasn't started waits for a card's answer too (or no
@@ -405,10 +417,15 @@ export const waits = {
                                                      end of its brief. A card that leaves the desk phone unanswered lets it
                                                      start, and it reads why`,
 
-  async run([id, how, waitedFor, replacement]: string[]) {
+  async run(given: string[]) {
+    const {
+      values: { why },
+      args: [id, how, waitedFor, replacement, ...rest],
+    } = takeValues(given, ['--why'], 'Wait unchanged');
+    if (rest.length) stop('Too many arguments: hq waits <job> add|move|drop <wait> [replacement] [--why "reason"]');
     const number = /^[0-9]+$/;
     const card = /^request:([0-9]+)$/.exec(waitedFor ?? '');
-    if (card) return changeCardWait(id, how, Number(card[1]), replacement);
+    if (card) return changeCardWait(id, how, Number(card[1]), replacement, why);
     const valid =
       number.test(id ?? '') &&
       number.test(waitedFor ?? '') &&
@@ -421,7 +438,7 @@ export const waits = {
     const change = how as 'add' | 'move' | 'drop';
     const from = change === 'add' ? null : Number(waitedFor);
     const to = { add: Number(waitedFor), move: Number(replacement), drop: null }[change];
-    const answer = await api.change('waits', { body: { id: Number(id), from, to } });
+    const answer = await api.change('waits', { body: { id: Number(id), from, to, why } });
     if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
       stop(`Couldn't change #${id}'s wait: ${api.errorIn(answer.body, 'no answer')}`);
     }
@@ -434,14 +451,14 @@ export const waits = {
   },
 };
 
-async function changeCardWait(id: string, how: string, card: number, extra: string | undefined) {
+async function changeCardWait(id: string, how: string, card: number, extra: string | undefined, why?: string) {
   if (!/^[0-9]+$/.test(id ?? '') || !['add', 'drop'].includes(how) || extra !== undefined) {
     stop(
       "usage: hq waits <job id> add request:<id>, or hq waits <job id> drop request:<id> (a card's wait isn't moved)",
     );
   }
   const answer = await api.change('waits', {
-    body: { id: Number(id), request: card, ...(how === 'drop' && { drop: true }) },
+    body: { id: Number(id), request: card, why, ...(how === 'drop' && { drop: true }) },
   });
   if (shown(api.parseOrNull(answer.body)?.ok) !== 'true') {
     stop(`Couldn't change #${id}'s wait: ${api.errorIn(answer.body, 'no answer')}`);
@@ -479,7 +496,8 @@ const target = (given: string | undefined) => {
   if (!match) return undefined;
   return match[3] ? { thread: match[3] } : { [match[1] ? 'pr' : 'job']: Number(match[2]) };
 };
-const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--try] (2h, 90m, 14:30 UTC)`;
+// (a time's forms, the board's own with its date and no zone among them, here and in the help)
+const WINDOW_USAGE = `usage: hq window ${TARGET} <deadline | none> [--aim <time>] [--try] (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)`;
 type Miss = { project: string; name: string; deadline: number; finish: number | null };
 
 export const window = {
@@ -488,8 +506,10 @@ export const window = {
                                                      a thread's window (named by it, or a job or PR on it). The deadline,
                                                      the latest it may be merged and deployed and still be what was
                                                      agreed, orders its work; --aim, the time we said, at or before it
-                                                     (else the aim stays, or is the deadline). 2h, 90m, 14:30 UTC or
-                                                     2026-10-06T14:30Z; none takes it off. Prints the threads whose
+                                                     (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;
+                                                     the board's own time with its date and no zone (2026-10-26 09:00, on
+                                                     the company's clock); one with Z or a time of day alone (14:30) is
+                                                     UTC; none takes it off. Prints the threads whose
                                                      planned finish moves and the windows the plan misses; --try: nothing saved`,
 
   async run(given: string[]) {
@@ -514,10 +534,13 @@ export const window = {
       if (!set.moves.length) print('Moves no thread.');
       for (const move of set.moves as Move[]) print(`Moves ${moveWords(move)}.`);
     }
-    for (const miss of (set.misses ?? []) as Miss[])
+    const misses = (set.misses ?? []) as Miss[];
+    for (const miss of misses)
       print(
         `Misses ${threadWords(miss)}: deadline ${at(miss.deadline)}, ${miss.finish === null ? 'no finish in sight' : `planned finish ${at(miss.finish)}`}.`,
       );
+    // on a call, what to do about them
+    print(...lateLines(missWords(misses.map(threadWords))));
   },
 };
 

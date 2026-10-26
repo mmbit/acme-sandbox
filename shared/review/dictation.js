@@ -37,8 +37,7 @@ export async function startMic(r) {
     });
     if (r.rec !== rec) {
       rec.stream.getTracks().forEach(t => t.stop());
-      rec.ctx?.close?.();
-      return;
+      return; // (endMic, which took r.rec, closes the context)
     }
     const type = TYPES.find(t => MediaRecorder.isTypeSupported?.(t));
     rec.mr = new MediaRecorder(rec.stream, type ? { mimeType: type, audioBitsPerSecond: 32000 } : undefined);
@@ -104,7 +103,8 @@ function live(r, rec, source) {
     } catch {
       return;
     }
-    if (m.type === 'heard' && typeof m.text === 'string' && (r.rec === rec || rec.ending)) words(r, rec, m.text);
+    const wanted = r.rec === rec || (rec.ending && !rec.cancelled);
+    if (m.type === 'heard' && typeof m.text === 'string' && wanted) words(r, rec, m.text);
     // (done unasked: the line's five minutes are up, so the mic stops there)
     if (m.type === 'done') {
       rec.liveDone = true;
@@ -172,20 +172,30 @@ function words(r, rec, heard) {
   if (typing) text.setSelectionRange(from, to);
   else text.scrollTop = text.scrollHeight;
 }
-// One stop at a time: r.stopping is the running one, so Pin it can wait for its words.
+// One stop at a time: r.stopping is the running one, so Pin it can wait for its words, and r.endingRec its recording,
+// so a cancel meanwhile still drops them (its last words would land in the next note).
 export function stopMic(r, cancel) {
-  if (!r.rec) return r.stopping ?? Promise.resolve();
-  const rec = r.rec,
-    p = (r.stopping = endMic(r, rec, cancel).finally(() => r.text.removeEventListener('input', rec.typed)));
-  return p.finally(() => r.stopping === p && (r.stopping = null));
+  if (!r.rec) {
+    if (cancel && r.endingRec) dropped(r.endingRec);
+    return r.stopping ?? Promise.resolve();
+  }
+  const rec = (r.endingRec = r.rec);
+  if (cancel) dropped(rec);
+  const p = (r.stopping = endMic(r, rec).finally(() => r.text.removeEventListener('input', rec.typed)));
+  return p.finally(() => r.stopping === p && (r.stopping = r.endingRec = null));
 }
-async function endMic(r, rec, cancel) {
+// A cancelled recording: no word of it goes in, and the line's last phrase isn't waited for
+function dropped(rec) {
+  rec.cancelled = true;
+  if (rec.live && rec.live !== 'failed') rec.live.close();
+}
+async function endMic(r, rec) {
   const m = r.mark;
   r.rec = null;
   clearTimeout(rec.limit);
   r.mic.classList.remove('on');
   const clip = await new Promise(res => {
-    if (!rec.mr || rec.mr.state === 'inactive' || cancel) {
+    if (!rec.mr || rec.mr.state === 'inactive' || rec.cancelled) {
       try {
         rec.mr?.stop();
       } catch {
@@ -197,17 +207,18 @@ async function endMic(r, rec, cancel) {
     rec.mr.stop();
   });
   rec.stream?.getTracks().forEach(t => t.stop());
-  const liveOk = await lastPhrase(rec, cancel);
+  const liveOk = await lastPhrase(rec);
   rec.ending = false;
   rec.untap?.();
   rec.ctx?.close?.();
+  if (rec.cancelled) return;
   if (liveOk) {
     r.msg.textContent = rec.heard
       ? 'Check the words, then pin it.'
       : 'No words came through. Try again, a little closer?';
     return;
   }
-  if (!clip || cancel) return;
+  if (!clip) return;
   if (performance.now() - rec.t0 < 600 || clip.size < 200) {
     r.msg.textContent = 'That was very short. Tap, talk, then tap again.';
     return;
@@ -215,16 +226,17 @@ async function endMic(r, rec, cancel) {
   await transcribed(r, rec, clip, m);
 }
 // the live line's last phrase: it says done once the words are in (or a few seconds pass); whether it brought them
-async function lastPhrase(rec, cancel) {
-  let liveOk = !!rec.liveDone && !cancel;
-  if (!liveOk && rec.live && rec.live !== 'failed' && !cancel) {
+async function lastPhrase(rec) {
+  let liveOk = !!rec.liveDone && !rec.cancelled;
+  if (!liveOk && rec.live && rec.live !== 'failed' && !rec.cancelled) {
     rec.ending = true; // (its last words still come in)
     if (rec.live.readyState === WebSocket.OPEN) rec.live.send(JSON.stringify({ type: 'end' }));
     liveOk = await Promise.race([rec.done, new Promise(res => setTimeout(() => res(false), 6000))]);
   }
   // (closed before the clip goes: the coordinator takes one at a time)
   if (rec.live && rec.live !== 'failed') rec.live.close();
-  if (rec.closed && !liveOk && !cancel) await Promise.race([rec.closed, new Promise(res => setTimeout(res, 2000))]);
+  if (rec.closed && !liveOk && !rec.cancelled)
+    await Promise.race([rec.closed, new Promise(res => setTimeout(res, 2000))]);
   return liveOk;
 }
 // the whole clip, transcribed next to the script
@@ -264,6 +276,7 @@ async function transcribed(r, rec, clip, m) {
 export function setupDictation(r) {
   r.rec = null;
   r.stopping = null;
+  r.endingRec = null;
   if (!canRecord) {
     r.mic.disabled = true;
     r.mic.title = 'This browser can’t record here';

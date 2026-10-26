@@ -1,10 +1,10 @@
 // An alarm for the CEO (alarms.ts) once the server's disk is FULL_AT used (the disk DATA_DIR is on, which holds Docker,
 // the volumes and the jobs' folders): one each time it fills up, and the next only after it was back under CLEAR_AT (the
 // jobs' folders move it a few GB either way all day). Only a disk past FULL_AT for HIGH_FOR, which the setting disk.high
-// times: a deploy's build takes ~10 GB for a few minutes and gives it back. Jobs stop once the disk is full, so the CEO
+// times: a deploy's build temporarily uses disk and gives it back. Jobs stop once the disk is full, so the CEO
 // hears of it while there's still room to act.
-import { statfsSync } from 'node:fs';
-import { DATA_DIR } from './config.ts';
+import { statSync, statfsSync } from 'node:fs';
+import { DATA_DIR, DEPLOY_BUILD_RESERVE_GB } from './config.ts';
 import { setting, remember } from './db.ts';
 import * as alarms from './alarms.ts';
 import { findAgent } from './jobs.ts';
@@ -46,4 +46,18 @@ export function diskCheck(dir = DATA_DIR, read: (dir: string) => Disk = statfsSy
     { title: "The server's disk is filling up", urgent: false, prompt, word: STANDING.disk },
     now,
   );
+}
+
+// SQLite can journal its whole database while reporting or backup copies another database.
+// Existing server use is already out of free space.
+export function jobReserve() {
+  const databaseBytes = statSync(`${DATA_DIR}/hq.db`).size;
+  const buildBytes = DEPLOY_BUILD_RESERVE_GB * 2 ** 30;
+  const disk = statfsSync(DATA_DIR);
+  return {
+    freeBytes: disk.bavail * disk.bsize,
+    databaseBytes,
+    buildBytes,
+    reserveBytes: buildBytes + 2 * databaseBytes,
+  };
 }

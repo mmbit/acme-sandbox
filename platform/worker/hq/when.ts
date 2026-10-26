@@ -47,6 +47,7 @@ type Answer = {
 
 const USAGE = 'usage: hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]';
 
+// (--by's forms, the board's own time with its date and no zone among them)
 export const when = {
   help: `
    hq when --extra-seat 5x|20x                       replay the live plan with one hypothetical Claude Max seat, at
@@ -59,7 +60,8 @@ export const when = {
                                                      (90m, 2h, 1h30m), as --agent's work (yours by default), after
                                                      --after's job. The earliest it can be done without making any
                                                      window miss, and the window to set for it (hq window). With --by
-                                                     (2h, 14:30, 2026-10-06T14:30Z), whether it makes that time, and only
+                                                     (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC),
+                                                     whether it makes that time, and only
                                                      if not, what would, each as played: the windows that would give
                                                      and by how much, and one more seat`,
 
@@ -92,30 +94,11 @@ export const when = {
       '',
       `(Played ${found.played.plays} ways on the queue as it is, in ${(found.played.ms / 1000).toFixed(1)} s.)`,
     );
-    if (found.by && (found.by.finish === null || found.by.finish > found.by.at))
-      print(...lateLines(`this work lands ${past(found.by)} the time asked for (${at(found.by.at)})`));
   },
 };
 
 const past = ({ finish, at: by }: NonNullable<Answer['by']>) =>
   finish === null ? 'with no finish in sight before' : `${duration((finish - by) / 60_000)} past`;
-
-// On a call (the voice line sets HQ_CALL), a finish past the board's time or a window's deadline comes with what to do
-// about it, at the moment it matters: the board's agents read the late time out as news, call after call (board, call
-// 139). An instruction for the agent's judgment, never a refusal: the board may name two times or a soft preference.
-export function lateLines(late: string) {
-  if (!process.env.HQ_CALL) return [];
-  return [
-    '',
-    `RED FLAG, not news for the board: ${late}. Before you say a time, judge whether this one makes sense, and check the likely causes:`,
-    '- the size: compare clean past jobs (estimate); work sized wrong plays wrong;',
-    '- the plan: what it waits on, and whether that should hold it at all (a fault in the scheduler is worth naming);',
-    '- other work ahead of it, slowing it, that could be paused or wait;',
-    "- the window: none set, or one later than the board's time (manage's window), then play it again.",
-    'If one moves it forward, do that now, on the call, and check again. If none does, tell the board plainly what you ' +
-      "looked at and that the time can't be made, and ask whether that's acceptable or whether to look further after the call.",
-  ];
-}
 
 function sizeLine({ work, size }: Answer) {
   const on = size.given
@@ -232,10 +215,15 @@ function roundedMinutes(time: PlayTime) {
 }
 
 // Each agreed deadline as the answer's play leaves it, against the plan without the work: the play its time comes from
-// (the earliest that holds every window, else none at all; with --by, the one it answers with).
+// (the earliest that holds every window, else none at all; with --by, the one it answers with, and whether it lands
+// past the time asked for: one instruction for all of them on a call).
 function agreedLines({ free, earliest, by }: Answer) {
   const answer = by ?? (earliest?.found ? earliest : free);
-  return deadlineLines(answer.deadlines, 'the work');
+  const late =
+    by && (by.finish === null || by.finish > by.at)
+      ? [`this work lands ${past(by)} the time asked for (${at(by.at)})`]
+      : [];
+  return deadlineLines(answer.deadlines, 'the work', late);
 }
 
 // Unknown prices make the replay conditional. They do not establish unlimited service.

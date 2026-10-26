@@ -2,6 +2,8 @@
 // folded or spread, where a drag of the spine leaves it, and what's remembered of it per shape. Plain maths (book.js
 // draws it), so node tests it: booklayout.test.js.
 
+// The rail is the open book's own column (its faces, Search, Undo and the arrow): folded, the book takes nothing from
+// HQ's page, and only its lip shows at the screen's edge, over the page (book.css).
 export const RAIL = 48;
 export const SPINE = 10;
 // The page's share of a screen with the book open beside it: 620 of the iPad mini's 1133 landscape points, which
@@ -36,22 +38,32 @@ export function initial(shape) {
 }
 
 // The parts' widths in px at a screen size and state, left to right: HQ's page, the spine, the book, the rail.
-// room: what the book's parts take from the screen's right edge, the width HQ's page gives up. In the spread the book
-// covers the whole screen but the rail, and the page keeps its open width under it (shown again as it was, at once);
-// where the open book would leave no page (a phone) the spread covers HQ at its folded width, never a sliver.
-// mode: the state's, or 'spread' where the open book would leave no page.
+// room: what the book's parts take from the screen's right edge, the width HQ's page gives up (none folded). In the
+// spread the book covers the whole screen, its rail too, and the page keeps its open width under it (shown again as it
+// was, at once); where the open book would leave no page (a phone) the spread covers HQ at its folded width, never a
+// sliver. mode: the state's, or 'spread' where the open book would leave no page. facing: whether the spread's paper
+// holds two facing pages, each a book's least; narrower, it's one page across it.
 export function layout(w, h, state) {
   const shape = shapeOf(w, h),
     book = bookWidth(w, state.book),
     openPage = w - RAIL - SPINE - book;
   if (state.mode === 'folded')
-    return { shape, mode: 'folded', page: w - RAIL, spine: 0, book: 0, rail: RAIL, room: RAIL };
+    return { shape, mode: 'folded', page: w, spine: 0, book: 0, rail: 0, room: 0, facing: false };
   if (state.mode === 'spread' || openPage < PAGE_MIN) {
-    const page = openPage < PAGE_MIN ? w - RAIL : openPage;
-    return { shape, mode: 'spread', page, spine: 0, book: w - RAIL, rail: RAIL, room: w - page };
+    const page = openPage < PAGE_MIN ? w : openPage;
+    return {
+      shape,
+      mode: 'spread',
+      page,
+      spine: 0,
+      book: w - RAIL,
+      rail: RAIL,
+      room: w - page,
+      facing: w - RAIL - SPINE >= 2 * BOOK.min,
+    };
   }
   const room = Math.min(w, RAIL + SPINE + book);
-  return { shape, mode: 'open', page: openPage, spine: SPINE, book, rail: RAIL, room };
+  return { shape, mode: 'open', page: openPage, spine: SPINE, book, rail: RAIL, room, facing: false };
 }
 
 // The book's open width: the one the board gave it, within what this screen allows, or the default.
@@ -83,7 +95,7 @@ export function released(w, h, state, dx, v) {
   return { mode: 'open', book: bookWidth(w, now.book - dx) };
 }
 
-// Where the book opens when the rail's edge is dragged left (dx < 0) and let go: past a third of the book's width,
+// Where the book opens when its lip is dragged left (dx < 0) and let go: past a third of the book's width,
 // or flicked left, it opens; else it stays folded.
 export function pulled(w, h, state, dx, v) {
   const book = bookWidth(w, state.book);

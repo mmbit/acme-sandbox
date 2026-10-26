@@ -33,7 +33,12 @@ async function listOpenItems() {
   if (list.length === 0) return print('No open items.');
   for (const item of list) {
     const job = present(item.job) ? ` · job #${item.job}` : '';
-    print(`#${item.id} (call #${item.call}, ${text(item.kind)} for ${text(item.owner)}): ${text(item.what)}${job}`);
+    const stopped = present(item.stopped) ? ` · returned by stopped job #${item.stopped}` : '';
+    // (ready: its work ended, open until the CEO records the board's yes)
+    const ready = item.status === 'ready' ? ', ready for the board to say yes' : '';
+    print(
+      `#${item.id} (call #${item.call}, ${text(item.kind)} for ${text(item.owner)}${ready}): ${text(item.what)}${job}${stopped}`,
+    );
     if (present(item.goal)) print(`   goal: ${text(item.goal)}`);
   }
 }
@@ -46,7 +51,9 @@ function itemInFull(item: Record<string, unknown>) {
     present(item.request) && `request #${item.request}`,
     present(item.ref) && `ref ${text(item.ref)}`,
     present(item.replaces) && `replaces #${item.replaces}`,
-    present(item.why) && `dropped: ${text(item.why)}`,
+    present(item.why) && `${item.status === 'dropped' ? 'dropped: ' : ''}${text(item.why)}`,
+    present(item.ready_at) && `ready since ${at(Date.parse(String(item.ready_at)))}`,
+    present(item.said) && `the board said yes: ${text(item.said)}`,
   ].filter(fact => fact !== false);
   const goal = present(item.goal) ? [`   goal: ${text(item.goal)}`] : [];
   const quoted = text(item.quote);
@@ -66,8 +73,9 @@ const REPLACE_USAGE = 'usage: hq item replace <item> "what" - [a-b] --goal - [--
 const LINK_USAGE =
   'usage: hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"';
 const DROP_USAGE = 'usage: hq item drop <item> "why"';
+const DONE_USAGE = 'usage: hq item done <item> "what the board said"';
 
-// (an item's time becomes its work's thread's window)
+// (an item's time becomes its work's thread's window; --deadline's forms)
 export const item = {
   help: `
    hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id>
@@ -84,8 +92,10 @@ export const item = {
                                                      --replaces (a call's follow-up only): the board changed an earlier
                                                      item; that one is replaced, its jobs that never ran are cancelled,
                                                      and a running one is told at its next step.
-                                                     --deadline: the time the board was given for it on the call (a UTC
-                                                     time, 14:30 or 2026-10-06T14:30Z; 2h counts from now): the thread of
+                                                     --deadline: the time the board was given for it on the call (its own
+                                                     with its date and no zone, 2026-10-26 09:00, on the company's clock;
+                                                     one with Z or a time of day alone, 14:30, is UTC; 2h counts from
+                                                     now): the thread of
                                                      the job that carries it (hq job --item) or of the job it's linked to
                                                      takes it as its window (hq window); a correction keeps the
                                                      earlier time. --job <id>, on a live call: a promise about
@@ -98,7 +108,8 @@ export const item = {
                                                      on the line. "Not confirmed" (exit 3, for add too): it may be
                                                      recorded, don't record it again
    hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"
-                                                     what shows it's done: a job (handled when it ends done), a pause
+                                                     what shows it's done: a job (handled when it ends done; a task or
+                                                     a promise is ready then, open until hq item done), a pause
                                                      the board agreed (hq thread pause, hq project pause: it carries the
                                                      item, handled already or not), or a request to the board or a ref
                                                      (a DECISIONS.md entry, a note, a commit) saying what your job did:
@@ -106,7 +117,8 @@ export const item = {
                                                      request, judged in its review (notes alone too); without one it
                                                      stays open (a question: handled now).
                                                      The call's follow-up, the job that carries the item, or a job of
-                                                     roles.asks; a job of yours carries one item, so it takes no second
+                                                     roles.asks. The CEO also links with --why "reason", shown on the feed.
+                                                     A job of yours carries one item, so it takes no second
                                                      (hand that one out).
                                                      A job linked while it's queued or running hears the item's goal.
                                                      An item already handled (or dropped, replaced): the call's follow-up
@@ -116,7 +128,11 @@ export const item = {
                                                      open thread first, its reviews and fixes with it (hq thread list)
    hq item drop <item> "why"                         it won't happen, and why (one line the board reads); the call's
                                                      follow-up only (it cancels the item's jobs that never ran and
-                                                     tells a running one at its next step)`,
+                                                     tells a running one at its next step), and the CEO on a ready item
+   hq item done <item> "what the board said"         the CEO: the board has the task or promise and said yes (on a
+                                                     call, in the intercom or a card's answer), in one line. Only this
+                                                     handles a task or promise: its work ending makes it ready, and it
+                                                     stays on what the board asked for until then`,
 
   async run(given: string[]) {
     const { flags, args } = takeItemFlags(given, 'item');
@@ -161,7 +177,8 @@ export const item = {
     refuseRecordingFlags(flags);
     if (action === 'link') return linkItem(rest);
     if (action === 'drop') return dropItem(rest);
-    stop('usage: hq item add | replace | link | drop (run hq for details)');
+    if (action === 'done') return doneItem(rest);
+    stop('usage: hq item add | replace | link | drop | done (run hq for details)');
   },
 };
 
@@ -302,8 +319,8 @@ async function record(body: object) {
 
 // (--thread)
 async function linkItem(given: string[]) {
-  const { values, args } = takeValues(given, ['--thread'], 'Not linked');
-  const { thread } = values;
+  const { values, args } = takeValues(given, ['--thread', '--why'], 'Not linked');
+  const { thread, why } = values;
   const [id, target, ...rest] = args;
   if (!/^[0-9]+$/.test(id ?? '') || !target || rest.length) stop(LINK_USAGE);
   if (thread !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(thread))
@@ -314,7 +331,9 @@ async function linkItem(given: string[]) {
   // (pause: the open pause on a project or thread carries it)
   const pause = /^pause:(\S+)$/.exec(target)?.[1];
   const to = jobOrRequest ? { [jobOrRequest[1]]: Number(jobOrRequest[2]) } : pause ? { pause } : { ref: target };
-  const answer = await api.call('item-link', { body: { id: Number(id), to, ...(thread !== undefined && { thread }) } });
+  const answer = await api.call('item-link', {
+    body: { id: Number(id), to, why, ...(thread !== undefined && { thread }) },
+  });
   const linked = api.parseOrNull(answer.body) ?? {};
   const status = shown(linked.status);
   if (status === '') refused(answer.body, 'Not linked');
@@ -324,6 +343,10 @@ async function linkItem(given: string[]) {
     );
   } else if (status === 'handled') {
     print(`Item #${id} is handled (${target}).`);
+  } else if (status === 'ready') {
+    print(
+      `Item #${id} is ready (${target} ended done): it stays open until the CEO records the board's yes (hq item done).`,
+    );
   } else if (jobOrRequest?.[1] === 'job') {
     print(`Item #${id} is linked to ${target}: handled when that job ends done (until then it's open).`);
   } else {
@@ -335,6 +358,11 @@ async function linkItem(given: string[]) {
   // the item's time, on the work's thread now
   if (present(linked.deadline))
     print(`Its time is the deadline of ${text(linked.thread)} now: ${at(Date.parse(String(linked.deadline)))}.`);
+  printGoalDelivery(linked, target);
+  print(...stopped(linked));
+}
+
+function printGoalDelivery(linked: Record<string, unknown>, target: string) {
   // the item's goal, to work linked while it's under way (the coordinator's ledger.ts goalTo)
   const goalDelivery: Record<string, string> = {
     brief: `${target} has the item's goal in its brief.`,
@@ -345,7 +373,6 @@ async function linkItem(given: string[]) {
   };
   const reachedLine = goalDelivery[shown(linked.goalReached)];
   if (reachedLine !== undefined) print(reachedLine);
-  print(...stopped(linked));
 }
 
 async function dropItem([id, why]: string[]) {
@@ -354,6 +381,14 @@ async function dropItem([id, why]: string[]) {
   const dropped = api.parseOrNull(answer.body) ?? {};
   if (shown(dropped.ok) !== 'true') refused(answer.body, 'Not dropped');
   print(`Item #${id} is dropped: ${why}`, ...stopped(dropped));
+}
+
+// hq item done: the CEO records the board's yes
+async function doneItem([id, said, ...rest]: string[]) {
+  if (!/^[0-9]+$/.test(id ?? '') || !said || rest.length) stop(DONE_USAGE);
+  const answer = await api.call('item-done', { body: { id: Number(id), said } });
+  if (shown((api.parseOrNull(answer.body) ?? {}).ok) !== 'true') refused(answer.body, 'Not recorded');
+  print(`Item #${id} is handled: the board said yes (${said}).`);
 }
 
 // A refusal says why in the coordinator's words. "not found": not a call or item this job works for.

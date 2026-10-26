@@ -166,6 +166,25 @@ export function post(given: Record<string, unknown>) {
   return { headline, summary };
 }
 
+// The summary's meetings closed since the last check, each its headline and its next step: the post's last line as post()
+// lays it out. A meeting that stalled before its post shows by its topic and why it ended.
+const NEXT = '**Next:** ';
+export function closedSince(since: number) {
+  const closed = db
+    .prepare("select * from meetings where status = 'done' and ended > ? order by ended")
+    .all(new Date(since).toISOString()) as Meeting[];
+  return closed.map(m => {
+    const next = m.summary
+      ?.split('\n')
+      .find(l => l.startsWith(NEXT))
+      ?.slice(NEXT.length);
+    const said = m.headline
+      ? `${m.headline}${next ? `. Next: ${next}` : ''}`
+      : `${m.topic}, ended ${m.why ?? 'without a post'}`;
+    return `meeting #${m.id}: ${said}`;
+  });
+}
+
 // Every meeting its chair closed, as a post in HQ's news feed (company.ts gazette): its headline (the topic for a
 // meeting closed before headlines) and the chair's summary as Markdown, raw HTML in it shown as text. It's the board's
 // (its feed, not the company's), and carries what HQ draws its cover from (postcover.js): who sat in it, the chair

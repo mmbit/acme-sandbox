@@ -223,7 +223,7 @@ async function paidSession(c: Caller, id: string) {
     const own = await ownSession(c, id);
     return own && own.s.status === 'complete' && own.s.payment_status === 'paid' ? own.s : null;
   } catch (e) {
-    if (e instanceof StripeError && e.status === 404) return null;   // gone at Stripe (the imitation after a restart)
+    if (e instanceof StripeError && e.status === 404) return null;   // gone at Stripe (a new key; the imitation's before it outlived restarts)
     throw e;
   }
 }

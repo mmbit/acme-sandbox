@@ -278,3 +278,68 @@ test('a blocked windowed consolidate does not reserve room ahead of ready review
   await h.finish(next);
   h.cancelQueued();
 });
+
+for (const expedited of [false, true])
+  for (const neededMb of [900, 1200])
+    test(`a ${neededMb} MB ${expedited ? 'expedited ' : ''}waiter pauses a sufficient group or leaves every run working`, async () => {
+      await h.capacity({ codex: 4 });
+      const first = await h.start({ agent: 'kit', engine: 'codex', forSeat: seat }, { seat, util: 0 });
+      const last = await h.start({ agent: 'bolt', engine: 'codex', forSeat: seat }, { seat, util: 0 });
+      const waiter = h.queue({
+        agent: 'moss',
+        engine: 'codex',
+        forSeat: seat,
+        ...(expedited ? { expedite: true } : { thread: h.dueThread({ deadline: Date.now() }) }),
+      });
+      const jobs = [first.id, last.id].map(job => ({ job, mb: 400 }));
+      jobs.push({ job: waiter, mb: neededMb });
+      await h.worker('room', {
+        jobs,
+        capacity: {
+          slots: { codex: 4 },
+          seatRuns: { codex: 4 },
+          room: 0,
+          memory: {
+            at: Date.now(),
+            availableMb: 1600,
+            freeReserveMb: 1500,
+            defaultRunMb: 700,
+            totalSlots: 4,
+            heldSlots: 0,
+            heldMb: 0,
+            starting: [],
+            runningMb: { [first.id]: 400, [last.id]: 400 },
+          },
+        },
+      });
+      for (let beat = 0; beat < 3; beat++)
+        assert.deepEqual(
+          [
+            (await h.heartbeat(first, { short: true })).body.yield,
+            (await h.heartbeat(last, { short: true })).body.yield,
+          ],
+          neededMb === 900 ? ['waiting', 'waiting'] : [undefined, undefined],
+        );
+      if (neededMb === 900) {
+        await h.finish(last, { status: 'yielded', session: 'last-session' });
+        assert.equal(
+          (await h.heartbeat(first, { short: true })).body.yield,
+          'waiting',
+          'the unfinished group still yields',
+        );
+        await h.finish(first, { status: 'yielded', session: 'first-session' });
+        const started = (await h.claim('codex', { seat, util: 0, room: 900 }))!;
+        assert.equal(started.id, waiter, 'the waiter takes the combined release');
+        await h.finish(started);
+        for (const session of ['first-session', 'last-session']) {
+          const resumed = (await claim())!;
+          assert.equal(resumed.session, session);
+          await h.finish(resumed);
+        }
+      } else {
+        await h.finish(first);
+        await h.finish(last);
+        await h.finish((await claim())!);
+      }
+      await h.capacity({ codex: 2 });
+    });

@@ -421,10 +421,9 @@ export async function loadJob(dev, id) {
 // no jobs start for memory, while it lasts: a line, or null (the coordinator's room.ts)
 export const loadRoom = dev => dev ? Promise.resolve({ line: 'No new jobs can start: the worker has been short of memory for 6 min. 2 jobs could start if memory allowed.' }) : get('/api/room');
 // a job's log, oldest first (the coordinator's log.ts); dev mode's is made up
-export const loadJobLog = (dev, id) => dev ? Promise.resolve(mockLog()) : get(`/api/jobs/log?id=${Number(id)}`);
-const mockLog = () => ['Read platform/coordinator/src/jobs.ts', 'Grep “claimNext” in platform/coordinator/src', 'I’ll add the wait to the claim query, then test it.',
-  'Edit platform/coordinator/src/jobs.ts', '$ cd platform/coordinator && node --test src/jobs.test.ts', 'Plan: ✓ Read the queue · ✓ Add the wait · Test it']
-  .map((text, i, all) => ({ ts: new Date(Date.now() - (all.length - i) * 47e3).toISOString(), agent: null, text }));
+// (dev mode's lines from mock/log.json, a read as the real one is, so a check can hold its reply.)
+export const loadJobLog = (dev, id) => dev ? get('mock/log.json').then(mockLog) : get(`/api/jobs/log?id=${Number(id)}`);
+const mockLog = texts => texts.map((text, i, all) => ({ ts: new Date(Date.now() - (all.length - i) * 47e3).toISOString(), agent: null, text }));
 // A job's record for its card's back (the coordinator's jobfacts.ts): when it started and finished, its agent time
 // against its size, and its pull request. Dev mode's from the mock job's own times.
 export async function loadJobFacts(dev, id) {
@@ -623,31 +622,13 @@ export async function loadCareNumbers(dev, app, mode) {
 export const loadMeaning = (dev, q) => get(dev ? 'mock/meaning.json' : `/api/search/meaning?q=${encodeURIComponent(q)}`);
 export const loadApps = dev => get(dev ? 'mock/apps.json' : '/api/apps');
 export const loadArtifacts = dev => get(dev ? 'mock/artifacts.json' : '/api/artifacts');
-// Review notes (the computer's Notes tab): pending until the board sends a batch to the product's owner.
-// Dev mode keeps them in mock/review.json and counts per product from there.
-export async function loadReviewProducts(dev) {
-  if (!dev) return get('/api/review/products');
-  const { products, notes } = await mockList('review'), n = (slug, s) => notes.filter(x => x.slug === slug && x.status === s).length;
-  return products.map(p => ({ ...p, pending: n(p.slug, 'pending'), sent: n(p.slug, 'sent'), discarded: n(p.slug, 'discarded') })).sort((a, b) => b.pending - a.pending);
-}
-export const loadReviewNotes = (dev, slug) => dev ? mockList('review').then(r => r.notes.filter(x => x.slug === slug)) : get(`/api/review/notes?slug=${encodeURIComponent(slug)}`);
-// (file: the screenshot's name, new when its mark is drawn again)
+// Reviews' Sent: the board's sent sheets, newest first (the book's store, booknotes.ts: { id, owner, name, sent, job,
+// notes: [{ n, words, snip, slips }] }), and the review notes sent before the book, each with who it went to (to) and
+// its job's code. Dev mode reads mock/book-sheets.json and mock/review.json.
+export const loadSentSheets = dev => get(dev ? 'mock/book-sheets.json' : '/api/book/sheets').then(r => r.sent);
+export const loadSentNotes = dev => dev ? mockList('review').then(r => r.notes) : get('/api/review/notes');
+// A sent note's screenshot (file: its name, in the link so no browser shows an older one)
 export const reviewShot = (dev, id, file) => dev ? 'mock/review-shot.svg' : `/api/review/shot?id=${Number(id)}${file ? `&v=${encodeURIComponent(file)}` : ''}`;
-// ...and a picture added to it, by its file's name
-export const reviewPicture = (dev, id, file) => dev ? 'mock/review-shot.svg' : `/api/review/shot?id=${Number(id)}&pic=${encodeURIComponent(file)}`;
-export async function sendNotes(dev, slug, ids) {
-  if (!dev) return post('/api/review/send', { slug, ids });
-  const { notes } = await mockList('review'), job = Math.max(0, ...(await mockList('jobs')).map(j => j.id)) + 1;
-  const batch = notes.filter(x => x.slug === slug && x.status === 'pending' && ids.includes(x.id));
-  batch.forEach(x => Object.assign(x, { status: 'sent', job }));
-  return { job, job_code: null, agent: world.company.ceo, name: world.agents.get(world.company.ceo).data.name, count: batch.length }; // (job_code)
-}
-export async function discardNotes(dev, ids) {
-  if (!dev) return post('/api/review/discard', { ids });
-  const batch = (await mockList('review')).notes.filter(x => x.status === 'pending' && ids.includes(x.id));
-  batch.forEach(x => { x.status = 'discarded'; });
-  return { ok: true, count: batch.length };
-}
 
 // Shares for outside notes (Reviews, and the viewer's Share): the people invited to leave notes on one preview, each on
 // a link of their own. Invite takes {page, name, email, days} (a new share, or the page's open one) or {id, name, email}.
@@ -682,12 +663,6 @@ export async function setPersonTitle(dev, name, title) {
   title = title.replace(/\s+/g, ' ').trim().slice(0, 40) || null;
   (mock.shares ?? []).flatMap(s => s.people).filter(p => p.name === name).forEach(p => { p.title = title; });
   return { name, title };
-}
-// A person's own Sketchbook (sketches.ts grant): the board's switch, on or off.
-export async function setPersonSketchbook(dev, name, on) {
-  if (!dev) return post('/api/review/people/sketchbook', { name, on });
-  (mock.shares ?? []).flatMap(s => s.people).filter(p => p.name === name).forEach(p => { p.sketchbook = on; });
-  return { name, sketchbook: on };
 }
 export async function removeFromShare(dev, id, name) {
   if (!dev) return post('/api/review/shares/remove', { id, name });

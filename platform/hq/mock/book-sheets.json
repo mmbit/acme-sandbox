@@ -23,6 +23,59 @@
       "name": null,
       "status": "open",
       "notes": [{ "id": 307, "n": 1, "status": "open", "words": "Settings: this switch says nothing", "slips": [] }]
+    },
+    {
+      "id": 44,
+      "owner": "lark",
+      "name": "Lark",
+      "status": "open",
+      "send_at": null,
+      "sent": null,
+      "page": null,
+      "notes": [
+        {
+          "id": 311,
+          "sheet": 44,
+          "page": 3,
+          "n": 1,
+          "by": "board",
+          "status": "open",
+          "anchor": {
+            "v": 1,
+            "url": "/?open=gazette",
+            "el": null,
+            "view": { "w": 1133, "h": 744, "x": 0, "y": 0, "dpr": 2 },
+            "ink": []
+          },
+          "words": "Too long: half this",
+          "said": "spoken",
+          "snip": "mock/book-snip-1.svg",
+          "slips": [],
+          "links": [312],
+          "guest": null
+        },
+        {
+          "id": 312,
+          "sheet": 44,
+          "page": 3,
+          "n": 2,
+          "by": "board",
+          "status": "open",
+          "anchor": {
+            "v": 1,
+            "url": "/?open=gazette",
+            "el": null,
+            "view": { "w": 1133, "h": 744, "x": 0, "y": 0, "dpr": 2 },
+            "ink": []
+          },
+          "words": "And warmer, like Inkbath",
+          "said": "spoken",
+          "snip": "mock/book-snip-2.svg",
+          "slips": [],
+          "links": [311],
+          "guest": null
+        }
+      ]
     }
   ],
   "sent": [
@@ -31,13 +84,18 @@
       "owner": "moss",
       "name": "Moss",
       "status": "sent",
+      "sent": "2026-10-25T16:40:00Z",
+      "job": 41,
       "notes": [
         {
           "id": 280,
+          "page": 5,
           "n": 1,
+          "by": "board",
           "status": "sent",
           "words": "The tear line is too dark",
-          "slips": [{ "id": 12, "by": "moss", "text": "Lighter now, half the old ink", "ticked": null }]
+          "said": "spoken",
+          "slips": [{ "id": 12, "by": "moss", "name": "Moss", "text": "Lighter now, half the old ink", "ticked": null }]
         }
       ]
     }

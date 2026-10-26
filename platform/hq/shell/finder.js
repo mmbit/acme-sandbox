@@ -5,7 +5,7 @@
 // them when words find little: the coordinator's memory search names what's near (loadMeaning), and HQ shows a hit only
 // where one of the lists below already holds it. Every list is the one its own screen shows, so each category keeps that
 // screen's rules.
-import { esc } from '../util.js';
+import { esc, fold } from '../util.js'; // (fold)
 import * as world from '../world/world.js';
 import { icon } from './icons.js';
 import { sfx } from './audio.js';
@@ -119,16 +119,12 @@ async function fill(c) {
   if (!$('#finder').hidden) paint();
 }
 const isOld = at => at != null && Date.now() - new Date(at).getTime() > OLD_MS;
-const fold = s =>
-  String(s ?? '')
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '')
-    .toLowerCase()
-    .replace(/#/g, '');
+// folded, and "#12" found by "12" (fold)
+const findable = s => fold(s).replace(/#/g, '');
 function folded({ title, codes = [], sub = '' }) {
-  const whole = [title, ...codes].filter(Boolean).map(fold);
+  const whole = [title, ...codes].filter(Boolean).map(findable);
   const words = whole.flatMap(f => [f, ...f.split(/[^\p{L}\p{N}]+/u)]).filter(Boolean);
-  return { whole, words, text: fold(`${title} ${codes.join(' ')} ${sub}`) };
+  return { whole, words, text: findable(`${title} ${codes.join(' ')} ${sub}`) };
 }
 
 // ---------------------------------------------------------------- typing and keys
@@ -235,7 +231,7 @@ function ranked(typedWords) {
 const listed = shown =>
   shown.flatMap((c, order) => c.items.map((item, i) => ({ item, order, i, tier: 0, late: item.old }))).sort(inOrder);
 const inOrder = (a, b) => a.late - b.late || a.tier - b.tier || a.order - b.order || a.i - b.i;
-const typedQuery = typedWords => fold(typedWords.trim()).replace(/\s+/g, ' ');
+const typedQuery = typedWords => findable(typedWords.trim()).replace(/\s+/g, ' ');
 
 // ---------------------------------------------------------------- drawing
 // Grouped by category, the group with the best match first; with nothing typed, the picked category's list (the apps
@@ -294,7 +290,7 @@ function rowHtml(item, named = false, q = '') {
   return `<li id="finder-row-${n}" role="option" data-row="${n}"><b>${esc(item.title)}</b>${code ? `<code>${esc(code)}</code>` : ''}${sub ? `<small>${esc(sub)}</small>` : ''}</li>`;
 }
 // The code a row shows: the one the words start (a look's name on Look), else its first
-const codeOf = ({ codes = [] }, q) => (q && codes.find(c => fold(c).startsWith(q))) || codes[0];
+const codeOf = ({ codes = [] }, q) => (q && codes.find(c => findable(c).startsWith(q))) || codes[0];
 const noneLine = (q, missed) =>
   `Nothing found for “${esc(q.trim())}”${only ? ` in ${esc(nameOf(only))}` : missed ? ' in the places that answered' : ''}.`;
 // The field's hint while it's empty: the prefixes

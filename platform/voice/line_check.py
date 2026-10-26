@@ -35,7 +35,7 @@ REPLIES = [  # (words as the model streams them, a tool step and how long it run
 
 
 class Agent:
-    voice, respell, token, call, recap, pin_shots = 'alba', {}, '', 0, '', ()  # (respell)
+    voice, respell, token, call, recap = 'alba', {}, '', 0, ''  # (respell)
 
     def __init__(self, t0):
         self.n, self.t0, self.steps = 0, t0, []  # steps: when each tool step started and ended
@@ -61,8 +61,8 @@ async def run():
     t0 = time.monotonic()
     frames, audio = recorder(t0)
     with tempfile.TemporaryDirectory() as tmp:
-        server.CALL_LOGS = Path(tmp)
-        call = server.Call(audio, nothing, nothing, 'ada', 'en')
+        # (each call is given what it's wired to: its files, coordinator and how its CLI starts)
+        call = server.Call(audio, nothing, nothing, 'ada', 'en', wiring=server.Wiring(paths=server.Paths(calls=Path(tmp))))
         call.brain = Agent(t0)
         # (in VAD windows: the board, never heard here, has been quiet all along)
         call.quiet = 10 ** 9
@@ -125,13 +125,16 @@ async def limited():
     url, stop = limit_model.serve(reset)
     seat = Path(d, 'token')
     seat.write_text('sk-ant-oat01-line-check')
-    env = server.agent_env
-    server.hq = lambda m, p, b=None: ({'prompt': 'You are Juno.', 'token': 'line-check', 'seat': {'room': True},
-                                       'timeZone': 'Europe/Amsterdam'} if p.startswith('call-context') else None)
-    server.REPO, server.SEAT, server.CALL_LOGS, server.LIVE = d, seat, Path(d), Path(d)
-    server.agent_env = lambda *a: limit_model.cli_env(env(*a), url, d)
+    coordinator = lambda m, p, b=None: ({'prompt': 'You are Juno.', 'token': 'line-check', 'seat': {'room': True},
+                                         'timeZone': 'Europe/Amsterdam'} if p.startswith('call-context') else None)
+    paths = server.Paths(seat=seat, repo=Path(d), calls=Path(d), live=Path(d), cli_config=Path(d),
+                         work=Path(d))
+
+    async def start_cli(*args, env, **kwargs):
+        return await asyncio.create_subprocess_exec(*args, env=limit_model.cli_env(env, url), **kwargs)
+
     try:
-        call = server.Call(audio, event, nothing, 'juno', 'en')
+        call = server.Call(audio, event, nothing, 'juno', 'en', wiring=server.Wiring(hq=coordinator, paths=paths, start_cli=start_cli))
         await call.start()
         for i, ask in enumerate(['I did my long rant. Are you there?', 'Hello?']):
             await call.answer(ask, None)

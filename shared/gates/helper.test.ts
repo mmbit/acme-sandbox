@@ -27,35 +27,52 @@ test('--helper runs the tests on a lent machine and brings back its report, and 
   assert.deepEqual(passed('lent.json'), { passed: 1 });
 });
 
-test("a bundle with a shell or Python run carries the worker's tools, first on the helper's PATH, and one with only node runs doesn't", async () => {
-  const bin = mkdtempSync(join(tmpdir(), 'tests-tools-'));
-  for (const tool of ['age', 'age-keygen', 'versitygw', 'caddy', 'docker-compose'])
-    writeFileSync(join(bin, tool), `#!/bin/sh\necho ${tool}\n`, { mode: 0o755 });
-  const env = { ...(await playedHq()), TESTS_TOOLS_BIN: bin };
-  const onHelper = {
-    'shared/gates/tests-on-helper.sh': "echo \"tools: $(ls ../tools 2>/dev/null | tr '\\n' ' ')\"\n" + ON_HELPER,
-  };
-  const kits = {
-    'kits/adds/sum.ts': sum('a + b'),
-    'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
-  };
-  const shell = {
-    'infra/test_tools.sh':
-      'test "$(caddy)" = caddy && test "$(age)" = age && test "$(docker-compose)" = docker-compose\n',
-  };
-  const infra = clone({ ...kits, ...onHelper, ...shell }, { 'infra/notes.md': 'touched\n' }).run(env, 'tests.ts', [
-    '--helper',
-  ]);
-  assert.equal(infra.status, 0, infra.out);
-  assert.match(infra.out, /^tools: age age-keygen caddy docker-compose versitygw$/m);
-  assert.match(infra.out, /^- infra \(in infra: bash test_tools.sh\): 0 passed/m);
-  assert.doesNotMatch(infra.out, /failing|flaky/); // its exit 0, with the copies on PATH, not failing on main too
-  const node = clone({ ...kits, ...onHelper }, { 'kits/adds/notes.md': 'touched\n' }).run(env, 'tests.ts', [
-    '--helper',
-  ]);
-  assert.equal(node.status, 0, node.out);
-  assert.match(node.out, /^tools:$/m);
-});
+for (const withJq of [true, false]) {
+  test(`shell and Python bundles carry available tools with jq ${withJq ? 'present' : 'absent'}, and node bundles carry none`, async () => {
+    const bin = mkdtempSync(join(tmpdir(), 'tests-tools-'));
+    const tools = ['age', 'age-keygen', 'versitygw', 'caddy', 'docker-compose', ...(withJq ? ['jq'] : [])];
+    for (const tool of tools) writeFileSync(join(bin, tool), `#!/bin/sh\necho ${tool}\n`, { mode: 0o755 });
+    const env = { ...(await playedHq()), TESTS_TOOLS_BIN: bin };
+    const onHelper = {
+      'shared/gates/tests-on-helper.sh': "echo \"tools: $(ls ../tools 2>/dev/null | tr '\\n' ' ')\"\n" + ON_HELPER,
+    };
+    const kits = {
+      'kits/adds/sum.ts': sum('a + b'),
+      'kits/adds/sum.test.ts': nodeTest('sums two numbers', 'assert.equal(sum(1, 2), 3);'),
+    };
+    const shell = {
+      'infra/test_tools.sh':
+        'test "$(caddy)" = caddy && test "$(age)" = age && test "$(docker-compose)" = docker-compose\n',
+    };
+    const infra = clone({ ...kits, ...onHelper, ...shell }, { 'infra/notes.md': 'touched\n' }).run(env, 'tests.ts', [
+      '--helper',
+    ]);
+    assert.equal(infra.status, 0, infra.out);
+    const bundled = `tools: ${tools.toSorted().join(' ')}`;
+    assert.ok(infra.out.split('\n').includes(bundled), infra.out);
+    assert.match(infra.out, /^- infra \(in infra: bash test_tools.sh\): 0 passed/m);
+    assert.doesNotMatch(infra.out, /failing|flaky/); // its exit 0, with the copies on PATH, not failing on main too
+    const python = {
+      'infra/test_tools.py':
+        'import subprocess, unittest\n' +
+        'class Tools(unittest.TestCase):\n' +
+        '    def test_tools(self):\n' +
+        `        for tool in ${JSON.stringify(tools)}:\n` +
+        '            self.assertEqual(subprocess.check_output([tool], text=True).strip(), tool)\n' +
+        'unittest.main()\n',
+    };
+    const py = clone({ ...onHelper, ...python }, { 'infra/notes.md': 'touched\n' }).run(env, 'tests.ts', ['--helper']);
+    assert.equal(py.status, 0, py.out);
+    assert.ok(py.out.split('\n').includes(bundled), py.out);
+    assert.match(py.out, /^- infra \(in infra: python3 test_tools.py\): 1 passed/m);
+    assert.doesNotMatch(py.out, /failing|flaky/);
+    const node = clone({ ...kits, ...onHelper }, { 'kits/adds/notes.md': 'touched\n' }).run(env, 'tests.ts', [
+      '--helper',
+    ]);
+    assert.equal(node.status, 0, node.out);
+    assert.match(node.out, /^tools:$/m);
+  });
+}
 
 test('--helper rides out HQ restarting: the run sent once HQ takes connections again, and polls it drops tried again', async () => {
   const { run } = clone(

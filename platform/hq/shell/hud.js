@@ -28,8 +28,8 @@ export function bindHud() {
   $('#btn-computer').onclick = () => openComputer();
   $('#btn-news').onclick = () => openGazette();
   $('#btn-projects').onclick = e => toggleProjects(e.currentTarget);
-  // (the projects view, from what was tapped)
-  const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from }); };
+  // (the projects view's list of the threads behind what was tapped: those done in a day, or those running and waiting;
+  const jobsAt = e => { const from = e.target.closest('[data-jobs]'); if (from) openProjects({ from, group: from.dataset.jobs === 'done' ? 'finished' : 'running' }); };
   $('#status').onclick = jobsAt;
   $('#status').onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); jobsAt(e); } };
   setInterval(updateStatus, 15000);   // (jobs start and finish between the agents' status events)
@@ -85,8 +85,9 @@ function nameHud() {
 }
 // HQ's throughput, bottom left (the coordinator's work.ts piles), counted in tasks: those done in the last 24 hours, hour
 // by hour as bars of work and, lighter, reviews, then those at work and those waiting, each over a bar split the same
-// way, and a swatch of each shade by its count says which is which. A tap on one opens the projects view. Read at most
-// every few seconds (agents' status events come in bursts), and redrawn only when it changed (aria-live).
+// way, and a swatch of each shade by its count says which is which. A tap on one opens the projects view at the threads
+// behind it. Read at most every few seconds (agents' status events come in bursts), and redrawn only when it changed
+// (aria-live). On a phone outside Wire the tasks stand over the reviews (.flow-and, style.css).
 let counting = false, counted = 0;
 export async function updateStatus() {
   if (counting || Date.now() - counted < 5000) return;
@@ -108,7 +109,7 @@ function throughput({ work, review, hours }) {
   const words = `${many(work, 'task')} and ${many(review, 'review')} done in the last 24 hours, hour by hour`;
   return `<span role="button" tabindex="0" data-jobs="done" class="flow" title="${words}" aria-label="${words}">
     <svg class="flow-bars" viewBox="0 0 ${hours.length * (W + GAP) - GAP} ${H}" preserveAspectRatio="none" aria-hidden="true">${hours.map(bar).join('')}</svg>
-    <span class="flow-words"><span><i class="flow-key"></i><b>${work.toLocaleString('en')}</b> ${work === 1 ? 'task' : 'tasks'} <i class="flow-key review"></i><b>${review.toLocaleString('en')}</b> ${review === 1 ? 'review' : 'reviews'}</span><small>done in 24 h</small></span></span>`;
+    <span class="flow-words"><span><i class="flow-key"></i><b>${work.toLocaleString('en')}</b> ${work === 1 ? 'task' : 'tasks'}<span class="flow-and"> </span><i class="flow-key review"></i><b>${review.toLocaleString('en')}</b> ${review === 1 ? 'review' : 'reviews'}</span><small>done in 24 h</small></span></span>`;
 }
 function pile(key, label, { work, review }) {
   const n = work + review, words = `${n.toLocaleString('en')} ${label}: ${many(work, 'task')}, ${many(review, 'review')}`;
@@ -117,7 +118,7 @@ function pile(key, label, { work, review }) {
 }
 
 // What waits on the board in the computer's apps, their counts summed, on the computer's button (desk.js
-// refreshWaitingNotes)
+// refreshComputerCount)
 export function paintComputerCount(n) {
   const el = $('#computer-count'); if (!el) return;
   countBadge(el, n); el.setAttribute('aria-label', `${n} waiting on the computer`);

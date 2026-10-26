@@ -260,7 +260,7 @@ export const inEtaOrder = (p, threads = p.threads) =>
     .map(t => [etaPlace(t, p), t])
     .sort(([a], [b]) => a[0] - b[0] || a[1] - b[1])
     .map(([, t]) => t);
-const etaPlace = (t, p) => {
+export const etaPlace = (t, p) => {
   const line = threadLine(t, p);
   return line.lit ? [0, 0] : line.waits ? [1, 0] : line.finish ? [2, line.finish] : [3, 0];
 };

@@ -1,18 +1,9 @@
 /* The book's own look (book.css lays it out): what makes it this sketchbook at a glance, the same on every HQ look.
-   Its indigo bookcloth, the red elastic, the red and gold silk of its headband and tailband, the gold ribbon down its
-   gutter with a swallowtail lying loose on the paper, the day stamped in its head, New page a paper label; and the
-   views pinched out (bookzoom.js), the day's pages and the week's as a contact sheet on the table. */
+   Its indigo bookcloth, the red elastic, the red and gold silk of its headband and tailband, the day stamped in its
+   head, New page a paper label; and the views pinched out (bookzoom.js), the day's pages and the week's as a contact
+   sheet on the table. */
 #book {
   --bk-cloth: #2a2352;
-  --bk-gold: #e2ad45;
-  --bk-ribbon: linear-gradient(
-    90deg,
-    #b98322 0 0.8px,
-    #e2ad45 0.8px 3px,
-    #f6d27a 3px 5.4px,
-    #e2ad45 5.4px calc(100% - 0.8px),
-    #b98322 calc(100% - 0.8px)
-  );
   --bk-silk: repeating-linear-gradient(90deg, #d9474c 0 2px, #f1c55c 2px 4px);
 }
 
@@ -29,34 +20,6 @@
   bottom: 14px;
 }
 
-/* the ribbon: a gold grosgrain band from the head down the gutter, its tail bending out onto the paper at the foot */
-#book .bk-ribbon {
-  position: absolute;
-  left: 8px;
-  top: -2px;
-  bottom: 18px;
-  width: 46px;
-  z-index: 6;
-  pointer-events: none;
-  filter: drop-shadow(1px 1.5px 1.2px rgba(29, 26, 47, 0.3));
-}
-#book .bk-ribbon i {
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 127px;
-  width: 10px;
-  background: var(--bk-ribbon);
-}
-#book .bk-ribbon svg {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: 46px;
-  height: 128px;
-  overflow: visible;
-}
-
 /* the head: the day stamped in small capitals, a stitched rule under it, New page a paper label on the cloth's blue */
 #book .bk-head {
   padding-left: 30px;
@@ -70,12 +33,14 @@
   font-size: 13px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--bk-cloth);
+  /* an invited person's colour in their book (bookhead.js). */
+  color: var(--bk-who, var(--bk-cloth));
 }
 #book .bk-day {
   font-size: 13px;
 }
-#book .bk-head .bk-new {
+#book .bk-head .bk-new,
+#book .bk-head .bk-mine {
   border: 0;
   border-radius: 5px;
   background: var(--bk-paper);
@@ -86,7 +51,8 @@
     0 0 0 2px var(--bk-cloth),
     0 2px 0 2px #1f1b33;
 }
-#book .bk-head .bk-new:active {
+#book .bk-head .bk-new:active,
+#book .bk-head .bk-mine:active {
   transform: translateY(2px);
   box-shadow:
     inset 0 0 0 3px var(--bk-paper),
@@ -94,7 +60,7 @@
     0 0 0 2px var(--bk-cloth);
 }
 
-/* a sheet's or a call's head on its page: a slip of the book's paper with the gold of its ribbon along its foot */
+/* a sheet's or a call's head on its page: a slip of the book's paper with a gold line along its foot */
 #book .bk-page[data-kind='sheet'] .bk-title,
 #book .bk-page[data-kind='call'] .bk-title {
   border-radius: 3px;

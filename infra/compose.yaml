@@ -46,6 +46,7 @@ services:
       RUNS_TOKEN: ${RUNS_TOKEN}         # this server's run helper's key
       IMPORTS_DIR: /imports
       RUN_DIR: /run/hq
+      DEPLOY_BUILD_RESERVE_GB: ${DEPLOY_BUILD_RESERVE_GB:-0}
       IMPORTS_MAX_GB: ${IMPORTS_MAX_GB:-}            # a company's own in its company/infra.env
       IMPORTS_MIN_FREE_GB: ${IMPORTS_MIN_FREE_GB:-}
     volumes:

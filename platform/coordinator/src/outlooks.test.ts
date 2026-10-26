@@ -128,8 +128,29 @@ test("each thread's window and slack: one that gives, one that misses, one witho
   const onCall = await h.hq({ ...lead, call: true }, 'thread', misses);
   assert.match(onCall.out, new RegExp(`RED FLAG, not news for the board: ${misses} misses its deadline\\.`));
   assert.match(onCall.out, /other work ahead of it.*paused[^]*whether to look further after the call\./);
-  const all = await h.hq({ ...lead, call: true }, 'projects');
-  assert.match(all.out, new RegExp(`RED FLAG, not news for the board: ${misses} misses its deadline\\.`));
+  // the eta tool's lookup, by words
+  const found = await h.hq({ ...lead, call: true }, 'projects', 'the', 'game');
+  assert.match(found.out, /RED FLAG, not news for the board: The misses misses its deadline\./);
+  // the job tool's answer lists every agreed deadline: on a call, the one it misses comes with the same instruction,
+  // after the line that makes moving it back the agent's
+  const job = (call: boolean) =>
+    h.hq({ ...lead, call }, 'job', 'bolt', 'Another step', '--thread', none, '--new', '--code', call ? 'CALL' : 'DESK');
+  const queuedOff = await job(false);
+  assert.equal(queuedOff.code, 0, queuedOff.out);
+  assert.match(queuedOff.out, /- The game's The misses: deadline .*; done about .* past it/);
+  assert.doesNotMatch(queuedOff.out, /RED FLAG/);
+  const queuedOn = await job(true);
+  assert.equal(queuedOn.code, 0, queuedOn.out);
+  assert.match(
+    queuedOn.out,
+    /\nAn agreed deadline its finish passes is yours to move back first; [^\n]*\n\nRED FLAG, not news for the board: The game's The misses misses its deadline\. [^]*don't raise it again\./,
+  );
+  // and hq window's, for the windows it leaves missing
+  const window = await h.hq({ ...lead, call: true }, 'window', misses, '1m', '--try');
+  assert.match(
+    window.out,
+    /\nMisses The game's The misses: [^]*RED FLAG, not news for the board: The game's The misses misses its deadline\./,
+  );
 });
 
 test('the view and hq read its jobs: the chain that sets its ETA, each job sized, and the one next', async () => {

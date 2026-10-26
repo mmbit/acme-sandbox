@@ -1,7 +1,9 @@
 // The call ledger: what the board asked for, decided or explained on a call, and what was promised on it, one item each,
 // followed until it's done. A call's follow-up job records the items first
 // (the words on the call, verbatim, stay with the agents), then hands them out: an item is handled only by evidence (its
-// job ended done, a pause the board agreed, a question's answer on the call), never by a claim. A sweep sends a call again whose follow-up failed or ended
+// job ended done, a pause the board agreed, a question's answer on the call), never by a claim. A task or promise whose
+// job ended done is ready, not handled: delivered means the board has seen it and said yes, and the CEO records that
+// (done()). A sweep sends a call again whose follow-up failed or ended
 // without recording anything, three times at most, then says so on HQ's feed. The model does the extracting: nothing
 // here reads or matches what anyone said.
 import { db, once } from './db.ts';
@@ -21,7 +23,8 @@ import { callAccess, customerCall } from './memory.ts';
 
 export type Item = { id: number; call: number; kind: string; owner: string; what: string; quote: string; lines: string | null;
   status: string; job: number | null; request: number | null; ref: string | null; why: string | null; replaces: number | null; by: number | null;
-  acted_at: string | null; board: number | null; due: number | null; goal: string | null };
+  acted_at: string | null; board: number | null; due: number | null; goal: string | null; ready_at: string | null;
+  said: string | null };
 type Call = { id: number; ts: string; agent: string; request: number | null; lines: string; job: number | null; status: string;
   processed_at: string | null; attempts: number; lines_at: string | null; resumes: string | null; reply: string | null; customers: number };
 
@@ -112,7 +115,10 @@ export function transcript(call: number, range?: unknown) {
 // hq items <call>: everything on the call, words included. hq items: what's open on every call, one line each and its
 // goal (the line also goes in every call's briefing and every follow-up's brief), every item's line whole.
 export const items = (call: number) => db.prepare('select * from call_items where call = ? order by id').all(call) as Item[];
-export const openItems = () => db.prepare(`select id, call, kind, owner, what, goal, job from call_items where status = 'open' order by id`).all() as Item[];
+// (ready: its work ended, and the board's yes is still to come: done())
+export const openItems = () => db.prepare(`select id, call, kind, owner, what, goal, job, status, ready_at,
+  (select j.id from jobs j where j.id = i.job and j.status = 'stopped') stopped from call_items i
+  where status in ('open', 'ready') order by id`).all() as (Item & { stopped: number | null })[];
 
 // hq item add: one item. Refusals say why (a string), for hq to print; nothing is cut to fit.
 // due: the time the board was given for it (ms; a correction keeps the earlier item's unless it gives one). goal: why the
@@ -251,7 +257,7 @@ function goalTo(item: Item, j: LinkedJob, carries: boolean, from: { agent: strin
 // link() to a job: the work that carries the item, or shows it's done (above). from: the linker, whose words the goal is.
 function linkJob(item: Item, job: LinkedJob, from: { agent: string; job: number }, onto?: string) {
   const by = from.agent;
-  if (['failed', 'cancelled'].includes(job.status)) return `job #${job.id} ${job.status}: hand the item out again (hq job --item ${item.id} ...)`;
+  if (['failed', 'stopped', 'cancelled'].includes(job.status)) return `job #${job.id} ${job.status}: hand the item out again (hq job --item ${item.id} ...)`;
   if (windows.dropped(job.id)) return `job #${job.id}'s pull request was closed unmerged: hand the item out again (hq job --item ${item.id} ...)`;
   const own = job.queued_by != null && (job.agent === by || job.queued_by === by);
   if (own && job.item != null && job.item !== item.id) return `job #${job.id} carries item #${job.item} already, and a job carries one: hand item #${item.id} out as its own job (hq job --item ${item.id} ...)`;
@@ -270,14 +276,33 @@ function linkJob(item: Item, job: LinkedJob, from: { agent: string; job: number 
   if (typeof thread === 'string')
     return `${thread}: link it with --thread <project>/<slug> to put the work, its reviews with it, on an open thread (hq thread list)`;
   // (a request or ref an earlier job left on it says what that job did: this job is its work now)
-  db.prepare('update call_items set job = ?, request = null, ref = null where id = ?').run(job.id, item.id);
+  db.prepare('update call_items set job = ?, request = null, ref = null, why = null where id = ?').run(job.id, item.id);
   // From now on it reads the call (hq call, hq items: mine()).
   if (own && job.item == null) db.prepare('update jobs set item = ?, call = coalesce(call, ?) where id = ?').run(item.id, item.call, job.id);
   const set = thread ? windows.set(thread, { deadline: item.due!, aim: item.due! }, callAgent(item.call)) : undefined;
-  if (job.status === 'done') close(item.id);
+  if (job.status === 'done') workEnded(item.id);
   return { set, goal: goalTo(item, job, own && (job.item == null || job.item === item.id), from) };
 }
 const close = (id: number) => db.prepare("update call_items set status = 'handled', closed_at = ? where id = ? and status = 'open'").run(iso(), id);
+// The work an open item is waiting on ended done (?1: when): a task or promise is ready for the board's yes (done()),
+// anything else is handled.
+const ASKED = "('task', 'promise')";
+const WORK_ENDED = `status = iif(kind in ${ASKED}, 'ready', 'handled'), ready_at = iif(kind in ${ASKED}, ?1, null),
+  closed_at = iif(kind in ${ASKED}, null, ?1)`;
+const workEnded = (id: number) => db.prepare(`update call_items set ${WORK_ENDED} where id = ?2 and status = 'open'`).run(iso(), id);
+
+// hq item done: the CEO records that the board has the task or promise and said yes (on a call, in the intercom or a
+// card's answer), in the board's words, a line: only that handles it. Ready (its work ended), or open (the board said
+// yes to what it saw before that). The CEO's jobs only (server.ts).
+export function done(id: number, said: unknown, by: number) {
+  const item = getItem(id), words = oneLine(said, WHY);
+  if (item && !['task', 'promise'].includes(item.kind)) return `item #${id} is a ${item.kind}: only a task or a promise waits for the board's yes`;
+  if (!item || !['open', 'ready'].includes(item.status)) return `item #${id} isn't open or ready`;
+  if (!words) return `what the board said is one plain line of at most ${WHY} characters`;
+  db.prepare("update call_items set status = 'handled', said = ?, closed_at = ? where id = ?").run(words, iso(), id);
+  wentThrough(id, by);
+  return { ok: true };
+}
 
 // The board's word the call agent passed on to work under way during the call (call.ts reach): a message item, handled
 // as it's recorded, for the job it went to (a running job, or a work job on the branch whose review it went to), and ref
@@ -294,11 +319,12 @@ export function reached(call: number, b: { owner: string; what: string; goal: st
 export const changedSince = (told: string) => (db.prepare(`select id from call_items where id in (select value from json_each(?))
   and status <> 'handled' order by id`).all(told) as { id: number }[]).map(i => i.id);
 
-// hq item drop: not going to happen, and why (the board reads it). Its work that hasn't started stops too.
+// hq item drop: not going to happen, and why (the board reads it). Its work that hasn't started stops too. A ready item
+// (its work ended without the board's yes): the CEO drops it too (server.ts).
 export function drop(id: number, why: unknown, by: number) {
   const item = getItem(id), w = oneLine(why, WHY);
   // (a message item is handled from the start, and withdrawn)
-  if (!item || !(item.status === 'open' || item.kind === 'message' && item.status === 'handled')) return `item #${id} isn't open`;
+  if (!item || !(['open', 'ready'].includes(item.status) || item.kind === 'message' && item.status === 'handled')) return `item #${id} isn't open`;
   if (!w) return `why is one plain line of at most ${WHY} characters: the board reads it`;
   const cancelled = stop(id, w, 'dropped');
   wentThrough(id, by);
@@ -480,6 +506,7 @@ export function cancelled(id: number, why: string) {
 export function handOut(itemId: number, forJob: (call: number) => boolean) {
   const item = getItem(itemId);
   if (!item || !forJob(item.call)) return `item #${itemId} isn't on a call this job works for`;
+  if (item.status === 'ready') return `item #${itemId} is ready (its work ended): the CEO records the board's yes (hq item done) or drops it`;
   if (item.status !== 'open') return `item #${itemId} is ${item.status}: nothing to hand out`;
   const open = item.job && db.prepare(`select status from jobs where id = ? and status in ${OPEN}`).get(item.job) as { status: string } | undefined;
   if (open) return `item #${itemId} already has job #${item.job} (${open.status}): it isn't handed out twice (to go through it, hq item link ${itemId} job:${item.job})`;
@@ -496,12 +523,12 @@ export function handOut(itemId: number, forJob: (call: number) => boolean) {
 }
 // (by: the job that handed it out, null for the live call's own token: the call's follow-up handing it out has gone through it.)
 export function handedOut(item: number, job: number, by: number | null) {
-  db.prepare('update call_items set job = ?, request = null, ref = null where id = ?').run(job, item);
+  db.prepare('update call_items set job = ?, request = null, ref = null, why = null where id = ?').run(job, item);
   return wentThrough(item, by) ? tell(by, item) : {};
 }
 
-// A job ended (jobs.ts finish()). Done: the items it carries are handled, and those of the failed jobs it replaced (jobs.ts
-// replacements), and a call it follows up is processed if its
+// A job ended (jobs.ts finish()). Done: the items it carries are handled (a task or promise ready for the board's yes:
+// done()), and those of the failed jobs it replaced (jobs.ts replacements), and a call it follows up is processed if its
 // follow-up went through an item on it since the transcript came in (recorded(): nothing means the call wasn't followed
 // up, and the sweep sends it again; an item's job ending done isn't the follow-up going through it), and nothing the
 // board added is untouched (acting on the board's items alone isn't the call followed up: they aren't a record of it).
@@ -517,6 +544,13 @@ export function handedOut(item: number, job: number, by: number | null) {
 // the CEO's, and the next turn hears them. (A call about a request the CEO's intercom asked is followed up by the chat
 // job itself, jobs.ts tell(): its reply is there already, and is the call's too, chat.answered().)
 export function finished(job: { id: number; kind: string }, status: string) {
+  if (status === 'stopped') {
+    const stopped = db.prepare('select stopping from jobs where id = ?').get(job.id) as { stopping: string | null };
+    db.prepare(`update call_items set status = 'open', job = ?2, closed_at = null, ready_at = null, why = ?1
+      where (job in (${lineageTo('?2')}) or id in (select item from jobs where id in (${lineageTo('?2')})))
+      and status in ('open', 'ready', 'handled') and kind not in ('message', 'question')`).run(`stopped: ${stopped.stopping}`, job.id);
+    return;
+  }
   if (status !== 'done') return;
   withheld(job.id);
   itemsDone(job.id);
@@ -563,10 +597,10 @@ function withheld(job: number) {
   if (!refusals.length) return;
   for (const i of db.prepare(`select * from call_items where job in (${lineageTo('?')}) and status = 'open'`).all(job) as Item[]) {
     const next = db.prepare(`select id, status from jobs where item = ? and id <> ? and kind = 'work' and created >= ?
-      and status not in ('failed', 'cancelled') order by id desc limit 1`).get(i.id, job, refusals[0].at) as { id: number; status: string } | undefined;
+      and status not in ('failed', 'stopped', 'cancelled') order by id desc limit 1`).get(i.id, job, refusals[0].at) as { id: number; status: string } | undefined;
     if (next && !(next.status === 'done' && db.prepare('select 1 from refusals where job = ?').get(next.id))) {
       db.prepare('update call_items set job = ? where id = ?').run(next.id, i.id);
-      if (next.status === 'done') close(i.id);
+      if (next.status === 'done') workEnded(i.id);
       continue;
     }
     const c = getCall(i.call)!, name = (agent?: string) => agent ? findAgent(agent)?.name ?? agent : 'a colleague';
@@ -582,14 +616,16 @@ function withheld(job: number) {
 const ON_BRANCH = `(i.id in (select item from jobs where branch = ?1 and kind = 'work')
   or exists (select 1 from jobs b where b.branch = ?1 and b.kind = 'work' and i.job in (${lineageTo('b.id')})))`;
 export const asked = (branch: string) => db.prepare(`select i.* from call_items i where ${ON_BRANCH} order by i.id`).all(branch) as Item[];
-// A pull request closed unmerged: the items asked() finds for its branch are open again if they were handled, and the
+// A pull request closed unmerged: the items asked() finds for its branch are open again if they were handled or ready, and the
 // board's view shows them open. A lead handed the item can queue the work for a colleague (server.ts passes it on) and end
 // done, which handles it, but the work is in the colleague's pull request. An item stays handled while another pull
 // request tied to it (a job carrying it or handed it) merged or hasn't closed yet (open, stuck, with the board): a
 // helper's or a stale sibling's close leaves it, whichever order the PRs end in, and the last one to close reopens it.
-// A pause that carries it, a question answered on the call, or a message delivered during the call stays handled.
+// A pause that carries it, a question answered on the call, a message delivered during the call, or the board's yes
+// (done()) stays handled.
 // A request or ref on any other item says what its job did (link()): that work didn't land either.
-export const reopen = (branch: string) => db.prepare(`update call_items as i set status = 'open', closed_at = null where status = 'handled'
+export const reopen = (branch: string) => db.prepare(`update call_items as i set status = 'open', closed_at = null, ready_at = null
+  where status in ('handled', 'ready') and said is null
   and not exists (select 1 from pauses p where p.item = i.id) and (kind not in ('question', 'message') or request is null and ref is null)
   and ${ON_BRANCH} and not ${tied("<> 'closed'")}`).run(branch).changes;
 // A pull request tied to item i (a job on its branch carries it, was handed it or replaced the job handed it) whose status
@@ -597,7 +633,7 @@ export const reopen = (branch: string) => db.prepare(`update call_items as i set
 // A done job's open items that its ending shows done: those a request or ref ties to its work once that work's pull
 // request is open or merged (tied), the rest at once.
 function itemsDone(job: number) {
-  db.prepare(`update call_items as i set status = 'handled', closed_at = ?1 where job in (${lineageTo('?2')}) and status = 'open'
+  db.prepare(`update call_items as i set ${WORK_ENDED}, why = null where job in (${lineageTo('?2')}) and status = 'open'
     and not exists (select 1 from refusals r where r.job = ?2)
     and not (${tied("= 'closed' and j.id > i.job")} and not ${tied("<> 'closed'")})
     and (request is null and ref is null or ${tied("<> 'closed'")})`).run(iso(), job);
@@ -710,6 +746,7 @@ This call carried on from ${which}: the board called back before the earlier fol
 }
 // (a message item in step 2) (step 3's new time from hq when) (step 2's request or ref) (a held card in step 2)
 // (an item's goal, and a rule judged against it, in steps 1 and 2)
+// (steps 1 and 3's times, the board's own with its date and no zone)
 //
 // (intercom: the CEO's intercom turn follows the call up, ceoNotesAsk.)
 function brief(c: Call, lines: string[], intercom = false) {
@@ -724,10 +761,10 @@ ${resumedBrief(c)}${c.agent === ceo() && unstaffed() ? founding() : ''}Work thro
 1. Record, before you act on any of it: one item for each thing the board asked for, decided or explained, and one for each promise made on the call (by you, or for a colleague). Put the goal and the words from the transcript, verbatim, in a JSON file in $TMPDIR ({"goal": "why", "words": "..."}), and run
    hq item add <kind> <owner> "what" - <a-b> --goal - --call ${c.id} < that-file
    kind: task (something to do), decision, briefing (the board explained something at length: a vision, a plan, a spec), promise (someone on the call said it would be done), or question (the board asked and got its answer on the call: link it right away, hq item link <item> "answered on the call"). owner: the agent who sees it through. "what": one plain line, the only thing the board reads about it (no quotes, no line numbers). "goal": why the board wants it, the goal it serves or the problem it solves, in the board's own terms from the whole discussion (it usually says why, often lines away from the ask), never your plan for it; every job that carries the item gets it. It goes on stdin with the words, never in argv, where other jobs can read it. a-b: its lines in the transcript below.
-   When it was given a time on the call (when it will be done, ready, live, on the desk phone), add --deadline with that time in UTC (2026-10-06T14:30Z), worked out from when the call began, ${c.ts.slice(0, 16).replace('T', ' ')} UTC, and the board's own time zone (${timeZone()}). A promise the call agent noted with its time has it already (hq items: due). The thread of the job that carries the item, or of the job you link it to, takes it as its window: HQ orders that thread's work by it, and the CEO sees it if the thread slips. An item with no time that you hand out takes its window as it's queued (\`hq job --item ... --by\`): a time the board asked for that the call didn't give (hq when's), or \`--by <project>/<slug>\`, the deliverable it serves; on a thread that has a window or one a windowed thread needs, it has it already. The CEO is asked for one otherwise, and the CEO's own hand-out is refused until it gives one or says \`--by none\`.
-   \`hq items ${c.id}\` lists what's recorded already (a promise, or the call agent's reading of a correction, may have gone in during the call): don't add it twice, and act on those too. A correction noted on the call is checked against the transcript: if it replaced the wrong item or misread the board, drop it and record the replaced item's work again as a new item and hand it out (its cancelled jobs stay cancelled). The replaced item's running jobs hear the correction from you when you first go through it (hand it out, link or drop it), with your reason if you drop it. One the call already handed out whose job hasn't ended (queued or running) is gone through with \`hq item link <item> job:<that job>\`: it stays open until that job ends done (a ref or request is refused while it's open). One that's handled already (its job, handed out on the call, ended done) still needs you to go through it: check the work, then \`hq item link <item> "<ref>"\` notes that you did, and changes nothing about it. If the board changed something it said on an earlier call, add the new item with --replaces <earlier item>: the earlier one is replaced (even if it was handled) and its jobs that haven't started are cancelled (it tells you which are running).
-2. Act on each item, and link it to what shows it's done. Hand work out with \`hq job --item <item> <agent> "title" <brief-file> --code <WORD>\`: the job gets the words from the call with it, and the item is handled when that job ends done (queued is not done: nobody is on it until it runs). Work already under way (a job queued or running, a pull request in review) is linked: \`hq item link <item> job:<its job>\` (a pull request's job is the one on its branch, job/<n>), and the item's time becomes the deadline of that work's thread (work in no open thread: add \`--thread <project>/<slug>\` to put it on one), and its goal reaches it where its agent may read the call (hq item link says). What the call agent added on the call to a job it queued there (its add tool: the job's brief, or a message to it if it had started) has reached that job already: link it to that job, never hand it out again. So has a message item (the board's word it passed on to work under way, recorded handled), in the call agent's words: check them against the transcript. If they say what the board said, go through it with \`hq item link <item> "checked against the call"\`, and never send it again. If the call agent misheard, \`hq item replace <item>\` with the board's own words from the transcript, or \`hq item drop <item> "why"\` if the board never said it or took it back: the work it reached and the pull request's review go by the correction from then on. Or do it here and link it: \`hq item link <item> request:<id>\`, or a ref (a DECISIONS.md entry, a note's path, a commit): the item is then this job's work, handled only when it ends done with a pull request, whose review judges it against the board's words: ending without one leaves it open (only a question is handled at once). Do what the board asked as it asked it: work you think should wait or go differently is the board's to decide, on a card. A card this job files (hq ask) is held off the desk phone until this job's work is merged and deployed, and the work it's about that you handed out with it (\`--when deployed:<job>\` for each), then shows as a new card: never hq wait on it, queue the step that needs its answer with \`hq job --after request:<id>\`. Something that won't happen: \`hq item drop <item> "why"\` (one line the board reads). Judge every rule you write down from an item (a hold, a limit, an order, a scope) against its goal before it goes in a brief or DECISIONS.md: a narrowing or an exception that would defeat the goal goes back to the board as a card (hq ask, one decision, our recommendation), never into the plan. A brief you hand out says the goal and the reasons the board gave on the call, not only the item's line, and a DECISIONS.md entry for the board's decision gives its why in the board's terms. A hold the board agreed on a project or a thread (no work on it until something lands) is recorded as the pause: \`hq project pause <project> "why"\` or \`hq thread pause <project>/<slug> "why"\`, with what wakes you to judge it: \`--until <job>\` for each job it waits for, \`--until-time <time>\`, or \`--by-hand\` (nothing does; it never lifts by itself, only your resume lifts it), then \`hq item link <item> pause:<project or thread>\` (the CEO or the project's owner pauses: anyone else hands the item to the CEO with \`hq job --item\`). Never as waits on its jobs or a line in a brief: the claim holds a pause, and the CEO's hourly check reads it. A long briefing reaches its builder through the job; a note in the Library keeps only a summary, never the board's words.
-3. ${c.agent === ceo() ? ceoNotesAsk(intercom) : callNotesAsk()} Build the reply from the items, and never call work done that hasn't run. A time in it is one the board asked about: the one given on the call (its item's deadline), or, where the board asked for one the call didn't give, a new one: read \`hq thread <project>/<slug>\` for work already queued, or \`hq when "..." --agent <owner>\` for new work, with its dependencies and \`--by\` the board's time when it named one. Put that new time on the work's thread as its window in UTC: \`--by <when>\` as you queue it, or \`hq window <thread | job | pr:<n>> <when>\` for work already queued.
+   When it was given a time on the call (when it will be done, ready, live, on the desk phone), add --deadline with the board's own time, with its date and no zone (2026-10-26 09:00, on the company's clock, ${timeZone()}), worked out from when the call began, ${c.ts.slice(0, 16).replace('T', ' ')} UTC; a time with Z, or a time of day alone (14:30), is UTC. A promise the call agent noted with its time has it already (hq items: due). The thread of the job that carries the item, or of the job you link it to, takes it as its window: HQ orders that thread's work by it, and the CEO sees it if the thread slips. An item with no time that you hand out takes its window as it's queued (\`hq job --item ... --by\`): a time the board asked for that the call didn't give (hq when's), or \`--by <project>/<slug>\`, the deliverable it serves; on a thread that has a window or one a windowed thread needs, it has it already. The CEO is asked for one otherwise, and the CEO's own hand-out is refused until it gives one or says \`--by none\`.
+   \`hq items ${c.id}\` lists what's recorded already (a promise, or the call agent's reading of a correction, may have gone in during the call): don't add it twice, and act on those too. A correction noted on the call is checked against the transcript: if it replaced the wrong item or misread the board, drop it and record the replaced item's work again as a new item and hand it out (its cancelled jobs stay cancelled). The replaced item's running jobs hear the correction from you when you first go through it (hand it out, link or drop it), with your reason if you drop it. One the call already handed out whose job hasn't ended (queued or running) is gone through with \`hq item link <item> job:<that job>\`: it stays open until that job ends done (a ref or request is refused while it's open). One that's handled or ready already (its job, handed out on the call, ended done) still needs you to go through it: check the work, then \`hq item link <item> "<ref>"\` notes that you did, and changes nothing about it. If the board changed something it said on an earlier call, add the new item with --replaces <earlier item>: the earlier one is replaced (even if it was handled) and its jobs that haven't started are cancelled (it tells you which are running).
+2. Act on each item, and link it to what shows it's done. Hand work out with \`hq job --item <item> <agent> "title" <brief-file> --code <WORD>\`: the job gets the words from the call with it, and the item is handled when that job ends done (a task or a promise is ready then, and stays open until the CEO records the board's yes; queued is not done: nobody is on it until it runs). Work already under way (a job queued or running, a pull request in review) is linked: \`hq item link <item> job:<its job>\` (a pull request's job is the one on its branch, job/<n>), and the item's time becomes the deadline of that work's thread (work in no open thread: add \`--thread <project>/<slug>\` to put it on one), and its goal reaches it where its agent may read the call (hq item link says). What the call agent added on the call to a job it queued there (its add tool: the job's brief, or a message to it if it had started) has reached that job already: link it to that job, never hand it out again. So has a message item (the board's word it passed on to work under way, recorded handled), in the call agent's words: check them against the transcript. If they say what the board said, go through it with \`hq item link <item> "checked against the call"\`, and never send it again. If the call agent misheard, \`hq item replace <item>\` with the board's own words from the transcript, or \`hq item drop <item> "why"\` if the board never said it or took it back: the work it reached and the pull request's review go by the correction from then on. Or do it here and link it: \`hq item link <item> request:<id>\`, or a ref (a DECISIONS.md entry, a note's path, a commit): the item is then this job's work, handled only when it ends done with a pull request, whose review judges it against the board's words: ending without one leaves it open (only a question is handled at once). Do what the board asked as it asked it: work you think should wait or go differently is the board's to decide, on a card. A card this job files (hq ask) is held off the desk phone until this job's work is merged and deployed, and the work it's about that you handed out with it (\`--when deployed:<job>\` for each), then shows as a new card: never hq wait on it, queue the step that needs its answer with \`hq job --after request:<id>\`. Something that won't happen: \`hq item drop <item> "why"\` (one line the board reads). Judge every rule you write down from an item (a hold, a limit, an order, a scope) against its goal before it goes in a brief or DECISIONS.md: a narrowing or an exception that would defeat the goal goes back to the board as a card (hq ask, one decision, our recommendation), never into the plan. A brief you hand out says the goal and the reasons the board gave on the call, not only the item's line, and a DECISIONS.md entry for the board's decision gives its why in the board's terms. A hold the board agreed on a project or a thread (no work on it until something lands) is recorded as the pause: \`hq project pause <project> "why"\` or \`hq thread pause <project>/<slug> "why"\`, with what wakes you to judge it: \`--until <job>\` for each job it waits for, \`--until-time <time>\`, or \`--by-hand\` (nothing does; it never lifts by itself, only your resume lifts it), then \`hq item link <item> pause:<project or thread>\` (the CEO or the project's owner pauses: anyone else hands the item to the CEO with \`hq job --item\`). Never as waits on its jobs or a line in a brief: the claim holds a pause, and the CEO's hourly check reads it. A long briefing reaches its builder through the job; a note in the Library keeps only a summary, never the board's words.
+3. ${c.agent === ceo() ? ceoNotesAsk(intercom) : callNotesAsk()} Build the reply from the items, and never call work done that hasn't run. A time in it is one the board asked about: the one given on the call (its item's deadline), or, where the board asked for one the call didn't give, a new one: read \`hq thread <project>/<slug>\` for work already queued, or \`hq when "..." --agent <owner>\` for new work, with its dependencies and \`--by\` the board's time when it named one. Put that new time on the work's thread as its window, the board's own time with its date and no zone: \`--by <when>\` as you queue it, or \`hq window <thread | job | pr:<n>> <when>\` for work already queued.
 The call counts as followed up only when this job ends done${intercom ? '' : " with the board's reply set (step 3)"} and, since the transcript came in, a follow-up has recorded at least one item, or handed out, linked or dropped one recorded during the call (a job ending done doesn't count, nor does anyone else acting on an item)${added.length ? ", and what the board added is handed out or linked: the board's items aren't a record of the call" : ''}. A call with nothing to act on is one question item, handled.
 ${open.length ? `\nStill open from earlier calls (for --replaces):\n${open.map(i => `- #${i.id} (call #${i.call}, ${i.owner}): ${i.what}`).join('\n')}\n` : ''}
 ${uploaded(c.id, lines.length > 0)}The transcript (again with \`hq call ${c.id}\`, or \`hq call ${c.id} a-b\` for a range):
@@ -819,6 +856,7 @@ export function stillOpen(max = 8, except: number[] = []) {  // (except: the liv
   const open = openItems().filter(i => !except.includes(i.call)), shown = open.slice(-max);
   if (!open.length) return { text: '', listed: [] as { id: number; end: number }[] };
   let text = '## Still open from earlier calls';
-  const listed = shown.map(i => { text += `\n- #${i.id}: ${i.what} (${i.owner})`; return { id: i.id, end: text.length }; });
+  // (ready: its work ended, and it's open until the board says yes)
+  const listed = shown.map(i => { text += `\n- #${i.id}: ${i.what} (${i.owner}${i.status === 'ready' ? ', ready for the board to say yes' : ''})`; return { id: i.id, end: text.length }; });
   return { text: `${text}${open.length > max ? `\n- and ${open.length - max} more` : ''}\n\n`, listed };
 }

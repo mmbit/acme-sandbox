@@ -1,0 +1,8 @@
+[
+  "Read platform/coordinator/src/jobs.ts",
+  "Grep “claimNext” in platform/coordinator/src",
+  "I’ll add the wait to the claim query, then test it.",
+  "Edit platform/coordinator/src/jobs.ts",
+  "$ cd platform/coordinator && node --test src/jobs.test.ts",
+  "Plan: ✓ Read the queue · ✓ Add the wait · Test it"
+]

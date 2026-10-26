@@ -10,7 +10,6 @@ const h = await harness('owed', { before: repo => {
 } });
 const { repo, db, agent } = h;
 const owed = await import('./owed.ts');
-const feedback = await import('./feedback.ts');
 const { routed } = await (await import('./routing.fixture.ts')).routingFixture();
 
 // Each case starts with nothing owed and no job open: no route clears a whole company's work
@@ -54,12 +53,13 @@ const ask = async (from: Running, o: { products?: string[]; back?: string[]; tit
 const answer = async (card: number, text: string) => assert.equal((await h.answer(card, text)).status, 200);
 const heardBy = (agent: string) => (h.jobs.listJobs() as any[]).find(j => j.agent === agent && j.title.startsWith('The board on:'));
 const ownersOpen = (agent: string) => (h.jobs.listJobs() as any[]).filter(j => j.agent === agent && ['queued', 'running', 'blocked'].includes(j.status));
-// The board's review notes on a product's preview (saved by the review overlay), sent from HQ and routed by the CEO's
-// check to the product's owner (or to `to`): the job they went to
+// The board's review notes on a product's preview, sent as HQ's Reviews sent them and routed by the CEO's check to the
+// product's owner (or to `to`): the job they went to (routing.fixture.ts sentNotes)
 let note = 0;
+const sent = await (await import('./routing.fixture.ts')).sentNotes();
 const notes = async (slug: string, to?: string, thread?: string) => {
-  const id = (feedback.saveNote(slug, `${slug}.preview.x`, { note: `note ${++note}` }) as { id: number }).id;
-  return routed((await h.board('/api/review/send', { slug, ids: [id] })).body.job, to, thread).job;
+  const id = sent.pin(slug, `note ${++note}`);
+  return routed(sent.send(slug, [id]).job, to, thread).job;
 };
 
 test("a held task of notes gives them back with the product's return: the task they go to next holds it", async () => {
@@ -122,8 +122,7 @@ test("the owner's held task of notes and a colleague's before it give theirs bac
   const colleague = h.jobs.createJob({ agent: 'bolt', title: 'Other work', prompt: '', queuedBy: 'bolt' }).id;
   const holder = await notes('yarn');
   assert.equal((await open('yarn')).job, holder);
-  const id = (feedback.saveNote('yarn', 'yarn.preview.x', { note: `note ${++note}` }) as { id: number }).id;
-  const check = (await h.board('/api/review/send', { slug: 'yarn', ids: [id] })).body.job;
+  const check = sent.send('yarn', [sent.pin('yarn', `note ${++note}`)]).job;
   const claimed = h.jobs.claim(`routing-${check}`, h.jobs.findAgent(h.jobs.jobAgent(check)!)!.engine);
   const went = routing.route({ id: check, agent: claimed!.agent }, `#${colleague}`, []);
   assert.equal(typeof went, 'object', String(went));

@@ -1,7 +1,7 @@
 // Project and thread pauses, what wakes their owner to judge them (a time, jobs merged or ended: pausewake.ts), the
 // decision of the board's whose answer lifts one (decisions.ts), and the queued work they hold. Every pause names what
 // wakes its owner, or that nothing does (by hand). Nothing but a resume lifts a pause otherwise: a condition met wakes
-// its owner, who lifts it, tells the board or keeps it on for what's still missing (board, 24 and 25 Oct). In words: pausewords.ts.
+// its owner, who lifts it, tells the board or keeps it on for what's still missing. In words: pausewords.ts.
 import { db, inOneStep, prepared } from './db.ts';
 import { ceo } from './company.ts';
 import { publish } from './events.ts';
@@ -37,8 +37,8 @@ const isDesk = (named: string) =>
 // judge it: --until jobs, once they're all merged or ended, and --until-time, a time (both: once both are met), or
 // --by-hand, nothing (the hourly check reads it). A pause for a decision (decisions.ts) is the CEO's, and waits for that.
 // Paused already, the same again by whoever may resume it keeps it on with this why and these conditions instead, and
-// they wake its owner afresh: how a woken owner keeps holding for what's still missing. The answer is the pause, or why
-// not.
+// they wake its owner afresh: how a woken owner keeps holding for what's still missing, or waits for the board's decision
+// (hq decision --blocks). The answer is the pause, or why not.
 export function pause(
   ask: {
     thread?: string;
@@ -102,7 +102,12 @@ function written(
 ) {
   return inOneStep(() => {
     if (kept !== undefined) {
-      db.prepare('update pauses set why = ?, until_time = ?, woken = null where id = ?').run(p.why, p.untilTime, kept);
+      db.prepare('update pauses set why = ?, until_time = ?, decision = ?, woken = null where id = ?').run(
+        p.why,
+        p.untilTime,
+        p.decision ?? null,
+        kept,
+      );
       db.prepare('delete from pause_until where pause = ?').run(kept);
     }
     const insert =
@@ -120,6 +125,7 @@ function written(
   });
 }
 // Why a pause names no way to wake its owner: none of --until, --until-time and --by-hand, or --by-hand with another
+// (its --until-time forms)
 function conditionRefusal(
   ask: { until: number[]; untilTime?: unknown; byHand?: boolean; decision?: number },
   target: string,
@@ -127,7 +133,7 @@ function conditionRefusal(
   const named = ask.until.length > 0 || ask.untilTime != null;
   if (named && ask.byHand) return '--by-hand is for a pause nothing wakes you about: give it or --until/--until-time';
   if (!named && !ask.byHand && ask.decision == null)
-    return `say what wakes you to judge ${target}: --until <job> (once it's merged or ended), --until-time <time> (2h, 14:30, 2026-10-26T08:00Z), or --by-hand (nothing does: the hourly check reads it)`;
+    return `say what wakes you to judge ${target}: --until <job> (once it's merged or ended), --until-time <time> (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC), or --by-hand (nothing does: the hourly check reads it)`;
   return null;
 }
 // Why `agent` can't put an open pause on new conditions: as resume, and never one waiting for the board's decision
@@ -203,10 +209,15 @@ export function openPause(target: string): Row | string {
 }
 
 // Why work on thread `from` (null: in no thread, held by the desk's pause) can't move to `to` (regroup.ts): an open pause
-// holds it there that wouldn't hold it after the move, and work leaves a pause only the way the pause lifts. A moving
-// thread (no `to.thread`) takes its own pauses along, never its project's. A moving job keeps only its project's, and
-// only within that project. Undefined when none does.
-export function shedRefusal(from: string | null, to: { project: string; thread?: string }) {
+// holds it there that would not hold it after the move. Its owner or the CEO may move it with a reason, except for
+// a board-decision pause. A moving thread takes its own pauses along. A moving job keeps its project's pause only
+// within that project. Undefined when no pause refuses the move.
+export function shedRefusal(
+  from: string | null,
+  to: { project: string; thread?: string },
+  agent?: string,
+  why?: string,
+) {
   const shed = (
     db
       .prepare(
@@ -217,6 +228,13 @@ export function shedRefusal(from: string | null, to: { project: string; thread?:
       .all(from?.split('/')[0] ?? jobs.DESK, from) as Row[]
   ).filter(p => (p.thread === null ? p.project !== to.project : to.thread !== undefined && p.thread !== to.thread));
   if (!shed.length) return undefined;
+  const protectedPause = shed.find(p => p.decision !== null);
+  if (protectedPause)
+    return `this work waits for the board's decision #${protectedPause.decision}: only its answer lets it go`;
+  if (agent && shed.every(p => (agent === ceo() || p.by === agent) && !rearmRefusal(p, agent))) {
+    if (!why?.trim()) return 'say why this work leaves its pause with --why "reason": HQ shows it on the feed';
+    return undefined;
+  }
   const pauses = shed.map(p => `${jobs.pauseName(targetOf(p))} (${oneLine(p.why)})`).join(' and ');
   return `the pause on ${pauses} holds this work where it is: move it once that pause lifts`;
 }
@@ -252,7 +270,8 @@ export function holding(thread: string | null) {
 }
 
 // GET /api/projects with each paused project's and thread's pause: why, by whom since when, the time and the jobs it
-// waits for (projects.ts listProjectBoard gives the rest). The board's item stays out: the board isn't shown its own words.
+// waits for, and whether its owner was woken to judge it (woken)
+// (projects.ts listProjectBoard gives the rest). The board's item stays out: the board isn't shown its own words.
 // (only what it shows: not the work each pause holds, open()'s two reads of the jobs per pause.)
 export function withPauses<B extends { projects: { id: string; threads: { id: string }[] }[] }>(board: B) {
   const rows = openRows();
@@ -284,6 +303,7 @@ const shownOf = (p: Row, until: Until[]) => ({
   at: p.at,
   untilTime: p.until_time,
   until,
+  woken: p.woken !== null,
   decision: decisionOf(p),
 });
 

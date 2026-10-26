@@ -22,6 +22,7 @@ export const board = { '/api/shop/*': forTheBoard };                    // behin
 export const agent = { 'GET /api/agent/thing': (body, me) => ({ ok: true }) };   // hq <command>'s route
 export const numbers = (app) => ({ thing: 3, lines: ['', 'Things: 3'] });          // more for one app's numbers
 export const dashboard = (r) => ({ id: 'things', name: 'Things', figures: [{ label: 'Things', value: 3 }] });  // a Numbers tile
+export const heartbeat = () => ({ head: 'Things', lines: ['3 today, 12 this week'] });       // in the CEO's hourly summary
 export const start = () => { setInterval(tick, 60_000); };                           // its timers
 ```
 
@@ -38,6 +39,10 @@ export const start = () => { setInterval(tick, 60_000); };                      
   dashboard, or a list of them, for counts across the shop rather than one app's: each is a tile on the Numbers home
   beside the apps', and tapping it prints its dashboard the way an app's prints (below, "Numbers"). `hq numbers` prints
   them under its list.
+- **heartbeat()** returns one part, or a list of them, for the CEO's summary (`hq summary`), which its hourly check
+  carries: a `head` and plain `lines`, read live each time, of what the company wants its CEO to steer by (its stats, a
+  funnel, the money). None for nothing to say. A part that throws shows in its place as unreadable. These parts alone
+  never queue the check: a goal open, the board's asks or something off do.
 - **start()** runs once the coordinator is up. Background work catches its own errors (CODE_STYLE.md).
 
 ### Numbers: a dashboard of the company's own

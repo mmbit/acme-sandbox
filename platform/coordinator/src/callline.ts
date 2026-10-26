@@ -90,7 +90,6 @@ export function context(b: any) {
     tools: 'partner',
     callout: c.id,
     call: null,
-    pins: [],
     who: c.who,
     lang: c.lang,
     kind: c.kind,

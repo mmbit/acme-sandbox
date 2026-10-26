@@ -373,3 +373,16 @@ test("the CEO's expedited fix starts first, through a pause and ahead of the boa
   for (const j of [first, late, started!]) await h.finish(j);
   assert.ok(cancelJob(word, 'Test finished'));
 });
+
+test('a running expedited fix keeps its seat: the latest-started other work makes room for what comes after it', async () => {
+  paused(null);
+  await seatReady('claude');
+  const first = await h.start({ agent: 'bolt', engine: 'claude', title: 'First' });
+  const fix = await h.start({ agent: 'juno', engine: 'claude', title: 'Fix the claim', expedite: true });
+  const word = h.queue({ agent: 'kit', engine: 'claude', title: 'Follow up on your call with the board', call: 11 });
+  h.storedCall(11, 'kit', word);
+  h.db.prepare('update jobs set created = ? where id = ?').run(new Date(Date.now() - 60_000).toISOString(), word);
+  assert.deepEqual([await yieldOf(fix), await yieldOf(first)], [undefined, 'waiting'], 'never the expedited run');
+  for (const j of [first, fix]) await h.finish(j);
+  assert.ok(cancelJob(word, 'Test finished'));
+});

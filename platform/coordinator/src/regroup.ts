@@ -4,6 +4,7 @@
 // (the work's owner: its thread's project's, projects.ts ownerOf)
 import { db, inOneStep, planChange } from './db.ts';
 import { ceo } from './company.ts';
+import { oneLine } from './agreements.ts';
 import { deskLets, inProcess, loopBranch, WORK_LEAD } from './jobs.ts';
 import { dropped, finished } from './windows.ts';
 import { findProject, findThread, ownerOf, type Thread } from './projects.ts';
@@ -16,7 +17,8 @@ import * as predictionlog from './predictionlog.ts'; // (its table, whose thread
 // hq thread move <project>/<slug> <project>: the thread becomes <project>/<slug> there, and everything that names it
 // follows: its jobs, proposals, pause (a paused thread stays paused, and the call item it carries with it) and prediction
 // records. Its window is on its own row. The thread, or why not.
-export function moveThread(id: string, to: string, agent: string): Thread | string {
+export function moveThread(id: string, to: string, agent: string, why = ''): Thread | string {
+  why = oneLine(why);
   const thread = findThread(id);
   if (!thread) return `there's no thread ${id} (hq thread list)`;
   const project = findProject(to);
@@ -28,11 +30,11 @@ export function moveThread(id: string, to: string, agent: string): Thread | stri
     moved = `${project.id}/${from.slice(thread.project.length + 1)}`;
   const taken = findThread(moved);
   if (taken && taken.id !== from) return `${moved} is a thread already`;
-  const held = shedRefusal(from, { project: project.id });
+  const held = shedRefusal(from, { project: project.id }, agent, why);
   if (held) return held;
   const changed = redraws.withoutLoop(from, () => newId(from, moved, project.id));
   if (typeof changed === 'string') return changed;
-  publish({ type: 'log', agent, text: `${thread.name} moved to ${project.name}` });
+  publish({ type: 'log', agent, text: `${thread.name} moved to ${project.name}${why ? `: ${why}` : ''}` });
   return findThread(moved)!;
 }
 
@@ -65,7 +67,9 @@ export function moveJob(
   to: string,
   agent: string,
   senderJob = job,
+  why = '',
 ): { thread: string; jobs: number[]; notices?: string[] } | string {
+  why = oneLine(why);
   const row = db.prepare(`select j.id, j.status, j.thread, ${WORK_LEAD} lead from jobs j where j.id = ?`).get(job) as
     { id: number; status: string; thread: string | null; lead: number } | undefined;
   if (!row) return `there's no job #${job}`;
@@ -88,13 +92,15 @@ export function moveJob(
       and (thread is not null or not ${deskLets('jobs')})`,
     )
     .all(loop) as { thread: string | null }[];
-  const held = on.map(r => shedRefusal(r.thread, { project: thread.project, thread: thread.id })).find(Boolean);
+  const held = on
+    .map(r => shedRefusal(r.thread, { project: thread.project, thread: thread.id }, agent, why))
+    .find(Boolean);
   if (held) return held;
   // (its place in its old thread's order stays there: by its id in the new one, plan.ts.)
   const from = on.map(r => r.thread).filter((id): id is string => id !== null && id !== thread.id);
   const moved = moveGroup(loop, thread, from, { agent, job: senderJob });
   if (typeof moved === 'string') return moved;
-  publish({ type: 'log', agent, text: `Job #${row.lead} moved to ${thread.name}` });
+  publish({ type: 'log', agent, text: `Job #${row.lead} moved to ${thread.name}${why ? `: ${why}` : ''}` });
   return { thread: thread.id, ...moved };
 }
 

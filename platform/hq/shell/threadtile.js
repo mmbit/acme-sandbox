@@ -62,10 +62,18 @@ const task = (sign, j, t, when) =>
 // What a thread waits on, a line each: the board's decision and cards first (lit), the cards it waits on that aren't on
 // the desk phone yet, its pause, and the open threads it needs (each with when it's done)
 function threadWaits(t, p, threadOf) {
+  const items = waitsOf(t, p, threadOf).map(
+    w =>
+      `<li${w.lit ? ' class="pj-you"' : ''}>${icon(w.glyph, 'pj-wait-icon')}<span>${withJobLinks(w.words)}</span></li>`,
+  );
+  return items.length ? `<ul class="pj-next pj-waits">${items.join('')}</ul>` : '';
+}
+// the same, each its glyph and words (the running threads' list says the first: threadlist.js)
+export function waitsOf(t, p, threadOf) {
   const { decision, cards, held } = boardPart(t, p),
     pause = t.pause ?? p.pause,
     needs = (t.needs ?? []).map(threadOf).filter(Boolean);
-  const items = [
+  return [
     decision && wait('phone', `Your decision: ${decision.name}`, true),
     ...cards.map(c => wait('phone', `On your ${names.phone}: ${c.title}`, true)),
     ...held.map(c => wait('phone', `Not on your ${names.phone} yet: ${c.title}`)),
@@ -75,10 +83,8 @@ function threadWaits(t, p, threadOf) {
       return wait('hourglass', `After ${nameText(n, 'name')}${line.finish ? `, done ${fromNow(line.finish)}` : ''}`);
     }),
   ].filter(Boolean);
-  return items.length ? `<ul class="pj-next pj-waits">${items.join('')}</ul>` : '';
 }
-const wait = (glyph, words, lit = false) =>
-  `<li${lit ? ' class="pj-you"' : ''}>${icon(glyph, 'pj-wait-icon')}<span>${withJobLinks(words)}</span></li>`;
+const wait = (glyph, words, lit = false) => ({ glyph, words, lit });
 // A thread's tasks as a strip, in the order its list runs them, a mark each in its row's state (tasks.js), and how
 // many are done
 function strip(t) {

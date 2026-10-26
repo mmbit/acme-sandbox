@@ -252,9 +252,13 @@ async function mouthDuring(page, fn) {
       await sleep(40);
     }
   })();
-  await fn();
-  done = true;
-  await sampling;
+  // (sampling stops when fn throws too: else it outlives the browser and hides fn's error)
+  try {
+    await fn();
+  } finally {
+    done = true;
+    await sampling;
+  }
   return samples;
 }
 

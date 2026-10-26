@@ -50,3 +50,36 @@ body.brownstone .pj-deliverables small.pj-you {
 body.brownstone .device header :is(.past-btn, .x, .home) {
   --hover-lip: var(--shadow-press);
 }
+/* its More (shell/more.js, scene.js): sound, music and the tour fold behind it and open on a row of their own under the
+   rest, and HQ's search shows on every screen, so the row is even. */
+body.brownstone .tools {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+body.brownstone #btn-find {
+  display: grid;
+}
+body.brownstone .tools > :is(#btn-sound, #btn-music, #btn-tour) {
+  order: 5;
+}
+body.brownstone .tools.more-open::before {
+  content: '';
+  flex-basis: 100%;
+  order: 4;
+}
+body.brownstone:not(.touring) .tools:not(.more-open) > :is(#btn-sound, #btn-music, #btn-tour) {
+  display: none;
+}
+body.brownstone #btn-more[aria-expanded='true'] {
+  background: var(--gold);
+  color: var(--on-accent);
+}
+/* (four keys a row, in the desktop's order: the board's keys first, More last with its row right under it) */
+@media (max-width: 700px) {
+  body.brownstone .tools:has(#btn-find) {
+    max-width: 190px;
+  }
+  body.brownstone .tools > :is(.board-tool, #btn-find) {
+    order: 0;
+  }
+}

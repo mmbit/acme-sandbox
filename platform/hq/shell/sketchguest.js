@@ -1,6 +1,6 @@
 // An invited person's own Sketchbook, on the guest desk (sketches.ts: /guest/sketchbook/, their own session): the same
 // shelf and pages as the board's in HQ (sketchshelf.js, sketchpage.js), on the guest desk's look, sent to the CEO from
-// their own book. A phone and a tablet first: the shelf is the whole screen, a sketch opens over it.
+// their own book. The board opens it from its own book and draws in it too. A phone and a tablet first: the shelf is the whole screen, a sketch opens over it.
 import { esc, stylesheet } from '../util.js';
 import { shelf, back } from './sketchshelf.js';
 
@@ -45,7 +45,7 @@ const book = {
 };
 
 main.innerHTML = `<header class="sk-head"><h1>${esc(name)}’s Sketchbook</h1>
-  <p>Draw anything: a pen or a finger. When it’s ready, <b>Send to ${esc(book.to)}</b> hands it to ${esc(book.to)}, who runs the crew, with your name on it. Only you and the crew see your sketches.</p></header>
+  <p>Draw anything: a pen or a finger. When it’s ready, <b>Send to ${esc(book.to)}</b> hands it to ${esc(book.to)}, who runs the crew, with your name on it. Only you and ${esc(main.dataset.co)} see your sketches, and ${esc(main.dataset.co)} can draw in them too, in its own ink.</p></header>
   <section class="sk-shelf"></section><div class="sk-toasts" aria-live="polite"></div>`;
 const at = main.querySelector('.sk-shelf');
 await Promise.all([

@@ -165,6 +165,69 @@ test('one review inbox item reaches the project owner with domains and files, an
   assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'accepted');
 });
 
+for (const redraw of [false, true])
+  test(`undrawn blockers stay in the owner's inbox after a partial fix push${redraw ? ' and a cancelled assignment' : ''}`, async () => {
+    const { author, branch } = await deliver();
+    await h.finish(author);
+    const owner = await h.start({ agent: 'wren', title: 'Draw the review fixes' });
+    const first = await h.agent('proposals/accept', owner.token, {
+      id: 'findings:71',
+      for: 'kit',
+      findings: '12',
+    });
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    if (redraw) {
+      const other = await h.agent('proposals/accept', owner.token, {
+        id: 'findings:71',
+        for: 'moss',
+        findings: '13',
+      });
+      assert.equal(other.status, 200, JSON.stringify(other.body));
+      assert.equal(
+        (await h.agent('cancel', owner.token, { id: other.body.job, why: 'Choose another worker' })).status,
+        200,
+      );
+    }
+    const fix = await h.claimJob(first.body.job);
+    assert.ok(fix);
+    const pushed = await h.finish(fix, { pr: 71, branch, sha: 'b'.repeat(40), files: ['game.ts'] });
+    assert.equal(pushed.status, 200, JSON.stringify(pushed.body));
+    proposals.sweep();
+    const listed = await h.hq(owner, 'inbox');
+    assert.equal(listed.code, 0, listed.out);
+    assert.match(listed.out, /findings:71/);
+    const read = await h.hq(owner, 'inbox', 'findings:71');
+    assert.equal(read.code, 0, read.out);
+    assert.match(read.out, /#13 \[art\] world.svg, ship.svg/);
+    const ceo = await h.start({ agent: 'juno', title: 'Read the remaining findings' });
+    const all = await h.hq(ceo, 'inbox', '--all');
+    assert.equal(all.code, 0, all.out);
+    assert.match(all.out, /findings:71/);
+    const pr = db.prepare('select round, why from prs where number = 71').get() as {
+      round: number;
+      why: string | null;
+    };
+    assert.equal(pr.round, 1);
+    assert.match(pr.why ?? '', /unassigned blocking finding/);
+    assert.match(pr.why ?? '', /#13/);
+    assert.match(pr.why ?? '', /findings:71/);
+    const second = await h.agent('proposals/accept', owner.token, {
+      id: 'findings:71',
+      for: 'moss',
+      findings: '13',
+    });
+    assert.equal(second.status, 200, JSON.stringify(second.body));
+    assert.deepEqual(inbox.unassigned(71, 1), []);
+    assert.deepEqual(
+      inbox
+        .tasks(71, 1)
+        .filter(task => task.status !== 'cancelled')
+        .map(task => task.findings),
+      [[12], [13]],
+    );
+    assert.equal(proposals.list('bolt').find(item => item.id === 'findings:71')?.status, 'accepted');
+  });
+
 test('hq job names findings structurally and keeps fixes in the existing thread order', async () => {
   await deliver();
   const owner = await h.start({ agent: 'wren', title: 'Draw the engine fix' });
@@ -315,6 +378,7 @@ test('an automatically drawn fix rejects missing task titles before accepting it
     h.agent('review-output', ruler.token, {
       output: JSON.stringify({
         decision: 'changes',
+        major_visual: false,
         blocking: [{ file: 'game.ts', line: 1, issue: 'The level cannot finish', task }],
       }),
     });

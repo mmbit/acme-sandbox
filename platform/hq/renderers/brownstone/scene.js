@@ -13,6 +13,7 @@ import { listen, burst, setParty, CONFETTI } from './react.js';
 import { SIGN } from './sign.js';
 import { slides } from './billboard.js';
 import { ART } from './mascots.js';
+import { moreKey } from '../../shell/more.js';
 
 export const info = { id: 'brownstone', name: 'Brownstone', context: '2d', label: 'The company as an isometric pixel-art brownstone in a little town' };
 // The look's style (pixel, line or any), which picks its icons.
@@ -51,11 +52,12 @@ export function createScene({ canvas: screen, world: w, brand: b, settings, shel
   const offs = listen();
   document.body.classList.add('brownstone'); // (the shell's pixel touches for this look alone: its skin.css).
   loadFont();
+  const unfold = moreKey(() => s.sound.play('press'));
   if (w.dev) for (const m of w.mascots) if (!ART[m.kind]) console.warn(`[hq] the brownstone has no art for a ${m.kind}, so ${m.name} isn't in the building`);
   return {
     update: step, draw, hit, focus, resize, camera, anchor, highlight: t => { lit = t; }, act, portrait, near, where, showcase,
     // its signals stop, and its sky and its pixel touches leave the page
-    dispose() { for (const off of offs) off(); document.body.style.background = ''; document.body.classList.remove('brownstone'); },
+    dispose() { for (const off of offs) off(); unfold(); document.body.style.background = ''; document.body.classList.remove('brownstone'); },
     controls: [{ id: 'walls', title: 'Outside walls', pressed: () => walls.on, toggle: () => setWalls(!walls.on) }],
     dev: {
       R, cam, fx,

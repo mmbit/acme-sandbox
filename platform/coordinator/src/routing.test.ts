@@ -18,7 +18,6 @@ const h = await harness('routing', {
 });
 const { agent, jobs, db } = h;
 const { cancelJob } = await import('./ledger.ts');
-const feedback = await import('./feedback.ts');
 const owed = await import('./owed.ts');
 const routing = await import('./routing.ts');
 const plan = await import('./plan.ts');
@@ -35,15 +34,12 @@ afterEach(() => {
     assert.deepEqual(owed.close(owing.slug, 'juno', owing.job, 'Test finished'), { ok: true });
 });
 
-// A note the board pinned (on HQ or a product's preview), and the board's send from HQ's Reviews: the routing check
+// A note the board pinned (on HQ or a product's preview), and its send as HQ's Reviews sent it: the routing check
+// (notes go to the board's book now, routing.fixture.ts sentNotes)
 let pinned = 0;
-const pin = (slug: string, words = `note ${++pinned}`) =>
-  (feedback.saveNote(slug, slug === 'hq' ? 'hq.x' : `${slug}.preview.x`, { note: words }) as { id: number }).id;
-const send = async (slug: string, ids: number[]) => {
-  const r = await h.board('/api/review/send', { slug, ids });
-  assert.equal(r.status, 200, JSON.stringify(r.body));
-  return r.body as { job: number; agent: string; name: string; count: number };
-};
+const sent = await (await import('./routing.fixture.ts')).sentNotes();
+const pin = (slug: string, words = `note ${++pinned}`) => sent.pin(slug, words);
+const send = async (slug: string, ids: number[]) => sent.send(slug, ids);
 // The check the send queued, as the worker starts it (first on the CEO's engine).
 const checkFor = async (sent: { job: number }, extra: Record<string, unknown> = {}) => {
   const check = await h.claim('claude', extra);

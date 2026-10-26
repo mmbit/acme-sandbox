@@ -796,6 +796,7 @@ async function retire(caller: Caller, requestBody: any): Promise<Refused | objec
     atOnce(() => {
       db.prepare('delete from payments where product = ? and mode = ? and reference = ?').run(caller.slug, caller.mode, reference);
       db.prepare('delete from checkout_creates where product = ? and mode = ? and reference = ?').run(caller.slug, caller.mode, reference);
+      forgetImitation(rows.map(row => row.id));
       for (const hook of retireHooks) hook(caller, reference);
     });
     return { reference };
@@ -1367,6 +1368,9 @@ async function forgetLine(c: Caller, id: string) {
   });
   forgetHeldWords();
   forgetAskedAddresses();
+  // a basket whose address and payer email already went (tick) waits for no parcel: the imitation's copy of the email goes now
+  if (line.session && !db.prepare('select 1 from payments where id = ? and (deliver is not null or payer is not null)').get(line.session))
+    forgetImitationEmail(line.session);
   for (const forget of lineForgotten) await forget(line);
   log(`${c.slug} deleted its ${c.mode} line for ${line.reference}'s details, as its customer asked.`);
   return { line: id };
@@ -1374,7 +1378,10 @@ async function forgetLine(c: Caller, id: string) {
 // The addresses and payer emails of baskets whose customer asked, once no parcel needs the address (keepAddress)
 function forgetAskedAddresses() {
   for (const asked of db.prepare('select id from payments where forget_asked is not null and (deliver is not null or payer is not null)').all() as { id: string }[])
-    if (!keepAddress.some(keep => keep(asked.id))) db.prepare('update payments set deliver = null, payer = null where id = ?').run(asked.id);
+    if (!keepAddress.some(keep => keep(asked.id))) {
+      db.prepare('update payments set deliver = null, payer = null where id = ?').run(asked.id);
+      forgetImitationEmail(asked.id);
+    }
 }
 async function refreshLineRefund(line: Line) {
   if (!line.refund || line.refund_status === 'succeeded' || ENDED.has(line.refund_status ?? '')) return line;
@@ -1990,8 +1997,12 @@ export async function tick(now = Date.now()) {
   db.prepare("update payments set deliver = null where deliver is not null and status not in ('open', 'complete', 'paid', 'refunded') and updated < ?").run(dayAgo);
   // paid, refunded or not: 14 days after, or later while its parcel may still be placed again (at most 30 days after)
   const paidBefore = (days: number) => new Date(now - days * DAY_MS).toISOString();
-  for (const paid of db.prepare("select id, updated from payments where deliver is not null and status in ('paid', 'refunded') and updated < ?").all(paidBefore(14)) as any[])
-    if (paid.updated < paidBefore(30) || !keepAddress.some(keep => keep(paid.id))) db.prepare('update payments set deliver = null where id = ?').run(paid.id);
+  for (const paid of db.prepare("select id, updated, forget_asked from payments where deliver is not null and status in ('paid', 'refunded') and updated < ?").all(paidBefore(14)) as any[])
+    if (paid.updated < paidBefore(30) || !keepAddress.some(keep => keep(paid.id))) {
+      db.prepare('update payments set deliver = null where id = ?').run(paid.id);
+      // a basket whose customer asked while its parcel held the address: the imitation's copy of the email goes with it
+      if (paid.forget_asked) forgetImitationEmail(paid.id);
+    }
   forgetAskedAddresses();
   db.prepare('update payments set payer = null where payer is not null and created < ?').run(longAgo);
   db.prepare("delete from events where type = 'log' and text like 'Payments: %' and ts < ?").run(longAgo);
@@ -2106,7 +2117,48 @@ export async function handle(req: IncomingMessage, res: ServerResponse) {
 // test mode until the board has entered a test key (and for the tests). Its payment page is on HQ (/pay/imitation/<id>)
 // and says plainly that no money moves.
 type Fake = Record<string, any>;
-const fake = { sessions: new Map<string, Fake>(), refunds: new Map<string, Fake>(), keys: new Map<string, { asked: string; out: Fake }>() };
+// Its sessions and refunds outlive a restart, as Stripe's do: an order paid before a deploy is still paid after it, so
+// it can be refunded and its emails sent (a company test purchase withdrawn during a deploy came back unavailable).
+// What it holds of an order goes when HQ retires the order or the order's records end (forgetImitation), and a session's
+// payer email when its customer's deletion request takes the basket's (forgetImitationEmail). Its idempotency keys last
+// one run.
+db.exec('create table if not exists imitation_records (kind text not null, id text not null, record text not null, primary key (kind, id))');
+const kept = (kind: 'session' | 'refund') => ({
+  get: (id: string): Fake | undefined => {
+    const row = db.prepare('select record from imitation_records where kind = ? and id = ?').get(kind, id) as { record: string } | undefined;
+    return row && JSON.parse(row.record);
+  },
+  // (an upsert keeps the record's rowid, so the lists stay in the order the records were made)
+  set: (record: Fake) => db.prepare(`insert into imitation_records (kind, id, record) values (?, ?, ?)
+    on conflict (kind, id) do update set record = excluded.record`).run(kind, record.id, JSON.stringify(record)),
+  values: () => (db.prepare('select record from imitation_records where kind = ? order by rowid').all(kind) as { record: string }[])
+    .map(row => JSON.parse(row.record) as Fake),
+  ofIntent: (pi: string | null) => (db.prepare("select record from imitation_records where kind = ? and json_extract(record, '$.payment_intent') = ? order by rowid")
+    .all(kind, pi) as { record: string }[]).map(row => JSON.parse(row.record) as Fake),
+});
+const fake = { sessions: kept('session'), refunds: kept('refund'), keys: new Map<string, { asked: string; out: Fake }>() };
+function forgetImitation(sessions: string[]) {
+  for (const id of sessions) {
+    const pi = fake.sessions.get(id)?.payment_intent;
+    if (pi) db.prepare("delete from imitation_records where kind = 'refund' and json_extract(record, '$.payment_intent') = ?").run(pi);
+    db.prepare("delete from imitation_records where kind = 'session' and id = ?").run(id);
+  }
+}
+recordsEnded.push(session => forgetImitation([session]));
+// the payment state stays, for the books
+function forgetImitationEmail(session: string) {
+  const s = fake.sessions.get(session);
+  if (!s) return;
+  s.customer_email = null;
+  if (s.customer_details) s.customer_details.email = null;
+  fake.sessions.set(s);
+}
+// an open session past its time is expired, as Stripe reads it
+function expiring(s: Fake, now: number) {
+  if (s.status !== 'open' || s.expires_at >= now) return;
+  s.status = 'expired';
+  fake.sessions.set(s);
+}
 // Its subscriptions outlive a restart, as Stripe's do: a held plan reads its own after one, to see it renewed or ended.
 db.exec('create table if not exists imitation_subscriptions (id text primary key, sub text not null)');
 const fakeSubscription = (id: string): Fake | undefined => {
@@ -2190,26 +2242,29 @@ export function imitation(method: string, path: string, p: URLSearchParams, idem
       name: items[0].name, items, url: `${ORIGIN}/pay/imitation/${id}`,
       payment_method_types: DASHBOARD.filter(m => !excluded.includes(m)), locale: p.get('locale'), customer_email: p.get('customer_email'),
       capture: p.get('payment_intent_data[capture_method]') ?? 'automatic', billing: p.get('billing_address_collection') ?? 'auto' };
-    fake.sessions.set(id, out);
+    fake.sessions.set(out);
   } else if (m) {
     const s = fake.sessions.get(m[1]) ?? fail(404, `No such checkout.session: '${m[1]}'`);
-    if (s.status === 'open' && s.expires_at < now) s.status = 'expired';
+    expiring(s, now);
     if (method === 'POST' && m[2]) {
       if (s.status !== 'open') fail(400, 'Only Checkout Sessions with a status of open can be expired.');
       s.status = 'expired';
+      fake.sessions.set(s);
     } else if (method !== 'GET') fail(404, 'Unrecognized request URL.');
     out = s;
   } else if (method === 'GET' && path.startsWith('/v1/checkout/sessions?')) {   // sessions by the payer's email, or made between two times (created): newest first, a page at a time
     const q = new URLSearchParams(path.split('?')[1]), email = q.get('customer_details[email]'), status = q.get('status');
     const from = Number(q.get('created[gte]') ?? 0), to = Number(q.get('created[lte]') ?? Infinity);
-    for (const x of fake.sessions.values()) if (x.status === 'open' && x.expires_at < now) x.status = 'expired';
-    out = listPage(q, [...fake.sessions.values()].reverse().filter(x => (!email || x.customer_details?.email === email)
+    const sessions = fake.sessions.values();
+    for (const x of sessions) expiring(x, now);
+    out = listPage(q, sessions.reverse().filter(x => (!email || x.customer_details?.email === email)
       && (!status || x.status === status) && x.created >= from && x.created <= to));
   } else if (hold) {   // a held payment, charged or let go
     const [, pi, decision] = hold;
-    const s = [...fake.sessions.values()].find(x => x.payment_intent === pi) ?? fail(404, `No such payment_intent: '${pi}'`);
+    const s = fake.sessions.ofIntent(pi)[0] ?? fail(404, `No such payment_intent: '${pi}'`);
     if (s.intent_status !== 'requires_capture') fail(400, `This PaymentIntent could not be ${decision === 'capture' ? 'captured' : 'canceled'} because it has a status of ${s.intent_status ?? 'succeeded'}.`);
     s.intent_status = decision === 'capture' ? 'succeeded' : 'canceled';
+    fake.sessions.set(s);
     out = intentOf(s);
   } else if (subscription) {   // a monthly subscription, as its time has moved on; stopping it at its period's end; ending it now
     const sub = fakeSubscription(subscription[1]) ?? fail(404, `No such subscription: '${subscription[1]}'`);
@@ -2224,24 +2279,24 @@ export function imitation(method: string, path: string, p: URLSearchParams, idem
     out = sub;
   } else if (method === 'GET' && path.startsWith('/v1/payment_intents/')) {   // a payment and its charge's settlement
     const pi = decodeURIComponent(path.slice('/v1/payment_intents/'.length).split('?')[0]);
-    const s = [...fake.sessions.values()].find(x => x.payment_intent === pi) ?? fail(404, `No such payment_intent: '${pi}'`);
+    const s = fake.sessions.ofIntent(pi)[0] ?? fail(404, `No such payment_intent: '${pi}'`);
     out = intentOf(s);
   } else if (method === 'GET' && path.startsWith('/v1/refunds?')) {   // a payment's refunds
     const q = new URLSearchParams(path.split('?')[1]), pi = q.get('payment_intent');
-    out = listPage(q, [...fake.refunds.values()].reverse().filter(r => r.payment_intent === pi));
+    out = listPage(q, fake.refunds.ofIntent(pi).reverse());
   } else if (method === 'GET' && path.startsWith('/v1/refunds/')) {
     const id = decodeURIComponent(path.slice('/v1/refunds/'.length));
     out = fake.refunds.get(id) ?? fail(404, `No such refund: '${id}'`);
   } else if (method === 'POST' && path === '/v1/refunds') {
-    const pi = p.get('payment_intent'), s = [...fake.sessions.values()].find(x => x.payment_intent === pi) ?? fail(404, `No such payment_intent: '${pi}'`);
-    const refunded = [...fake.refunds.values()].filter(r => r.payment_intent === pi && r.status !== 'failed' && r.status !== 'canceled').reduce((n, r) => n + r.amount, 0);
+    const pi = p.get('payment_intent'), s = fake.sessions.ofIntent(pi)[0] ?? fail(404, `No such payment_intent: '${pi}'`);
+    const refunded = fake.refunds.ofIntent(pi).filter(r => r.status !== 'failed' && r.status !== 'canceled').reduce((n, r) => n + r.amount, 0);
     const amount = p.has('amount') ? Number(p.get('amount')) : s.amount_total - refunded;   // a part, as Stripe takes it
     if (refunded >= s.amount_total) fail(400, 'Charge has already been refunded.');
     if (!Number.isInteger(amount) || amount < 1 || refunded + amount > s.amount_total) fail(400, 'Refund amount is greater than unrefunded amount on charge.');
     const meta: Fake = {};
     for (const [k, v] of p) { const mk = k.match(/^metadata\[(.+)\]$/); if (mk) meta[mk[1]] = v; }
     out = { id: fakeId('re_test'), object: 'refund', amount, currency: s.currency, payment_intent: pi, status: 'succeeded', metadata: meta };
-    fake.refunds.set(out.id, out);
+    fake.refunds.set(out);
   } else return fail(404, 'Unrecognized request URL.');
   if (idempotency) fake.keys.set(idempotency, { asked, out: structuredClone(out) });
   return structuredClone(out);
@@ -2290,34 +2345,41 @@ function words(locale: unknown, req: IncomingMessage) {
   const lang = (typeof locale === 'string' && locale !== 'auto' ? locale : String(req.headers['accept-language'] ?? '')).slice(0, 2).toLowerCase();
   return { lang: WORDS[lang] ? lang : 'en', w: WORDS[lang] ?? WORDS.en };
 }
+// The page's POST: pays (test) and returns to the product
+async function payImitation(req: IncomingMessage, res: ServerResponse, id: string) {
+  if (req.headers.origin !== ORIGIN) { res.writeHead(403); return res.end(); }
+  // the payer's address, as Stripe's checkout asks for it (the shop's, when it gave one): the form's field, read here
+  // (so this handler is async)
+  let raw = ''; for await (const chunk of req) if ((raw += chunk).length > 2048) break;
+  const form = new URLSearchParams(raw);
+  // the session as it is now, read again after the form's wait: another request may have expired or retired it meanwhile.
+  // From here to its upsert nothing waits.
+  const s = fake.sessions.get(id);
+  if (!s) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('No such test checkout.'); }
+  expiring(s, Date.now() / 1000);
+  const email = s.customer_email || form.get('email')?.trim() || 'test-customer@example.com';
+  // the billing country, as Stripe's card form asks for it: NL unless the form names another; the card's issuing
+  // country, the billing country unless the form names another
+  const country = /^[A-Z]{2}$/.test(form.get('country') ?? '') ? form.get('country') : 'NL';
+  const cardCountry = /^[A-Z]{2}$/.test(form.get('card_country') ?? '') ? form.get('card_country') : country;
+  // a held payment (capture manual) stays unpaid until it's charged, and one by a delayed method (sepa_debit) until it
+  // settles, which here it never does; a subscription's first month is paid through its subscription, with no payment
+  // of the session's own (renewals=decline: a card whose later charges are declined, as Stripe's test clocks show it).
+  // (sepa_debit and renewals)
+  const held = s.capture === 'manual', delayed = form.get('method') === 'sepa_debit', monthly = s.mode === 'subscription';
+  if (s.status === 'open') fake.sessions.set(Object.assign(s, { status: 'complete', payment_status: held || delayed ? 'unpaid' : 'paid', payment_intent: monthly ? null : fakeId('pi_test'),
+    subscription: monthly ? subscribe(s, Math.floor(Date.now() / 1000), form.get('renewals') === 'decline') : null,
+    intent_status: held ? 'requires_capture' : delayed ? 'processing' : 'succeeded', method: form.get('method') ?? 'card', card_country: cardCountry, customer_details: { email, address: { country } } }));
+  if (s.status !== 'complete') { res.writeHead(409, { 'content-type': 'text/plain' }); return res.end('This checkout has expired.'); }
+  res.writeHead(303, { location: s.success_url.replace('{CHECKOUT_SESSION_ID}', s.id) });
+  return res.end();
+}
 export async function imitationPage(req: IncomingMessage, res: ServerResponse) {
   const [, id, action] = new URL(req.url ?? '/', 'http://x').pathname.match(/^\/pay\/imitation\/([A-Za-z0-9_]{1,80})(\/pay)?$/) ?? [];
   const s = id ? fake.sessions.get(id) : undefined;
-  if (s?.status === 'open' && s.expires_at < Date.now() / 1000) s.status = 'expired';
+  if (s) expiring(s, Date.now() / 1000);
   if (!s) { res.writeHead(404, { 'content-type': 'text/plain' }); return res.end('No such test checkout.'); }
-  if (action && req.method === 'POST') {
-    if (req.headers.origin !== ORIGIN) { res.writeHead(403); return res.end(); }
-    // the payer's address, as Stripe's checkout asks for it (the shop's, when it gave one): the form's field, read here
-    // (so this handler is async)
-    let raw = ''; for await (const chunk of req) if ((raw += chunk).length > 2048) break;
-    const form = new URLSearchParams(raw);
-    const email = s.customer_email || form.get('email')?.trim() || 'test-customer@example.com';
-    // the billing country, as Stripe's card form asks for it: NL unless the form names another; the card's issuing
-    // country, the billing country unless the form names another
-    const country = /^[A-Z]{2}$/.test(form.get('country') ?? '') ? form.get('country') : 'NL';
-    const cardCountry = /^[A-Z]{2}$/.test(form.get('card_country') ?? '') ? form.get('card_country') : country;
-    // a held payment (capture manual) stays unpaid until it's charged, and one by a delayed method (sepa_debit) until it
-    // settles, which here it never does; a subscription's first month is paid through its subscription, with no payment
-    // of the session's own (renewals=decline: a card whose later charges are declined, as Stripe's test clocks show it).
-    // (sepa_debit and renewals)
-    const held = s.capture === 'manual', delayed = form.get('method') === 'sepa_debit', monthly = s.mode === 'subscription';
-    if (s.status === 'open') Object.assign(s, { status: 'complete', payment_status: held || delayed ? 'unpaid' : 'paid', payment_intent: monthly ? null : fakeId('pi_test'),
-      subscription: monthly ? subscribe(s, Math.floor(Date.now() / 1000), form.get('renewals') === 'decline') : null,
-      intent_status: held ? 'requires_capture' : delayed ? 'processing' : 'succeeded', method: form.get('method') ?? 'card', card_country: cardCountry, customer_details: { email, address: { country } } });
-    if (s.status !== 'complete') { res.writeHead(409, { 'content-type': 'text/plain' }); return res.end('This checkout has expired.'); }
-    res.writeHead(303, { location: s.success_url.replace('{CHECKOUT_SESSION_ID}', s.id) });
-    return res.end();
-  }
+  if (action && req.method === 'POST') return payImitation(req, res, id);
   const { lang, w } = words(s.locale, req);
   const choices = s.payment_method_types.map((m: string, i: number) =>
     `<label class="m"><input type="radio" name="method" value="${esc(m)}"${i ? '' : ' checked'}> ${esc(m === 'card' ? w.card : METHOD_NAMES[m] ?? m)}</label>`).join('');

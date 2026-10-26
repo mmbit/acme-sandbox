@@ -5,7 +5,7 @@ import {
   onWallY, onWallX, silhouette,
 } from './iso.js';
 import { BILLBOARD, drawBillboard } from './billboard.js';
-import { roomAt } from './layout.js';
+import { roomAt, ESCAPE } from './layout.js';
 
 const LIP = 4; // the roof cornice's lip above the roof
 const BRICK = '#c0593f', BRICK_HI = mix(BRICK, '#ffffff', 0.09), BRICK_LO = mix(BRICK, INK, 0.1), MORTAR = mix(BRICK, INK, 0.2), BRICK_SH = mix(BRICK, INK, 0.38);
@@ -239,14 +239,13 @@ function pentGlass(g, L) {
 // and the flight coming down to it), so it arrives with its floor and still makes sense with the walls off.
 const IRON = '#2b2230', IRON_HI = '#6d6a80', GRATE = '#4a4560';
 function fireEscape(L, i) {
-  const top1 = L.nUp - 1, X = L.street !== 'x', E = X ? L.X1 : L.Y1, z = i * FH, N = 0.6, A0 = 0.3, A1 = 2.7;
+  const top1 = L.nUp - 1, X = L.street !== 'x', E = X ? L.X1 : L.Y1, z = i * FH, { n: N, a0: A0, a1: A1, from, to, n0, n1, rail, ladder: LN, rung: RUNG } = ESCAPE;
   const pt = (a, n) => X ? [E + n, a] : [a, E + n], s = (a, n, zz) => { const [x, y] = pt(a, n); return [Math.round(SX(x, y)), Math.round(SY(x, y, zz))]; };
   const flat = (g, a0, a1, n0, n1, zz, c) => { const [x0, y0] = pt(Math.min(a0, a1), n0), [x1, y1] = pt(Math.max(a0, a1), n1); top(g, Math.min(x0, x1), Math.min(y0, y1), Math.max(x0, x1), Math.max(y0, y1), zz, c); };
   const front = (g, a0, a1, n, z0, z1, c) => X ? wallX(g, a0, a1, E + n, z0, z1, c) : wallY(g, a0, a1, E + n, z0, z1, c);
   const side = (g, a, n0, n1, z0, z1, c) => X ? wallY(g, E + n0, E + n1, a, z0, z1, c) : wallX(g, E + n0, E + n1, a, z0, z1, c);
-  const ladder = (g, a, n, zb, zt) => { for (const u of [a, a + 0.22]) line(g, s(u, n, zb), s(u, n, zt), IRON); for (let zz = zb + 3; zz < zt; zz += 5) line(g, s(a, n, zz), s(a + 0.22, n, zz), IRON_HI); };
-  const from = k => k % 2 ? 0.5 : 2.5, to = k => k % 2 ? 2.2 : 0.8; // the flight down to landing k starts over here and lands there
-  const up = i === top1 ? (i > 1 ? (from(i - 1) < 1.5 ? 2.25 : 0.45) : 2.25) : null;
+  const ladder = (g, a, n, zb, zt) => { for (const u of [a, a + RUNG]) line(g, s(u, n, zb), s(u, n, zt), IRON); for (let zz = zb + 3; zz < zt; zz += 5) line(g, s(a, n, zz), s(a + RUNG, n, zz), IRON_HI); };
+  const up = i === top1 ? ESCAPE.up(top1) : null;
   const [bx0, by0] = pt(A0 - 0.1, 0), [bx1, by1] = pt(A1 + 0.1, N + 0.1);
   return sprite(Math.min(bx0, bx1), Math.min(by0, by1), Math.max(bx0, bx1), Math.max(by0, by1), i === 1 ? 24 : z - 16, i === top1 ? L.roofZ + 16 : z + FH + 14, g => {
     for (const a of [A0 + 0.2, A1 - 0.2]) line(g, s(a, 0, z - 13), s(a, N - 0.05, z - 1), IRON); // brackets
@@ -255,14 +254,14 @@ function fireEscape(L, i) {
     for (let a = A0 + 0.1; a < A1; a += 3 / 16) flat(g, a, a + 1 / 16, 0.04, N - 0.04, z, IRON_HI);
     front(g, A0, A1, N, z - 2, z, IRON); front(g, A0, A1, N, z - 1, z, IRON_HI);
     if (i < top1) { // the flight coming down from the landing above
-      const a0 = from(i), a1 = to(i), n0 = 0.1, n1 = 0.36, zt = z + FH;
+      const a0 = from(i), a1 = to(i), zt = z + FH;
       for (let k = 1; k < 16; k++) { const a = a0 + (a1 - a0) * k / 16, zz = zt + (z - zt) * k / 16; flat(g, a - 0.05, a + 0.05, n0, n1, zz, IRON_HI); }
       line(g, s(a0, n0, zt), s(a1, n0, z), IRON); line(g, s(a0, n1, zt), s(a1, n1, z), IRON);
-      line(g, s(a0, n1, zt + 11), s(a1, n1, z + 11), IRON_HI); line(g, s(a1, n1, z), s(a1, n1, z + 11), IRON);
+      line(g, s(a0, n1, zt + rail), s(a1, n1, z + rail), IRON_HI); line(g, s(a1, n1, z), s(a1, n1, z + rail), IRON);
     }
     if (up != null) { // a gooseneck ladder over the cornice onto the roof
-      ladder(g, up, 0.42, z, L.roofZ + 6);
-      for (const u of [up, up + 0.22]) { line(g, s(u, 0.42, L.roofZ + 6), s(u, 0.22, L.roofZ + 11), IRON); line(g, s(u, 0.22, L.roofZ + 11), s(u, 0.02, L.roofZ + 6), IRON); }
+      ladder(g, up, LN, z, L.roofZ + 6);
+      for (const u of [up, up + RUNG]) { line(g, s(u, LN, L.roofZ + 6), s(u, 0.22, L.roofZ + 11), IRON); line(g, s(u, 0.22, L.roofZ + 11), s(u, 0.02, L.roofZ + 6), IRON); }
     }
     if (i === top1) { // someone keeps a plant out here
       const a = up < 1.5 ? 2.05 : 0.95, [sx, sy] = s(a, 0.24, z);

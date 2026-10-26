@@ -14,9 +14,11 @@ import * as ledger from './ledger.ts';
 import * as review from './review.ts';   // (reach)
 import * as pictures from './pictures.ts';
 import * as watchalong from './watchalong.ts';
-import * as feedback from './feedback.ts';
+import * as walks from './walkthroughs.ts';
 import * as goingon from './goingon.ts';
 import * as forecast from './forecast.ts';
+import * as goals from './goals.ts';
+import { pad } from './pad.ts';
 import { org, ceo, names, roles, timeZone, unstaffed, companyTime, titleOf, respellings } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
@@ -47,13 +49,11 @@ const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 // What the line itself says when the agent can't answer: whether a Claude seat has room now (callSeat), and the company's
 // clock for the time a limit ends. respell: the company's words as the speech engines should say them (company.ts).
 const line = () => ({ seat: callSeat(), timeZone: timeZone(), respell: respellings() });
-// pins: the review notes the board ticked when it rang from HQ's Reviews (feedback.ts pinsFor): the call is about them,
-// for good (a restart reads them from the call, not the line), and the voice line gets their screenshots (pins in the
-// answer). Ones sent or discarded since HQ showed them don't come; if none are left, it's a call like any other.
 // lang: the board's language (language.ts) as HQ or the phone line read it when the call started, which the voice line
 // speaks and hears in: one it doesn't know is English.
 const spoken = (lang: string): BoardLanguage => Object.hasOwn(LANGUAGES, lang) ? lang as BoardLanguage : 'en';
-export function context(agent: string, lang: string, request = 0, again = '', phone = false, pins: unknown = null) {
+// walk: HQ rang from a card's Walk me through it (walkthroughs.ts)
+export function context(agent: string, lang: string, request = 0, again = '', phone = false, walk = false) {
   const who = findAgent(agent);
   if (!who || who.temp || boardId(agent)) return 404;
   const live = again ? db.prepare(`select c.id, c.request, c.resumes, t.listed from call_tokens t join calls c on c.id = t.call and c.agent = t.agent
@@ -63,25 +63,21 @@ export function context(agent: string, lang: string, request = 0, again = '', ph
   if (again && !live) return 409;
   const req = about(agent, live ? live.request ?? 0 : request);
   if (live) {  // a restart
-    const pinned = feedback.pinsOf(live.id);
-    const p = heard(prompt(spoken(lang), agent, req, live.id, phone, pinned, JSON.parse(live.resumes ?? '[]'))), listed = [...new Set([...JSON.parse(live.listed) as number[], ...p.listed])];
+    const p = heard(prompt(spoken(lang), agent, req, live.id, phone, JSON.parse(live.resumes ?? '[]'))), listed = [...new Set([...JSON.parse(live.listed) as number[], ...p.listed])];
     db.prepare('update call_tokens set listed = ? where hash = ?').run(JSON.stringify(listed), sha256(again));
-    return { prompt: p.text, token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, ...callModel(), ...line(),
-      pins: feedback.shots(pinned) };
+    return { prompt: p.text, token: again, call: live.id, key: pictures.callKey(sha256(again)), voice: who.voice, ...callModel(), ...line() };
   }
   const token = randomBytes(32).toString('base64url');
   db.prepare('delete from call_tokens where expires < ?').run(Date.now() - 86400e3);
   const earlier = unfinished(agent);
   const call = Number(db.prepare("insert into calls (ts, agent, request, lines, status, resumes) values (?, ?, ?, '[]', 'live', ?)")
     .run(new Date().toISOString(), agent, req?.id ?? null, earlier.length ? JSON.stringify(earlier) : null).lastInsertRowid);
-  const pinned = pins == null ? [] : feedback.pinsFor(pins) ?? [];
-  feedback.pin(call, pinned);
-  const p = heard(prompt(spoken(lang), agent, req, 0, phone, pinned, earlier, call));
+  walks.begin(call, req?.id ?? 0, walk);
+  const p = heard(prompt(spoken(lang), agent, req, 0, phone, earlier, call));
   db.prepare('insert into call_tokens (hash, agent, expires, call, listed) values (?, ?, ?, ?, ?)')
     .run(sha256(token), agent, Date.now() + CALL_MS, call, JSON.stringify(p.listed));
   // call: HQ watches its follow-up by it. key: HQ's picture uploads for this call carry it (pictures.ts)
-  return { prompt: p.text, token, call, key: pictures.callKey(sha256(token)), voice: who.voice, ...callModel(), ...line(),
-    pins: feedback.shots(pinned) };
+  return { prompt: p.text, token, call, key: pictures.callKey(sha256(token)), voice: who.voice, ...callModel(), ...line() };
 }
 // The board can ring an agent again before its last call is followed up: a correction, or something else entirely. That
 // call carries on from the agent's calls still waiting for their follow-up (calls.resumes, kept for a restart): their
@@ -130,8 +126,6 @@ corrects the earlier items from it.
       if (i.status === 'open') listed.push({ id: i.id, end: text.length });
     }
     if (!noted.length) text += ' nothing yet';
-    const pinned = feedback.pinsOf(c.id);
-    if (pinned.length) text += `\nThe board's review pins it was about:${pinned.map(n => `\n- Pin #${n.id} on ${n.page}: ${cut(n.note, 300)} (${n.status === 'pending' ? 'waiting in HQ' : n.status})`).join('')}`;
     text += `\n${!lines.length ? "(No transcript: the line dropped before it was handed over.)"
       : `The transcript:\n${keep.length < lines.length ? `(Lines 1-${lines.length - keep.length} are left out here: the call tool reads call #${c.id} whole.)\n` : ''}`}${keep.join('\n')}\n`;
   }
@@ -192,8 +186,8 @@ export function addToJob(me: { agent: string; callId?: number }, id: number, tex
     if (customers) handedCustomerData(id);
     return { job: id, agent: job.agent, added: 'brief' };
   }
-  if (['done', 'failed', 'cancelled'].includes(job.status))
-    return [409, `job #${id} has ${job.status === 'done' ? 'finished' : `been ${job.status === 'failed' ? 'stopped' : 'cancelled'}`}. If the board still wants it, queue it as a new job with the whole brief`];
+  if (['done', 'failed', 'stopped', 'cancelled'].includes(job.status))
+    return [409, `job #${id} has ${job.status === 'done' ? 'finished' : `been ${job.status === 'cancelled' ? 'cancelled' : 'stopped'}`}. If the board still wants it, queue it as a new job with the whole brief`];
   const message = `An addition to your job #${id} (${job.title}), from ${me.agent}'s call with the board (call #${call}), where it was queued. `
     + `It's part of the brief: act on it with the rest.\n\n${text}`;
   if (message.length > messages.MAX) return [413, `too long for a job that has started (${text.length.toLocaleString('en')} characters, and the note around it counts): keep the addition short; the follow-up has the whole call`];
@@ -288,9 +282,9 @@ export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c
 // On the phone: who they are, how to talk, and the company as it is right now; listed: the open items it numbers, and
 // where each one's line ends. The open items come before the parts that can grow (the company right now), so an
 // over-long briefing cuts those first (fit()).
-// `restarted`: the call this session takes over (context()), and what's on its list already. pins: the review notes the
-// call is about. carried: the calls it carries on from (carriedOn()), and `call` this one.
-function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, pins: any[] = [], carried: number[] = [], call = restarted) {
+// `restarted`: the call this session takes over (context()), and what's on its list already. carried: the calls it
+// carries on from (carriedOn()), and `call` this one. (A call about review pins went with HQ's waiting notes)
+function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, carried: number[] = [], call = restarted) {
   const head = `${instructions(lang, agent, phone)}
 ## You
 ${profile(read(`company/people/${agent.replace(/[^a-z0-9-]/g, '')}.md`))}
@@ -299,15 +293,15 @@ ${recentWork(agent, call)}${req ? `## What this call is about
 Your own desk phone request to the board, #${req.id}: ${req.title}
 ${req.body.length > 20_000 ? `${req.body.slice(0, 20_000).trimEnd()}… (cut here: the request has ${req.body.length.toLocaleString('en')} characters)` : req.body}
 After the call you get the transcript, and ${req.status === 'open' ? "the request stays on the board's desk phone until you close it" : `the request is off the board's desk phone already (${req.status})`}.
-${req.kind === 'credential' ? `It asks for keys. Help the board find them, but never ask them to read a key, password or code out loud: they go in the fields on the desk phone (you never see them). If the board starts reading one out, stop them.\n` : ''}
+${call && walks.isWalk(call) ? walks.BRIEFING : ''}${req.kind === 'credential' ? `It asks for keys. Help the board find them, but never ask them to read a key, password or code out loud: they go in the fields on the desk phone (you never see them). If the board starts reading one out, stop them.\n` : ''}
 ` : ''}${restarted ? `## Already noted on this call
 Your session on this call stopped and was restarted: it's still the same call. What was noted on it so far is on its
 list already, so don't note it again (replace one to change it):
 ${ledger.items(restarted).map(i => `- #${i.id}: ${i.what} (${i.kind} for ${i.owner}, ${i.status})`).join('\n') || '- nothing yet'}
 
-` : ''}` + feedback.pinsText(pins);   // the board's pins, on a call about them
+` : ''}`;
   const open = ledger.stillOpen(8, [restarted, ...carried]);
-  const now = companyNow();
+  const now = companyNow(agent);
   const before = carriedOn(carried, call, ARG_BYTES - Buffer.byteLength(`${head}${open.text}${now}`));
   const text = `${head}${open.text}${before.text}${now}`;
   return { text, listed: [...open.listed.map(l => ({ id: l.id, end: head.length + l.end })),
@@ -329,7 +323,7 @@ function instructions(lang: BoardLanguage, agent: string, phone: boolean) {
   // with promise) or leaves it untimed, and never asks the board by when.
   // A time from the when tool: the work played into the plan (when.ts). A time far past the board's is the agent's to
   // solve on the call: it sets windows as it queues or releases, and the when and eta answers say what to check when a
-  // finish misses (worker/hq when.ts lateLines; board, call 139). Judgment, never a refusal.
+  // finish misses (worker/hq deadlines.ts lateLines). Judgment, never a refusal.
   // Where planned work stands: the eta tool (voice hq_tools.py, outlooks.ts findOutlooks).
   // What's going on now: the eta tool with no query (hq now, goingon.ts).
   // hang_up: the agent ends the call once the board has clearly said goodbye (the voice line's Call.leave), with a
@@ -436,7 +430,8 @@ ${read('AGENTS.md').trim()}
 }
 
 // The board's clock (org.yaml's company.timeZone): what the call says is on it, as the tools' answers are (the voice line
-// gives their hq the zone: guard.py agent_env); what the agent gives the tools stays UTC.
+// gives their hq the zone: guard.py agent_env); what the agent gives the tools is on it too, with its date and no zone
+// (windows.ts parse).
 function boardClock(now = Date.now()) {
   const zone = timeZone();
   const clock = (options: Intl.DateTimeFormatOptions, at = now) =>
@@ -447,8 +442,9 @@ function boardClock(now = Date.now()) {
     ? ` Its clocks change at ${clock({ weekday: 'short', day: 'numeric', month: 'short', timeZone: zone }, change)}: a time after that converts at its new offset.`
     : '';
   return `it lives on ${zone} time, where it's ${there} now (${clock({ timeZone: 'UTC' })}).${next} Your tools'
-answers name each time's zone, on the board's clock where they can: one marked UTC is UTC, so convert it before you say it. A
-time you give a tool (by, deadline) is UTC: convert the board's own to it.`;
+answers name each time's zone, on the board's clock where they can: one marked UTC is UTC, so convert it before you say it. Give
+a tool (by, deadline) the board's own time as it said it, with its date and no zone (2026-10-26 09:00): HQ reads it on the
+board's clock at that date's offset. A time with Z, or a time of day alone (14:30), is UTC.`;
 }
 // The first moment the zone's offset from UTC changes (summer or winter time) within the next half year, or none
 const HALF_YEAR_MS = 183 * 86_400_000;
@@ -513,7 +509,7 @@ report. If the board asks about something you did that isn't here, look it up no
 
 // The company right now: the team, what's going on (goingon.ts: who's at work, the holds, the desk phone's cards and what
 // waits on each), work and reviews queued, the intercom's latest and the newest decisions
-function companyNow() {
+function companyNow(agent: string) {
   const rows = (sql: string) => db.prepare(sql).all() as Record<string, string>[];
   // (by number, for reach and add: what's running is in goingon's list; step, round: a job's name, nameOf.)
   const jobs = rows("select id, agent, title, step, round, status from jobs where status in ('queued', 'blocked') and kind in ('work', 'chat') order by id desc limit 15")
@@ -537,7 +533,7 @@ The team:
 ${team}
 
 ${goingon.words(forecast.current())}
-Queued or waiting for the board (the newest):
+${agent === ceo() ? heartbeatPart() : ''}Queued or waiting for the board (the newest):
 ${jobs}
 Reviews queued:
 ${reviews}
@@ -548,6 +544,14 @@ ${talk || '(nothing yet)'}
 
 ## Recent decisions
 ${decisions(read('company/DECISIONS.md'))}`;
+}
+
+// A call with the CEO has its heartbeat at hand: its page (pad.ts) and the goals as the hourly check reads them (goals.ts).
+function heartbeatPart() {
+  const page = pad(),
+    goalLines = goals.lines(forecast.current());
+  const pageText = page ? `Your page (hq pad), the plan you run the company by, as you last wrote it:\n${page.text}\n` : 'Your page (hq pad): none yet.\n';
+  return `${pageText}Our goals:\n${goalLines.map(l => `- ${l}`).join('\n') || '- none marked yet (hq project goal)'}\n`;
 }
 
 // A file of the company's repo (main), or nothing when it isn't there

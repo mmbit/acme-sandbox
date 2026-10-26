@@ -36,9 +36,7 @@ export function first<T extends { id: number; expedite?: number }>(
     const resting = new Set(planned.flatMap(m => queuedSeats(m.id).map(s => s.job)));
     return { jobs: sorted.filter(j => !resting.has(j.id)), gathering: false };
   }
-  const m = planned.find(
-    m => m.at <= now && (m.rests ?? 0) <= now && queuedSeats(m.id).every(s => seatReadyFor(s.job, now)),
-  );
+  const m = planned.find(m => m.at <= now && queuedSeats(m.id).every(s => seatReadyFor(s.job, now)));
   if (!m) return available;
   const jobs = new Set(queuedSeats(m.id).map(s => s.job));
   return { jobs: sorted.filter(j => jobs.has(j.id)), gathering: true };

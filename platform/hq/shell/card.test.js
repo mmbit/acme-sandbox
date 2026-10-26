@@ -50,6 +50,23 @@ test('a choice wrapped over two lines is one choice, and a blank line before the
   assert.equal(c.after, '');
 });
 
+test('a card with choices and an Options: line keeps both as written, for cardcheck.js to refuse', () => {
+  const c = parseCard(
+    'Buy the duck?\n\nChoose:\n- Buy it (recommended): it squeaks.\n- Not for now\n\nOptions: Buy it | Not for now',
+  );
+  assert.deepEqual(
+    c.choices.map(ch => [ch.label, ch.rec]),
+    [
+      ['Buy it', true],
+      ['Not for now', false],
+    ],
+  );
+  assert.deepEqual(c.options, ['Buy it', 'Not for now']);
+  const more =
+    'Buy the duck?\n\nChoose:\n- Buy it (recommended)\n- Not for now\n\nOptions: Buy it | Not for now | Ask me in spring';
+  assert.match(cardProblem(`${more}\nRecommend: Ask me in spring`), /answers twice.*Drop the Options: line/);
+});
+
 test('details start after a line of ---, wherever it is between the first line and the last', () => {
   assert.deepEqual(
     ['Short.\n  ---  \nMore.\n---\nAnd more.', 'Short.\n\n\n----\n\nMore.\n---\nAnd more.'].map(

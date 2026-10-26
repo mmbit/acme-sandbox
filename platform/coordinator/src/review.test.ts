@@ -106,7 +106,7 @@ async function claim(n: number, which: (j: Listed) => boolean = () => true) {
 // A seat at its limit hands its run back, until long after this file has run
 const putBack = (id: number, at: string) => worker('finish', { job: id, seat: at, status: 'limited', resetAt: Date.now() + 86_400_000 });
 const FINE = { output: '{"summary": "fine", "findings": []}' }, FAILED = { status: 'failed', result: 'Worker error: git clone failed' };
-const verdict = (decision: string) => ({ output: JSON.stringify({ decision, summary: 'ok' }) });
+const verdict = (decision: string) => ({ output: JSON.stringify({ decision, summary: 'ok', major_visual: false }) });
 // A run ends, as the worker reports it, and what the review loop does with it runs its course
 async function end(run: { id: number; seat: string }, report: Record<string, unknown> = FINE) {
   assert.equal((await worker('finish', { job: run.id, seat: run.seat, status: 'done', ...report })).status, 200);
@@ -135,11 +135,11 @@ async function submit(n: number, push: Record<string, unknown> = {}, by?: Runnin
 const pushFix = (n: number, files: string[], fixed?: string[], links: string[] = []) =>
   submit(n, { files, links, ...(fixed && heads.has(n) ? { pushedSince: { sha: heads.get(n), files: fixed } } : {}) });
 // The panel reports on PR n's round and Quill rules: Quill's run, with the panel's
-async function decide(n: number, decision: string) {
+async function decide(n: number, decision: string, major_visual?: boolean) {
   const panel = await claim(n, j => j.kind === 'review');
   for (const run of panel) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
-  await end(quill, verdict(decision));
+  await end(quill, major_visual === undefined ? verdict(decision) : { output: JSON.stringify({ decision, summary: 'ok', major_visual }) });
   return Object.assign(quill, { panel });
 }
 // `hq review <n>`, run by `agent`'s job: the route's reply
@@ -260,6 +260,7 @@ test("an exhausted consolidator roster still closes work, reopens call items, ho
     await end(ruler, {
       output: JSON.stringify({
         decision: 'close',
+        major_visual: false,
         summary: 'Redraw the work',
         pre_existing: [{ file: 'products/old/play.ts', line: 1, issue: 'An old loop', fix: 'Simplify the loop' }],
       }),
@@ -542,7 +543,7 @@ const findingsOf = (n: number) => db.prepare('select id, kind, issue, by, outcom
 async function ruleFindings(n: number, blocking: object[], outcomes?: object[]) {
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [ruling] = await claim(n, j => j.kind === 'consolidate');
-  await end(ruling, { output: JSON.stringify({ decision: blocking.length ? 'changes' : 'merge', blocking, outcomes }) });
+  await end(ruling, { output: JSON.stringify({ major_visual: false, decision: blocking.length ? 'changes' : 'merge', blocking, outcomes }) });
   return ruling;
 }
 const blocker = (issue: string, earlier?: number) => ({ file: ONE_FILE, line: 10, issue, earlier, caused_by: { file: ONE_FILE, line: 10 }, task: `Fix ${issue}`, by: ['quill'] });
@@ -612,7 +613,7 @@ test('a reintroduced blocker is judged on the next fix attempt before a new bloc
   await ruleFindings(n, [blocker('A again', a.id)], [{ finding: b.id, outcome: 'fixed' }]);
   await pushFix(n, [ONE_FILE], [ONE_FILE]);
   const [check] = await claim(n, j => j.kind === 'consolidate');
-  await end(check, { output: JSON.stringify({ decision: 'changes', blocking: [blocker('D')] }) });
+  await end(check, { output: JSON.stringify({ major_visual: false, decision: 'changes', blocking: [blocker('D')] }) });
   assert.equal(prs(n).status, 'open', 'missing outcomes decide nothing');
   assert.deepEqual(queued(n).map(j => j.kind), ['consolidate'], 'the ruling is replaced without a stalled PR');
   assert.equal(findingsOf(n).length, 2, 'an invalid ruling records no new blocker');
@@ -724,7 +725,7 @@ test("a finding on lines the change doesn't add or alter is set apart from the d
   }
   const reviewer = panel[0];
   await end(quill, { output: JSON.stringify({ blocking: [], nonblocking: [],
-    pre_existing: [{ file: ONE_FILE, line: 200, issue: 'at 200', fix: 'z', by: [reviewer.agent, 'someone else'] }], decision: 'merge', summary: 'ok' }) });
+    pre_existing: [{ file: ONE_FILE, line: 200, issue: 'at 200', fix: 'z', by: [reviewer.agent, 'someone else'] }], major_visual: false, decision: 'merge', summary: 'ok' }) });
   assert.equal(prs(n).status, 'merged');
   assert.deepEqual(findingsOf(n).map(f => ({ kind: f.kind, issue: f.issue, by: JSON.parse(f.by) })),
     [{ kind: 'pre-existing', issue: 'at 200', by: [{ agent: reviewer.agent, engine: reviewer.engine }] }]);
@@ -739,7 +740,7 @@ test("each finding that reached the author gets its outcome from the check after
   assert.doesNotMatch(quill.prompt, /"outcomes"/, 'nothing reached the author yet');
   await end(quill, { output: JSON.stringify({
     blocking: [{ file: ONE_FILE, line: 3, case: 'x', issue: 'the total counts the fee twice', also: [{ file: ONE_FILE, line: 9 }], fix: 'y', task: 'Count the fee once', by: [reviewer.agent, 'quill'] }],
-    nonblocking: [{ file: ONE_FILE, line: 7, issue: 'a name that says nothing', fix: 'z', by: ['quill'] }], decision: 'changes', summary: 'two' }) });
+    nonblocking: [{ file: ONE_FILE, line: 7, issue: 'a name that says nothing', fix: 'z', by: ['quill'] }], major_visual: false, decision: 'changes', summary: 'two' }) });
   const [fee, name] = findingsOf(n);
   assert.deepEqual([fee.kind, name.kind], ['blocking', 'nonblocking']);
   const fix = db.prepare("select prompt from jobs where pr = ? and kind = 'work' and status = 'queued'").get(n) as { prompt: string };
@@ -753,7 +754,7 @@ test("each finding that reached the author gets its outcome from the check after
   assert.match(check.prompt, /\{"outcomes": \[/);
   // the fee is still counted twice in its other place: the same finding, sent back, not a new one
   const sentBack = (outcomes: object[]) => ({ output: JSON.stringify({ outcomes,
-    blocking: [{ file: ONE_FILE, line: 9, issue: 'the fee still counts twice here', earlier: fee.id, task: 'Count the fee once', by: ['quill'] }], decision: 'changes', summary: 'one left' }) });
+    blocking: [{ file: ONE_FILE, line: 9, issue: 'the fee still counts twice here', earlier: fee.id, task: 'Count the fee once', by: ['quill'] }], major_visual: false, decision: 'changes', summary: 'one left' }) });
   // an outcome it doesn't know judges nothing and decides nothing: the check runs again
   await end(check, sentBack([{ finding: fee.id, outcome: 'not fixd' }, { finding: name.id, outcome: 'disputed', right: 'author' }]));
   assert.deepEqual(findingsOf(n).map(f => f.outcome), [null, null]);
@@ -779,7 +780,7 @@ test("a check after the author's fixes that leaves a finding without its outcome
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
-  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }, { file: ONE_FILE, line: 30, issue: 'two', task: 'Fix two', by: ['quill'] }],
+  await end(quill, { output: JSON.stringify({ major_visual: false, blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }, { file: ONE_FILE, line: 30, issue: 'two', task: 'Fix two', by: ['quill'] }],
     decision: 'changes', summary: 'two' }) });
   const [one, two] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed both.' });
@@ -788,7 +789,7 @@ test("a check after the author's fixes that leaves a finding without its outcome
     const [check] = await claim(n);
     await review.actOnRulings();
     assert.equal(prs(n).status, 'open', 'a superseded verdict cannot stick its running replacement');
-    await end(check, { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], decision: 'merge', summary: 'ok' }) });
+    await end(check, { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], major_visual: false, decision: 'merge', summary: 'ok' }) });
     if (!i) {
       await review.actOnRulings();
       assert.equal(prs(n).status, 'open', 'a superseded verdict cannot stick its queued replacement');
@@ -803,7 +804,7 @@ test('hq review acts on a completed replacement ruling left behind by an older s
   const n = 1363;
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
-  await end((await claim(n))[0], { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
+  await end((await claim(n))[0], { output: JSON.stringify({ major_visual: false, blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
   const [one] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] } });
   const [first] = await claim(n);
@@ -811,7 +812,7 @@ test('hq review acts on a completed replacement ruling left behind by an older s
   later(n);
   const [replacement] = await claim(n);
   h.stuckReview(n);
-  await end(replacement, { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], decision: 'merge', summary: 'ok' }) });
+  await end(replacement, { output: JSON.stringify({ major_visual: false, outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], decision: 'merge', summary: 'ok' }) });
   assert.equal(prs(n).status, 'stuck');
   const back = await hqReview(n, 'lark');
   assert.equal(back.status, 200);
@@ -827,15 +828,15 @@ test('a verdict whose outcomes decide nothing is no ruling: `hq review` runs the
     await submit(n, { files: [ONE_FILE] });
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const [quill] = await claim(n, j => j.kind === 'consolidate');
-    await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
+    await end(quill, { output: JSON.stringify({ major_visual: false, blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }], decision: 'changes', summary: 'one' }) });
     const [one] = findingsOf(n);
     await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed it.' });
     for (let i = 0; i < 2; i++) {
       if (i) later(n);
-      await end((await claim(n))[0], { output: JSON.stringify({ outcomes: [], blocking: [], decision: 'merge', summary: 'ok' }) });
+      await end((await claim(n))[0], { output: JSON.stringify({ outcomes: [], blocking: [], major_visual: false, decision: 'merge', summary: 'ok' }) });
     }
     assert.deepEqual(prs(n), { round: 2, status: 'stuck' });
-    return { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], decision: 'merge', summary: 'ok' }) };
+    return { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }], blocking: [], major_visual: false, decision: 'merge', summary: 'ok' }) };
   };
   const n = 1360;
   const right = await stuckOnOutcomes(n);
@@ -859,19 +860,19 @@ test("a merge check judges no findings: one left open by the pass it checks does
   await submit(n, { files: [ONE_FILE] });
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
-  await end(quill, { output: JSON.stringify({ blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }],
+  await end(quill, { output: JSON.stringify({ major_visual: false, blocking: [{ file: ONE_FILE, line: 3, issue: 'one', task: 'Fix one', by: ['quill'] }],
     nonblocking: [{ file: ONE_FILE, line: 30, issue: 'a name that says nothing', by: ['quill'] }], decision: 'changes', summary: 'two' }) });
   const [one, name] = findingsOf(n);
   await submit(n, { files: [ONE_FILE], pushedSince: { sha: heads.get(n), files: [ONE_FILE] }, result: 'Fixed the one; the name stays.' });
   github.pr(n).mergeable = false;
   await end((await claim(n))[0], { output: JSON.stringify({ outcomes: [{ finding: one.id, outcome: 'fixed' }, { finding: name.id, outcome: 'not fixed' }],
-    blocking: [], decision: 'merge', summary: 'ok' }) });
+    blocking: [], major_visual: false, decision: 'merge', summary: 'ok' }) });
   github.pr(n).mergeable = true;
   await submit(n, { files: [ONE_FILE] });
   const [check] = await claim(n);
   assert.equal(check.stage, 'merge');
   assert.doesNotMatch(check.prompt, /"outcomes"/);
-  await end(check, verdict('merge'));
+  await end(check, { output: JSON.stringify({ decision: 'merge', summary: 'The merge is ready' }) });
   assert.equal(prs(n).status, 'merged');
   assert.deepEqual(findingsOf(n).map(f => f.outcome), ['fixed', 'not fixed']);
 });
@@ -904,7 +905,7 @@ test("a merge check's blocking finding is recorded like any ruling's: the next r
   assert.match(next.prompt, new RegExp(`#${finding.id} \\(round 1, blocking\\) ${ONE_FILE}:12: a test change beyond the merge`));
   assert.match(next.prompt, /Disputed: the test change is what the merge needed/);
   assert.match(next.prompt, /\{"outcomes": \[/);
-  await end(next, { output: JSON.stringify({ outcomes: [{ finding: finding.id, outcome: 'disputed', right: 'author' }], blocking: [], decision: 'merge', summary: 'ok' }) });
+  await end(next, { output: JSON.stringify({ outcomes: [{ finding: finding.id, outcome: 'disputed', right: 'author' }], blocking: [], major_visual: false, decision: 'merge', summary: 'ok' }) });
   assert.equal(prs(n).status, 'merged');
   assert.deepEqual(findingsOf(n).map(f => [f.outcome, f.right]), [['disputed', 'author']]);
 });
@@ -937,7 +938,7 @@ test("Quill's check that fails to run, or writes no verdict, runs once more; twi
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   later(n);
   const [again] = await claim(n);
-  assert.equal(again.prompt, quill.prompt);
+  assert.ok(again.prompt.startsWith(quill.prompt));
   await end(again, verdict('merge'));
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
   // Quill wrote prose around a verdict, or none, instead of the file: no braces are dug out
@@ -1118,7 +1119,7 @@ test('a push of the same head while its ruling runs leaves that ruling standing:
   assert.deepEqual(prs(n), { round: 2, status: 'open' });
 });
 
-test('a pass whose branch moved before the merge counts like a merge that could not happen: at the last round, the push is a merge check, not a close', async () => {
+test('a panel or board pass whose merge finds a moved branch gets a merge check in the same round', async () => {
   const n = 160;
   for (let i = 0; i < 2; i++) { await submit(n); await decide(n, 'changes'); }
   await submit(n);
@@ -1133,16 +1134,23 @@ test('a pass whose branch moved before the merge counts like a merge that could 
   await end(check, verdict('merge'));
   assert.deepEqual(prs(n), { round: 3, status: 'merged' });
 
-  // the board's "merge" on a branch that moved: the push gets a round of its own too
+  // The board's pass stands for its reviewed commit too. The next push still needs its merge checked.
   const b = 161;
   for (let i = 0; i < 2; i++) { await submit(b); await decide(b, 'changes'); }
-  await submit(b); await decide(b, 'board');
+  await submit(b);
+  const boardRuling = await decide(b, 'board');
   github.refuse.push(MOVED);
   await boardSays(b, 'merge');
   assert.deepEqual(prs(b), { round: 3, status: 'stuck' });
   await submit(b);
-  assert.deepEqual(prs(b), { round: 4, status: 'open' });
-  assert.equal(github.pr(b).state, 'open', 'not closed');
+  assert.deepEqual(prs(b), { round: 3, status: 'open' });
+  assert.equal(github.pr(b).merged, false, 'the board did not approve this new head');
+  const [boardCheck] = await claim(b);
+  assert.deepEqual([boardCheck.stage, boardCheck.sha, boardCheck.round], ['merge', heads.get(b), 3]);
+  assert.ok(boardCheck.prompt.includes(`passed review at ${boardRuling.sha}`));
+  await end(boardCheck, verdict('merge'));
+  assert.deepEqual(prs(b), { round: 3, status: 'merged' });
+  assert.equal(github.pr(b).mergedSha, boardCheck.sha);
 });
 
 test("hq review on a ruled round whose branch moved outside any job gives that push to its author's job: the worker's push and checks start the next round; one that has not moved waits", async () => {
@@ -1373,7 +1381,7 @@ for (const duringPanel of [false, true]) {
       const [ruling] = await claim(n, j => j.kind === 'consolidate');
       if (duringPanel) await submit(n);
       const matter = 'Approve the external publishing authority for this change';
-      await end(ruling, { output: JSON.stringify({ decision: 'board', summary: matter }) });
+      await end(ruling, { output: JSON.stringify({ decision: 'board', summary: matter, major_visual: false }) });
       if (!duringPanel) {
         await submit(n, { sha: first });
         assert.deepEqual(prs(n), { round: 1, status: 'board' }, 'an unchanged push keeps the card too');
@@ -1670,10 +1678,10 @@ test('a pull request from an ordinary job gets no board words', async () => {
   for (const run of [quill, ...quill.panel]) assert.doesNotMatch(run.prompt, /What the board asked|"asked"/);
 });
 
-test('an item stays handled only when its pull request merges: closed unmerged, it is open again, its ref or not, unless it was a question answered on the call', async () => {
+test("an item stays ready for the board's yes only when its pull request merges: closed unmerged, it is open again, its ref or not, unless it was a question answered on the call", async () => {
   const merged = await itemJob(122);
   await submit(122, {}, merged.job); await decide(122, 'merge');
-  assert.equal(itemStatus(merged.item).status, 'handled');
+  assert.equal(itemStatus(merged.item).status, 'ready');
   const closed = await itemJob(123);
   await submit(123, {}, closed.job); await decide(123, 'close');
   assert.deepEqual(prs(123), { round: 1, status: 'closed' });
@@ -1889,6 +1897,17 @@ test("hq review gives a pull request stuck on tests that couldn't complete to it
   assert.ok((await claim(n)).every(j => j.kind === 'review'), 'the panel has it');
 });
 
+test("tests the platform stopped (its disk accounting down) give their author no job: the pull request waits stuck until hq review", async () => {
+  const n = 3919, gates = { passed: true, report: 'ok' };
+  const stopped = { passed: null, platform: true, report: 'Could not complete: job #9: Disk accounting unavailable for job 9.' };
+  await gated(n, gates, stopped);
+  assert.deepEqual(prs(n), { round: 0, status: 'stuck' });
+  assert.match(why(n)!, /^the platform couldn't run its tests \(Could not complete: .*\); `hq review 3919` runs them again$/);
+  assert.equal((await claim(n)).length, 0, 'no repair job, no review');
+  assert.equal((await hqReview(n)).status, 200);
+  assert.match((await claim(n))[0].title, /^Running the tests again/);
+});
+
 test("failing gates and incomplete tests keep streaks of their own: a push without one ends its streak, and a push with both counts towards each", async () => {
   const fails = { passed: false, report: 'lib/a.ts:3: x is never used (no-unused-vars)' }, passes = { passed: true, report: 'ok' };
   const incomplete = { passed: null, report: "Tests incomplete: some didn't start in the 25 min 0 s they have" };
@@ -2060,6 +2079,43 @@ test('a merge ruling on a pull request closed on GitHub by hand closes it here, 
   assert.deepEqual(doing(n), [], 'no fix job, and nothing redoes it');
 });
 
+const passed = { gates: { passed: true, report: 'Gates passed' }, tests: { passed: true, report: 'Tests passed' } };
+// An expedited pull request whose worker merged main as `merged`: nothing lands, or is marked expedited, until that head
+// passes its own checks on the author's push
+async function landsAfterItsChecks(n: number, merged: string) {
+  assert.equal(github.pr(n).merged, false, 'only the original head passed checks');
+  assert.equal((db.prepare('select expedited from prs where number = ?').get(n) as { expedited: number }).expedited, 0);
+  assert.ok(queued(n).some(j => j.kind === 'work'), 'the author gets the job that runs checks on the new head');
+  await submit(n, { sha: merged, ...passed });
+  assert.equal(github.pr(n).mergedSha, merged, 'the new head lands after its own checks');
+}
+
+test("an expedited push GitHub merges only with main lands once the worker's merge of main passes its own checks", async () => {
+  const n = 969, first = newSha(), merged = newSha();
+  const job = await h.start({ agent: 'bolt', branch: `review/${n}`, expedite: true });
+  github.pr(n).mergeable = false;
+  answer = ask => {
+    if (ask.pr !== n) return git(ask);
+    github.pr(n).mergeable = true;
+    github.pr(n).head = merged;
+    return { pr: n, head: ask.head, sha: merged };
+  };
+  await submit(n, { sha: first, ...passed }, job);
+  await landsAfterItsChecks(n, merged);
+});
+
+test("hq expedite on a pull request the worker merged main into refuses, and the merge lands once it passes its own checks", async () => {
+  const n = 968, first = newSha(), merged = newSha();
+  const job = await h.start({ agent: 'bolt', branch: `review/${n}` });
+  await submit(n, { sha: first, ...passed }, job);
+  github.pr(n).head = merged;
+  await worker('main-merged', { pr: n, head: first, sha: merged });
+  github.refuse.push(MOVED);
+  assert.equal(typeof await review.expedite(job.id, 'juno'), 'string', 'the CEO hears that the new head still needs checks');
+  await settled();
+  await landsAfterItsChecks(n, merged);
+});
+
 // ---- GitHub refusing a merge
 test('a merge GitHub refuses because main moved seconds before goes through on a retry of the same commit: no fix job', async () => {
   const n = 970;
@@ -2089,7 +2145,7 @@ test('a real conflict goes back to its author at once, told which files; a refus
   assert.equal(github.pr(s).merged, false);
 });
 
-test("a passed pull request GitHub calls conflicting only for want of our union merge is merged as git's merge of main: no author job, no round", async () => {
+test("a clean worker merge of main lands after the author's push and the same round's merge check", async () => {
   const n = 974;
   await submit(n);
   github.pr(n).mergeable = false; gitConflicts = [];
@@ -2097,12 +2153,42 @@ test("a passed pull request GitHub calls conflicting only for want of our union 
   const asked = mainAsked.filter(a => a.pr === n);
   assert.deepEqual(asked.map(a => a.head), [quill.sha], 'main merged into the commit the panel passed');
   assert.ok(asked[0].msLeft > 0 && asked[0].msLeft <= 5 * 60_000, "the worker is told the time left of the coordinator's wait");
+  assert.equal(github.pr(n).merged, false, 'the generated head has not been checked');
+  assert.deepEqual(doing(n), ['Bringing up to date']);
+  await submit(n, { sha: asked[0].sha });
+  assert.deepEqual(queued(n).map(j => [j.stage, j.round]), [['merge', 1]]);
+  await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
-  assert.equal(github.pr(n).mergedSha, asked[0].sha, "GitHub merges the worker's merge");
-  assert.deepEqual(queued(n), [], 'no author job and no review round');
+  assert.equal(github.pr(n).mergedSha, asked[0].sha);
 });
 
-test("the worker's merge of main reported after a restart's re-acted ruling found the branch moved by it: open again, and merged", async () => {
+test("a board merge that needs git's union merge goes to its author, then the same round's merge check", async () => {
+  const n = 8330, first = newSha(), merged = newSha();
+  const files = [...FILES, 'company/DECISIONS.md', 'company/people/bolt.md'];
+  await submit(n, { sha: first, files, ...passed });
+  await decide(n, 'board');
+  github.pr(n).mergeable = false;
+  answer = ask => {
+    if (ask.pr !== n) return git(ask);
+    assert.equal(ask.head, first);
+    github.pr(n).mergeable = true;
+    github.pr(n).head = merged;
+    return { pr: n, head: ask.head, sha: merged };
+  };
+  await boardSays(n, 'merge');
+  assert.equal(github.pr(n).merged, false, 'the generated head has not passed checks');
+  assert.deepEqual(prs(n), { round: 1, status: 'open' });
+  assert.deepEqual(doing(n), ['Bringing up to date']);
+  const [author] = await claim(n);
+  assert.equal(author.agent, 'bolt');
+  await submit(n, { sha: merged, files, ...passed }, author);
+  assert.deepEqual(queued(n).map(j => [j.stage, j.round]), [['merge', 1]]);
+  await decide(n, 'merge');
+  assert.deepEqual(prs(n), { round: 1, status: 'merged' });
+  assert.equal(github.pr(n).mergedSha, merged);
+});
+
+test("a worker merge reported after a restart still needs a checked push before landing", async () => {
   const n = 975, merged = newSha();
   await submit(n);
   github.refuse.push(MOVED);   // the worker pushed its merge, but the report hadn't come
@@ -2110,7 +2196,12 @@ test("the worker's merge of main reported after a restart's re-acted ruling foun
   assert.equal(prs(n).status, 'stuck');
   await worker('main-merged', { pr: n, head: quill.sha, sha: merged });
   assert.equal(prs(n).status, 'open');
+  github.refuse.push(MOVED);
   await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false);
+  assert.deepEqual(doing(n), ['Bringing up to date']);
+  await submit(n, { sha: merged });
+  await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
   assert.equal(github.pr(n).mergedSha, merged);
   // a report for a commit the pull request isn't at changes nothing: its own commit merges
@@ -2137,17 +2228,21 @@ test("the worker's answer about a commit a push has left decides nothing: no aut
   assert.equal(github.pr(n).merged, false);
 });
 
-test("GitHub not showing the worker's merge as the head yet is tried again, not stuck", async () => {
+test("a worker reporting that the checked head already contains main permits a retry of that head", async () => {
   const n = 979;
   await submit(n);
-  github.pr(n).mergeable = false; gitConflicts = [];
-  answer = ask => { const report = git(ask); github.refuse.push({ status: 409, message: 'Head branch was modified. Review and try the merge again.' }); return report; };
-  await decide(n, 'merge');
+  github.pr(n).mergeable = false;
+  answer = ask => {
+    github.pr(ask.pr).mergeable = true;
+    github.refuse.push(BASE_MOVED);
+    return { pr: ask.pr, head: ask.head, sha: ask.head };
+  };
+  const checked = await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
-  assert.equal(github.pr(n).mergedSha, mainAsked.find(a => a.pr === n)!.sha);
+  assert.equal(github.pr(n).mergedSha, checked.sha);
 });
 
-test("an own profile's merge a restart cut off while the worker merged main is merged when the worker's report comes", async () => {
+test("an own profile's worker merge survives a restart and lands after its author checks it", async () => {
   const n = 978, sha = newSha(), merged = newSha();
   github.pr(n).mergeable = false;
   let held: Ask | undefined;
@@ -2160,14 +2255,18 @@ test("an own profile's merge a restart cut off while the worker merged main is m
   github.pr(n).mergeable = true;
   restarted.mainMerged({ pr: n, head: sha, sha: merged });
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
+  github.refuse.push(MOVED);
   await restarted.actOnRulings();
-  assert.deepEqual(prs(n), { round: 1, status: 'merged' });
-  assert.equal(github.pr(n).mergedSha, merged);
-  assert.deepEqual(queued(n), [], 'no author job');
+  assert.equal(github.pr(n).merged, false);
+  assert.deepEqual(doing(n), ['Bringing up to date']);
   // (the process before the restart lets go)
   answer = git;
   await worker('main-merged', { pr: n, head: sha, sha: merged });
   await settled();
+  await submit(n, { sha: merged, files: ['company/people/bolt.md'] });
+  await decide(n, 'merge');
+  assert.deepEqual(prs(n), { round: 1, status: 'merged' });
+  assert.equal(github.pr(n).mergedSha, merged);
 });
 
 test("an own profile that can't merge goes back to its author once, keeping every archived line: a fix job that ends without a push isn't followed by another", async () => {
@@ -2723,7 +2822,7 @@ const writes = (run: Run) => JSON.parse(run.writes ?? '[]');
 async function ruleWithTouchups(n: number, ruling: Record<string, unknown>, touchup: Record<string, unknown>) {
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n);
-  await end(quill, { output: JSON.stringify({ summary: 'ok', touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name', ...ruling }), touchup });
+  await end(quill, { output: JSON.stringify({ major_visual: false, summary: 'ok', touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name', ...ruling }), touchup });
 }
 // The author's job on the branch ends with a push at `sha`, its branch at `before` until then
 const pushAt = (n: number, files: string[], sha: string, before: string, changed: string[], triage?: string[]) =>
@@ -2775,7 +2874,7 @@ test("a changes ruling's fix round is named by the tasks its consolidator gave t
   for (const run of await claim(n, j => j.kind === 'review')) await end(run);
   const [quill] = await claim(n, j => j.kind === 'consolidate');
   const finding = (issue: string, task: string) => ({ file: PAGE, line: 1, case: 'a visit', issue, fix: 'fix it', task });
-  await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'two fixes', blocking: [
+  await end(quill, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'two fixes', blocking: [
     finding('The level cannot finish', 'Let the level finish'), finding('The ship is invisible', 'Show the ship'),
     finding('The ship flickers', 'Show the ship')] }) });
   assert.deepEqual(queued(n).map(j => [j.title, j.step]), [['Let the level finish; Show the ship', null]]);
@@ -2805,7 +2904,7 @@ test('an author touch-up check that failed twice still keeps its round when its 
   for (const [n, file] of [[1514, PAGE], [1515, 'platform/web/src/x.ts']] as const) {
     const head = newSha();
     await pushFix(n, [file]);
-    await ruleWithTouchups(n, {decision:'changes', blocking:[]}, {sha:head, files:[file]});
+    await ruleWithTouchups(n, { decision: 'changes', blocking:[]}, {sha:head, files:[file]});
     for (let i = 0; i < 2; i++) {
       later(n);
       await end((await claim(n))[0], FAILED);
@@ -2878,7 +2977,7 @@ test("a fix round's title is every task its ruling names in full, and a task tha
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const [quill] = await claim(n, j => j.kind === 'consolidate');
     const blocking = tasks.map((task, i) => ({ file: PAGE, line: i + 1, issue: `wrong ${i}`, task, by: ['quill'] }));
-    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking }) });
+    await end(quill, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'ok', blocking }) });
     return quill;
   };
   const long = ['Count the fee once in the total the basket shows before checkout', 'Show the delivery date the shop promised on the order page',
@@ -2974,7 +3073,7 @@ test("touch-ups kept after the board's word their ruling went by was withdrawn g
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const told = await tell(queued(n).find(j => j.kind === 'consolidate')!, 'Only something insecure blocks the site now.');
     const [quill] = await claim(n, j => j.kind === 'consolidate');
-    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking: [], touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' }),
+    await end(quill, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'ok', blocking: [], touchups: [{ file: PAGE, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' }),
       touchup: { sha: head, files: [PAGE] } });
     assert.deepEqual(doing(n), [null]);
     return told;
@@ -3044,7 +3143,7 @@ test('a changes ruling reaches the project owner once and only the last named fi
     await submit(8007, { files }, task);
     for (const run of await claim(8007)) await end(run);
     const [ruler] = await claim(8007);
-    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'Fix movement and drawing', blocking: [
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Fix movement and drawing', blocking: [
       { file: files[0], line: 1, issue: 'Movement cannot finish', fix: 'Complete movement', domain: 'engine' },
       { file: files[1], line: 1, issue: 'Drawing is stale', fix: 'Draw current state', domain: 'art' }
     ] }) });
@@ -3078,7 +3177,7 @@ test('a changes ruling reaches the project owner once and only the last named fi
     for (const id of ids) assert.ok(check.prompt.includes(`finding #${id}`));
     assert.match(check.prompt, /Movement report from Wren/);
     assert.match(check.prompt, /Drawing report from Moss/);
-    await end(check, { output: JSON.stringify({ decision: 'changes', summary: 'Still blocked',
+    await end(check, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Still blocked',
       outcomes: ids.map(finding => ({ finding, outcome: 'not fixed' })), blocking: [
         { earlier: ids[0], file: files[0], issue: 'Movement still cannot finish' },
         { earlier: ids[1], file: files[1], issue: 'Drawing is still stale' }
@@ -3101,7 +3200,7 @@ test('a "changes" ruling whose blocking finding is a string runs its consolidato
     await submit(n, { files }, task);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'The record moved', blocking: ['Two commits re-point the record'] }) });
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'The record moved', blocking: ['Two commits re-point the record'] }) });
     assert.deepEqual(queued(n).map(j => [j.kind, j.agent]), [['consolidate', ruler.agent]], 'its consolidator rules again');
     assert.equal(inbox.get(n), undefined, 'no findings reach the owner');
 
@@ -3111,7 +3210,7 @@ test('a "changes" ruling whose blocking finding is a string runs its consolidato
     later(n);
     const [again] = await claim(n, j => j.kind === 'consolidate');
     assert.ok(again.prompt.includes('"Two commits re-point the record"'), 'its run again names the entry that is no finding');
-    await end(again, { output: JSON.stringify({ decision: 'changes', summary: 'The record moved', blocking: [
+    await end(again, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'The record moved', blocking: [
       { file: files[0], line: 1, issue: 'Two commits re-point the record', fix: 'Drop them' }
     ] }) });
     await until(() => !!inbox.get(n), 'the finding to reach the owner');
@@ -3132,12 +3231,12 @@ test('a "changes" ruling already delivered with a blocking finding that is a str
     await submit(n, { files }, task);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'The record moved', blocking: [
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'The record moved', blocking: [
       { file: files[0], line: 1, issue: 'Two commits re-point the record' }
     ] }) });
     await until(() => !!inbox.get(n), 'the ruling to reach the owner');
     // as the old code left it: the string saved, no finding recorded, and an empty item delivered
-    db.prepare('update jobs set output = ? where id = ?').run(JSON.stringify({ decision: 'changes', summary: 'The record moved', blocking: ['Two commits re-point the record'] }), ruler.id);
+    db.prepare('update jobs set output = ? where id = ?').run(JSON.stringify({ major_visual: false, decision: 'changes', summary: 'The record moved', blocking: ['Two commits re-point the record'] }), ruler.id);
     db.prepare('delete from findings where pr = ?').run(n);
     db.prepare("update finding_rulings set blocking = '[]' where ruling = ?").run(ruler.id);
     db.prepare("update review_inbox set findings = '[]' where pr = ?").run(n);
@@ -3166,11 +3265,11 @@ test('a touch-up-only ruling passes its Stop check before publication and merges
         const [ruler] = await claim(n, j => j.kind === 'consolidate');
         assert.ok(writes(ruler).includes(file));
         const verdict = {
-          decision: windowed ? 'merge' : 'changes', blocking: [], nonblocking: [],
+          major_visual: false, decision: windowed ? 'merge' : 'changes', blocking: [], nonblocking: [],
           touchups: [{ file, line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name',
         };
         const check = (candidate: object) => h.agent('review-output', ruler.token, { output: JSON.stringify(candidate) });
-        assert.ok((await check({ decision: 'changes', blocking: [], nonblocking: [] })).body.error,
+        assert.ok((await check({ major_visual: false, decision: 'changes', blocking: [], nonblocking: [] })).body.error,
           'a changes ruling with nothing to fix is still refused');
         assert.equal((await check(verdict)).body.error, null, 'the Stop hook cannot require the post-exit commit');
         if (windowed) {
@@ -3204,8 +3303,8 @@ test('a touch-up-only ruling passes its Stop check before publication and merges
 test('a thread\'s "changes" ruling with no blocking finding and no touch-ups pushed runs its consolidator again', async () => {
   const projects = await import('./projects.ts'), inbox = await import('./reviewinbox.ts');
   const rulings = [
-    { n: 8093, verdict: { decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [] }, touchup: undefined },
-    { n: 8095, verdict: { decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [], touchups: [{ file: 'products/game/world.ts', line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' },
+    { n: 8093, verdict: { major_visual: false, decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [] }, touchup: undefined },
+    { n: 8095, verdict: { major_visual: false, decision: 'changes', summary: 'Tidy it', blocking: [], nonblocking: [], touchups: [{ file: 'products/game/world.ts', line: 1, what: 'a clearer name' }], touchups_task: 'Keep the clearer name' },
       touchup: { refused: "review/8095 isn't at abc1234 any more" } },
   ];
   for (const { n, verdict, touchup } of rulings) {
@@ -3232,7 +3331,7 @@ test("the sweep holds records-only work for its owner's blocking ruling, includi
     await submit(n, { files: [file, ...records] }, work);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'The decision is incorrect', blocking: [
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'The decision is incorrect', blocking: [
       { file: records[0], line: 1, issue: 'The recorded decision contradicts the approved behavior' }
     ] }) });
     const inbox = await import('./reviewinbox.ts');
@@ -3266,7 +3365,7 @@ test('a changes ruling on work with no thread queues its author\'s fix at once, 
     await submit(n, { files });
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, { output: JSON.stringify({ decision: 'changes', summary: 'Movement needs a fix', blocking: [
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'Movement needs a fix', blocking: [
       { file: files[0], line: 1, issue: 'Movement cannot finish', fix: 'Complete movement', task: 'Let movement finish' }
     ] }) });
     const inbox = await import('./reviewinbox.ts');
@@ -3287,7 +3386,7 @@ test('a close ruling sends its findings to the project owner without an author r
     await submit(8008, { files: ['products/game/world.ts'] });
     for (const run of await claim(8008)) await end(run);
     const [ruler] = await claim(8008);
-    await end(ruler, { output: JSON.stringify({ decision: 'close', summary: 'Redraw the slice', blocking: [
+    await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'close', summary: 'Redraw the slice', blocking: [
       { domain: 'slice', file: 'products/game/world.ts', line: 1, issue: 'Beyond the thread, propose it' }
     ] }) });
     const inbox = await import('./reviewinbox.ts');
@@ -3367,38 +3466,56 @@ test('an owner drops closed work only after explicitly dropping its dependent jo
   await h.finish(owner);
 });
 
-test('an owner reassigns a twice-failed automatic fix and its final push starts the next review', async () => {
-  const n = 8014, thread = h.dueThread();
+for (const platformRetry of [false, true])
+ test(`${platformRetry ? 'hq review redraws' : 'an owner reassigns'} a twice-failed fix and its final push starts the next review`, async () => {
+  const n = platformRetry ? 8015 : 8014, thread = h.dueThread({deadline:Date.now() + 3_600_000});
   const work = await h.start({agent:'bolt', title:'A world that moves', branch:`review/${n}`, thread});
-  const owner = await h.start({agent:'juno', title:'Reassign the failed finding'});
+  const owner = await h.start({agent:'juno', title:'Reassign the failed finding', engine:'claude'});
   await withConsolidators(async () => {
     const files = ['products/game/world.ts'];
     await submit(n, {files}, work);
     for (const run of await claim(n)) await end(run);
     const [ruler] = await claim(n);
-    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
+    await end(ruler, {output:JSON.stringify({ major_visual: false,decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
     const inbox = await import('./reviewinbox.ts');
     await until(() => !!inbox.get(n), 'the finding to arrive');
     const id = inbox.get(n)!.findings[0].id;
     assert.equal((await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'wren', findings:String(id), title:'Make what the review found right'})).status, 200);
+    const proposals = await import('./proposals.ts');
+    const accepted = () => db.prepare('select status, accepted, decided from proposals where id = ?').get(inbox.get(n)!.proposal);
+    const originalAcceptance = accepted();
     const first = await h.claim('claude');
     assert.equal(first?.agent, 'wren');
     await h.finish(first!, {status:'failed', result:'The worker clone failed'});
+    assert.deepEqual(accepted(), originalAcceptance, 'a first-failure retry leaves an accepted item alone');
     later(n);
     const retry = await h.claim('claude');
     assert.equal(retry?.agent, 'wren');
     await h.finish(retry!, {status:'failed', result:'The worker clone failed again'});
     assert.equal(prs(n).status, 'stuck');
-    const reassigned = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', findings:String(id), title:'Make what the review found right'});
+    proposals.sweep();
+    assert.equal(proposals.list('juno').find(item => item.id === `findings:${n}`)?.status, 'open');
+    const notices = db.prepare('select id from messages where held = ? and delivered is null and lapsed is null').all(inbox.get(n)!.proposal).map(row => row.id);
+    assert.ok(notices.length, 'the reopened item notifies its owner');
+    const reassigned = platformRetry
+      ? await h.agent('review', owner.token, {pr:n})
+      : await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', findings:String(id), title:'Make what the review found right'});
     assert.equal(reassigned.status, 200, JSON.stringify(reassigned.body));
+    assert.equal(accepted()?.status, 'accepted');
+    assert.deepEqual(inbox.unassigned(n, 1), []);
+    const hook = await h.agent('inbox', owner.token, {});
+    assert.equal(hook.status, 200);
+    assert.equal(hook.body.some((message: {message:number}) => notices.includes(message.message)), false, 'the acceptance withdraws the owner notice');
+    proposals.sweep();
+    assert.equal(proposals.list('juno').some(item => item.id === `findings:${n}` && item.status === 'open'), false);
     const last = await h.claim('claude');
-    assert.equal(last?.id, reassigned.body.job);
+    assert.equal(last?.id, platformRetry ? reassigned.body.jobs[0] : reassigned.body.job);
     await submit(n, {files, result:`Fixed finding #${id}`}, last!);
     assert.deepEqual(prs(n), {round:2, status:'open'});
     const [check] = await claim(n);
     assert.equal(check.stage, 'ruling');
     assert.ok(check.prompt.includes(`finding #${id}`));
-    await end(check, {output:JSON.stringify({decision:'merge', summary:'Movement fixed', outcomes:[{finding:id, outcome:'fixed'}]})});
+    await end(check, {output:JSON.stringify({major_visual: false, decision: 'merge', summary:'Movement fixed', outcomes:[{finding:id, outcome:'fixed'}]})});
     assert.equal(prs(n).status, 'merged');
   });
   await h.finish(owner);
@@ -3519,7 +3636,7 @@ test('successive touch-up checks each retry once and their later same-round ruli
     await submit(n, {files:[file]}, work);
     for (let i = 0; i < 2; i++) {
       const head = newSha();
-      await ruleWithTouchups(n, {decision:'changes', blocking:[]}, {sha:head, files:[file]});
+      await ruleWithTouchups(n, { decision: 'changes', blocking:[]}, {sha:head, files:[file]});
       const accepted = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'bolt'});
       assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
       const fix = await h.claim('claude');
@@ -3594,7 +3711,7 @@ test('a redraw refuses a destination with a pending review fix without holding t
     await submit(n, {}, existing);
     for (const run of await claim(n, j => j.kind === 'review')) await end(run);
     const [quill] = await claim(n, j => j.kind === 'consolidate');
-    await end(quill, { output: JSON.stringify({ decision: 'changes', summary: 'ok', blocking: [{ file: FILES[0], line: 1, issue: 'wrong', by: ['quill'] }] }) });
+    await end(quill, { output: JSON.stringify({ major_visual: false, decision: 'changes', summary: 'ok', blocking: [{ file: FILES[0], line: 1, issue: 'wrong', by: ['quill'] }] }) });
     const inbox = await import('./reviewinbox.ts');
     const [found] = inbox.get(n)!.findings;
     const fix = await h.agent('proposals/accept', owner.token, {id:`findings:${n}`, for:'lark', findings:[found.id], title:'Make what the review found right'});
@@ -3612,7 +3729,7 @@ test('a redraw refuses a destination with a pending review fix without holding t
     await submit(n, {}, fixing!);
     assert.equal(prs(n).round, 2);
     const [check] = await claim(n, j => j.kind === 'consolidate');
-    await end(check, { output: JSON.stringify({ decision: 'merge', summary: 'ok', outcomes: [{ finding: found.id, outcome: 'fixed' }] }) });
+    await end(check, { output: JSON.stringify({ major_visual: false, decision: 'merge', summary: 'ok', outcomes: [{ finding: found.id, outcome: 'fixed' }] }) });
   });
   await h.finish(owner);
 });
@@ -3698,7 +3815,7 @@ for (const assignment of ['inbox', 'job'])
     await submit(replacementPr, {branch, files}, replacement!);
     for (const run of await claim(replacementPr)) await end(run);
     const [ruler] = await claim(replacementPr);
-    await end(ruler, {output:JSON.stringify({decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
+    await end(ruler, {output:JSON.stringify({ major_visual: false,decision:'changes', summary:'Movement needs a fix', blocking:[{file:files[0], line:1, issue:'Movement cannot finish', task:'Let movement finish'}]})});
     const inbox = await import('./reviewinbox.ts');
     await until(() => !!inbox.get(replacementPr), 'the replacement findings');
     const finding = inbox.get(replacementPr)!.findings[0].id;
@@ -3719,10 +3836,273 @@ for (const assignment of ['inbox', 'job'])
     await submit(replacementPr, {branch, files, result:`Fixed finding #${finding}`}, retry!);
     assert.deepEqual(prs(replacementPr), {round:2, status:'open'});
     const [check] = await claim(replacementPr);
-    await end(check, {output:JSON.stringify({decision:'merge', summary:'Movement fixed', outcomes:[{finding, outcome:'fixed'}]})});
+    await end(check, {output:JSON.stringify({major_visual: false, decision: 'merge', summary:'Movement fixed', outcomes:[{finding, outcome:'fixed'}]})});
     assert.equal(prs(replacementPr).status, 'merged');
     assert.equal(h.job(sourceContinuation).ready, 1);
     assert.equal(h.job(destinationContinuation).ready, 1);
   });
   await h.finish(owner);
+});
+
+
+function visualDecision(author: Running) {
+  const decision = /Decision #(\d+) holds its merge/.exec(author.prompt);
+  assert.ok(decision, 'the card author is told which decision holds the merge');
+  return Number(decision[1]);
+}
+
+async function visualCard(n: number, working?: Running, also: number[] = []) {
+  const author = working ?? await h.claim();
+  assert.ok(author, 'the card author can run while the merge waits');
+  assert.equal(author.agent, 'bolt');
+  const decision = visualDecision(author);
+  const shown = await h.hq(author, 'decision', 'show', String(decision));
+  assert.equal(shown.code, 0, shown.out);
+  for (const pr of [n, ...also]) assert.ok(shown.out.includes(`PR #${pr}`), shown.out);
+  const card = await h.ask(author, { title: 'The new look', body: 'Before and after, on phone and desktop.', decides: decision });
+  await h.finish(author);
+  return card;
+}
+
+test('a major live visual change waits for its card and Go live releases its reviewed merge', async () => {
+  const n = 8180;
+  await submit(n, { files: ['products/site/page.css'] });
+  await decide(n, 'merge', true);
+  assert.equal(github.pr(n).merged, false);
+  await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false, 'the saved ruling cannot bypass the decision');
+  assert.match(why(n)!, /visual decision/);
+  const card = await visualCard(n);
+  await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false, 'filing a card is not approval');
+  assert.equal((await h.answer(card, '', { answers: ['Go live'] })).status, 200);
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+  assert.equal(prs(n).status, 'merged');
+});
+
+test('Changes first invalidates the old visual ruling, even when its next push keeps the same head', async () => {
+  const n = 8181;
+  const sha = newSha();
+  await submit(n, { files: ['products/site/page.css'], sha });
+  await decide(n, 'merge', true);
+  const card = await visualCard(n);
+  assert.equal((await h.answer(card, 'Keep the old palette.', { answers: ['Changes first'] })).status, 200);
+  await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false);
+  assert.equal(prs(n).round, 0);
+  assert.equal(queued(n).filter(j => j.stage === 'feedback').length, 1);
+  await submit(n, { files: ['products/site/page.css'], sha });
+  await decide(n, 'merge', true);
+  await review.actOnRulings();
+  assert.equal(github.pr(n).merged, false, 'the rejected head needs a fresh card');
+  const replacement = await visualCard(n);
+  assert.notEqual(replacement, card);
+  await h.answer(replacement, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+});
+
+test('one visual card covers the reviewed pull requests waiting on the same thread', async () => {
+  const thread = h.dueThread();
+  let cardAuthor: Running | null = null;
+  for (const n of [8182, 8183]) {
+    const author = await h.start({ agent: 'bolt', thread });
+    await submit(n, { branch: `job/${author.id}`, files: ['products/site/page.css'] }, author);
+    await decide(n, 'merge', true);
+    if (n === 8182) cardAuthor = await h.claim();
+  }
+  assert.ok(cardAuthor);
+  const card = await visualCard(8182, cardAuthor, [8183]);
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(8182).merged, true);
+  assert.equal(github.pr(8183).merged, true);
+});
+
+test('an expedited major visual change leaves no visual hold or card job after review', async () => {
+  const n = 8295;
+  const author = await h.start({ agent: 'bolt', branch: `review/${n}`, expedite: true });
+  await submit(n, { files: ['products/site/page.css'], gates: { passed: true, report: 'clean' }, tests: { passed: true, report: 'passed' } }, author);
+  assert.equal(github.pr(n).merged, true, 'expedited work merges before its review');
+  assert.equal(prs(n).status, 'open', 'the review is still pending');
+  const before = h.jobs.listJobs().map(j => j.id);
+  await decide(n, 'merge', true);
+  assert.equal(prs(n).status, 'merged');
+  assert.equal(db.prepare('select 1 from decision_merges where pr = ?').get(n), undefined);
+  assert.deepEqual(h.jobs.listJobs().filter(j => !before.includes(j.id) && j.kind === 'work'), []);
+});
+
+test('a minor visual edit merges without a visual decision and reviewers get the company live description', async () => {
+  const n = 8184, live = 'The signed-in workshop and the public gallery.';
+  await withSetting(`review:\n  live: ${JSON.stringify(live)}`, async () => {
+    await submit(n, { files: ['products/site/page.css'] });
+    for (const reader of await claim(n, j => j.kind === 'review')) {
+      assert.ok(reader.prompt.includes(live));
+      await end(reader);
+    }
+    const [ruler] = await claim(n, j => j.kind === 'consolidate');
+    assert.ok(ruler.prompt.includes(live));
+    await end(ruler, { output: JSON.stringify({ decision: 'merge', summary: 'A minor edit', major_visual: false }) });
+    assert.equal(github.pr(n).merged, true);
+  });
+});
+
+test('visual changes joining after a card was filed replace that card for the whole waiting thread', async () => {
+  const thread = h.dueThread();
+  const first = await h.start({ agent: 'bolt', branch: 'review/8185', thread });
+  await submit(8185, { files: ['products/site/page.css'] }, first);
+  await decide(8185, 'merge', true);
+  const cardAuthor = await h.claim();
+  assert.ok(cardAuthor);
+  const decision = visualDecision(cardAuthor);
+  const oldCard = await visualCard(8185, cardAuthor);
+  const other = await h.start({ agent: 'lark' });
+  assert.equal((await h.agent('request', other.token, { kind: 'decision', title: 'Go live?', body: 'A look', decides: decision })).status, 400);
+  assert.notEqual((await h.hq(other, 'decision', 'show', String(decision))).code, 0);
+  await h.finish(other);
+  const duplicate = await h.start({ agent: 'bolt' });
+  assert.equal((await h.agent('request', duplicate.token, { kind: 'decision', title: 'Another?', body: 'A look', decides: decision })).status, 400);
+  await h.finish(duplicate);
+  const second = await h.start({ agent: 'bolt', branch: 'review/8186', thread });
+  await submit(8186, { files: ['products/site/page.css'] }, second);
+  await decide(8186, 'merge', true);
+  assert.notEqual((await h.answer(oldCard, '', { answers: ['Go live'] })).status, 200, 'the old pictures cannot approve new changes');
+  const archived = (await h.board('/api/requests/archive')).body.cards.find((c: { id: number }) => c.id === oldCard);
+  assert.equal(archived?.status, 'done');
+  assert.ok(archived.answered);
+  assert.ok(archived.closing, 'HQ explains why the card left the phone');
+  const card = await visualCard(8186, undefined, [8185]);
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(8185).merged, true);
+  assert.equal(github.pr(8186).merged, true);
+});
+
+test('visual approval and a separate board merge can arrive in either order', async () => {
+  for (const visualFirst of [false, true]) {
+    const n = visualFirst ? 8188 : 8187;
+    await submit(n, { files: ['products/site/page.css'] });
+    await decide(n, 'board', true);
+    const card = await visualCard(n);
+    const approveVisual = async () => {
+      assert.equal((await h.answer(card, '', { answers: ['Go live'] })).status, 200);
+      await settled();
+    };
+    if (visualFirst) await approveVisual();
+    else await boardSays(n, 'merge');
+    assert.equal(github.pr(n).merged, false, 'both decisions are needed');
+    if (visualFirst) await boardSays(n, 'merge');
+    else await approveVisual();
+    assert.equal(github.pr(n).merged, true);
+  }
+});
+
+test('a missing or malformed visual judgment decides nothing, including on saved-ruling recovery', async () => {
+  const cases = [
+    { decision: 'merge' },
+    { decision: 'merge', major_visual: 'false' },
+    { decision: 'changes', major_visual: null },
+    { decision: 'close', major_visual: 0 },
+    { decision: 'board', major_visual: 'true' },
+  ];
+  for (const [i, invalid] of cases.entries()) {
+    const n = 8280 + i;
+    await submit(n);
+    for (const reader of await claim(n, j => j.kind === 'review')) await end(reader);
+    const [ruler] = await claim(n);
+    await end(ruler, { output: JSON.stringify(invalid) });
+    assert.equal(github.pr(n).merged, false);
+    assert.equal(github.pr(n).state, 'open');
+    await review.actOnRulings();
+    assert.equal(prs(n).status, 'open', 'the saved invalid ruling cannot act while its retry waits');
+    later(n);
+    const [retry] = await claim(n);
+    assert.ok(retry.prompt.includes('"major_visual": true or false'));
+    await end(retry, { output: JSON.stringify(invalid) });
+    assert.equal(prs(n).status, 'stuck');
+    assert.match(why(n)!, /major_visual/);
+    const resumed = await hqReview(n);
+    assert.equal(resumed.status, 200);
+    assert.equal(resumed.body.jobs.length, 1, 'a saved invalid verdict is unruled, so the check runs again');
+    const [recovery] = await claim(n);
+    await end(recovery, { output: JSON.stringify({ decision: 'merge', major_visual: true }) });
+    assert.equal(github.pr(n).merged, false);
+    const card = await visualCard(n);
+    await h.answer(card, '', { answers: ['Go live'] });
+    await settled();
+    assert.equal(github.pr(n).merged, true);
+  }
+});
+
+test('closing the last visual change retires its decision and card before another change joins the thread', async () => {
+  const decisions = await import('./decisions.ts');
+  const thread = h.dueThread();
+  const author = await h.start({ agent: 'bolt', thread });
+  await submit(8290, { branch: `job/${author.id}` }, author);
+  await decide(8290, 'board', true);
+  const cardAuthor = await h.claim();
+  assert.ok(cardAuthor);
+  const decision = visualDecision(cardAuthor);
+  const card = await visualCard(8290, cardAuthor);
+  await boardSays(8290, 'close');
+  assert.equal(prs(8290).status, 'closed');
+  assert.equal(decisions.awaited().some(line => line.includes(`decision #${decision} `)), false);
+  const archived = (await h.board('/api/requests/archive')).body.cards.find((c: { id: number }) => c.id === card);
+  assert.equal(archived?.status, 'done');
+  assert.ok(archived.answered);
+  assert.ok(archived.closing);
+  for (const answer of ['Go live', 'Changes first'])
+    assert.notEqual((await h.answer(card, '', { answers: [answer] })).status, 200);
+  const owner = await h.start({ agent: 'juno', title: 'Drop the closed visual change' });
+  assert.equal((await h.agent('proposals/drop', owner.token, { id: 'findings:8290', why: 'The board closed this change' })).status, 200);
+  await h.finish(owner);
+  const next = await h.start({ agent: 'bolt', thread });
+  await submit(8291, { branch: `job/${next.id}` }, next);
+  await decide(8291, 'merge', true);
+  const replacement = await h.claim();
+  assert.ok(replacement);
+  assert.notEqual(visualDecision(replacement), decision);
+  await visualCard(8291, replacement);
+});
+
+test('queued visual card preparation cannot file a decision after its last pull request closes', async () => {
+  await submit(8292);
+  await decide(8292, 'board', true);
+  await boardSays(8292, 'close');
+  const preparation = await h.claim();
+  assert.ok(preparation);
+  const refused = await h.agent('request', preparation.token, {
+    kind: 'decision', title: 'The old look', body: 'No changes remain.', decides: visualDecision(preparation),
+  });
+  assert.equal(refused.status, 400);
+  assert.equal((await h.board('/api/requests')).body.some((card: { title: string }) => card.title === 'The old look'), false);
+  await h.finish(preparation);
+});
+
+test('closing one shared visual change replaces its card with only the remaining changes', async () => {
+  const thread = h.dueThread();
+  let preparation: Running | null = null;
+  for (const n of [8293, 8294]) {
+    const author = await h.start({ agent: 'bolt', thread });
+    await submit(n, { branch: `job/${author.id}` }, author);
+    await decide(n, n === 8293 ? 'board' : 'merge', true);
+    if (n === 8293) preparation = await h.claim();
+  }
+  assert.ok(preparation);
+  const old = await visualCard(8293, preparation, [8294]);
+  await boardSays(8293, 'close');
+  for (const answer of ['Go live', 'Changes first'])
+    assert.notEqual((await h.answer(old, '', { answers: [answer] })).status, 200);
+  assert.equal(github.pr(8294).merged, false);
+  const replacement = await h.claim();
+  assert.ok(replacement);
+  const shown = await h.hq(replacement, 'decision', 'show', String(visualDecision(replacement)));
+  assert.equal(shown.code, 0);
+  assert.ok(!shown.out.includes('PR #8293'), shown.out);
+  const card = await visualCard(8294, replacement);
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(8294).merged, true);
+  assert.equal(prs(8293).status, 'closed');
 });

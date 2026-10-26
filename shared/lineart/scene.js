@@ -1,5 +1,6 @@
 // A drawing in the isometric line-art style, built in 3D: boxes, cylinders, balls, flat panels and lines, and the
 // pieces made of them (rooms cut away, walls, roofs, base plates, trees, people).
+import { project, shapesOf, inside } from './shapes.js';
 
 // x runs to the lower right, y to the lower left, z up, in any unit the drawing likes. Items are drawn in the order
 // they're added, so add them back to front: further back means smaller x + y.
@@ -124,7 +125,8 @@ function roof(api, { x, y, z, w, d, h, ridge = 'x', over = 0.2, tone = 'roof', c
 }
 
 // A person: a body and a head, standing or seated (pose 'sit': on a seat PERSON.seat up). tone: their clothes' tone;
-// accent: the person in the accent; reach: a hand out to that point; lift: both arms up; mark: a little aerial.
+// accent: the person in the accent; reach: a hand out to that point, in onAccent where it shows over an accent drawn
+// before it; lift: both arms up; mark: a little aerial.
 function figure(api, x, y, z, { pose = 'stand', tone = 'plain', accent, reach, lift, mark } = {}) {
   const { r, body, head } = PERSON;
   const low = pose === 'sit' ? z + PERSON.seat - body * 0.35 : z;
@@ -139,7 +141,7 @@ function figure(api, x, y, z, { pose = 'stand', tone = 'plain', accent, reach, l
         [x, y, top + head + 0.3],
       ])
       .ball(x, y, top + head + 0.36, 0.07, { tone: 'dark' });
-  if (reach) api.line([[x, y, low + tall * 0.85], reach]);
+  if (reach) arm(api, [x, y, low + tall * 0.85], reach);
   if (lift)
     api
       .line([
@@ -151,6 +153,23 @@ function figure(api, x, y, z, { pose = 'stand', tone = 'plain', accent, reach, l
         [x + 0.3, y - 0.3, top + 0.9],
       ]);
   return api;
+}
+
+// An arm from the shoulder to the hand, split where it starts or stops showing over an accent face already drawn, and
+// those parts drawn on the accent, so it reads there in every palette. The split is at the accent's outline, so a hand
+// must end well on the accent's fill or clear of its outline: one within half a line of the edge draws an on-accent
+// spot on the ink rim
+function arm(api, shoulder, hand) {
+  const accents = shapesOf(api.items.filter(item => item.accent)).filter(shape => shape.role === 'accent');
+  const along = t => shoulder.map((v, i) => v + (hand[i] - v) * t);
+  const runs = [];
+  for (let t = 0; t <= 1; t += 0.01) {
+    const over = accents.some(shape => inside(project(along(t)), shape));
+    if (runs.at(-1)?.over !== over) runs.push({ from: t, over });
+  }
+  runs.forEach(({ from, over }, i) =>
+    api.line([along(from), i + 1 < runs.length ? along(runs[i + 1].from) : hand], { onAccent: over }),
+  );
 }
 
 function ellipse(x, y, rx, ry, z) {

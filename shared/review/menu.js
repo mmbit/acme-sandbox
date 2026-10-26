@@ -1,5 +1,6 @@
 // Review mode's menu: a small button beside the pin, with the count of the reviewer's notes not sent yet: General note,
-// My notes (the sidebar, notes.js), Send my notes, and once an outsider sent theirs, Add more notes. The pin stays just
+// then an outsider's My notes (the sidebar, notes.js), Send my notes, and once they sent theirs, Add more notes; the
+// board's Open the book, whose sheet for the page's owner its notes join (the count is that sheet's). The pin stays just
 // the pin.
 import { ACCENT, label } from './base.js';
 import { say, uncoach } from './dock.js';
@@ -44,17 +45,20 @@ export const HTML = `<div class="menu" hidden role="menu" aria-label="Review mod
           <div class="items"><button role="menuitem" data-general>General note<small>About it all, not one spot</small></button>
             <button role="menuitem" data-list>My notes<small></small></button>
             <button role="menuitem" class="go" data-mine hidden>Send my notes<small></small></button>
+            <button role="menuitem" class="go" data-open-book hidden>Open the book<small></small></button>
             <button role="menuitem" class="go" data-again hidden>Add more notes<small>Pin away, then send them again</small></button></div></div></div>
         <button class="more" aria-label="Review mode’s menu: a general note, my notes" aria-haspopup="menu" aria-expanded="false">${MENU}<span class="count"></span></button>`;
 
-const sendLine = r => (r.outside ? `To the ${r.OUTSIDE} crew` : 'Tick and send in HQ');
+const sendLine = r => `To the ${r.OUTSIDE} crew`;
 
 // The notes are the coordinator's (/__review/mine), read on every page and again when the browser brings one back or
-// its tab is shown again: an outsider's wherever they pinned them on the link (the shop's pages and its apps'), the
-// board's waiting on this product.
+// its tab is shown again: an outsider's wherever they pinned them on the link (the shop's pages and its apps'); for the
+// board, whose sheet a note on this page joins and how many are on it (book: { owner, name }).
 export async function refresh(r) {
   try {
-    const res = await fetch(new URL('mine', r.ROUTE), { credentials: 'same-origin', cache: 'no-store' });
+    const mine = new URL('mine', r.ROUTE);
+    if (!r.outside) mine.searchParams.set('page', location.href);
+    const res = await fetch(mine, { credentials: 'same-origin', cache: 'no-store' });
     if (res.ok) {
       r.state = await res.json();
       paint(r);
@@ -63,9 +67,6 @@ export async function refresh(r) {
   } catch {
     /* this page's own count */
   }
-  // inside HQ's frame the viewer bar's Send counts the board's notes waiting on this product, as listed here: a cue for
-  // HQ only, whose Reviews shows the real ones
-  if (!r.outside) r.toHq({ waiting: r.state.list.map(n => n.id) });
 }
 export function paint(r) {
   const n = r.state.notes,
@@ -82,9 +83,17 @@ export function paint(r) {
   r.more.querySelector('.count').textContent = done ? '' : n || '';
   r.fab.hidden = done;
   r.$('[data-general]').hidden = done;
+  if (!r.outside) return paintBook(r);
   // every line one line in the menu's width, a phone's too: the count only in the caption, a sub-line only what its title
   // doesn't say
-  r.$('.cap').textContent = done ? 'Sent · thank you!' : n ? `Review · ${of} to send` : 'Review mode';
+  // (an outsider whose notes join the board's book as they write them, with none of theirs to send: where they go.
+  r.$('.cap').textContent = done
+    ? 'Sent · thank you!'
+    : n
+      ? `Review · ${of} to send`
+      : r.IN_BOOK
+        ? `Review · to ${r.OUTSIDE}’s book`
+        : 'Review mode';
   r.side.querySelector('.cap').textContent = `My notes${n ? ` · ${n} to send` : ''}`;
   r.notesItem.hidden = done || !n;
   label(r.notesItem, 'My notes', 'Read, change or delete');
@@ -93,6 +102,15 @@ export function paint(r) {
     if (!b.dataset.sure) label(b, 'Send my notes', sendLine(r));
   }
   r.again.hidden = !done;
+}
+// The board's: where its notes go, and the way there.
+function paintBook(r) {
+  const n = r.state.notes,
+    name = r.state.book?.name;
+  r.$('.cap').textContent = name && n ? `For ${name} · ${n} on the sheet` : 'Review mode';
+  r.notesItem.hidden = r.sendButton.hidden = r.again.hidden = true;
+  r.bookButton.hidden = !name;
+  if (name) label(r.bookButton, 'Open the book', `In your book, for ${name}`);
 }
 
 // it opens over the pin (under it when the pin sits high) and shuts on a choice, a tap anywhere else or Escape; shut,
@@ -122,20 +140,20 @@ function opened(r) {
   r.menu.classList.toggle('below', r.dock.getBoundingClientRect().top < r.menu.offsetHeight + 24);
 }
 
-// Send my notes, in the menu and at the sidebar's foot. An outsider's (two taps): their notes go to the crew, and they
+// Open the book, the board's: at the sheet its notes here join. The book is HQ's, behind its sign-in, where the board
+// sees every note before its plane sends a sheet: inside HQ's frame it asks HQ to open it there, on HQ itself it asks
+// the page ('review:book'), in a tab of its own it opens HQ.
+function openBook(r) {
+  shut(r);
+  const owner = r.state.book?.owner;
+  if (!owner) return;
+  if (r.framed) return r.toHq({ book: owner });
+  if (r.summoned) return dispatchEvent(new CustomEvent('review:book', { detail: owner }));
+  window.open(`${r.HQ}/?open=book&owner=${encodeURIComponent(owner)}`, '_blank', 'noopener');
+}
+// Send my notes, an outsider's, in the menu and at the sidebar's foot (two taps): their notes go to the crew, and they
 // add no more (until its date they can take them up again: Add more notes). Once everyone invited has sent theirs, the
 // crew gathers them
-// The board's is a hand-over to HQ, where only its own ticks choose what goes (the page's code could post a send
-// itself): inside HQ's frame it asks HQ for its send step (Reviews over the preview, at these notes), on HQ itself it
-// opens Reviews there, in a tab of its own it opens HQ's Reviews at them.
-function handOver(r) {
-  shut(r);
-  closeSide(r);
-  const ids = r.state.list.slice(0, 50).map(n => n.id);
-  if (r.framed) return r.toHq({ send: 1 });
-  if (r.summoned) return dispatchEvent(new CustomEvent('review:send', { detail: ids }));
-  window.open(`${r.HQ}/?open=notes&notes=${ids.join(',')}`, '_blank', 'noopener');
-}
 async function submit(r, b) {
   if (!b.dataset.sure) {
     b.dataset.sure = '1';
@@ -181,6 +199,7 @@ async function again(r) {
 }
 
 export function setupMenu(r) {
+  r.bookButton = r.$('[data-open-book]');
   r.state = { notes: 0, list: [], sent: r.SENT, more: r.SENT };
   paint(r);
   refresh(r);
@@ -197,7 +216,7 @@ export function setupMenu(r) {
   };
   r.notesItem.onclick = () => openSide(r);
   // A page that frames another page with its own pin (HQ's viewer) hides this one meanwhile ('review:cover', detail
-  // true, then false); notes sent or discarded on that page count again ('review:notes')
+  // true, then false)
   addEventListener('review:cover', e => {
     r.covered = !!e.detail;
     if (r.covered) {
@@ -207,7 +226,7 @@ export function setupMenu(r) {
     r.host.style.display = r.covered ? 'none' : 'block';
   });
   if (r.covered) r.host.style.display = 'none'; // (covered while it loaded)
-  addEventListener('review:notes', () => refresh(r));
-  for (const b of [r.sendButton, r.sideSend]) b.onclick = () => (r.outside ? submit(r, b) : handOver(r));
+  for (const b of [r.sendButton, r.sideSend]) b.onclick = () => submit(r, b);
+  r.bookButton.onclick = () => openBook(r);
   r.again.onclick = () => again(r);
 }

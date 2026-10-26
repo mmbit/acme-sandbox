@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 280" width="480" height="280">
+  <!-- dev mode's stand-in for a note's snip (booksheet.js): a picture the Pencil pointed at, cut at 2x -->
+  <rect width="480" height="280" fill="#fffdf7"/>
+  <rect x="150" y="40" width="290" height="200" rx="10" fill="#7a9cc6"/>
+  <circle cx="230" cy="110" r="34" fill="#f6d27a"/>
+  <path d="M150 240l90-90 60 50 50-40 90 80z" fill="#3f6b4f"/>
+  <path d="M30 200c40-10 80-30 108-70" fill="none" stroke="#2a2352" stroke-width="5" stroke-linecap="round"/>
+  <path d="M118 120l22 8-6 22" fill="none" stroke="#2a2352" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

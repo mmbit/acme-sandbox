@@ -44,6 +44,15 @@ export function sheetPen(sheet, sketch, { tool, changed, paste }) {
       page.k = k;
       page.redraw();
     },
+    // The page as merged with the store's (someone else drew in it meanwhile: pagemerge.js), drawn again. What undo
+    // knew goes: its steps' places are no longer the lines'.
+    replace(lines, scraps) {
+      page.lines.splice(0, page.lines.length, ...lines);
+      page.scraps.splice(0, page.scraps.length, ...scraps.map(s => (s.key ? s : { ...s, key: s.file })));
+      steps.done = [];
+      steps.undone = [];
+      page.redraw();
+    },
     undo: steps.undo,
     redo: steps.redo,
     get canUndo() {

@@ -327,7 +327,6 @@ test('a link opens 15 minutes before its time until 3 hours after, for one call;
     callout: f.id,
     phone: false,
     request: 0,
-    pins: [],
   });
   assert.equal(ctx.status, 200);
   assert.equal(
@@ -363,7 +362,7 @@ test('the call: its partner briefing and fixed opening, a token that opens no ro
   const juno = await h.start({ agent: 'juno' });
   const d = await dialled(juno);
   assert.equal((await voice('call-ticket', { ticket: d.ticket })).status, 200);
-  const ask = { agent: 'juno', lang: 'en', callout: d.id, phone: true, request: 0, pins: [] };
+  const ask = { agent: 'juno', lang: 'en', callout: d.id, phone: true, request: 0 };
   const ctx = (await voice('call-context', ask)).body;
   assert.equal(
     ctx.opening,
@@ -526,7 +525,7 @@ const shareHello = async () => {
 const startWatching = (token: string) =>
   h.send('/api/watchalong/join', { origin: ORIGIN, 'content-type': 'application/json' }, { token });
 const live = async (id: number) =>
-  (await voice('call-context', { agent: 'juno', lang: 'en', callout: id, phone: false, request: 0, pins: [] })).body;
+  (await voice('call-context', { agent: 'juno', lang: 'en', callout: id, phone: false, request: 0 })).body;
 const batch = { events: [{ type: 4, timestamp: Date.now(), data: {} }] };
 const postEvents = async (events: string) =>
   (await h.send(events, { origin: ORIGIN, 'content-type': 'application/json' }, batch)).status;

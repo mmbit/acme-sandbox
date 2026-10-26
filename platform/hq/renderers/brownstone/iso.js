@@ -170,3 +170,13 @@ export function upright(g, s, x, y, c, rows) {
     g.drawImage(flat, u, 0, 1, 5, x + u, y + low - rows[x + u], 1, 5);
   }
 }
+// a room's name on a plate on a wall at depth d (an upper room's front edge, the basement's soil face or the island's
+// curb), zb px up, a quarter tile in from the room's near end and never past its far one, its letters upright on the
+// wall's slant: cream with ink letters, or dark, the slab's plum with cream ones
+export function namePlate(g, rm, d, zb, dark) {
+  const X = rm.wing !== 'y', len = X ? rm.x1 - rm.x0 : rm.y1 - rm.y0;
+  const s = rm.name.toUpperCase().slice(0, Math.floor((len * 16 - 8) / 4)), w = textW(s) + 4, a = X ? rm.x0 + 0.25 : rm.y0 + 0.25 + w / 16;
+  const f = canvas(w, 7), fg = f.getContext('2d'), rows = Array.from({ length: w }, (_, u) => (X ? wallYCol : wallXCol)(a, d, zb, 7, u)[1]);
+  F(fg, 0, 0, w, 7, dark ? '#3b3355' : '#fdf3e1'); upright(fg, s, 2, 1, dark ? '#fdf3e1' : INK, rows);
+  (X ? onWallY : onWallX)(g, f, a, d, zb);
+}

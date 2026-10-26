@@ -127,6 +127,7 @@
       ],
       "prs": 2,
       "last": {
+        "id": 42,
         "title": "Morning round (2026-09-25)",
         "finished": "2026-09-25T08:05:00Z"
       }
@@ -144,6 +145,7 @@
       ],
       "prs": 5,
       "last": {
+        "id": 50,
         "title": "Gift wrap at checkout",
         "finished": "2026-09-25T17:45:00Z"
       }
@@ -161,6 +163,7 @@
       ],
       "prs": 3,
       "last": {
+        "id": 44,
         "title": "Banner for the building post",
         "finished": "2026-09-25T10:02:00Z"
       }
@@ -178,6 +181,7 @@
       ],
       "prs": 0,
       "last": {
+        "id": 43,
         "title": "Landing page for the sticker shop",
         "finished": "2026-09-25T10:40:00Z"
       }
@@ -280,6 +284,7 @@
       ],
       "prs": 4,
       "last": {
+        "id": 46,
         "title": "Landing page for the sticker shop",
         "finished": "2026-09-25T11:20:00Z"
       }
@@ -314,6 +319,7 @@
       ],
       "prs": 1,
       "last": {
+        "id": 41,
         "title": "Landing page for the sticker shop",
         "finished": "2026-09-25T09:30:00Z"
       }

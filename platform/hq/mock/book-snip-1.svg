@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 560 240" width="560" height="240">
+  <!-- dev mode's stand-in for a note's snip (booksheet.js): a Gazette headline the Pencil ringed, cut at 2x -->
+  <rect width="560" height="240" fill="#fffdf7"/>
+  <rect x="40" y="36" width="120" height="12" rx="6" fill="#d8cdb8"/>
+  <text x="40" y="104" font-family="Georgia, serif" font-size="38" font-weight="700" fill="#2b2540">The kiln is lit again, and</text>
+  <text x="40" y="150" font-family="Georgia, serif" font-size="38" font-weight="700" fill="#2b2540">the first mugs are out</text>
+  <rect x="40" y="186" width="420" height="10" rx="5" fill="#e6dccb"/>
+  <rect x="40" y="206" width="300" height="10" rx="5" fill="#e6dccb"/>
+  <path d="M26 92c40-52 470-62 512-14 34 42-20 92-210 96-176 4-330-6-316-58" fill="none" stroke="#2a2352" stroke-width="5" stroke-linecap="round"/>
+</svg>

@@ -369,3 +369,75 @@ test('a thread whose "done when" alone changed is asked for that name only', asy
   assert.deepEqual([shown.name, shown.goal], ['Gift wrap (plain)', 'Every gift goes out wrapped']);
   assert.deepEqual(await claim(), {}, 'nothing more is due');
 });
+
+test("a finished task's card says what it did in a few plain sentences, written from its report and brief, nothing before", async () => {
+  await nameAll();
+  projects.createThread({ project: 'game', name: 'Gift tags', goal: 'A gift carries a tag', slug: 'tags' });
+  const report = [
+    'Added gift tags: tags.ts takes a 40-character note per item, checkout.ts prints it on the packing slip,',
+    'and the order page shows it. Ran npm test (212 pass) and checked it in Chromium at 390 px.',
+  ].join(' ');
+  const run = await h.start({
+    agent: 'ivy',
+    title: 'Wire tags.ts into checkout',
+    thread: 'game/tags',
+    prompt: 'Let a buyer add a short note to a gift, printed on its packing slip.',
+  });
+  const open = await claim();
+  assert.ok(!refs(open).includes(`did:${run.id}`), 'nothing to say while it runs');
+  await answer(open, Object.fromEntries(open.names!.map(n => [`${n.kind}:${n.id}`, n.words])));
+  await h.finish(run, { result: report });
+  const customer = await h.start({ agent: 'ivy', title: 'Answer Sample Person', thread: 'game/tags', customers: true });
+  await h.finish(customer, { result: 'Told Sample Person their parcel ships Monday' });
+  const next = h.queue({ agent: 'ivy', title: 'Tag gift cards too', thread: 'game/tags' }); // (it keeps the thread open)
+  assert.equal((await boardJob(run.id)).did, undefined, 'none until it is made, never the report');
+
+  // (the names earlier tests left due go first, named their words as they are)
+  const claimOf = async (ref: string) => {
+    let c = await claim();
+    for (; c.names && !refs(c).includes(ref); c = await claim())
+      await answer(c, Object.fromEntries(c.names.map(n => [`${n.kind}:${n.id}`, n.words])));
+    return c;
+  };
+  const claimed = await claimOf(`did:${run.id}`);
+  assert.deepEqual(refs(claimed), [`did:${run.id}`, `task:${next}`], 'due once it is done, never customer work');
+  assert.match(claimed.prompt!, /What it is: what a finished task did/);
+  assert.match(claimed.prompt!, /The agents' words: Added gift tags: tags\.ts takes a 40-character note/, 'its report');
+  assert.match(claimed.prompt!, /Let a buyer add a short note to a gift/, 'its brief');
+  assert.doesNotMatch(claimed.prompt!, /Sample Person/);
+  // (too long a summary is an error, kept for the agents, and it's asked again later)
+  await answer(claimed, { [`did:${run.id}`]: 'x'.repeat(401), [`task:${next}`]: 'Tag gift cards too' });
+  assert.equal(
+    (
+      h.db.prepare("select error from board_names where kind = 'did' and id = ?").get(String(run.id)) as {
+        error: string;
+      }
+    ).error,
+    "the naming model's name was over 400 characters",
+  );
+  assert.equal((await boardJob(run.id)).did, undefined);
+  assert.deepEqual(await claim(), {}, 'not asked again at once');
+  mock.timers.tick(10 * MIN);
+  const again = await claimOf(`did:${run.id}`);
+  assert.deepEqual(refs(again), [`did:${run.id}`]);
+  const did = 'A buyer can now add a short note to a gift. It prints on the packing slip and shows on the order page.';
+  await answer(again, { [`did:${run.id}`]: did });
+  assert.equal((await boardJob(run.id)).did, did);
+  const shown = (await h.board('/api/projects/thread?id=game/tags')).body;
+  const job = shown.jobs.find((j: { id: number }) => j.id === run.id);
+  assert.deepEqual([job.did, job.result], [did, report], 'the report stays whole beside it');
+  const listed = (await h.board('/api/projects')).body.projects
+    .find((p: { id: string }) => p.id === 'game')
+    .threads.find((t: { id: string }) => t.id === 'game/tags');
+  assert.equal(listed.jobs.find((j: { id: number }) => j.id === run.id).did, did);
+  assert.equal((await boardJob(customer.id)).did, undefined);
+  assert.deepEqual(await claim(), {}, 'nothing more is due');
+
+  // (one done before HQ made these has the row the start's one-off leaves, saying nothing: never due, none read)
+  const earlier = await h.start({ agent: 'ivy', title: 'Tag the parcels' });
+  await answer(await claim(), { [`task:${earlier.id}`]: 'Tag the parcels' });
+  await h.finish(earlier, { result: 'Gift cards carry a tag too' });
+  h.db.prepare("insert into board_names (kind, id, words, plain) values ('did', ?, '', '')").run(String(earlier.id));
+  assert.deepEqual(await claim(), {}, 'not due');
+  assert.equal((await boardJob(earlier.id)).did, undefined);
+});

@@ -40,14 +40,17 @@ import { applyList, carryOut, off, type Listed, type SeatAction } from './seatli
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
+import { DiskShares } from './disk.ts';
+import { warnDisk } from './diskwarnings.ts';
 import { Reload } from './reload.ts';
+import { sampleWrites } from './diskwrites.ts';
 import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
 import { memoryWatch, type MemoryCause, type MemoryVerdict } from './lowmemory.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
 import { hqReports, ResponseError } from './reports.ts';
 import { openPullRequest as openOn } from './pulls.ts';
-import { alive, dropRun, endOf, endSeen, exitOf, follow, keepRecord, launch as launchDetached, launchesOf, processesOf, procStat, recordOf, records, sweepRuns, type Checks, type Launched, type RunRecord } from './detached.ts';
+import { alive, dropRun, endOf, endSeen, exitOf, follow, keepRecord, launch as launchDetached, launchesOf, processesOf, procStat, recordOf, records, sweepRuns, type CheckRun, type Checks, type Launched, type RunRecord } from './detached.ts';
 import { inChecks, runChecks, testsOnce, type CheckOutcome, type CheckSpec, type TestsOutcome } from './pushchecks.ts';
 import { answering, askAgainPrompt, cantAsk, lacksVerdict, see, seeSessionLogs, touchedFiles, verdictFromAnswer, verdictOf, written } from './verdict.ts';
 
@@ -172,7 +175,7 @@ const LOW_MEMORY_MB = Number(process.env.LOW_MEMORY_MB ?? 2048), MEMORY_BACK_MB 
 const { samples: CAPACITY_SAMPLES, job: CAPACITY_JOB } = JSON.parse(readFileSync(new URL('../capacity.json', import.meta.url), 'utf8')) as { samples: number; job: number };
 const inSlot = new Map<string, { job: Job; me: Me; seat: string }>();   // (each slot's job, from its claim to its end: runJob)
 const SESSION = procStat(process.pid)!.sid;   // (this process's session, which the CLIs it launches share)
-const checking = new Map<number, string[]>();   // a push's checks running (afterPush), by pid: what the shares stopped of each
+const checking = new Map<number, CheckRun>();   // a push's checks running (afterPush), by pid: what the shares stopped of each
 const reload = new Reload();
 // A job in a slot, its slot's ids looked up once, and its CLI's launch while one runs (none during its push's checks)
 type SlotJob = { job: Job; me: Me; uid: number; gid: number; launch?: Launched };
@@ -184,6 +187,7 @@ type Memory = { verdict: MemoryVerdict; cause?: MemoryCause };
 async function watchShares() {
   const watch: RoomWatch = { waiting: 0, reportedAt: 0, answeredAt: 0, reporting: false };
   let before: ProcessSnapshot[] = [], at = Date.now(), pending = new Set<string>();   // (the session groups asked for: overShare)
+  const diskShares = new DiskShares(WORK);
   const hotSince = new Map<number, number>();   // each job (uid) past the cores, since when
   const memoryOf = memoryWatch(LOW_MEMORY_MB, MEMORY_BACK_MB);
   while (!shuttingDown) {
@@ -191,7 +195,7 @@ async function watchShares() {
     try {
       const jobs = slotJobs(), procs = await processesFor(jobs), t = Date.now();
       const intervalMs = t - at, uses = tally(procs, before, intervalMs);
-      before = procs; at = t;
+      const previous = before; before = procs; at = t;
       const short = !room(false);
       watch.shortSince = short ? watch.shortSince ?? t : undefined;
       const memory = memoryOf(freeMb(false), new Map(jobs.map(j => [j.job.id, uses.get(j.uid)?.memoryMb ?? 0])));
@@ -201,19 +205,36 @@ async function watchShares() {
       for (const uid of hotSince.keys()) if (!((uses.get(uid)?.cores ?? 0) > JOB_CORES)) hotSince.delete(uid);
       for (const [uid, use] of uses) if (use.cores > JOB_CORES && !hotSince.has(uid)) hotSince.set(uid, t);
       const hot = new Set([...hotSince].filter(([, since]) => t - since >= JOB_HOT_MS).map(([uid]) => uid));
+      for (const pid of diskShares.scanners()) cli.add(pid);
       const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, processes: JOB_PROCESSES, starved, hot, workerSessionId: SESSION };
       const { block, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
       pending = still;
-      const owner = block && jobs.find(j => j.uid === block.uid);
-      if (block && owner) await reload.block({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
-        ask: hq.blocked, checking,
-        stopped: text => { log(text); capacityTrial.note(text); },
-      });
+      await blockShare(block, jobs, procs);
       if (block?.measure === 'cores') hotSince.delete(block.uid);
       await slowDown(jobs, slow, groups);
+      // Descriptor sampling cannot delay this pass's memory, process or CPU enforcement.
+      await sampleWrites(procs, jobs);
+      const diskUses = tally(procs, previous, intervalMs);
+      const disk = await sampleDisk(diskShares, jobs, diskUses, cli);
+      if (!block) await blockShare(overShare(diskUses, cli, { ...limits, disk }).block, jobs, procs);
       capacityTrial.record(() => sampleCapacity(jobs, uses, intervalMs, t));
     } catch (err) { log('shares:', err); capacityTrial.note(`Shares failed: ${err}`); }
   }
+  diskShares.close();
+}
+async function sampleDisk(shares: DiskShares, jobs: SlotJob[], uses: Map<number, JobUse>, cli: Set<number>) {
+  const reserve = await hq.api('disk', {}, AbortSignal.timeout(ROOM_REQUEST_MS));
+  const owners = jobs.map(j => ({ job: j.job.id, uid: j.uid, gid: j.gid }));
+  const disk = await shares.measure(owners, reserve);
+  await warnDisk(owners, disk, uses, cli, shares, hq.blocked);
+  return disk;
+}
+async function blockShare(block: ReturnType<typeof overShare>['block'], jobs: SlotJob[], procs: ProcessSnapshot[]) {
+  const owner = block && jobs.find(j => j.uid === block.uid);
+  if (block && owner) await reload.block({ job: owner.job.id, uid: owner.uid, gid: owner.gid }, block, procs, {
+    ask: hq.blocked, checking,
+    stopped: text => { log(text); capacityTrial.note(text); },
+  });
 }
 // (a worker that runs jobs as itself, in a local test, keeps no shares)
 const slotJobs = (): SlotJob[] => [...inSlot].flatMap(([slot, { job, me }]) =>
@@ -371,7 +392,7 @@ function takeVolumes(taken: Map<string, RunRecord>) {
   for (const [slot, ids] of SLOT_IDS) if (!taken.has(slot)) { killAll(ids); sweep(ids); }
 }
 
-// The folders of jobs that have ended (done, failed or cancelled) go now, not after STALE_FOLDER: a 1.7 GB folder per
+// The folders of jobs that have ended (done, failed, stopped or cancelled) go now, not after STALE_FOLDER: a 1.7 GB folder per
 // failed review run, kept for two weeks, filled the disk on 2026-10-07. A chat job's home stays (its session goes on at
 // the board's next message). Asked of the coordinator at the start and every hour; a folder whose job runs is never asked.
 async function sweepEnded() {
@@ -568,29 +589,49 @@ async function namesLoop() {
   }
 }
 
+// The board's handwriting read into type (the coordinator's handwriting.ts): the board waits for the words as it writes,
+// so the loop asks often.
+const READ_POLL_MS = 2_000;
+async function readLoop() {
+  while (!shuttingDown) {
+    await sleep(READ_POLL_MS);
+    try { await smallCall('reads', ['reading']); }
+    catch (err) { log('handwriting:', err); }
+  }
+}
+
 // One call of the coordinator's small model (smallmodel.ts), claimed from HQ's `${kind}/claim` and answered to
 // `${kind}/answer` with the claim's own `keys`: on the healthiest ready Claude seat, one short call with no tools (the
-// prompt holds outside input) and the prompt on stdin. Its spend counts on the seat, and its rate-limit reading updates
-// the seat's windows as a run's does. Whether there was a call to make.
-async function smallCall(kind: 'gists' | 'names', keys: string[]) {
+// prompt holds outside input) and the prompt on stdin: words, or a message's content (a picture with them) as the CLI's
+// stream-json. Its spend counts on the seat, and its rate-limit reading updates the seat's windows as a run's does.
+// Whether there was a call to make.
+async function smallCall(kind: 'gists' | 'names' | 'reads', keys: string[]) {
   wakeSeats();
   const seat = healthiest(SEATS.filter(s => cliOf(s) === 'claude' && s.signIn === 'login' && !off(s)), 'claude');
-  const token = seat && readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
-  if (!seat || !token) return false;
+  if (!seat) return false;
   const next = await hq.api(`${kind}/claim`);
-  if (!next?.prompt) return false;   // (nothing due: an empty claim)
+  if (!next?.prompt && !next?.content) return false;   // (nothing due: an empty claim)
+  const claimed = Object.fromEntries(keys.map(k => [k, next[k]]));
+  // (the token read once there's a call to make: reads asks every few seconds.)
+  const token = readAs(keeper, `${seatDir(seat.id)}/token`)?.trim();
+  if (!token) {
+    await hq.api(`${kind}/answer`, { ...claimed, error: `${seat.id} has no sign-in to call with` });
+    return true;
+  }
   // (thinking off: the CLI gives Haiku a 31,999-token thinking budget by default, which can outrun oneLine's 90 s
   // kill.)
+  // (content: one user message on stdin.)
+  const content = next.content ? ['--input-format', 'stream-json'] : [];
   const args = ['--model', next.model, '--tools', '', '--strict-mcp-config', '--no-session-persistence',
-    '--settings', '{"alwaysThinkingEnabled":false}',
+    '--settings', '{"alwaysThinkingEnabled":false}', ...content,
     '--output-format', 'stream-json', '--verbose', '--json-schema', next.schema];
-  const r = await oneLine(seat, token, args, next.prompt);
+  const prompt = next.content ? `${JSON.stringify({ type: 'user', message: { role: 'user', content: next.content } })}\n` : next.prompt;
+  const r = await oneLine(seat, token, args, prompt);
   const events = r.out.split('\n').flatMap(l => { try { return [JSON.parse(l)]; } catch { return []; } });
   const rl = events.findLast(e => e.type === 'rate_limit_event');
   if (rl) windows(seat, rl);
   const result = events.find(e => e.type === 'result');
   const error = result ? undefined : redact(unkey(plain(r.err), token)).trim().slice(-300) || `exit ${r.code}`;
-  const claimed = Object.fromEntries(keys.map(k => [k, next[k]]));
   await hq.api(`${kind}/answer`, { ...claimed, ...(result ? { result } : { error }) });
   return true;
 }
@@ -651,8 +692,6 @@ async function codexWindow(seat: Seat, me: Me, home: string, session: string | u
     const r = codexReading(line, since, seat.measured);
     if (!r) return;
     takeReading(seat, r, false);
-    if (r.util !== undefined) seat.fiveHourObservedAt = r.at;
-    if (r.week !== undefined) seat.weekObservedAt = r.at;
     drain(seat);
     return codexTokens(line);
   } catch (err) { log(`${seat.id}: unreadable Codex window reading:`, err); }
@@ -1101,13 +1140,15 @@ const boardLanguage = (c: Company) => !c.language || c.language === 'English' ? 
   and done-when lines, projects' names). Code and the company's own documents (briefs, notes, profiles, DECISIONS.md,
   commit messages) stay English.`;
 // The board's clock (the coordinator's company.ts timeZone): every time it reads or hears is on it. The intercom's run
-// has hq's times on it too, as a call has (HQ_TIME_ZONE: hq's estimate.ts at); other jobs keep UTC.
+// has hq's times on it too, as a call has (HQ_TIME_ZONE: hq's estimate.ts at); other jobs keep UTC. What an agent gives
+// hq is on the board's clock, with its date and no zone (the coordinator's windows.ts parse).
 const boardClock = (c: Company, intercom: boolean) => !c.timeZone || c.timeZone === 'UTC' ? '' : `
 - The board lives on ${c.timeZone} time: every time that reaches it (${c.phone} cards, ${c.newsletter}, the board report,
   the ${c.intercom}'s answers, a call's notes) is its own, never UTC. ${intercom ? `hq's answers here name each time's
-  zone, on the board's clock where they can: one marked UTC is UTC, so convert it` : "hq's times are UTC: convert them for the board"}; a time you give hq (--by,
-  --deadline, --when) is UTC, so convert the board's own to it. Its offset from UTC changes with summer and winter time:
-  convert a time at the offset of its own date.`;
+  zone, on the board's clock where they can: one marked UTC is UTC, so convert it` : "hq's times are UTC: convert them for the board"}. Its offset from UTC
+  changes with summer and winter time: convert a time at the offset of its own date. Give hq (--by, --deadline, --when)
+  the board's own time with its date and no zone (2026-10-26 09:00): HQ reads it on the board's clock at that date's
+  offset. A time with Z, or a time of day alone (14:30), is UTC.`;
 const boardTimes = (job: Job) => job.kind === 'chat' && job.company?.timeZone ? { HQ_TIME_ZONE: job.company.timeZone } : {};
 
 // A profile past what its template keeps: every job of the agent reads it, and each turn reads it again. A busy agent's is
@@ -1257,7 +1298,7 @@ const TOKENS_MS = 10_000;   // how often a run's tokens go to HQ, when they grew
 // limited, for a seat with room or the reset.
 const drained = new Map<number, number>();
 // Jobs stopped with hq stop (the heartbeat's `stop`, or the claim's for a paused one), with who and why: ended at once,
-// and finished as if they had stopped there, their work committed and their pull request opened.
+// and ended stopped, their work committed on their branch without opening a pull request.
 const stopAsked = new Map<number, string>();
 // probe: the job was claimed to measure its seat's unknown window (slotLoop), so its first reading decides whether it
 // may go on (the coordinator holds that reading to the start threshold).
@@ -1613,6 +1654,8 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     const conflicts = fresh && !reviewing && job.inThread && !job.session ? bringUpToDate(g, dir, branch, BASE) : [];
     if (conflicts.length) log(`job #${job.id}: bringing ${branch} up to date left a merge in progress: ${conflicts.length} files conflict`);
 
+    // A paused job that was stopped saves its work and ends.
+    if (job.stopping && !reviewing) return await stopWork(g, dir, branch, job, job.session ?? undefined, job.stopping);
     // A run that ended well but snagged on its push or pull request: this run lands it, from its kept clone or its
     // pushed branch and before the config strip below, without the agent (land).
     if (job.landing && !reviewing) {
@@ -1958,9 +2001,8 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
 
   if (shuttingDown) return {};
   const session = run.session;
-  // Stopped with hq stop: it ends as a job that stopped there would (its work committed, its pull request opened), whatever
-
-  const stopWhy = stopped ? stopAsked.get(job.id) : undefined;
+  // An emergency stop preserves its work without starting review.
+  const stopWhy = stopAsked.get(job.id);
   const pauseCut = () => ({ ...(cut.lost?.length ? cut : {}), ...(working.size ? { members: [...working].map(c => members.get(c)!.name) } : {}) });
   if (stopWhy) log(`job #${job.id}: ended by hq stop`);
   // A job stopped because its seat drained: it resumes in this session, from its kept clone, on a seat with room or after
@@ -2025,11 +2067,12 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // A meeting's seat leaves its outcome in its agent's plans, so nothing in its clone is committed or pushed.
   if (meeting) return code !== 0 && !stopWhy ? { status: 'failed', session, result: failure(result, `${how.cli} ${errors}`) } : { status: 'done', session, result };
 
+  if (stopWhy) return await stopWork(g, dir, branch, job, session, stopWhy, result);
   const parked = readAs(me, `${hqDir}/request.json`);
   // A run that didn't end well keeps its work on its branch, with no pull request. A refused push (say, workflow files
   // with a token that may not change them), or one that never reached GitHub in all its tries (git.ts pushToGitHub),
   // fails the job with the reason.
-  if (!stopWhy && (parked !== undefined || code !== 0)) {
+  if (parked !== undefined || code !== 0) {
     const to: Pushed = {};
     try { await pushRun(g, dir, branch, job, to); }
     catch (err) { return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `the push failed: ${String((err as Error).message ?? err)}`) }; }
@@ -2043,6 +2086,14 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     return { status: 'failed', session, branch, profile: to.profile, result: failure(result, `${how.cli} ${errors}`) };
   }
   return await land({ g, dir, branch, job, me, session, summary: last, result, spent, launches, failure, keep: checks => { if (!ownershipSignal()?.aborted) keepRecord(RUNS, { ...recordNow(), checks }); } });
+}
+
+async function stopWork(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, job: Job, session: string | undefined, why: string, result = `Stopped by ${why}`) {
+  const to: Pushed = {};
+  g.settle(dir, cloneIdentity(job));
+  try { await pushRun(g, dir, branch, job, to); }
+  catch (err) { return { status: 'failed', session, branch, profile: to.profile, result: failed(0)(result, `the push failed: ${String((err as Error).message ?? err)}`) }; }
+  return { status: 'stopped', session, branch, profile: to.profile, result: whole(redact(result), 100_000) };
 }
 
 // What went wrong, in the CLI's words, for a failed job's report (after the model's own last message).
@@ -2327,7 +2378,7 @@ async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (c
     { args: [], env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
   const specs = [gates, tests];
   const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
-    watch: (pid, stopped) => checking.set(pid, stopped), unwatch: pid => checking.delete(pid),
+    watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
     said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers }));
   remove(`${TESTED}/${job.id}`);
   await keepRendersOf(job, me, dir, checks.body.files as string[]);
@@ -2648,6 +2699,7 @@ function startWork() {
   recheckLoop();
   gistLoop();
   namesLoop();
+  readLoop();
   voiceLoop();
   watchShares();
   // The runs the last worker's stop cut off go back first, or a claim would count them abandoned. A file that can't be

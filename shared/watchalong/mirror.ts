@@ -8,9 +8,12 @@
 //     HQ's own pictures and stylesheets from disk, and a preview's pictures, fonts and stylesheets when the recording
 //     was there and the session may show it), or is refused.
 //   - Pictures are JPEG (PNG when asked), LONG px on their long side, a tap ringed where it was, the pen's ink drawn.
+//   - Every step has STEP_MS: one that fails or runs past it closes its mirror, which opens again from the recording
+//     when next asked for, and until then the session isn't seen (seen), so its page can say so.
 import { readFileSync } from 'node:fs';
 import { launch, type Answer, type Asked, type Browser, type Tab } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
+import { OWN, type Own } from './mirrorpage.ts';
 
 export const IDLE_MS = 10 * 60_000;
 // The replay's own files, on an origin that never resolves
@@ -18,6 +21,13 @@ const ORIGIN = 'https://mirror.invalid';
 const QUALITY = 80;
 // The longest a replay waits for what the recorded page asks for (its pictures) before the picture is taken
 export const LOADING_MS = 1_000; // (exported: the owner's answer takes no longer.)
+// The longest a step may take: opening a mirror with the recording so far, taking in a batch, a picture, a past moment.
+// A hard limit, as a step that never ends held every later picture of its session behind it, silently, until the
+// server restarted; 15 s as the voice line waits that long for any answer of the coordinator's (platform/voice/
+// server.py's hq()), so a later one reaches nobody. A mirror opens from what the replay still shows (shown), so opening
+// again late in a long share fits too: from the whole recording, HQ's canvas frames (0.5 a second, 40 KB each) took
+// past 15 s from 30 minutes, its first picture waiting on 900 frames' pictures
+export const STEP_MS = 15_000;
 
 // A tap to ring, a part of the screen (fractions of it, 0 to 1) to zoom into, and the long side in px
 export type Shot = { long: number; ring?: { x: number; y: number }; region?: Region; png?: boolean };
@@ -29,6 +39,7 @@ export type Picture = { bytes: Buffer; width: number; height: number };
 // recording is its page's
 type Mirror = {
   tab: Tab;
+  browser: Promise<Browser>; // (the Chromium it's in)
   loading: Set<string>;
   pages: Set<string>;
   shows: Shows;
@@ -45,6 +56,9 @@ export class Mirrors {
   private browser: Promise<Browser> | null = null;
   private sweeper: NodeJS.Timeout | null = null;
   private tabs = 0; // open or opening, the past moments' too: Chromium closes when none is left
+  // whether a live session's screen reaches its mirror: true once its replay took the recording in, false once a step
+  // failed
+  private reached = new Map<number, boolean>();
 
   // replay: @rrweb/replay's dist folder, in the app's own dependencies. answer: what a replay's page gets for each
   // request of the recorded page's, told the origins of the recording's pages it may show (null: refused)
@@ -56,57 +70,81 @@ export class Mirrors {
   }
 
   has = (id: number) => this.mirrors.has(id);
+  // Whether the session's screen reaches its mirror, so an agent sees it: undefined while it opens or has none
+  seen = (id: number) => this.reached.get(id);
+  // Once the session's mirror has opened or failed to (within STEP_MS), so seen says which
+  settled = async (id: number) => void (await this.mirrors.get(id)?.catch(() => undefined));
 
   // A live session's mirror, opened with what's recorded so far, and the other origins it may show
   open(id: number, events: RecordedEvent[], shows: Shows) {
-    const opening =
-      this.mirrors.get(id) ??
-      this.opened(shows).then(async mirror => {
+    const had = this.mirrors.get(id);
+    if (had) return had.then(() => undefined);
+    const tab = this.opened(shows);
+    const opening = timed(
+      tab.then(async mirror => {
         addPages(mirror, events);
-        await this.inTurn(mirror, () => evaluate(mirror.tab, `mirror.live(${JSON.stringify(events)})`));
+        await evaluate(mirror.tab, `mirror.live(${JSON.stringify(shown(events))})`);
         return mirror;
-      });
-    if (!this.mirrors.has(id)) {
-      this.mirrors.set(id, opening);
-      opening.catch(() => this.mirrors.get(id) === opening && this.mirrors.delete(id));
-    }
+      }),
+      'opening',
+    );
+    this.mirrors.set(id, opening);
+    this.reached.delete(id);
+    opening.then(
+      () => this.mirrors.get(id) === opening && this.reached.set(id, true),
+      async err => {
+        this.failed(id, opening, err);
+        // (its tab is this one's to close, the mirror closed meanwhile or not: close() had none from opening)
+        const mirror = await tab.catch(() => undefined);
+        if (mirror) await this.closeTab(mirror).catch(() => undefined);
+      },
+    );
     this.sweeper ??= setInterval(() => this.sweep(), 60_000).unref();
     return opening.then(() => undefined);
   }
 
   // Events as they come in, for a session that has a mirror
   feed(id: number, events: RecordedEvent[]) {
-    void this.mirrors
-      .get(id)
+    const opening = this.mirrors.get(id);
+    void opening
       ?.then(mirror => {
         mirror.used = Date.now();
         addPages(mirror, events);
-        return this.inTurn(mirror, () => evaluate(mirror.tab, `mirror.add(${JSON.stringify(events)})`));
+        return this.inTurn(id, opening, mirror, () => evaluate(mirror.tab, `mirror.add(${JSON.stringify(events)})`));
       })
+      .then(() => this.mirrors.get(id) === opening && this.reached.set(id, true))
       .catch(() => undefined);
   }
 
   // The screen now
   async now(id: number, shot: Shot) {
-    const mirror = await this.mirrors.get(id);
-    if (!mirror) return undefined;
+    const opening = this.mirrors.get(id);
+    const mirror = await opening;
+    if (!opening || !mirror) return undefined;
     mirror.used = Date.now();
-    return this.inTurn(mirror, () => picture(mirror, shot));
+    return this.inTurn(id, opening, mirror, () => picture(mirror, shot));
   }
 
   // The screen at a time on the page's clock, from the events up to it, in a tab of its own
   async at(events: RecordedEvent[], time: number, shot: Shot, shows: Shows) {
-    const mirror = await this.opened(shows);
+    const tab = this.opened(shows);
     try {
-      addPages(mirror, events);
-      await evaluate(mirror.tab, `mirror.at(${JSON.stringify(upTo(events, time))}, ${time})`);
-      return await picture(mirror, shot);
+      return await timed(
+        tab.then(async mirror => {
+          addPages(mirror, events);
+          await evaluate(mirror.tab, `mirror.at(${JSON.stringify(upTo(events, time))}, ${time})`);
+          return picture(mirror, shot);
+        }),
+        'past moment',
+      );
     } finally {
-      await this.closeTab(mirror);
+      // (once open: a tab that opens after its time ran out closes too)
+      await tab.then(mirror => this.closeTab(mirror)).catch(() => undefined);
     }
   }
 
   async close(id: number) {
+    this.reached.delete(id);
     const opening = this.mirrors.get(id);
     if (!opening) return;
     this.mirrors.delete(id);
@@ -131,27 +169,26 @@ export class Mirrors {
         .catch(() => undefined);
   }
 
-  // A tab of the replay, ready (Chromium started for the first)
+  // A tab of the replay, ready within STEP_MS (Chromium started for the first), or closed: one made after its time ran
+  // out too
   private async opened(shows: Shows): Promise<Mirror> {
     const launching = (this.browser ??= launch().then(browser => {
       // (stopped on its own: every mirror goes with it, and the next opens a new one)
       void browser.closed.then(() => {
         if (this.browser !== launching) return;
         this.browser = null;
+        for (const id of this.mirrors.keys()) this.reached.set(id, false);
         this.mirrors.clear();
         this.tabs = 0;
       });
       return browser;
     }));
     this.tabs++;
-    let tab: Tab | undefined;
-    try {
-      const loading = new Set<string>(),
-        pages = new Set<string>();
-      let asked = 0;
-      tab = await (
-        await launching
-      ).tab(async request => {
+    const loading = new Set<string>(),
+      pages = new Set<string>();
+    let asked = 0;
+    const made = launching.then(browser =>
+      browser.tab(async request => {
         const id = ++asked;
         loading.add(`${id}`);
         try {
@@ -159,29 +196,26 @@ export class Mirrors {
         } finally {
           loading.delete(`${id}`);
         }
-      });
-      await tab.send('Runtime.enable');
-      await tab.send('Emulation.setDeviceMetricsOverride', {
-        width: 1280,
-        height: 800,
-        deviceScaleFactor: 1,
-        mobile: false,
-      });
-      const navigated = await tab.send('Page.navigate', { url: `${ORIGIN}/` });
-      if (navigated.errorText) throw new Error(`The mirror's page didn't open: ${navigated.errorText}`);
-      await evaluate(tab, READY);
-      return { tab, loading, pages, shows, used: Date.now(), turn: Promise.resolve(), size: '' };
+      }),
+    );
+    try {
+      const tab = await timed(made.then(paged), 'page');
+      return { tab, browser: launching, loading, pages, shows, used: Date.now(), turn: Promise.resolve(), size: '' };
     } catch (err) {
-      await tab?.close().catch(() => undefined);
-      this.tabs--;
+      void made.then(tab => tab.close()).catch(() => undefined);
+      await this.release(launching).catch(() => undefined);
       throw err;
     }
   }
 
   private async closeTab(mirror: Mirror) {
     await mirror.tab.close();
-    if (--this.tabs || !this.browser) return;
-    const browser = this.browser;
+    await this.release(mirror.browser);
+  }
+
+  // A tab fewer: Chromium closes with the last (a tab of one that stopped went with it, and was counted out then)
+  private async release(browser: Promise<Browser>) {
+    if (browser !== this.browser || --this.tabs) return;
     this.browser = null;
     clearInterval(this.sweeper ?? undefined);
     this.sweeper = null;
@@ -201,11 +235,36 @@ export class Mirrors {
     return Promise.resolve(own ? { type: own.type, body: body(own) } : null);
   }
 
-  private inTurn<T>(mirror: Mirror, step: () => Promise<T>): Promise<T> {
-    const turn = mirror.turn.then(step, step);
+  // A live mirror's steps, one at a time, each within STEP_MS
+  private inTurn<T>(id: number, opening: Promise<Mirror>, mirror: Mirror, step: () => Promise<T>): Promise<T> {
+    const run = () => timed(step(), 'step');
+    const turn = mirror.turn.then(run, run);
     mirror.turn = turn.catch(() => undefined);
+    turn.catch(async err => {
+      if (this.failed(id, opening, err)) await this.closeTab(mirror).catch(() => undefined);
+    });
     return turn;
   }
+
+  // A live mirror whose step failed or ran out of time: not seen, and gone, so it holds nothing up and opens again from
+  // the recording when next asked for; its tab is closed by the caller. False when it was closed meanwhile (close()
+  // closed an open one's tab)
+  private failed(id: number, opening: Promise<Mirror>, err: unknown) {
+    if (this.mirrors.get(id) !== opening) return false;
+    this.mirrors.delete(id);
+    this.reached.set(id, false);
+    console.error(`Watch-along #${id}: its mirror failed, and closed:`, err);
+    return true;
+  }
+}
+
+// A step, or its failure once it runs past STEP_MS
+function timed<T>(step: Promise<T>, what: string): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`the mirror's ${what} took over ${STEP_MS / 1000} s`)), STEP_MS);
+  });
+  return Promise.race([step, late]).finally(() => clearTimeout(timer));
 }
 
 // The events a replay to this time needs: from the full snapshot last taken by then (and the page's size before it)
@@ -217,6 +276,33 @@ export function upTo(events: RecordedEvent[], time: number) {
 }
 const FULL_SNAPSHOT = 2,
   META = 4;
+
+// The events a live mirror opens with: what the screen still shows, from the full snapshot last taken (upTo), each
+// canvas's pictures but its latest. A picture that starts by wiping its whole canvas (canvas.js's, at the canvas's own
+// size) leaves nothing of the ones before it, and each costs the replay a picture to decode.
+export function shown(events: RecordedEvent[]) {
+  const since = upTo(events, Infinity);
+  const latest = new Map<number, number>();
+  since.forEach((event, i) => {
+    const wiped = wipes(event);
+    if (wiped !== undefined) latest.set(wiped, i);
+  });
+  return since.filter((event, i) => {
+    const wiped = wipes(event);
+    return wiped === undefined || latest.get(wiped) === i;
+  });
+}
+const INCREMENTAL = 3,
+  CANVAS_MUTATION = 9;
+// The canvas a canvas mutation wipes before it draws (its first command a clearRect from the corner), or undefined
+function wipes(event: RecordedEvent) {
+  const data = event.data as { source?: number; id?: number; commands?: { property?: string; args?: unknown[] }[] };
+  if (event.type !== INCREMENTAL || data.source !== CANVAS_MUTATION || typeof data.id !== 'number') return undefined;
+  const [wipe] = data.commands ?? [];
+  const [x, y, width, height] = wipe?.args ?? [];
+  const whole = wipe?.property === 'clearRect' && x === 0 && y === 0 && Number(width) > 0 && Number(height) > 0;
+  return whole ? data.id : undefined;
+}
 
 // The origins of the pages these events were on that the mirror may show: the recorded page's addresses, and the page
 // moments its frames sent up
@@ -266,6 +352,21 @@ async function picture(mirror: Mirror, shot: Shot): Promise<Picture | undefined>
   };
 }
 
+// A new tab with the replay's page open in it, ready
+async function paged(tab: Tab) {
+  await tab.send('Runtime.enable');
+  await tab.send('Emulation.setDeviceMetricsOverride', {
+    width: 1280,
+    height: 800,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const navigated = await tab.send('Page.navigate', { url: `${ORIGIN}/` });
+  if (navigated.errorText) throw new Error(`The mirror's page didn't open: ${navigated.errorText}`);
+  await evaluate(tab, READY);
+  return tab;
+}
+
 async function evaluate(tab: Tab, expression: string) {
   const answer = await tab.send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true });
   if (answer.exceptionDetails)
@@ -275,102 +376,3 @@ async function evaluate(tab: Tab, expression: string) {
   return answer.result?.value;
 }
 const READY = `new Promise(resolve => { const check = () => (window.mirror ? resolve(true) : setTimeout(check, 20)); check(); })`;
-
-// The replay's page: rrweb's replayer at the top left, at the recorded screen's size, its own cursor hidden. Live, every
-// event is played as it's added (its baseline far ahead: no event waits for its time). A past moment plays to its time.
-// Its policy runs only its own script files: rrweb's frame takes it on (an about:blank frame keeps its maker's), so
-// nothing the recorded page carries runs (an onerror, a javascript: address, a script). The frame itself can't be the
-// boundary: rrweb draws canvas frames only in a frame allowed scripts (UNSAFE_replayCanvas), as a canvas in one without
-// shows nothing.
-const PAGE = `<!doctype html>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="script-src 'self'; object-src 'none'; base-uri 'none'">
-<link rel="stylesheet" href="/replay.css">
-<style>
-  html, body { margin: 0; background: #fff; overflow: hidden; }
-  .replayer-wrapper { position: absolute; left: 0; top: 0; transform: none !important; }
-  .replayer-mouse, .replayer-mouse-tail { display: none !important; }
-  .replayer-wrapper iframe { border: 0; display: block; }
-  #ink, #ink div { position: absolute; left: 0; top: 0; z-index: 9; pointer-events: none; }
-  #ink svg { overflow: visible; display: block; }
-  #ring { position: absolute; z-index: 10; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%;
-    border: 4px solid #ff2d55; box-shadow: 0 0 0 3px #fff; box-sizing: border-box; pointer-events: none; }
-</style>
-<script type="module" src="/mirror.js"></script>`;
-const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in its error paths)
-  const { Replayer } = await import('/replay.js');
-  // the pen's ink (strokes.js), drawn over the screen with ink.js as SVG, so a picture at any scale is sharp
-  const { Inks, inkAt, placer } = await import('/strokes.js');
-  const ink = await import('/ink.js');
-  let inks = new Inks(), past = null;
-  const OPTIONS = { root: document.body, mouseTail: false, triggerFocus: false, showWarning: false, showDebug: false,
-    UNSAFE_replayCanvas: true, skipInactive: false, speed: 1 };
-  let replayer = null;
-  const frames = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-  window.mirror = {
-    async live(events) {
-      replayer = new Replayer([], { ...OPTIONS, liveMode: true });
-      replayer.startLive(8.64e15);
-      inks = new Inks();
-      return this.add(events);
-    },
-    async add(events) {
-      for (const event of events) {
-        replayer.addEvent(event);
-        inks.add(event);
-      }
-      await frames();
-    },
-    async at(events, time) {
-      if (!events.length) return;
-      past = inkAt(events, time);
-      replayer = new Replayer(events, OPTIONS);
-      replayer.pause(Math.max(0, time - events[0].timestamp) + 1); // (what happened at that time too)
-      await frames();
-    },
-    // The screen's size once drawn (none before a full snapshot), the page made as big, and a tap ringed
-    async drawn(ring) {
-      await frames();
-      const iframe = replayer && replayer.iframe;
-      const width = iframe && Number(iframe.width), height = iframe && Number(iframe.height);
-      if (!width || !height || !iframe.contentDocument || !iframe.contentDocument.documentElement) return null;
-      this.ink();
-      if (ring) {
-        const mark = document.createElement('div');
-        mark.id = 'ring';
-        mark.style.left = ring.x + 'px';
-        mark.style.top = ring.y + 'px';
-        document.body.append(mark);
-      }
-      await Promise.all([...iframe.contentDocument.images].map(image => image.decode().catch(() => {})));
-      await frames();
-      return { width, height };
-    },
-    unring() { document.getElementById('ring')?.remove(); },
-    // the strokes on screen (as they were at a past moment's time), each in its page's or frame's place
-    ink() {
-      document.getElementById('ink')?.remove();
-      const where = placer(replayer), layer = document.createElement('div');
-      layer.id = 'ink';
-      for (const s of past ?? inks.shown) {
-        const at = where(s.id);
-        if (!at || !s.stroke.points.length) continue;
-        const box = document.createElement('div');
-        box.style.left = at.x + s.left + 'px';
-        box.style.top = at.y + s.top + 'px';
-        box.innerHTML = ink.svg([s.stroke], 1, 1, { halo: s.halo });
-        layer.append(box);
-      }
-      document.body.append(layer);
-    },
-  };`;
-// (file: in @rrweb/replay's dist; url: one of ours)
-type Own = { type: string; file?: string; url?: URL; text?: string };
-const OWN: Record<string, Own> = {
-  '/': { type: 'text/html; charset=utf-8', text: PAGE },
-  '/mirror.js': { type: 'text/javascript', text: MIRROR },
-  '/replay.js': { type: 'text/javascript', file: 'replay.js' },
-  '/replay.css': { type: 'text/css', file: 'style.css' },
-  '/strokes.js': { type: 'text/javascript', url: new URL('strokes.js', import.meta.url) },
-  '/ink.js': { type: 'text/javascript', url: new URL('../review/ink.js', import.meta.url) },
-};

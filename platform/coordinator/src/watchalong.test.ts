@@ -150,6 +150,26 @@ test("a caller's turn brings the moments since the agent's last, a picture when 
   assert.equal((await screenTool(ctx, {})).status, 404);
 });
 
+// (and the empty batch a quiet page asks with)
+test("each batch's answer says whether the screen reaches the agent, the first's once its mirror has opened (without Chromium, it doesn't)", async () => {
+  const ctx = await h.liveCall('wren');
+  const watching = await startWatching(ctx);
+  const answers = [];
+  for (const events of [...WALK, []]) {
+    const res = await fetch(`${base}${watching.body.events}`, {
+      method: 'POST',
+      headers: { origin: ORIGIN },
+      body: JSON.stringify({ events }),
+    });
+    answers.push(((await res.json()) as { seen?: boolean }).seen);
+  }
+  assert.deepEqual(
+    answers,
+    answers.map(() => !noChromium),
+  );
+  await endCall('wren', ctx, ['Board: look']);
+});
+
 test(
   'the screen tool: the screen now or at a moment, a part zoomed in, and the moments since a time',
   { skip: noChromium },
@@ -183,6 +203,8 @@ test("a session of a purpose without its own briefing is never watched for an ag
   });
   const tool = await voice('screen', { purpose: 'customer', ref: '7' });
   assert.equal(tool.status, 404);
+  // (the purpose gate's 404, not the one for nothing recorded yet)
+  assert.notEqual(tool.body.error, watchalong.NOTHING);
   store.forget(kept, 'customer', '7');
 });
 

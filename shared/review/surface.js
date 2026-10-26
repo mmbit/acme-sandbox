@@ -148,16 +148,20 @@ export function undo(r) {
   if (r.editing) paintInk(r, []);
 }
 
-// the inks on the strip, the one last chosen in hand
+// the inks on the strip, the one last chosen in hand. An invited person's first ink is their own colour, the one their
+// notes wear in the board's book (r.INK, review.js).
+const inksOf = r =>
+  r.INK ? [{ ...inkjs.INKS[0], name: 'Your ink', color: r.INK }, ...inkjs.INKS.slice(1)] : inkjs.INKS;
 function inks(r) {
-  r.inkNow = Math.min(Number(kept(localStorage, INK_KEY)) || 0, inkjs.INKS.length - 1);
+  r.inks = inksOf(r);
+  r.inkNow = Math.min(Number(kept(localStorage, INK_KEY)) || 0, r.inks.length - 1);
   const choose = i => {
     r.inkNow = i;
     keep(localStorage, INK_KEY, String(i));
     r.strip.querySelectorAll('.pot').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
   };
   r.strip.prepend(
-    ...inkjs.INKS.map((k, i) => {
+    ...r.inks.map((k, i) => {
       const b = button('', `pot${k.alpha < 1 ? ' wide' : ''}`);
       b.setAttribute('aria-label', k.name);
       b.title = k.name;
@@ -225,7 +229,7 @@ export function setupSurface(r) {
     halo: true,
     under: r.haloCanvas,
     use: drawable,
-    ink: () => inkjs.INKS[r.inkNow],
+    ink: () => r.inks[r.inkNow],
     shape,
     end: (s, e) => stroked(r, s, e),
   });

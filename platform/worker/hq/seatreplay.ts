@@ -106,13 +106,10 @@ function showAccounts(replay: Replay) {
       if (!exhaustions.length) print(`  ${seat.seat}: no predicted exhaustion`);
       for (const event of exhaustions) {
         const started = event.started_at === null ? 'hold active at cutoff, original start unknown' : 'runs dry';
-        const idle = event.running_continues
-          ? 'work continues'
-          : event.idle_ms == null
-            ? 'idle unknown'
-            : `idle ${duration(event.idle_ms / 60_000)}`;
+        const idle = event.idle_ms == null ? 'idle unknown' : `idle ${duration(event.idle_ms / 60_000)}`;
+        const work = event.running_continues ? `work continues, then ${idle}` : idle;
         print(
-          `  ${seat.seat}: ${time(event.at)}, ${event.quota}, ${started}, return ${time(event.until ?? null)}, ${idle}`,
+          `  ${seat.seat}: ${time(event.at)}, ${event.quota}, ${started}, return ${time(event.until ?? null)}, ${work}`,
         );
         for (const run of event.running ?? [])
           print(

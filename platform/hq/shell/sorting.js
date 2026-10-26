@@ -1,7 +1,7 @@
 // Keys the board sorts by dragging: a press held still on one ([data-sort], in a .pj-sortable grid) lifts it, it
 // follows the finger or the mouse while the others make way, and letting go sets it down there and hands the grid's new
-// order on. A press that moves first is a scroll or a swipe, a short one a tap; but a mouse's press that moves lifts its
-// key at once, as a mouse drags, and never swipes the level.
+// order on. A press that moves first is a scroll, a short one a tap; but a mouse's press that moves lifts its key at
+// once, as a mouse drags.
 
 const HOLD_MS = 380; // how long a press stays still before its key lifts: past a tap, short of a long wait
 const STILL = 8; // how far (CSS px) a press may wander and still lift

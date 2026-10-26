@@ -184,6 +184,8 @@ export type CheckRun = {
   lent?: boolean;
   stopped: string[];
   unreached?: number;
+  // of stopped, the stops that were the platform's: its disk accounting unavailable, not the job's use
+  platformStops?: number;
 };
 export const recordOf = (runs: string, job: number) => `${runs}/${job}.json`;
 export function keepRecord(runs: string, r: RunRecord) {

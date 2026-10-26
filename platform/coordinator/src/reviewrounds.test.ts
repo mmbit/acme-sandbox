@@ -79,7 +79,7 @@ async function push(n: number, thread = 'game/world') {
     result: 'Fixed what blocked.',
   });
 }
-const json = (o: object) => ({ output: JSON.stringify(o) });
+const json = (o: object) => ({ output: JSON.stringify({ major_visual: false, ...o }) });
 const at = (line: number, issue: string, file = FILE) => ({
   file,
   line,

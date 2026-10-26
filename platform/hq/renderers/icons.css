@@ -16,9 +16,7 @@ body {
 .crt .apps .count {
   border-radius: 13px;
 }
-#status i {
-  border-radius: 50%;
-}
+/* (the status line keeps style.css's shapes here: its flow split a pill, not rounded as a dot.) */
 .tools svg.icon,
 #zfit svg.icon {
   width: 20px;

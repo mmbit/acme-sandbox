@@ -2,7 +2,7 @@
 // sidewalk, a street with a loading bay, a park with a duck pond), trees, lamps, the delivery van,
 // and the sky backdrop with sun, moon, stars, clouds and a distant city.
 import { rng, pick, mix, clamp, lerp, canvas, trim } from '../../util.js';
-import { FH, SLAB, CORE, PLAZA, ENTRANCE, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, onWallY, onWallX, wallYCol, wallXCol, ellipse, text, textW, upright } from './iso.js';
+import { FH, SLAB, CORE, PLAZA, ENTRANCE, INK, F, disc, sprite, SX, SY, top, wallY, wallX, box, ellipse, text, textW, namePlate } from './iso.js';
 import { today, season, holidays, darkness } from '../../world/clock.js';
 // the calendar and the weather are the world's; the rest of the brownstone still imports them from here
 export { today, season, holidays, darkness };
@@ -67,7 +67,7 @@ export function buildIsland(L, sea = season()) {
     (X ? pY(D) : pX(D))(X ? rm.x0 : rm.y0, X ? rm.x1 : rm.y1, rm.z - SLAB, rm.z, '#3b3355');
     if ((X ? rm.x1 : rm.y1) >= (X ? Xe : Ye)) { const end = X ? pX(Xe) : pY(Ye); cut(end, 0, D, rm.z, zt); end(0, D, rm.z - SLAB, rm.z, '#3b3355'); }
   }
-  for (const rm of basement) label(gf, rm, rm.wing === 'x', rm.lv.D, rm.z - SLAB + 1);
+  for (const rm of basement) namePlate(gf, rm, rm.lv.D, rm.z - SLAB + 1);
   // fibre from the server room: down into the ground, then along the soil face and round the corner to the
   // park end (render.js sends little pulses of data along it). out.fiber: one path per cable, points in world
   // coordinates on the faces.
@@ -105,7 +105,7 @@ export function buildIsland(L, sea = season()) {
   top(gg, C, C + 0.94, X1, C + 1, 0, '#fdf3e1'); top(gg, C + 0.94, C, C + 1, Y1, 0, '#fdf3e1');
   // level-0 room labels along the curb, on their own layer: the closed façade hides them (see render.js)
   const labels = canvas(W, H), gl = labels.getContext('2d'); gl.setTransform(gf.getTransform());
-  for (const rm of L.rooms) if (rm.level === 0 && rm.wing !== 'core') label(gl, { ...rm, x0: rm.wing === 'x' ? rm.x0 + 1 : rm.x0, y0: rm.wing === 'y' ? rm.y0 + 1 : rm.y0, y1: rm.wing === 'y' ? rm.y1 + 1 : rm.y1 }, rm.wing === 'x', 4, -SLAB + 1, true);
+  for (const rm of L.rooms) if (rm.level === 0 && rm.wing !== 'core') namePlate(gl, { ...rm, x0: rm.wing === 'x' ? rm.x0 + 1 : rm.x0, y0: rm.wing === 'y' ? rm.y0 + 1 : rm.y0, y1: rm.wing === 'y' ? rm.y1 + 1 : rm.y1 }, 4, -SLAB + 1, true);
   // street extension: asphalt, a loading bay by the dock, dashed centre line, sidewalk
   const len = street === 'x' ? Xe - X1 : Ye - Y1;
   const rect = (u0, v0, u1, v1, c, g = gg) => { const a = E(u0, v0), bb = E(u1, v1); top(g, Math.min(a.x, bb.x), Math.min(a.y, bb.y), Math.max(a.x, bb.x), Math.max(a.y, bb.y), 0, c); };
@@ -257,17 +257,6 @@ function bikeFlat(col, basket) {
   F(g, 7, 3, 4, 1, INK); F(g, 9, 4, 1, 1, INK); F(g, 15, 2, 1, 3, INK); F(g, 14, 2, 4, 1, INK); ln(11, 12, 12, 15, '#565a70');
   if (basket) { F(g, 18, 4, 6, 4, '#c98a52'); F(g, 18, 5, 6, 1, '#a8693f'); F(g, 18, 7, 6, 1, '#a8693f'); for (const [x, y, k] of [[18, 2, '#ff8fab'], [20, 1, '#ffd966'], [22, 2, '#ff8fab'], [21, 3, '#5cc26a'], [19, 3, '#5cc26a'], [23, 3, '#fffaf0']]) F(g, x, y, k === '#5cc26a' ? 1 : 2, k === '#5cc26a' ? 1 : 2, k); }
   return c;
-}
-
-// the room's name on a plate on the wall at depth d (the basement's soil face, or the island's curb when curb), its
-// letters upright on the wall's slant
-function label(g, rm, X, d, zb, curb) {
-  const len = X ? rm.x1 - rm.x0 : rm.y1 - rm.y0;
-  const s = rm.name.toUpperCase().slice(0, Math.floor((len * 16 - 12) / 4)), w = textW(s) + 4;
-  const f = canvas(w, 7), fg = f.getContext('2d'), a = X ? rm.x0 + 0.25 : rm.y0 + 0.25 + w / 16;
-  const rows = Array.from({ length: w }, (_, u) => (X ? wallYCol : wallXCol)(a, d, zb, 7, u)[1]);
-  F(fg, 0, 0, w, 7, curb ? '#3b3355' : '#fdf3e1'); upright(fg, s, 2, 1, curb ? '#fdf3e1' : INK, rows);
-  (X ? onWallY : onWallX)(g, f, a, d, zb);
 }
 
 // ---- the delivery van (drawn per frame from two cached poses) ----

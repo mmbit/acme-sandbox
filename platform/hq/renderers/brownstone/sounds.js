@@ -1,5 +1,6 @@
 // The brownstone's sounds: the chiptune, its sounds and its music.
 import { tone, noise, note, strike } from '../../shell/audio.js';
+import { ring, micOn, micOff } from '../../shell/desksounds.js';
 
 export const sfx = {
   blip: () => tone(note(84), 0.06, { vol: 0.08 }),
@@ -76,11 +77,7 @@ export const sfx = {
     [0, 0.12, 0.2].forEach((at, i) => tone(note(b + (i % 2) * 3), 0.07, { type: 'sine', vol: 0.025, at, slide: 1.25 }));
   },
   flap: () => noise(0.25, { vol: 0.05, freq: 900 }),
-  ring: () =>
-    [0, 0.18, 0.5, 0.68].forEach(at => {
-      tone(note(88), 0.12, { type: 'square', vol: 0.05, at });
-      tone(note(91), 0.12, { type: 'square', vol: 0.04, at: at + 0.06 });
-    }),
+  ring,
   twinkle: () => [96, 100, 103, 108].forEach((n, i) => tone(note(n), 0.25, { type: 'sine', vol: 0.06, at: i * 0.07 })),
   // a call minimised into its bubble: a soft whoop falling away as it shrinks; opened again, rising; the bubble
   // settling into a corner, a little bump
@@ -110,17 +107,9 @@ export const sfx = {
   },
   watchJump: () => tone(note(76), 0.07, { type: 'triangle', vol: 0.07, slide: 1.5 }),
   watchTick: () => noise(0.012, { vol: 0.022, freq: 5200 }),
-  // the intercom's mic: a soft radio key-up, and a squelch when it lets go
-  micOn: () => {
-    noise(0.05, { vol: 0.035, freq: 2400 });
-    tone(note(79), 0.07, { type: 'sine', vol: 0.07, at: 0.02 });
-    tone(note(86), 0.1, { type: 'sine', vol: 0.07, at: 0.08 });
-  },
-  micOff: () => {
-    tone(note(86), 0.07, { type: 'sine', vol: 0.06 });
-    tone(note(79), 0.12, { type: 'sine', vol: 0.06, at: 0.06 });
-    noise(0.16, { vol: 0.025, freq: 1500, at: 0.1 });
-  },
+  // the intercom's mic (desksounds.js)
+  micOn,
+  micOff,
   // a switch in Settings flicked: a tiny click, then two notes stepping up for on, down for off
   toggle: (on = true) => {
     noise(0.015, { vol: 0.04, freq: 4000 });

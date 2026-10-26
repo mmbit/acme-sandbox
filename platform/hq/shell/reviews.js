@@ -1,56 +1,20 @@
-// The computer's Reviews app: the board's review notes waiting to be sent to a product's owner (My notes), and what it
-// shared with outside people (Shared).
+// The computer's Reviews app: the record of what the board sent (Sent: its book's sheets, newest first, and the review
+// notes sent before the book), and what it shared with outside people (Shared).
 import { esc } from '../util.js';
 import * as world from '../world/world.js';
 import { dayTime } from '../world/clock.js';
-import {
-  loadReviewProducts,
-  loadReviewNotes,
-  reviewShot,
-  reviewPicture,
-  sendNotes,
-  discardNotes,
-  loadShares,
-} from './data.js';
+import { loadSentSheets, loadSentNotes, reviewShot, loadShares } from './data.js';
 import { sfx } from './audio.js';
-import { toast } from './hud.js';
-import { askAgain } from '/ask.js'; // a button that asks once more (shared/ask/ask.js)
 import { jobNameLink } from './prose.js';
-import { callAgent } from './call.js';
-import { frameMark } from '/__review/frame.js';
-import {
-  who,
-  ago,
-  refreshWaitingNotes,
-  paintWaiting,
-  loadRecent,
-  toldReview,
-  unpin,
-  noteCount,
-  shareTitle,
-  kindOf,
-  untilLine,
-  shareHtml,
-  wireShare,
-  went,
-} from './desk.js';
+import { ago, noteCount, loadRecent, shareTitle, kindOf, untilLine, shareHtml, wireShare, went } from './desk.js';
 
 const $ = s => document.querySelector(s);
 
-// Review notes: what the board pinned on product preview pages. They wait here until the board sends the ones it
-// ticked to the product's owner.
-// A preview page runs the product's own code, which can post notes too, so only a batch sent from here reaches an
-// agent, and note text, being page-controlled, always goes through esc().
-// A note starts unticked (one that arrives during the 15 s refresh must never ride along unseen); the ones the board
-// ticks live in `ticked`, so the refresh keeps them. The refresh skips a render while a screenshot is open or a send
-// is on its way.
-// A note shows what the board needs to send or discard it: its words, where it was pinned in human terms (the
-// element's text, the screenshot), when, and what it was seen on. The page address and the selector travel with the
-// note to the owner's job, not here.
-// A sent note is one line; the safety line shows only while notes wait, and Tick all sits by the heading for two
-// notes or more.
-const ticked = new Set(),
-  SEND_MAX = 50;
+// Nothing waits here: a note goes on its sheet in the book, and the book's plane sends the sheet. Sent lists each sheet
+// as one block (who it went to, when, its job, its notes with their snips and how each was answered). The review notes
+// sent before the book (and an outside reviewer's, once gathered) follow, one block a job, read only.
+// A note's words come from a page agents wrote (a preview's own code can post one), so they always go through esc().
+// The refresh skips a render while a picture is open or a share is changing.
 let notesBusy = false;
 // (a share's change, from the viewer's Share box too, holds the refresh the same way)
 export async function holdReviews(work) {
@@ -61,127 +25,48 @@ export async function holdReviews(work) {
     notesBusy = false;
   }
 }
-// The send step (sendStep) opens the tab at one product: notesWanted is { slug, sent }. The first paint scrolls to
-// that product and ticks nothing. A send from that product calls `sent`.
-let notesWanted = null;
-// Reviews' two submenus at its top: My notes, the board's own notes waiting to be sent, opened
-// first, and Shared, what it shared with outside people, each share one line that opens to its whole block.
-let notesShown = 'mine';
-// The computer opening Reviews (openComputer), at My notes and at opts.notes when it's the send step
-export function openReviews(want = null) {
-  notesWanted = want;
-  notesShown = 'mine';
-  if (notesWanted) ticked.clear(); // a send step starts with nothing ticked: a tick left from before mustn't ride along unseen
+// Reviews' two submenus at its top: Sent, opened first, and Shared, what it shared with outside people, each share one
+// line that opens to its whole block.
+let notesShown = 'sent';
+// The computer opening Reviews (openComputer), at Sent
+export function openReviews() {
+  notesShown = 'sent';
 }
-const notesMenu = (waiting, open) =>
+const notesMenu = open =>
   `<div class="pills" role="radiogroup" aria-label="Reviews">${[
-    ['mine', 'My notes', waiting],
+    ['sent', 'Sent', null],
     ['shared', 'Shared', open],
   ]
     .map(
       ([k, label, n]) =>
-        `<button role="radio" aria-checked="${k === notesShown}" data-shown="${k}">${label}<i>${+n}</i></button>`,
+        `<button role="radio" aria-checked="${k === notesShown}" data-shown="${k}">${label}${n === null ? '' : `<i>${+n}</i>`}</button>`,
     )
     .join('')}</div>`;
-const shorten = (s, n) => (s.length > n ? `${s.slice(0, n).replace(/[\s.,;:]+$/, '')}…` : s);
-// (a general note is pinned to nothing)
-const pinnedOn = e =>
-  e?.kind === 'general' ? 'General note · ' : e?.el?.text ? `on “${esc(shorten(e.el.text, 48))}” · ` : '';
-// The thumbnail is framed on the note's mark (frameMark), in the padding box of .notes li.pending .shot (style.css):
-// its img then gets the class framed.
-const SHOT_ASPECT = 70 / 52;
-function shotFrame(element) {
-  const placement = frameMark(element, SHOT_ASPECT);
-  return placement
-    ? ` class="framed" style="width:${placement.width};height:${placement.height};left:${placement.left};top:${placement.top}"`
-    : '';
-}
-// A picture the reviewer added to a note, small under its words
-const pictureButton = (id, file) =>
-  `<button data-picture="${+id}" data-file="${esc(file)}" aria-label="Show the picture bigger">` +
-  `<img src="${esc(reviewPicture(world.dev, id, file))}" alt="" loading="lazy"></button>`;
 export async function notes(el) {
   const idle = () => !notesBusy && !$('#tool .zoom') && el.isConnected;
   if (!idle()) return;
-  const [products, shares] = await Promise.all([loadReviewProducts(world.dev), loadShares(world.dev), loadRecent()]);
-  const lists = await Promise.all(products.map(p => loadReviewNotes(world.dev, p.slug)));
+  const [sheets, older, shares] = await Promise.all([
+    loadSentSheets(world.dev),
+    loadSentNotes(world.dev),
+    loadShares(world.dev),
+    loadRecent(),
+  ]);
   if (!idle()) return;
-  const waiting = paintWaiting(products),
-    want = notesWanted,
-    first = want && !want.shown;
-  const open = new Set(
-    lists
-      .flat()
-      .filter(x => x.status === 'pending')
-      .map(x => +x.id),
-  );
-  ticked.forEach(id => open.has(id) || ticked.delete(id)); // sent or discarded since
-  const pending =
-    x => `<li class="pending"><input type="checkbox" id="rn-${+x.id}" data-note="${+x.id}" ${ticked.has(+x.id) ? 'checked' : ''}>
-      <label for="rn-${+x.id}"><b>${esc(x.note)}</b></label><span class="dim">${pinnedOn(x.element)}${esc(ago(x.created))}</span>
-      ${x.seen ? `<span class="dim seen">${esc(x.seen)}</span>` : ''}
-      ${x.shot ? `<button class="shot" data-shot="${+x.id}" data-file="${esc(x.shotFile ?? '')}" aria-label="Show the screenshot bigger"><img src="${esc(reviewShot(world.dev, x.id, x.shotFile))}" alt="" loading="lazy"${shotFrame(x.element)}></button>` : ''}
-      ${x.pictures?.length ? `<span class="pics">${x.pictures.map(file => pictureButton(x.id, file)).join('')}</span>` : ''}</li>`; // (pictures)
-  // (a note marked sent on a call with no job, or answered by its job: answered. One whose fix is live: fixed. One whose
-  // work is held, or that came back to be routed again: rerouting, with why; waiting is an unsent note's, the board's to
-  // send.)
-  const state = x =>
-    x.fixed_live
-      ? 'fixed'
-      : x.answered || (x.status === 'sent' && !x.job && x.call)
-        ? 'answered'
-        : x.waiting
-          ? 'rerouting'
-          : x.status;
-  const why = x =>
-    x.waiting
-      ? `<span class="dim reason">${esc(x.waiting)}</span>`
-      : x.answered
-        ? `<span class="dim reason">${esc(x.answered)}</span>`
-        : '';
-  // (an outside reviewer's, once it went: who wrote it, as they signed in; and a general note says so)
-  const by = x => {
-    const line = [
-      x.element?.kind === 'general' ? 'General note' : '',
-      x.author ? `by ${esc(x.author)}${x.author_email ? ` (${esc(x.author_email)})` : ''}` : '',
-    ].filter(Boolean);
-    return line.length ? `<span class="dim by">${line.join(' · ')}</span>` : '';
-  };
-  // (only a rerouting note has its own colour: answered and fixed keep their status's)
-  const done = x => {
-    const said = state(x);
-    return `<li class="old"><span class="st st-${esc(said === 'rerouting' ? said : x.status)}">${esc(said)}</span><b>${esc(x.note)}</b><span class="dim">${esc(ago(x.created))}</span>${by(x)}${why(x)}</li>`;
-  };
   const live = shares.filter(s => !s.ended || s.reopens);
   if (notesShown === 'shared') {
     // (a share the board opened stays open through the refresh)
     const unfolded = new Set(
       [...el.querySelectorAll('section.share > details[open]')].map(d => +d.parentElement.dataset.share),
     );
-    el.innerHTML = `${notesMenu(waiting, live.length)}${shares.length ? sharesHtml(shares, unfolded) : '<p><i class="prompt">&gt; </i>Nothing shared. A preview’s share invites outside people.</p>'}`;
+    el.innerHTML = `${notesMenu(live.length)}${shares.length ? sharesHtml(shares, unfolded) : '<p><i class="prompt">&gt; </i>Nothing shared. A preview’s share invites outside people.</p>'}`;
     shareActs(el, shares);
-  } else
-    el.innerHTML = `${notesMenu(waiting, live.length)}<p class="cap"><i class="prompt">&gt; </i>REVIEW NOTES · ${waiting} WAITING</p>
-    ${waiting ? '<p class="warn notes-warn">Send only the notes you recognise: a preview page can write notes too.</p>' : ''}
-    ${
-      products
-        .map((p, i) => {
-          // (a discarded note is gone from the list, kept on the server.)
-          const open = lists[i].filter(x => x.status === 'pending'),
-            old = lists[i].filter(x => !['pending', 'discarded'].includes(x.status));
-          if (!open.length && !old.length) return '';
-          // (wanted: by the notes pinned in the viewer too, as a deck's are about its cycle folder; data-agent for Call.
-          const wanted = want && (p.slug === want.slug || open.some(x => want.ids?.has(+x.id)));
-          return `<section class="notes${wanted ? ' wanted' : ''}" data-slug="${esc(p.slug)}" data-owner="${esc(p.ownerName || who(p.owner))}" data-agent="${esc(p.owner)}">
-        <h3><span>${esc(p.name || p.slug)}${+p.pending ? ` · ${+p.pending} waiting` : ''}</span>${open.length > 1 ? '<button data-all></button>' : ''}</h3>
-        ${open.length ? `<ul class="rows">${open.map(pending).join('')}</ul><p class="acts"><button class="cta" data-send></button><button data-call></button><button data-discard></button><span class="msg" role="status"></span></p>` : ''}
-        ${old.length ? `<ul class="rows">${old.slice(0, 10).map(done).join('')}</ul>${old.length > 10 ? `<p class="dim">+ ${old.length - 10} earlier</p>` : ''}` : ''}
-      </section>`;
-        })
-        .join('') ||
-      '<p><i class="prompt">&gt; </i>No notes yet. Open a product preview and tap the pin to leave one.</p>'
-    }`;
-  el.querySelectorAll('section.notes').forEach(s => wireProduct(el, s));
+  } else {
+    const blocks = [...sheets.map(sheetBlock), ...byJob(older).map(olderBlock)].sort((a, b) =>
+      b.when.localeCompare(a.when),
+    );
+    el.innerHTML = `${notesMenu(live.length)}<p class="cap"><i class="prompt">&gt; </i>SENT</p>
+    ${blocks.map(b => b.html).join('') || '<p><i class="prompt">&gt; </i>Nothing sent yet. Mark a page and send its sheet from the book.</p>'}`;
+  }
   el.querySelectorAll('[data-shown]').forEach(
     b =>
       (b.onclick = () => {
@@ -193,18 +78,14 @@ export async function notes(el) {
         el.scrollTop = 0;
       }),
   );
-  // a thumbnail opens the screenshot (or a picture added to the note) over the screen; a tap anywhere closes it
-  el.querySelectorAll('[data-shot], [data-picture]').forEach(
+  // a snip opens bigger over the screen; a tap anywhere closes it
+  el.querySelectorAll('[data-zoom]').forEach(
     b =>
       (b.onclick = () => {
-        const picture = b.dataset.picture,
+        const url = b.dataset.zoom,
           z = document.createElement('div');
-        const url = picture
-          ? reviewPicture(world.dev, picture, b.dataset.file)
-          : reviewShot(world.dev, b.dataset.shot, b.dataset.file);
-        const alt = picture ? 'A picture added to the note' : 'Screenshot of the page when the note was made';
         z.className = 'zoom';
-        z.innerHTML = `<img src="${esc(url)}" alt="${alt}"><a href="${esc(url)}" target="_blank" rel="noopener">Full size ↗</a>`;
+        z.innerHTML = `<img src="${esc(url)}" alt="The page around the mark"><a href="${esc(url)}" target="_blank" rel="noopener">Full size ↗</a>`;
         z.onclick = e => {
           if (e.target.tagName !== 'A') z.remove();
         };
@@ -212,127 +93,62 @@ export async function notes(el) {
         sfx.blip();
       }),
   );
-  if (!first) return;
-  want.shown = true;
-  const section = el.querySelector('section.wanted');
-  if (section) requestAnimationFrame(() => section.scrollIntoView({ block: 'start' }));
 }
-// A product's section: its ticks, and Send, Call and Discard on the ticked notes
-function wireProduct(el, s) {
-  const ui = {
-    boxes: [...s.querySelectorAll('[data-note]')],
-    send: s.querySelector('[data-send]'),
-    drop: s.querySelector('[data-discard]'),
-    msg: s.querySelector('.msg'),
-  };
-  const ring = s.querySelector('[data-call]');
-  const all = s.querySelector('[data-all]');
-  if (!ui.send) return;
-  const { boxes, send, drop } = ui;
-  const chosen = () => boxes.filter(b => b.checked).map(b => +b.dataset.note);
-  const paint = () => {
-    const n = Math.min(chosen().length, SEND_MAX),
-      every = chosen().length === boxes.length;
-    send.textContent = n ? `Send ${n}` : 'Send';
-    send.disabled = drop.disabled = !n;
-    ask.show();
-    ring.textContent = `Call ${s.dataset.owner}`;
-    ring.disabled = !n;
-    if (all) {
-      all.textContent = every ? 'Untick all' : 'Tick all';
-      all.dataset.every = every ? 1 : '';
-    }
-  };
-  wireTicks(boxes, all, paint);
-  const busy = busyIn(el, ui, paint);
-  const ask = discardAsk(ui, chosen, busy);
-  paint();
-  send.onclick = () => {
-    const ids = chosen().slice(0, SEND_MAX);
-    busy(
-      'Sending…',
-      () => sendNotes(world.dev, s.dataset.slug, ids),
-      r => {
-        sfx.ding(0.6);
-        toast(
-          `<b>Sent to ${esc(r.name)}</b><br>${r.count} ${r.count === 1 ? 'note' : 'notes'} · job ${jobNameLink(r.job, r.job_code)}`,
-        );
-        if (s.classList.contains('wanted')) notesWanted?.sent?.(ids, r.count, r.name);
-      },
-    );
-  };
-  // a call about the ticked notes sends none of them: on it, the maker marks each one sent or leaves it waiting here
-  ring.onclick = () => {
-    sfx.blip();
-    callAgent(s.dataset.agent, s.dataset.owner, 0, chosen().slice(0, SEND_MAX));
-  };
+
+// A sent sheet: who it went to (nobody's goes to the CEO, who routes each note), when, its job, and its notes
+function sheetBlock(s) {
+  const to = s.name ? `To ${esc(s.name)}` : 'To the CEO, to pass on';
+  const job = s.job ? ` · job ${jobNameLink(s.job, s.job_code)}` : '';
+  const html = `<section class="notes sent"><h3><span>${to}</span></h3>
+    <p class="dim">${esc(noteCount(s.notes.length))} · ${esc(s.sent ? `${dayTime(s.sent)}, ${ago(s.sent)}` : '')}${job}</p>
+    <ol class="rows">${s.notes.map(n => noteRow(n.n, n.words, n.snip, answerOf(n.slips))).join('')}</ol></section>`;
+  return { when: s.sent ?? s.created ?? '', html };
 }
-function wireTicks(boxes, all, paint) {
-  const set = (b, on) => {
-    b.checked = on;
-    ticked[on ? 'add' : 'delete'](+b.dataset.note);
-  };
-  boxes.forEach(
-    b =>
-      (b.onchange = () => {
-        set(b, b.checked);
-        paint();
-      }),
-  );
-  if (all)
-    all.onclick = () => {
-      const on = !all.dataset.every;
-      boxes.forEach(b => set(b, on));
-      paint();
-      sfx.blip();
-    };
+// How a note was answered: its last slip ticked by the board, or answered and waiting for its look
+const answerOf = slips => (!slips?.length ? '' : slips.at(-1).ticked ? 'ticked' : 'answered');
+// One note: its number, its words, its snip (a tap shows it bigger) and its answer's state
+const noteRow = (n, words, snip, state, by = '') =>
+  `<li class="sent-note"><b class="n">${+n}</b><span class="words">${esc(words || '(no words: its snip shows the mark)')}</span>${
+    snip
+      ? `<button class="shot" data-zoom="${esc(snip)}" aria-label="Show the snip bigger"><img src="${esc(snip)}" alt="" loading="lazy"></button>`
+      : ''
+  }${state ? `<span class="st st-${state}">${state}</span>` : ''}${by}</li>`;
+
+// The notes sent before the book, one block a job (one marked on a call with no job: a block of its own)
+function byJob(list) {
+  const groups = new Map();
+  for (const x of list) {
+    const key = x.job ? `job:${x.job}` : `note:${x.id}`;
+    groups.set(key, [...(groups.get(key) ?? []), x]);
+  }
+  return [...groups.values()].map(g => g.sort((a, b) => a.id - b.id));
 }
-// a send or discard on its way: the section's keys wait, its line says what's happening, and Reviews draws again after
-const busyIn =
-  (el, { send, drop, msg }, paint) =>
-  async (doing, fn, done) => {
-    notesBusy = true;
-    send.disabled = drop.disabled = true;
-    msg.textContent = doing;
-    try {
-      done(await fn());
-    } catch (e) {
-      const status = +String(e.message).match(/\d{3}$/)?.[0];
-      msg.textContent = status
-        ? `That didn’t go through (error ${status}). Try again in a minute.`
-        : 'Could not reach the coordinator. Try again.';
-      notesBusy = false;
-      paint();
-      return;
-    }
-    notesBusy = false;
-    notes(el);
-    refreshWaitingNotes();
-    toldReview();
+function olderBlock(list) {
+  const first = list[0],
+    when = list.at(-1).created;
+  const job = first.job
+    ? ` · job ${jobNameLink(first.job, first.job_code)}`
+    : first.call
+      ? ' · answered on a call'
+      : '';
+  // (a note marked sent on a call with no job: answered there. One whose fix is live: fixed. One answered by its job:
+  // answered, with its answer. One whose work is held, or that came back to be routed again: rerouting, with why. An
+  // outside reviewer's: who wrote it, as they signed in; a general note says so)
+  const state = x => (x.fixed_live ? 'fixed' : x.answered ? 'answered' : x.waiting ? 'rerouting' : '');
+  const why = x => x.waiting ?? x.answered;
+  const by = x => {
+    const line = [
+      x.element?.kind === 'general' ? 'General note' : '',
+      x.author ? `by ${esc(x.author)}${x.author_email ? ` (${esc(x.author_email)})` : ''}` : '',
+    ].filter(Boolean);
+    return `${line.length ? `<span class="dim by">${line.join(' · ')}</span>` : ''}${why(x) ? `<span class="dim reason">${esc(why(x))}</span>` : ''}`;
   };
-// discarding can't be undone: the first tap asks, the second does it. The discarded notes no longer count on the
-// viewer's Send. (steady: the row beside it stays put. Asking, the key says only "Sure?", no wider than Discard, so
-// it keeps its own word's size; the line under it says what a second tap does.)
-const discardAsk = ({ drop, msg }, chosen, busy) =>
-  askAgain(drop, {
-    status: msg,
-    label: 'Discard',
-    again: 'Sure?',
-    question: () => `Tap again to discard ${noteCount(chosen().length)} for good.`,
-    steady: true,
-    act: () => {
-      const ids = chosen();
-      busy(
-        'Discarding…',
-        () => discardNotes(world.dev, ids),
-        r => {
-          sfx.blip();
-          toast(`<b>Discarded</b><br>${r.count} ${r.count === 1 ? 'note' : 'notes'}`);
-          unpin(ids);
-        },
-      );
-    },
-  });
+  const snip = x => (x.shot ? reviewShot(world.dev, x.id, x.shotFile) : null);
+  const html = `<section class="notes sent"><h3><span>To ${esc(first.to?.name ?? 'the owner')}</span></h3>
+    <p class="dim">${esc(first.to?.what ?? '')} · ${esc(noteCount(list.length))} · ${esc(`${dayTime(when)}, ${ago(when)}`)}${job}</p>
+    <ol class="rows">${list.map((x, i) => noteRow(i + 1, x.note, snip(x), state(x), by(x))).join('')}</ol></section>`;
+  return { when, html };
+}
 // Shared for outside notes: each open
 // share with what it opens and until when, its people (Send link, Remove, Invite) and End now (two taps, like Discard),
 // as the viewer's Share shows it. An ended one says who was on it and where its notes went, for a week.

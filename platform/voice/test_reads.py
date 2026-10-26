@@ -1,8 +1,7 @@
 """The call agent's report and git tools (reads.py): what they read, in pages, and that no word of the agent's becomes a
 git option. Run: python3 -m unittest test_reads."""
-import re, subprocess, sys, tempfile, unittest
+import os, re, subprocess, sys, tempfile, unittest
 from pathlib import Path
-from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).parent))
 import reads
@@ -41,31 +40,33 @@ class Git(unittest.TestCase):
         sh('git', 'commit', '-q', '-am', 'Job 7 adds a line', cwd=work)
         sh('git', 'clone', '-q', '--mirror', work, mirror, cwd=cls.dir.name)
         sh('git', 'update-ref', 'refs/outgoing/job/8', 'job/7', cwd=mirror)
-        cls.mirror = mock.patch.object(reads, 'MIRROR', mirror)
-        cls.mirror.start()
+        cls.mirror = mirror
 
     @classmethod
     def tearDownClass(cls):
-        cls.mirror.stop()
         cls.dir.cleanup()
 
+    def git(self, a):
+        """The git tool's answer, on the test's mirror."""
+        return reads.git(a, self.mirror)
+
     def test_unmerged_work_by_a_jobs_name(self):
-        ok, text = reads.git({'command': 'log', 'rev': 'main..origin/job/7'})
+        ok, text = self.git({'command': 'log', 'rev': 'main..origin/job/7'})
         self.assertTrue(ok, text)
         self.assertIn('Job 7 adds a line', text)
         self.assertNotIn('The first', text)
-        ok, text = reads.git({'command': 'diff', 'rev': 'main...job/7', 'stat': True})
+        ok, text = self.git({'command': 'diff', 'rev': 'main...job/7', 'stat': True})
         self.assertIn('a.txt | 1 +', text)
-        self.assertEqual(reads.git({'command': 'show', 'rev': 'job/7', 'path': 'a.txt'}),
+        self.assertEqual(self.git({'command': 'show', 'rev': 'job/7', 'path': 'a.txt'}),
                          (True, 'first line\n--no-index here'))
-        branches = reads.git({'command': 'branches'})[1]
+        branches = self.git({'command': 'branches'})[1]
         self.assertIn('outgoing/job/8', branches)
-        self.assertEqual(reads.git({'command': 'branches', 'pattern': 'outgoing'})[1].count('\n'), 0)
+        self.assertEqual(self.git({'command': 'branches', 'pattern': 'outgoing'})[1].count('\n'), 0)
 
     def test_grep_reads_a_pattern_as_text(self):
-        self.assertEqual(reads.git({'command': 'grep', 'rev': 'job/7', 'pattern': '--no-index'}),
+        self.assertEqual(self.git({'command': 'grep', 'rev': 'job/7', 'pattern': '--no-index'}),
                          (True, 'job/7:a.txt:2:--no-index here'))
-        self.assertEqual(reads.git({'command': 'grep', 'rev': 'main', 'pattern': 'nowhere'}), (True, 'No line has it.'))
+        self.assertEqual(self.git({'command': 'grep', 'rev': 'main', 'pattern': 'nowhere'}), (True, 'No line has it.'))
 
     def test_no_word_becomes_an_option(self):
         """Each is refused before git runs: an option for a revision (also behind origin/), a range where one revision
@@ -75,17 +76,19 @@ class Git(unittest.TestCase):
                   {'command': 'log', 'rev': 'a..b..c'}, {'command': 'show', 'rev': 'main:a.txt'},
                   {'command': 'show', 'path': ':(top)a.txt'}, {'command': 'log', 'path': '../x'},
                   {'command': 'diff', 'rev': 'main'}, {'command': 'push'}, {'command': 'grep', 'pattern': 'a\nb'}):
-            with mock.patch.object(subprocess, 'run') as run:
-                ok, text = reads.git(a)
+            ok, text = reads.git(a, f'{self.dir.name}/nowhere.git')  # (git there would fail as git, not refuse)
             self.assertFalse(ok, a)
-            run.assert_not_called()
+            self.assertFalse(text.startswith('git '), text)
 
 
 class Report(unittest.TestCase):
     def report(self, a, out=REPORT):
-        done = subprocess.CompletedProcess([], 0, out, '')
-        with mock.patch.object(subprocess, 'run', return_value=done) as run:
-            return reads.report(a, {}), run.call_args.args[0]
+        """The report tool's answer, with an hq that prints `out`, and the hq command line it ran."""
+        with tempfile.TemporaryDirectory() as d:
+            Path(d, 'out').write_text(out)
+            Path(d, 'hq').write_text(f'#!/bin/sh\nprintf \'%s\\n\' hq "$@" > {d}/argv\ncat {d}/out\n')
+            os.chmod(f'{d}/hq', 0o755)
+            return reads.report(a, {'PATH': f'{d}:/usr/bin:/bin'}), Path(d, 'argv').read_text().splitlines()
 
     def test_its_sections_first_then_one_by_its_heading(self):
         (ok, text), argv = self.report({})

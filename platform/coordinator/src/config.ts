@@ -13,6 +13,8 @@ export const RUN_DIR = process.env.RUN_DIR ?? '';
 // The most IMPORTS_DIR may hold, and the disk the zips must leave free, in GB (a company's own in company/infra.env)
 export const IMPORTS_MAX_GB = Number(process.env.IMPORTS_MAX_GB || 10);
 export const IMPORTS_MIN_FREE_GB = Number(process.env.IMPORTS_MIN_FREE_GB || 5);
+// Temporary deploy-build space excluded from job disk shares, in GiB. Each company supplies its measured peak.
+export const DEPLOY_BUILD_RESERVE_GB = Number(process.env.DEPLOY_BUILD_RESERVE_GB || 0);
 export const PUBLIC_HOST = process.env.PUBLIC_HOST ?? 'localhost';
 // The company's zone, the hosts HQ, its products and their previews share (hq.<zone>, <slug>.preview.<zone>); empty on
 // localhost, and on a host named for the server's IP (<ip-with-dashes>.sslip.io, <ip>.nip.io): that zone is everyone's,

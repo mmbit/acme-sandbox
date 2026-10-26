@@ -2,7 +2,9 @@
 
 Counting for a product app (`metrics.ts`): page loads and funnel steps tallied in memory, sent to HQ every few
 minutes, with a daily summary of the app's orders. An app imports it by its path in the repo and keeps its own
-`app/metrics.json` (the steps, funnel, dashboard and A/B tests: the coordinator's `metrics.ts` reads it).
+`app/metrics.json` (the steps, funnel, dashboard and A/B tests: the coordinator's `metrics.ts` reads it). Who loaded
+a page and where from (below, "People, not machines") is `loads.ts`, which the app imports through `metrics.ts` too
+.
 
 ```ts
 createServer((req, res) => metrics.serve(req, () => handle(req, res))); // counts nothing from the board's preview door

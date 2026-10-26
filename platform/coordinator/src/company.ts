@@ -11,7 +11,7 @@ import { teamMembers, lastStep } from './team.ts';
 import { TYPES, typeOf } from './types.ts';
 import { formats } from '../../../shared/format/format.js';
 import { contrastChannels } from '../../../shared/contrast/contrast.js';
-import { zoneOf } from './clock.ts';
+import { momentIn, zoneOf } from './clock.ts';
 
 export function org() {
   const o = orgChart();
@@ -112,9 +112,8 @@ export const theme = () => optional('theme/hq.yaml');
 // names its business. groups: the projects view's side groups beside the businesses (recurring: the routines'
 // projects, schedule.ts keepProjects; unsorted: the work outside the projects), each maybe with a cover and its style
 // the same way. Both as declared.
-// A group may carry its own name for the view: a company that names
-// unsorted, the CEO's desk (call follow-ups and the CEO's own work, projects.ts listProjectBoard), has it as a standing
-// tile.
+// A group may carry its own name for the view: a company that names unsorted, the CEO's desk (the CEO's own work: its
+// call follow-ups and meeting work, projects.ts listProjectBoard), has it as a standing tile.
 // covers: each project's cover by its id, a file under theme/hq/ the same way (the projects are HQ's data, their pictures
 // the company's).
 export type Business = { id: string; name: string; cover?: string; owner?: string; style?: string };
@@ -182,8 +181,9 @@ export const unstaffed = () => (org().departments ?? []).every((d: any) => (d.ag
 // - asks: who sees that every ended call's items have work and close, except customer or keys calls (server.ts keepsAsks)
 //   Left out, only the jobs working for a call
 //   Left out, only the jobs working for a call
-// - foundation: the foundation keeper, one more reader on a first round that touches the foundation's paths (reviewkeeper.ts
-//   keeperSeat). Left out, there is no keeper
+// - foundation: the foundation keeper, who runs the weekly foundation sweep (shared/routines/foundation-sweep.md)
+// - readability: the reader of readability and structure a first review round chooses unless its triage says why not
+//   (reviewtriage.ts). Left out, triage chooses that lens like any other
 export function roles() {
   const r = optional('company/org.yaml').roles ?? {}, id = (v: unknown) => typeof v === 'string' && v ? v : ceo();
   const ids = (v: unknown) => (Array.isArray(v) ? v : []).filter((a: unknown) => typeof a === 'string') as string[];
@@ -191,7 +191,8 @@ export function roles() {
   return { reviewers: ids(r.reviewers), consolidator: consolidators[0] ?? ceo(), consolidators, process: id(r.process), inbox: id(r.inbox), finance: id(r.finance),
     businessMail: ids(r.businessMail), customerData: ids(r.customerData), customerMail: ids(r.customerMail), orders: ids(r.orders),
     triage: r.triage as string | undefined, asks: r.asks as string | undefined,
-    foundation: typeof r.foundation === 'string' && r.foundation ? r.foundation : undefined };
+    foundation: typeof r.foundation === 'string' && r.foundation ? r.foundation : undefined,
+    readability: typeof r.readability === 'string' && r.readability ? r.readability : undefined };
 }
 // Whether an agent's work needs what one of those roles reads
 export type ReadingRole = 'businessMail' | 'customerData' | 'customerMail' | 'orders';
@@ -199,6 +200,10 @@ export const reads = (agent: string, role: ReadingRole) => roles()[role].include
 export { reviewSettings } from './reviewsettings.ts';
 // The company's clock (clock.ts): the schedule's times, and the times briefs and alerts say.
 export const timeZone = () => zoneOf(optional('company/org.yaml'));
+// A time on the company's clock, in ms, at the zone's offset on that date (later.ts's days, callrules.ts --at, windows.ts
+// parse)
+export const companyMoment = (y: number, m: number, d: number, hour: number, minute: number) =>
+  momentIn(timeZone(), y, m, d, hour, minute);
 // Money and days as the coordinator writes them (shared/format), in British English on the company's clock: a binding
 // per clock and currency, as a payment carries its own and a day needs none.
 // locales: another language's, for an email in it (shared/format's).

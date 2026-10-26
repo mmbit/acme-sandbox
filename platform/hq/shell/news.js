@@ -98,9 +98,10 @@ function openPost(p, back = openGazette) {
   const readMore = p.links?.length
     ? `<div class="reads"><h3>Read more in ${esc(names.library)}</h3>${p.links.map(read).join('')}</div>`
     : '';
+  // (a post is its author's: a mark the Pencil makes on it goes on their sheet.)
   show(
     'post',
-    `<button class="back">← Back</button><article class="post"><img class="cover" alt="" src="${esc(coverFor(p))}">` +
+    `<button class="back">← Back</button><article class="post" data-owner="${esc(p.author ?? '')}"><img class="cover" alt="" src="${esc(coverFor(p))}">` +
       `${p.sound ? `<audio class="sound" src="${esc(p.sound)}" controls preload="none"></audio>` : ''}
     <h2>${withJobLinks(p.title)}</h2><p class="role">${author(p.author)} · ${fmtDate(p.date)} ${tags(p.tags)}</p>` +
       `<div class="html">${sanitize(p.html || '')}</div>

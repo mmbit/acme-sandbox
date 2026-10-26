@@ -2,22 +2,55 @@
 import type { Memory, QueuedJob, Snapshot } from './eta.ts';
 const budgets = new WeakMap<Snapshot, { recoverableMb: number; externalSlots: number }>();
 
-export function canStart(snapshot: Snapshot, running: QueuedJob[], candidate: QueuedJob, now: number) {
+// The room's use at one moment of the play (simulation.ts start): its runs' slots and memory, summed once and added to
+// as claims start, not summed again for every claim.
+export type Room = { snapshot: Snapshot; slots: number; occupiedMb: number; startingMb: number };
+export function room(snapshot: Snapshot, running: QueuedJob[], now: number): Room {
   const memory = snapshot.memory;
-  if (!memory) return running.length < (snapshot.room ?? Infinity);
+  return {
+    snapshot,
+    slots: running.length,
+    occupiedMb: memory ? running.reduce((sum, row) => sum + demand(memory, row), 0) : 0,
+    startingMb: memory
+      ? memory.starting.reduce((sum, reservation) => sum + (reservation.until > now ? reservation.mb : 0), 0)
+      : 0,
+  };
+}
+
+export function join(room: Room, row: QueuedJob) {
+  room.slots++;
+  if (room.snapshot.memory) room.occupiedMb += demand(room.snapshot.memory, row);
+}
+
+// A start is admitted as the worker admits a claim (its reserve.ts and the claim's room, jobs.ts): its starting
+// allowance above the reserve, or less for a job whose measured memory is smaller. A run then holds its measured
+// memory. (admitting on the measured peak never started a job that peaks past the room the snapshot's moment left, and
+// every job ordered after it waited out the 8 days.)
+export function canStart(room: Room, candidate: QueuedJob) {
+  const { snapshot } = room,
+    memory = snapshot.memory;
+  if (!memory) return room.slots < (snapshot.room ?? Infinity);
   return (
-    running.length < memory.totalSlots - memory.heldSlots - budget(snapshot).externalSlots &&
-    free(snapshot, running, now) >= demand(memory, candidate)
+    room.slots < memory.totalSlots - memory.heldSlots - budget(snapshot).externalSlots &&
+    free(room) >= Math.min(memory.defaultRunMb, demand(memory, candidate))
   );
 }
 
-export function full(snapshot: Snapshot, running: QueuedJob[], now: number) {
-  const memory = snapshot.memory;
-  if (!memory) return running.length >= (snapshot.room ?? Infinity);
-  return (
-    running.length >= memory.totalSlots - memory.heldSlots - budget(snapshot).externalSlots ||
-    free(snapshot, running, now) <= 0
-  );
+export function afterPauses(room: Room, rows: QueuedJob[]): Room {
+  return {
+    ...room,
+    slots: room.slots - rows.length,
+    occupiedMb:
+      room.occupiedMb -
+      rows.reduce((sum, row) => sum + (room.snapshot.memory ? demand(room.snapshot.memory, row) : 0), 0),
+  };
+}
+
+export function full(room: Room) {
+  const { snapshot } = room,
+    memory = snapshot.memory;
+  if (!memory) return room.slots >= (snapshot.room ?? Infinity);
+  return room.slots >= memory.totalSlots - memory.heldSlots - budget(snapshot).externalSlots || free(room) <= 0;
 }
 
 export function nextEvent(snapshot: Snapshot, now: number): number | null {
@@ -38,15 +71,15 @@ export function assumptions(snapshot: Snapshot) {
   ];
 }
 
-function free(snapshot: Snapshot, running: QueuedJob[], now: number) {
-  const memory = snapshot.memory!;
-  const occupiedMb = running.reduce((sum, row) => sum + demand(memory, row), 0);
-  const startingMb = memory.starting.reduce(
-    (sum, reservation) => sum + (reservation.until > now ? reservation.mb : 0),
-    0,
-  );
+function free(room: Room) {
+  const memory = room.snapshot.memory!;
   return (
-    memory.availableMb - memory.freeReserveMb - memory.heldMb + budget(snapshot).recoverableMb - occupiedMb - startingMb
+    memory.availableMb -
+    memory.freeReserveMb -
+    memory.heldMb +
+    budget(room.snapshot).recoverableMb -
+    room.occupiedMb -
+    room.startingMb
   );
 }
 

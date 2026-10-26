@@ -35,7 +35,7 @@ import {
   queuedWords,
   planned,
 } from './threads.js';
-import { clockWhen, fromNow } from '../world/clock.js';
+import { dayTime, fromNow } from '../world/clock.js';
 
 // The keys after the businesses: Recurring, the routines' projects (projects.ts gives each its schedule), and the work
 // outside the projects, each its name and a line icon (or the cover projects.yaml's groups name for it). A company's own
@@ -65,13 +65,15 @@ export const named = (key, set) => ({
 });
 
 // ---------------------------------------------------------------- the tiles
+// Each tile names whose it is (data-owner: a business's, project's or thread's owner, a job's agent), so a mark the
+// Pencil makes on it goes on their sheet (shared/review/marks.js).
 // A business: its cover with what waits on the board or is paused marked on it, the bars of the work running in it
 // over its corner and its owner crowned in the other, and its name.
 export function businessTile(b, projects) {
   const state = businessState(projects),
     threads = projects.flatMap(p => p.threads);
   const owner = b.owner ? [person(b.owner, true, atWork(threads).includes(b.owner))] : [];
-  return `<button class="pj-tile pj-business${state.lit ? ' lit' : ''}" data-business="${esc(b.id)}">
+  return `<button class="pj-tile pj-business${state.lit ? ' lit' : ''}" data-business="${esc(b.id)}" data-owner="${esc(b.owner ?? '')}">
     ${art(b, b.name, owner, state, running(threads))}<span class="pj-tile-body"><b>${esc(b.name)}</b></span></button>`;
 }
 // A project: a business's tile with whoever else is at work on it beside its owner, and its deliverables up next (a
@@ -81,7 +83,7 @@ export function projectTile(p) {
   const state = projectState(p),
     on = atWork(p.threads),
     people = [p.owner, ...on.filter(a => a !== p.owner)].map((a, i) => person(a, i === 0, on.includes(a)));
-  return `<button class="pj-tile pj-project${state.lit ? ' lit' : ''}" data-project="${esc(p.id)}" data-sort="${esc(p.id)}">
+  return `<button class="pj-tile pj-project${state.lit ? ' lit' : ''}" data-project="${esc(p.id)}" data-sort="${esc(p.id)}" data-owner="${esc(p.owner ?? '')}">
     ${art(p, nameText(p, 'name'), people, state, running(p.threads))}<b>${nameHtml(p, 'name')}</b>${deliverables(p)}</button>`;
 }
 // A done thread, quieter: its owner, its name and how many of its jobs were done (projects.ts tally), or while it's
@@ -95,7 +97,7 @@ export function doneThreadTile(t, opening) {
         ? `Done · ${t.done} of ${t.jobs} ${t.jobs === 1 ? 'job' : 'jobs'}`
         : 'Closed with no jobs';
   return tile({
-    attrs: `data-thread="${esc(t.id)}"`,
+    attrs: `data-thread="${esc(t.id)}" data-owner="${esc(t.owner ?? '')}"`,
     label: `${nameText(t, 'name')}, ${words}`,
     top: faces([t.owner]),
     name: nameHtml(t, 'name'),
@@ -123,7 +125,7 @@ function jobTile(j, t) {
   // (and when it lands, the play's finish a thread gives too: a line of its own.)
   const lands = planned(j.lead ?? j).done;
   return tile({
-    attrs: `data-job="${Number(j.id)}"`,
+    attrs: `data-job="${Number(j.id)}" data-owner="${esc(j.agent ?? '')}"`,
     label: [nameText(j), ...where.map(x => x.text ?? x), lands].filter(Boolean).join(', '),
     state: { lit: s === 'you', words: 'Waits for you' },
     top: whoTop(j.agent),
@@ -165,8 +167,8 @@ export function head({ back = '', over = '', title, marks = '', keys = '' }) {
     ? `<button class="pj-key pj-back-key" data-up aria-label="Back to ${esc(back)}">${icon('back')}</button>`
     : `<span class="pj-slot">${icon('app-projects')}</span>`;
   return `<header class="pj-head">${start}
-    <div class="pj-where">${over ? `<small>${esc(over)}</small>` : ''}<h1>${esc(title)}</h1></div>
-    ${marks ? `<div class="pj-marks">${marks}</div>` : ''}${keys ? `<div class="pj-keys">${keys}</div>` : ''}
+    <div class="pj-flow"><div class="pj-where">${over ? `<small>${esc(over)}</small>` : ''}<h1>${esc(title)}</h1></div>
+    ${marks ? `<div class="pj-marks">${marks}</div>` : ''}${keys ? `<div class="pj-keys">${keys}</div>` : ''}</div>
     <button class="pj-key pj-close" data-leave aria-label="Close the projects">${icon('close')}</button></header>`;
 }
 // What waits on the board here, the tiles' lit mark beside the name (words: what it says to a screen reader and on
@@ -174,8 +176,10 @@ export function head({ back = '', over = '', title, marks = '', keys = '' }) {
 export const litMark = words =>
   words ? `<span class="pj-mark you" title="${esc(words)}">${icon('phone', '', esc(words))}</span>` : '';
 // A project's marks: its owner, crowned, a routine's interval and next run, then what waits on the board and its pause
+// (a goal the CEO marked)
 export const projectMarks = p =>
   person(p.owner, true) +
+  (p.goal ? `<span class="pj-note">${icon('finish')}<span>Goal</span></span>` : '') +
   (p.schedule
     ? `<span class="pj-note pj-schedule">${icon('group-recurring')}<span>${esc(scheduled(p.schedule))}</span></span>`
     : '') +
@@ -199,14 +203,16 @@ function eta(t) {
 // of the board's is lit instead)
 const pausedMark = pause =>
   pause && !pause.decision
-    ? `<span class="pj-note">${icon('pause')}<span>${esc(pausedWords(pause))}</span></span>`
+    ? `<span class="pj-note pj-paused">${icon('pause')}<span>${esc(pausedWords(pause))}</span></span>`
     : '';
-// A pause in words, with what wakes its owner to judge it: its time, the work it waits for ending (by title: no numbers
-// for the board). Nothing lifts it by itself.
+// A pause in words, with what wakes its owner to judge it: its time (with its date), the work it waits for still to end
+// (by title: no numbers for the board), or, once that's met, that it's its owner's to decide. Nothing lifts it by
+// itself.
 export function pausedWords(pause) {
-  const until = pause.until ?? [];
+  if (pause.woken) return 'Paused until its owner decides what’s next';
+  const until = (pause.until ?? []).filter(u => !u.ended);
   const work = until.length === 1 ? `“${until[0].title}” ends` : until.length ? `${until.length} tasks end` : '';
-  const when = [pause.untilTime && `it's ${clockWhen(Date.parse(pause.untilTime))}`, work].filter(Boolean);
+  const when = [pause.untilTime && `it's ${dayTime(Date.parse(pause.untilTime))}`, work].filter(Boolean);
   return when.length ? `Paused, to be judged once ${when.join(' and ')}` : 'Paused';
 }
 // A head's key for the board's decision a project or thread waits on (the CEO names it): its card, which alone ends it.

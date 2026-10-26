@@ -25,7 +25,7 @@ export function refusal(agent: string, after: number | undefined, me: { id: numb
 
 // A work job whose changes may still reach main: not ended, or its pull request still open.
 const pending = (job: number) => !!db.prepare(`select 1 from jobs a where a.id = ? and a.kind = 'work'
-  and (a.status not in ('done', 'failed', 'cancelled')
+  and (a.status not in ('done', 'failed', 'stopped', 'cancelled')
     or exists (select 1 from prs where branch = coalesce(a.branch, 'job/' || a.id) and status in ('open', 'stuck', 'board')))`).get(job);
 
 const released = new Map<number, number>();   // a waiting job: when its hiring was first seen merged or closed

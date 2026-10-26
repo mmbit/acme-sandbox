@@ -102,9 +102,12 @@ RUN curl -fsSL -o smart-turn-v3.2-cpu.onnx "$SMART_TURN/smart-turn-v3.2-cpu.onnx
 # turns.py too (server.py logs each call's numbers from it, then forgets the session), echo.py, aloud.py (numbers in
 # words, shared with On Air), room.py (a call out's room on the join page), endpoint.py and dictate.py (a note's live
 # dictation), reads.py (the call agent's report and git tools), drawing.py (the
-# board's notes, the agent's asks to see its screen and rings on its page)
+# board's notes, the agent's asks to see its screen and rings on its page), driving.py (the agent's walk-throughs of
+# finished work), answers.py (HQ's answers to both's rings and moves). Every module server.py and hq_tools.py import goes here:
+# platform/coordinator/src/image.test.ts fails on one left out.
 COPY voice/server.py voice/aloud.py voice/guard.py voice/hq_tools.py voice/turns.py voice/echo.py voice/room.py \
-     voice/endpoint.py voice/dictate.py voice/reads.py voice/drawing.py /app/
+     voice/endpoint.py voice/dictate.py voice/reads.py voice/drawing.py voice/driving.py \
+     voice/answers.py /app/
 # (and the TypeScript it runs, beside it as in the repo)
 COPY worker/bin/hq /usr/local/bin/hq
 COPY worker/hq /usr/local/hq

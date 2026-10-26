@@ -1,8 +1,7 @@
-// The board's review notes (feedback.ts in the coordinator): one in full with its screenshot (hq note), the ones sent to
-// this agent's jobs listed, and the pins a call about them goes
-// through (hq pin).
+// The board's review notes (feedback.ts in the coordinator): one in full with its screenshot (hq note), and the ones sent
+// to this agent's jobs listed. (hq pin, for a call about review pins, went with HQ's waiting notes)
 import * as api from './api.ts';
-import { readStdin, savePrivately } from './files.ts';
+import { savePrivately } from './files.ts';
 import { minute, oneLine, print, shown, stop, text } from './output.ts';
 
 // (its pictures)
@@ -238,46 +237,4 @@ function routeLog(rows: RouteRow[]) {
         `#${r.note}  ${minute(r.sent)}  #${r.job}  ${after(r.sent, r.started)}  ${after(r.sent, r.routed)}  ${r.to_job ? `#${r.to_job} ${oneLine(r.to_agent!)} (${oneLine(r.how!)})` : `not routed (${oneLine(r.slug)}, ${oneLine(r.owner)}'s)`}`,
     ),
   ];
-}
-
-const PIN_USAGE = 'usage: hq pin words <id> - | hq pin sent <id> job:<n> | answered';
-
-// A pin on a call about the board's pins: only the call's token. A refusal (4xx) changed nothing (exit 1); anything
-// else may have (exit 3).
-export const pin = {
-  help: `
-   hq pin words <id> -                               on a call about the board's pins (review notes, from HQ's Reviews):
-                                                     the pin's new words, on stdin; it still waits in HQ
-   hq pin sent <id> job:<n> | answered               on that call: the pin is sent, with the job queued for it, or
-                                                     answered on the call with no work; it leaves HQ's waiting notes
-                                                     (hq pin)`,
-
-  async run([action, id, what]: string[]) {
-    if (!/^[0-9]+$/.test(id ?? '')) stop(PIN_USAGE);
-    const body = pinChange(action, Number(id), what);
-    const answer = await api.orNoAnswer(api.call('pin', { body }));
-    if (api.isSuccess(answer.status)) return print(pinDone(action, id, api.parseOrNull(answer.body) ?? {}));
-    if (api.isRefusal(answer.status)) stop(`Nothing changed: ${api.errorIn(answer.body, 'refused')}`);
-    stop(`Not confirmed: the pin may or may not have changed (HTTP ${api.httpCode(answer.status)}).`, 3);
-  },
-};
-
-function pinChange(action: string, id: number, what: string | undefined) {
-  if (action === 'words') {
-    if (what !== '-') stop('hq pin words takes the words on stdin (-)');
-    return { id, words: readStdin() };
-  }
-  if (action !== 'sent') stop(PIN_USAGE);
-  const job = what?.match(/^job:([0-9]+)$/);
-  if (job) return { id, sent: true, job: Number(job[1]) };
-  if (what === 'answered') return { id, sent: true, answered: true };
-  stop('usage: hq pin sent <id> job:<n> | answered');
-}
-
-function pinDone(action: string, id: string, marked: { job?: unknown; agent?: unknown }) {
-  if (action === 'words') return `Pin #${id} has its new words in HQ. It still waits there: not sent.`;
-  if (shown(marked.job) !== '') {
-    return `Pin #${id} is marked sent with job #${text(marked.job)} (${text(marked.agent)}'s). It's no longer waiting in HQ.`;
-  }
-  return `Pin #${id} is marked sent as answered on this call, with no job queued for it. It's no longer waiting in HQ.`;
 }

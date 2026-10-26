@@ -588,7 +588,7 @@ async function reviewed(n: number, sha: string, decision: string) {
   for (const r of panel) { const c = await take(r.id); shas.push(c.sha); await h.finish(c, { output: '{"findings": []}' }); }
   await settle();
   const c = await take(runs('consolidate')[0].id); shas.push(c.sha);
-  await h.finish(c, { output: JSON.stringify({ decision, summary: 'clean' }) });
+  await h.finish(c, { output: JSON.stringify({ decision, major_visual: false, summary: 'clean' }) });
   await settle();
   return shas;
 }

@@ -67,8 +67,14 @@ function aim(seat: Seat, seats: Seat[], now: number) {
   return paceTo(own, seat.pacing, reserveElsewhere(own, windows, now));
 }
 const windowsOf = (s: Seat) => ({
-  ...{ engine: s.engine, state: s.state, util: s.fiveHour ?? undefined, resets: s.fiveHourResets ?? 0 },
-  ...{ week: s.week ?? undefined, weekResets: s.weekResets ?? 0, credits: s.credits, drainAt: s.stop },
+  engine: s.engine,
+  state: s.state,
+  util: s.fiveHour ?? undefined,
+  resets: s.fiveHourResets ?? 0,
+  week: s.week ?? undefined,
+  weekResets: s.weekResets ?? 0,
+  credits: s.credits,
+  drainAt: s.stop,
 });
 
 export function available(seat: Seat, now: number) {

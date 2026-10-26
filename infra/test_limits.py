@@ -39,7 +39,7 @@ def as_deployed(setting):
     return expanded.stdout
 
 
-def composed_worker(folder, memory):
+def composed_services(folder, memory, build_reserve_gb=0):
     stack = yaml.safe_load((HERE / 'compose.yaml').read_text())
     server_env = folder / 'server.env'
     server_env.write_text('')
@@ -49,21 +49,27 @@ def composed_worker(folder, memory):
     compose = folder / 'compose.yaml'
     compose.write_text(yaml.safe_dump(stack))
     settings = folder / 'infra.env'
-    settings.write_text(f'SERVER_NAME=limitsfixture\nWORKER_MEMORY={memory}\n')
+    settings.write_text(f'SERVER_NAME=limitsfixture\nWORKER_MEMORY={memory}\n'
+                        f'DEPLOY_BUILD_RESERVE_GB={build_reserve_gb}\n')
     # Use the deployment's setting reader and Compose's own interpolation and byte-size normalization.
     rendered = run('bash', '-c', '. "$1"; shift; exec "$@"', '_', str(HERE / 'infra-env.sh'),
                    COMPOSE, '-f', str(compose), 'config', '--format', 'json',
                    env={'PATH': os.environ['PATH'], 'INFRA_ENV': str(settings), 'PUBLIC_HOST': 'hq.company.test'})
-    return json.loads(rendered)['services']['worker']
+    return json.loads(rendered)['services']
 
 
 @unittest.skipUnless(COMPOSE, 'real Compose required: set DOCKER_COMPOSE=/path/to/docker-compose')
 class MemoryLimits(unittest.TestCase):
+    def test_company_deploy_build_reserve_reaches_the_coordinator(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            services = composed_services(Path(tmp), '8192m', build_reserve_gb=25)
+            self.assertEqual(services['coordinator']['environment']['DEPLOY_BUILD_RESERVE_GB'], '25')
+
     def test_compose_resolves_equivalent_ceiling_spellings_without_extra_swap(self):
         with tempfile.TemporaryDirectory() as tmp:
             for spelling in ['8192m', '8g', '8589934592']:
                 with self.subTest(spelling=spelling):
-                    worker = composed_worker(Path(tmp), spelling)
+                    worker = composed_services(Path(tmp), spelling)['worker']
                     self.assertEqual(int(worker['mem_limit']), 8192 * MIB)
                     self.assertEqual(int(worker['memswap_limit']), 8192 * MIB)
 
@@ -72,7 +78,7 @@ class MemoryLimits(unittest.TestCase):
     def test_kernel_ceiling_and_no_swap_survive_container_restart(self):
         with ExitStack() as cleanup:
             folder = Path(cleanup.enter_context(tempfile.TemporaryDirectory()))
-            worker = composed_worker(folder, '8192m')
+            worker = composed_services(folder, '8192m')['worker']
             project = 'limits' + uuid.uuid4().hex
             parent = worker['cgroup_parent'].replace('limitsfixture', project)
             unit = Path('/run/systemd/system') / parent

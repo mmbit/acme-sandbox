@@ -78,6 +78,7 @@ async function blocked(pr: number, note = false, finder = 'rook', agent = 'bolt'
   await until(() => pending(pr).some(job => job.stage === 'ruling'), 'ruling');
   const ruling = await finish(pr, 'ruling', {
     decision: 'changes',
+    major_visual: false,
     blocking: [{ file: files[0], line: 5, issue: 'The label is hidden', task: 'Show the label', by: [finder] }],
     nonblocking: note ? [{ file: files[0], line: 6, issue: 'A naming suggestion', by: ['rook'] }] : [],
   });
@@ -127,12 +128,13 @@ test('a running triage corrects unreadable answers against the live roster befor
     (
       await rulingCheck({
         decision: 'merge',
+        major_visual: false,
         finding_sources: true,
         blocking: [{ from: [{ by: 'outsider', finding: 0 }] }],
       })
     ).body.error,
   );
-  const verdict = { decision: 'merge', finding_sources: true, blocking: [], nonblocking: [] };
+  const verdict = { decision: 'merge', major_visual: false, finding_sources: true, blocking: [], nonblocking: [] };
   assert.equal((await rulingCheck(verdict)).body.error, null);
   assert.equal(h.jobs.findJob(ruler!.id)?.status, 'running');
   await h.finish(ruler!, { output: JSON.stringify(verdict) });
@@ -427,6 +429,7 @@ test('a new fix-round blocker without a regression cause decides nothing and an 
   await until(() => pending(97).some(job => job.stage === 'ruling'), 'solo ruling');
   await finish(97, 'ruling', {
     decision: 'changes',
+    major_visual: false,
     outcomes: [{ finding, outcome: 'fixed' }],
     blocking: [{ file: files[0], line: 12, issue: 'An unrelated problem' }],
   });
@@ -440,6 +443,7 @@ test('a new fix-round blocker without a regression cause decides nothing and an 
   retryNow(db, retry.id);
   await finish(97, 'ruling', {
     decision: 'merge',
+    major_visual: false,
     outcomes: [{ finding, outcome: 'fixed' }],
     blocking: [],
     nonblocking: [{ file: files[0], line: 12, issue: 'An unrelated problem' }],
@@ -476,6 +480,7 @@ test('a newly discovered secret blocks a fix round without a regression cause', 
   assert.equal(report.pre_existing, undefined);
   await finish(pr, 'ruling', {
     decision: 'changes',
+    major_visual: false,
     outcomes: [{ finding, outcome: 'fixed' }],
     blocking: [{ ...secret, task: 'Take the credential out' }],
   });
@@ -704,6 +709,7 @@ test('refused reviewer and ruling reads report their full reason and brief their
   const rulingRetry = pending(pr).find(job => job.stage === 'ruling')!;
   retryNow(db, rulingRetry.id);
   const ruled = await finish(pr, 'ruling', {
+    major_visual: false,
     decision: 'changes',
     blocking: [{ file: files[0], line: 5, issue: 'The label is hidden', task: 'Show the label' }],
   });

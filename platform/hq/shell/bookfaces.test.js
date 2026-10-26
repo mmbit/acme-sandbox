@@ -13,6 +13,8 @@ test("HQ's mock sheets: a face per open sheet with its notes counted, the CEO's 
     { id: 'wren', owner: 'wren', count: 2, dot: false },
     { id: 'kit', owner: 'kit', count: 1, dot: false },
     { id: 'juno', owner: null, count: 1, dot: false },
+    // (Lark's sheet on today's page of the mock book)
+    { id: 'lark', owner: 'lark', count: 2, dot: false },
     { id: 'moss', owner: 'moss', count: 0, dot: true },
   ]);
 });

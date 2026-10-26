@@ -19,6 +19,7 @@
 // stopped audio clock asks for a tap if it cannot wake itself.
 // A new call clears the last one's status, hanging up adds no line, and the ON AIR sign lights while the board or the
 // agent speaks, never for the line's tick. A line that doesn't go through shows as an error until the board types again.
+// It rings from the tap until the line picks up, and the agent's handset clacks then.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -406,6 +407,61 @@ async function callScreen() {
 }
 await callScreen();
 
+// It rings while the line picks up, as a phone does: the ringing tone (425 Hz) from the tap, again five seconds on,
+// cut the moment the line picks up, and the handset's clack then (a sample of HQ's sound kit). A line picked up again
+// after the connection drops rings and clacks no more, nor does a call the line never picks up after its hang-up.
+async function ringing() {
+  const { context, page, errors } = await callPage();
+  await context.addInitScript(() => {
+    window.sounds = [];
+    const set = AudioParam.prototype.setValueAtTime, fade = AudioParam.prototype.setTargetAtTime, start = AudioBufferSourceNode.prototype.start;
+    AudioParam.prototype.setValueAtTime = function (v, ...a) { if (v === 425) window.sounds.push(['ring', performance.now()]); return set.call(this, v, ...a); };
+    AudioParam.prototype.setTargetAtTime = function (v, t, k) { if (v === 0 && k === 0.005) window.sounds.push(['cut', performance.now()]); return fade.call(this, v, t, k); };
+    AudioBufferSourceNode.prototype.start = function (...a) { if (this.buffer?.numberOfChannels === 2 && this.buffer.duration < 0.5) window.sounds.push(['kit', performance.now()]); return start.apply(this, a); };
+  });
+  let line = null;
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"(agent|resume)"/.test(m)) line = ws; }));
+  const now = () => page.evaluate(() => performance.now());
+  const after = async t => (await page.evaluate(() => window.sounds)).filter(([, at]) => at >= t).map(([what, at]) => [what, Math.round(at - t)]);
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  const tapped = await now();
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  await page.waitForTimeout(6000 - ((await now()) - tapped)); // (the line takes its time: a second ring)
+  const picked = await now();
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 })); line.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  await page.waitForTimeout(5500);
+  const before = (await after(tapped)).filter(([, at]) => at < picked - tapped), since = await after(picked);
+  // (the connection drops and the line picks the call up again)
+  const dropped = await now();
+  line.close({ code: 1006 }); line = null;
+  while (!line) await page.waitForTimeout(50);
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 }));
+  await page.waitForTimeout(1500);
+  const again = await after(dropped);
+  await page.click('#call-end');
+  // a call the line never picks up: hanging up cuts its ring too
+  line = null;
+  const second = await now();
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  await page.waitForTimeout(500);
+  await page.click('#call-end');
+  await page.waitForTimeout(5500);
+  const unanswered = (await after(second)).filter(([what]) => what !== 'kit');
+  await context.close();
+  assert.deepEqual(errors, []);
+  const rings = before.filter(([what]) => what === 'ring').map(([, at]) => at);
+  assert.ok(rings.length === 2 && rings[0] < 1500 && Math.abs(rings[1] - rings[0] - 5000) < 300, `it doesn't ring from the tap, every 5 s: ${JSON.stringify(before)}`);
+  assert.ok(since.some(([what, at]) => what === 'cut' && at < 100), `the ring isn't cut as the line picks up: ${JSON.stringify(since)}`);
+  assert.ok(since.some(([what, at]) => what === 'kit' && at < 500), `no clack as the line picks up: ${JSON.stringify(since)}`);
+  assert.ok(!since.some(([what]) => what === 'ring'), `it rings on after the pickup: ${JSON.stringify(since)}`);
+  assert.deepEqual(again, [], 'picked up again after a drop, it rings or clacks');
+  assert.ok(unanswered[0]?.[0] === 'ring' && unanswered.some(([what]) => what === 'cut') && unanswered.filter(([what]) => what === 'ring').length === 1, `hanging up before the pickup doesn't cut the ring: ${JSON.stringify(unanswered)}`);
+  console.log(`ok: it rings from the tap (${rings.join(', ')} ms), is cut as the line picks up, and the handset clacks then`);
+}
+await ringing();
+
 // The board's screen is shared only when it says so: minimising the call (its
 // key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call
 // screen's Show my screen starts one, the bubble's eye shows it, and Stop showing pauses it (Show my screen again).
@@ -461,6 +517,261 @@ async function shareScreen() {
   console.log('ok: minimising shares nothing; Show my screen starts the watch-along (the eye shows), Stop showing pauses it');
 }
 await shareScreen();
+
+// Show on the agent's ask to see, with the call small: a start that fails keeps
+// the card, saying so, and the line hears nothing; Show again starts it, and only then does the line hear Show.
+async function askFailed() {
+  const { context, page, errors } = await callPage();
+  let starts = 0, line = null;
+  const asked = [];
+  await context.route(`${base}/api/watchalong/start`, r => ++starts === 1 ? r.fulfill({ status: 503, json: { error: 'down' } }) : r.fulfill({ json: { id: 1, events: null } }));
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m !== 'string') return;
+    const e = JSON.parse(m);
+    if (e.type === 'asked') asked.push(e.answer);
+    if (!e.agent) return;
+    line = ws;
+    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  }));
+  const card = page.locator('#call-cards [data-card="ask"]');
+  const eye = () => page.evaluate(() => { const e = document.querySelector('.callbubble .cb-eye'); return !!e && !e.hidden; });
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  await page.waitForTimeout(500);
+  await page.click('#call-min'); await page.waitForTimeout(500);
+  line.send(JSON.stringify({ type: 'ask', id: 1, what: 'the pricing page' }));
+  await card.locator('[data-show]').click(); await page.waitForTimeout(300);
+  const failed = { starts, card: (await card.count()) && (await card.locator('p').textContent()), asked: [...asked], eye: await eye() };
+  await card.locator('[data-show]').click(); await page.waitForTimeout(300);
+  const shown = { starts, card: await card.count(), asked: [...asked], eye: await eye() };
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(failed, { starts: 1, card: 'Your screen couldn’t be shown. Tap Show to try again.', asked: [], eye: false }, `a failed start on the ask wasn't said, or the line heard Show: ${JSON.stringify(failed)}`);
+  assert.deepEqual(shown, { starts: 2, card: 0, asked: ['show'], eye: true }, `Show again didn't share: ${JSON.stringify(shown)}`);
+  console.log("ok: a share the agent asked for that fails to start says so on its card, and the line hears Show only once it's shown");
+}
+await askFailed();
+
+// The call's screen as the board sees it: the agent's little screen at its top,
+// its figure moving while it speaks and still while it's quiet, over the transcript: the board's lines and the agent's
+// in order, each growing as the line sends more of the same turn, in a box that scrolls and keeps the newest in view,
+// unless the board scrolled up to read. Minimised on a small screen, or by the Pencil coming down on a bigger one, the
+// bubble is a slim strip of audio bars moving with the voice, no figure, hang up and Pause in reach, still dragged to
+// a corner and tapped open; minimised by its key on the bigger screen it has the figure again.
+async function transcriptAndSlim() {
+  const seen = {};
+  const tone = seconds => Array.from({ length: seconds * 50 }, (_, f) => Buffer.from(Int16Array.from({ length: 320 }, (_, i) => Math.sin(2 * Math.PI * 300 * (f * 320 + i) / 16000) * 8000).buffer));
+  // (the call's page, picked up, its screen able to show)
+  const open = async viewport => {
+    const { context, page, errors } = await callPage(viewport);
+    await context.route(`${base}/api/watchalong/start`, r => r.fulfill({ json: { id: 1, events: null } }));
+    let line = null;
+    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
+      line = ws;
+      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+    }));
+    await page.goto(`${base}/?intro=0&open=intercom`);
+    await page.click('#call');
+    while (!line) await page.waitForTimeout(50);
+    await page.waitForTimeout(300);
+    return { context, page, errors, line };
+  };
+  const send = (line, type, text) => line.send(JSON.stringify({ type, text }));
+  // what the board reads: each line's speaker (board or agent) and words, and whether the newest words are in the box's view
+  const transcript = page => page.evaluate(() => {
+    const box = document.querySelector('#call-lines'), all = [...box.children], r = box.getBoundingClientRect(), last = all.at(-1)?.getBoundingClientRect();
+    return { lines: all.map(li => [li.dataset.who, li.lastElementChild.textContent]), scrolls: box.scrollHeight > box.clientHeight + 1,
+      newest: !!last && last.bottom <= r.bottom + 1 && last.bottom > r.top, top: box.scrollTop };
+  });
+  // the figure in the call's little screen: shown clear of the transcript, and where it's drawn in it over 0.4 s
+  const figure = page => page.evaluate(async () => {
+    const fig = document.querySelector('#call-screen canvas'), box = document.querySelector('#call-lines');
+    const at = [];
+    // (in its screen: the call's screen itself may move as a note under it comes and goes)
+    for (let i = 0; i < 10; i++) { at.push((fig.getBoundingClientRect().top - fig.parentElement.parentElement.getBoundingClientRect().top).toFixed(1)); await new Promise(r => setTimeout(r, 40)); }
+    const f = fig.getBoundingClientRect();
+    return { shown: f.width > 0 && f.height > 0 && f.bottom <= box.getBoundingClientRect().top, moves: new Set(at).size > 1 };
+  });
+  // the bubble as the board sees it: where it is, the figure in it or not, the bars and how tall they're drawn, its keys
+  const bubble = page => page.evaluate(() => {
+    const b = document.querySelector('.callbubble'), r = b.getBoundingClientRect(), shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
+    return { w: r.width, h: r.height, x: r.left, y: r.top, topLeft: r.left + r.width / 2 < innerWidth / 2 && r.top + r.height / 2 < innerHeight / 2, figure: shown(b.querySelector('canvas, .cb-initial')),
+      bars: [...b.querySelectorAll('.cb-bars > *')].filter(shown).map(i => i.getBoundingClientRect().height),
+      hangUp: shown(b.querySelector('[aria-label="Hang up"]')), pause: shown(b.querySelector('.cb-pause')), eye: shown(b.querySelector('[role=img]')) };
+  });
+  const bars = async page => { const all = []; for (let i = 0; i < 8; i++) { all.push(...(await bubble(page)).bars); await page.waitForTimeout(40); } return all; };
+
+  // on a phone: the transcript, then the slim bubble
+  let { context, page, errors, line } = await open({ width: 390, height: 844 });
+  seen.quietFigure = await figure(page);
+  send(line, 'heard', 'Can you look at'); await page.waitForTimeout(100);
+  send(line, 'heard', 'Can you look at the shop page?'); await page.waitForTimeout(100);
+  send(line, 'said', 'Of course.'); send(line, 'said', 'I can see it now.');
+  for (const f of tone(1.5)) line.send(f);
+  await page.waitForTimeout(400);
+  seen.talkingFigure = await figure(page);
+  send(line, 'heard', 'The price feels high.');
+  for (let i = 1; i <= 6; i++) { send(line, 'said', `Sentence ${i} of a long answer, long enough to fill the box and make it scroll.`); await page.waitForTimeout(30); }
+  await page.waitForTimeout(300);
+  seen.first = await transcript(page);
+  // (the board scrolls up to read; a new line doesn't take it away, and the newest shows again once it's back down)
+  await page.$eval('#call-lines', box => { box.scrollTop = 0; });
+  send(line, 'heard', 'And with shipping?'); await page.waitForTimeout(200);
+  seen.scrolledUp = await transcript(page);
+  await page.$eval('#call-lines', box => { box.scrollTop = box.scrollHeight; });
+  send(line, 'said', 'With shipping it comes to 29,90.'); await page.waitForTimeout(200);
+  seen.back = await transcript(page);
+  // (a turn the agent answers without a word, then the board's next: each turn on its own line, the first kept whole)
+  const thinking = () => line.send(JSON.stringify({ type: 'state', state: 'thinking' }));
+  thinking(); send(line, 'heard', 'Is it live yet?'); await page.waitForTimeout(100);
+  thinking(); send(line, 'heard', 'And the gift card?'); await page.waitForTimeout(100);
+  thinking(); send(line, 'said', 'Both are.'); await page.waitForTimeout(200);
+  seen.turns = await transcript(page);
+  // (a turn taken back: the board goes on before the reply is heard, and the line sends the whole turn again, back)
+  send(line, 'heard', 'Is it on the shop?'); thinking(); await page.waitForTimeout(100);
+  line.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  line.send(JSON.stringify({ type: 'heard', text: 'Is it on the shop? And in the post? …', back: true })); await page.waitForTimeout(100);
+  seen.takenBack = await transcript(page);
+  send(line, 'heard', 'Is it on the shop? And in the post?'); thinking(); send(line, 'said', 'It is.'); await page.waitForTimeout(200);
+  seen.answeredAgain = await transcript(page);
+  // (taken back after the reply's first words were shown: its line goes, and the turn is one line again)
+  send(line, 'heard', 'Is it paid?'); thinking(); send(line, 'said', 'Let me look.');
+  line.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  line.send(JSON.stringify({ type: 'heard', text: 'Is it paid? And sent? …', back: true })); await page.waitForTimeout(100);
+  seen.takenBackAfterSaid = await transcript(page);
+  await page.click('#call-min'); await page.waitForTimeout(700);
+  seen.phoneQuiet = await bubble(page);
+  for (const f of tone(1.5)) line.send(f);
+  await page.waitForTimeout(300);
+  seen.phoneBars = await bars(page);
+  // (dragged to the top left, it lands there; tapped, the call opens; Hang up is in reach)
+  const b = seen.phoneQuiet;
+  await page.mouse.move(b.x + 20, b.y + b.h / 2); await page.mouse.down();
+  for (let i = 1; i <= 8; i++) await page.mouse.move(b.x + 20 - i * 40, b.y + b.h / 2 - i * 90);
+  await page.mouse.up(); await page.waitForTimeout(1200);
+  seen.dragged = await bubble(page);
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' });
+  seen.reopened = true;
+  await context.close();
+  seen.phoneErrors = errors;
+
+  // on an iPad mini: the Pencil comes down while the call is in front, and the bubble is slim, the eye and Pause in it
+  // while the screen is shown; opened and minimised by its key, it has the figure again
+  ({ context, page, errors } = await open({ width: 744, height: 1133 }));
+  await page.click('#call-screenshare'); await page.waitForTimeout(300);
+  await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'pen', bubbles: true })));
+  await page.waitForTimeout(800);
+  seen.pen = await bubble(page);
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(400);
+  await page.click('#call-min'); await page.waitForTimeout(800);
+  seen.key = await bubble(page);
+  await page.click('.callbubble [aria-label="Hang up"]');
+  await page.waitForSelector('.callbubble', { state: 'detached' });
+  await context.close();
+  seen.padErrors = errors;
+
+  assert.deepEqual([seen.phoneErrors, seen.padErrors], [[], []]);
+  assert.ok(seen.quietFigure.shown && !seen.quietFigure.moves, `the agent's figure isn't shown still over the transcript: ${JSON.stringify(seen.quietFigure)}`);
+  assert.ok(seen.talkingFigure.moves, 'the agent\'s figure doesn\'t move while it speaks');
+  assert.deepEqual(seen.first.lines.slice(0, 3), [['board', 'Can you look at the shop page?'], ['agent', 'Of course. I can see it now.'], ['board', 'The price feels high.']], 'the transcript\'s lines, in order, each turn on one line');
+  assert.equal(seen.first.lines.length, 4, JSON.stringify(seen.first.lines));
+  assert.ok(seen.first.scrolls && seen.first.newest, `the transcript doesn't scroll, or the newest line isn't in view: ${JSON.stringify(seen.first)}`);
+  assert.ok(seen.scrolledUp.top === 0 && !seen.scrolledUp.newest, 'a new line took the board away from what it scrolled up to read');
+  assert.deepEqual(seen.back.lines.at(-1), ['agent', 'With shipping it comes to 29,90.']);
+  assert.ok(seen.back.newest, 'back at the end, the newest line isn\'t in view');
+  assert.deepEqual(seen.turns.lines.slice(-3), [['board', 'Is it live yet?'], ['board', 'And the gift card?'], ['agent', 'Both are.']], 'two turns of the board\'s with no answer between ran into one line');
+  assert.deepEqual(seen.takenBack.lines.slice(-2), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post? …']], 'a turn taken back shows the board\'s first words twice');
+  assert.deepEqual(seen.answeredAgain.lines.slice(-3), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post?'], ['agent', 'It is.']], 'a turn taken back and answered isn\'t one line and its answer');
+  assert.deepEqual(seen.takenBackAfterSaid.lines.slice(-2), [['agent', 'It is.'], ['board', 'Is it paid? And sent? …']], 'a turn taken back after the reply began isn\'t one board line');
+  const slim = x => !x.figure && x.bars.length > 2 && x.hangUp;
+  assert.ok(slim(seen.phoneQuiet), `on a phone the bubble isn't slim audio bars: ${JSON.stringify(seen.phoneQuiet)}`);
+  assert.ok(Math.max(...seen.phoneBars) > Math.max(...seen.phoneQuiet.bars), `the bars don't move with the voice: ${JSON.stringify([seen.phoneQuiet.bars, seen.phoneBars])}`);
+  assert.ok(seen.dragged.topLeft, `the slim bubble wasn't dragged into the top left corner: ${JSON.stringify(seen.dragged)}`);
+  assert.ok(slim(seen.pen) && seen.pen.eye && seen.pen.pause, `the Pencil didn't make the bubble slim, its eye and Pause in it: ${JSON.stringify(seen.pen)}`);
+  assert.ok(seen.key.figure && !seen.key.bars.length, `minimised by its key on an iPad, the bubble has no figure: ${JSON.stringify(seen.key)}`);
+  console.log('ok: the call\'s little screen and its transcript (in order, scrolling, the newest in view); the bubble slim on a phone and with the Pencil');
+}
+await transcriptAndSlim();
+
+// A share that reaches nobody says so: while the server answers the page's batches with seen
+// false, the bubble shows no eye and the call screen says the screen isn't reaching the agent (the key still stops it);
+// paused by the board's choice the words go, even as a false lands meanwhile, and shown again it's as last said; once
+// seen, the eye shows and the words go. On a quiet page, with nothing to send, the page still asks (an empty batch) and
+// hears it.
+async function unseenScreen() {
+  const { context, page, errors } = await callPage();
+  let line = null, seen = false, posts = 0, hold = null, held = 0, quiet = false, asked = 0;
+  const holding = () => { let release; const promise = new Promise(resolve => (release = resolve)); return { promise, release }; };
+  const RECORDER = new URL('../coordinator/node_modules/@rrweb/record/dist/record.js', import.meta.url);
+  await context.route(`${base}/shared/watchalong/**`, r => {
+    const name = new URL(r.request().url()).pathname.split('/').pop();
+    const file = name === 'rrweb-record.js' ? RECORDER : new URL(`../../shared/watchalong/${name}`, import.meta.url);
+    r.fulfill({ contentType: 'text/javascript', body: readFileSync(file) });
+  });
+  await context.route(`${base}/api/watchalong/start`, r => r.fulfill({ json: { id: 1, events: '/api/watchalong/events?id=1&key=k' } }));
+  await context.route(`${base}/api/watchalong/events?**`, async r => {
+    posts++;
+    if (hold) {
+      held++;
+      await hold.promise;
+    }
+    // (quiet: the batches with events are answered as by a server that doesn't know yet, the empty ones with false)
+    const empty = !JSON.parse(r.request().postData()).events.length;
+    if (quiet && empty) asked++;
+    await r.fulfill({ json: quiet ? { ok: true, ...(empty && { seen: false }) } : { ok: true, seen } });
+  });
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    if (typeof m !== 'string' || !JSON.parse(m).agent) return;
+    line = ws;
+    ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+  }));
+  const state = () => page.evaluate(() => {
+    const eye = document.querySelector('.callbubble .cb-eye'), note = document.querySelector('#call-unshown');
+    return { eye: !!eye && !eye.hidden, note: !note.hidden && note.textContent.trim(), key: document.querySelector('#call-screenshare').textContent.trim() };
+  });
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  await page.waitForTimeout(500);
+  await page.click('#call-screenshare');
+  await page.click('#call-min'); // (the bubble, with its eye)
+  while (posts < 2) await page.waitForTimeout(100);
+  await page.waitForTimeout(200);
+  const unseen = await state();
+  // paused while a batch's answer (false) is held, which lands during the pause; shown again before any other answers
+  hold = holding();
+  while (!held) await page.waitForTimeout(100);
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(400);
+  await page.click('#call-screenshare'); await page.waitForTimeout(300);
+  const landing = hold;
+  hold = holding();
+  landing.release(); await page.waitForTimeout(300);
+  const paused = await state();
+  await page.click('#call-screenshare');
+  await page.click('#call-min'); await page.waitForTimeout(300);
+  const resumed = await state();
+  hold.release(); hold = null;
+  seen = true;
+  const after = posts;
+  while (posts < after + 2) await page.waitForTimeout(100);
+  await page.waitForTimeout(200);
+  const reached = await state();
+  quiet = true;
+  for (let tries = 0; !asked && tries < 50; tries++) await page.waitForTimeout(100);
+  await page.waitForTimeout(200);
+  const quietUnseen = await state();
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(unseen, { eye: false, note: 'Your screen isn’t reaching Juno right now.', key: 'Stop showing' }, `a share that reaches nobody looked live: ${JSON.stringify(unseen)}`);
+  assert.deepEqual(paused, { eye: false, note: false, key: 'Show my screen' }, `a pause said the screen isn't reaching the agent: ${JSON.stringify(paused)}`);
+  assert.deepEqual(resumed, unseen, `shown again, a share that reaches nobody looked live: ${JSON.stringify(resumed)}`);
+  assert.deepEqual(reached, { eye: true, note: false, key: 'Stop showing' }, `a share that reaches the agent didn't show as watched: ${JSON.stringify(reached)}`);
+  assert.deepEqual(quietUnseen, unseen, `a quiet page never heard its share stopped reaching the agent: ${JSON.stringify(quietUnseen)}`);
+  console.log('ok: a share the agent can\'t see says so (no eye), shows as watched once it reaches the agent, and a quiet page hears it too');
+}
+await unseenScreen();
 
 // The screen going off on a call (iOS mutes the microphone until the page is back, and lets go of the screen's wake lock):
 // back in view, the lock is asked for again, even if a pending request was refused as the page hid.
@@ -557,8 +868,8 @@ async function phoneContext() {
   }));
   return { context, page, errors, connected: () => line !== null, bye: () => bye };
 }
-async function callPage() {
-  const opened = await openPage(browser, { viewport: { width: 420, height: 912 }, permissions: ['microphone'] });
+async function callPage(viewport = { width: 420, height: 912 }) {
+  const opened = await openPage(browser, { viewport, permissions: ['microphone'] });
   await opened.context.route(`${base}/api/**`, async r => {
     const path = new URL(r.request().url()).pathname;
     if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });

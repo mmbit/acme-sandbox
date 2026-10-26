@@ -30,7 +30,7 @@ const reasons: string[] = [];
 // Observe the real fetch failure after its retry delay has begun.
 subscribe('undici:request:error', () => setImmediate(() => process.send!({ lost: true })));
 const options = {
-  checking: new Map([[child.pid!, reasons]]),
+  checking: new Map([[child.pid!, { stopped: reasons }]]),
   stopped: () => process.send!({ stopped: 'admitted', reasons }),
   ask: hqReports(url).blocked,
 };

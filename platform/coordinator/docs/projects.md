@@ -155,11 +155,12 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
   threads. A new thread or task in it is refused; a finished area that comes back is a new project.
 - `hq propose` goes to the owner of the project it names (`--project`, else the proposer's thread's project; with
   neither, to the CEO). The owner reads and decides it in `hq inbox` (accept into a thread of the plan, or drop with
-  why); the CEO sees every one with `hq inbox --all` and in the summary. The owner's planning job, while one is open
-  (queued, running or blocked, on any engine), takes it: it reads the inbox at its start and again before it ends, and
-  what reached the owner after it started (new, or handed on with its project) and is still open when it ends gets the
-  owner's next one (`proposals.sweep`, every minute). With none open, a running Claude session of the owner hears it
-  at its next step; otherwise HQ queues a new planning job, a one-task thread in the project. With org.yaml's
+  why); the CEO sees every one with `hq inbox --all` and in the summary. The owner's planning job for the proposal's
+  project, while one is open (queued, running or blocked, on any engine), takes it: it reads that project's inbox at
+  its start and again before it ends, and what reached it after it started (new, or handed on with its project) and is
+  still open when it ends gets the next one (`proposals.sweep`, every minute). With none open, a running Claude session
+  of the owner hears it at its next step; otherwise HQ queues a new planning job, a one-task thread in the project, so
+  a pause on one of an owner's projects holds only that project's sorting. With org.yaml's
   `review.drawWindowedChanges: true` (off unless set), a review's "changes" on a thread with a window is drawn at once,
   as `hq inbox accept findings:<pr> --for <author> --findings <blocking ids>` would: the PR's author fixes every
   blocking finding (or checks the touch-ups) in the reviewed thread, and the owner's running session hears of the task
@@ -171,14 +172,19 @@ it's read (`projects.ts ownerOf`), so `hq project owner` hands on every thread i
   round or the merge has left closes by itself in the sweep, and while one waits with no fix task drawn, the thread's
   ETA says so, with no merge in sight. A proposal whose owner can't be told (the messages refuse the line)
   is refused, and nothing of it is kept, nor shown in HQ's feed. The CEO hears its own at the hourly check instead. When `hq project owner`
-  hands a project on, its open proposals reach the new owner the same way, and the old owner's planning job that
+  hands a project on, its open proposals reach the new owner the same way, and the old owner's planning job for it that
   hasn't started stands down if nothing is left for it.
 - Nothing HQ makes runs under a template name or as a bundle (`sorting.ts`). A
   job HQ makes from a template or holding several things (a colleague's message no session took in, the board's
-  feedback on a product and its return to the board, outside notes on a preview) starts under a template title but
+  feedback on a product and its return to the board, outside notes on a preview, a repair of HQ standing still) starts
+  under a template title but
   waits, on a `sorted` wake, until the owner of its project (else the CEO) sorts it in that same planning job: `hq
   inbox accept <id> --title "..." [--code WORD]` names it for what it does and lets it start in its thread (`hq job
-  move` first for another), and work that joins it before it starts holds it again. Unrelated parts become tasks of
+  move` first for another), and work that joins it before it starts holds it again. A task belongs to the project its
+  work is for, judged by whoever places it with that guidance (`wherework.ts whereWorkGoes`), never by paths or titles:
+  only the CEO's own work stays in no thread, the desk's (its call follow-ups and meeting work), so a job of anyone
+  else's in none is moved to its project before it's accepted, and a call's job for anyone but the CEO names its thread
+  as any hand-off does. Unrelated parts become tasks of
   their own (`hq job`) and the rest is accepted, or it's dropped, which cancels it; a return to the board is only ever
   named. A review's follow-up bundle is accepted only under the accepter's title. A review's fix tasks are named by
   their consolidator: each blocking finding's `task`, and `touchups_task` for its touch-ups' check. `hq inbox accept
@@ -248,8 +254,11 @@ claim, the worker and the review panel (`threadorder.ts`). There is no setting f
   still to merge stays open, ready to judge (`threadjudge.ts`): HQ queues its owner a job with the thread's "done when"
   and each task's report (`threads.judge`; one that hasn't started takes the owner's next such thread in too), never
   held by a pause. The owner closes it with `hq plan done` or draws its next task. `hq projects`, `hq thread` and the
-  CEO's summary say "ready to judge" until then, with the open threads that need it. A judge's own thread closes at its
-  merge.
+  CEO's summary say "ready to judge" until then, with the open threads that need it. HQ's one-task threads (a routine's
+  run, a check, a note's job) and a judge's own thread close at their merge. The judge's brief carries each
+  task's report as quoted data, and only a report its owner may read (`jobs.ts readsReport`): one holding a customer's
+  own details stays with its job unless the owner has roles.customerData, and a judge handed it holds those details
+  too.
 - **Refusals.** A running job's `hq job` into a thread is its project's owner's or the CEO's (anyone else: `hq
   propose`), and `--after` a job in another thread is refused for `hq plan need`, in its own for the order it has.
 

@@ -3,8 +3,10 @@
 // name without its numbers ("the play's parts: played 634 ms" is the same step each minute), and every request is one
 // cause: a request's hold is its time from start to answer, so one that only waited out another's stall holds as long.
 // While a cause's job is queued, a new stall is added to its brief; once it has started, it holds the alarm until its
-// work is deployed (or never will be: wakes.ts deployed).
+// work is deployed (or never will be: wakes.ts deployed). Its title is a template's, so it waits for its sort into the
+// project it's for (sorting.ts), like HQ's other template work.
 import { db, setting, remember } from './db.ts';
+import * as sorting from './sorting.ts';
 import { createJob } from './jobs.ts';
 import { roles } from './company.ts';
 import { deployed } from './wakes.ts';
@@ -34,6 +36,7 @@ Find what makes that step slow and make it quick: the same work done once instea
 The stalls:${stall}`,
   });
   remember(key, String(id));
+  sorting.hold(id, { from: 'hq', project: null, why: `HQ stood still behind ${hold.name}.` });
 }
 
 // A stall added to its cause's job, if that job hasn't started yet
