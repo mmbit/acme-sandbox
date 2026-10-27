@@ -10,7 +10,7 @@
 import { pen } from '/__review/ink.js';
 import { store } from '../util.js';
 import { loadDay, loadPage } from './bookdata.js';
-import { changed, readAgain, readAt, said, saveAll } from './booksave.js'; // (readAgain: company: job #19916)
+import { changed, readAgain, readAt, said, saveAll } from './booksave.js';
 import { pageView } from './bookpage.js';
 import { panning } from './bookpan.js';
 import { mountZoom } from './bookzoom.js';
@@ -68,7 +68,7 @@ export function mountPages(paper, { dev, shape }) {
   import('./booktools.js').then(m => (book.tools = m.mountTools(book, paper, toolHooks(book))));
   // (an invited person's book from the rail)
   document.addEventListener('book:person', e => openBookOf(book, e.detail));
-  document.addEventListener('book:changed', e => wroteTo(book, e.detail?.page)); // (company: job #19916)
+  document.addEventListener('book:changed', e => wroteTo(book, e.detail?.page));
   new ResizeObserver(() => resized(book)).observe(book.desk);
   document.addEventListener('visibilitychange', () => document.hidden && saveAll(book));
   const place = store.get(placeKey(book), null);

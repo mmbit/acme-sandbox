@@ -194,7 +194,7 @@ async function downWhileFiled(s) {
   await page.evaluate(() => window.__lift());
   await page.waitForTimeout(SETTLE_MS + 400); // (the ring going in now)
   await s.pen(
-    Array.from({ length: 12 }, (_, i) => [600 + i * 8, 250 + i * 4]), // (clear of the ring: company: job #19861)
+    Array.from({ length: 12 }, (_, i) => [600 + i * 8, 250 + i * 4]), // (clear of the ring)
     { lift: false },
   );
   s.line.send({ type: 'heard', text: 'goes thinner' });
