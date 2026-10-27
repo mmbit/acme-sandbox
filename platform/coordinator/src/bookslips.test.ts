@@ -2,7 +2,7 @@
 // and "now", a page sent to the CEO through its routing, a question answered within seconds)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { harness, type Running } from './harness.ts';
 
@@ -114,31 +114,20 @@ test('--artifact shows its running preview and cover on the slip, pending until 
   assert.ok(!db.prepare('select 1 from note_routes where note = ?').get(review));
 });
 
-test('a slip\'s "now" is kept, read back, served, and a new cut replaces the old', async () => {
+// (rule zero: nothing cuts one now; those kept before still show.)
+test('a slip\'s "now" kept from before is read back and served; nothing takes a new one', async () => {
   const { page, review, job } = await sentNote('kit', 'The basket button');
   const slip = (await answer(job, { note: review, text: 'Bigger now' })).body.slip;
   assert.equal(slip.now, null);
-  const nows = () => readdirSync(DIR).filter(f => f.startsWith(`slip${slip.id}-now-`));
-  const first = (await h.board('/api/book/slip/now', { id: slip.id, picture: await picture('png') })).body.slip;
-  assert.match(first.now, new RegExp(`^/api/book/slip/now\\?id=${slip.id}&v=[0-9a-z]+$`));
-  assert.ok(first.now_at);
-  assert.deepEqual(
-    (await notesOn(page))[0].slips.map((s: any) => [s.now, s.now_at]),
-    [[first.now, first.now_at]],
-  );
-  const served = await fetch(base + first.now, { headers: { cookie: h.boardCookie } });
+  const file = `slip${slip.id}-now-old.png`;
+  writeFileSync(`${DIR}/${file}`, Buffer.from((await picture('png')).split(',')[1], 'base64'));
+  db.prepare('update book_slips set now = ?, now_at = ? where id = ?').run(file, new Date().toISOString(), slip.id);
+  const [kept] = (await notesOn(page))[0].slips;
+  assert.match(kept.now, new RegExp(`^/api/book/slip/now\\?id=${slip.id}&v=[0-9a-z]+$`));
+  const served = await fetch(base + kept.now, { headers: { cookie: h.boardCookie } });
   assert.equal(served.headers.get('content-type'), 'image/png');
-  const [kept] = nows();
-  await new Promise(r => setTimeout(r, 5)); // (another millisecond, another address)
-  const second = (await h.board('/api/book/slip/now', { id: slip.id, picture: await picture('jpeg') })).body.slip;
-  assert.notEqual(second.now, first.now);
-  assert.deepEqual(nows().length, 1);
-  assert.notEqual(nows()[0], kept, "the first cut's file is gone");
-  const again = await fetch(base + second.now, { headers: { cookie: h.boardCookie } });
-  assert.equal(again.headers.get('content-type'), 'image/jpeg');
-  assert.equal((await h.board('/api/book/slip/now', { id: 999_999, picture: await picture('png') })).status, 404);
-  assert.equal((await h.board('/api/book/slip/now', { id: slip.id, picture: 'data:text/plain,hi' })).status, 400);
   assert.equal((await fetch(`${base}/api/book/slip/now?id=${slip.id}`)).status, 401, "behind the board's login");
+  assert.equal((await h.board('/api/book/slip/now', { id: slip.id, picture: await picture('png') })).status, 404);
   await h.finish(job);
 });
 

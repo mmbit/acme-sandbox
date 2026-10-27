@@ -144,7 +144,7 @@ function synthetic(
     finished: null,
     seat: null,
     for_seat: null,
-    board: 0,
+    board: Number(owner.itemWork ?? false),
     followThrough: false,
     after: 'released',
     follows: undefined,

@@ -87,8 +87,8 @@ export function propose(
 }
 
 // One item per pull request, delivered with the owner's existing planning notifications. With the company's
-// review.drawWindowedChanges, a "changes" ruling on a thread with a window is drawn at once, as the owner almost always
-// draws it: the PR's author fixes every blocking finding (or checks the touch-ups) in the reviewed thread. The owner
+// review.drawWindowedChanges draws a "changes" ruling at once when its thread has a window or carries a live call item.
+// The PR's author fixes every blocking finding (or checks the touch-ups) in the reviewed thread. The owner
 // hears of that task, and may cancel and redraw it; nothing waits on a session or a planning job that may not look at it
 export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: string; job: number }) {
   return inOneStep(() => {
@@ -96,15 +96,16 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
     const item = reviewinbox.deliver(details);
     if (reviewinbox.sameDelivery(previous, item)) return item;
     const owner = ownerOf(item);
+    const reason = reviewinbox.drawReason(item);
     const drawn =
-      item.decision === 'changes' && reviewSettings().drawWindowedChanges && windowed(item.proposal)
+      item.decision === 'changes' && reviewSettings().drawWindowedChanges && reason
         ? reviewinbox.drawnAtOnce(item, owner)
         : undefined;
     if (drawn) {
       messages.withdraw(item.proposal);
       const tasks = drawn.jobs.map(job => `#${job}`).join(' and ');
       const running = by && messages.runningSession(owner);
-      const line = `Review ${reviewinbox.externalId(item.proposal)} from ${item.agent} for ${item.project}: its thread has a window, so HQ drew ${tasks} for ${drawn.author} to answer it. To draw it another way, cancel ${drawn.jobs.length > 1 ? 'them' : 'it'} and accept the item again (hq inbox ${reviewinbox.externalId(item.proposal)}).`;
+      const line = `Review ${reviewinbox.externalId(item.proposal)} from ${item.agent} for ${item.project}: ${reason}, so HQ drew ${tasks} for ${drawn.author} to answer it. To draw it another way, cancel ${drawn.jobs.length > 1 ? 'them' : 'it'} and accept the item again (hq inbox ${reviewinbox.externalId(item.proposal)}).`;
       // held: unread when the session ends, it lapses rather than becoming a job
       if (running) {
         const sent = messages.send(by, owner, line, running.id, item.proposal);
@@ -113,7 +114,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
       publish({
         type: 'log',
         agent: drawn.author,
-        text: `PR #${item.pr}'s review asked for changes: ${tasks} drawn at once, as its thread has a window`,
+        text: `PR #${item.pr}'s review asked for changes: ${tasks} drawn at once, as ${reason}`,
       });
     } else
       tell(

@@ -753,6 +753,14 @@ const ITEM_WORK = `${itemCarriers("in (select i.job from call_items i where i.st
     and exists (select 1 from jobs w indexed by jobs_work_branch where coalesce(w.branch, 'job/' || w.id) = +p.branch
       and w.kind = 'work' and (w.item in (select id from (${LIVE_ITEMS}))
         or exists (select 1 from (${lineageTo('w.id')}) l where l.id in (select job from (${LIVE_ITEMS})))))`;
+export const itemWorkCarriers = () =>
+  new Map(
+    (
+      prepared(`select j.id, ${workBranch('j')} branch from (${ITEM_WORK}) carrier
+    join jobs j on j.id = carrier.id`).all() as { id: number; branch: string }[]
+    ).map(row => [row.id, row.branch]),
+  );
+export const itemWorkBranches = () => new Set(itemWorkCarriers().values());
 // The board's word: the job a board's call left to follow it up (ledger.ts: calls.job), a check routing the notes it
 // sent (routing.ts), a sheet the board sent from its book to its page's owner (booknotes.ts), work carrying a call's
 // item (ITEM_WORK), and a meeting's seat when queued work carrying one waits for any of that meeting's seats (--after or

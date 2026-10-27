@@ -58,8 +58,8 @@ imports it, `acts.js` what a part asks of the parts above it (put the note away,
 hands in as it loads, so the imports form no circle, `dock.js` the pin, `menu.js` its menu, `surface.js` the page
 while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
 `pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
-the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `join.js`, `gestures.js`, `marks.js`, `marktaps.js`, `markpage.js`, `markshows.js`, `markfollow.js` and `written.js` the Pencil on HQ and its numbered
-marks (below), `slip.js` and `markslips.js` the answers on them, `base.js` what they share. The coordinator serves
+the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js`, `markfollow.js` and `written.js` the Pencil on HQ
+and the mark being made (below), `slip.js` the answers on notes, `base.js` what they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js` and `ink.js`
 are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
 photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
@@ -122,18 +122,17 @@ the page; over a dialog it leaves the book's room (`--book-room`); a pen or two 
   `platform/hq/shell/booklanding.js`). No post-it and no Send: a mouse's mark with the pin goes the same way once the
   mouse rests; a page with no book keeps the post-it. HQ's page is a sheet's page in today's book for its owner (made at its first
   note, `page/new`).
-- **Hairlines:** every note in the book shows on HQ's page as a faint hairline of its ink, sent or not, so the page is
-  clean for the next mark (`marks.js`). A finger's tap on one opens its card (`marktaps.js`): its words, where it is
-  ("For Lark, not sent", "On your call with Juno", "Sent Tue 09:12") and its answers. HQ keeps one address whatever
-  screen is open, so a hairline shows only while what it was drawn on is on the screen (`markshows.js`): its element
-  found again (the element itself, else its selector), mostly the words it had, taking room, and on top at the mark's
-  middle (not under another screen or a dialog). The marks are drawn again as the page changes what it shows
-  (`markfollow.js`).
-- **Join, wipe, undo:** a line drawn on or beside a hairline joins its note (`join.js`: the note's ink and the new lines
-  one mark, then `note/edit` with its ink, the snip cut again and the words added). A scribble over a mark or a
-  hairline wipes its note, from the book too; over a sent note's, only the hairline clears, on this screen. A two-finger
-  tap or Cmd/Ctrl+Z takes back the last thing: a line, a lift, a join, a wipe, a clear. A finger pressed inside a
-  hairline's ring and dragged onto the open book tapes its snip there (`carry.js`), the note left as it is.
+- **Rule zero** (the board's, 2026-10-27): nothing stays drawn on HQ or an artifact, ever. The page's ink layer holds
+  only the mark being made (`marks.js` paint: its lines, and those drawn while it goes in); once its note is in the
+  book, or it's let go, the page is clean at once, and its lines live only in the note's snip. The book keeps no lines
+  of a note (the coordinator's `booknotes.ts` stores its anchor without them) and nothing reads a page's notes back to
+  draw them, so no tab, screen, reload or call can bring one back. A second screen draws the other's mark only while
+  it's open (HQ's `pairink.js`); a call's agent's rings go at the end of its turn (below). `book-check.mjs` asserts it
+  (`bookink.mjs` `nothingDrawn`).
+- **Wipe, undo:** a scribble over the mark being made lets it go, post-it and all. A two-finger tap or Cmd/Ctrl+Z
+  takes back the last thing: a line, the mark let go, or the last note sent to its sheet (gone from the book). A finger
+  pressed inside a ring still open and dragged onto the open book tapes a cut-out of what it's round there
+  (`carry.js`).
 - **A pen's tap** is a click, never ink (`tap.js`, shared with the book): lifted within 300 ms, never 10 px from where
   it touched, it clicks what's under it, focused, on HQ's page and over a dialog. (`pentouch.js` has the pen's and the
   fingers' touches.)
@@ -147,9 +146,8 @@ the page; over a dialog it leaves the book's room (`--book-room`); a pen or two 
   `pencil:words` on the document for the book). Never on a call: its agent sees the ink.
 - **Hold the pen still** on one spot for half a second and talk: a red pulse at its tip, the words landing there as a
   note (a pin on what's under it) as the pen lifts, on a call too (the call's own hearing). Nothing heard, no note.
-- **Ring something** and the mark is on what's inside the ring. A wiped note comes back whole with an undo, last on
-  its sheet. Nothing asks "are you sure?". A wipe or undo the book refuses changes nothing, and the step stays to take
-  back.
+- **Ring something** and the mark is on what's inside the ring. Nothing asks "are you sure?". An undo the book refuses
+  changes nothing, and the step stays to take back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
 - **A second screen** (`handover.js`; HQ's `shell/pair.js` pairs a phone or tablet with a desktop by the book's code):
   while `<html data-paired>`, the Pencil tells `pencil:mark` (the open mark as an anchor and its words, or null) at each
@@ -166,16 +164,15 @@ its own: the words the call heard while it was drawn (or while the pen was held 
 settles and lifts as every mark does, and HQ's call then sends it to the agent. The agent's ring (its `draw` tool) is
 not the Pencil's and never in the book: `drive.js` draws it (`ring.js`) where the agent aimed on its picture of the
 board's screen, in its own ink with its words beside it, over the page, following what's under it as the page scrolls
-and gone with that or the call. A mark's snip
+and gone with that, at the end of the agent's turn (the board speaks again, or the agent starts its next answer), or
+with the call. A mark's snip
 goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`) painted over
 (`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book doesn't take
 stays, the pin's tip says so (the pin back while it speaks, even with the book folded), and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
 
-**Answers** (`slip.js`, `markslips.js`; the coordinator's `bookslips.ts`): an agent's answer clips onto its note as a
-slip, typed under a paper clip, with then and now: the note's snip beside the same place cut again from the live page
-(once its mark is on the screen and the page has been still 1.2 s, kept on the store with `slip/now`, one cut per
-answer), or something new's running preview (its picture and link). The page shows a slip's corner under an answered
-number; a tap on the mark (or a hairline) opens its card with the slips. A tick in a slip's box closes the note; words
+**Answers** (`slip.js`; the coordinator's `bookslips.ts`): an agent's answer clips onto its note in the book as a
+slip, typed under a paper clip, with the note's snip ("then") beside something new's running preview (its picture and
+link), or a cut of the same place kept from before rule zero. Nothing of it shows on HQ's page. A tick in a slip's box closes the note; words
 written under it go as the reply, a new note on the same sheet (`slip/reply`). The book (HQ's `shell/bookslips.js`)
 draws the same slips, and there a tick written over one with the Pencil ticks it. HQ's feed brings a new answer at
 once (a `book` event). `book-check.mjs` plays it (`bookslip.mjs`).

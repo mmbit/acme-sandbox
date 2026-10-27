@@ -82,7 +82,7 @@ export function initPair(follow) {
   swapButton.classList.add('bk-swap');
   swapButton.hidden = true;
   isle.append(phone);
-  mountInk(events => tell(...events));
+  mountInk(events => together(...events));
   card.addEventListener('click', clicked);
   card.addEventListener('submit', e => (e.preventDefault(), join(card.querySelector('input').value)));
   hear();
@@ -222,6 +222,21 @@ function tell(...events) {
     () => false,
   );
 }
+// ...and those of one moment in one post: a line's end with the mark it went into (the Pencil's 'pencil:mark' comes in
+// the same task), so the other screen draws the line from the mark from then on, without a frame between them where
+// neither has it (pairink.js: rule zero.)
+let batch = null;
+function together(...events) {
+  if (!batch) {
+    batch = [];
+    queueMicrotask(() => {
+      const them = batch;
+      batch = null;
+      tell(...them);
+    });
+  }
+  batch.push(...events);
+}
 function got({ tag, payload = {} }) {
   if (tag === 'pair') return state(payload.state);
   if (heard({ tag, payload })) return;
@@ -255,8 +270,10 @@ function state(now) {
       );
     }
     draw('paired');
-  } else if (now === 'away' && p.paired) draw('away');
-  else if (now === 'back' && p.paired) {
+  } else if (now === 'away' && p.paired) {
+    forget(); // (its open mark may never be heard of again: back, it sends it once more.)
+    draw('away');
+  } else if (now === 'back' && p.paired) {
     // (what it missed while away may be past the coordinator's memory: this screen's state again)
     tell({ tag: 'hello', payload: { screen: screenKind() } });
     if (shown) tell({ tag: 'open', payload: shown });
@@ -311,7 +328,7 @@ function ended() {
 function hear() {
   document.addEventListener('pencil:mark', e => {
     const mark = (lastMark = e.detail?.mark ?? null);
-    tell({ tag: 'mark', payload: { mark } });
+    together({ tag: 'mark', payload: { mark } });
     // (a mark made here goes into the book from here as it settles, and the other screen's book turns to it: below.
   });
   document.addEventListener('pencil:flick', () => handOver());

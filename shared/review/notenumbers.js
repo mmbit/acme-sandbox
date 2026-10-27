@@ -1,9 +1,8 @@
-// The number a note shows: beside its mark on a page (marks.js) and beside it on its sheet in the book (HQ's
-// booksheet.js), by one rule. A number is there to tell notes apart, so a page that shows only one open note numbers
-// none; one that shows several gives each its number on its sheet (page and sheet point at each other), and never two
-// the same: notes from two sheets (two owners', or a sent sheet's and the next one's) that share a number on their own
-// sheets, the later ones in the page's order take the next numbers free. A sent note is a hairline on its page and a
-// line on its sheet, never numbered.
+// The number a note shows beside it on its sheet in the book (HQ's booksheet.js; nothing of a note shows on HQ's page:
+// rule zero). A number is there to tell notes apart, so a page that shows only
+// one open note numbers none; one that shows several gives each its number on its sheet, and never two the same: notes
+// from two sheets (two owners', or a sent sheet's and the next one's) that share a number on their own sheets, the later
+// ones in the page's order take the next numbers free. A sent note is a line on its sheet, never numbered.
 
 // notes: the open notes one page shows, in its order ({ id, n }: n, its number on its sheet). Returns id → its number
 // there, or null when it shows none.

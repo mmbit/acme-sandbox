@@ -29,6 +29,9 @@ export async function theirInk(s) {
   assert.equal(ring.words, `${name}: or this one?`, 'its words beside it, with its name');
   assert.notEqual(ring.color.toLowerCase(), '#ff5a5f', 'never in the board’s red');
   assert.equal(s.posts.filter(p => p.path === '/api/book/note').length, notes, 'nothing of it in the book');
+  // the board's next turn: what the agent drew in its last one goes (rule zero)
+  s.line.send({ type: 'heard', text: 'That one, yes' });
+  await page.waitForFunction(() => !document.querySelector('[data-call-ink]'), null, { timeout: 3000 });
 }
 // A box on the screen (px) as the agent aims at it on its picture: fractions of the screen
 const aim = ({ x, y, w, h, W, H }) => ({ x: x / W, y: y / H, width: w / W, height: h / H });

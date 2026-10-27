@@ -119,8 +119,6 @@ function settle(r, mark) {
   send('/note/edit', { id: note.id, words, said: 'written', was: note.words }).then(
     ({ note: now }) => {
       Object.assign(mark, { note: now, written: words });
-      r.marks = r.marks.map(m => (m.id === now.id ? { ...m, words: now.words, said: now.said } : m));
-      paint(r);
       document.dispatchEvent(new CustomEvent('pencil:words', { detail: { id: now.id } }));
     },
     err => {

@@ -45,7 +45,7 @@ test('a line is on the slip that holds its middle', () => {
   assert.equal(slipUnder(from([250, 104], [260, 110], [290, 106]), slips), null, 'between them: neither');
 });
 
-test("now is the preview for something new, else the place cut again, else what it's waiting for", () => {
+test('now is the preview for something new, else a cut kept from before, else nothing: the snip alone', () => {
   const preview = {
     name: 'Inkbath',
     open: 'https://inkbath.preview.example',
@@ -59,5 +59,5 @@ test("now is the preview for something new, else the place cut again, else what 
   });
   assert.equal(nowOf({ preview: { pending: true } }).empty, 'Its preview shows here once it runs');
   assert.deepEqual(nowOf({ preview: null, now: '/cut.jpg' }), { src: '/cut.jpg', label: 'Now' });
-  assert.match(nowOf({}).empty, /next time its page is open/);
+  assert.equal(nowOf({}), null, 'nothing cuts the place again (rule zero)');
 });

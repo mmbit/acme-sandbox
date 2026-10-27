@@ -428,7 +428,7 @@ const api: Record<string, BoardRoute> = {
   'POST /api/book/page/label': (q, s, b) => refusal(book.labelPage(b)),
   'POST /api/book/page/archive': (q, s, b) => refusal(book.archivePage(b)),
   'POST /api/book/page/delete': (q, s, b) => refusal(book.deletePage(Number(b.id))),
-  'GET /api/book/notes': (q, s, b) => (b.url === undefined ? booknotes.pageNotes(Number(b.page)) : refusal(booknotes.urlNotes(b.url))),   // (url)
+  'GET /api/book/notes': (q, s, b) => booknotes.pageNotes(Number(b.page)),
   'POST /api/book/note/edit': (q, s, b) => refusal(booknotes.editNote(b)),
   'POST /api/book/note/move': (q, s, b) => refusal(booknotes.moveNote(b)),
   'POST /api/book/note/delete': (q, s, b) => refusal(booknotes.wipeNote(Number(b.id))),
@@ -1841,7 +1841,6 @@ const board: RouteTable = {
     return answer(res, body === null ? new Refused(400, 'the body: JSON') : refusal(pair.sendEvents(body)));
   },
   // a slip's "now", the note's place cut again from the live page
-  'POST /api/book/slip/now': boardJson((q, s, b) => refusal(bookslips.cutNow(b)), NOTE_MAX),
   'GET /api/book/slip/now': ({ req, res }) => bookslips.serveSlipPicture(req, res, undefined, 'now'),
   // a sketch's ink and scraps, its picture and a scrap (sketchbook.ts, book.ts; the board sees every book's).
   'POST /api/sketches/save': boardJson((q, s, b) => refusal(sketchbook.saveSketch(b)), SAVE_MAX),

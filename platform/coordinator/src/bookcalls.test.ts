@@ -80,15 +80,6 @@ test("a call's page: the board's notes numbered on it, never on a sheet to send,
     calls.map((s: any) => [s.id, s.notes.map((n: any) => n.id)]),
     [[one.sheet.id, [one.note.id, two.note.id]]],
   );
-  const onUrl = (await h.board('/api/book/notes?url=%2F%3Fopen%3Dprojects')).body.notes;
-  assert.deepEqual(
-    onUrl.map((n: any) => [n.id, n.owner, n.onCall]),
-    [
-      [one.note.id, 'juno', true],
-      [two.note.id, 'juno', true],
-      [own.note.id, 'juno', false],
-    ],
-  );
   assert.equal((await h.board('/api/book/calls?pages=')).status, 400);
   assert.match((await h.board('/api/book/send', { id: one.sheet.id })).body.error, /stay on its page/);
   // ...nor moved to a sheet that is, and a question written over again asks no second time

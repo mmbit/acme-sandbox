@@ -1,8 +1,8 @@
 // A mark's end, the same on a call or not, the Pencil's (pencil.js) or a mouse's on HQ (surface.js): once the pen has
 // stayed up SETTLE_MS the mark is done. Its
 // note goes into the book with the words heard while it was drawn (the mic's, or on a call the call's own hearing:
-// callnotes.js), and its ink lifts off the page into the book (lift.js), a hairline left where it was (marks.js). Lines
-// drawn while it goes in are drawn at once and make the next mark. A mark the book doesn't take stays, the board is
+// callnotes.js), and its ink lifts off the page into the book (lift.js), nothing of it left where it was (marks.js
+// paint: rule zero). Lines drawn while it goes in are drawn at once and make the next mark. A mark the book doesn't take stays, the board is
 // told, and it goes in with the next line. This is the one way from a mark to the book: a different flow changes it
 // here.
 import { stopMic } from './dictation.js';
@@ -12,8 +12,8 @@ import { lift } from './lift.js';
 import * as marks from './marks.js';
 import { boxOfLines, marked } from './mark.js';
 import { expose } from './snapshot.js';
-import { rejoin } from './join.js';
 import * as written from './written.js';
+import { moved } from './handover.js';
 
 // The Pencil up this long and the mark is done: about a breath, so a circle and the arrow after it stay one note
 export const SETTLE_MS = 1500;
@@ -53,6 +53,9 @@ export function settleSoon(r) {
 export function file(r) {
   if (!r.book || r.mode !== 'note' || !r.mark || !r.sheet.hidden) return;
   r.mode = 'sending';
+  // (a second screen hears at once that it's no longer open: nothing of it stays drawn there while it goes in. Rule
+  // zero)
+  moved(r);
   const mark = r.mark,
     tried = { mark, sent: [...r.strokes], at: r.markAt };
   return (r.filing = inBook(r, mark).then(
@@ -72,6 +75,7 @@ export function file(r) {
       console.error('The Pencil: a note into the book', err);
       if (r.mark !== mark) return false;
       r.mode = 'note';
+      moved(r); // (open again, there too)
       r.unheard = err?.status ? null : tried;
       for (const line of r.nextLines.splice(0)) liftedLine(r, line);
       const why = err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.';
@@ -103,8 +107,8 @@ async function heardNow(r) {
   r.text.value = words;
 }
 
-// The mark's note into the book (its words once any still being said are in), a new one or the note it joins changed
-// (join.js), as it settles (file) or by the post-it's Send (postit.js). Its lines then show as its hairline. Returns
+// The mark's note into the book (its words once any still being said are in), as it settles (file) or by the post-it's
+// Send (postit.js). Its lines then go from the page at once: they live on in its snip. Returns
 // { note, snip, photoless: whether it went without its photo (the screenshot failed, or was still developing after
 // 9 s), for the post-it to say so }; null if the mark was let go while it developed (another maybe begun: never that
 // one's lines).
@@ -126,9 +130,8 @@ export async function toBook(r) {
         r.strokes.length ? boxOfLines(r.strokes) : r.mark.element.rect,
       ));
   const anchor = general ? { ...marked(r), el: null } : marked(r);
-  const fields = { anchor, live: r.mark.el, words, said, snip },
-    note = mark.joins ? await rejoin(r, mark.joins, fields) : await marks.post(r, fields);
-  if (!mark.joins) r.steps.push({ kind: 'note', id: note.id });
+  const note = await marks.post(r, { anchor, live: r.mark.el, words, said, snip });
+  r.steps.push({ kind: 'note', id: note.id });
   written.sent(r, mark, note);
   mark.filed = true;
   marks.paint(r);

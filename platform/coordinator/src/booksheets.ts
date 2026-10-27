@@ -146,7 +146,7 @@ function deliver(id: number, wrote: writing.Writing[]) {
     agent: s.owner ?? ceo(),
     text: `The board sent a sheet of ${notes.length} note${notes.length === 1 ? '' : 's'} from its book: job #${job}`,
   });
-  // (every HQ open reads its book again now: its marks turn to hairlines.)
+  // (every HQ open reads its book again now.)
   publish({ type: 'book', agent: s.owner ?? ceo(), text: 'sent' });
 }
 // The sheet's one task for its owner, or the CEO's routing check for a sheet nobody owns (and one that can't run on

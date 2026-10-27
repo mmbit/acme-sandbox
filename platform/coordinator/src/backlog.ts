@@ -108,6 +108,12 @@ export function orderingSnapshot(
     planned.filter(p => p.placeholder),
     rows,
   );
+  const itemCarriers = jobs.itemWorkCarriers();
+  const itemBranches = new Set(itemCarriers.values());
+  for (const row of rows) {
+    const placed = itemCarriers.has(row.id) ? placement.place(row) : undefined;
+    if (placed) itemBranches.add(placed.branch);
+  }
   const { waits, inOrder } = placement;
   const answers = answerTimes(now),
     lag = deployLag(now);
@@ -126,6 +132,7 @@ export function orderingSnapshot(
   const queued = rows.map((row, index) => {
     const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder });
     if (row.id < 0) job.orderId = lastId + index + 1;
+    job.itemWork = itemBranches.has(placement.place(row)?.branch ?? jobs.workBranchOf(row));
     job.reviewPlan = rounds(row);
     job.opensReview = job.reviewPlan !== undefined;
     job.placeholder = planned.find(p => p.id === row.id)?.placeholder;

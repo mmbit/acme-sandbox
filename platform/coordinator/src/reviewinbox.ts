@@ -1,5 +1,5 @@
 // Review rulings in the project owner's inbox, and the findings each ordered fix task answers.
-import { unassignedFindings } from './inbox.ts';
+import { unassignedFindings, windowed } from './inbox.ts';
 import { oneLine } from './agreements.ts';
 import { db, inOneStep } from './db.ts';
 import * as jobs from './jobs.ts';
@@ -166,6 +166,11 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
   }
 }
 class RefusedError extends Error {}
+
+export const drawReason = (item: Item) =>
+  jobs.itemWorkBranches().has(item.branch)
+    ? 'its work carries a live board call item'
+    : windowed(item.proposal) && 'its thread has a window';
 
 // The author's fix tasks for a ruling's blocking findings, or its touch-ups' check, accepted as its owner would (hq inbox
 // accept findings:<pr> --for <author> --findings <ids>): one per task the consolidator named, in its order, under its

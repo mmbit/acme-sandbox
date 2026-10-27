@@ -1,5 +1,5 @@
-// Ring and carry: something the Pencil has just ringed on HQ's page, or a note's ring kept as a hairline (its snip from
-// the book), lifted by a finger pressed inside the ring and dragged. A cut-out of what's inside (the screenshot's pixels in the ring's box) follows the finger; let go over the
+// Ring and carry: something the Pencil has just ringed on HQ's page, while its note is open, lifted by a finger pressed
+// inside the ring and dragged. A cut-out of what's inside (the screenshot's pixels in the ring's box) follows the finger; let go over the
 // book's paper it's taped on today's page there, anywhere else it goes back. A finger anywhere else still works the page,
 // and a finger's tap inside the ring is still the page's.
 //
@@ -45,7 +45,8 @@ export function cutOf(box, k, W, H) {
 // ---- the finger
 
 // ring(at): the ring that can be carried from a point now, or null: { then: its points on the screenshot, now: on the
-// screen now, shot: the screenshot { c, k } }, or a note's { now, snip: its picture's URL }. carried(): the cut-out was taped in the book. onPage(e): whether a touch is HQ's page's
+// screen now, shot: the screenshot { c, k } }. carried(): the cut-out was taped in the book. onPage(e): whether a touch
+// is HQ's page's
 export function setupCarry(r, { ring, carried, onPage }) {
   const st = { r, ring, carried, onPage, c: null }; // c: the press, { id, from, target, ring, lifted, el, at, picture }
   addEventListener('pointerdown', e => pressed(st, e), true);
@@ -108,7 +109,7 @@ const ask = (phase, e, picture = null) =>
 // edge, in an element of its own over everything (outside the page, so it can cross onto the book). The page hears its
 // touch cancelled, as when the browser takes one to scroll. False when the ring is off the screenshot.
 function lift(c) {
-  const picture = c.ring.snip ? snipped(c.ring) : cutOut(c.ring);
+  const picture = cutOut(c.ring);
   if (!picture) return false;
   c.picture = picture.blob;
   const at = picture.at,
@@ -151,18 +152,6 @@ function cutOut({ shot, then, now }) {
   canvas.getContext('2d').drawImage(shot.c, cut.sx, cut.sy, cut.sw, cut.sh, 0, 0, cut.sw, cut.sh);
   Object.assign(canvas.style, { display: 'block', width: `${cut.sw / shot.k}px`, height: `${cut.sh / shot.k}px` });
   return { el: canvas, blob: new Promise(res => canvas.toBlob(res, 'image/png')), at: boxOfPoints(now) };
-}
-// A note's snip from the book, over its ring (the snip is the ring with a margin round it): { el, blob, at }
-function snipped({ snip, now }) {
-  const ring = boxOfPoints(now),
-    img = Object.assign(new Image(), { src: snip, alt: '' }),
-    w = Math.max(ring.w + 48, 160);
-  Object.assign(img.style, { display: 'block', width: `${w}px` });
-  const blob = fetch(snip, { credentials: 'same-origin' }).then(r => {
-    if (!r.ok) throw new Error(`the note's snip: ${r.status}`);
-    return r.blob();
-  });
-  return { el: img, blob, at: { x: ring.x + ring.w / 2 - w / 2, y: ring.y - 24 } };
 }
 // ...following the finger, lifted a little, and over the book's paper tilted as it will be taped
 function follow(c, dx, dy, over) {
