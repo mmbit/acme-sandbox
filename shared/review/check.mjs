@@ -23,6 +23,7 @@ import { tmpdir } from 'node:os';
 import { join, extname, normalize, relative } from 'node:path';
 import { createRequire } from 'node:module';
 import { playwright } from '../browser/browser.mjs';
+import { dropped } from './pincheck.mjs';
 
 const REPO = new URL('../..', import.meta.url).pathname;
 const { parse } = createRequire(join(REPO, 'platform/coordinator/package.json'))('yaml');
@@ -424,11 +425,13 @@ if (slugs.length) {
     const pins = await inner.evaluate(() => !!document.querySelector('review-mode'));
     report('framed-elsewhere', b, { ok: !pins, why: pins ? 'a pin in a frame that isn\'t HQ\'s viewer' : `no pin inside ${a}'s frame` });
   }
-  // 7. dragged to the left, the pin stays there on the next page
+  // 7. dragged to the left, the pin stays exactly where it's let go, and there
+  // on the next page
   await page.goto(`https://${a}.preview.${ZONE}/`); await page.waitForTimeout(1200);
   const r = await ui(page.mainFrame(), root => { const b = root.querySelector('.fab').getBoundingClientRect(); return { x: b.left + 30, y: b.top + 30 }; });
   const cdp = await ctx.newCDPSession(page), touch = (type, x, y) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' ? [] : [{ x, y }] });
-  await touch('touchStart', r.x, r.y); for (let i = 1; i <= 10; i++) await touch('touchMove', r.x - i * 25, r.y - i * 20); await touch('touchEnd');
+  await touch('touchStart', r.x, r.y); for (let i = 1; i <= 10; i++) await touch('touchMove', r.x - i * 25, r.y - i * 20);
+  report('drop', a, await dropped(page.mainFrame(), () => touch('touchEnd')));
   await page.reload(); await page.waitForTimeout(1200);
   const left = await ui(page.mainFrame(), root => root.querySelector('.fab').getBoundingClientRect().left);
   report('drag', a, { ok: left < 100, why: left < 100 ? 'dragged left, it stays left after a reload' : `still at x ${Math.round(left)} after the drag` });

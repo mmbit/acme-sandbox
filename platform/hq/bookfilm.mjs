@@ -13,17 +13,30 @@ import assert from 'node:assert/strict';
 export async function morningStory(browser, c) {
   const { page, errors, done } = await c.hq(browser, c.viewport);
   try {
-    const when = page.locator('#book .bk-when');
-    assert.equal(await when.textContent(), 'Today');
-    const back = page.locator('#book').getByRole('button', { name: /^‹ / }),
+    // (the day in the shown page's heading, written out; yesterday from the pages' list.)
+    const shown = page.locator('#book .bk-page:not([hidden]) .bk-title'),
+      when = shown.locator('.bk-when');
+    assert.match(await shown.textContent(), /Today/i, 'the book opens on today');
+    await page
+      .locator('#book')
+      .getByRole('button', { name: /^The day's pages/ })
+      .click();
+    const back = page.locator('#book').getByRole('menuitem', { name: /^‹ / }),
       yesterday = (await back.textContent()).slice(2);
     await back.click();
     const sheet = page.getByRole('region', { name: 'For Moss' }),
-      note = sheet.getByRole('group', { name: 'Note 1' });
+      // (a lone note carries no number)
+      note = sheet.getByRole('group', { name: /^Note( 1)?$/ });
     await note.waitFor({ timeout: 5000 });
     await page.waitForTimeout(c.settle);
-    assert.equal((await when.textContent()).toLowerCase(), yesterday.toLowerCase(), 'the book on yesterday');
-    assert.match(await sheet.textContent(), /Sent \d+ \w+ \d\d:\d\d/, 'the sheet marked sent, with its time');
+    // ("Sun 25 Oct" in the list is "Sunday 25 October" on the page)
+    const written = (await when.textContent()).split(' ');
+    assert.ok(
+      yesterday.split(' ').every((w, i) => written[i]?.startsWith(w)),
+      `the book on yesterday: ${written.join(' ')}, not ${yesterday}`,
+    );
+    // (what went to whom and when)
+    assert.match(await sheet.textContent(), /sent to Moss · \d+ \w+ \d\d:\d\d/, 'the sheet marked sent, with its time');
     assert.match(await note.textContent(), /The tear line is too dark/);
     const answer = note.getByText('Lighter now, half the old ink');
     assert.ok(await c.inBook(page, answer), "the answer clipped on, on the book's paper");
@@ -31,9 +44,13 @@ export async function morningStory(browser, c) {
     assert.equal(await note.getByRole('button', { name: 'Tick it: done' }).isVisible(), true, 'a box to tick');
     assert.equal(await note.getByRole('textbox', { name: 'Reply to Moss' }).isVisible(), true, 'a line to reply on');
     await c.shot('book-morning', page);
-    await page.locator('#book').getByRole('button', { name: 'Today ›' }).click();
+    await page
+      .locator('#book')
+      .getByRole('button', { name: /^The day's pages/ })
+      .click();
+    await page.locator('#book').getByRole('menuitem', { name: 'Today ›' }).click();
     await page.waitForTimeout(c.settle);
-    assert.equal(await when.textContent(), 'Today', 'and on to today');
+    assert.match(await shown.textContent(), /Today/i, 'and on to today');
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -42,7 +59,8 @@ export async function morningStory(browser, c) {
 
 // The screens HQ is opened on besides book-check's own (an iPad mini either way round, a 1440 desktop, a phone)
 const SCREENS = [
-  { width: 560, height: 744 }, // (half an iPad mini's split screen beside Safari)
+  // (the narrowest that keeps a page: a phone-wide HQ beside the narrowest book.)
+  { width: 660, height: 744 },
   { width: 700, height: 1000 }, // (a 342 px page, where Wire's three pills on one row would run under the book)
   { width: 820, height: 1180 },
   { width: 1024, height: 768 },
@@ -50,7 +68,7 @@ const SCREENS = [
   { width: 1920, height: 1080 },
 ];
 // (Wire in Chromium only: Linux's headless WebKit can't start it, book-check's Wire stories say why)
-const LOOKS = browser => (browser.browserType().name() === 'chromium' ? ['', '&renderer=wire'] : ['']);
+export const LOOKS = browser => (browser.browserType().name() === 'chromium' ? ['', '&renderer=wire'] : ['']);
 // c: book-check's { hq, sight, beside, hqWhole, settled, shot, noErrorsIn }
 export async function everyWidthStory(browser, c) {
   for (const look of LOOKS(browser)) for (const screen of SCREENS) await atWidth(browser, c, screen, look);

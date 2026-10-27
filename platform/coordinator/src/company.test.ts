@@ -84,6 +84,17 @@ test("HQ's looks are its renderers' folders with a scene, dressed when they brin
   rmSync(renderers, { recursive: true });
 });
 
+test("A company's tip films are the films and stills in its theme/hq/films, none without one, for the board only", async () => {
+  const films = (cookie = h.boardCookie) => fetch(`${h.base}/films/films.json`, { headers: { cookie }, redirect: 'manual' });
+  assert.deepEqual(await (await films()).json(), []);
+  const folder = `${repo}/theme/hq/films`;
+  mkdirSync(folder, { recursive: true });
+  for (const file of ['look-wire.mp4', 'look-wire.jpg', 'look-wire.mp4.render.json']) writeFileSync(`${folder}/${file}`, '');
+  assert.deepEqual(await (await films()).json(), ['look-wire.jpg', 'look-wire.mp4']);
+  assert.notEqual((await films('')).status, 200);
+  rmSync(folder, { recursive: true });
+});
+
 test('HQ\'s pages name the company before any script runs: index.html, the manifest, the login page and its logo', async () => {
   writeFileSync(`${repo}/platform/hq/acme-dark.svg`, '<svg xmlns="http://www.w3.org/2000/svg"/>');
   writeFileSync(`${repo}/company/brand.yaml`, `name: Acme

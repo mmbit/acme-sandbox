@@ -635,17 +635,14 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .state { margin: 6px 0; font-size: 22px; font-weight: 600; }
 .intercom .call .note { margin: 8px 0 0; } /* (an alert) */
 /* The call's own little screen at its top: the agent's pixel figure standing in the screen's light, bobbing on two frames
-   while it speaks, a ring in its colour as wide as it's loud (as the bubble's face), and what it's doing in the corner.
-   Under it the transcript, the board's lines and the agent's, a box of its own that scrolls. */
+   while it speaks (the bob alone says it speaks: no ring), and what it's doing in the corner. Under it the transcript,
+   the board's lines and the agent's, plain boxes in a box of its own that scrolls. */
 .intercom .call { --cb-accent: var(--gold); }
 .intercom .call .call-face { position: relative; display: grid; place-items: end center; height: 184px; margin: 0 0 10px; overflow: hidden; --cb-level: 0;
-  background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r);
-  box-shadow: inset 0 0 0 calc(2px + var(--cb-level) * 3px) color-mix(in srgb, var(--cb-accent) calc(20% + var(--cb-level) * 70%), transparent); transition: box-shadow .08s linear; }
-/* (the light it stands in, brighter as it speaks, and the floor) */
+  background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); }
+/* (the light it stands in, brighter as it speaks; no floor drawn under it.) */
 .intercom .call .call-face::before { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse 46% 70% at 50% 100%, color-mix(in srgb, var(--cb-accent) calc(22% + var(--cb-level) * 40%), transparent), transparent 70%); }
-.intercom .call .call-face::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 18px; pointer-events: none;
-  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--scr) 22%, transparent) 0 2px, transparent 2px 8px); border-top: 2px solid color-mix(in srgb, var(--scr) 40%, transparent); }
 .intercom .call .cf-figure { position: relative; z-index: 1; display: grid; place-items: end center; margin-bottom: 12px; }
 .intercom .call .cf-figure > canvas { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; }
 .intercom .call .cf-figure > .cb-initial { margin-bottom: 30px; font-size: 52px; line-height: 1; color: var(--scr); text-shadow: var(--scr-glow); }
@@ -653,16 +650,17 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .call-face[data-state=thinking] .cf-figure > canvas { animation: cb-think 1.6s steps(4) infinite; }
 .intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--scr); text-shadow: var(--scr-glow); }
-.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(96px, 24dvh, 220px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
+/* (the height of the share key's old row, 64 px, goes to the transcript.) */
+.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(160px, calc(24dvh + 64px), 284px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
   text-align: left; background: #1d1f2e; border: var(--bw) solid var(--line); border-radius: var(--r); }
 .intercom .call .lines:empty::before { content: attr(data-empty); margin: auto; padding: 0 12px; font-size: 13px; color: #9a9eb4; text-align: center; }
 .intercom .call .lines li { max-width: 88%; padding: 5px 9px 6px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; border-radius: var(--r); animation: cs-line-in .2s steps(3) both; }
 .intercom .call .lines .who { display: block; font-size: 11px; letter-spacing: .05em; text-transform: uppercase; opacity: .7; }
-.intercom .call .lines .agent { align-self: flex-start; background: var(--paper); color: var(--ink); box-shadow: inset 3px 0 0 var(--cb-accent); }
+.intercom .call .lines .agent { align-self: flex-start; background: var(--paper); color: var(--ink); }
 .intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 @keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
 /* a phone on its side: the little screen smaller, so the keys stay in view */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 72px; } }
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
@@ -670,11 +668,13 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .row .attach { width: 52px; padding: 0; }
 @container page (max-width: 440px) { .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; } } /* (all three on one row on a phone) */
 /* the screen's share key: Show my screen, Stop showing while the agent sees the page */
-.intercom .call .row.share { margin: 0 0 12px; }
 .intercom .call #call-screenshare { display: inline-flex; align-items: center; gap: 10px; }
 .intercom .call #call-screenshare svg.icon { width: 20px; height: 20px; }
 .intercom .call #call-screenshare[aria-pressed="true"] svg.icon { color: var(--red); }
 .intercom .call #call-screenshare:disabled { opacity: .55; }
+/* (in the bottom row between the picture key and Hang up: its words take two lines where the row can't hold them on one.) */
+.intercom .call .row { flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
+.intercom .call #call-screenshare { flex: 0 1 auto; min-width: 0; padding: 0 14px; gap: 8px; line-height: 1.15; text-align: left; }
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
 .intercom .call .pics li { flex: none; width: 84px; }
@@ -702,9 +702,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   transition: box-shadow .15s steps(2), scale .15s steps(2); will-change: transform; }
 .callbubble.held { cursor: grabbing; scale: 1.06; box-shadow: var(--shadow-xl); }
 .callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
-  background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r);
-  /* the voice: a ring in the agent's colour as wide as it's loud */
-  box-shadow: inset 0 0 0 calc(2px + var(--cb-level) * 5px) color-mix(in srgb, var(--cb-accent) calc(20% + var(--cb-level) * 80%), transparent); transition: box-shadow .08s linear; }
+  background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); } /* (the bob says it speaks: no ring.) */
 .callbubble .cb-face > canvas { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; }
 .callbubble .cb-face > .cb-initial { align-self: center; font-size: 34px; color: var(--scr); text-shadow: var(--scr-glow); }
 /* alive with its voice: the pixel figure bobs on two frames while it speaks, leans in while it thinks */
@@ -726,27 +724,20 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .callbubble .cb-keys .cb-hangup { flex: none; width: 38px; background: var(--red); color: #fff; }
 .callbubble .cb-hangup svg { width: 18px; height: 18px; fill: currentColor; shape-rendering: var(--icons, crispEdges); }
 .callbubble.paused .cb-face { filter: grayscale(.6); }
-/* slim (review mode, a small screen): a strip of audio bars in the agent's colour in place of the face, moving with its
-   voice, hang up and Pause beside it; the box changes size in its corner while its contents are out (callbubble.js
-   slim). */
-.callbubble > * { transition: opacity .15s steps(3); }
-.callbubble.morphing { overflow: hidden; }
-.callbubble.morphing > * { opacity: 0; transition: none; }
-.callbubble.slim { grid-auto-flow: column; align-items: center; width: auto; gap: 4px; padding: 4px; }
-.callbubble.slim .cb-face { place-items: center; width: 60px; height: 34px; box-shadow: none; }
-.callbubble.slim .cb-face > :not(.cb-bars) { display: none; }
-.callbubble .cb-bars:not([hidden]) { display: flex; align-items: center; gap: 3px; height: 22px; }
-.callbubble .cb-bars i { width: 5px; height: 100%; background: var(--cb-accent); box-shadow: 0 0 4px color-mix(in srgb, var(--cb-accent) 60%, transparent);
-  scale: 1 calc(.2 + var(--cb-level) * var(--cb-reach) * .8); transition: scale .08s steps(2); }
-.callbubble.talking .cb-bars i { animation: cb-bar .3s steps(3) calc(var(--cb-i) * -.11s) infinite alternate; }
-.callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s steps(2) calc(var(--cb-i) * .2s) infinite; }
-@keyframes cb-bar { to { transform: scaleY(.5); } }
-@keyframes cb-bar-think { 50% { scale: 1 .45; } }
-.callbubble.slim .cb-keys { gap: 4px; }
-.callbubble.slim .cb-keys .cb-hangup { width: 36px; }
-.callbubble.slim .cb-eye { left: -7px; top: -7px; width: 22px; height: 17px; }
-.callbubble.slim .cb-eye svg { width: 13px; height: 13px; }
-@media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .callbubble .cb-bars i, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the bars, the little screen, the lines) */
+/* One form all call: on a small screen (a phone either way round) the same bubble, drawn smaller so the face covers
+   less of the page. */
+@media (max-width: 599px), (max-height: 499px) {
+  .callbubble { width: 108px; gap: 4px; padding: 4px; }
+  .callbubble .cb-face { height: 62px; }
+  .callbubble .cb-face > canvas { width: 26px; height: 52px; }
+  .callbubble .cb-face > .cb-initial { font-size: 26px; }
+  .callbubble .cb-keys { gap: 4px; }
+  .callbubble .cb-keys button { min-height: 30px; font-size: 12px; }
+  .callbubble .cb-keys .cb-hangup { width: 32px; }
+  .callbubble .cb-eye { left: 7px; top: 7px; width: 22px; height: 17px; }
+  .callbubble .cb-eye svg { width: 13px; height: 13px; }
+}
+@media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the little screen, the lines.) */
 /* A call's cards (shell/calldraw.js): the agent's ask to see, with Show and Not now, and the page a call left, kept or
    thrown away; over HQ and the call alike, in a toast's look, waiting until tapped. */
 #call-cards { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); z-index: 46; display: grid; gap: 8px; width: min(92vw, 380px); }
@@ -775,17 +766,10 @@ body.keys .callbubble .cb-keys button { background: var(--key-bg); color: var(--
 body.keys .callbubble .cb-keys button:active { transform: var(--key-down); box-shadow: var(--key-down-lip); }
 body.keys.keys .callbubble .cb-pause[aria-pressed=true] { transform: var(--key-down); box-shadow: var(--key-down-lip); font-weight: 750; }
 body.keys.keys .callbubble .cb-hangup { background: var(--red); color: #fff; border-radius: 999px; box-shadow: 0 var(--depth-button) 0 color-mix(in srgb, var(--red) 60%, #000); }
-/* Wire, slim: a pill of soft rounded bars, set in like the face; the call's little screen set in the same way, the figure
-   standing on its own soft shadow, the lines easing in. */
-body.keys .callbubble > * { transition: opacity .18s ease-out; }
-body.keys .callbubble.morphing > * { transition: none; }
-body.keys .callbubble.slim { border-radius: 999px; padding: 5px; gap: 5px; }
-body.keys .callbubble.slim .cb-face { border-radius: 999px; }
-body.keys .callbubble .cb-bars i { width: 4px; border-radius: 2px; box-shadow: none; transition: scale .1s ease-out; }
-body.keys .callbubble.talking .cb-bars i { animation: cb-bar .42s ease-in-out calc(var(--cb-i) * -.15s) infinite alternate; }
-body.keys .callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s ease-in-out calc(var(--cb-i) * .2s) infinite; }
-body.keys .intercom .call .call-face { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--k-ink) 7%, var(--key-bg)); transition: box-shadow .12s ease-out; }
-body.keys .intercom .call .call-face::after { left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
+/* Wire: the call's little screen set in like the bubble's face, the figure standing on its own soft shadow, the lines
+   easing in. */
+body.keys .intercom .call .call-face { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--k-ink) 7%, var(--key-bg)); }
+body.keys .intercom .call .call-face::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
 body.keys .intercom .call .cf-figure { margin-bottom: 14px; }
 body.keys .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
 body.keys .intercom .call .call-face .state { top: 10px; left: 14px; font-size: 12px; color: var(--k-muted); }
@@ -1123,19 +1107,19 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 @media (prefers-reduced-motion: reduce) { .on-air .onair, .bell.ringing svg { animation: none; } }
 /* the desk phone's bottom row: one kind of button, in three colours */
 .req .btns { gap: var(--keys-gap); }
-.req .btns button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 44px; min-height: 0; padding: 0 14px; margin: 0;
+.req .btns button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 44px; min-height: 0; padding: 0 8px; margin: 0;
   font: inherit; font-size: 16px; font-weight: 600; color: var(--ink); white-space: nowrap; border: var(--bw) solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
 .req .btns button svg { width: 14px; height: 14px; flex: none; fill: currentColor; shape-rendering: var(--icons, auto); }
 .req .btns button:active { transform: var(--press); box-shadow: var(--shadow-press); }
-.req .btns .send { flex: 1 1 0; min-width: 0; background: var(--gold); color: var(--on-accent); } .req .btns .approve { background: var(--green); color: var(--on-accent); } .req .btns .later { background: var(--cream); }
+/* (an answer's key shares the row's room, but is never narrower than its words: a row that can't hold them all wraps.) */
+.req .btns .send { flex: 1 1 0; min-width: max-content; background: var(--gold); color: var(--on-accent); } .req .btns .approve { background: var(--green); color: var(--on-accent); } .req .btns .later { background: var(--cream); }
 .req .btns .mic { width: 44px; padding: 0; background: var(--cream); } .req .btns .mic svg { width: 16px; height: 16px; }
+/* the desk phone is never wider than 440 px, so the Call key shows its phone and the name alone. */
 .req .btns .talk, .req .btns .share { background: var(--cream); }
 /* Call as its phone alone, on a card that brings work back: its two answers fill the row */
 .req .btns .talk.icon { width: 44px; padding: 0; flex: none; } .req .btns .talk.icon svg { width: 16px; height: 16px; }
 /* a walk-through offered: its own row over the card's answers, the whole width, in words on every screen. */
 .req .btns.walk { margin-bottom: 8px; } .req .btns.walk .talk { flex: 1 1 auto; }
-/* the Share button keeps its word on a phone: as an icon alone the board didn't find it */
-@container page (max-width: 440px) { .req .btns .talk .w { display: none; } .req .btns button { padding: 0 8px; gap: 6px; } }
 .req .row.on-air .mic { background: var(--red); color: #fff; }
 /* Send to the team, under a mail of the board's own */
 .mailfwd { margin: 10px 0 2px; }

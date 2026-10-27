@@ -22,6 +22,18 @@ def sh(*argv, cwd):
     subprocess.run(argv, cwd=cwd, check=True, capture_output=True)
 
 
+def diff(before, after):
+    """What changed from one report to the other, its hunks as hq report --since gives them (oversight.ts diff)."""
+    with tempfile.TemporaryDirectory() as d:
+        Path(f'{d}/before.md').write_text(before)
+        Path(f'{d}/after.md').write_text(after)
+        Path(f'{d}/attributes').write_text('* diff=report\n')
+        out = subprocess.run(['git', '-c', f'core.attributesFile={d}/attributes', '-c',
+                              'diff.report.xfuncname=^(== .*)$', 'diff', '--no-index', '--no-color', '--unified=1',
+                              f'{d}/before.md', f'{d}/after.md'], cwd=d, capture_output=True, text=True).stdout
+    return out[out.index('\n@@') + 1:]
+
+
 class Git(unittest.TestCase):
     """A mirror like the worker's (bare, branches in refs/heads, a job's unpushed commits in refs/outgoing)."""
 
@@ -101,10 +113,18 @@ class Report(unittest.TestCase):
         self.assertFalse(self.report({'section': 'nothing like it'})[0][0])
 
     def test_what_changed_since_a_time_by_its_hunks(self):
-        changed = '# What changed\n@@ -1,3 +1,3 @@ == memory\n-Mem: 1\n+Mem: 2\n@@ -9,2 +9,2 @@ == work\n+job 9\n'
+        """git names a hunk by the heading above it, so a change on a section's first line comes in the hunk of the
+        section before: it's found by its own heading too."""
+        before = REPORT.replace('Mem: 15613 used 6176\n', ''.join(f'Mem line {i}\n' for i in range(6)))
+        after = before.replace('Mem line 1', 'Mem line one').replace('job 18510 bolt done', 'job 18510 bolt merged')
+        changed = '# What changed\n' + diff(before, after)
         (ok, text), argv = self.report({'since': '2026-10-25T20:00Z', 'section': 'work'}, changed)
         self.assertEqual(argv, ['hq', 'report', '--since', '2026-10-25T20:00Z'])
-        self.assertEqual(text, '@@ -9,2 +9,2 @@ == work\n+job 9')
+        self.assertEqual(text, '@@ -10,3 +10,3 @@ == memory\n == work (the latest 30)\n-job 18510 bolt done\n'
+                         '+job 18510 bolt merged\n job 18511 bolt queued')
+        (ok, text), _ = self.report({'since': '2026-10-25T20:00Z', 'section': 'memory'}, changed)
+        self.assertIn('+Mem line one', text)
+        self.assertFalse(self.report({'since': '2026-10-25T20:00Z', 'section': 'voice'}, changed)[0][0])
         self.assertFalse(reads.report({'at': '--list'}, {})[0])
 
     def test_a_long_answer_comes_in_pages(self):

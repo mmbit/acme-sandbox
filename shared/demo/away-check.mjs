@@ -2,18 +2,29 @@
 // Checks the run away.mjs sends to a lent machine, as it runs there: on a copy of the demo kit with no server and no
 // job's token, a page asking for a file the job has and the run lacks stops it, naming that file, whatever the page does
 // with its 404 meanwhile; given the file, it draws the film and leaves the note to the job. And the job's side: the film
-// sent again with the file it lacked, brought back, noted and the file learned
+// sent again with the file it lacked, brought back, noted and the file learned; a clip the job has only the note of
+// fetched and sent the same way
 //   node shared/demo/away-check.mjs
-import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { HERE } from './core.mjs';
+import { sha256 } from './renders.mjs';
 
 let failed = 0;
 const check = (ok, what, detail = '') => {
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${what}${detail ? `: ${detail}` : ''}`);
   if (!ok) failed++;
+};
+
+// The demo kit and what it imports (core.mjs: shared/browser), as away.mjs sends them, in a tree of its own
+const kit = tree => {
+  for (const folder of ['demo', 'browser'])
+    cpSync(join(HERE, '..', folder), join(tree, 'shared', folder), {
+      recursive: true,
+      filter: from => !/\.(mp4|wav|webm)$/.test(from),
+    });
 };
 
 // A page whose look and data are files of its own: its ready waits for the data, and fails without it
@@ -26,7 +37,7 @@ const page = `<!doctype html><link rel=stylesheet href="look.css"><div id=box></
 function runSide() {
   const tree = mkdtempSync(join(tmpdir(), 'away-check-'));
   try {
-    cpSync(HERE, join(tree, 'shared/demo'), { recursive: true, filter: from => !/\.(mp4|wav|webm)$/.test(from) });
+    kit(tree);
     mkdirSync(join(tree, 'scene'));
     writeFileSync(join(tree, 'scene/film.html'), page);
     writeFileSync(join(tree, 'scene/look.css'), '#box { width: 80px; height: 80px; background: #c63; }');
@@ -77,7 +88,7 @@ function jobSide() {
   const tree = mkdtempSync(join(tmpdir(), 'away-check-job-'));
   const bin = mkdtempSync(join(tmpdir(), 'away-check-bin-'));
   try {
-    cpSync(HERE, join(tree, 'shared/demo'), { recursive: true, filter: from => !/\.(mp4|wav|webm)$/.test(from) });
+    kit(tree);
     mkdirSync(join(tree, 'scene'));
     mkdirSync(join(tree, 'data'));
     writeFileSync(join(tree, 'scene/film.html'), page.replace("'words.json'", "'/data/words.json'"));
@@ -126,6 +137,74 @@ function jobSide() {
   }
 }
 
+// A page playing a clip (demo.clip, /__clipinfo and /__clip) the job has only the note of, as one kept by another job:
+// the run names it, the job fetches it from the worker's store and sends it with the next run
+function clipSide() {
+  const tree = mkdtempSync(join(tmpdir(), 'away-check-clip-'));
+  const bin = mkdtempSync(join(tmpdir(), 'away-check-bin-'));
+  const store = mkdtempSync(join(tmpdir(), 'away-check-store-'));
+  try {
+    kit(tree);
+    mkdirSync(join(tree, 'scene'));
+    const clip = join(tree, 'scene/real.mp4');
+    const footage = [
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc=size=160x90:rate=10:duration=1',
+      '-pix_fmt',
+      'yuv420p',
+    ];
+    execFileSync('ffmpeg', [...footage, clip]);
+    const hash = sha256(clip);
+    writeFileSync(`${clip}.render.json`, JSON.stringify({ sha256: hash, bytes: readFileSync(clip).length }));
+    renameSync(clip, join(store, hash));
+    writeFileSync(
+      join(tree, 'scene/film.html'),
+      `<!doctype html><img id=shot style="width:160px;height:90px"><script>
+        window.frame = (t) => window.demo.clip(shot, 'real.mp4', t);
+      </script>`,
+    );
+    const git = (...args) => spawnSync('git', ['-C', tree, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+    git('init', '-q');
+    git('add', '-A');
+    git('commit', '-q', '-m', 'tree');
+    writeFileSync(join(bin, 'hq'), STAND_IN, { mode: 0o755 });
+    const log = join(bin, 'sent.log');
+    const film = "{ page: '/scene/film.html', out: 'scene/film.mp4', width: 320, height: 180, duration: 1, fps: 10 }";
+    const script = `import { render } from './shared/demo/core.mjs'; await render({ ...${film}, recipe: ['node', 'make.mjs'] });`;
+    const sent = spawnSync('node', ['--input-type=module', '-e', script], {
+      cwd: tree,
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        HOME: process.env.HOME,
+        TMPDIR: tmpdir(),
+        SENT_LOG: log,
+        HQ_URL: 'http://hq.invalid',
+        HQ_TOKEN: 'stand-in',
+        HQ_RENDERS: store,
+      },
+      encoding: 'utf8',
+    });
+    check(
+      sent.status === 0,
+      'a film playing a clip the job has only the note of comes back',
+      sent.status ? sent.stderr.slice(-400) : '',
+    );
+    const carried = (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []).map(line => line.split(','));
+    check(
+      carried.length === 2 && !carried[0].includes('scene/real.mp4') && carried[1].includes('scene/real.mp4'),
+      'the clip fetched and sent with the second run',
+      `${carried.length} runs`,
+    );
+    check(existsSync(clip) && sha256(clip) === hash, 'and left in the clone, as its note names it');
+  } finally {
+    for (const folder of [tree, bin, store]) rmSync(folder, { recursive: true, force: true });
+  }
+}
+
 // hq run as a lent machine runs it: the command in a tree of what was sent alone, with no job's token, and --bring
 // brought back. Each run's --with goes in the log.
 const STAND_IN = `#!/usr/bin/env node
@@ -147,4 +226,5 @@ process.exit(ran.status);
 
 runSide();
 jobSide();
+clipSide();
 process.exitCode = failed ? 1 : 0;

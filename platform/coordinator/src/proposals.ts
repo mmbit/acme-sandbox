@@ -121,7 +121,7 @@ export function deliverFindings(details: reviewinbox.Delivery, by?: { agent: str
         {
           id: item.proposal,
           agent: item.agent,
-          title: `Review ${item.decision} on PR #${item.pr}`,
+          title: reviewinbox.titleOf(item),
           project: item.project,
         },
         by,
@@ -364,8 +364,9 @@ const notTheirs = (p: Proposal, by: string) =>
 
 // The owner hears of a proposal: through its planning job for the proposal's project (the one open, queued, running or
 // blocked, which reads the project's inbox at its start and again before it ends), else in its running Claude session at its next step, else through a
-// new planning job. A proposal holding a thread's window (inbox.ts) reaches the running session first and stays with
-// it while it runs (then the sweep). A running planning job for another project is no such session: the proposal goes
+// new planning job. A proposal holding a thread's window (inbox.ts) reaches the running session first. One told to a
+// session stays with it while it runs, its notice held there: left open when it stops, the sweep tells the owner again.
+// A running planning job for another project is no such session: the proposal goes
 // to its own project's planning job, the open one or a new one. Only non-urgent CEO proposals wait for the summary
 // (summary.ts). A refused line throws OwnerNotificationError.
 export function tell(
@@ -388,10 +389,10 @@ export function tell(
     const label = reviewinbox.externalId(p.id);
     const line = `${typeof label === 'number' ? 'Proposal #' : 'Review '}${label} from ${p.agent}${p.project ? ` for ${p.project}` : ''}: "${p.title}". Accept it into your plan or drop it (hq inbox ${label}).`;
     if (by) {
-      const sent = messages.send(by, owner, line, running.id, urgent ? p.id : undefined);
+      const sent = messages.send(by, owner, line, running.id, p.id);
       if (typeof sent === 'number') throw new OwnerNotificationError(sent, owner);
     } else messages.notice(owner, line, running.id, p.id);
-    return heardBy(urgent ? running.id : null);
+    return heardBy(running.id);
   }
   heardBy(planningJob(owner, p.project));
 }

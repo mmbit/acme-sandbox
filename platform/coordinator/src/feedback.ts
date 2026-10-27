@@ -82,7 +82,6 @@ mkdirSync(SHOTS, { recursive: true });
 //   HQ), moved (a pending one, now in the book: bookreview.ts).
 // - about: whose note it is to handle (owed.about), the product or cycle folder its page is in.
 // - call: from before the book, the call about pins that marked it sent, with its queued job or none if answered on it
-//   (the call about pins went with HQ's waiting notes).
 // - share: the outside reviewer's share it was made with.
 // - author, author_email: who wrote it there, as they signed in. The board's notes have neither.
 // - early: the job that looked at an outside note while its share was open (lookEarly).
@@ -195,7 +194,7 @@ const inBook = (tool: string, share: shares.Session) => {
   return tool.replace('{{IN_BOOK}}', g ? '1' : '').replace('{{INK}}', g ? sketchPeople.colourOf(g) : '');
 };
 // The parts anyone may load (shared/review: no review mode's own logic in them).
-const OPEN_PARTS = new Set(['frame', 'ink', 'anchor', 'paper']); // ('paper')
+const OPEN_PARTS = new Set(['frame', 'ink', 'anchor', 'paper', 'tap']); // ('paper'; 'tap')
 
 // /__review/* on a product host (no HQ session here).
 export async function product(req: IncomingMessage, res: ServerResponse) {
@@ -239,7 +238,7 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (path === '/__review/mine' && req.method === 'GET') {
     const on = reviewerOn(req), query = new URL(req.url ?? '/', 'http://x').searchParams;
     if (!on) return json(res, 404, { error: 'not found' });
-    if (!on.share) return json(res, 200, (await import('./bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base)));
+    if (!on.share) return json(res, 200, (await import('./bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base), query.get('owner')));   // (owner)
     return json(res, 200, mine({ ...on, share: on.share }, query.has('shots')));
   }
   if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/submit', '/__review/thanked', '/__review/edit', '/__review/delete', '/__review/more', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
@@ -435,12 +434,20 @@ export function markOf(b: any, url: string) {
   const tag = general ? '' : line(e.el?.tag, 40), view = e.view ?? {};
   const element = { v: ANCHOR, url, el: tag ? { selector: line(e.el.selector, 300), tag, text: line(e.el.text, 200), box: rect(e.el.box) } : null,
     view: { w: num(view.w), h: num(view.h), x: num(view.x), y: num(view.y), dpr: num(view.dpr, 2) }, ink: general ? [] : inkOf(e.ink) ?? [],
-    kind, area: general ? null : rect(e.area), html: tag ? str(e.html, 2000) : '' };
+    kind, area: general ? null : rect(e.area), html: tag ? str(e.html, 2000) : '', ...(general ? {} : momentOf(e.video)) };
   const v = b.viewport ?? {};
   const viewport = { w: num(v.w), h: num(v.h), dpr: num(v.dpr, 2), x: num(v.x), y: num(v.y), ua: line(v.ua, 200),
     sw: num(v.sw), sh: num(v.sh), touch: num(v.touch) };
   return { element, viewport, shot: b.shot && !general ? image(b.shot) : null };
 }
+// A note on a film keeps the moment it was stopped at, for its reader to find the frame meant (a film from another site
+// gives no picture of it).
+const momentOf = (m: any): { video?: { time: number; src: string } } =>
+  m && typeof m.time === 'number' && Number.isFinite(m.time) && m.time >= 0 ? { video: { time: num(m.time, 1), src: line(m.src, 500) } } : {};
+const clock = (t: number) => {
+  const s = Math.floor(t), mm = `${Math.floor(s / 60) % 60}`;
+  return `${s >= 3600 ? `${Math.floor(s / 3600)}:${mm.padStart(2, '0')}` : mm}:${`${s % 60}`.padStart(2, '0')}`;
+};
 // The page a note is on, whole
 export const urlOf = (host: string, base: string, page: string) => `https://${host}${base}${page}`;
 // base: a shelf's; share: an outside reviewer's session, whose note it is. The board's goes on its sheet in the book
@@ -617,7 +624,7 @@ function coach(on: Reviewer, b: any) {
 }
 
 // The prompt carries the note, its page, the element (tag, selector and text, JSON-quoted; none of them without a
-// tag) or that it's a general note, and what it was seen on (seenOn). HQ shows the board the note, the element's text,
+// tag) or that it's a general note, a film's moment, and what it was seen on (seenOn). HQ shows the board the note, the element's text,
 // the screenshot and what it was seen on before sending. The rest (screenshot, element HTML, the clicks before the note)
 // is in `hq note`.
 // (exported for the tests' notes sent the way they were before the book)
@@ -633,6 +640,7 @@ export function noteText(n: any) {
     `Seen on: ${seenOn(v)}`,
     // (Drawn on)
     el ? `${e.kind === 'circle' ? 'Drawn on' : 'Pinned to'}: tag ${q(el.tag)}, selector ${q(el.selector)}${el.text ? `, text ${q(el.text)}` : ''}` : '',
+    e.video ? `At: ${clock(Number(e.video.time))} into the film ${q(e.video.src)}, stopped there for the note` : '',
     r ? `Where: ${Number(r.w)}×${Number(r.h)} at ${Number(r.x)},${Number(r.y)} on the page (CSS px), seen in a ${Number(v.w)}×${Number(v.h)} viewport scrolled to ${Number(v.x)},${Number(v.y)}` : '',
     added ? `Pictures: the reviewer added ${pictures} to the note` : '',
     `More (${n.shot ? 'screenshot, ' : 'no screenshot, '}${added ? `the ${pictures}, ` : ''}element HTML, the clicks before the note): hq note ${n.id}`,
@@ -765,12 +773,13 @@ export function ended(job: number) {
 // by: who wrote it in the book; an invited person's note (sketchpeople.ts, 'guest:<grant>') is kept signed as theirs, an
 // outside reviewer's, with the address they had the grant at (noteText's By:).
 export type FromBook = { url: string; words: string; el: { selector: string; tag: string; text: string; box: { x: number; y: number; w: number; h: number } } | null;
-  view: { w: number; h: number; x: number; y: number; dpr: number }; snip: string | null; review: number | null; by?: string };
+  view: { w: number; h: number; x: number; y: number; dpr: number }; snip: string | null; review: number | null; by?: string;
+  video?: { time: number; src: string } };   // (video.)
 export function fromBook(n: FromBook, job: number | null) {
   const v = n.view, { slug, page, about } = placeOf(n.url);
   const el = n.el && { selector: line(n.el.selector, 500), tag: line(n.el.tag, 40), text: line(n.el.text, 200), box: rect(n.el.box) };
   const view = { w: num(v.w), h: num(v.h), x: num(v.x), y: num(v.y), dpr: num(v.dpr, 2) };
-  const element = { v: ANCHOR, url: urlOfNote(slug, page), el, view, ink: [], kind: el ? 'circle' : 'general', area: el?.box ?? null, html: '' };
+  const element = { v: ANCHOR, url: urlOfNote(slug, page), el, view, ink: [], kind: el ? 'circle' : 'general', area: el?.box ?? null, html: '', ...momentOf(n.video) };
   const words = n.words || '(no words: its snip shows the mark)';
   const guest = n.by ? sketchPeople.grantBy(n.by) : undefined, author = guest?.guest ?? null, email = guest?.email ?? null;
   if (n.review) {

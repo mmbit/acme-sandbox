@@ -1,5 +1,5 @@
 // Branch authors, review eligibility and the consolidator selected for a round.
-import { db, redacted } from './db.ts';
+import { db, redactedJson } from './db.ts';
 import { org, roles } from './company.ts';
 import { findAgent, SEAT_READY } from './jobs.ts';
 import * as ordering from './ordering.ts';
@@ -9,7 +9,7 @@ import { withPicks } from './models.ts';
 db.exec(`create table if not exists review_triage (job integer primary key, pr integer not null,
   round integer not null, sha text, base text, selection text not null);
   create index if not exists review_triage_round on review_triage (pr, round, job)`);
-redacted('review_triage', 'selection');
+redactedJson('review_triage', 'selection');
 
 // The jobs that can be on the branch come by index first (its own, its thread's, the job it's named after, a touch-up's
 // pull request), then the rule decides: the rule alone read every job row, and a review's start asks 5 times (0.3 s).

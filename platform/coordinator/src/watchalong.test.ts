@@ -82,10 +82,12 @@ test("the sweep ends a lost line's watch-along with its call, and takes it with 
 test("the recorder is served to HQ's pages and a join link's without a session", async () => {
   const own = readFileSync(new URL('../../../shared/watchalong/watchalong.js', import.meta.url), 'utf8');
   const canvas = readFileSync(new URL('../../../shared/watchalong/canvas.js', import.meta.url), 'utf8');
+  const encoder = readFileSync(new URL('../../../shared/watchalong/encoder.js', import.meta.url), 'utf8');
   const recorder = readFileSync(new URL('../node_modules/@rrweb/record/dist/record.js', import.meta.url), 'utf8');
   for (const [path, text] of [
     ['/shared/watchalong/watchalong.js', own],
     ['/shared/watchalong/canvas.js', canvas],
+    ['/shared/watchalong/encoder.js', encoder],
     ['/shared/watchalong/vendor/rrweb-record.js', recorder],
   ]) {
     const res = await fetch(`${base}${path}`);

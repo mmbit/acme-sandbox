@@ -4,7 +4,8 @@
 //
 // A stroke is { color: '#rrggbb', size, alpha, points: [[x, y, pressure, t], ...] }: x and y in CSS px on the surface it
 // was drawn on, pressure 0–1 and t in ms from its first point, so anything can draw it again, at any scale, or replay it
-// as it was drawn (draw's `until`). A pen's pressure is its own; a mouse's or a finger's comes from its speed.
+// as it was drawn (draw's `until`). A pen's pressure is its own; a mouse's or a finger's comes from its speed. A filled
+// shape has fill: true, its points going round it: the line and everything inside it are ink.
 
 // The inks a small tool strip offers: the review pin's red first, then black, blue, green and a see-through highlighter
 export const INKS = [
@@ -17,6 +18,8 @@ export const INKS = [
 
 // a line's radius at a point: a light touch draws about a third of the ink's size, a firm press half again as wide
 const radius = (size, pressure) => (size * (0.3 + 1.2 * Math.min(1, Math.max(0.05, pressure)))) / 2;
+// how far a line's point goes towards the pointer, the rest left behind against a hand's jitter (an ink can have its own)
+const FOLLOW = 0.6;
 const HALO = 2; // px of white around review mode's ink, so it shows on any page (not under a highlighter)
 const HALO_ALPHA = 0.9; // (the white's, a little see-through; a pen's under canvas has it as its opacity)
 
@@ -32,7 +35,20 @@ export function outline(stroke, grow = 0) {
     d += disc(x, y, r);
     if (i) d += band(pts[i - 1], radius(size, pts[i - 1][2]) + grow, x, y, r);
   }
-  return d;
+  return stroke.fill ? d + inside(pts) : d;
+}
+// A filled shape's inside: its points as one polygon, turned clockwise on screen like the discs and bands, so the
+// nonzero rule adds it to them and never cuts a hole where they overlap
+function inside(pts) {
+  if (pts.length < 3) return '';
+  let area = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i],
+      [bx, by] = pts[(i + 1) % pts.length];
+    area += ax * by - bx * ay;
+  }
+  const round = area < 0 ? pts.slice().reverse() : pts;
+  return `M${round.map(([x, y]) => `${f(x)} ${f(y)}`).join('L')}Z`;
 }
 const f = n => Math.round(n * 100) / 100;
 // (both turn the same way, clockwise on screen, so the nonzero rule joins them and never cuts a hole)
@@ -99,20 +115,22 @@ export function fit(canvas) {
 // The pen on a surface: strokes drawn live on `wet`, a canvas over the surface (with no pointer events of its own).
 // opts:
 //   use(e): whether this pointer draws (review mode: once a pen has drawn, only the pen: a resting palm doesn't)
-//   ink(): the ink to draw with, { color, size, alpha }
+//   ink(): the ink to draw with, { color, size, alpha, follow? (its smoothing: extend's) }
 //   halo: a white edge around the ink, as draw's
 //   under: with halo, a canvas the same size as `wet` under the dry ink, where the live line's white edge goes (ink.js
 //     gives it draw's opacity), so it sits under every line's ink as draw puts it, and the line doesn't change as it
 //     goes on the dry canvas. Without it the edge is drawn on `wet`, under its own line but over older lines' ink.
 //   shape(e): 'rect' for a rectangle from where it starts to where it is (Shift held, in review mode)
+//   pictured: its dry ink is on canvases a watch-along records (the book's).
 //   end(stroke, e): a stroke finished; the wet canvas still shows it until clear()
 // start(e) begins a stroke from a pointerdown that reached another element first (review mode's pen on the page),
 // move(e) carries it on from a pointermove that did too, and end(e) ends it from a pointerup that did (the Pencil on
 // HQ, followed on the window).
 // Anything may follow the ink as data (a walk-through call's recording): the document hears an 'ink:stroke' event as
 // a stroke starts, grows and ends or is cancelled, its detail { phase: 'start' | 'move' | 'end' | 'cancel', stroke,
-// left, top, scroll, halo }: the surface's place on screen and the page's scroll as the stroke started, and whether
-// it's drawn with a white edge. A surface's dry ink drawn again (shown) is { phase: 'shown', canvas, strokes, halo }.
+// left, top, scroll, halo, pictured }: the surface's place on screen and the page's scroll as the stroke started,
+// whether it's drawn with a white edge, and whether its dry ink is in recorded canvas pictures (opts.pictured). A
+// surface's dry ink drawn again (shown) is { phase: 'shown', canvas, strokes, halo }.
 export function pen(surface, wet, opts) {
   const under = opts.halo ? opts.under : null;
   if (under) under.style.opacity = HALO_ALPHA;
@@ -181,6 +199,7 @@ function begin(e, surface, wet, under, opts) {
     g: fit(wet),
     u: under && fit(under),
     scroll: [Math.round(scrollX), Math.round(scrollY)],
+    pictured: !!opts.pictured,
   };
 }
 
@@ -194,6 +213,8 @@ const track = (e, at, ink, { rect = false, halo = false } = {}) => ({
   rect,
   halo: halo && !(ink.alpha < 1),
   stroke: { color: ink.color, size: ink.size, ...(ink.alpha < 1 ? { alpha: ink.alpha } : {}), points: [] },
+  // (how far each point goes towards the pointer: less is a steadier line.)
+  follow: ink.follow ?? FOLLOW,
   speed: 0, // (a mouse's or a finger's, for its pressure)
   pressure: 0, // (a pen's last, for a lift that reports none)
 });
@@ -211,13 +232,14 @@ function follow(line, e, phase) {
   if (line.rect) return phase === 'end' ? [] : (boxed(line, e), null);
   const kept = [];
   for (const s of phase === 'move' ? samples(e) : [e])
-    if (extend(line, s, phase === 'start')) kept.push(line.stroke.points.length - 1);
+    if (extend(line, s, phase)) kept.push(line.stroke.points.length - 1);
   return kept;
 }
 
-// A point, smoothed a little against a hand's jitter; a pen's pressure is its own, anything else's from its speed.
+// A point, smoothed a little against a hand's jitter (FOLLOW, or the ink's own); a pen's pressure is its own, anything
+// else's from its speed.
 // It's kept rounded, and drawn as kept: the dry canvas draws it from the stroke, so the live line must be that one.
-function extend(line, e, first = false) {
+function extend(line, e, phase = 'move') {
   const x = e.clientX - line.left,
     y = e.clientY - line.top,
     t = Math.max(0, Math.round(e.timeStamp - line.t0)),
@@ -231,9 +253,11 @@ function extend(line, e, first = false) {
     if (prev) line.speed += (Math.hypot(x - prev[0], y - prev[1]) / Math.max(1, t - prev[3]) - line.speed) * 0.3;
     p = Math.max(0.3, 0.62 - line.speed * 0.12);
   }
+  // (the lift's point is where the pointer lifted, so a steady line still ends there.)
+  const k = phase === 'end' ? 1 : line.follow;
   const q =
-    prev && !first
-      ? [prev[0] + (x - prev[0]) * 0.6, prev[1] + (y - prev[1]) * 0.6, prev[2] + (p - prev[2]) * 0.5, t]
+    prev && phase !== 'start'
+      ? [prev[0] + (x - prev[0]) * k, prev[1] + (y - prev[1]) * k, prev[2] + (p - prev[2]) * 0.5, t]
       : [x, y, p, t];
   const kept = q.map((v, i) => (i === 3 ? v : Math.round(v * 100) / 100));
   if (prev && Math.hypot(kept[0] - prev[0], kept[1] - prev[1]) < 0.6) return false;
@@ -362,11 +386,9 @@ function boxed(line, e) {
   line.stroke.points = corners.map(([a, b], i) => [Math.round(a), Math.round(b), 0.5, i ? t : 0]);
 }
 
-const tell = (phase, line) =>
+const tell = (phase, { stroke, left, top, scroll, halo, pictured }) =>
   document.dispatchEvent(
-    new CustomEvent('ink:stroke', {
-      detail: { phase, stroke: line.stroke, left: line.left, top: line.top, scroll: line.scroll, halo: line.halo },
-    }),
+    new CustomEvent('ink:stroke', { detail: { phase, stroke, left, top, scroll, halo, pictured } }),
   );
 
 // What a canvas of dry ink shows now, after it's drawn again (a note's lines, fewer after an undo, none once sent), for

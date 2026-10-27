@@ -9,7 +9,9 @@ import {
   planeSheet,
   reordered,
   sendOrder,
+  sendWords,
   sentLine,
+  sentTo,
   slotAt,
 } from './booksheetplace.js';
 
@@ -34,6 +36,16 @@ test("each sheet page shows its owner's notes, sent first, then open, each in it
   );
   assert.deepEqual(on.get(3), []);
   assert.equal(on.has(2), false, 'a free page shows no notes');
+});
+
+test("a call's notes show on its call's page, in order; a call page not in the row shows none", () => {
+  const call = { id: 11, owner: 'juno', status: 'call', notes: [note(111, 5, 2), note(110, 5, 1), note(112, 6, 1)] };
+  const on = notesOnPages({ calls: [call] }, [...pages, { id: 5, kind: 'call', call: 7 }], 'juno');
+  assert.deepEqual(
+    on.get(5).map(g => [g.sheet.id, g.notes.map(x => x.note.id)]),
+    [[11, [110, 111]]],
+  );
+  assert.equal(on.has(6), false);
 });
 
 test("nobody's sheet is the CEO's page's; a moved note shows on its new owner's page, or stays tagged with its owner", () => {
@@ -135,4 +147,12 @@ test("a free page's faces: the rail's first, then everyone by name", () => {
     sendOrder(agents, ['lark', 'gone']).map(a => a.id),
     ['lark', 'abe', 'kit', 'wren'],
   );
+});
+
+test('the plane says what it sends to whom, and a sent sheet keeps a line of what went to whom and when', () => {
+  assert.equal(sendWords(2, 'Juno'), 'Send 2 notes to Juno');
+  assert.equal(sendWords(1, 'Kit'), 'Send 1 note to Kit');
+  const now = new Date(2026, 9, 26, 18, 0);
+  assert.equal(sentTo(3, 'Bolt', new Date(2026, 9, 26, 15, 36).toISOString(), now), '3 notes sent to Bolt · 15:36');
+  assert.equal(sentTo(1, 'Moss', new Date(2026, 9, 25, 9, 5).toISOString(), now), '1 note sent to Moss · 25 Oct 09:05');
 });

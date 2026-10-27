@@ -666,7 +666,7 @@ test('a refused kept touch-up stops unchanged pushes and resumes through hq revi
   assert.equal(github.pr(n).mergedSha, head);
 });
 
-test('a worker merge of main permits another merge attempt before an unchanged head stops', async () => {
+test('a worker merge awaiting checks does not count as a refusal of the new head', async () => {
   const n = 62426;
   await submit(n);
   const sha = heads.get(n)!;
@@ -682,7 +682,11 @@ test('a worker merge of main permits another merge attempt before an unchanged h
   assert.deepEqual(doing(n), ['Bringing up to date']);
   await submit(n, { sha: merged });
   await decide(n, 'merge');
-  assert.equal(prs(n).status, 'stuck');
+  assert.equal(prs(n).status, 'open', 'GitHub refused the checked merge head for the first time');
+  assert.deepEqual(doing(n), ['Bringing up to date']);
+  await submit(n, { sha: merged });
+  await decide(n, 'merge');
+  assert.equal(prs(n).status, 'stuck', 'a second actual refusal of the unchanged head stops');
   assert.deepEqual(queued(n), []);
 });
 
@@ -3918,6 +3922,54 @@ test('one visual card covers the reviewed pull requests waiting on the same thre
   await settled();
   assert.equal(github.pr(8182).merged, true);
   assert.equal(github.pr(8183).merged, true);
+});
+
+test("the board's own word settles a visual hold: the merge goes on, the card job and open card end; no other word does", async () => {
+  const held = (n: number) => db.prepare(`select d.id, d.card_job, d.request from decisions d
+    join decision_merges m on m.decision = d.id where m.pr = ?`).get(n) as { id: number; card_job: number; request: number | null };
+  const card = (status: string) => Number(db.prepare(`insert into requests (created, agent, kind, title, body, status, answer)
+    values ('2026-10-27T00:00:00Z', 'kit', 'decision', 'Build it tonight?', 'x', ?, 'Yes')`).run(status).lastInsertRowid);
+  const [answered, unanswered] = [card('answered'), card('open')];
+  const call = Number(db.prepare("insert into calls (ts, agent, lines) values ('2026-10-27T00:00:00Z', 'juno', '[]')").run().lastInsertRowid);
+  const item = (status: string) => Number(db.prepare(`insert into call_items (call, kind, owner, what, quote, status, ts)
+    values (?, 'task', 'juno', 'Build it tonight, no sign-off needed', 'just build whatever seems sensible', ?, 'x')`).run(call, status).lastInsertRowid);
+  const [standing, dropped] = [item('open'), item('dropped')];
+
+  // The card job hasn't run yet: it ends as void.
+  const n = 8296;
+  await submit(n, { files: ['products/site/page.css'] });
+  await decide(n, 'merge', true);
+  const queuedCard = held(n);
+  assert.equal(h.job(queuedCard.card_job).status, 'queued');
+  const ceo = await h.start({ agent: 'juno', title: 'Settle the visual holds' });
+  const settle = (job: Running, word: string) => h.hq(job, 'decision', 'settle', String(queuedCard.id), word);
+  for (const word of [`item:${dropped}`, `card:${unanswered}`, 'item:999999', `${standing}`]) {
+    const refused = await settle(ceo, word);
+    assert.notEqual(refused.code, 0, `${word} is no standing word of the board's`);
+  }
+  const agent = await h.start({ agent: 'kit', title: 'Not the CEO' });
+  assert.notEqual((await settle(agent, `item:${standing}`)).code, 0, "an agent's say-so settles nothing");
+  await h.finish(agent);
+  assert.equal(github.pr(n).merged, false);
+  const ok = await settle(ceo, `item:${standing}`);
+  assert.equal(ok.code, 0, ok.out);
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+  assert.equal(h.job(queuedCard.card_job).status, 'cancelled');
+  assert.notEqual((await settle(ceo, `item:${standing}`)).code, 0, 'a settled decision is answered');
+
+  // Its card is filed already: the card leaves the desk phone, and a card the board answered settles it too.
+  const m = 8297;
+  await submit(m, { files: ['products/site/page.css'] });
+  await decide(m, 'merge', true);
+  const filed = await visualCard(m);
+  const decision = held(m).id;
+  const done = await h.hq(ceo, 'decision', 'settle', String(decision), `card:${answered}`);
+  assert.equal(done.code, 0, done.out);
+  await settled();
+  assert.equal(github.pr(m).merged, true);
+  assert.equal(db.prepare('select status from requests where id = ?').get(filed)?.status, 'done');
+  await h.finish(ceo);
 });
 
 test('an expedited major visual change leaves no visual hold or card job after review', async () => {

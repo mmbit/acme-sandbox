@@ -167,6 +167,33 @@ test("a running owner hears a proposal in its session; its owner or the CEO drop
   assert.equal((await h.agent('proposals/drop', juno.token, { id: other.body.id, why: 'Later' })).status, 200);
 });
 
+test("a proposal told to a running session that ends without deciding it reaches its owner again at the next sweep; one decided there doesn't", async () => {
+  levels();
+  const proposals = await import('./proposals.ts');
+  const bolt = await h.start({ agent: 'bolt', title: 'Level art', engine: 'claude', thread: 'game/levels' });
+  // decided in the session: nothing follows its end
+  const first = await h.start({ agent: 'wren', title: 'The first world', engine: 'claude' });
+  const decided = await h.agent('proposals', bolt.token, { title: 'A second world', brief: 'Snow.' });
+  assert.deepEqual(queuedWork(), [], 'no planning job: wren is at work');
+  assert.equal((await h.hq(first, 'inbox', 'drop', String(decided.body.id), 'One world first')).code, 0);
+  assert.equal((await h.finish(first)).status, 200);
+  proposals.sweep();
+  assert.deepEqual(queuedWork(), []);
+  // left open: the sweep tells wren again once the session ends, not while it runs
+  const second = await h.start({ agent: 'wren', title: 'The second world', engine: 'claude' });
+  const left = await h.agent('proposals', bolt.token, { title: 'A third world', brief: 'Sand.' });
+  proposals.sweep();
+  assert.deepEqual(queuedWork(), [], 'nothing follows while the session runs');
+  assert.equal((await h.finish(second)).status, 200);
+  proposals.sweep();
+  const [planning, ...none] = queuedWork();
+  assert.deepEqual([planning.agent, planning.title, none], ['wren', 'Sort new proposals into the plan', []]);
+  const heard = db.prepare('select heard_by from proposals where id = ?').get(left.body.id) as { heard_by: number };
+  assert.equal(heard.heard_by, planning.id);
+  proposals.sweep();
+  assert.equal(queuedWork().length, 1, 'once');
+});
+
 test('work proposed for no project waits for the CEO, who hears it in the summary: no planning job', async () => {
   const kit = await h.start({ agent: 'kit', title: 'Ads' });
   const made = await h.agent('proposals', kit.token, { title: 'A newsletter', brief: 'Monthly.' });

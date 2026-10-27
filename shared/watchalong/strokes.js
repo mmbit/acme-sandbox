@@ -7,7 +7,10 @@
 //   { phase: 'move', n, id, points }              the points since the last (sampled: at most one every INK_MS),
 //   { phase: 'move', n, id, points, all: true }   or all of them, when the line was redrawn (a rectangle's corners)
 //   { phase: 'end', n, id, stroke, left, top, box, under }  the stroke whole, where on screen it is (box, CSS px of the
-//                                                  document's viewport) and what's under it (watchalong.js described)
+//                                                  document's viewport) and what's under it (watchalong.js described);
+//                                                  pictured: true when its dry ink is on canvases recorded as pictures
+//                                                  (the Sketchbook's page): drawn until a canvas picture after it, then
+//                                                  that picture holds it, wherever the page has gone since
 //   { phase: 'cancel', n, id }                    the stroke went (a palm, a second finger)
 //   { phase: 'shown', id, canvas, strokes, left, top, halo }  a canvas of dry ink drawn again (ink.js shown): what it
 //                                                  shows now takes the place of the document's finished strokes (a
@@ -20,6 +23,9 @@
 // drawn with a white edge (review mode's).
 
 export const INK_MS = 100;
+// A canvas picture this long after a pictured stroke's end holds it: the picture was taken before it was encoded and
+// sent
+const PICTURED_MS = 300;
 const FULL_SNAPSHOT = 2,
   INCREMENTAL = 3,
   CUSTOM = 5,
@@ -33,7 +39,8 @@ export class Inks {
   add(event) {
     // (a new page on top: the ink of everything before it goes)
     if (event.type === FULL_SNAPSHOT) return this.strokes.clear();
-    if (event.type === INCREMENTAL && event.data?.source === CANVAS_MUTATION) return this.drop(event.data.id);
+    if (event.type === INCREMENTAL && event.data?.source === CANVAS_MUTATION)
+      return this.drop(event.data.id, event.timestamp);
     if (event.type !== CUSTOM || event.data?.tag !== 'ink') return;
     const ink = event.data.payload ?? {},
       key = `${ink.id}:${ink.n}`;
@@ -53,6 +60,7 @@ export class Inks {
         stroke: copy(ink.stroke),
         at: s?.at ?? event.timestamp - (ink.stroke.points?.at(-1)?.[3] ?? 0),
         end: event.timestamp,
+        ...(ink.pictured ? { pictured: true } : {}),
       });
     }
   }
@@ -74,9 +82,10 @@ export class Inks {
       this.strokes.set(key, { key, id: ink.id, ...placed(ink), stroke: copy(stroke), at, end: at });
     });
   }
-  drop(canvas) {
+  drop(canvas, at) {
     for (const key of this.pictured.get(canvas) ?? []) this.strokes.delete(key);
     this.pictured.delete(canvas);
+    for (const [key, s] of this.strokes) if (s.pictured && at - s.end >= PICTURED_MS) this.strokes.delete(key);
   }
 }
 
@@ -182,6 +191,7 @@ export function hearInk(record, named) {
       ...place,
       box,
       under: under(box, named),
+      ...(detail.pictured ? { pictured: true } : {}),
     });
   };
   document.addEventListener('ink:stroke', hear);

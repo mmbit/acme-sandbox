@@ -1,0 +1,229 @@
+/* The faces at the column's top (bookrail.js): each agent with notes on a sheet or an answer to read (a dot), never a
+   count; the face of the sheet shown ringed, a small paper plane right by it that sends the sheet, a ring running out
+   round the plane while a send can be undone; everyone's face while a page is carried to one. Under them, the invited
+   people's books. The book's own look, the same on every HQ look. (were
+   book.css's, with a count tab at the face's foot) */
+
+/* (what's by a face stands out past the island's edge; too many faces for it scroll, down to one) */
+#book .bk-island[data-island='faces'] {
+  position: relative;
+  flex-shrink: 1;
+  min-height: 48px;
+  max-height: 40%;
+  overflow: visible;
+}
+#book .bk-island[data-island='faces'][data-many] {
+  overflow: hidden auto;
+  scrollbar-width: none;
+}
+/* something carried to the faces: everyone's, the column theirs till it's let go */
+#book .bk-islands[data-carrying] .bk-island[data-island='faces'] {
+  max-height: none;
+}
+#book .bk-islands[data-carrying] .bk-island:not([data-island='faces']) {
+  display: none;
+}
+#book:has(.bk-islands[data-carrying]) > .bk-tip {
+  display: none;
+}
+#book .bk-face {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: scale 0.24s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+@media (hover: hover) {
+  #book .bk-face:hover {
+    background: var(--bk-ink-soft);
+  }
+}
+#book .bk-face:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 1px;
+}
+#book .bk-face .bk-av {
+  position: relative;
+  z-index: 1;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bk-paper2) center / cover no-repeat;
+  box-shadow:
+    0 0 0 2px #fff,
+    0 1px 3px 1px rgba(29, 26, 47, 0.25);
+  font: 700 14px/30px var(--bk-font);
+  font-style: normal;
+  text-align: center;
+  color: var(--bk-night);
+  image-rendering: pixelated;
+  transition: box-shadow 0.2s;
+}
+#book .bk-face:active .bk-av {
+  scale: 0.92;
+}
+/* an answer to read: a dot */
+#book .bk-face .bk-dot {
+  position: absolute;
+  right: 3px;
+  top: 3px;
+  z-index: 2;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--bk-lamp);
+  box-shadow: 0 0 0 2px var(--bk-paper);
+}
+/* the face of the sheet shown: ringed, the plane by it */
+#book .bk-face[data-here] .bk-av {
+  box-shadow:
+    0 0 0 2px var(--bk-paper),
+    0 0 0 4px var(--bk-night),
+    0 4px 10px rgba(29, 26, 47, 0.3);
+}
+/* the plane: a small paper plane right by the face, to its left; its tap sends the sheet shown to them */
+#book .bk-plane {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  right: calc(100% - 3px);
+  z-index: 3;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bk-paper);
+  color: var(--bk-night);
+  box-shadow:
+    inset 0 0 0 1.5px var(--bk-night),
+    0 2px 0 var(--bk-night),
+    0 4px 10px rgba(29, 26, 47, 0.22);
+  translate: 0 -50%;
+  cursor: pointer;
+  animation: bk-plane-in 0.28s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+/* (a finger finds it: the touch target is bigger than it looks) */
+#book .bk-plane::after {
+  content: '';
+  position: absolute;
+  inset: -7px;
+}
+#book .bk-plane svg:not(.bk-ring) {
+  width: 17px;
+  height: 17px;
+  translate: -1px 1px;
+  transition: translate 0.2s;
+}
+@media (hover: hover) {
+  #book .bk-plane:hover svg:not(.bk-ring) {
+    translate: 1px -1px;
+  }
+}
+#book .bk-plane:active {
+  translate: 0 calc(-50% + 2px);
+  box-shadow: inset 0 0 0 1.5px var(--bk-night);
+}
+#book .bk-plane:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+@keyframes bk-plane-in {
+  from {
+    opacity: 0;
+    translate: 10px -50%;
+  }
+}
+/* a send in its seconds to undo: a ring running out round the plane (a tap takes it back) */
+#book .bk-plane[data-sending] {
+  box-shadow: none;
+  animation: none;
+}
+#book .bk-ring {
+  position: absolute;
+  inset: -3px;
+  width: 36px;
+  height: 36px;
+  rotate: -90deg;
+  pointer-events: none;
+}
+#book .bk-ring circle {
+  fill: var(--bk-paper);
+  stroke: var(--bk-night);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  animation: bk-ring-run linear forwards;
+}
+#book .bk-ring .bk-ring-track {
+  stroke: var(--bk-edge);
+  animation: none;
+}
+#book .bk-ring circle:not(.bk-ring-track) {
+  fill: none;
+}
+@keyframes bk-ring-run {
+  to {
+    stroke-dashoffset: 100.53px;
+  }
+}
+/* carried over a face: it opens to take it */
+#book .bk-face[data-over] {
+  scale: 1.22;
+}
+#book .bk-face[data-over] .bk-av {
+  box-shadow:
+    0 0 0 2px var(--bk-paper),
+    0 0 0 4px var(--bk-lamp),
+    0 6px 14px rgba(29, 26, 47, 0.3);
+}
+/* everyone's faces as something is carried: they come out to take it */
+#book .bk-islands[data-carrying] .bk-face .bk-av {
+  animation: bk-face-ready 0.32s cubic-bezier(0.3, 1.6, 0.5, 1);
+}
+@keyframes bk-face-ready {
+  from {
+    scale: 0.6;
+    opacity: 0;
+  }
+}
+/* an invited person's book: their initial in their colour, filled while it's open, under a hairline after the faces
+ */
+#book .bk-sep {
+  flex: none;
+  width: 24px;
+  margin: 2px 0;
+  border: 0;
+  border-top: 1px solid rgba(42, 35, 82, 0.18);
+}
+#book .bk-person .bk-av {
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 0 0 2px var(--ink);
+  transition:
+    background-color 0.15s ease-out,
+    color 0.15s ease-out,
+    transform 0.1s ease-out;
+}
+#book .bk-person[aria-pressed='true'] .bk-av {
+  background: var(--ink);
+  color: #fff;
+}
+#book .bk-person:active .bk-av {
+  transform: scale(0.9);
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-face,
+  #book .bk-face .bk-av,
+  #book .bk-person .bk-av,
+  #book .bk-plane,
+  #book .bk-plane svg {
+    transition: none;
+    animation: none;
+  }
+}

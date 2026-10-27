@@ -8,7 +8,8 @@
 // and plays again once the clock moves; the bye counts the stall. A pause that cancels the element's play() before it
 // started (the context stopped right at the call's start) leaves the call on the stream, not on direct audio. The bye
 // carries the playback's timeline: each sentence and tick as it starts, when the voice ran dry, each stall and how long,
-// and a clock running slower than real time; a sentence cut by Skip before it started isn't in it. Once a reply has
+// and a clock running slower than real time; a sentence the line cut (the board talked over the agent) before it started
+// isn't in it. Once a reply has
 // played out, the stream still gets audio (silence), so Safari has nothing to loop between replies either (Chromium
 // only: it reads the stream's track). Pictures the board attaches or pastes on the call reach the line, and the strip
 // shows how far each got. A notice from the line (its agent can't answer) shows apart from the words while the call is
@@ -19,7 +20,7 @@
 // stopped audio clock asks for a tap if it cannot wake itself.
 // A new call clears the last one's status, hanging up adds no line, and the ON AIR sign lights while the board or the
 // agent speaks, never for the line's tick. A line that doesn't go through shows as an error until the board types again.
-// It rings from the tap until the line picks up, and the agent's handset clacks then.
+// It rings until the line picks up, and the agent's handset clacks then, both in the call's own sound.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -33,7 +34,7 @@ const browser = process.env.BROWSER === 'webkit' ? await webkit.launch()
   : await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', '--autoplay-policy=no-user-gesture-required'] });
 
 async function call(slow, stall) {
-  let sent = null, first = null, skipped = false, said = 0;
+  let sent = null, first = null, said = 0, cut = null;
   const { context, page, errors } = await callPage();
   if (stall?.how === 'start') await context.addInitScript(() => { window.pauseFirstPlay = true; });
   // each frame HQ schedules: when it starts and how long it is, on the call's AudioContext clock
@@ -76,7 +77,6 @@ async function call(slow, stall) {
       if (typeof m !== 'string') return void mic.push(Buffer.from(m));
       const e = JSON.parse(m);
       if (e.type === 'bye') return void (bye = e);
-      if (e.type === 'interrupt') return void (skipped = true); // (the line stops the reply)
       if (!e.agent) return;
       ws.send(JSON.stringify({ type: 'call', id: 'line', call: 1 }));
       if (stall?.how === 'notice') ws.send(JSON.stringify({ type: 'notice', text: NOTICE }));
@@ -84,7 +84,8 @@ async function call(slow, stall) {
       const t0 = Date.now();
       let at = 0, late = 0;
       for (const [i, [t, pcm, sentence]] of frames.entries()) {
-        if (skipped) break;
+        // (the board talks over the agent once the line has sent stall.said sentences: the line clears the voice and stops)
+        if (stall?.how === 'talkover' && said >= stall.said) { ws.send(JSON.stringify({ type: 'clear' })); cut = said; break; }
         const pcm16 = Buffer.from(pcm, 'base64'), starts = i === 0 || !sentence || sentence !== frames[i - 1][2]; // (a tick is one frame)
         // (slow.pace: from frame `from` on, each frame takes `pace` times its own length to come, as from a line that
         // fell behind; slow.pause: each sentence comes that many ms later than the line sent it, as after a tool step)
@@ -100,17 +101,13 @@ async function call(slow, stall) {
   });
   await page.goto(`${base}/?intro=0&open=intercom`);
   await page.click('#call');
-  let stalled = null, cut = null, noted = null;
+  let stalled = null, noted = null;
   if (stall?.how === 'notice') { // the call screen as the board sees it while the line says it
     while (first === null) await page.waitForTimeout(20);
     await page.waitForTimeout(1500);
     noted = await page.evaluate(() => { const n = document.querySelector('#call-note'); return { text: n.textContent, shown: !n.hidden && n.offsetHeight > 0 }; });
     if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT });
-  } else if (stall?.how === 'skip') { // the board presses Skip as soon as the line has sent stall.said sentences
-    while (said < stall.said) await page.waitForTimeout(5);
-    await page.click('#call-skip');
-    cut = said;
-  } else if (stall && stall.how !== 'start') { // the call's context stops for stall.for ms, stall.at ms into the reply: suspended
+  } else if (stall && !['start', 'talkover'].includes(stall.how)) { // the call's context stops for stall.for ms, stall.at ms into the reply: suspended
     // (as iOS does it, refusing to resume until then: the call tries on every tick), or its clock stuck
     while (first === null) await page.waitForTimeout(20);
     await page.waitForTimeout(stall.at);
@@ -407,27 +404,38 @@ async function callScreen() {
 }
 await callScreen();
 
-// It rings while the line picks up, as a phone does: the ringing tone (425 Hz) from the tap, again five seconds on,
-// cut the moment the line picks up, and the handset's clack then (a sample of HQ's sound kit). A line picked up again
-// after the connection drops rings and clacks no more, nor does a call the line never picks up after its hang-up.
+// It rings while the line picks up, as a phone does: the ringing tone (425 Hz) once the microphone is on, again five
+// seconds on, cut the moment the line picks up, and the handset's clack then (a sample of HQ's sound kit). A line
+// picked up again after the connection drops rings and clacks no more, nor does a call the line never picks up after
+// its hang-up. The ring and the clack play in the call's own sound, where its voice plays (the context with the stream
+// the <audio> element plays): an iPhone hears nothing of HQ's own Web Audio while the microphone is on.
 async function ringing() {
   const { context, page, errors } = await callPage();
   await context.addInitScript(() => {
     window.sounds = [];
+    // (each sound with whether its context is the call's: the one that made a stream for the <audio> element)
+    const calls = new WeakSet(), of = new WeakMap(), onCall = param => calls.has(of.get(param));
+    const stream = AudioContext.prototype.createMediaStreamDestination, osc = BaseAudioContext.prototype.createOscillator, gain = BaseAudioContext.prototype.createGain;
+    AudioContext.prototype.createMediaStreamDestination = function (...a) { calls.add(this); return stream.apply(this, a); };
+    BaseAudioContext.prototype.createOscillator = function () { const o = osc.call(this); of.set(o.frequency, this); return o; };
+    BaseAudioContext.prototype.createGain = function () { const g = gain.call(this); of.set(g.gain, this); return g; };
     const set = AudioParam.prototype.setValueAtTime, fade = AudioParam.prototype.setTargetAtTime, start = AudioBufferSourceNode.prototype.start;
-    AudioParam.prototype.setValueAtTime = function (v, ...a) { if (v === 425) window.sounds.push(['ring', performance.now()]); return set.call(this, v, ...a); };
-    AudioParam.prototype.setTargetAtTime = function (v, t, k) { if (v === 0 && k === 0.005) window.sounds.push(['cut', performance.now()]); return fade.call(this, v, t, k); };
-    AudioBufferSourceNode.prototype.start = function (...a) { if (this.buffer?.numberOfChannels === 2 && this.buffer.duration < 0.5) window.sounds.push(['kit', performance.now()]); return start.apply(this, a); };
+    AudioParam.prototype.setValueAtTime = function (v, ...a) { if (v === 425) window.sounds.push(['ring', performance.now(), onCall(this)]); return set.call(this, v, ...a); };
+    AudioParam.prototype.setTargetAtTime = function (v, t, k) { if (v === 0 && k === 0.005) window.sounds.push(['cut', performance.now(), onCall(this)]); return fade.call(this, v, t, k); };
+    AudioBufferSourceNode.prototype.start = function (...a) { if (this.buffer?.numberOfChannels === 2 && this.buffer.duration < 0.5) window.sounds.push(['kit', performance.now(), calls.has(this.context)]); return start.apply(this, a); };
   });
   let line = null;
   await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"(agent|resume)"/.test(m)) line = ws; }));
   const now = () => page.evaluate(() => performance.now());
-  const after = async t => (await page.evaluate(() => window.sounds)).filter(([, at]) => at >= t).map(([what, at]) => [what, Math.round(at - t)]);
+  const after = async t => (await page.evaluate(() => window.sounds)).filter(([, at]) => at >= t).map(([what, at, onCall]) => [what, Math.round(at - t), onCall]);
   await page.goto(`${base}/?intro=0&open=intercom`);
   const tapped = await now();
   await page.click('#call');
   while (!line) await page.waitForTimeout(50);
-  await page.waitForTimeout(6000 - ((await now()) - tapped)); // (the line takes its time: a second ring)
+  // (the line takes its time: a second ring, five seconds after the first, which waits for the microphone)
+  let rang;
+  while (!(rang = (await after(tapped)).find(([what]) => what === 'ring'))) await page.waitForTimeout(50);
+  await page.waitForTimeout(tapped + rang[1] + 5500 - (await now()));
   const picked = await now();
   line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 })); line.send(JSON.stringify({ type: 'state', state: 'listening' }));
   await page.waitForTimeout(5500);
@@ -452,13 +460,15 @@ async function ringing() {
   await context.close();
   assert.deepEqual(errors, []);
   const rings = before.filter(([what]) => what === 'ring').map(([, at]) => at);
-  assert.ok(rings.length === 2 && rings[0] < 1500 && Math.abs(rings[1] - rings[0] - 5000) < 300, `it doesn't ring from the tap, every 5 s: ${JSON.stringify(before)}`);
+  assert.ok(rings.length === 2 && rings[0] < 2500 && Math.abs(rings[1] - rings[0] - 5000) < 300, `it doesn't ring once the microphone is on, every 5 s: ${JSON.stringify(before)}`);
   assert.ok(since.some(([what, at]) => what === 'cut' && at < 100), `the ring isn't cut as the line picks up: ${JSON.stringify(since)}`);
-  assert.ok(since.some(([what, at]) => what === 'kit' && at < 500), `no clack as the line picks up: ${JSON.stringify(since)}`);
+  assert.ok(since.some(([what, at, onCall]) => what === 'kit' && at < 500 && onCall), `no clack in the call's sound as the line picks up: ${JSON.stringify(since)}`);
+  const offCall = [...before, ...since, ...unanswered].filter(([what, , onCall]) => what !== 'kit' && !onCall);
+  assert.deepEqual(offCall, [], 'the ring plays on HQ\'s own sound, not the call\'s (an iPhone never hears it)');
   assert.ok(!since.some(([what]) => what === 'ring'), `it rings on after the pickup: ${JSON.stringify(since)}`);
   assert.deepEqual(again, [], 'picked up again after a drop, it rings or clacks');
   assert.ok(unanswered[0]?.[0] === 'ring' && unanswered.some(([what]) => what === 'cut') && unanswered.filter(([what]) => what === 'ring').length === 1, `hanging up before the pickup doesn't cut the ring: ${JSON.stringify(unanswered)}`);
-  console.log(`ok: it rings from the tap (${rings.join(', ')} ms), is cut as the line picks up, and the handset clacks then`);
+  console.log(`ok: it rings once the microphone is on (${rings.join(', ')} ms), is cut as the line picks up, and the handset clacks then`);
 }
 await ringing();
 
@@ -556,10 +566,10 @@ await askFailed();
 // The call's screen as the board sees it: the agent's little screen at its top,
 // its figure moving while it speaks and still while it's quiet, over the transcript: the board's lines and the agent's
 // in order, each growing as the line sends more of the same turn, in a box that scrolls and keeps the newest in view,
-// unless the board scrolled up to read. Minimised on a small screen, or by the Pencil coming down on a bigger one, the
-// bubble is a slim strip of audio bars moving with the voice, no figure, hang up and Pause in reach, still dragged to
-// a corner and tapped open; minimised by its key on the bigger screen it has the figure again.
-async function transcriptAndSlim() {
+// unless the board scrolled up to read. Minimised, the bubble has one form all call: the agent's figure, bobbing with its
+// voice, hang up and Pause in reach, dragged to a corner and tapped open. On a phone it's drawn smaller; on an iPad mini
+// the Pencil coming down and the minimise key make the same bubble.
+async function transcriptAndBubble() {
   const seen = {};
   const tone = seconds => Array.from({ length: seconds * 50 }, (_, f) => Buffer.from(Int16Array.from({ length: 320 }, (_, i) => Math.sin(2 * Math.PI * 300 * (f * 320 + i) / 16000) * 8000).buffer));
   // (the call's page, picked up, its screen able to show)
@@ -594,16 +604,17 @@ async function transcriptAndSlim() {
     const f = fig.getBoundingClientRect();
     return { shown: f.width > 0 && f.height > 0 && f.bottom <= box.getBoundingClientRect().top, moves: new Set(at).size > 1 };
   });
-  // the bubble as the board sees it: where it is, the figure in it or not, the bars and how tall they're drawn, its keys
-  const bubble = page => page.evaluate(() => {
+  // the bubble as the board sees it: where it is, the figure in it or not, whether the figure moves over 0.4 s, its keys
+  const bubble = page => page.evaluate(async () => {
     const b = document.querySelector('.callbubble'), r = b.getBoundingClientRect(), shown = el => !!el && el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden';
-    return { w: r.width, h: r.height, x: r.left, y: r.top, topLeft: r.left + r.width / 2 < innerWidth / 2 && r.top + r.height / 2 < innerHeight / 2, figure: shown(b.querySelector('canvas, .cb-initial')),
-      bars: [...b.querySelectorAll('.cb-bars > *')].filter(shown).map(i => i.getBoundingClientRect().height),
+    const fig = b.querySelector('canvas, .cb-initial'), at = [];
+    for (let i = 0; i < 10; i++) { at.push((fig.getBoundingClientRect().top - b.getBoundingClientRect().top).toFixed(1)); await new Promise(done => setTimeout(done, 40)); }
+    return { w: r.width, h: r.height, x: r.left, y: r.top, topLeft: r.left + r.width / 2 < innerWidth / 2 && r.top + r.height / 2 < innerHeight / 2, figure: shown(fig),
+      moves: new Set(at).size > 1,
       hangUp: shown(b.querySelector('[aria-label="Hang up"]')), pause: shown(b.querySelector('.cb-pause')), eye: shown(b.querySelector('[role=img]')) };
   });
-  const bars = async page => { const all = []; for (let i = 0; i < 8; i++) { all.push(...(await bubble(page)).bars); await page.waitForTimeout(40); } return all; };
 
-  // on a phone: the transcript, then the slim bubble
+  // on a phone: the transcript, then the bubble
   let { context, page, errors, line } = await open({ width: 390, height: 844 });
   seen.quietFigure = await figure(page);
   send(line, 'heard', 'Can you look at'); await page.waitForTimeout(100);
@@ -645,7 +656,7 @@ async function transcriptAndSlim() {
   seen.phoneQuiet = await bubble(page);
   for (const f of tone(1.5)) line.send(f);
   await page.waitForTimeout(300);
-  seen.phoneBars = await bars(page);
+  seen.phoneTalking = await bubble(page);
   // (dragged to the top left, it lands there; tapped, the call opens; Hang up is in reach)
   const b = seen.phoneQuiet;
   await page.mouse.move(b.x + 20, b.y + b.h / 2); await page.mouse.down();
@@ -657,8 +668,8 @@ async function transcriptAndSlim() {
   await context.close();
   seen.phoneErrors = errors;
 
-  // on an iPad mini: the Pencil comes down while the call is in front, and the bubble is slim, the eye and Pause in it
-  // while the screen is shown; opened and minimised by its key, it has the figure again
+  // on an iPad mini: the Pencil comes down while the call is in front, and the bubble has the figure, the eye and Pause in
+  // it while the screen is shown; opened and minimised by its key, it's the same bubble
   ({ context, page, errors } = await open({ width: 744, height: 1133 }));
   await page.click('#call-screenshare'); await page.waitForTimeout(300);
   await page.evaluate(() => document.body.dispatchEvent(new PointerEvent('pointerdown', { pointerType: 'pen', bubbles: true })));
@@ -685,15 +696,16 @@ async function transcriptAndSlim() {
   assert.deepEqual(seen.takenBack.lines.slice(-2), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post? …']], 'a turn taken back shows the board\'s first words twice');
   assert.deepEqual(seen.answeredAgain.lines.slice(-3), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post?'], ['agent', 'It is.']], 'a turn taken back and answered isn\'t one line and its answer');
   assert.deepEqual(seen.takenBackAfterSaid.lines.slice(-2), [['agent', 'It is.'], ['board', 'Is it paid? And sent? …']], 'a turn taken back after the reply began isn\'t one board line');
-  const slim = x => !x.figure && x.bars.length > 2 && x.hangUp;
-  assert.ok(slim(seen.phoneQuiet), `on a phone the bubble isn't slim audio bars: ${JSON.stringify(seen.phoneQuiet)}`);
-  assert.ok(Math.max(...seen.phoneBars) > Math.max(...seen.phoneQuiet.bars), `the bars don't move with the voice: ${JSON.stringify([seen.phoneQuiet.bars, seen.phoneBars])}`);
-  assert.ok(seen.dragged.topLeft, `the slim bubble wasn't dragged into the top left corner: ${JSON.stringify(seen.dragged)}`);
-  assert.ok(slim(seen.pen) && seen.pen.eye && seen.pen.pause, `the Pencil didn't make the bubble slim, its eye and Pause in it: ${JSON.stringify(seen.pen)}`);
-  assert.ok(seen.key.figure && !seen.key.bars.length, `minimised by its key on an iPad, the bubble has no figure: ${JSON.stringify(seen.key)}`);
-  console.log('ok: the call\'s little screen and its transcript (in order, scrolling, the newest in view); the bubble slim on a phone and with the Pencil');
+  const face = x => x.figure && x.hangUp;
+  assert.ok(face(seen.phoneQuiet) && !seen.phoneQuiet.moves, `on a phone the bubble isn't the agent's still figure: ${JSON.stringify(seen.phoneQuiet)}`);
+  assert.ok(seen.phoneTalking.moves, `the bubble's figure doesn't move with the voice: ${JSON.stringify(seen.phoneTalking)}`);
+  assert.ok(seen.dragged.topLeft, `the bubble wasn't dragged into the top left corner: ${JSON.stringify(seen.dragged)}`);
+  assert.ok(face(seen.pen) && seen.pen.eye && seen.pen.pause, `the Pencil didn't make the bubble with the figure, its eye and Pause in it: ${JSON.stringify(seen.pen)}`);
+  assert.ok(face(seen.key) && seen.key.w === seen.pen.w && seen.key.h === seen.pen.h, `minimised by its key, the bubble isn't the Pencil's: ${JSON.stringify([seen.pen, seen.key])}`);
+  assert.ok(seen.phoneQuiet.w < seen.key.w, `on a phone the bubble isn't drawn smaller: ${JSON.stringify([seen.phoneQuiet, seen.key])}`);
+  console.log('ok: the call\'s little screen and its transcript (in order, scrolling, the newest in view); the bubble one form, the figure, on a phone and with the Pencil');
 }
-await transcriptAndSlim();
+await transcriptAndBubble();
 
 // A share that reaches nobody says so: while the server answers the page's batches with seen
 // false, the bubble shows no eye and the call screen says the screen isn't reaching the agent (the key still stops it);
@@ -723,6 +735,9 @@ async function unseenScreen() {
     await r.fulfill({ json: quiet ? { ok: true, ...(empty && { seen: false }) } : { ok: true, seen } });
   });
   await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+    // (answering pings as the line does: else the call's window counts up how late the line hears, a change each second
+    // in its recording, and the page is never quiet.)
+    if (typeof m === 'string' && JSON.parse(m).type === 'ping') return ws.send(JSON.stringify({ type: 'pong', late: 0 }));
     if (typeof m !== 'string' || !JSON.parse(m).agent) return;
     line = ws;
     ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
@@ -1095,7 +1110,8 @@ else {
 }
 // ...and while it played, the microphone's frames carried it too, after the microphone's own 320 samples, as it played
 // (the voice line takes it out of what the microphone heard). The board's
-// microphone here is Chromium's fake one, a beep the voice never matches.
+// microphone here is Chromium's fake one, a beep the voice never matches. The call's ring and clack play there too,
+// before the reply: the reply is found by its own first words.
 {
   const sizes = new Set(mic.map(m => m.length));
   assert.deepEqual([...sizes].sort(), [1280, 640], `frame sizes ${[...sizes]}`);
@@ -1103,7 +1119,16 @@ else {
   const heard = mic.flatMap(m => m.length === 1280 ? plane(m, 640) : new Array(320).fill(0));
   const sent = frames.flatMap(([, pcm]) => { const b = Buffer.from(pcm, 'base64'); return Array.from(new Int16Array(b.buffer, b.byteOffset, b.length / 2)); });
   // (the best lag of the reply in what came beside the microphone, and how alike they are there: 1 is the same)
-  const energy = x => x.reduce((a, v) => a + v * v, 0), first = heard.findIndex(v => v !== 0), n = Math.min(sent.length, 16000 * 4);
+  const energy = x => x.reduce((a, v) => a + v * v, 0), n = Math.min(sent.length, 16000 * 4);
+  // (roughly where first: the reply's first 0.1 s of sound, wherever in the whole plane it's most alike)
+  const opens = sent.findIndex(v => v !== 0), opening = sent.slice(opens, opens + 1600), own = energy(opening);
+  let first = 0, near = 0, there = energy(heard.slice(0, opening.length));
+  for (let at = 0; at + opening.length <= heard.length; at++) {
+    if (at) there += heard[at + opening.length - 1] ** 2 - heard[at - 1] ** 2;
+    let dot = 0; for (let i = 0; i < opening.length; i++) dot += opening[i] * heard[at + i];
+    const r = dot / Math.sqrt(own * there);
+    if (r > near) [first, near] = [at - opens, r];
+  }
   let best = [0, 0];
   for (let lag = Math.max(0, first - 800); lag < first + 800; lag++) {
     let dot = 0; for (let i = 0; i < n; i++) dot += sent[i] * (heard[lag + i] ?? 0);
@@ -1156,24 +1181,24 @@ assert.ok(slowEvents.length === 1 && Math.abs(slowEvents[0][2] - 0.5) < 0.1 && s
 assert.ok(slow.bye.timeline.every(e => e[1] !== 'stall'), JSON.stringify(slow.bye.timeline));
 console.log('ok: a slow clock is in the timeline:', JSON.stringify(slowEvents));
 
-// Skip while the line has sent sentences ahead of what's playing: the ones that never started aren't in the timeline
-// (a sentence the stand-in sent after the Skip, before it heard the interrupt, plays after the cut, as it would on a call)
-// (the first sentence the line sent while the one before still played: Skip right after it's sent; a fixed time missed
+// The board talks over the agent while the line has sent sentences ahead of what's playing: the line clears the voice,
+// and the ones that never started aren't in the timeline
+// (the first sentence the line sent while the one before still played: cut right after it's sent; a fixed time missed
 // it in a reply that starts with tool steps)
 const sentences = starts.filter(f => f[2]).map(([t, , s]) => [t, frames.filter(f => f[2] === s).reduce((d, f) => d + Buffer.from(f[1], 'base64').length / 32000, 0)]);
 const ahead = sentences.findIndex(([t], i) => i && t < sentences[i - 1][0] + sentences[i - 1][1]);
 assert.ok(ahead > 0, 'no sentence in these frames was sent while the one before played');
-const skipped = await call(null, { said: ahead + 1, how: 'skip' });
-const timed = skipped.bye.timeline, cutAt = timed.find(e => e[1] === 'cut')?.[0];
+const talkedOver = await call(null, { said: ahead + 1, how: 'talkover' });
+const timed = talkedOver.bye.timeline, cutAt = timed.find(e => e[1] === 'cut')?.[0];
 const voiced = timed.filter(e => e[1] === 'voice'), beforeCut = voiced.filter(e => e[0] <= cutAt).length;
-assert.ok(cutAt != null && beforeCut < skipped.cut, `${skipped.cut} sentences sent before the Skip: ${JSON.stringify(timed)}`);
-assert.ok(voiced.length - beforeCut <= skipped.said - skipped.cut, `${skipped.said - skipped.cut} sent after it: ${JSON.stringify(timed)}`);
-console.log(`ok: Skip leaves the ${skipped.cut - beforeCut} sentences that never played out of the timeline:`, JSON.stringify(timed));
+assert.ok(cutAt != null && beforeCut < talkedOver.cut, `${talkedOver.cut} sentences sent before the cut: ${JSON.stringify(timed)}`);
+assert.equal(voiced.length, beforeCut, `a sentence started after the cut: ${JSON.stringify(timed)}`);
+console.log(`ok: a cut leaves the ${talkedOver.cut - beforeCut} sentences that never played out of the timeline:`, JSON.stringify(timed));
 // (and after the cut, as after a reply's end, the stream is still fed: cut mid-word, a starved one loops the word)
-if (skipped.quiet === null) console.log('skipped: what reaches the stream after the Skip (no MediaStreamTrackProcessor here)');
+if (talkedOver.quiet === null) console.log('skipped: what reaches the stream after the cut (no MediaStreamTrackProcessor here)');
 else {
-  assert.ok(skipped.quiet >= 100, `the stream got ${skipped.quiet} chunks in the 1.5 s after the Skip: starved`);
-  console.log(`ok: after the Skip the stream is still fed, ${skipped.quiet} chunks in 1.5 s`);
+  assert.ok(talkedOver.quiet >= 100, `the stream got ${talkedOver.quiet} chunks in the 1.5 s after the cut: starved`);
+  console.log(`ok: after the cut the stream is still fed, ${talkedOver.quiet} chunks in 1.5 s`);
 }
 
 // the element's first play() is paused before it starts: it plays once the clock moves, and the call stays on the stream

@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 // The book's stories as the board lives them, held like an iPad mini in WebKit (touch, 744 × 1133). One check for all of
 // them; each thread adds its story here.
-//   node platform/hq/book-check.mjs [--shots dir]
+//   node platform/hq/book-check.mjs [--shots dir] [--stories words]
 // The Pencil on HQ: a ring drawn on HQ's own page with a pen, no button first; nothing moves as the pen lifts (the line
-// on screen just before is the line after, pixel for pixel but antialiasing); its number at the mark; the post-it with
-// the words said while drawing, live from a stand-in voice line; Send puts the note on its sheet in the book (the
-// anchor in document px, the words as spoken, a snip), and the mark stays numbered on the page. A finger's drag draws
+// on screen just before is the line after, pixel for pixel but antialiasing); no number on a lone mark; the pen rested,
+// the note goes on its sheet in the book with no post-it (the anchor in document px, the words said while drawing, a
+// snip), and the mark is a faint hairline on the page once it's in. A finger's
+// drag draws
 // nothing. Held still, the pen takes a voice note there. A scribble wipes a mark, a two-finger tap brings it back. The
 // ring, its number and Send again in Wire (?renderer=wire). And on a page of their own, every kind of line (pressure, a
 // lift at no pressure, one crossing another, a highlighter) is the same wet as dry (shared/review/inkcheck.mjs).
@@ -13,12 +14,10 @@
 // mock data): HQ's page laid out in the room the book leaves (its toolbar whole, nothing of it under the book), the
 // rail put, the book folded away to its lip with HQ's page the whole screen and brought back, spread, portrait starting
 // folded, a phone's book opening as one whole page that stays whole, what's remembered after a reload, a page that
-// grows as it's written down and New page starting the next. The post-it on a phone, the book folded.
+// grows as it's written down and New page starting the next. A ring on a phone, the book folded, rests into the book.
 // The Pencil on HQ's page, never over the book beside it, in WebKit and Chromium at iPad mini landscape: review mode's
-// layer the page's width, a pen on the book's paper drawing nothing, the post-it and the pin on the page, over a dialog
-// too, and the spread covering them with the page.
-// The post-it where the book is folded away saying so, with the mic, a Cancel and one Send, in both looks; pinched
-// out, the day's pages side by side, then the week as a contact sheet, and back.
+// layer the page's width, a pen on the book's paper drawing nothing, a ring at the page's edge going in, the pin on the
+// page, over a dialog too, and the spread covering it with the page. Pinched out, the day's pages side by side, then the week as a contact sheet, and back.
 // A guest's note on the board's sheet: their name tag in their colour, beside the board's own, one plane for both.
 // A second screen: an iPad (WebKit) paired with a desktop (Chromium) by the book's code, a ring live across, finished
 // on the other screen, swapped, flicked back, closed (bookpair.mjs).
@@ -31,11 +30,18 @@
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
-// Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, fill the post-it and stand beside
-// the ink as type; sent as written, or as typed once changed; read after Send, they still reach the note and the book.
+// The pin (bookpin.mjs): summoned by the open book, away while it's folded; a note's sheet and review
+// mode's menu naming one owner. Carried and let go, it stays exactly where it's
+// dropped, the same button while it's held.
+// Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, stand beside the ink as type and
+// go into the book as written; read late, they still reach the note.
+// Ink on HQ's screens (bookink.mjs): a ring shows on the screen it was drawn on only, in this tab and another, notes left
+// on what HQ no longer draws show nowhere, and once its sheet goes it's a faint hairline there, its card a tap away.
 // The film's other stories (bookfilm.mjs): a morning, yesterday's sheet in the book with its answer clipped on; HQ's
 // page beside the book, none of its buttons cut, at every width that keeps a page (in Wire too, in Chromium); and a
 // picture dragged in from beside, taped where it's let go. (Wire: job #19263)
+// The drawing tools (bookdraw.mjs): erased at two sizes, shapes filled and outlined, an arrow, ink and a picture
+// selected, moved, cut, pasted and deleted, Undo and Redo through all of it, with a mouse and the Pencil.
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { crc32, deflateSync } from 'node:zlib';
@@ -48,10 +54,26 @@ import { walkStory } from './bookwalk.mjs';
 import { pairStory } from './bookpair.mjs';
 import { phoneStory } from './bookphone.mjs';
 import { slipStory } from './bookslip.mjs';
-import { findStory, foldStory } from './bookfind.mjs';
+import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
-import { morningStory, everyWidthStory } from './bookfilm.mjs';
+import { mouseStories } from './bookmouse.mjs';
+import { drawStories } from './bookdraw.mjs';
+import { spaceStories } from './bookspace.mjs';
+import { deskStories, notPaper, inkPixels } from './bookdesk.mjs';
+import { frameStories } from './bookframe.mjs';
+import { bodyStories } from './bookbody.mjs';
+import { inkStory } from './bookink.mjs';
+import { sentStory, phoneSendStory } from './booksent.mjs'; // (phoneSendStory: job #19631)
+import { sendFaceStories } from './booksendface.mjs';
+import { pinStory } from './bookpin.mjs';
+import { chromeStories } from './bookchrome.mjs';
+import { circleStories } from './bookcircle.mjs';
+import { liftStories } from './booklift.mjs';
+import { penStories } from './bookpen.mjs';
+// (LOOKS: job #19359)
+import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
 
+const only = process.argv.includes('--stories') ? process.argv[process.argv.indexOf('--stories') + 1] : null;
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
 const shot = async (name, page) => shots && page.screenshot({ path: `${shots}/${name}.png` });
@@ -74,7 +96,6 @@ let ids = 0;
 const ownerOf = n =>
   pages.find(p => p.id === n.page)?.kind === 'call' ? `call ${n.page}` : (n.owner ?? org.company.ceo);
 const openOf = (owner = org.company.ceo) => notes.filter(n => n.status === 'open' && ownerOf(n) === owner);
-const sheetNotes = () => openOf();
 const renumber = () => new Set(notes.map(ownerOf)).forEach(o => openOf(o).forEach((n, i) => (n.n = i + 1)));
 // each owner's open sheet: { id, status, send_at }, and the sheets sent, newest first
 const sheets = new Map(),
@@ -102,15 +123,58 @@ function deliverDue() {
       });
       sheets.delete(owner);
     }
+  // (a page given on its own: a one-off sheet, sent once its seconds are over.)
+  for (const s of pageSends.filter(p => p.send_at <= Date.now())) {
+    pageSends.splice(pageSends.indexOf(s), 1);
+    sentSheets.unshift({ ...s, status: 'sent', send_at: null, sent: new Date().toISOString() });
+  }
 }
-function sheetStore(path, body) {
+// pages given by their corner, in their seconds to undo (booksend.ts).
+const pageSends = [];
+function pageSendStore(path, body) {
+  if (path === '/api/book/page/send') {
+    const page = pages.find(p => p.id === body.id);
+    if (!['free', 'call'].includes(page?.kind))
+      return { refused: [400, 'a free page or a call’s is given on its own'] };
+    const id = ++ids,
+      note = { id: ++ids, n: 1, page: page.id, status: 'open', words: page.label ?? '', slips: [], links: [] };
+    pageSends.push({
+      id,
+      owner: body.to,
+      name: null,
+      status: 'sending',
+      send_at: Date.now() + 10_000,
+      sent: null,
+      page: page.id,
+      notes: [note],
+    });
+    return pageSends.at(-1);
+  }
+  const s = path === '/api/book/undo' && pageSends.find(p => p.id === body.id);
+  if (!s) return null;
+  pageSends.splice(pageSends.indexOf(s), 1);
+  return { id: s.id, status: 'undone' };
+}
+function sheetStore(path, body, q) {
+  const given = pageSendStore(path, body);
+  if (given) return given;
   const note = notes.find(n => n.id === body?.id);
   if (path === '/api/book/sheets') {
     deliverDue();
     const owners = [...new Set([...sheets.keys(), ...notes.filter(n => n.status === 'open').map(ownerOf)])];
     return {
-      open: owners.filter(o => !o.startsWith('call ') && openOf(o).length).map(shownSheet),
+      open: [...owners.filter(o => !o.startsWith('call ') && openOf(o).length).map(shownSheet), ...pageSends],
       sent: sentSheets,
+    };
+  }
+  // (a call page's notes, on a sheet of its own for its page)
+  if (path === '/api/book/calls') {
+    const pages = q.get('pages').split(',').map(Number);
+    return {
+      calls: pages
+        .map(page => `call ${page}`)
+        .filter(o => openOf(o).length)
+        .map(o => ({ id: 9000 + Number(o.slice(5)), owner: null, status: 'call', notes: openOf(o) })),
     };
   }
   if (path === '/api/book/send' || path === '/api/book/undo') {
@@ -126,7 +190,12 @@ function sheetStore(path, body) {
   // (words read late only over the words they were read for)
   if (path === '/api/book/note/edit' && body.was !== undefined && body.was !== note.words)
     return { refused: [409, 'the note has other words by now: read it again'] };
-  if (path === '/api/book/note/edit') return { note: Object.assign(note, { words: body.words, said: body.said }) };
+  // (and lines joined to it on HQ's page: its ink and its snip cut again.)
+  if (path === '/api/book/note/edit' && body.snip) snips.set(note.id, body.snip);
+  if (path === '/api/book/note/edit')
+    return {
+      note: Object.assign(note, { words: body.words, said: body.said, ...(body.anchor && { anchor: body.anchor }) }),
+    };
   if (path === '/api/book/note/move') {
     Object.assign(note, { owner: body.to ?? org.company.ceo, links: [] });
     for (const n of notes) n.links = (n.links ?? []).filter(id => id !== note.id);
@@ -160,28 +229,38 @@ function sheetStore(path, body) {
 function store(path, body, q) {
   if (path === '/api/book') return { day: '2026-10-26', today: '2026-10-26', days: [], pages };
   if (path === '/api/book/page/new') {
-    const page = { id: ++ids, ...body };
+    const page = { id: ++ids, day: '2026-10-26', ...body }; // (its day)
     pages.push(page);
     return page;
   }
+  // (each with whose sheet it's on and whether that's a call's.)
+  const listed = n => ({ ...n, owner: n.owner ?? null, onCall: ownerOf(n).startsWith('call ') });
   if (path === '/api/book/notes' && q.has('url'))
     return {
-      notes: notes.filter(n => {
-        const u = new URL(n.anchor.url, base);
-        return u.origin === base && u.pathname + u.search === q.get('url');
-      }),
+      notes: notes
+        .filter(n => {
+          const u = new URL(n.anchor.url, base);
+          return u.origin === base && u.pathname + u.search === q.get('url');
+        })
+        .map(listed),
     };
-  if (path === '/api/book/notes') return { notes: notes.filter(n => n.page === +q.get('page')) };
+  if (path === '/api/book/notes') return { notes: notes.filter(n => n.page === +q.get('page')).map(listed) };
   // (a page read whole and saved, its pictures with it.)
   if (path === '/api/book/page') {
     const page = pages.find(p => p.id === +q.get('id'));
-    return page && { ...page, ink: page.ink ?? [], scraps: (page.scraps ?? []).map(s => ({ ...s, url: scrapUrl(s) })) };
+    const scraps = (page?.scraps ?? []).map(s => ({ ...s, url: scrapUrl(s) }));
+    // (and the words typed on it.)
+    return page && { ...page, ink: page.ink ?? [], scraps, texts: page.texts ?? [] };
   }
   if (path === '/api/book/page/save') {
-    const page = pages.find(p => p.id === body.id);
-    return page && Object.assign(page, { ink: body.ink, scraps: body.scraps, h: body.h ?? page.h });
+    const page = pages.find(p => p.id === body.id),
+      // (its width grows too, and the words typed on it kept.)
+      grown = { h: body.h ?? page?.h, w: body.w ?? page?.w, ...(body.texts && { texts: body.texts }) },
+      // (its top-left once it grows up or left.)
+      corner = { x: body.x ?? page?.x ?? 0, y: body.y ?? page?.y ?? 0 };
+    return page && Object.assign(page, { ink: body.ink, scraps: body.scraps, ...grown, ...corner });
   }
-  const played = sheetStore(path, body);
+  const played = sheetStore(path, body, q);
   if (played) return played;
   if (path === '/api/book/note') {
     const note = {
@@ -304,6 +383,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
     if (url.pathname === '/api/org') return r.fulfill({ json: org });
     // (a call reads the board's language before it dials, and its Show starts a watch-along: nothing recorded here)
     if (url.pathname === '/api/language') return r.fulfill({ json: { lang: 'en' } });
+    // (nobody invited: the rail draws its faces only once it has read who has a book.)
+    if (url.pathname === '/api/book/people') return r.fulfill({ json: [] });
     if (url.pathname === '/api/watchalong/start') return r.fulfill({ json: { id: 1, events: null } });
     if (url.pathname === '/api/book/scrap') {
       const req = r.request();
@@ -318,6 +399,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
     }
     if (url.pathname === '/api/book/snip') {
       const snip = snips.get(+url.searchParams.get('id'));
+      if (!snip) return r.fulfill({ status: 404, json: { error: 'not found' } });
       return r.fulfill({
         contentType: snip.slice(5, snip.indexOf(';')),
         body: Buffer.from(snip.split(',')[1], 'base64'),
@@ -335,7 +417,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
     const answer = store(url.pathname, body, url.searchParams);
     if (answer?.refused) return r.fulfill({ status: answer.refused[0], json: { error: answer.refused[1] } });
     if (answer) return r.fulfill({ json: answer });
-    if (['/api/requests', '/api/gazette'].includes(url.pathname)) return r.fulfill({ json: [] });
+    // (no guests' books here: HQ's rail reads them with its sheets, and tells the page only once both are read.)
+    if (['/api/requests', '/api/gazette', '/api/book/people'].includes(url.pathname)) return r.fulfill({ json: [] });
     return r.fulfill({ status: 404, body: '' });
   });
   return context;
@@ -347,10 +430,50 @@ const MINI = { width: 1133, height: 744 },
   PHONE = { width: 390, height: 844 };
 const SETTLE_MS = 700; // the book's slide (260 ms) and HQ laying itself out again after it
 
+// A story in every look the browser shows (bookfilm.mjs's LOOKS), its stills marked -wire in Wire.
+async function inLooks(browser, story) {
+  for (const look of LOOKS(browser))
+    try {
+      await story(look, (name, page) => shot(`${name}${look && '-wire'}`, page));
+    } catch (e) {
+      e.message = `${look ? 'in Wire' : 'in Brownstone'}: ${e.message}`;
+      throw e;
+    }
+}
 function STORIES() {
   return {
     "a morning: yesterday's sheet in the book, sent, its answer clipped on": browser =>
       morningStory(browser, { hq, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
+    // (the book's tools with a mouse on a desktop.)
+    ...mouseStories({
+      hqIn,
+      base,
+      store,
+      pages,
+      notes,
+      posts,
+      org,
+      renumber,
+      shot,
+      settled,
+      noErrorsIn,
+      settle: SETTLE_MS,
+    }),
+    // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
+    ...drawStories({ hqIn, base, store, pages, shot, settled, settle: SETTLE_MS }),
+    // (the paper's space: every way, the pinch, never frozen.)
+    ...spaceStories({ hqIn, base, store, pages, shot, settled, noErrorsIn, settle: SETTLE_MS }),
+    // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
+    ...penStories({ hqIn, base, store, pages, shot, settled }),
+    // (moving about the book's pages with a mouse: the overview, the zoom, the pan, New page, the heading.)
+    ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS }),
+    // (the book as an object: its shadow, its floating controls, its spine let go, its cover and name, the pairing
+    // card at any width.)
+    ...frameStories({ hq, shot, settled, settle: SETTLE_MS }),
+    // (the book's body: its handle, where it's let go, the table under it, its open and its turns.)
+    ...bodyStories({ hq, shot, settled, settle: SETTLE_MS }),
+    // (the book's chrome: the column, the foot and the overview, the pages' names, Safari's strip.)
+    ...chromeStories({ base, hqIn, shot, settled, settle: SETTLE_MS }),
     'iPad mini landscape: the book open beside the page, HQ whole in it': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
@@ -369,7 +492,7 @@ function STORIES() {
         const { page, errors, done } = await hq(browser, MINI);
         try {
           const open = await sight(page);
-          await page.click('#book [title^="Put the book away"]');
+          await putAway(page);
           await settled(page, 'folded');
           let seen = await sight(page);
           assert.equal(seen.mode, 'folded');
@@ -394,7 +517,7 @@ function STORIES() {
         await drag(page, await spineAt(page), 120, 3);
         await settled(page, 'folded');
         assert.equal((await sight(page)).mode, 'folded');
-        await pullLip(page, -240);
+        await pullLip(page, -600);
         await settled(page, 'open');
         const seen = await sight(page);
         assert.equal(seen.mode, 'open');
@@ -404,35 +527,37 @@ function STORIES() {
         await done();
       }
     },
-    'the spine dragged left past half spreads the book over the screen, the rail still there': async browser => {
-      const { page, errors, done } = await hq(browser, MINI);
-      try {
-        const open = await sight(page);
-        await drag(page, await spineAt(page), -260, 14);
-        await settled(page, 'spread');
-        const seen = await sight(page);
-        assert.equal(seen.mode, 'spread');
-        assert.ok(
-          seen.book.left < open.page / 2 && seen.book.right <= seen.rail.left,
-          `the spread is ${JSON.stringify(seen.book)}, beside a page of ${open.page}`,
-        );
-        railStays(seen, open);
-        await shot('book-spread', page);
-        await page.click('#book [title^="Put the book away"]');
-        await settled(page, 'open');
-        assert.equal((await sight(page)).page, open.page, 'the page is back at its open width');
-        assert.deepEqual(errors, []);
-      } finally {
-        await done();
-      }
-    },
+    // (the spread only where HQ would be narrower than a phone)
+    'the spine let go with HQ narrower than a phone spreads the book over the screen, the rail still there':
+      async browser => {
+        const { page, errors, done } = await hq(browser, MINI);
+        try {
+          const open = await sight(page);
+          await drag(page, await spineAt(page), -320, 14, undefined, HOLD_MS);
+          await settled(page, 'spread');
+          const seen = await sight(page);
+          assert.equal(seen.mode, 'spread');
+          assert.ok(
+            seen.book.left < open.page / 2 && seen.rail.left >= seen.book.left && seen.rail.right <= seen.book.right,
+            `the spread is ${JSON.stringify(seen.book)}, beside a page of ${open.page}`,
+          );
+          railStays(seen, open);
+          await shot('book-spread', page);
+          await putAway(page);
+          await settled(page, 'open');
+          assert.equal((await sight(page)).page, open.page, 'the page is back at its open width');
+          assert.deepEqual(errors, []);
+        } finally {
+          await done();
+        }
+      },
     'portrait starts folded; pulled in, the book opens beside a narrower page, never over it': async browser => {
       const { page, errors, done } = await hq(browser, MINI_PORTRAIT);
       try {
         const start = await sight(page);
         assert.equal(start.mode, 'folded');
         folded(start, MINI_PORTRAIT);
-        await pullLip(page, -260);
+        await pullLip(page, -420);
         await settled(page, 'open');
         const seen = await sight(page);
         assert.equal(seen.mode, 'open');
@@ -470,14 +595,14 @@ function STORIES() {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const before = (await sight(page)).book.width;
-        await drag(page, await spineAt(page), -60, 10);
+        await drag(page, await spineAt(page), -60, 10, undefined, HOLD_MS);
         await page.waitForTimeout(SETTLE_MS);
         const wider = (await sight(page)).book.width;
         assert.ok(wider > before + 40, `dragged from ${before} to ${wider}`);
         await page.reload();
         await ready(page);
         assert.equal((await sight(page)).book.width, wider);
-        await page.click('#book [title^="Put the book away"]');
+        await putAway(page);
         await settled(page, 'folded');
         await page.reload();
         await ready(page);
@@ -496,7 +621,7 @@ function STORIES() {
           beside(seen);
           hqWhole(seen);
           await shot('book-desktop', page);
-          await page.click('#book [title^="Put the book away"]');
+          await putAway(page);
           await settled(page, 'folded');
           folded(await sight(page), DESKTOP);
           await shot('book-desktop-folded', page);
@@ -525,13 +650,12 @@ function STORIES() {
             const seen = await sight(page);
             coversPaper(await pageAtMiddle(page, seen.book, PHONE), seen.book, `round ${round}, laid out`);
             assert.ok(
-              seen.book.left <= 10 && seen.book.right <= seen.rail.left,
+              seen.book.left <= 12 && seen.rail.left >= seen.book.left && seen.rail.right <= seen.book.right,
               `the paper: ${JSON.stringify(seen.book)}`,
             );
             onScreen(seen.rail, PHONE, 'the rail');
-            assert.equal(seen.facing, false, "a phone's paper is one page, not two facing");
             if (round === 1) await shot('book-phone-open', page);
-            await page.click('#book [title^="Put the book away"]');
+            await putAway(page);
             await settled(page, 'folded');
             folded(await sight(page), PHONE);
           }
@@ -540,37 +664,43 @@ function STORIES() {
           await done();
         }
       },
+    // (the page is endless: panned down past what it holds, a line written there grows it in the store, and the paper
+    // shows nothing but paper all the while.)
     "a page grows as it's written down": async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const paper = (await sight(page)).book,
-          before = await pageAtMiddle(page, paper),
           stored = await storedPages(page);
-        await write(page, paper.left + 60, MINI.height - 60);
+        await page.mouse.move(paper.left + paper.width / 2, MINI.height / 2);
+        for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 400);
         await page.waitForTimeout(SETTLE_MS);
-        const after = await pageAtMiddle(page, paper);
-        assert.ok(after.height > before.height, `the page stayed ${before.height} px tall`);
+        assert.deepEqual(await notPaper(page), [], 'the paper shows past the page');
+        await write(page, paper.left + 60, MINI.height - 40);
+        await page.waitForTimeout(SETTLE_MS);
         const grown = (await storedPages(page)).find(p => p.h > stored.find(q => q.id === p.id).h);
         assert.ok(grown, 'no page grew in the store');
-        assert.equal(grown.h, after.height);
         await shot('book-grown', page);
         assert.deepEqual(errors, []);
       } finally {
         await done();
       }
     },
-    'New page starts the next: the row gets a page more, and writing on it keeps it': async browser => {
+    // (the pages control says which page of the day it is)
+    'New page starts the next: the day gets a page more, and writing on it keeps it': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const paper = (await sight(page)).book,
-          row = await page.locator('#book section [data-kind]').count(),
-          stored = (await storedPages(page)).length;
-        await page.getByRole('button', { name: 'New page' }).click();
+          stored = (await storedPages(page)).length,
+          where = () =>
+            page
+              .locator('#book')
+              .getByRole('button', { name: /^The day's pages/ })
+              .getAttribute('aria-label'),
+          [, n] = (await where()).match(/(\d+) of \d+$/);
+        await page.getByRole('button', { name: 'New page', exact: true }).click();
         await page.waitForTimeout(SETTLE_MS);
-        assert.equal(await page.locator('#book section [data-kind]').count(), row + 1);
-        const blank = await pageAtMiddle(page, paper);
-        assert.ok(blank.left >= paper.left && blank.left < paper.left + 20, `the new page is at ${blank.left}`);
-        assert.equal(blank.inked, false, 'the new page has ink on it');
+        assert.match(await where(), new RegExp(`Free page, ${+n + 1} of ${+n + 1}$`));
+        assert.equal(await inkPixels(page), 0, 'the new page has ink on it');
         assert.equal((await storedPages(page)).length, stored, 'a page was kept before anything was written on it');
         await write(page, paper.left + 80, MINI.height / 2);
         await page.waitForTimeout(SETTLE_MS);
@@ -615,7 +745,7 @@ function STORIES() {
         // a finger's tap on it: its words, when it went and the answer, and the page hears its touch cancelled
         let heard = await fingerTap(page, 300, y + 7);
         assert.deepEqual(heard, { up: 0, cancel: 1 }, 'a tap on a hairline is the card’s, not the page’s');
-        const card = page.getByRole('dialog', { name: 'A sent note' });
+        const card = page.getByRole('dialog', { name: 'A note in the book' });
         await card.waitFor({ timeout: 3000 });
         // (when it went comes once the sheets are read)
         let said = await card.innerText();
@@ -642,6 +772,31 @@ function STORIES() {
         ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
         ...{ shot, settled, fingerTap, noErrorsIn },
       }),
+    "the open book summons the pin, a note's sheet and the menu name one owner; dropped, it stays": browser =>
+      inLooks(browser, (look, shot) =>
+        pinStory({
+          ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, penOn, ring, noErrorsIn, look },
+        }),
+      ),
+    // (a circle on HQ, on a call or not, and the pen's tap.)
+    ...circleStories({
+      hqIn,
+      base,
+      MINI,
+      settled,
+      posts,
+      pages,
+      notes,
+      snips,
+      org,
+      penOn,
+      ring,
+      inkAt,
+      shot,
+      noErrorsIn,
+    }),
+    // (a mark's ink lifting into the book, open and folded.)
+    ...liftStories({ hqIn, base, MINI, settled, penOn, ring, inkAt, shot, noErrorsIn }),
     'a picture pasted in the book lands taped, and one dragged in lands where it was let go': async browser => {
       const { page, errors, done } = await hqOnStore(browser);
       try {
@@ -757,7 +912,8 @@ function STORIES() {
       renumber();
       const { page, errors, done } = await hqOnStore(browser);
       try {
-        const hers = page.getByRole('group', { name: /^Note \d+, Esmee/ });
+        // (a note numbered only to tell it apart from a snip's)
+        const hers = page.getByRole('group', { name: /^Note( \d+)?, Esmee/ });
         await hers.waitFor({ timeout: 5000 });
         // her name on it, in her colour; the board's own note beside it carries no name
         const tag = hers.getByText('Esmee', { exact: true });
@@ -768,12 +924,12 @@ function STORIES() {
         const wordsOf = g => g.getByRole('textbox').first().inputValue();
         assert.equal(await wordsOf(hers), 'The price is hard to read');
         const boards = [];
-        for (const g of await page.getByRole('group', { name: /^Note \d+$/ }).all())
+        for (const g of await page.getByRole('group', { name: /^Note( \d+)?$/ }).all())
           if ((await wordsOf(g)) === 'yes, both') boards.push(g);
         assert.equal(boards.length, 1, "the board's own note is on the same sheet");
         assert.equal(await boards[0].getByText('Esmee').count(), 0, "the board's note has no name tag");
-        // both go in one send: the plane counts hers with the board's
-        const plane = page.getByRole('button', { name: new RegExp(`^Send to .+: ${sheetNotes().length} notes$`) });
+        // both go in one send: the one plane by the face
+        const plane = page.getByRole('button', { name: /^Send to / });
         assert.ok(await plane.isVisible(), 'one plane sends the lot');
         await shot('book-guest-note', page);
         noErrorsIn(errors);
@@ -815,9 +971,8 @@ function STORIES() {
       const { page, errors, done } = await hqOnStore(browser);
       try {
         // Kit's face in the rail counts them, and a tap on it opens Kit's sheet in the book
-        const face = page.locator('#book nav [title^="For Kit"]');
+        const face = page.locator('#book nav [aria-label^="For Kit"]');
         await face.waitFor({ timeout: 5000 });
-        assert.match(await face.getAttribute('title'), /2 notes/);
         await face.click();
         await page.waitForTimeout(SETTLE_MS);
         // (Kit's sheet: another one of today's sheets has its own Note 1)
@@ -846,10 +1001,10 @@ function STORIES() {
         const held = await fingerHold(kits.getByRole('group', { name: 'Note 1' }).locator('img'), 900);
         assert.deepEqual(held, { lifted: true, paste: false }, 'a held note lifts, with no Paste bubble under it');
         await page.waitForTimeout(SETTLE_MS);
-        // one tap on the plane: no question asked, the ring runs out with Undo on it
-        const plane = page.getByRole('button', { name: 'Send to Kit: 2 notes' });
+        // one tap on the plane by Kit's face: no question asked, the ring runs out round it (by the face, was in the page's heading)
+        const plane = page.getByRole('button', { name: 'Send to Kit' });
         await plane.click();
-        const timer = page.getByRole('timer', { name: /^Sending to Kit/ });
+        const timer = page.locator('#book .bk-plane[data-for="kit"] .bk-ring');
         await timer.waitFor({ timeout: 3000 });
         assert.equal(await page.getByRole('dialog').count(), 0, 'nothing asks "are you sure?"');
         const ring = () =>
@@ -864,8 +1019,8 @@ function STORIES() {
           posts.some(p => p.path === '/api/book/send' && p.body.id === sheetFor(kit).id),
           'the sheet is sent',
         );
-        // Undo within the seconds: the sheet is open again, the plane back with its count
-        await page.getByRole('button', { name: 'Undo the send to Kit' }).click();
+        // Undo within the seconds: the sheet is open again, the plane back
+        await page.locator('#book .bk-undo').click();
         await plane.waitFor({ timeout: 3000 });
         assert.ok(
           posts.some(p => p.path === '/api/book/undo'),
@@ -875,12 +1030,13 @@ function STORIES() {
         // sent again and left: after ten seconds the sheet reads "Sent 08:16", creased, its words read-only
         await plane.click();
         await timer.waitFor({ timeout: 3000 });
-        const went = page.getByText(/^Sent \d\d:\d\d$/);
+        const went = page.getByText(/^2 notes sent to Kit · \d\d:\d\d$/);
         await went.waitFor({ timeout: 16_000 });
         assert.ok(await inBook(page, went), '"Sent" shows at the sheet\'s head');
         assert.equal(await timer.count(), 0, 'the seconds to undo are over');
+        // (a sent note shows no number)
         assert.equal(
-          await kits.getByRole('group', { name: 'Note 1' }).getByRole('textbox').isEditable(),
+          await kits.getByRole('group').first().getByRole('textbox').isEditable(),
           false,
           'a sent note is read-only',
         );
@@ -898,40 +1054,71 @@ function STORIES() {
     // (Search, bookfind.mjs)
     "Search: a word said while drawing yesterday found as it's written, its page opened at the note, the number lit":
       browser => findStory(browser, { hq, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
-    'Search on a desktop: the caret in the field, put away with the book, and back with it and its words, the caret too':
-      browser => foldStory(browser, { hq, noErrorsIn, desktop: DESKTOP }),
+    'Search on a desktop: in the overview, its words kept when the overview closes and opens again, Esc wiping them':
+      browser => keptStory(browser, { hq, noErrorsIn, desktop: DESKTOP }),
     // (handwriting read into type, bookwritten.mjs)
-    'handwriting on the page read into type: in the post-it and beside the ink, sent as written, changed, read late, refused':
+    // (a send that says what went to whom, a plane in view, notes clear of the writing: booksent.mjs; in Wire too: job #19359)
+    "a sheet's send: notes clear of the board's writing, numbered only to tell apart, the plane in view, what went to whom":
       browser =>
-        writtenStory(browser, {
-          hqOnStore,
-          ui,
-          reader,
-          hush: on => (hushed = on),
-          posts,
-          notes,
-          pages,
-          ceo: org.departments.flatMap(d => d.agents).find(a => a.id === org.company.ceo).name,
-          noErrorsIn,
-          shot,
+        inLooks(browser, (look, shot) =>
+          sentStory({
+            ...{ browser, hqIn, base, viewport: MINI, settled, pages, notes, snips, sentSheets, sheets },
+            ...{ renumber, SNIP, shot, noErrorsIn, look, posts },
+          }),
+        ),
+    // (giving through the faces: a face's sheet turned to, handed over, a page by its corner.)
+    ...sendFaceStories({
+      ...{ hqIn, base, viewport: MINI, settled, pages, notes, snips, posts, sheets, org, renumber },
+      ...{ SNIP, shot, noErrorsIn },
+    }),
+    // (the board's phone, 420 × 912)
+    "a phone's folded book: its handle nudges no one; opened, a face turns it to their sheet, the plane in view":
+      browser =>
+        phoneSendStory({
+          ...{ browser, hqIn, base, viewport: { width: 420, height: 912 }, settled, pages, notes, snips, sentSheets },
+          ...{ sheets, renumber, SNIP, shot, noErrorsIn },
         }),
+    'handwriting on the page read into type: beside the ink, into the book as written, read late, refused': browser =>
+      writtenStory(browser, {
+        hqOnStore,
+        ui,
+        reader,
+        hush: on => (hushed = on),
+        posts,
+        notes,
+        pages,
+        ceo: org.departments.flatMap(d => d.agents).find(a => a.id === org.company.ceo).name,
+        noErrorsIn,
+        shot,
+      }),
+    // (in Wire too: job #19359)
+    'a ring shows on its own screen only, in any tab; sent, a faint hairline there; nothing stuck': browser =>
+      inLooks(browser, (look, shot) =>
+        inkStory({
+          ...{ browser, hqIn, base, MINI, settled, ui, penOn, ring, inkAt, fingerTap, notes, org, posts },
+          ...{ shot, noErrorsIn, look },
+        }),
+      ),
     "HQ's page never under the book, at every width that keeps a page: split screen to a big desktop": browser =>
       everyWidthStory(browser, { hq, sight, beside, hqWhole, settled, shot, noErrorsIn }),
-    "pinched out, the day's pages side by side; again, the week as a contact sheet; a page tapped, or pinched in, back":
+    // (the overview opens from its button, never a pinch on the page.)
+    "the overview: the day's pages side by side, in order; pinched out, the week as a contact sheet; a page tapped, or pinched in, back":
       async browser => {
         const { page, errors, done } = await hq(browser, MINI);
         try {
           const paper = (await sight(page)).book,
             today = (await storedPages(page)).length;
-          await pinch(page, paper, 0.5);
+          await overviewButton(page).click();
+          await page.waitForTimeout(SETTLE_MS);
           let far = await farView(page);
-          assert.equal(far.level, 'day', 'one pinch out shows the day');
+          assert.equal(far.level, 'day', 'the overview shows the day');
           assert.equal(far.days.length, 1);
           assert.equal(far.days[0].frames.length, today, "every page of the day's");
           const row = far.days[0].frames;
+          // (side by side, in rows where the book is too narrow for them all: none out of sight.)
           assert.ok(
-            row.every((f, i) => !i || (f.top === row[0].top && f.left > row[i - 1].right)),
-            `side by side: ${JSON.stringify(row)}`,
+            row.every((f, i) => !i || (f.top === row[i - 1].top ? f.left > row[i - 1].right : f.top > row[i - 1].top)),
+            `side by side, in order: ${JSON.stringify(row)}`,
           );
           assert.ok(
             row.every(f => f.left >= paper.left && f.right <= paper.left + paper.width),
@@ -957,9 +1144,15 @@ function STORIES() {
           await page.locator('#book [data-level=week] .bk-frame').last().click();
           await page.waitForTimeout(SETTLE_MS);
           assert.equal((await farView(page)).level, undefined, 'a page tapped goes back to the page');
-          assert.equal(await page.locator('#book .bk-when').textContent(), far.days[1].name, 'on its own day');
+          // (its heading on the page says the day.)
+          const day = await page.locator('#book .bk-page:not([hidden]) .bk-when').textContent();
+          assert.ok(
+            far.days[1].name.split(' ').every(w => day.includes(w)),
+            `on its own day: ${day}, not ${far.days[1].name}`,
+          );
           // and a pinch in comes back from the day
-          await pinch(page, paper, 0.5);
+          await overviewButton(page).click();
+          await page.waitForTimeout(SETTLE_MS);
           assert.equal((await farView(page)).level, 'day');
           await pinch(page, paper, 2);
           assert.equal((await farView(page)).level, undefined, 'a pinch in goes back to the page');
@@ -1022,7 +1215,7 @@ async function hqOnStore(browser) {
     errors = errorsOf(page);
   await page.goto(`${base}/?intro=0`);
   await until(page, '#loading.gone');
-  await page.waitForSelector('review-mode .fab');
+  await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away while the book's folded)
   await settled(page, 'open');
   return { page, errors, done: () => context.close() };
 }
@@ -1111,6 +1304,12 @@ const noErrorsIn = errors =>
     [],
   );
 
+// The overview's button at the paper's foot
+const overviewButton = page =>
+  page
+    .locator('#book')
+    .getByRole('button', { name: /^The overview:/ })
+    .first();
 // Two fingers on the book's paper, apart and then closing to (or opening to) k of that, as Safari hands them over
 const pinch = (page, paper, k) =>
   page.evaluate(
@@ -1149,7 +1348,8 @@ const farView = page =>
     return {
       level: far.hidden ? undefined : far.dataset.level,
       days: [...far.querySelectorAll('.bk-far-day')].map(d => ({
-        name: d.querySelector('b').textContent,
+        // (the day's name: the week's row's, or the day's at the overview's head.)
+        name: (d.querySelector('.bk-far-name') ?? far.querySelector('.bk-far-nav b')).textContent,
         frames: [...d.querySelectorAll('.bk-frame')].map(f => {
           const r = f.getBoundingClientRect(),
             c = f.querySelector('canvas');
@@ -1197,12 +1397,12 @@ async function hq(browser, viewport, options = {}, look = '') {
 }
 async function ready(page) {
   // (folded away, the rail's faces are out of sight)
-  await page.waitForSelector('#book [title^="For "]', { state: 'attached', timeout: 30_000 });
+  await page.waitForSelector('#book [aria-label^="For "]', { state: 'attached', timeout: 30_000 });
   await page.waitForTimeout(SETTLE_MS);
 }
-// What the board sees, measured: the book's mode, HQ's page width, the book's paper, the rail's and the lip's boxes,
-// whether the folded book is out of sight, whether the spread's paper holds two facing pages, and HQ's toolbar buttons
-// that show
+// What the board sees, measured: the book's mode, HQ's page width, the book's paper, the rail's (the controls floating
+// over the paper's right edge, together) and the lip's boxes, whether the folded book is out of sight, and HQ's toolbar
+// buttons that show (the rail's islands, no facing pages)
 const sight = page =>
   page.evaluate(() => {
     const box = el => {
@@ -1219,11 +1419,22 @@ const sight = page =>
     return {
       mode: document.documentElement.dataset.book,
       page: document.body.getBoundingClientRect().width,
-      book: box(document.querySelector('#book section')),
-      rail: box(document.querySelector('#book nav')),
+      book: box(document.querySelector('#book section > div')),
+      rail: (() => {
+        const all = [...document.querySelectorAll('#book nav [role="toolbar"][aria-orientation="vertical"]')]
+          .map(el => el.getBoundingClientRect())
+          .filter(r => r.width);
+        const left = Math.min(...all.map(r => r.left)),
+          right = Math.max(...all.map(r => r.right));
+        return {
+          left: Math.round(left),
+          right: Math.round(right),
+          width: Math.round(right - left),
+          top: Math.round(Math.min(...all.map(r => r.top))),
+        };
+      })(),
       lip: { ...box(lip), shows: getComputedStyle(lip).opacity > 0.5 },
       away: getComputedStyle(document.querySelector('#book section')).visibility === 'hidden',
-      facing: document.querySelector('#book').hasAttribute('data-facing'),
       tools: [...document.querySelectorAll('#hud .tools > *')].filter(shown).map(box),
     };
   });
@@ -1242,9 +1453,10 @@ function folded(seen, screen) {
     `the book shows: ${JSON.stringify(seen)}`,
   );
   assert.ok(seen.away, 'the folded book is out of sight');
+  // (the handle, at the screen's edge)
   assert.ok(
-    seen.lip.shows && seen.lip.right <= screen.width && seen.lip.width <= 12,
-    `the lip: ${JSON.stringify(seen.lip)}`,
+    seen.lip.shows && Math.abs(seen.lip.right - screen.width) <= 1 && seen.lip.width < screen.width / 2,
+    `the handle: ${JSON.stringify(seen.lip)}`,
   );
 }
 // A box (the rail's) on the screen, none of it past an edge
@@ -1273,12 +1485,22 @@ const spineAt = async page => {
   const r = await page.locator('#book [role=separator]').boundingBox();
   return r.x + r.width / 2;
 };
-// A drag across the screen at two-thirds of its height (or at y): from x by dx, in steps (few: a flick)
-async function drag(page, x, dx, steps, y = (page.viewportSize().height * 2) / 3) {
+// A drag across the screen at two-thirds of its height (or at y): from x by dx, in steps (few: a flick), held still
+// for hold ms before it's let go (hold, a drag let go where it is, not a flick)
+async function drag(page, x, dx, steps, y = (page.viewportSize().height * 2) / 3, hold = 0) {
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + dx, y, { steps });
+  if (hold) await page.waitForTimeout(hold);
   await page.mouse.up();
+}
+// (longer than a flick's reading of the last moves, booklayout.js)
+const HOLD_MS = 200;
+// The book put away: its spine flicked right, to the screen's edge (the rail's
+// arrow gone)
+async function putAway(page) {
+  const x = await spineAt(page);
+  await drag(page, x, page.viewportSize().width - 10 - x, 3);
 }
 // The book in a mode, laid out: headless WebKit's frames come slowly under HQ's scene, and it tells the page a new
 // size up to a second or two late
@@ -1290,6 +1512,7 @@ async function settled(page, mode) {
 async function bookStories(browser, which) {
   let failed = 0;
   for (const [name, story] of Object.entries(STORIES())) {
+    if (only && !name.includes(only)) continue;
     try {
       await story(browser);
       console.log(`ok   ${which}: ${name}`);
@@ -1301,7 +1524,10 @@ async function bookStories(browser, which) {
   return failed;
 }
 
-const browser = await playwright().webkit.launch();
+// (--stories: Chromium, which this machine has; the whole check's first part is WebKit's)
+const browser = await (only
+  ? playwright().chromium.launch({ args: ['--disable-dev-shm-usage'] })
+  : playwright().webkit.launch());
 let context = await hqIn(browser);
 
 // HQ at an address, on a page of its own
@@ -1311,7 +1537,7 @@ const open = async url => {
   errors = errorsOf(page);
   await page.goto(`${base}${url}`);
   await until(page, '#loading.gone');
-  await page.waitForSelector('review-mode .fab');
+  await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away while the book's folded)
 };
 const ui = s => `review-mode >> css=${s}`;
 
@@ -1389,18 +1615,38 @@ const pixels = src =>
 // how two pictures differ: the worst channel, and how many pixels differ past 24 (the first few of them), leaving out
 // a square of corner device px at the top left
 async function differ(a, b, { corner = 0 } = {}) {
-  const [p, q] = await Promise.all([pixels(a), pixels(b)]);
-  let worst = 0,
-    changed = 0;
-  const at = [];
-  for (let i = 0; i < p.data.length; i += 4) {
-    if ((i / 4) % p.width < corner && i / 4 / p.width < corner) continue;
-    const d = Math.max(...[0, 1, 2].map(k => Math.abs(p.data[i + k] - q.data[i + k])));
-    worst = Math.max(worst, d);
-    if (d > 24 && changed++ < 6)
-      at.push([(i / 4) % p.width, Math.floor(i / 4 / p.width), p.data.slice(i, i + 3), q.data.slice(i, i + 3)]);
-  }
-  return { worst, changed, at };
+  // (worked out in the page: two pictures' pixels carried out to here hold up the stand-ins for seconds.)
+  return page.evaluate(
+    async ([a, b, corner]) => {
+      const data = async src => {
+        const img = new Image();
+        img.src = src;
+        await img.decode();
+        const c = Object.assign(document.createElement('canvas'), { width: img.width, height: img.height }),
+          g = c.getContext('2d');
+        g.drawImage(img, 0, 0);
+        return { data: g.getImageData(0, 0, c.width, c.height).data, width: c.width };
+      };
+      const [p, q] = await Promise.all([data(a), data(b)]);
+      let worst = 0,
+        changed = 0;
+      const at = [];
+      for (let i = 0; i < p.data.length; i += 4) {
+        if ((i / 4) % p.width < corner && i / 4 / p.width < corner) continue;
+        const d = Math.max(...[0, 1, 2].map(k => Math.abs(p.data[i + k] - q.data[i + k])));
+        worst = Math.max(worst, d);
+        if (d > 24 && changed++ < 6)
+          at.push([
+            (i / 4) % p.width,
+            Math.floor(i / 4 / p.width),
+            [...p.data.slice(i, i + 3)],
+            [...q.data.slice(i, i + 3)],
+          ]);
+      }
+      return { worst, changed, at };
+    },
+    [a, b, corner],
+  );
 }
 // whether the board sees the number's red disc at a point (ACCENT, #ff5a5f)
 async function redAt(x, y) {
@@ -1419,6 +1665,8 @@ async function ringed(look) {
   const loop = ring(372, 330, 150, 60),
     clip = { x: 372 - 175, y: 330 - 85, width: 350, height: 170 };
   await pen(loop, { lift: false });
+  // (a ring takes a moment to draw: the mic, on from the pen's touch, is listening by its end)
+  await page.waitForTimeout(1500);
   const { wet, dry } = await lifting(clip);
   // (the mark's number may land in the very frame of the lift, its disc in the clip's top left 32 px, 64 device px:
   // the ring never comes that near)
@@ -1432,43 +1680,21 @@ async function ringed(look) {
   // inkcheck.mjs below holds every line to a few pixels on the CPU canvas, as Safari draws)
   assert.ok(jump.worst < 100, `nothing moves as the pen lifts${look} (${JSON.stringify(jump)})`);
   assert.equal(await page.locator(ui('.veil')).isHidden(), true, 'the Pencil draws on HQ with no mode over the page');
-  await page.waitForSelector(ui('.sheet:not([hidden])'));
-  await aScrap(look);
-  // its number, at the top left of the ring
-  for (let i = 0; i < 20 && !(await redAt(372 - 150 - 6, 330 - 60 - 6)); i++) await page.waitForTimeout(150);
-  assert.ok(await redAt(372 - 150 - 6, 330 - 60 - 6), `the mark's number shows at it${look}`);
-  assert.ok(
-    !posts.some(p => p.path === '/api/book/page/new' && p.body.url === here),
-    'counting its number makes no page in the book',
-  );
-  // the words said while drawing, live
-  await page.waitForFunction(
-    () => /shorter|Make this/.test(document.querySelector('review-mode').shadowRoot.querySelector('textarea').value),
-    null,
-    { timeout: 15_000 },
-  );
-  // a picture pasted into the post-it stays out: the book's notes take none
-  const pics = await page.evaluate(async () => {
-    const root = document.querySelector('review-mode').shadowRoot,
-      c = Object.assign(document.createElement('canvas'), { width: 8, height: 8 }),
-      png = await new Promise(res => c.toBlob(res, 'image/png')),
-      dt = new DataTransfer();
-    dt.items.add(new File([png], 'shot.png', { type: 'image/png' }));
-    root
-      .querySelector('textarea')
-      .dispatchEvent(
-        new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, composed: true, cancelable: true }),
-      );
-    await new Promise(res => setTimeout(res, 300));
-    return root.querySelectorAll('.pics li').length;
-  });
-  assert.equal(pics, 0, "a picture pasted into the book's post-it isn't taken");
+  // (rested, it goes into the book with no post-it: settle.js.)
+  await page.waitForTimeout(800);
+  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, `no post-it${look}`);
+  // a lone mark carries no number: numbers only tell several apart (shared/review/notenumbers.js)
+  assert.ok(!(await redAt(372 - 150 - 6, 330 - 60 - 6)), `a lone mark shows no number${look}`);
   await shot(`book-pencil-ring${look}`, page);
-  // (headless WebKit paints and hit-tests the post-it late while it pops in: the button's own click, as a tap gives)
-  await page.locator(ui('.send')).dispatchEvent('click');
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden', timeout: 15_000 });
+  for (let i = 0; i < 100 && posts.filter(p => p.path === '/api/book/note').length === noted; i++)
+    await page.waitForTimeout(100);
   const sent = posts.filter(p => p.path === '/api/book/note')[noted]?.body,
     made = pages.find(p => p.id === sent?.page);
+  // (the note's own page for HQ's address, once)
+  assert.ok(
+    posts.filter(p => p.path === '/api/book/page/new' && p.body.url === here).length <= 1,
+    'counting its number makes no page in the book',
+  );
   // (one page an owner a day, whatever HQ's address)
   assert.deepEqual(
     made && { kind: made.kind, owner: made.owner },
@@ -1485,24 +1711,11 @@ async function ringed(look) {
   assert.match(sent.words, /shorter/, 'the words said while drawing are its words');
   assert.equal(sent.said, 'spoken');
   assert.match(sent.snip ?? '', /^data:image\/jpeg;base64,/, 'a snip of the page around it goes with it');
-  assert.ok(
-    await redAt(372 - 150 - 6, 330 - 60 - 6),
-    `sent to its sheet, the mark keeps its number on the page${look}`,
-  );
+  await page.waitForTimeout(800); // (its lift into the book)
+  assert.ok(!(await redAt(372 - 150 - 6, 330 - 60 - 6)), `in the book, its hairline shows no number${look}`);
+  assert.ok((await inkAt(page, 372 + 150, 330)) < 0.45 * 255, `in the book, a hairline on the page${look}`);
   await shot(`book-pencil-sent${look}`, page);
   return { sent, jump };
-}
-// The post-it where the book is folded away: it shows where the book is, and has the mic, a Cancel and one Send.
-async function aScrap(look) {
-  const seen = await page.evaluate(() => {
-    const sheet = document.querySelector('review-mode').shadowRoot.querySelector('.sheet');
-    return {
-      book: document.documentElement.dataset.book,
-      buttons: [...sheet.querySelectorAll('.row button')].filter(b => b.offsetWidth).map(b => b.textContent),
-    };
-  });
-  assert.equal(seen.book, 'folded', `the post-it shows where the book is folded away${look}`);
-  assert.deepEqual(seen.buttons, ['', 'Cancel', 'Send'], `the mic, a Cancel and one Send${look}`);
 }
 // ---- the Pencil on a phone, the book folded away to its lip: the post-it on HQ's page, within its whole width, and
 // Send puts the note in the book
@@ -1511,25 +1724,18 @@ async function onAPhone(browser) {
   context = await hqIn(browser, PHONE);
   await open('/?intro=0');
   await settled(page, 'folded');
-  const noted = posts.filter(p => p.path === '/api/book/note').length;
+  // (into the book, a note of its own or joining one beside it, its ink landing in the folded book's lip)
+  const noted = posts.length,
+    inBook = () => posts.slice(noted).filter(p => p.path === '/api/book/note' || p.path === '/api/book/note/edit');
+  await page.evaluate(() => document.addEventListener('book:landed', () => (window.__landed = true), { once: true }));
   await pen(ring(195, 300, 110, 50));
-  await page.waitForSelector(ui('.sheet:not([hidden])'));
-  await aScrap(' on a phone');
-  const seen = await page.evaluate(() => {
-    const b = document.querySelector('review-mode').shadowRoot.querySelector('.sheet').getBoundingClientRect();
-    return { page: document.body.getBoundingClientRect().width, left: b.left, right: b.right };
-  });
-  assert.equal(seen.page, PHONE.width, "HQ's page is the phone's whole width");
-  assert.ok(seen.left >= 0 && seen.right <= PHONE.width, `the post-it at ${seen.left}-${seen.right} on a phone`);
-  await page.waitForFunction(
-    () => /shorter|Make this/.test(document.querySelector('review-mode').shadowRoot.querySelector('textarea').value),
-    null,
-    { timeout: 15_000 },
-  );
-  await shot('book-phone-postit', page);
-  await page.locator(ui('.send')).dispatchEvent('click');
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden', timeout: 15_000 });
-  assert.equal(posts.filter(p => p.path === '/api/book/note').length, noted + 1, 'Send puts the note in the book');
+  const width = await page.evaluate(() => document.body.getBoundingClientRect().width);
+  assert.equal(width, PHONE.width, "HQ's page is the phone's whole width");
+  for (let i = 0; i < 100 && !inBook().length; i++) await page.waitForTimeout(100);
+  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, 'no post-it on a phone either');
+  assert.equal(inBook().length, 1, 'rested, the note goes in the book');
+  await page.waitForFunction(() => window.__landed, null, { timeout: 3000 });
+  await shot('book-phone-ring', page);
   noErrors();
 }
 // ---- the Pencil writes on HQ's page, never on the book beside it: in landscape, the book open.
@@ -1538,7 +1744,7 @@ async function besideTheBook(browser) {
   context = await hqIn(browser, MINI);
   await open('/?intro=0');
   await settled(page, 'open');
-  // review mode's layer and its pin, and the post-it when it's up, beside the page's width
+  // review mode's layer and its pin beside the page's width
   const layer = () =>
     page.evaluate(() => {
       const root = document.querySelector('review-mode').shadowRoot,
@@ -1552,7 +1758,6 @@ async function besideTheBook(browser) {
         page: Math.round(document.body.getBoundingClientRect().width),
         ui: box(root.querySelector('.ui')),
         fab: box(root.querySelector('.fab')),
-        sheet: box(root.querySelector('.sheet')),
       };
     });
   const onPage = (l, what) =>
@@ -1565,23 +1770,21 @@ async function besideTheBook(browser) {
   assert.deepEqual([l.ui.left, l.ui.right], [0, l.page], "review mode's layer is HQ's page, not the book beside it");
   onPage(l, 'fab');
   // a pen on the book's paper is the book's
-  const noted = posts.length;
+  let noted = posts.length;
   await pen(Array.from({ length: 16 }, (_, i) => [seen.book.left + 40 + i * 12, 420 + 8 * Math.sin(i)]));
-  // (a post-it waits for its screenshot: WebKit's takes up to 6 s)
-  const opened = await page.waitForSelector(ui('.sheet'), { state: 'visible', timeout: 8000 }).then(
-    () => true,
-    () => false,
+  await page.waitForTimeout(4000); // (past a mark's settle and its screenshot)
+  assert.equal(
+    posts.slice(noted).filter(p => p.path === '/api/book/note').length,
+    0,
+    "a pen on the book's paper is no note",
   );
-  assert.equal(opened, false, "a pen on the book's paper opens no note on the page");
-  assert.equal(posts.slice(noted).filter(p => p.path === '/api/book/note').length, 0);
-  // a ring at the page's edge: its post-it on the page
+  noted = posts.length;
+  // a ring at the page's edge: into the book, a note of its own or joining one beside it
+  const inBook = () => posts.slice(noted).filter(p => p.path === '/api/book/note' || p.path === '/api/book/note/edit');
   await pen(ring(l.page - 70, 420, 50, 34));
-  await page.waitForSelector(ui('.sheet'), { state: 'visible' });
-  await page.waitForTimeout(500); // (it pops in)
-  onPage(await layer(), 'sheet');
+  for (let i = 0; i < 100 && !inBook().length; i++) await page.waitForTimeout(100);
+  assert.equal(inBook().length, 1, 'a ring on the page goes in');
   await shot('book-pencil-beside', page);
-  await page.locator(ui('[data-cancel]')).dispatchEvent('click');
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden' });
   // over one of HQ's dialogs (the top layer, placed by the window), still the page's width
   await page.evaluate(() => {
     const d = Object.assign(document.createElement('dialog'), { id: 'beside' });
@@ -1593,8 +1796,8 @@ async function besideTheBook(browser) {
   assert.deepEqual([l.ui.left, l.ui.right], [0, l.page], "over a dialog, review mode's layer is still the page's");
   await page.evaluate(() => document.querySelector('#beside').remove());
   await page.waitForTimeout(300);
-  // the spread covers HQ's page, the pin with it
-  await drag(page, await spineAt(page), -260, 14);
+  // the spread covers HQ's page, the pin with it (the spine let go with HQ narrower than a phone)
+  await drag(page, await spineAt(page), 320 - (await spineAt(page)), 14, undefined, HOLD_MS);
   await settled(page, 'spread');
   l = await layer();
   assert.equal(
@@ -1612,6 +1815,15 @@ const noErrors = () =>
     [],
   );
 
+// --stories <words>: only the book's stories whose names hold those words, in Chromium, nothing else (a check's share of
+// the worker's memory holds one part at a time).
+if (only) {
+  await context.close();
+  const failed = await bookStories(browser, 'chromium');
+  await browser.close();
+  server.close();
+  process.exit(failed ? 1 : 0);
+}
 await open('/?intro=0');
 const { sent, jump } = await ringed('');
 
@@ -1675,35 +1887,6 @@ assert.deepEqual(
 assert.equal(posts.filter(p => p.path === '/api/book/note').length, 2, '...not a new one in its place');
 noErrors();
 
-// ---- a post-it cancelled while its note goes in: the note it was is done with it, the next post-it is left alone
-let letGo;
-const held = new Promise(res => (letGo = res));
-await page.route('**/api/book/note', async r => {
-  await held;
-  await r.fallback();
-});
-await pen(ring(372, 330, 150, 60));
-await page.waitForSelector(ui('.sheet'), { state: 'visible' });
-const filing = page.waitForRequest('**/api/book/note');
-await page.locator(ui('.send')).dispatchEvent('click');
-await filing;
-await page.locator(ui('[data-cancel]')).dispatchEvent('click');
-await pen(ring(372, 640, 120, 50));
-await page.waitForSelector(ui('.sheet'), { state: 'visible' });
-letGo();
-await page.waitForTimeout(2500); // (past the post-it's flight, and a photoless note's 1.8 s with it)
-assert.deepEqual(
-  await page.evaluate(() => {
-    const sheet = document.querySelector('review-mode').shadowRoot.querySelector('.sheet');
-    return { hidden: sheet.hidden, away: sheet.classList.contains('away') };
-  }),
-  { hidden: false, away: false },
-  "the next mark's post-it stays open when the cancelled one's note has gone in",
-);
-await page.unroute('**/api/book/note');
-await page.locator(ui('[data-cancel]')).dispatchEvent('click');
-noErrors();
-
 // ---- a call drawing in (bookcall.mjs)
 await context.close();
 context = await hqIn(browser);
@@ -1719,8 +1902,9 @@ await onAPhone(browser);
 await context.close();
 // a second screen: an iPad paired with a desktop by the book's code
 const desk = await playwright().chromium.launch({ args: ['--disable-dev-shm-usage'] });
-await pairStory({ pad: browser, desk, hqIn, base, penOn, ring, ui, posts, shot });
-await phoneStory({ pad: browser, desk, hqIn, base, penOn, ring, ui, posts, shot }); // (a phone: job #19221)
+await pairStory({ pad: browser, desk, hqIn, base, penOn, ring, ui, posts, notes, shot });
+// (a phone: job #19221; its ring's life on the desktop, notes: job #19336)
+await phoneStory({ pad: browser, desk, hqIn, base, penOn, ring, ui, posts, notes, shot });
 await desk.close();
 
 // ---- every kind of line, wet and dry, on a page of its own
@@ -1771,6 +1955,6 @@ await chromium.close();
 server.close();
 // (Search; handwriting; a morning, a picture dragged in, every width)
 console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), its number at it (no page made for it), the words said while drawing, a pasted picture kept out, the post-it a scrap of the folded book (its paper, torn head, ribbon, one Send and a Cancel), Send to the book (anchor, words, snip), the mark kept numbered, in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a scribble wiping a mark and a two-finger tap bringing it back with its words and snip; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring in its own ink, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card, its pointer at what it named, a miss told, Back, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink round what it named inside the frame, scrolled there first when it's off the screen, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, the post-it and the pin on the page, over a dialog too, the spread covering them), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, swapped, flicked back, closed); the book's stories above (the pinch-out to the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), the mark a hairline once it's in, in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a scribble wiping a mark and a two-finger tap bringing it back with its words and snip; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring in its own ink, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card, its pointer at what it named, a miss told, Back, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink round what it named inside the frame, scrolled there first when it's off the screen, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
 );
 if (failed) process.exitCode = 1;

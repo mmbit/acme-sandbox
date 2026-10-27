@@ -2,7 +2,7 @@
 // the board sees every card whole (the board, 2026-10-06): secrets.ts redact(), db.ts redacted() and scrub(), jobs.ts.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { utimesSync } from 'node:fs';
+import { readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { harness, type Running } from './harness.ts';
 
@@ -10,6 +10,7 @@ const h = await harness('redact');
 const { board, agent, worker } = h;
 const { scrubOnStart, remember } = await import('./db.ts');   // (scrubOnStart: what the server's start runs)
 const memory = await import('./memory.ts');                     // (refresh: the search index's next pass)
+const secrets = await import('./secrets.ts');
 
 const KEY = 'sk_live_' + 'Q7'.repeat(20), TEST = 'sk_test_' + 'x9'.repeat(20);
 const say = async (text: string) => (await board('/api/chat', { text })).body.messages.at(-1).id as number;
@@ -122,4 +123,101 @@ test('a start goes over old text again only when the key store or redact()\'s ru
   scrubOnStart();
   assert.equal(await line(again), 'it was [STRIPE_LIVE_SECRET_KEY]');
   other.close();
+});
+
+// A made-up key in the double quotes a .env line puts round it, said without them.
+const INNER = 'tw' + '7f'.repeat(12), QUOTED = `"${INNER}"`;
+
+test('a key pasted in double quotes is saved without them', async () => {
+  await save(bolt, 'TWILIO_AUTH_TOKEN', QUOTED);
+  assert.equal(readFileSync(`${h.dataDir}/secrets/TWILIO_AUTH_TOKEN`, 'utf8'), INNER);
+});
+
+test('a key saved in its quotes, said without them, leaves every JSON column it is masked in readable', async () => {
+  writeFileSync(`${h.dataDir}/secrets/TWILIO_AUTH_TOKEN`, QUOTED);   // (saved before the quotes came off)
+  secrets.forget([]);   // (redact() reads the key store again)
+  const card = { kind: 'switches', title: 'Keys', says: INNER, none: 'none', switches: [{ name: INNER, what: 'the line', on: true }] };
+  const masked = { kind: 'switches', title: 'Keys', says: '[TWILIO_AUTH_TOKEN]', none: 'none', switches: [{ name: '[TWILIO_AUTH_TOKEN]', what: 'the line', on: true }] };
+  const shapes: [string, unknown, unknown][] = [
+    ['calls.lines, a callout\'s transcript and notes', [INNER, `Board: it's ${QUOTED}`], ['[TWILIO_AUTH_TOKEN]', 'Board: it\'s "[TWILIO_AUTH_TOKEN]"']],
+    ['requests.questions', [{ title: 'The token', answer: INNER }], [{ title: 'The token', answer: '[TWILIO_AUTH_TOKEN]' }]],
+    ['chat.card', card, masked],
+    ["the pending card (the setting chat.card)", { job: 7, card }, { job: 7, card: masked }],
+  ];
+  for (const [column, shape, then] of shapes) assert.deepEqual(JSON.parse(secrets.redactJson(JSON.stringify(shape))), then, column);
+  // and through a guarded column's trigger, as the intercom writes a reply's card
+  const { db } = await import('./db.ts');
+  const id = Number(db.prepare("insert into chat (ts, who, text, card) values ('t', 'lyra', 'Here.', ?)").run(JSON.stringify(card)).lastInsertRowid);
+  assert.deepEqual(JSON.parse((db.prepare('select card from chat where id = ?').get(id) as { card: string }).card), masked);
+});
+
+test('a 12-character key ending in a quote of its own is masked whole, said plainly and inside JSON', async () => {
+  const PASSWORD = 'Ab3!cD7?xQ9"';
+  await save(bolt, 'PRINTAPI_LIVE_PASSWORD', PASSWORD);
+  assert.equal(await line(await say(`Credential: ${PASSWORD}`)), 'Credential: [PRINTAPI_LIVE_PASSWORD]');
+  assert.deepEqual(JSON.parse(secrets.redact(JSON.stringify({ credential: PASSWORD }))), { credential: '[PRINTAPI_LIVE_PASSWORD]' });
+});
+
+// A key with a quote at one end, as saveSecrets keeps it: in a JSON column the whole key is masked, string by string, and
+// the key without its quote, where a string's own quote follows or leads it, leaves the JSON as it was.
+test('a key with a quote at one end leaves the JSON columns readable, written after its save or scrubbed by it', async () => {
+  const { db } = await import('./db.ts'), past = new DatabaseSync(`${h.dataDir}/hq.db`);   // (past: a writer past the triggers)
+  const request = await h.ask(wren, { title: 'Keys', body: 'Which?' });
+  for (const [name, key, bare] of [['PRINTAPI_LIVE_SECRET', 'Ex4mpleKey73"', 'Ex4mpleKey73'], ['PRINTAPI_LIVE_TOKEN', '"Ex4mpleKey74', 'Ex4mpleKey74']]) {
+    const lines = [`Board: it's ${key}`, bare], questions = [{ title: bare, answer: key }],
+      card = { kind: 'switches', title: bare, says: key, none: 'none', switches: [{ name: bare, what: `use ${key}`, on: true }] };
+    const masked = { lines: ["Board: it's [" + name + ']', bare], questions: [{ title: bare, answer: `[${name}]` }],
+      card: { ...card, says: `[${name}]`, switches: [{ name: bare, what: `use [${name}]`, on: true }] } };
+    const write = (to: DatabaseSync) => {
+      to.prepare('update requests set questions = ? where id = ?').run(JSON.stringify(questions), request);
+      return {
+        call: Number(to.prepare("insert into calls (ts, agent, lines, status) values ('t', 'bolt', ?, 'ended')").run(JSON.stringify(lines)).lastInsertRowid),
+        chat: Number(to.prepare("insert into chat (ts, who, text, card) values ('t', 'lyra', 'Here.', ?)").run(JSON.stringify(card)).lastInsertRowid),
+      };
+    };
+    const read = ({ call, chat }: ReturnType<typeof write>) => ({
+      lines: JSON.parse((db.prepare('select lines from calls where id = ?').get(call) as { lines: string }).lines),
+      questions: JSON.parse((db.prepare('select questions from requests where id = ?').get(request) as { questions: string }).questions),
+      card: JSON.parse((db.prepare('select card from chat where id = ?').get(chat) as { card: string }).card),
+    });
+    const before = read(write(past));
+    assert.deepEqual(before, { lines, questions, card }, "nothing knows it's a key yet");
+    const scrubbed = write(past);
+    await save(bolt, name, key);
+    assert.deepEqual(read(scrubbed), masked, `${name}: scrubbed when it's saved`);
+    assert.deepEqual(read(write(db)), masked, `${name}: through the triggers`);
+    const quoteFree = JSON.stringify([bare, { [bare]: bare }]);
+    assert.equal(secrets.redactJson(quoteFree), quoteFree, `${name}: the key without its quote is no key`);
+    assert.deepEqual(JSON.parse(secrets.redactJson(JSON.stringify({ job: 7, [key]: bare }))), { job: 7, [`[${name}]`]: bare }, `${name}: a property's name`);
+  }
+  past.close();
+});
+
+// A column that holds only JSON is redacted string by string, written and read by its own module: a string there that
+// starts with a one-sided-quote key's bare form keeps its own quote, so its reader still parses it, and the key itself
+// is masked. (guest_items.options: guests.test.ts)
+test('a key with a quote at one end leaves review findings, triage selections, a snag\'s landing and note anchors readable where a string starts with the key without it', async () => {
+  const reviewinbox = await import('./reviewinbox.ts'), reviewtriage = await import('./reviewtriage.ts');
+  const key = '"Ex4mpleKey75', said = 'Ex4mpleKey75 is in the settings', masked = '[PRINTAPI_LIVE_SIGNING]';
+  await save(bolt, 'PRINTAPI_LIVE_SIGNING', key);
+
+  const finding = { id: 1, domain: 'general', files: ['src/a.ts'], issue: said, fix: `drop ${key}` };
+  reviewinbox.deliver({ pr: 9001, round: 1, branch: 'job/9001', agent: 'wren', decision: 'changes', summary: 'One fix.', findings: [finding] });
+  assert.deepEqual(reviewinbox.get(9001)!.findings, [{ ...finding, fix: `drop ${masked}` }], 'review_inbox.findings');
+
+  const selection = { decision: 'review' as const, reason: said, consolidator: 'wren', reviewers: [], looker: null, foundation: [],
+    exceptions: [{ agent: 'bolt', reason: `asked for ${key}` }] };
+  assert.ok(reviewtriage.record({ id: wren.id, pr: 9001, round: 1, sha: 'abc123' }, null, selection));
+  assert.deepEqual(reviewtriage.selected(9001, 1, 'abc123'), { ...selection, exceptions: [{ agent: 'bolt', reason: `asked for ${masked}` }] }, 'review_triage.selection');
+
+  const snagged = await h.start({ agent: 'wren', title: 'Pushed into an outage' });
+  await h.finish(snagged, { status: 'snagged', result: 'the push failed', landing: { summary: said, result: `pushed with ${key}` } });
+  assert.deepEqual(JSON.parse((await h.claimJob(snagged.id)).landing), { summary: said, result: `pushed with ${masked}` }, 'jobs.landing');
+
+  const page = (await board('/api/book/page/new', { kind: 'free', w: 800, h: 600 })).body.id;
+  const anchor = { v: 1, url: '/?open=settings', el: { selector: `input[value='${key}']`, tag: 'input', text: said, box: { x: 10, y: 40, w: 300, h: 40 } },
+    view: { w: 1024, h: 768, x: 0, y: 0, dpr: 2 }, ink: [] };
+  assert.equal((await board('/api/book/note', { page, anchor, words: 'This one', said: 'typed' })).status, 200);
+  assert.deepEqual((await board(`/api/book/notes?page=${page}`)).body.notes.at(-1).anchor,
+    { ...anchor, el: { ...anchor.el, selector: `input[value='${masked}']` } }, 'book_notes.anchor');
 });

@@ -87,13 +87,16 @@ function queuedHow(ids: number[]) {
 // sizer's together, else as given.
 function givenSizes(sized: Sized[], measured: Sized[]) {
   const pairOf = (s: Sized): [number, number] => [s.size.agent_ms, s.j.agent_ms];
-  const pool = measured.filter(m => m.size.by !== 'tool' && !m.size.revised && m.j.agent_ms > 0);
+  // (each one's finish parsed once)
+  const pool = measured
+    .filter(m => m.size.by !== 'tool' && !m.size.revised && m.j.agent_ms > 0)
+    .map(m => ({ ...m, finished: Date.parse(m.j.finished) }));
   const given = sized.filter(s => s.size.by !== 'tool');
   const corrected = given.map(s => {
     // (the CEO's revision plays as given)
     if (s.size.revised) return pairOf(s);
     const at = Date.parse(s.size.at);
-    const before = pool.filter(m => Date.parse(m.j.finished) < at && Date.parse(m.j.finished) >= at - BIAS_WINDOW_MS);
+    const before = pool.filter(m => m.finished < at && m.finished >= at - BIAS_WINDOW_MS);
     const own = before.filter(m => m.size.by === s.size.by).map(pairOf);
     const bias = biasOf(own, true) ?? biasOf(before.map(pairOf), false);
     return [s.size.agent_ms * (bias?.usual ?? 1), s.j.agent_ms] as [number, number];
@@ -120,11 +123,12 @@ export function areaOf(j: Pick<PastJob, 'pr' | 'files'>) {
 // by then): a row stands until the next one moves it.
 function etaMisses(jobs: number[]) {
   const landed = landings(jobs);
-  const rows = predictionlog.ofJobs([...landed.keys()]);
+  // (each job's own rows, in order)
+  const rows = Map.groupBy(predictionlog.ofJobs([...landed.keys()]), r => r.job);
   const samples: Sample[] = [];
   for (const { lead, ms } of LEADS)
     for (const [job, at] of landed) {
-      const standing = rows.findLast(r => r.job === job && r.at <= at - ms);
+      const standing = rows.get(job)?.findLast(r => r.at <= at - ms);
       if (standing) samples.push({ lead, merged: standing.merged, held: standing.held, landed: at });
     }
   return byLead(samples);

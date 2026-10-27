@@ -14,7 +14,7 @@ import { paint, refresh } from './menu.js';
 import { cancel, reset } from './tool.js';
 import { toBook } from './pencil.js';
 import { PAPER } from './paper.js';
-import { across } from './handover.js';
+import { ownerNamed } from './markpage.js';
 
 export const CSS = `
       /* The post-it is a scrap of the book (paper.js): its paper and dot grid, a head torn along
@@ -71,6 +71,10 @@ export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note 
 
 // TOLD: an outsider was told what goes with a note
 const TOLD = '__hq_review_told';
+// Whether the open mark is this screen's own on the page's screen of a pairing (<html data-paired="page">), which goes
+// to the other screen (handover.js) rather than open its post-it here, nor the mic. Never on HQ, where a mark goes into the book from the screen it's drawn on (settle.js)
+export const across = r =>
+  !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.editing && !r.call;
 
 // The note for what was marked: the screenshot taken at the first mark, every line since drawn on it (develop)
 export function compose(r) {
@@ -102,8 +106,13 @@ export function compose(r) {
   // A paired phone's own mark goes to the other screen without a post-it, so without the mic too: nothing listens
   // unseen.)
   if (r.call) return;
-  const unseen = across(r); // (decided once: the mic and the post-it agree, whichever screen holds the page by then)
+  // (the mic is decided here, once. A post-it kept back for a mark going across asks again as it lands: a pairing that
+  // ended meanwhile shows it on this screen, the mic not started.)
+  const unseen = across(r);
   if (canRecord && !r.rec && !r.stopping && !unseen) startMic(r);
+  // (a mark on HQ, the Pencil's or a mouse's, has no post-it: it goes into the book as it settles, settle.js; a page
+  // with no book keeps it.)
+  if (r.book) return;
   setTimeout(() => stuck(r, mark, unseen), 380); // let the pin land, then the note
 }
 // The mark's screenshot, developed in the polaroid while the mark is open: the picture is the mark's either way, for
@@ -137,11 +146,27 @@ function stuck(r, mark, unseen) {
   const t = mark.element,
     words = t.text ? ` “${t.text.slice(0, 40)}${t.text.length > 40 ? '…' : ''}”` : '';
   r.$('.chip').textContent = `<${t.tag}>${t.video ? ` at ${clock(t.video.time)}` : ''}${words}`; // (the moment before the words the chip may cut)
-  r.$('.page').textContent = here();
+  r.$('.page').textContent = r.towards ?? here(); // (whose sheet, on HQ: towards, below.)
   r.$('.who h2').textContent = mark.kind === 'circle' ? 'About this bit…' : 'About this…';
   if (unseen && across(r)) return; // (the pairing ended meanwhile: it shows here.)
   showSheet(r);
   if (mark.frameless) r.msg.textContent = `${r.msg.textContent} ${mark.frameless}`.trim();
+}
+// Where the note goes, on its post-it: its Send names the sheet's owner ("Send to Juno"), and the line under its head
+// says it's that sheet in the Sketchbook, the same owner the note is filed under (marks.js post). Not on a call, where
+// the call's page takes it.
+export function towards(r, mark) {
+  r.towards = null;
+  if (r.call) return;
+  ownerNamed(r, mark.el).then(
+    ({ name }) => {
+      if (r.mark !== mark || r.editing) return;
+      r.towards = `For ${name}’s sheet in your Sketchbook`;
+      r.pinIt.textContent = `Send to ${name}`;
+      if (!r.sheet.hidden) r.$('.page').textContent = r.towards;
+    },
+    () => {}, // (the org unread: a plain Send, which still files it)
+  );
 }
 // The polaroid, framed on the mark: the page as it was with every line drawn so far
 export function develop(r) {
@@ -165,6 +190,7 @@ export function general(r) {
   r.$('.page').textContent = `About it all · written on ${here()}`;
   r.text.placeholder = 'Something across the pages, or that differs between them? Type it, or tap the mic and say it.';
   showSheet(r);
+  if (r.book) towards(r, r.mark);
 }
 // A mark from the other screen that can't land on this one's layout (handover.js): a note about the page, its picture
 // the other screen's own with the mark on it (snap: a data URL, or null when it had none; el: what it marked there, by
@@ -216,10 +242,12 @@ function opened(r) {
 // the script; a change saves instead
 async function pinIt(r) {
   if (r.mode !== 'note') return;
+  const open = opened(r); // (asked after each wait, the mic's too.)
   // words still being spoken or transcribed belong in this note: wait for them before reading it
   if (r.rec || r.stopping) {
     r.pinIt.disabled = true;
     await stopMic(r);
+    if (!open()) return;
     r.pinIt.disabled = false;
     if (r.mode !== 'note') return;
   }
@@ -233,8 +261,7 @@ async function pinIt(r) {
   r.mode = 'sending';
   r.pinIt.disabled = true;
   r.msg.textContent = r.shot ? 'Developing the photo…' : 'Sending…';
-  const open = opened(r),
-    waiting = r.pictures,
+  const waiting = r.pictures,
     url = photo(r, await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), 9000))]), r.mark);
   const added = await picturesNow(r, waiting);
   if (!open()) return; // (cancelled meanwhile: the next note, if one's begun, is its own.)
@@ -306,7 +333,7 @@ async function booked(r) {
   const mark = r.mark,
     open = () => r.mark === mark;
   try {
-    const photoless = await toBook(r);
+    const { photoless } = (await toBook(r)) ?? {};
     if (!open()) return;
     r.text.value = '';
     // (a note that went without its photo says so before the post-it goes)

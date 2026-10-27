@@ -11,6 +11,8 @@ import { createServer } from 'node:net';
 import { args, playwright, encoder, probe } from './core.mjs';
 import { noteRender } from './renders.mjs';
 import { keysOf, pricesFor } from './prices.mjs';
+// the frames on the page clock, with the finger or cursor drawn over the page (frames.mjs).
+import { frameClock, tapAt, keystrokes, ease } from './frames.mjs';
 
 const VIEWPORTS = { phone: { width: 360, height: 640, scale: 3, touch: true }, desktop: { width: 1280, height: 720, scale: 1.5 } };
 const a = args();
@@ -32,56 +34,6 @@ async function startServer() {
   return { origin, stop: () => p.kill() };
 }
 
-// In-page overlay: finger dot / cursor and tap ripples, drawn from state we pass each frame. Its look is a constructed
-// stylesheet and its positions are set through the element's style, both of which a page's CSP allows: a <style> or a
-// style="" in markup would be dropped under `style-src 'self'`, and the cursor drawn as a huge unstyled blob
-function overlay(s) {
-  let host = document.getElementById('__demo_cursor');
-  if (!host) {
-    host = document.createElement('div'); host.id = '__demo_cursor';
-    Object.assign(host.style, { position: 'fixed', inset: '0', pointerEvents: 'none', zIndex: '2147483647' });
-    const root = host.attachShadow({ mode: 'open' }), sheet = new CSSStyleSheet();
-    sheet.replaceSync(`
-      .f{position:absolute;width:40px;height:40px;margin:-20px;border-radius:50%;background:radial-gradient(circle at 40% 35%,#fff,#e8e8ee);
-        opacity:.8;box-shadow:0 3px 10px rgba(0,0,0,.35),inset 0 0 0 1.5px rgba(0,0,0,.12)}
-      .c{position:absolute;width:24px;height:24px;filter:drop-shadow(0 2px 3px rgba(0,0,0,.35))}
-      .r{position:absolute;border-radius:50%;border:3px solid rgba(255,255,255,.95);box-shadow:0 0 0 2px rgba(0,0,0,.18)}`);
-    root.adoptedStyleSheets = [sheet];
-    root.innerHTML = '<div class="f"></div><svg class="c" viewBox="0 0 24 24"><path d="M3 2l17 10.5-7.3 1.3 4.3 7.7-3.2 1.7-4.2-7.7L3 21z" fill="#111" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg><div class="rs"></div>';
-    document.documentElement.append(host);
-  }
-  const r = host.shadowRoot, f = r.querySelector('.f'), c = r.querySelector('.c');
-  f.style.display = s.touch ? '' : 'none'; c.style.display = s.touch ? 'none' : '';
-  f.style.transform = `translate(${s.x}px,${s.y}px) scale(${1 - 0.18 * s.press})`; f.style.opacity = 0.82 * s.show;
-  c.style.transform = `translate(${s.x - 3}px,${s.y - 2}px) scale(${1 - 0.1 * s.press})`; c.style.opacity = s.show;
-  r.querySelector('.rs').replaceChildren(...s.ripples.map(({ x, y, k }) => { const d = (s.touch ? 30 : 16) + k * (s.touch ? 60 : 40);
-    const ring = document.createElement('div'); ring.className = 'r';
-    Object.assign(ring.style, { left: `${x - d / 2}px`, top: `${y - d / 2}px`, width: `${d}px`, height: `${d}px`, opacity: (1 - k) ** 1.5 });
-    return ring; }));
-}
-// Seek every CSS animation/transition to our virtual clock. A paused one never finishes, so once the clock passes the
-// end of one that plays forward and ends, finish() it: its `finished` promise and finish/animationend events fire on
-// that frame. finish() throws for a zero playback rate, so a stopped or reversed one is only seeked. One the page plays
-// again (no longer finished) is picked up afresh.
-function syncAnimations(now) {
-  for (const an of document.getAnimations()) {
-    if (an.__demoDone && an.playState === 'finished') continue;
-    if (an.__demoStart === undefined || an.__demoDone) {
-      an.__demoStart = now - (an.currentTime ?? 0);
-      an.__demoDone = false;
-      an.pause();
-    }
-    const elapsed = now - an.__demoStart, endTime = an.effect?.getComputedTiming().endTime;
-    if (an.playbackRate > 0 && Number.isFinite(endTime) && elapsed >= endTime) {
-      an.finish();
-      an.__demoDone = true;
-    } else {
-      an.currentTime = elapsed;
-    }
-  }
-}
-
-const ease = (k) => (k < 0.5 ? 4 * k ** 3 : 1 - (-2 * k + 2) ** 3 / 2);
 const T0 = new Date(flow.time ?? '2026-09-27T10:00:00');
 
 async function recordOne(name) {
@@ -103,8 +55,7 @@ async function recordOne(name) {
   const cdp = await ctx.newCDPSession(page);
   const enc = encoder(out, { fps, duration: 0, crf: Number(flow.crf ?? 18), maxrate: '10M', level: '4.2' });
   const cur = { touch: !!vp.touch, x: vp.width * 0.62, y: vp.height * 0.8, show: vp.touch ? 0 : 1, press: 0, ripples: [] };
-  let vt = 0, frame = 0;
-  const events = [], mark = (type, what) => events.push({ t: +(frame / fps).toFixed(3), type, ...what }); // when each action shows, for syncing sounds
+  const events = [], mark = (type, what) => events.push({ t: +(clock.frame / fps).toFixed(3), type, ...what }); // when each action shows, for syncing sounds
 
   // A frame's script, run again on the next page when the app has moved on (a tap that opens a checkout on another
   // address, and the payment page that sends it back): the navigation that replaced the page fails the first try
@@ -114,20 +65,13 @@ async function recordOne(name) {
       catch (e) { if (tries === 3) throw e; await page.waitForLoadState('load'); }
     }
   }
-  async function tick() {
-    const ms = Math.round(((frame + 1) * 1000) / fps) - Math.round((frame * 1000) / fps);
-    frame++; vt += ms;
-    await page.clock.runFor(ms);
-    cur.ripples = cur.ripples.map((r) => ({ ...r, k: r.k + 1 / (0.5 * fps) })).filter((r) => r.k < 1);
-    // eslint-disable-next-line no-eval -- the kit's own functions go to the page as source: Playwright can't pass functions inside an argument
-    const [x, y] = await inPage(([now, s]) => { (0, eval)(`(${s.sync})`)(now); (0, eval)(`(${s.draw})`)(s.cur);
-      return [visualViewport.pageLeft, visualViewport.pageTop]; }, [vt, { sync: syncAnimations.toString(), draw: overlay.toString(), cur }]);
-    // The clip is in document coordinates: follow the scroll, or a scrolled page comes out half painted.
+  // The clip is in document coordinates: follow the scroll, or a scrolled page comes out half painted.
+  const clock = frameClock({ page, fps, finger: cur, inPage, capture: async ({ x, y }) => {
     const { data } = await cdp.send('Page.captureScreenshot', { format: 'jpeg', quality: 93, optimizeForSpeed: true, clip: { x, y, width: vp.width, height: vp.height, scale: vp.scale } });
     await enc.drained();
     enc.write(Buffer.from(data, 'base64'));
-  }
-  async function during(s, fn = () => {}) { const n = Math.max(1, Math.round(s * fps)); for (let i = 1; i <= n; i++) { await fn(i / n); await tick(); } }
+  } });
+  const { tick, during } = clock;
   async function point(target) {
     if (Array.isArray(target)) return { x: target[0], y: target[1] };
     const el = page.locator(target).first();
@@ -149,16 +93,10 @@ async function recordOne(name) {
   }
   async function tap(target, step = {}) {
     const p = await point(target);
-    if (cur.touch) { // finger comes down near the target, presses, lifts
-      cur.x = p.x + 26; cur.y = p.y + 34;
-      await during(0.22, (k) => { const e = ease(k); cur.show = e; cur.x = p.x + 26 * (1 - e); cur.y = p.y + 34 * (1 - e); });
-    } else await moveTo(p, step.s);
-    await during(0.1, (k) => { cur.press = k; });
-    if (cur.touch) await page.touchscreen.tap(p.x, p.y); else await page.mouse.click(p.x, p.y);
-    mark('tap', { target });
-    cur.ripples.push({ x: p.x, y: p.y, k: 0 });
-    await during(0.14, (k) => { cur.press = 1 - k; });
-    if (cur.touch) await during(0.2, (k) => { cur.show = 1 - k; cur.y = p.y + 10 * k; });
+    await tapAt(clock, cur, p, { moveTo: (to) => moveTo(to, step.s), press: async () => {
+      if (cur.touch) await page.touchscreen.tap(p.x, p.y); else await page.mouse.click(p.x, p.y);
+      mark('tap', { target });
+    } });
   }
 
   const steps = {
@@ -168,9 +106,7 @@ async function recordOne(name) {
     tap: (s) => tap(s.tap, s),
     type: async (s) => {
       if (s.into) await tap(s.into);
-      let rnd = 7;
-      for (const ch of s.type) { await page.keyboard.type(ch); mark('key', { key: ch }); rnd = (rnd * 16807) % 2147483647;
-        await during((1 / (s.cps ?? 11)) * (0.6 + (rnd % 1000) / 1250)); }
+      for (const [ch, pause] of keystrokes(s.type, s.cps ?? 11)) { await page.keyboard.type(ch); mark('key', { key: ch }); await during(pause); }
     },
     press: async (s) => { await page.keyboard.press(s.press); mark('key', { key: s.press }); await tick(); },
     scroll: async (s) => { mark('scroll', { by: s.scroll }); await scroll({ y: s.scroll, s: s.s, in: s.in }); mark('scrolled'); },
@@ -194,12 +130,12 @@ async function recordOne(name) {
     for (const step of flow.steps) {
       const verb = Object.keys(steps).find((k) => k in step);
       if (!verb) throw new Error('unknown step ' + JSON.stringify(step));
-      process.stderr.write(`  ${name}: ${JSON.stringify(step)} @ ${(frame / fps).toFixed(2)} s\n`);
+      process.stderr.write(`  ${name}: ${JSON.stringify(step)} @ ${(clock.frame / fps).toFixed(2)} s\n`);
       await steps[verb](step);
     }
     await enc.end();
     // <out>.events.json: when every tap, key, scroll and drag shows in the video, so an ad's sound cues can land on them
-    writeFileSync(out.replace(/\.[^./]+$/, '') + '.events.json', JSON.stringify({ fps, duration: +(frame / fps).toFixed(3), events }, null, 0) + '\n');
+    writeFileSync(out.replace(/\.[^./]+$/, '') + '.events.json', JSON.stringify({ fps, duration: +(clock.frame / fps).toFixed(3), events }, null, 0) + '\n');
   } finally {
     await browser.close();
     srv.stop();

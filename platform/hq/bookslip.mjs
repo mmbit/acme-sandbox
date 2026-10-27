@@ -12,6 +12,8 @@ import assert from 'node:assert/strict';
 // a snip: an 8 × 6 red PNG
 const RED =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
+// a page turned to is the only one on the paper once its leaf has turned (bookflip.js).
+const TURN_MS = 600;
 const WAIT_MS = 4000; // an answer clipped on, as the feed brings it (the rail's own read is every 20 s)
 
 // c: book-check's { browser, hqIn, base, MINI, store, pages, notes, snips, posts, org, shot, settled, fingerTap,
@@ -30,9 +32,11 @@ export async function slipStory(c) {
     await page.goto(`${c.base}${at}`);
     await page.waitForSelector('#loading.gone');
     if (c.look) assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), false, 'Wire');
-    await page.waitForSelector('review-mode .fab');
+    await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away while the book's folded)
     await c.settled(page, 'open');
     await page.click(`#book .bk-face[data-id="${f.ceo}"]`);
+    // (the leaf turning to the sheet's page holds a picture of both pages while it turns.)
+    await page.waitForTimeout(TURN_MS);
     const inBook = page.locator('#book .bs-note', { hasText: f.asked.words });
     await inBook.waitFor({ timeout: 5000 });
     assert.equal(await inBook.locator('.answer-slip').count(), 0, 'no answer yet');
@@ -188,13 +192,14 @@ async function onThePage(s, page) {
   const { asked, y } = s,
     c = s;
   await c.fingerTap(page, 300, y + 4);
-  const card = page.getByRole('dialog', { name: 'A sent note' });
+  const card = page.getByRole('dialog', { name: 'A note in the book' });
   await card.waitFor({ timeout: 3000 });
   const said = await card.innerText();
   assert.match(said, /Is this banner too long\?/);
-  assert.match(said, /On its sheet, not sent yet/);
+  assert.match(said, /For Juno, not sent/); // (where it waits, as the card says)
   assert.match(said, /five words, it fits on one line/);
-  await page.waitForTimeout(300); // (its pop-in)
+  // (its pop-in, and the tap's own click, which the card swallows for 400 ms: marktaps.js.)
+  await page.waitForTimeout(500);
   await c.shot('slip-card', page);
   await card.getByRole('button', { name: 'Tick it: done' }).click();
   await until(() => asked.slips[0].ticked);

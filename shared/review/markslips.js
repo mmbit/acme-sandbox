@@ -1,7 +1,7 @@
 // The answers on an HQ page's notes (marks.js draws the marks): a slip's corner under a number, the card a tap opens
 // on an open mark with an answer (hairline.js), what its slips do, and the same place cut again from the live page for
 // an answer's "then and now" (slip.js).
-import { placed, snipOf, whereNow } from './marks.js';
+import { placed, showsNow, snipOf, whereNow } from './marks.js'; // (showsNow)
 import { send } from './markpage.js';
 import { snapshot } from './snapshot.js';
 
@@ -10,7 +10,7 @@ export const answered = n => (n.slips ?? []).some(s => !s.ticked);
 // The open marks with an answer, as a tap finds them: their lines and their number's disc
 export const answeredNow = r =>
   (r.marks ?? [])
-    .filter(m => m.slips?.length)
+    .filter(m => m.slips?.length && showsNow(r, m)) // (only one that shows)
     .map(m => {
       const ink = placed(m),
         at = whereNow(m, ink),
@@ -60,7 +60,7 @@ export async function cutNow(r) {
     .filter(({ slip }) => slip && !slip.ticked && !slip.preview && !r.cutTried.has(slip.id))
     .filter(({ slip }) => !slip.now_at || slip.now_at < slip.created)
     .map(d => ({ ...d, area: areaNow(d.n) }))
-    .filter(d => d.area && onScreen(d.area));
+    .filter(d => d.area && onScreen(d.area) && showsNow(r, { anchor: d.n.anchor, live: d.n.live ?? null }));
   if (!due.length) return;
   r.cutting = true;
   try {

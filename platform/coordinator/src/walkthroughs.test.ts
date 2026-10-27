@@ -75,6 +75,10 @@ test("the sweep throws away a walk-through's page nobody wrote on once its call 
     200,
   );
   assert.equal((await h.board('/api/book/note', { page: p2.id, anchor, words: 'Bigger?', said: 'typed' })).status, 200);
+  // the pages are old, so only the hang-up's own minute can hold one back
+  h.db
+    .prepare('update book_pages set created = ? where id in (?, ?, ?, ?)')
+    .run(new Date(Date.now() - 3_600_000).toISOString(), p1.id, p2.id, p3.id, p4.id);
   for (const c of [empty, written, plain])
     await h.voice('call-end', { agent: 'kit', lines: ['Board: Thanks, bye.'], request: card, token: c.token });
 

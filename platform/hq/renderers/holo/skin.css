@@ -37,17 +37,9 @@ body {
 .callbubble .cb-keys button:active { transform: var(--press); }
 .callbubble .cb-keys .cb-pause[aria-pressed=true] { background: var(--cy); color: var(--scr-ink); border-color: var(--cy); box-shadow: var(--cy-glow); }
 .callbubble .cb-keys .cb-hangup { background: color-mix(in srgb, var(--red) 70%, transparent); color: #fff; border-color: var(--red); border-radius: 999px; }
-/* slim: bars of light on the glass; the call's little screen a projector's, a grid of light the figure stands in */
-.callbubble > * { transition: opacity .18s ease-out; }
-.callbubble.morphing > * { transition: none; }
-.callbubble.slim { border-radius: 999px; padding: 5px 6px; }
-.callbubble.slim .cb-face { border-radius: 999px; background: rgba(0, 10, 16, .6); }
-.callbubble .cb-bars i { width: 3px; border-radius: 2px; background: color-mix(in srgb, var(--cb-accent) 55%, #fff); box-shadow: 0 0 6px var(--cb-accent), 0 0 12px color-mix(in srgb, var(--cb-accent) 50%, transparent); transition: scale .1s ease-out; }
-.callbubble.talking .cb-bars i { animation: cb-bar .4s ease-in-out calc(var(--cb-i) * -.14s) infinite alternate; }
-.callbubble[data-state=thinking] .cb-bars i { animation: cb-bar-think 1.2s ease-in-out calc(var(--cb-i) * .2s) infinite; }
-.intercom .call .call-face { border: 1px solid var(--line); border-radius: 10px; transition: box-shadow .12s ease-out;
-  background: linear-gradient(rgba(90, 220, 255, .07) 1px, transparent 1px) 0 0 / 100% 12px, linear-gradient(90deg, rgba(90, 220, 255, .07) 1px, transparent 1px) 0 0 / 12px 100%, rgba(0, 10, 16, .7); }
-.intercom .call .call-face::after { left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
+/* the call's little screen a projector's, plain dark glass the figure stands in (no grid.) */
+.intercom .call .call-face { border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 10, 16, .7); }
+.intercom .call .call-face::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--cb-accent) 30%, transparent), transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--cb-accent) 40%, transparent); }
 .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
 .intercom .call .lines { border-radius: 10px; }

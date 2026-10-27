@@ -14,7 +14,8 @@ const BATCH_BYTES = 8 << 20,
 const TAP_PX = 10,
   TAP_MS = 800;
 const LABEL_CHARS = 60;
-// What never leaves the page: whatever is marked (the call's own bubble, a card's key fields)
+// What never leaves the page: whatever is marked (a card's key fields; the call's own window
+// and bubble no longer)
 export const HIDE = '[data-watchalong-hide]';
 // A person's private details on a page (an address, an email, a customer's case): their text and anything typed in
 // them leave the page masked, for the board's own calls too, their elements keep only the attributes the replay draws

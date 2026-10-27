@@ -1,35 +1,42 @@
 // The sheets in the book: on each sheet page ("For Lark") its notes in their sheet's order, each with its number in the
 // red disc it has on HQ's page, its snip and its words, a text field the Pencil writes over (Apple's Scribble) or a
-// keyboard types into; at the page's head the paper plane that sends the sheet, ten seconds to undo, then "Sent 08:16"
-// and the page lightly creased. A line from one number to another links the two notes; a face in the rail opens its
-// sheet. Holding, dragging and flicking a note are booknotegrip.js; the plane's flight bookplane.js, a free page's
-// booksendpage.js; the maths
-// booksheetplace.js; the store's routes booksheetdata.js.
+// keyboard types into; once sent, "3 notes sent to Bolt · 15:36" at the page's head and the page lightly creased. A
+// line from one number to another links the two notes; a face in the rail opens its sheet with a turn of the leaf, and
+// the small plane by it hands the sheet over. Holding, dragging and flicking a
+// note are booknotegrip.js; the faces' side booksheetface.js; the hand-over's fold and flight bookplane.js; a page
+// given by its corner bookdogear.js; the maths booksheetplace.js; the store's routes booksheetdata.js.
 //
 // The sheets come with the rail's read of them (book:sheets, bookrail.js), so the faces and the pages never disagree;
-// every change here reads them again (refreshRail).
-import { esc, titleCase } from '../util.js';
+// every change here reads them again (refreshRail). A call page's come with it (withCalls).
+import { esc, store, titleCase } from '../util.js';
+import { shownNumbers } from '/__review/notenumbers.js';
 import * as world from '../world/world.js';
 import { refreshRail } from './bookrail.js';
 import { said } from './booksave.js';
-import { editNote, linkNotes } from './booksheetdata.js';
-import { joined, notesOnPages, planeSheet, sentLine, whose } from './booksheetplace.js';
+import { editNote, linkNotes, loadCalls } from './booksheetdata.js';
+import { joined, notesOnPages, sentTo, whose } from './booksheetplace.js';
+import { laidOut, takenBoxes } from './booksheetlay.js';
 import { mountGrip } from './booknotegrip.js';
-import { mountPageSend } from './booksendpage.js';
-import { PLANE, awaitSend, flightHtml, sendNow, undoNow } from './bookplane.js';
+// (the faces give, the leaf turns to a sheet, a page goes by its corner)
+import { awaitSend, deadlines } from './bookplane.js';
+import { mountDogEar } from './bookdogear.js';
+import { mountFaces } from './booksheetface.js';
+import { pageBox } from './bookrow.js';
 import { slipsHtml, tickLine, wire as wireSlips } from './bookslips.js';
+import { keep } from './bookedit.js'; // (steps filtered in place, for Redo)
 
 // a note's words are saved this long after the last letter (and at once when the field is left)
 const SAVE_MS = 700;
 // the room under the last note, so the page never ends at a note's edge
 const FOOT_PX = 48;
 
-// book: the pages' (bookpages.js). hooks: { lay(), changed(page), show(pageId), today(), reload(), release() }.
+// book: the pages' (bookpages.js). hooks: { lay(), changed(page), show(pageId), open(day, pageId), made(pageId), release() }
+// (open: a day at a page at once, under a turning leaf.).
 // Returns { added(view), drawAll(), claim(view, stroke) }: a page view made, a day's row laid out, and a line just
 // drawn on a page, which the sheet takes (true) when it links two notes rather than staying as ink.
 // (And light(note): Search's find.)
 export function mountSheets(book, hooks) {
-  const sh = { book, hooks, dev: book.dev, sheets: { open: [], sent: [] }, on: new Map(), deadlines: new Map() };
+  const sh = { book, hooks, dev: book.dev, sheets: { open: [], sent: [] }, on: new Map(), deadlines };
   sh.ceo = () => world.company?.ceo;
   sh.name = id => world.agents?.get(id)?.data.name ?? titleCase(id ?? '');
   sh.view = id => book.views.find(v => v.page.id === id);
@@ -38,29 +45,40 @@ export function mountSheets(book, hooks) {
   sh.refresh = () => refreshRail();
   sh.tell = (page, e) => (page ? said(book, page, e.message) : console.error('[hq] The book:', e));
   mountGrip(sh);
-  sh.pageSend = mountPageSend(sh);
-  document.addEventListener('book:sheets', e => {
-    sh.sheets = e.detail;
-    drawAll(sh);
-  });
-  document.addEventListener('book:face', e => openSheetOf(sh, e.detail.owner ?? sh.ceo()));
-  // a note the Pencil just left: its page may be new today (the first mark on that agent's work)
+  sh.corner = mountDogEar(sh);
+  document.addEventListener('book:sheets', e =>
+    withCalls(sh, e.detail).then(
+      sheets => {
+        sh.sheets = sheets;
+        drawAll(sh);
+      },
+      err => sh.tell(null, err),
+    ),
+  );
+  mountFaces(sh); // (a face opens its sheet, its plane gives it: booksheetface.js.)
+  // a note the Pencil just left: its page may be new today (the first mark on that agent's work), read in at it once
   document.addEventListener('pencil:note', e => {
-    if (book.day === book.today && !sh.view(e.detail?.page)) hooks.reload();
+    if (!book.who && book.day === book.today && !sh.view(e.detail?.page)) hooks.made(e.detail.page);
   });
   return {
-    added: v => draw(sh, v),
+    added: v => (v.page.kind === 'call' ? drawAll(sh) : draw(sh, v)),
     drawAll: () => drawAll(sh),
     // (a tick written over an answer's slip ticks it: bookslips.js.)
     claim: (v, stroke) => linkLine(sh, v, stroke) || tickLine(sh, v, stroke),
     // (Search's find)
     light: id => light(sh, id),
+    // (a page's ink just read: the table laid out again, and a sheet's notes round the ink.)
+    inked: v => {
+      hooks.lay();
+      if (v.page.kind === 'sheet') settle(sh, v);
+    },
   };
 }
 // A note's number lit where a page of the row shows it (Search's find): its note, or null when none shows it.
+// (a note with no number shows none: its cutting is lit.)
 function light(sh, id) {
   const note = sh.book.world.querySelector(`.bs-note[data-id="${Number(id)}"]`),
-    n = note?.querySelector('.bs-n');
+    n = note?.querySelector('.bs-n') ?? note?.querySelector('.bs-body');
   if (!n) return null;
   delete n.dataset.lit;
   void n.offsetWidth; // (lit again from the start when it's the same one)
@@ -74,6 +92,13 @@ function light(sh, id) {
 function drawAll(sh) {
   // (a note held up is left alone: the sheets are drawn again once it's put down)
   if (sh.busy) return;
+  if (sh.sheets.callsFor !== callPages(sh).join()) {
+    withCalls(sh, sh.sheets).then(
+      () => drawAll(sh),
+      err => sh.tell(null, err),
+    );
+    return;
+  }
   sh.on = notesOnPages(
     sh.sheets,
     sh.book.views.map(v => v.page),
@@ -82,20 +107,38 @@ function drawAll(sh) {
   for (const v of sh.book.views) draw(sh, v);
   for (const s of sh.sheets.open) if (s.status === 'sending') awaitSend(sh, s);
   // a send that has gone can't be undone any more: its step leaves the book's undo
-  sh.book.steps = sh.book.steps.filter(step => !step.sheet || !sh.sheets.sent.some(s => s.id === step.sheet));
+  keep(sh.book.steps, step => !step.sheet || !sh.sheets.sent.some(s => s.id === step.sheet));
+}
+// The call pages in the row, by id: each one's notes read with it (its call's sheet, never sent), however old the call,
+// with every read of the sheets and as a call page comes into the row.
+const callPages = sh => sh.book.views.filter(v => v.page.kind === 'call' && v.page.id).map(v => v.page.id);
+async function withCalls(sh, sheets) {
+  const pages = callPages(sh);
+  sheets.calls = pages.length ? await loadCalls(sh.dev, pages) : [];
+  sheets.callsFor = pages.join();
+  return sheets;
 }
 function draw(sh, v) {
-  if (v.page.kind === 'free') return sh.pageSend.draw(v);
+  sh.corner.draw(v); // (a page sent by its corner: when it went.)
   const slot = v.el.querySelector('[data-slot=notes]');
   if (!slot || !v.page.id) return;
   const groups = sh.on.get(v.page.id) ?? [];
   const creased = groups.length > 0 && groups.every(g => g.sheet.status === 'sent');
   // (a page whose words are being written keeps its notes as they are till they're left: only its head follows)
   if (slot.contains(document.activeElement)) return head(sh, v, groups, creased);
+  // (each open note's number, when the page shows several to tell apart: notenumbers.js.)
+  const numbers = shownNumbers(
+    groups.flatMap(g => (g.sheet.status === 'sent' ? [] : g.notes.map(x => x.note).filter(n => n.status === 'open'))),
+  );
+  // (a sheet just sent from here: its line pressed on as it lands.)
+  const fresh = new Set(
+    groups.filter(g => g.sheet.status === 'sent' && sh.deadlines.has(g.sheet.id)).map(g => g.sheet.id),
+  );
   slot.innerHTML = `${creased ? creaseHtml(v.page) : ''}<div class="bs-list">${groups
-    .map(g => groupHtml(sh, g, groups.length > 1))
+    .map(g => groupHtml(sh, g, groups.length > 1, numbers, fresh))
     .join('')}</div><svg class="bs-links" aria-hidden="true"></svg>`;
-  head(sh, v, groups, creased);
+  head(sh, v, groups, creased, fresh);
+  for (const id of fresh) sh.deadlines.delete(id);
   for (const field of slot.querySelectorAll('textarea.bs-words')) words(sh, v, field);
   wireSlips(sh, slot);
   for (const img of slot.querySelectorAll('img.bs-snip')) img.addEventListener('load', () => snipSize(sh, v, img));
@@ -103,35 +146,46 @@ function draw(sh, v) {
   for (const img of slot.querySelectorAll('.answer-slip img')) img.addEventListener('load', () => settle(sh, v));
   requestAnimationFrame(() => settle(sh, v));
 }
-// A sheet's notes on the page; a sent one under the time it went, when the page has more than one
-function groupHtml(sh, { sheet, notes }, captioned) {
-  const sent = sheet.status === 'sent';
-  return `<section class="bs-group" data-sheet="${sheet.id}"${sent ? ' data-sent' : ''}>${
-    sent && captioned ? `<p class="bs-when">${esc(sentLine(sheet.sent))}</p>` : ''
-  }${notes.map(({ note, away }) => noteHtml(sh, sheet, note, away)).join('')}</section>`;
+// A sheet's notes on the page; a sent one under what went to whom and when ("3 notes sent to Bolt · 15:36"), when the
+// page has more than one (one alone: at the page's head). numbers: shownNumbers'; fresh: the sheets just sent from here.
+// (a sheet in its seconds to undo: its notes gone faint, folded into the plane.)
+function groupHtml(sh, { sheet, notes }, captioned, numbers, fresh) {
+  const sent = sheet.status === 'sent',
+    going = sheet.status === 'sending' ? ' data-going' : '';
+  return `<section class="bs-group" data-sheet="${sheet.id}"${sent ? ' data-sent' : ''}${going}>${
+    sent && captioned
+      ? `<p class="bs-when"${fresh.has(sheet.id) ? ' data-fresh' : ''}>${esc(sentOf(sh, sheet))}</p>`
+      : ''
+  }${notes.map(({ note, away }) => noteHtml(sh, sheet, note, away, numbers.get(note.id))).join('')}</section>`;
 }
-function noteHtml(sh, sheet, n, away) {
-  const open = sheet.status !== 'sent' && n.status === 'open',
+const sentOf = (sh, sheet) => sentTo(sheet.notes.length, sh.name(whose(sheet, sh.ceo())), sheet.sent);
+// (shown: its number on the page, or none. Its snip taped on a touch askew, each its own way, as a cutting in a
+// scrapbook.)
+function noteHtml(sh, sheet, n, away, shown) {
+  // (a call's notes were heard on the call: kept as they were said.)
+  const open = sheet.status !== 'sent' && sheet.status !== 'call' && n.status === 'open',
     who = n.guest ? ` style="--who: ${esc(n.guest.colour)}"` : '';
-  const label = `Note ${n.n}${n.guest ? `, ${n.guest.name}'s` : ''}`;
+  const label = `Note${shown ? ` ${shown}` : ''}${n.guest ? `, ${n.guest.name}'s` : ''}`;
   return `<article class="bs-note" role="group" aria-label="${esc(label)}" data-id="${n.id}" data-sheet="${sheet.id}"${
     open ? ' data-open' : ''
-  }><b class="bs-n"${who}>${n.n}</b><div class="bs-body">${
+  } style="--tilt: ${tiltOf(n.id)}deg">${shown ? `<b class="bs-n"${who}>${shown}</b>` : ''}<div class="bs-body">${
     n.guest ? `<span class="bs-tag"${who}>${esc(n.guest.name)}</span>` : ''
   }${away ? `<span class="bs-away">For ${esc(sh.name(away))}</span>` : ''}${
     n.snip
-      ? `<img class="bs-snip" src="${esc(n.snip)}" alt="" draggable="false" data-id="${n.id}" data-dpr="${
+      ? `<span class="bs-cut"><img class="bs-snip" src="${esc(n.snip)}" alt="" draggable="false" data-id="${n.id}" data-dpr="${
           Number(n.anchor?.view?.dpr) || 2
-        }"${sizes.has(n.id) ? ` style="width: ${sizes.get(n.id)}px"` : ''}>`
+        }"${sizes.has(n.id) ? ` style="width: ${sizes.get(n.id)}px"` : ''}></span>`
       : ''
   }${
     open || n.words
-      ? `<textarea class="bs-words" rows="1" data-id="${n.id}" aria-label="Note ${n.n}'s words" placeholder="Write here"${
+      ? `<textarea class="bs-words" rows="1" data-id="${n.id}" aria-label="${esc(label)}: its words" placeholder="Write here"${
           open ? '' : ' readonly'
         }>${esc(n.words)}</textarea>`
       : ''
   }${slipsHtml(n)}</div></article>`;
 }
+// A cutting's tilt: a degree or so either way, the same for a note each time it's drawn
+const tiltOf = id => (((id * 7919) % 23) / 22 - 0.5) * 2.4;
 // The fold lines of a sheet that has been sent: folded into a plane, opened again (a centre crease, the nose's two
 // folds and the wings'), each a faint light line beside a fainter shadow
 function creaseHtml({ w, h }) {
@@ -150,30 +204,15 @@ function creaseHtml({ w, h }) {
     .join('')}</svg>`;
 }
 
-// The page's head beside "For Lark": the plane and its count, the seconds to undo a send, or when it went
-function head(sh, v, groups, creased) {
-  const at = v.el.querySelector('[data-slot=plane]');
-  if (!at) return;
-  const sheet = planeSheet(sh.sheets, v.page, sh.ceo(), groups);
-  if (sheet?.status === 'sending') at.innerHTML = flightHtml(sh, sheet, sh.name(whose(sheet, sh.ceo())));
-  else if (sheet) {
-    const count = sheet.notes.filter(n => n.status === 'open').length,
-      to = sh.name(whose(sheet, sh.ceo()));
-    at.innerHTML = `<button class="bs-plane" data-send="${sheet.id}" aria-label="Send to ${esc(to)}: ${count} note${
-      count === 1 ? '' : 's'
-    }" title="Send to ${esc(to)}">${PLANE}<b>${count}</b></button>`;
-  } else if (creased) {
-    const last = groups.map(g => g.sheet).sort((a, b) => (a.sent < b.sent ? 1 : -1))[0];
-    at.innerHTML = `<span class="bs-stamp">${esc(sentLine(last.sent))}</span>`;
-  } else at.innerHTML = '';
-  // (a tap on the plane is the plane's: never the table's pan or the page's ink, which would take its click)
-  at.onpointerdown = e => e.stopPropagation();
-  at.onclick = e => {
-    const send = e.target.closest('[data-send]'),
-      back = e.target.closest('[data-undo]');
-    if (send) sendNow(sh, v, sh.sheet(send.dataset.send), send);
-    if (back) undoNow(sh, v, sh.sheet(back.dataset.undo));
-  };
+// The page's head beside "For Lark": what went to whom and when, once sent ("3 notes sent to Bolt · 15:36"), pressed on
+// as it lands just after a send from here; a page of several sheets says it over each. (the plane is the face's, bookrail.js)
+function head(sh, v, groups, creased, fresh = new Set()) {
+  const at = v.el.querySelector('[data-slot=stamp]');
+  if (!at || v.page.kind !== 'sheet') return;
+  const last = creased && groups.length === 1 ? groups[0].sheet : null;
+  at.innerHTML = last
+    ? `<span class="bs-stamp"${fresh.has(last.id) ? ' data-fresh' : ''}>${esc(sentOf(sh, last))}</span>`
+    : '';
 }
 // ---- words
 
@@ -230,9 +269,12 @@ function settle(sh, v) {
   const slot = v.el.querySelector('[data-slot=notes]'),
     list = slot?.querySelector('.bs-list');
   if (!list) return;
-  const need = Math.ceil(list.offsetTop + list.offsetHeight + FOOT_PX);
-  if (need > v.page.h) {
-    v.page.h = need;
+  lie(sh, v, list);
+  // (the page's box may start above 0: its foot is y1.)
+  const need = Math.ceil(list.offsetTop + list.offsetHeight + FOOT_PX),
+    box = pageBox(v.page);
+  if (need > box.y1) {
+    v.page.h = need - box.y0;
     v.page.blank = false;
     sh.hooks.lay();
     // (a page whose ink isn't read yet is saved once it is: a save is its whole ink)
@@ -240,16 +282,51 @@ function settle(sh, v) {
   }
   links(sh, v, slot);
 }
-// A disc's middle on its page, in the page's px
+// The notes down the page clear of the board's writing and pictures there, and of each other (booksheetlay.js): each
+// note (with its sent sheet's line over it, for a sheet's first) pushed down as far as it must, its place kept in this
+// browser once its page's ink is read, so writing added round it later never moves it.
+const SPOTS = 'book.spots';
+function lie(sh, v, list) {
+  const els = [...list.querySelectorAll('.bs-note')],
+    leads = els.map(el => (el.previousElementSibling?.matches('.bs-when') ? el.previousElementSibling : el));
+  for (const lead of leads) lead.style.marginTop = '';
+  if (!els.length) return;
+  const notes = els.map((el, i) => {
+    const top = list.offsetTop + leads[i].offsetTop;
+    return {
+      id: Number(el.dataset.id),
+      top,
+      h: list.offsetTop + el.offsetTop + el.offsetHeight - top,
+      after: i ? Number(els[i - 1].dataset.id) : null,
+    };
+  });
+  const kept = new Map(Object.entries(store.get(SPOTS, {})).map(([id, p]) => [Number(id), p])),
+    held = Number(list.contains(document.activeElement) && document.activeElement.dataset.id) || null,
+    column = { x0: list.offsetLeft + els[0].offsetLeft, x1: list.offsetLeft + els[0].offsetLeft + els[0].offsetWidth };
+  const out = laidOut(notes, column, takenBoxes(v.page.ink ?? [], v.page.scraps), kept, held);
+  let shift = 0;
+  notes.forEach((x, i) => {
+    const down = out.get(x.id).y - (x.top + shift);
+    if (down > 0.5) leads[i].style.marginTop = `${parseFloat(getComputedStyle(leads[i]).marginTop) + down}px`;
+    shift += down;
+  });
+  // (kept only once the page's ink is read: a place given without it could be on writing not seen yet)
+  if (!v.page.ink) return;
+  const shown = new Set([...sh.sheets.open, ...sh.sheets.sent].flatMap(s => s.notes.map(n => n.id)));
+  const all = Object.fromEntries([...kept, ...out].filter(([id]) => shown.has(id)));
+  store.set(SPOTS, all);
+}
+// A disc's middle on its page, in the page's px (a note with no number: where its disc would be)
 export function discsOf(v) {
   const at = v.el.getBoundingClientRect();
   return [...v.el.querySelectorAll('.bs-note')].map(el => {
-    const r = el.querySelector('.bs-n').getBoundingClientRect();
+    const disc = el.querySelector('.bs-n'),
+      r = (disc ?? el).getBoundingClientRect();
     return {
       id: Number(el.dataset.id),
       sheet: Number(el.dataset.sheet),
-      x: r.left + r.width / 2 - at.left,
-      y: r.top + r.height / 2 - at.top,
+      x: disc ? r.left + r.width / 2 - at.left : r.left + 16 - at.left,
+      y: disc ? r.top + r.height / 2 - at.top : r.top + 12 - at.top,
     };
   });
 }
@@ -293,20 +370,4 @@ function linkLine(sh, v, stroke) {
   sh.book.steps.push({ undo: () => link(!linked) });
   link(linked);
   return true;
-}
-
-// ---- a face opens its sheet
-
-// Today's sheet page for that agent, the table sliding to it (today's row opened first when another day shows). One the
-// book hasn't read yet (a note in review mode on a preview made it: bookreview.ts) brings today's row and the sheets in
-// again.
-async function openSheetOf(sh, owner) {
-  const find = () => sh.book.views.find(v => v.page.kind === 'sheet' && v.page.owner === owner && v.page.id);
-  if (!find()) {
-    // (from an invited person's book open, the board's own)
-    await (sh.book.day !== sh.book.today || sh.book.who ? sh.hooks.today() : sh.hooks.reload());
-    await sh.refresh();
-  }
-  const v = find();
-  if (v) sh.hooks.show(v.page.id);
 }

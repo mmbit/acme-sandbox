@@ -148,8 +148,9 @@ function make(file, command, cwd = process.cwd()) {
 }
 
 // A render any job pushed is in the worker's store by its sha256 (HQ_RENDERS), a branch's not yet merged included:
-// taken from there, else from HQ's checkout of main. An adopted one is in this clone's own history.
-async function fetchRender(side) {
+// taken from there, else from HQ's checkout of main. An adopted one is in this clone's own history. Exported for
+// away.mjs
+export async function fetchRender(side) {
   const { HQ_URL, HQ_TOKEN, HQ_RENDERS } = process.env;
   const { sha256: expectedHash, blob } = read(side);
   const path = relative(ROOT, target(side)),

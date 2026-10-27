@@ -67,6 +67,7 @@ export function bindCanvas(cv) {
   const pt = e => ({ x: e.clientX, y: e.clientY });
   const mid = () => { const [a, b] = [...ptrs.values()]; return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) }; };
   cv.addEventListener('pointerdown', e => {
+    if (e.pointerType === 'touch' && e.isPrimary) letGo(); // (a first finger: no other is down.)
     cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, pt(e)); scene.camera.grab();
     audio.unlock(); stopTour();
     document.querySelector('#hint').classList.add('gone');
@@ -107,6 +108,11 @@ export function bindCanvas(cv) {
     if (!ptrs.size) { scene.camera.release(!tapped && performance.now() - lastMove <= 80); tapInfo = null; cv.classList.remove('drag'); }
   };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+  const letGo = lostFingers(cv, ptrs, up);
+  wheelZoom(cv);
+}
+// The wheel on the scene's canvas (out of bindCanvas, as it was)
+function wheelZoom(cv) {
   let wheel = 0;
   cv.addEventListener('wheel', e => {
     e.preventDefault(); dropCard();
@@ -115,4 +121,13 @@ export function bindCanvas(cv) {
     wheel += e.deltaY * (e.deltaMode ? 30 : 1);
     if (Math.abs(wheel) > 50) { scene.camera.zoom(-Math.sign(wheel), e.clientX, e.clientY); audio.sfx.blip(); wheel = 0; }
   }, { passive: false });
+}
+// Only the fingers the browser says are down: a lift it never sent (a lost capture, the window left or hidden) can't
+// leave the pinch counting a ghost finger. Returns letGo: every finger lifted.
+function lostFingers(cv, ptrs, up) {
+  const letGo = () => { for (const id of [...ptrs.keys()]) up({ pointerId: id, type: 'pointercancel' }); };
+  cv.addEventListener('lostpointercapture', up);
+  addEventListener('blur', letGo);
+  document.addEventListener('visibilitychange', () => document.hidden && letGo());
+  return letGo;
 }

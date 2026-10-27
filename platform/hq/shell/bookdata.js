@@ -1,7 +1,7 @@
 // The book's pages from the coordinator's store (book.ts), or in dev mode from mock/book.json, written in memory.
 //   a day: { day, today, days: [{ day, pages }], pages: [summaries] }
-//   a page read whole: its summary { id, day, kind, owner, url, call, label, w, h, ... } with ink: [strokes] and
-//   scraps: [{ file, url, x, y, w, h, tilt }]
+//   a page read whole: its summary { id, day, kind, owner, url, call, label, w, h, ... } with ink: [strokes],
+//   scraps: [{ file, url, x, y, w, h, tilt }] and texts: [{ x, y, w, text, color }] (the words typed on it, in its px.
 import { act, copy, get, refused } from './data.js';
 
 // (who: an invited person's book the board has open, null for its own; people: everyone with a book of their own,
@@ -13,7 +13,7 @@ export const loadPage = (dev, id, who = null) =>
   dev ? mockPage(id) : act(`/api/book/page?id=${Number(id)}${whose(who)}`);
 // { kind: 'free', w, h, who? }: a blank page, today's
 export const createPage = (dev, body) => (dev ? mockCreate(body) : act('/api/book/page/new', body));
-// { id, ink, scraps, h, since, who? }: refused (409) when the page changed since (pagemerge.js)
+// { id, ink, scraps, texts?, w?, h, since, who? }: refused (409) when the page changed since (pagemerge.js)
 export const savePage = (dev, body) => (dev ? mockSave(body) : act('/api/book/page/save', body));
 export const loadPeople = dev => (dev ? get('mock/book-people.json') : act('/api/book/people'));
 
@@ -33,7 +33,7 @@ async function state() {
   }
   return mock;
 }
-const summary = ({ ink, scraps, ...p }) => ({ ...p, strokes: ink.length, pictures: scraps.length });
+const summary = ({ ink, scraps, texts: _texts, ...p }) => ({ ...p, strokes: ink.length, pictures: scraps.length });
 async function mockDay(day, who) {
   const pages = (await state()).filter(p => (p.who ?? null) === who),
     today = dayOf(),
@@ -50,7 +50,12 @@ async function mockDay(day, who) {
 async function mockPage(id) {
   const p = (await state()).find(p => p.id === Number(id));
   if (!p) throw refused(404, 'not found');
-  return copy({ ...summary(p), ink: p.ink, scraps: p.scraps.map(s => ({ ...s, url: `mock/${s.file}` })) });
+  return copy({
+    ...summary(p),
+    ink: p.ink,
+    scraps: p.scraps.map(s => ({ ...s, url: `mock/${s.file}` })),
+    texts: p.texts ?? [],
+  });
 }
 async function mockCreate({ kind, w, h, who = null }) {
   const pages = await state(),
@@ -67,9 +72,11 @@ async function mockCreate({ kind, w, h, who = null }) {
   pages.push(Object.assign(p, { label: '', w, h, ink: [], scraps: [], created: now, updated: now }));
   return copy(summary(p));
 }
-async function mockSave({ id, ink, scraps, h }) {
+async function mockSave({ id, ink, scraps, texts, x = 0, y = 0, w, h }) {
   const p = (await state()).find(p => p.id === Number(id));
   if (!p) throw refused(404, 'not found');
-  Object.assign(p, { ink, scraps, h, updated: new Date().toISOString() });
+  // (x, y: the page's top-left.)
+  Object.assign(p, { ink, scraps, texts: texts ?? p.texts ?? [], x, y, w: w ?? p.w, h });
+  p.updated = new Date().toISOString();
   return copy(summary(p));
 }

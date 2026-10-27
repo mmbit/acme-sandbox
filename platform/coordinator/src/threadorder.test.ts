@@ -25,12 +25,14 @@ const plan = await import('./plan.ts');
 const threadends = await import('./threadends.ts');
 const backlog = await import('./backlog.ts');
 const predictions = await import('./predictions.ts');
+const pastpool = await import('./pastpool.ts');
 const meetings = await import('./meetings.ts');
 const wakes = await import('./wakes.ts');
 const forecast = await import('./forecast.ts');
 const proposals = await import('./proposals.ts');
 const threadjudge = await import('./threadjudge.ts');
 const review = await import('./review.ts');
+const rounds = await import('./rounds.ts');
 
 beforeEach(async () => {
   h.cancelQueued();
@@ -548,7 +550,7 @@ test('the play plays the order: a task after the one before it, a need after its
 
 // The play runs every minute and after each change, so a bare thread's size is worked out once for the hour, as a spot
 // size is, not read off every done job at every play.
-test("a bare thread's placeholder keeps its size for the hour, then sizes on the done work since", () => {
+test("a bare thread's placeholder keeps its size for the hour, then sizes on the done work since", async () => {
   // Start a fresh cache hour after the earlier cases have played their queues.
   const HOUR = 3_600_000,
     now = Date.now() + 2 * HOUR;
@@ -560,9 +562,10 @@ test("a bare thread's placeholder keeps its size for the hour, then sizes on the
         run: { started: now - hours * HOUR, ended: now },
       });
   };
-  predictions.keepSpotSizes();
+  pastpool.keep();
   done(1);
   const bare = thread('drawn-sizes');
+  await freshHour(now);
   const size = (at: number) => {
     const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
     return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === bare)!.id)!.agent_ms;
@@ -574,10 +577,12 @@ test("a bare thread's placeholder keeps its size for the hour, then sizes on the
   const since = sized().size.agent_ms;
   assert.ok(since > first, `${since} after ${first}: the longer work moves its size`);
   assert.equal(size(now + 60_000), first, 'kept for the hour');
-  assert.equal(size(now + HOUR + 60_000), since, 'then sized on the done work since');
+  assert.equal(size(now + HOUR + 60_000), first, 'the play past the hour reads the done work again, in the background');
+  await pastpool.renewal();
+  assert.equal(size(now + HOUR + 120_000), since, 'then sized on the done work since');
 });
 
-test('a thread drawn within the hour is sized on the done work read for the hour, not every done job read again', () => {
+test('a thread drawn within the hour is sized on the done work read for the hour, not every done job read again', async () => {
   const HOUR = 3_600_000,
     now = Date.now() + 5 * HOUR;
   const done = (hours: number) => {
@@ -588,22 +593,25 @@ test('a thread drawn within the hour is sized on the done work read for the hour
         run: { started: now - hours * HOUR, ended: now },
       });
   };
-  predictions.keepSpotSizes();
+  pastpool.keep();
   done(1);
+  const kept = thread('pool-kept');
+  await freshHour(now);
   const size = (slug: string, at: number) => {
     const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
     return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === slug)!.id)!.agent_ms;
   };
-  const first = size(thread('pool-kept'), now);
+  const first = size(kept, now);
   done(3);
   const again = thread('pool-kept-again');
   assert.equal(size(again, now + 60_000), first, "on the hour's done work");
   const since = predictions.predict({ title: 'Thread pool-kept-again: It works', origin: 'work', agent: 'wren' });
   assert.ok(since.size.agent_ms > first);
-  assert.equal(size(again, now + HOUR + 60_000), since.size.agent_ms, 'the next hour on the done work since');
+  await freshHour(now + HOUR + 60_000);
+  assert.equal(size(again, now + HOUR + 120_000), since.size.agent_ms, 'the next hour on the done work since');
 });
 
-test("a bare thread is sized once for its name, kept through the plays after, and sized again when it's renamed", () => {
+test("a bare thread is sized once for its name, kept through the plays after, and sized again when it's renamed", async () => {
   const HOUR = 3_600_000,
     now = Date.now() + 8 * HOUR;
   const done = (title: string, hours: number) => {
@@ -611,10 +619,11 @@ test("a bare thread is sized once for its name, kept through the plays after, an
       h.pastJob({ agent: 'wren', title, run: { started: now - (i + hours) * HOUR, ended: now - i * HOUR } });
   };
   const sized = (title: string) => predictions.predict({ title, origin: 'work', agent: 'wren' }).size.agent_ms;
-  predictions.keepSpotSizes();
+  pastpool.keep();
   done('Thread harbour: It works', 4);
   done('Thread quay: It works', 1);
   const bare = thread('harbour');
+  await freshHour(now);
   const size = (at: number) => {
     const { snapshot, sizes } = predictions.prepared(at, [], ['usual']);
     return sizes.usual.get(snapshot.jobs.find(j => j.placeholder && j.thread === bare)!.id)!.agent_ms;
@@ -628,6 +637,12 @@ test("a bare thread is sized once for its name, kept through the plays after, an
   assert.equal(typeof renamed, 'object', typeof renamed === 'string' ? renamed : '');
   assert.equal(size(now + 120_000), quay, 'renamed, it is sized again for its new name');
 });
+
+// A fresh hour of kept done work at `at`: a play past the last one's hour reads it again in the background.
+async function freshHour(at: number) {
+  predictions.prepared(at, [], ['usual']);
+  await pastpool.renewal();
+}
 
 test('hq projects and hq thread read a bare thread without a made-up job number', async () => {
   const bare = thread('bare');
@@ -875,6 +890,36 @@ test('a wait drawn before thread planning holds both tasks when it conflicts wit
   assert.equal(second.follows, undefined);
   assert.match(JSON.stringify(second.reasons), new RegExp(`it and #${one} wait for each other`));
   assert.ok(predictions.played(Date.now(), [], ['usual']).usual.has(one), 'no loop for the planner to throw on');
+});
+
+test('an --after on a task before it in its thread, queued before threads, plays and starts as the order', async () => {
+  const t = thread('pre');
+  const [one, two, three] = [task(t), task(t, 'moss'), task(t, 'kit')];
+  // (queued --after before threads were drawn: hq job refuses one now, threadorder.ts jobRefusal)
+  db.prepare('update jobs set after = ? where id = ?').run(two, three);
+  // (the plan with its review rounds, where an --after reaches the merge of the pull request it's on: rounds.ts expand)
+  const played = () => rounds.expand(backlog.orderingSnapshot(Date.now()), new Map()).snapshot.jobs;
+  const loops = () => played().filter(j => JSON.stringify(j.reasons).includes('wait for each other'));
+  assert.deepEqual(loops(), []);
+  assert.equal(played().find(j => j.id === three)!.follows, two, 'after the task before it, as the order has it');
+  assert.ok(predictions.played(Date.now(), [], ['usual']).usual.has(three), 'it has an ETA');
+  for (const [id, c] of [
+    [one, '1'],
+    [two, '2'],
+    [three, '3'],
+  ] as const) {
+    assert.deepEqual(h.jobs.readyWork(), [id], `#${id} is ready in its turn`);
+    const run = await claim();
+    assert.equal(run?.id, id, `#${id} starts in its turn`);
+    await h.finish(run!, { pr: 9707, branch: `job/${one}`, files: [`platform/${c}.ts`], sha: sha(c) });
+  }
+  assert.equal(prOf(9707)?.status, 'open', "the last task's push opens the thread's pull request");
+  // (ruled "changes", no fix drawn, so the pull request's merge waits for its owner's tasks)
+  proposals.deliverFindings({
+    ...{ pr: 9707, branch: `job/${one}`, round: 1, agent: 'bolt', decision: 'changes', summary: 'Fix it' },
+    findings: [{ id: 12, domain: 'engine', files: ['platform/1.ts'], issue: 'It cannot finish' }],
+  });
+  assert.deepEqual(loops(), [], 'in review, no loop through its own pull request');
 });
 
 test('a task waiting for a later time holds no ready task behind it, nor its pull request, and follows it once its time comes', async () => {

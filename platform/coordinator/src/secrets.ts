@@ -106,7 +106,7 @@ mkdirSync(DIR, { recursive: true, mode: 0o700 });
 export function saveSecrets(names: string[], values: Record<string, unknown>): { saved: string[]; refused: Record<string, string> } | string {
   if (!validNames(names.join(','))) return "This card asks for a key the server can't keep: the agent who sent it needs to send it again.";
   const filled = names.map(n => {
-    const v = String(values[n] ?? '').trim();
+    const v = unquoted(String(values[n] ?? '').trim());
     return [n, SHAPE[n] === ADDRESS ? addressText(v) : v];
   }).filter(([, v]) => v);
   if (!filled.length) return 'Fill in at least one key.';
@@ -138,6 +138,11 @@ export function saveSecrets(names: string[], values: Record<string, unknown>): {
   held = null;
   return { saved: saved.map(([n]) => n), refused };
 }
+
+// A key pasted with the double quotes around it (a value copied from a .env line) is saved without one pair of them: they're
+// no part of the key, and a key kept with them would hand them to the service that reads it. A quote at one end only is
+// the key's own (forms() unquotes a stored key the same way).
+const unquoted = (v: string) => (v.length > 1 && v.startsWith('"') && v.endsWith('"') ? v.slice(1, -1).trim() : v);
 
 // which of these keys the server already holds (names only, never values)
 export const stored = (names: string[]) => names.filter(n => validNames(n) && existsSync(`${DIR}/${n}`));
@@ -202,12 +207,27 @@ function keyStamp(name: string) {
   const { size, mtimeMs } = statSync(`${DIR}/${name}`);
   return `${name} ${size} ${mtimeMs}`;
 }
-// a value, each of its lines if it has several, and the JSON-escaped form of each
+// a value, each of its lines if it has several, and the JSON-escaped form of each, all unquoted() as saveSecrets() saves
+// them: a key kept in its .env quotes is masked inside them, so a JSON string around it keeps its own quotes (calls.lines,
+// chat.card), and a quote that is part of a key stays in it.
 function forms(value: string) {
-  const lines = value.split('\n').map(l => l.trim()), plain = [value, ...(lines.length > 1 ? lines : [])];
+  const lines = value.split('\n').map(l => l.trim()),
+    plain = [value, ...(lines.length > 1 ? lines : [])].map(unquoted);
   return [...new Set(plain.flatMap(v => [v, JSON.stringify(v).slice(1, -1)]))];
 }
-export const REDACT_RULES = [LONG, secret, forms, redact].join('\n');
+// JSON kept as text (a call's lines, a card's questions or switches): each string in it, a property's name too, is redacted
+// as it reads and the JSON written again, so a key's form ending in a quote never takes a string's own quote with it. Text
+// with nothing to mask stays as it was written.
+export function redactJson<T>(text: T): T {
+  if (typeof text !== 'string' || text.length < LONG) return text;
+  let masked = false;
+  const string = (v: string) => { const r = redact(v); masked ||= r !== v; return r; };
+  const walk = (v: unknown): unknown => typeof v === 'string' ? string(v) : Array.isArray(v) ? v.map(walk)
+    : v && typeof v === 'object' ? Object.fromEntries(Object.entries(v).map(([k, x]) => [string(k), walk(x)])) : v;
+  const out = JSON.stringify(walk(JSON.parse(text)));
+  return (masked ? out : text) as T;
+}
+export const REDACT_RULES = [LONG, secret, forms, redact, redactJson].join('\n');
 
 // PRINTAPI_TEST_CLIENT_ID reaches a job as PRINTAPI_CLIENT_ID. A Stripe key goes only if it really is a test key, so a
 // live key pasted into a test field never reaches an agent. A key with a shape of its own goes only in that shape, and

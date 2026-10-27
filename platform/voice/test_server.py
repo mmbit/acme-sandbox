@@ -1480,6 +1480,45 @@ class Late(Juno):
 
 
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class Pen(Juno):
+    """The board's Pencil still moving as it stops talking (HQ's pen events): the answer waits for the pen to rest, so the
+    turn has what it drew while it spoke."""
+    async def test_a_turn_waits_for_the_pen_to_rest_and_takes_the_words_said_while_it_moved(self):
+        self.call.penned(True)
+        await self.talk('It does not say who.', 30)
+        await self.quiet(20)
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.brain.asked, [], 'answered with the pen still down')
+        await self.talk('Or what time.', 30)  # (said while writing on)
+        self.call.penned(False)
+        await self.quiet(20)  # (0.6 s: the pen hasn't rested yet)
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.brain.asked, [], 'answered before the pen rested')
+        CLOCK[0] += server.PEN_REST_SECONDS
+        await self.settle()
+        self.assertEqual(self.brain.asked, ['It does not say who. Or what time.'])
+
+    async def test_a_pen_lifted_long_ago_holds_nothing(self):
+        self.call.penned(True)
+        self.call.penned(False)
+        CLOCK[0] += server.PEN_REST_SECONDS
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await self.settle()
+        self.assertEqual(self.brain.asked, ['Can you check the orders?'])
+
+    async def test_a_pen_that_never_lifts_holds_the_answer_at_most_pen_most_seconds(self):
+        self.call.penned(True)
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await asyncio.sleep(0.2)
+        self.assertEqual(self.brain.asked, [])
+        CLOCK[0] += server.PEN_MOST_SECONDS
+        await self.settle()
+        self.assertEqual(self.brain.asked, ['Can you check the orders?'])
+
+
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 class HangUp(Juno):
     """The agent ends the call with hang_up once the board has said goodbye: the line hangs up after the
     goodbye has played and 1.5 s of quiet, unless the board speaks first."""
@@ -2173,12 +2212,11 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         """ HQ's hello on a walk-through carries walk beside the card it's about
         (request): call-context hears it on the new call, and not on a restart (the coordinator keeps it on the call's
         row). Without a card, or as anything but true, it isn't one."""
-        self.capture()
         hellos = ({'request': 31, 'walk': True}, {'walk': True}, {'request': 31, 'walk': 'yes'}, {'request': 31})
         self.procs = [Proc([None]), Proc(['Here it is.']), *(Proc([]) for _ in hellos[1:])]
         for hello in hellos:
             ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en', **hello}))
-            task = asyncio.create_task(server.app_call(ws))
+            task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))  #.
             for _ in range(300):
                 await asyncio.sleep(0.01)
                 if any(json.loads(m)['type'] == 'call' for m in ws.sent if isinstance(m, str)):
@@ -2257,7 +2295,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         await call.answer('What do you think of this?', None)
         self.assertEqual(len(self.started), 2, 'a second session was started')
         self.assertEqual(self.picture_events(events), [(17, 'failed', 'lost')])
-        self.assertEqual((call.pictures, call.held, call.picture_bytes), ([], [], 0))
+        self.assertEqual((call.pictures, call.held, call.picture_bytes), ([], {}, 0))
         await call.answer('What do you think of it?', None)
         message = self.started[1].heard_messages[0]['content']
         self.assertEqual([part['type'] for part in message], ['text'], 'the new session gets no picture')
@@ -2275,7 +2313,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         call.pictures = [{'id': 20, 'type': 'image/jpeg', 'data': JPEG}]
         await call.answer('And this is the menu.', None)  # the model has it, then the session dies
         self.assertEqual(self.picture_events(events)[1:], [(20, 'seen', None), (17, 'failed', 'lost'), (20, 'failed', 'lost')])
-        self.assertEqual(call.held, [])
+        self.assertEqual(call.held, {})
         await call.answer('Can you see them?', None)
         message = self.started[1].heard_messages[0]['content']
         self.assertEqual([part['type'] for part in message], ['text'])
@@ -2294,10 +2332,10 @@ class Restart(unittest.IsolatedAsyncioTestCase):
             call.pictures = [{'id': 17, 'type': 'image/jpeg', 'data': JPEG}]
             await call.answer('This is the shop.', None)
             self.assertEqual(self.picture_events(events), [], 'not seen yet, and nothing failed')
-            self.assertEqual((call.held, [p['id'] for p in call.unsent]), ([], [17]))
+            self.assertEqual((call.held, [p['id'] for p in call.unsent]), ({}, [17]))
             await call.answer('What do you think?', None)
             self.assertEqual(self.picture_events(events), [(17, 'seen', None)])
-            self.assertEqual((call.held, call.unsent), ([17], []))
+            self.assertEqual(([*call.held], call.unsent), ([17], []))
             self.assertEqual(len(self.started), 1, 'the session goes on')
             self.assertEqual([part['type'] for part in self.started[0].heard_messages[1]['content']], ['text'], 'sent once')
             call.end()
@@ -2929,32 +2967,156 @@ class Screen(Juno):
         self.assertEqual(self.screen_turns(), [(0, 0, False), (13, 4, True)])
         self.assertEqual((self.call.screen['pictures'], self.call.picture_bytes), (1, len(SHOT(4))))
 
-    async def test_pictures_of_the_screen_stop_at_forty_a_call_the_tools_included(self):
+    def sessions(self):
+        """Each session the call's brain starts, as the recap its first message carries ('' for the call's first)."""
+        recaps = []
+
+        async def start():
+            recaps.append(self.brain.recap)
+        self.brain.start = start
+        return recaps
+
+    # A long walk-through: the screen's picture comes with every changed turn to the end, and a
+    # session holds at most the line's 40, the screen tool's included. Past them, a fresh session has the older ones as
+    # their moments' lines and the board's shared pictures again.
+    async def test_a_long_walk_through_sees_the_screen_to_the_end_its_older_pictures_compacted(self):
+        recaps = self.sessions()
+        await self.call.start()
+        moment = lambda n: f'#{n} 17:{n // 60:02}:{n % 60:02} tapped Next (button)'
+        self.looks = [{'type': 'image/jpeg', 'data': JPEG}]
+        await self.call.show(17)  # (the board shares a picture of its own first)
+        held = []
+        for n in range(1, 101):
+            self.turns = NS(pop=lambda _, n=n: self.on(n, [moment(n)], n))  # (the screen as it is, however often asked)
+            await self.call.answer(f'And now {n}?', None)
+            held.append(self.call.screen['pictures'])
+        self.assertTrue(all(shown[-1] == 'screen' for shown in self.brain.shown), 'a picture of the screen every turn')
+        self.assertEqual(max(held), 40, 'a session holds at most 40')
+        self.assertEqual(len(recaps), 3, 'compacted twice')
+        self.assertEqual([i for i, shown in enumerate(self.brain.shown) if 17 in shown], [0, 40, 80], 'shared again')
+        self.assertIn("The pictures they shared that you had come again with this message: #17.", recaps[2])
+        self.assertIn(f'Board: (on screen: {moment(80)}; a picture of the screen went with it)', recaps[2])
+        self.assertIn(f'Board: (on screen: {moment(1)}; a picture of the screen went with it)', recaps[2])
+        self.assertIn(BRIEF, self.brain.asked[80], 'the fresh session is briefed again')
+        self.assertIn(moment(81), self.brain.asked[80])
+        self.assertNotIn(server.SCREEN_WORDS['full'], ' '.join(self.brain.asked))
+        self.assertEqual(self.call.picture_bytes, len(JPEG) + 20 * len(SHOT(100)))
+        self.assertEqual(self.picture_events(), [(17, 'received', None), (17, 'seen', None), (17, 'seen', None), (17, 'seen', None)])
+
+    def picture_events(self):
+        return [(e['id'], e['state'], e.get('why')) for e in self.events if e.get('type') == 'picture']
+
+    async def test_the_screen_tool_past_forty_waits_for_the_next_turn_to_compact(self):
+        recaps = self.sessions()
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(n)}, 'line': f'#{n} 17:00:00 page /'} for n in range(100, 140)]
+        for _ in range(40):
+            self.assertIn('picture', await self.call.screen_tool({}))
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['full']})
+        self.looks = [{'lines': MOMENTS}]
+        self.assertEqual(await self.call.screen_tool({'since': '#12'}), {'lines': MOMENTS}, 'the moments go on')
+        self.turns = [self.on(1, MOMENTS[:1], 12), self.on(1, MOMENTS[:1], 12), self.on(2, MOMENTS[1:], 13)]
+        await self.turn('This one?')
+        await self.turn('And this?')
+        self.assertEqual(self.brain.shown, [['screen'], ['screen']])
+        self.assertEqual(len(recaps), 1, 'compacted on the first turn')
+        self.assertIn("the screen and sketch tools' pictures went with the old session", recaps[0])
+        self.assertEqual(self.screen_turns(), [(0, 0, False), (0, 0, False), (12, 1, True)],
+                         'the fresh session is asked again from the same moment, with its briefing')
+        self.assertEqual(self.call.screen['pictures'], 2)
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(140)}, 'line': '#14 17:00:00 page /'}]
+        self.assertIn('picture', await self.call.screen_tool({}), 'the tool shows again')
+
+    # The tools fill the session while the screen stays as it is: the board's next turn compacts it all the same.
+    async def test_the_screen_tool_past_forty_compacts_with_the_next_turn_on_a_screen_that_has_not_changed(self):
+        recaps = self.sessions()
+        self.turns = [self.on(1, MOMENTS[:1], 12), self.on(1, [], 12), self.on(1, [], 12), self.on(1, [], 12)]
+        await self.turn('This one?')
         self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(n)}, 'line': f'#{n} 17:00:00 page /'} for n in range(100, 139)]
         for _ in range(39):
             self.assertIn('picture', await self.call.screen_tool({}))
-        self.turns = [self.on(1, MOMENTS[:1], 12), self.on(2, MOMENTS[1:], 13), self.on(3, [], 13)]
-        for words in ('This one?', 'And this?', 'Still there?'):
-            await self.turn(words)
-        self.assertEqual(self.brain.shown, [['screen'], [], []])
-        self.assertEqual([body['picture'] for path, body in self.asked if path == 'screen-turn'], [True, False, False],
-                         'past the count, no picture is asked for')
-        self.assertIn(MOMENTS[1], self.brain.asked[1], 'the moments go on')
-        self.assertIn(server.SCREEN_WORDS['full'], self.brain.asked[1])
-        self.assertEqual(self.brain.asked[2], 'Still there?', 'told once')
         self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['full']})
-        self.looks = [{'lines': MOMENTS}]
-        self.assertEqual(await self.call.screen_tool({'since': '#12'}), {'lines': MOMENTS})
-        self.assertEqual(self.call.screen['pictures'], 40)
+        await self.turn('Still this one?')
+        self.assertEqual((len(recaps), self.brain.shown[1]), (1, ['screen']), 'compacted: the screen as it is, again')
+        self.assertEqual(self.screen_turns()[1:], [(12, 1, True), (12, 0, False)])
+        await self.turn('And now?')
+        self.assertEqual((len(recaps), self.brain.shown[2], self.call.screen['pictures']), (1, [], 1))
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(140)}, 'line': '#14 17:00:00 page /'}]
+        self.assertIn('picture', await self.call.screen_tool({}), 'the tool shows again')
 
-    async def test_pictures_of_the_screen_stop_within_the_sessions_bytes(self):
-        self.new_call(session_bytes=2 * len(SHOT(1)) - 1)  # (room for one)
-        self.turns = [self.on(1, [], 0), self.on(2, [], 0)]
+    async def test_a_tool_refused_for_the_sessions_bytes_compacts_with_the_next_turn_on_a_screen_that_has_not_changed(self):
+        self.new_call(session_bytes=3 * len(SHOT(1)) - 1)  # (room for two)
+        recaps = self.sessions()
+        self.turns = [self.on(1, [], 0), self.on(1, [], 0), self.on(1, [], 0)]
+        await self.turn('Look.')
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(n)}, 'line': f'#{n} 17:00:00 page /'} for n in (2, 3, 4)]
+        self.assertIn('picture', await self.call.screen_tool({}))
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['full']})
+        await self.turn('And now?')
+        self.assertEqual((len(recaps), self.brain.shown[1], self.call.screen['refused']), (1, ['screen'], False))
+        self.assertIn('picture', await self.call.screen_tool({}), 'the tool shows again')
+
+    # The board's shared pictures fill the room a tool's picture needs: the next turn's compaction lets the oldest go for
+    # it, rather than renewing the session on every turn for nothing.
+    async def test_a_tool_refused_beside_the_boards_pictures_has_room_after_the_next_turn(self):
+        photo = base64.b64encode(b'\xff\xd8\xff\xe0 another photo').decode()
+        self.new_call(session_bytes=len(JPEG) + len(photo) + len(SHOT(1)) + len(SHOT(2)) - 1)
+        recaps = self.sessions()
+        self.turns = [self.on(1, [], 0), self.on(1, [], 0), self.on(1, [], 0), self.on(1, [], 0)]
+        self.looks = [{'type': 'image/jpeg', 'data': JPEG}, {'type': 'image/jpeg', 'data': photo}]
+        await self.call.show(17)
+        await self.call.show(18)
+        await self.turn('Look.')
+        self.looks = [{'picture': {'type': 'image/jpeg', 'data': SHOT(2)}, 'line': '#2 17:00:00 page /'}] * 2
+        self.assertEqual(await self.call.screen_tool({}), {'error': server.SCREEN_WORDS['full']})
+        await self.turn('And now?')
+        self.assertEqual((len(recaps), self.brain.shown[1]), (1, [18, 'screen']), '#17 makes room for the tool')
+        self.assertIn((17, 'failed', 'lost'), self.picture_events())
+        self.assertIn('picture', await self.call.screen_tool({}), 'the tool shows again')
+        await self.turn('And this?')
+        self.assertEqual(len(recaps), 1, 'no renewal for nothing')
+
+    async def test_the_sketch_tool_refused_for_the_sessions_bytes_compacts_with_the_next_turn_on_a_call_with_no_screen(self):
+        png = base64.b64encode(b'\x89PNG\r\n\x1a\n sketch').decode()
+        self.new_call(session_bytes=len(JPEG) + len(png))
+        recaps = self.sessions()
+        self.turns = [{'on': False}, {'on': False}, {'on': False}]
+        self.looks = [{'type': 'image/jpeg', 'data': JPEG}]
+        await self.call.show(17)
+        await self.turn('Look.')
+        self.looks = [{'picture': {'type': 'image/png', 'data': png}, 'line': 'Sketch #3'}] * 3
+        self.assertIn('picture', await self.call.sketch_tool({'sketch': '3'}))
+        self.assertEqual(await self.call.sketch_tool({'sketch': '3'}), {'error': server.SKETCH_WORDS['full']})
+        await self.turn('And now?')
+        self.assertEqual((len(recaps), self.brain.shown[1]), (1, [17]), "compacted: the board's picture again")
+        self.assertIn('picture', await self.call.sketch_tool({'sketch': '3'}), 'the sketch shows again')
+
+    async def test_a_screen_that_grows_while_the_session_is_renewed_is_sent_in_the_room_kept_for_it(self):
+        self.new_call(screen_pictures=1, session_bytes=len(JPEG) + len(SHOT(2)))
+        recaps = self.sessions()
+        self.turns = [self.on(1, [], 0), self.on(2, [], 0), self.on(123456, [], 0)]  # (a bigger capture as it renews)
+        self.looks = [{'type': 'image/jpeg', 'data': JPEG}]
+        await self.call.show(17)
         await self.turn('Look.')
         await self.turn('And now?')
-        self.assertEqual(self.brain.shown, [['screen'], []])
-        self.assertIn(server.SCREEN_WORDS['full'], self.brain.asked[1])
-        self.assertEqual(self.call.picture_bytes, len(SHOT(1)))
+        self.assertEqual((len(recaps), self.brain.shown[1]), (1, ['screen']), '#17 makes room for the screen as it is now')
+        self.assertEqual(self.picture_events()[-1], (17, 'failed', 'lost'))
+        self.assertNotIn(server.SCREEN_WORDS['full'], self.brain.asked[1])
+        self.assertEqual(self.call.picture_bytes, len(SHOT(123456)))
+
+    async def test_a_picture_past_the_sessions_bytes_compacts_it_and_the_board_can_share_into_the_screens_room(self):
+        self.new_call(session_bytes=len(SHOT(1)) + len(JPEG) - 1)  # (room for one, either)
+        recaps = self.sessions()
+        self.turns = [self.on(1, [], 0), self.on(2, [], 0), self.on(2, [], 0), self.on(2, [], 0), self.on(3, [], 0)]
+        await self.turn('Look.')
+        self.looks = [{'type': 'image/jpeg', 'data': JPEG}]
+        await self.call.show(17)  # (the screen's picture would go to make room for it)
+        await self.turn('And now?')
+        self.assertEqual(self.brain.shown, [['screen'], [17]], 'room for the shared picture alone')
+        self.assertEqual(len(recaps), 1)
+        await self.turn('And this?')  # (#17 goes as lost: the screen's picture is the newer)
+        self.assertEqual(self.brain.shown[2], ['screen'])
+        self.assertEqual((len(recaps), [*self.call.held], self.call.picture_bytes), (2, [], len(SHOT(3))))
+        self.assertEqual([e for e in self.events if e.get('type') == 'picture'][-1], {'type': 'picture', 'id': 17, 'state': 'failed', 'why': 'lost'})
 
     async def test_paused_the_agent_hears_it_once_and_gets_nothing_more_until_it_is_on_again(self):
         self.turns = [self.on(5, ['#14 17:04:00 paused'], 14, paused=True), self.on(5, ['#15 17:04:30 typed in Name'], 15, paused=True),
@@ -3323,10 +3485,11 @@ class BoardDriving(Juno):
                          {'error': server.OPEN_WORDS['waiting'].format(what='the teacup page')})
         for answer in ({'id': 7, 'answer': 'not now'}, {'id': 1, 'answer': 'show'}):  # (no such suggestion, no such answer)
             self.call.driving.opened({'type': 'opened', **answer})
-        self.call.driving.opened({'type': 'opened', 'id': 1, 'answer': 'open'})
+        # (Open and show: one tap opens it and shows their screen.)
+        self.call.driving.opened({'type': 'opened', 'id': 1, 'answer': 'open', 'shown': True})
         self.call.driving.opened({'type': 'opened', 'id': 1, 'answer': 'not now'})  # (answered already)
         await self.turn('Ah, there it is.')
-        opened = ("(They tapped Open on the teacup page: it's on their screen now, with a way back to where they were. "
+        opened = ("(They tapped Open on the teacup page: it's on their screen now, and you see their screen with it. "
                   'drive scrolls and points, draw rings.)')
         self.assertEqual(self.brain.asked, [f'{opened}\n\nAh, there it is.'])
         for n, (answer, why) in enumerate((('not now', None), ('failed', "The  preview isn't\nrunning."), ('failed', None)), 2):
@@ -3419,8 +3582,8 @@ class BoardDriving(Juno):
         self.assertIn({'type': 'open', 'id': 1, 'what': 'the teacup page', 'url': TEACUP_PAGE}, sent,
                       'the waiting suggestion, again on the resumed connection')
         self.assertEqual(await move, {'error': 'No “Price” on their screen.'})
-        self.assertEqual(self.call.driving.answered, ["(They tapped Open on the teacup page: it's on their screen now, with a way "
-                                                      'back to where they were. drive scrolls and points, draw rings.)'])
+        self.assertEqual(self.call.driving.answered, ["(They tapped Open on the teacup page: it's on their screen now, and their "
+                                                      "screen isn't shown to you. drive scrolls and points, draw rings.)"])
         self.assertIsNone(self.call.driving.waiting)
 
     async def test_no_suggestions_or_moves_on_a_call_out_or_the_phone_or_while_hq_is_away(self):
@@ -3597,10 +3760,10 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(call.leaving, 'it hangs up')
 
     async def test_a_walk_through_s_screen_reaches_the_model_and_its_tool_through_the_real_cli(self):
-        """A walk-through as the line runs it, with a call's screen pictures at 2: the first turn's picture of the screen and its
-        moments in the message, the screen tool's picture through the line's socket in the tool's result, and on the
-        next turn, the budget spent, the moments and that pictures have stopped, without one. The CLI's copies of the
-        pictures go with the session."""
+        """A walk-through as the line runs it, with a session's screen pictures at 2: the first turn's picture of the screen
+        and its moments in the message, the screen tool's picture through the line's socket in the tool's result, and on
+        the next turn, the session full, a fresh session (a new CLI) whose first message has the call so far in words,
+        the coordinator's briefing again, the moments and the screen's new picture. The CLI's copies of the pictures go with each session."""
         d, bodies = limit_model.tmp(), []
         tool = {'type': 'tool_use', 'id': 'toolu_1', 'name': 'mcp__hq__screen', 'input': {'at': '#12'}}
 
@@ -3631,8 +3794,8 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         threading.Thread(target=model.serve_forever, daemon=True).start()
         turns = [{'on': True, 'paused': False, 'lines': MOMENTS, 'last': 13, 'version': 1, 'brief': BRIEF,
                   'picture': {'type': 'image/jpeg', 'data': GREY('D')}},
-                 {'on': True, 'paused': False, 'lines': ['#14 17:03:20 typed in Name on the mug'], 'last': 14, 'version': 2,
-                  'picture': {'type': 'image/jpeg', 'data': GREY('T')}}]
+                 *[{'on': True, 'paused': False, 'lines': ['#14 17:03:20 typed in Name on the mug'], 'last': 14, 'version': 2,
+                    'picture': {'type': 'image/jpeg', 'data': GREY('T')}, 'brief': BRIEF}] * 2]  # (asked again, compacted)
         asked = []
 
         def coordinator(method, path, body=None):
@@ -3651,7 +3814,11 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
             # (the CLI's copies of the pictures, where it keeps them: they go with the session)
             copies = lambda: [*server.PICTURE_COPIES.glob(f"claude-*/{re.sub('[^A-Za-z0-9]', '-', d)}/*/images/*"),
                               *Path(d).rglob('*.jpg')]  # (and the tool's, beside the session's records)
-            self.assertEqual(len(copies()), 2)
+            for _ in range(100):  # (the first session's go once its CLI has ended)
+                if len(copies()) == 1:
+                    break
+                await asyncio.sleep(0.1)
+            self.assertEqual(len(copies()), 1)
             call.end()
             for _ in range(100):
                 if not copies():
@@ -3669,11 +3836,17 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(words.startswith(BRIEF) and words.rstrip().endswith('What do I tap?'))
         self.assertIn(MOMENTS[1], words)
         self.assertIn(GREY('L'), json.dumps(result), "the tool's picture reached the model")
-        self.assertNotIn('image', [part.get('type') for part in second], 'the budget is spent')
-        self.assertIn('#14 17:03:20 typed in Name on the mug', json.dumps(second))
-        self.assertIn(server.SCREEN_WORDS['full'], json.dumps(second))
+        self.assertEqual(len([m for m in bodies[2]['messages'] if m['role'] == 'user']), 1, 'a fresh session')
+        self.assertEqual([part['source']['data'] for part in second if part['type'] == 'image'], [GREY('T')])
+        words = next(part['text'] for part in second if part['type'] == 'text' and 'That one?' in part['text'])
+        self.assertIn('renewed to make room for more pictures', words)
+        self.assertIn(f'Board: (on screen: {MOMENTS[0]}; {MOMENTS[1]}; a picture of the screen went with it)', words)
+        self.assertIn(BRIEF, words)
+        self.assertIn('#14 17:03:20 typed in Name on the mug', words)
+        self.assertNotIn(server.SCREEN_WORDS['full'], words)
         self.assertEqual([body for path, body in asked if path == 'screen'], [{'purpose': 'call', 'ref': '7', 'at': '#12'}])
-        self.assertEqual(call.screen['pictures'], 2)
+        self.assertEqual(len([path for path, body in asked if path == 'call-context']), 2)
+        self.assertEqual(call.screen['pictures'], 1)
 
     async def test_open_work_and_drive_through_the_real_cli(self):
         """ The agent suggests opening its work and drives it, as the line runs
@@ -3722,14 +3895,10 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
             if event['type'] == 'drive' and (answer := moved.pop(0)):
                 call.driving.driven({'type': 'driven', 'id': event['id'], **answer})
 
-        saved = server.SCREEN_SOCKET, server.SESSIONS
-        self.addCleanup(lambda: [setattr(server, k, v) for k, v in zip(('SCREEN_SOCKET', 'SESSIONS'), saved)])
-        server.SCREEN_SOCKET, server.SESSIONS = Path(d, 'screen.sock'), Path(d, 'projects')
-        screens = await server.serve_screens(server.SCREEN_SOCKET)
+        coordinator = lambda method, path, body=None: {**self.coordinator(method, path, body), 'call': 7} if path == 'call-context' else None
+        call = self.line(f'http://127.0.0.1:{model.server_address[1]}', d, coordinator)
+        screens = await server.serve_screens(call.wiring.paths.screen_socket)
         try:
-            call = self.line(f'http://127.0.0.1:{model.server_address[1]}', d)
-            context = server.hq
-            server.hq = lambda method, path, body=None: {**context(method, path, body), 'call': 7} if path == 'call-context' else None
             call.send_event = hq_side
             tap = lambda answer, **why: call.driving.opened({'type': 'opened', 'id': self.opens()[-1]['id'], 'answer': answer, **why})
             with unittest.mock.patch.object(driving, 'DRIVE_SECONDS', 1):
@@ -3752,7 +3921,8 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.assertTrue({'mcp__hq__open_work', 'mcp__hq__drive'} <= set(offered), offered)
         last = [json.dumps([m for m in body['messages'] if m['role'] == 'user'][-1], ensure_ascii=False) for body in bodies]
         self.assertIn(server.OPEN_WORDS['asked'].format(what='the teacup page'), last[1])
-        self.assertIn(server.OPEN_WORDS['tapped']['open'].format(what='the teacup page'), last[2])
+        self.assertIn(server.OPEN_WORDS['tapped']['open'].format(what='the teacup page', seen=server.OPEN_WORDS['seen'][False]),
+                      last[2])
         self.assertIn('Scrolled: “Price” is in view on their screen.', last[3])
         self.assertIn('Nothing on their screen says “Gift wrap”.', last[4])
         self.assertIn(server.DRIVE_WORDS['late'], last[5])

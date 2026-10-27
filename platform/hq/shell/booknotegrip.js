@@ -1,5 +1,5 @@
-// A note held on its sheet: a finger (or a mouse) held still on it ~350 ms lifts it off the paper, and then it goes
-// where it's let go. Between the other notes of its sheet on the page: there, the others making room. Over a face in
+// A note held on its sheet: a finger held still on it ~350 ms lifts it off the paper (a mouse's press, as soon as it
+// moves), and then it goes where it's let go. Between the other notes of its sheet on the page: there, the others making room. Over a face in
 // the rail: onto that agent's sheet. Thrown sideways off the paper: wiped. Anywhere else it settles back. Each is a
 // step the rail's Undo takes back (book.steps). No "are you sure?": everything undoes instead.
 import { faceAt } from './bookrail.js';
@@ -9,6 +9,11 @@ import { reordered, slotAt, whose } from './booksheetplace.js';
 // how long a press is held still before the note lifts, and how far it may wander meanwhile (further: the table pans)
 const HOLD_MS = 350,
   STILL_PX = 8;
+// a mouse's press lifts it once it has moved this far (less is a click, the note's own).
+const DRAG_PX = 3;
+// what on a note a mouse's line starts on, not its grip: its number (a line to another links them) and its answers'
+// slips (a tick ticks one), booksheet.js's claim.
+export const SHEET_INK = '.bs-n, .answer-slip';
 // a throw: faster than this sideways (px per ms, over its last FLICK_MS) and mostly sideways
 const THROW = 0.9,
   FLICK_MS = 100;
@@ -16,24 +21,30 @@ const THROW = 0.9,
 export function mountGrip(sh) {
   sh.book.world.addEventListener('pointerdown', e => {
     const el = e.target.closest?.('.bs-note[data-open]');
-    if (!el || e.target.closest('textarea') || !e.isPrimary) return;
+    if (!el || e.target.closest('textarea, button, a, input') || !e.isPrimary) return;
     if (!(e.pointerType === 'touch' || (e.pointerType === 'mouse' && e.button === 0))) return;
+    // (a mouse on its number or an answer's slip writes: a link, a tick.)
+    if (e.pointerType === 'mouse' && e.target.closest(SHEET_INK)) return;
     if (sh.sheet(el.dataset.sheet)?.status !== 'open') return;
     hold(sh, el, e);
   });
 }
 
-// A press on a note: still for HOLD_MS, it lifts; moved first, it was the table's (or the mouse's ink)
+// A finger's press on a note: still for HOLD_MS, it lifts; moved first, it was the table's. A mouse's lifts it as it
+// moves (the book's tools give the note a mouse's press: booktools.js).
 function hold(sh, el, down) {
-  const trail = [[down.timeStamp, down.clientX, down.clientY]];
+  const trail = [[down.timeStamp, down.clientX, down.clientY]],
+    mouse = down.pointerType === 'mouse';
   let lifted = null;
-  const timer = setTimeout(() => (lifted = lift(sh, el, down)), HOLD_MS);
+  const timer = mouse ? 0 : setTimeout(() => (lifted = lift(sh, el, down)), HOLD_MS);
   const move = e => {
     if (e.pointerId !== down.pointerId) return;
     trail.push([e.timeStamp, e.clientX, e.clientY]);
     while (trail.length > 2 && trail[0][0] < e.timeStamp - FLICK_MS) trail.shift();
+    const far = Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY);
+    if (!lifted && mouse && far > DRAG_PX) lifted = lift(sh, el, down);
     if (lifted) return carry(sh, lifted, e);
-    if (Math.hypot(e.clientX - down.clientX, e.clientY - down.clientY) > STILL_PX) end();
+    if (far > STILL_PX) end();
   };
   const up = e => {
     if (e.pointerId !== down.pointerId) return;

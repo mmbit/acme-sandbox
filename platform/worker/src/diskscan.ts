@@ -1,4 +1,5 @@
 // A slot-owned scanner keeps command-controlled paths away from worker filesystem privileges.
+import { AccountingError, type AccountingFailure } from './accounting.ts';
 import { fork, type ChildProcess } from 'node:child_process';
 
 export class DiskScan {
@@ -13,11 +14,11 @@ export class DiskScan {
       execArgv: [],
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
-    this.child.on('message', (reading: { bytes: number; error?: string }) => {
+    this.child.on('message', (reading: { bytes: number; error?: AccountingFailure }) => {
       if (this.closed) return;
       const pending = this.pending;
       this.pending = undefined;
-      if (reading.error) pending!.reject(new Error(reading.error));
+      if (reading.error) pending!.reject(new AccountingError(reading.error.reason, reading.error.message));
       else pending!.resolve(reading.bytes);
     });
     this.child.on('error', failure => this.fail(failure));

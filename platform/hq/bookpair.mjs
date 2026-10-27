@@ -3,27 +3,22 @@
 // The desktop's book shows a code (its QR and six digits); the iPad opens HQ with it and the two are paired: the book
 // stays open on the desktop and folds away on the iPad, each saying who it's paired with, the swap in both rails. A
 // ring the Pencil draws on the iPad shows on the desktop's page while it's still being drawn, round the same element
-// in the desktop's own layout; lifted, the mark goes to the desktop, its post-it open with the caret in it, and what's
-// typed there goes into the book with the iPad's ring. Swapped, the desktop holds the page and the iPad the book: a
-// ring on the desktop goes to the iPad to finish, and a flick of its post-it sends it back. A page closed on one
-// closes on the other, and Close ends it on both.
-// The iPad's ring goes across without its post-it popping up there and away again (it never shows on the page's
-// screen); a phone paired the same way is bookphone.mjs's.
+// in the desktop's own layout; lifted and rested, the mark goes into the book from the iPad, no post-it on either
+// screen, and the desktop's book turns to its note. Swapped, the desktop holds the page and the iPad the book: a ring
+// on the desktop goes in from there, and the iPad's book turns to it. A page closed on one closes on the other, and
+// Close ends it on both.
+// A phone paired the same way is bookphone.mjs's.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
 
-export const SETTLE_MS = 1500; // (pair.js: a mark made on the page's screen goes to the book's after this)
-// A post-it takes its snapshot as it opens: a few seconds on a loaded worker's headless WebKit
-export const POSTIT_MS = 20_000;
 export const DESKTOP = { width: 1280, height: 800 },
   PHONE = { width: 390, height: 844 };
 
 // The coordinator's pairing as a stand-in, shared by both contexts: a code makes a pairing, joining it tells both
-// sides 'paired', a send reaches the other side (after refuseSend() the next mark sent is refused, as on a dropped
-// connection). Its stream is answered as a long poll (each answer ends, and the EventSource comes back at once), which
-// a route can do where it can't hold a stream open.
+// sides 'paired', a send reaches the other side. Its stream is answered as a long poll (each answer ends, and the
+// EventSource comes back at once), which a route can do where it can't hold a stream open.
 export function pairRelay() {
-  const relay = { pairs: new Map(), codes: new Map(), made: 0, refusing: false };
+  const relay = { pairs: new Map(), codes: new Map(), made: 0 };
   const route = async r => {
     const req = r.request(),
       url = new URL(req.url()),
@@ -36,16 +31,12 @@ export function pairRelay() {
     if (!side) return r.fulfill({ status: 403, json: { error: 'Not this pairing' } });
     if (url.pathname === '/api/pair/live') return r.fulfill(await streamed(pr, side));
     const other = side === 'a' ? 'b' : 'a';
-    if (url.pathname === '/api/pair/send' && relay.refusing && body.events.some(e => e.tag === 'take')) {
-      relay.refusing = false;
-      return r.fulfill({ status: 503, json: { error: 'Not now' } });
-    }
     if (url.pathname === '/api/pair/send') for (const ev of body.events) push(pr, other, ev);
     else if (url.pathname === '/api/pair/end') push(pr, other, state('ended'));
     else return r.fulfill({ status: 404, json: {} });
     return r.fulfill({ json: { ok: true } });
   };
-  return Object.assign(route, { refuseSend: () => (relay.refusing = true) });
+  return route;
 }
 const state = s => ({ tag: 'pair', payload: { state: s } });
 function push(pr, side, ev) {
@@ -96,7 +87,7 @@ async function streamed(pr, side) {
   };
 }
 
-// c: book-check's { hqIn, base, penOn, ring, ui, posts, shot }, with the iPad's browser (pad: WebKit) and the
+// c: book-check's { hqIn, base, penOn, ring, ui, posts, notes, shot }, with the iPad's browser (pad: WebKit) and the
 // desktop's (desk: Chromium, as a desktop's Chrome)
 export async function pairStory(c) {
   const route = pairRelay();
@@ -104,11 +95,10 @@ export async function pairStory(c) {
     pad = await c.hqIn(c.pad);
   for (const context of [desk, pad]) await context.route(/\/api\/pair(\/[a-z]+)?(\?.*)?$/, route);
   const s = { ...c, route, ...(await paired(c, desk, pad)) };
-  await watchSheet(s.p.page);
-  await finishedOnTheDesktop(s, await liveAcross(s));
-  assert.equal(await sheetShowed(s.p.page), false, "the iPad's post-it never popped up as its mark went across");
+  for (const page of [s.d.page, s.p.page]) await watchSheet(page);
+  await settledOnTheIPad(s, await liveAcross(s));
   await swapped(s);
-  await flickedBack(s);
+  for (const page of [s.d.page, s.p.page]) assert.equal(await sheetShowed(page), false, 'no post-it on either screen');
   await closed(s);
   await desk.close();
   await pad.close();
@@ -120,7 +110,7 @@ export async function opened(c, context, url) {
     errors = errorsOf(page);
   await page.goto(`${c.base}${url}`);
   await until(page, '#loading.gone');
-  await page.waitForSelector('review-mode .fab');
+  await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away while the book's folded)
   return { page, errors };
 }
 
@@ -128,8 +118,12 @@ export async function opened(c, context, url) {
 // desktop and folded on the iPad
 async function paired(c, desk, pad) {
   const d = await opened(c, desk, '/?intro=0&open=phone');
+  // (the phone in the book's overview, closed again once the code shows)
+  const overview = d.page.locator('#book').getByRole('button', { name: /^The overview/ });
+  await overview.click();
   await d.page.getByRole('button', { name: 'Draw from your phone' }).click();
   await d.page.waitForSelector('#book .pair-qr path');
+  await overview.click();
   assert.ok((await d.page.getAttribute('#book .pair-qr path', 'd')).length > 200, 'the book shows a QR to scan');
   const code = (await d.page.textContent('#book .pair-digits')).replace(/\D/g, '');
   assert.equal(code.length, 6, 'and six digits to type');
@@ -145,9 +139,9 @@ async function paired(c, desk, pad) {
     { timeout: 10_000 },
   );
   assert.equal(await d.page.evaluate(() => document.documentElement.dataset.book), 'open', "the desktop's book stays");
-  // (in the folded book's rail too, which shows once the book comes out)
+  // (on the folded book's card too, which shows once the book comes out)
   for (const page of [d.page, p.page])
-    assert.ok(await page.$eval('#book .bk-swap', b => !b.hidden), 'the swap is in each rail');
+    assert.ok(await page.$eval('#book .bk-swap', b => !b.hidden), "the swap is on each pairing's card");
   return { d, p };
 }
 export const bookIs = (page, mode) =>
@@ -200,85 +194,46 @@ function inkOver(sel) {
   return b ? { x: sx / n, y: sy / n, box: { x: b.left, y: b.top, w: b.width, h: b.height } } : null;
 }
 
-// Lifted, the mark goes to the desktop, its post-it and caret ready; typed there, it goes into the book
-async function finishedOnTheDesktop({ d, p, ...c }, target) {
+// Lifted and rested, the mark goes into the book from the iPad, its ring and snip with it, and the desktop's book turns
+// to its note
+async function settledOnTheIPad({ d, p, ...c }, target) {
+  const from = c.notes.length;
   await p.page.evaluate(() => window.__lift());
-  await moved(c, p.page, d.page);
-  await d.page.waitForFunction(
-    () => document.querySelector('review-mode').shadowRoot.activeElement?.localName === 'textarea',
-    null,
-    { timeout: POSTIT_MS },
-  );
-  const noted = c.posts.filter(x => x.path === '/api/book/note').length;
-  await d.page.keyboard.type(' Make it bigger');
-  await c.shot('pair-typed', d.page);
-  await d.page.locator(c.ui('.send')).dispatchEvent('click');
-  await d.page.waitForSelector(c.ui('.sheet'), { state: 'hidden', timeout: 15_000 });
-  const note = c.posts.filter(x => x.path === '/api/book/note')[noted]?.body;
-  // (after any the stand-in voice line said on the iPad as the ring was drawn: they come along)
-  assert.match(note?.words ?? '', /Make it bigger$/, 'the words typed on the desktop go with the mark');
+  const note = await noteIn(c, p.page, from);
   // (the Pencil's own pick: the smallest element holding most of the ring, inside the one it was drawn round)
   const on = note.anchor.el?.selector;
   assert.ok(on?.startsWith(target.sel), `on what the iPad's ring was round (${on})`);
   assert.ok(note.anchor.ink.length >= 1, "with the iPad's ring as its ink");
+  assert.ok(note.snip, 'and its snip');
+  await bookShows(d.page, note, "the desktop's book turns to the iPad's note");
+  await c.shot('pair-noted', d.page);
 }
-// The open mark gone from one screen and its post-it open on the other
-export async function moved(c, from, to) {
-  await to.waitForSelector(c.ui('.sheet:not([hidden])'), { timeout: SETTLE_MS + POSTIT_MS });
-  await from.waitForSelector(c.ui('.sheet'), { state: 'hidden', timeout: 3000 });
+// The next note in the book's store after the first `from`, waited for
+export async function noteIn(c, page, from) {
+  // (its snip's screenshot: a few seconds on a loaded worker's headless WebKit)
+  for (let i = 0; i < 150 && c.notes.length === from; i++) await page.waitForTimeout(150);
+  assert.ok(c.notes.length > from, 'the mark goes into the book as it rests');
+  return c.notes[from];
 }
+// A screen's book showing a note on the page turned to
+export const bookShows = (page, note, what) =>
+  page
+    .waitForSelector(`#book .bk-world .bk-page:not([hidden]) .bs-note[data-id="${note.id}"]`, { timeout: 10_000 })
+    .catch(() => assert.fail(what));
 
-// Swapped: the book on the iPad, the page on the desktop, where a ring now goes to the iPad to finish
+// Swapped: the book on the iPad, the page on the desktop, where a ring now goes into the book from there, the iPad's
+// book turning to it
 async function swapped({ d, p, ...c }) {
   await d.page.click('#book .bk-swap');
   await bookIs(p.page, 'open');
   await bookIs(d.page, 'folded');
-  const there = await d.page.evaluate(() => {
-    const b = document.elementFromPoint(400, 300).getBoundingClientRect();
-    return { x: b.left + b.width / 2, y: b.top + b.height / 2, w: b.width, h: b.height };
-  });
+  // (away from the iPad's note, whose hairline shows here now: a line beside it would join it)
+  const there = { x: 1000, y: 620, w: 160, h: 80 },
+    from = c.notes.length;
   await ringRound(c, d.page, there);
-  await moved(c, d.page, p.page);
+  const note = await noteIn(c, d.page, from);
+  await bookShows(p.page, note, "the iPad's book turns to the desktop's note");
   await c.shot('pair-swapped', p.page);
-}
-
-// Flicked away on the iPad (its post-it thrown by its paper), it flies off and the mark comes back to the desktop. A
-// flick whose send doesn't get there leaves the mark on the iPad, and says so.
-async function flickedBack({ d, p, route, ...c }) {
-  route.refuseSend();
-  assert.ok(await flick(p.page), 'the flicked post-it flies off before it goes');
-  await p.page.waitForSelector('#toasts .toast:has-text("wasn’t reached")', { timeout: 5000 });
-  await p.page.waitForSelector(c.ui('.sheet:not([hidden])'), { timeout: POSTIT_MS });
-  assert.equal(await d.page.isVisible(c.ui('.sheet')), false, 'a mark that wasn’t sent stays on the iPad');
-  await flick(p.page);
-  await moved(c, p.page, d.page);
-  await d.page.locator(c.ui('[data-cancel]')).dispatchEvent('click');
-}
-// (whether the post-it flies off, still there as the finger lifts; the moves go at once, so a loaded worker's timers
-// can't slow the throw below a flick)
-function flick(page) {
-  return page.evaluate(() => {
-    const root = document.querySelector('review-mode').shadowRoot,
-      paper = root.querySelector('.sheet .who'),
-      b = paper.getBoundingClientRect();
-    const at = (type, dy, target = window) =>
-      target.dispatchEvent(
-        new PointerEvent(type, {
-          pointerId: 9,
-          pointerType: 'touch',
-          isPrimary: true,
-          clientX: b.left + b.width / 2,
-          clientY: b.top + b.height / 2 + dy,
-          bubbles: true,
-          composed: true,
-        }),
-      );
-    at('pointerdown', 0, paper);
-    for (let i = 1; i <= 6; i++) at('pointermove', -30 * i);
-    at('pointerup', -180);
-    const sheet = root.querySelector('.sheet');
-    return !sheet.hidden && sheet.getAnimations().some(a => a.effect.getKeyframes().some(k => k.opacity === '0'));
-  });
 }
 
 // A page closed on one screen closes on the other; Close on the screen with the book ends the pairing on both

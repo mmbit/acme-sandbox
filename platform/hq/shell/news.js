@@ -12,6 +12,7 @@ import { BLOCK, covered, jobLink, linkJobsIn, withJobLinks } from './prose.js';
 import { docOn } from './card.js';
 import { keepPictures } from './covers.js';
 import { coverFor } from './postcover.js';
+import { manualHtml, wireManual } from './manual.js';
 
 export let gazette = []; // the posts, newest first
 export async function reloadGazette(dev) {
@@ -195,14 +196,16 @@ export async function openLibrary(q = '') {
       // the shelves
       list = all;
       const names = [...new Set(all.map(p => p.shelf))];
+      // (How HQ works first: manual.js.)
       out.innerHTML =
-        names
+        manualHtml() +
+        (names
           .map(
             n =>
               `<section><h3>${esc(n)}</h3><ul class="results">` +
               `${all.map((p, i) => (p.shelf === n ? item(p, i) : '')).join('')}</ul></section>`,
           )
-          .join('') || '<p class="muted">The shelves are empty.</p>';
+          .join('') || '<p class="muted">The shelves are empty.</p>');
     } else {
       list = all.filter(p => words.every(w => plain(p).toLowerCase().includes(w)));
       const found = new RegExp(
@@ -223,6 +226,7 @@ export async function openLibrary(q = '') {
       }</ul>`;
     }
     out.querySelectorAll('button[data-i]').forEach(b => (b.onclick = () => open(list[+b.dataset.i], back)));
+    if (!words.length) wireManual(out, back);
   };
   input.oninput = run;
   run();

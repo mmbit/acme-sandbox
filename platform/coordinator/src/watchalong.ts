@@ -193,7 +193,7 @@ function live(purpose: string, ref: string) {
   const session = sessions.findLast(session => !session.ended);
   const watch = session && watches.get(session.id);
   if (!watch) return session && watchFrom(session.id);
-  // (its mirror closed while idle: it opens again with the whole recording)
+  // (its mirror closed while idle: it opens again from the recording, with what the screen still shows: mirror.ts)
   const recording = !mirrors.has(watch.id) && store.read(kept, watch.id);
   if (recording) mirrorOf(recording);
   return watch;

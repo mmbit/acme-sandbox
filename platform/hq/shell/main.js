@@ -1,6 +1,17 @@
 // HQ's entry point: boot, and staying current (the org, open requests, a new HQ version) without a reload button.
 import { store, esc } from '../util.js';
-import { loadOrg, connectEvents, fetchOrg, orgKey, loadHealth, loadHqChanges, loadMeetings, loadChat } from './data.js';
+// (tipEvent: the look's tip.)
+import {
+  tipEvent,
+  loadOrg,
+  connectEvents,
+  fetchOrg,
+  orgKey,
+  loadHealth,
+  loadHqChanges,
+  loadMeetings,
+  loadChat,
+} from './data.js';
 import * as audio from './audio.js';
 import * as world from '../world/world.js';
 import * as clock from '../world/clock.js';
@@ -30,14 +41,15 @@ import {
   closeTool,
 } from './desk.js'; // (the intercom's count; openJob; bookAt)
 import { refreshSeen, seen, onSeen } from './seen.js'; // (seen, onSeen: job #7083)
-import { registerWorker, syncPush } from './push.js';
+import { registerWorker, syncPush, urgentCards } from './push.js'; // (urgentCards)
 import { names, brand, theme } from './brand.js';
 import { initProjects, openProjects, readAhead } from './projects.js'; // (readAhead)
 import { initTalk } from './talk.js';
 import { initFinder } from './finder.js';
-import { initBook } from './book.js';
+import { initBook, openBook } from './book.js';
 import { refreshRail } from './bookrail.js';
 import { initPair } from './pair.js';
+import { loadFilms } from './tipcard.js';
 
 const $ = s => document.querySelector(s);
 const REQUEST_POLL_MS = 20000; // open board requests
@@ -65,6 +77,8 @@ async function boot() {
   // the book beside the page, before the stage, so the building is framed in the room it leaves (a book that can't start
   // stops HQ's start, as the stage does), and its rail's faces drawn again once the look can draw them.
   await initBook();
+  // the tips' films, before anything can show a tip (a paired screen opens the phone).
+  await loadFilms();
   // (a second screen, paired by the book's code, opening what this one opens.)
   initPair({ phone: () => openPhone(), intercom: openIntercom, computer: app => openComputer(app), close: closeTool });
   await stage(q.get('intro') !== '0');
@@ -83,6 +97,8 @@ async function boot() {
   bindInput();
   bindHud();
   updateStatus();
+  $('#hud .brand').addEventListener('click', () => tipEvent(dev, 'look').catch(() => {}), { once: true }); // the look's tip (tips.js)
+  onRequests(list => urgentCards(dev, list).catch(() => {})); // the notifications' tip.
   keepCurrent();
   $('#loading').classList.add('gone');
   refreshMeetings().then(pollMeetings); // (once HQ is up: who's in a meeting walks there)
@@ -132,7 +148,8 @@ function openAsked(dev) {
     jobs: ({ job }) => (Number(job) ? openJob(Number(job)) : openProjects()),
     onair: () => openComputer('onair'),
     projects: () => openProjects(), // (/?open=projects: HQ at the projects view)
-    book: ({ owner }) => bookAt(owner),
+    // (no owner: the book as it is, opened if it's folded, left as it is if not: a call's card.)
+    book: ({ owner }) => (owner ? bookAt(owner) : document.documentElement.dataset.book === 'folded' && openBook()),
   };
   navigator.serviceWorker?.addEventListener('message', e => {
     if (tools[e.data?.open]) {
@@ -287,10 +304,12 @@ const refreshCounts = () =>
 // A card that changed (an agent rewrote it) rings and counts as unread like a new one: both go by cardTime.
 let cards = [],
   heard = ''; // heard: the newest card time HQ has rung for
+// A tip (tips.js) neither rings nor counts.
 function showRequests(list) {
-  const n = list.length,
-    newest = list.map(cardTime).sort().at(-1) ?? '';
-  cards = list;
+  const waiting = list.filter(r => r.kind !== 'tip'),
+    n = waiting.length,
+    newest = waiting.map(cardTime).sort().at(-1) ?? '';
+  cards = waiting;
   paintDeskCount();
   if (newest > heard) {
     if (audio.ready()) audio.sfx.ring();

@@ -1,4 +1,5 @@
 // Stops a run past its share and attributes it to its push check before asking HQ for the report.
+import { workerAccountingFailure } from './accounting.ts';
 import { randomUUID } from 'node:crypto';
 import { procStat, type CheckRun } from './detached.ts';
 import { ResponseError } from './reports.ts';
@@ -21,14 +22,15 @@ export async function blockRun(
   const used = shareWords(block.measure, block.used),
     share = shareWords(block.measure, block.share);
   const reason =
-    block.accountingError ??
+    block.accountingError?.message ??
     `the worker blocked its run ${block.root.pid} (the job's ${used}, past a job's share of ${share})`;
   const parent = new Map(procs.map(p => [p.pid, p.ppid]));
   for (let pid: number | undefined = block.root.pid; pid !== undefined; pid = parent.get(pid)) {
     const check = options.checking.get(pid);
     if (!check) continue;
     check.stopped.push(reason);
-    if (block.accountingError) check.platformStops = (check.platformStops ?? 0) + 1;
+    if (block.accountingError && workerAccountingFailure(block.accountingError.reason))
+      check.platformStops = (check.platformStops ?? 0) + 1;
   }
   const body = {
     event: randomUUID(),
@@ -37,7 +39,7 @@ export async function blockRun(
     used: block.used,
     share: block.share,
     command: commandOf(live),
-    accountingError: !!block.accountingError,
+    accountingError: block.accountingError,
   };
   try {
     await stopRun(live, owner, block.root, () => options.ask(body));
@@ -49,7 +51,7 @@ export async function blockRun(
   } finally {
     options.stopped(
       block.accountingError
-        ? `job #${owner.job}: ${block.accountingError}`
+        ? `job #${owner.job}: ${block.accountingError.message}`
         : `job #${owner.job}: blocked its run ${block.root.pid} (${live.length} processes), ${used} past ${share}`,
     );
   }

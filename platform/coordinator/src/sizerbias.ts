@@ -2,8 +2,9 @@
 // model) gave as what that sizer's sizes have lately come to, so ETAs track how fast the work really goes. The saved
 // size stays as given (sizes.ts): only the play and hq when read it corrected.
 import { db } from './db.ts';
-import { cleanPastJobs, pastJobs } from './matching.ts';
+import { cleanPastJobs, pastJobs, type PastJob } from './matching.ts';
 import { latestGiven } from './sizes.ts';
+import { keptPool } from './pastpool.ts';
 import { fitIn, wholeSeconds } from './arithmetic.ts';
 import { SLOW_SHARE } from './reviewtime.ts';
 
@@ -21,15 +22,17 @@ export type Bias = { usual: number; slow: number; jobs: number; own: boolean };
 
 // The done clean jobs of the last two weeks that had a given size before they ended, by who gave it: [given, took] in ms.
 // A job whose latest size is the CEO's revision (sizes.ts revised) is left out: the bias is that of guesses at queue time.
-export function measured(now = Date.now()) {
+export function measured(now = Date.now(), pool = keptPool(now)) {
   const since = new Date(now - WINDOW_MS).toISOString();
   const ids = (db.prepare('select distinct job from sizes where at > ?').all(since) as { job: number }[]).map(
     r => r.job,
   );
   if (!ids.length) return new Map<string, [number, number][]>();
   const given = latestGiven(ids);
+  // (the server's kept done work is up to an hour old, so the bias leaves out jobs done since its last read)
+  const jobs = pool ? pool.filter(j => given.has(j.id)) : pastJobs(ids);
   const pairs = new Map<string, [number, number][]>();
-  for (const j of cleanPastJobs(pastJobs(ids))) {
+  for (const j of cleanPastJobs(jobs)) {
     const size = given.get(j.id);
     if (!size || size.revised || j.finished < since || size.at > j.finished || !(j.agent_ms > 0)) continue;
     pairs.set(size.by, [...(pairs.get(size.by) ?? []), [size.agent_ms, j.agent_ms]]);
@@ -45,15 +48,17 @@ export function biasOf(pairs: [number, number][], own: boolean): Bias | undefine
   return { usual, slow: Math.max(fitIn(ratios, SLOW_SHARE)!, usual), jobs: pairs.length, own };
 }
 
-// Each sizer's bias, read once an hour (pastJobs is a wide read): its own with enough jobs, else every sizer's together.
-let kept: { at: number; of: (by: string) => Bias | undefined } | undefined;
+// Each sizer's bias, read once an hour (pastJobs is a wide read), and again once the server's kept done work is renewed
+//: its own with enough jobs, else every sizer's together.
+let kept: { at: number; pool?: PastJob[]; of: (by: string) => Bias | undefined } | undefined;
 export function sizerBias(now = Date.now()) {
-  if (kept && now - kept.at < KEPT_MS && now >= kept.at) return kept.of;
-  const pairs = measured(now);
+  const pool = keptPool(now);
+  if (kept && kept.pool === pool && now - kept.at < KEPT_MS && now >= kept.at) return kept.of;
+  const pairs = measured(now, pool);
   const sizers = new Map([...pairs].map(([by, list]) => [by, biasOf(list, true)] as const));
   const all = biasOf([...pairs.values()].flat(), false);
   const of = (by: string) => sizers.get(by) ?? all;
-  kept = { at: now, of };
+  kept = { at: now, pool, of };
   return of;
 }
 

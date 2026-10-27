@@ -1,0 +1,289 @@
+/* The book's controls, one style for all of them (bookui.js): a button, a floating card and the list in it, the
+   tooltip, and the islands the controls float on over the paper. Ink on the book's paper: a quiet indigo icon, a wash
+   of ink under the pointer, a pressed toggle inked in. Lark's send button and the guest book reuse it. */
+#book,
+.bk-ui {
+  --bk-ink: #2a2352;
+  --bk-ink-soft: rgba(42, 35, 82, 0.08);
+  --bk-ink-wash: rgba(42, 35, 82, 0.14);
+  --bk-edge: rgba(42, 35, 82, 0.14);
+  --bk-lift: 0 1px 0 rgba(42, 35, 82, 0.08), 0 6px 18px -4px rgba(29, 26, 47, 0.28), 0 0 0 1px var(--bk-edge);
+}
+
+/* ---- a button: an icon on the paper, 36 px (44 to the touch), or a word on a paper label */
+.bk-btn {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 9px;
+  color: var(--bk-muted, #5a5478);
+  cursor: pointer;
+  transition:
+    background-color 0.12s,
+    color 0.12s,
+    transform 0.08s;
+  -webkit-tap-highlight-color: transparent;
+}
+.bk-btn[hidden] {
+  display: none;
+}
+.bk-btn svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+  pointer-events: none;
+}
+/* wider to the touch than it looks */
+.bk-btn::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+}
+@media (hover: hover) {
+  .bk-btn:hover {
+    background: var(--bk-ink-soft);
+    color: var(--bk-ink);
+  }
+}
+.bk-btn:active {
+  background: var(--bk-ink-wash);
+  transform: scale(0.94);
+}
+.bk-btn:focus-visible {
+  outline: 2px solid var(--bk-ink);
+  outline-offset: 1px;
+}
+.bk-btn[aria-pressed='true'] {
+  background: var(--bk-ink);
+  color: var(--bk-paper, #fffaf0);
+}
+.bk-btn:disabled,
+.bk-btn[aria-disabled='true'] {
+  opacity: 0.38;
+  cursor: default;
+  pointer-events: none;
+}
+/* a word: a paper label edged in ink (Join, Send, New page) */
+.bk-btn.bk-text {
+  width: auto;
+  min-width: 36px;
+  padding: 0 14px;
+  gap: 6px;
+  grid-auto-flow: column;
+  border-radius: 9px;
+  background: var(--bk-ink);
+  color: var(--bk-paper, #fffaf0);
+  font: 700 14px/1 var(--bk-font, system-ui, sans-serif);
+  white-space: nowrap;
+  box-shadow: 0 2px 0 #15112b;
+}
+.bk-btn.bk-text svg {
+  width: 18px;
+  height: 18px;
+}
+@media (hover: hover) {
+  .bk-btn.bk-text:hover {
+    background: #3a3168;
+    color: var(--bk-paper, #fffaf0);
+  }
+}
+.bk-btn.bk-text:active {
+  transform: translateY(2px);
+  box-shadow: none;
+}
+/* a quiet word: on the paper, no ink (Cancel, Not now) */
+.bk-btn.bk-text.bk-quiet {
+  background: transparent;
+  color: var(--bk-ink);
+  box-shadow: inset 0 0 0 1.5px var(--bk-edge);
+}
+@media (hover: hover) {
+  .bk-btn.bk-text.bk-quiet:hover {
+    background: var(--bk-ink-soft);
+    color: var(--bk-ink);
+  }
+}
+@media (pointer: coarse) {
+  .bk-btn {
+    width: 44px;
+    height: 44px;
+  }
+  /* (an icon a touch screen's eye reads alone.) */
+  .bk-btn svg {
+    width: 24px;
+    height: 24px;
+  }
+  .bk-btn.bk-text {
+    width: auto;
+  }
+  .bk-btn::after {
+    inset: 0;
+  }
+}
+
+/* ---- a card: a sheet of the book's paper floating over it (the pairing card, a menu) */
+.bk-card {
+  box-sizing: border-box;
+  border-radius: 14px;
+  background: var(--bk-paper, #fffaf0);
+  color: var(--bk-ink);
+  box-shadow: var(--bk-lift);
+  font: 15px/1.4 var(--bk-font, system-ui, sans-serif);
+}
+/* a list in a card: one row each, the current one inked */
+.bk-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+}
+.bk-menu > * > button,
+.bk-menu > button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--bk-ink);
+  font: 14px/1.3 var(--bk-font, system-ui, sans-serif);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (hover: hover) {
+  .bk-menu > * > button:hover,
+  .bk-menu > button:hover {
+    background: var(--bk-ink-soft);
+  }
+}
+.bk-menu > * > button:focus-visible,
+.bk-menu > button:focus-visible {
+  outline: 2px solid var(--bk-ink);
+  outline-offset: -2px;
+}
+.bk-menu [aria-current='true'],
+.bk-menu [aria-current='page'] {
+  font-weight: 700;
+  background: var(--bk-ink-soft);
+}
+
+/* ---- the tooltip: a slip of ink with the paper's words, its keys quieter (bookui.js places it) */
+.bk-tip {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 260px;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: var(--bk-ink, #2a2352);
+  color: var(--bk-paper, #fffaf0);
+  font: 600 13px/1.25 var(--bk-font, system-ui, sans-serif);
+  box-shadow: 0 4px 14px -2px rgba(15, 10, 30, 0.35);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: bk-tip-in 0.12s ease-out;
+}
+.bk-tip[hidden] {
+  display: none;
+}
+.bk-tip kbd {
+  font: inherit;
+  font-weight: 400;
+  opacity: 0.62;
+  letter-spacing: 0.04em;
+}
+@keyframes bk-tip-in {
+  from {
+    opacity: 0;
+    transform: translateX(3px);
+  }
+}
+.bk-tip[data-side='right'] {
+  animation-name: bk-tip-in-r;
+}
+@keyframes bk-tip-in-r {
+  from {
+    opacity: 0;
+    transform: translateX(-3px);
+  }
+}
+
+/* ---- the islands: small cards of controls floating over the paper's right edge, top to bottom (bookrail.js places
+   the stack); an island with nothing in it doesn't show */
+.bk-islands {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 10px;
+  pointer-events: none;
+}
+.bk-island {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 13px;
+  background: var(--bk-paper, #fffaf0);
+  box-shadow: var(--bk-lift);
+  pointer-events: auto;
+}
+.bk-island:empty {
+  display: none;
+}
+/* a thin rule between groups within an island */
+.bk-island hr {
+  align-self: stretch;
+  margin: 3px 6px;
+  border: 0;
+  border-top: 1px solid var(--bk-edge);
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-btn,
+  .bk-tip {
+    transition: none;
+    animation: none;
+  }
+}
+/* the pages' row at the paper's foot, centred, its controls side by side */
+.bk-island[aria-orientation='horizontal'] {
+  flex-direction: row;
+}
+.bk-island[aria-orientation='horizontal'] hr {
+  align-self: stretch;
+  margin: 6px 3px;
+  border-top: 0;
+  border-left: 1px solid var(--bk-edge);
+}
+/* (the book's own fixed parts are full height: a tooltip or a card is as tall as its words) */
+#book > .bk-tip,
+#book > .bk-card {
+  height: auto;
+}
+/* a short screen (an iPad mini in landscape, a phone): the islands' buttons a little closer, 44 px to the touch still */
+@media (max-height: 900px) and (pointer: coarse) {
+  .bk-btn {
+    width: 40px;
+    height: 40px;
+  }
+  .bk-btn::after {
+    inset: -2px;
+  }
+  .bk-island {
+    gap: 1px;
+  }
+}

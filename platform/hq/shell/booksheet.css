@@ -1,13 +1,11 @@
-/* The sheets on the book's pages (booksheet.js): each note's number, snip and words; the paper plane, its seconds to
-   undo and the stamp of when it went; the creases of a sent sheet; a held note lifted; a free page's faces to send it
-   to. The book's own look (book.css's colours), the same on every HQ look. */
+/* The sheets on the book's pages (booksheet.js): each note's number, snip and words; the stamp of when it went; the
+   creases of a sent sheet; a held note lifted; what's given folding into the plane, and the page's corner that gives
+   it. The book's own look (book.css's colours), the same on every HQ look. */
 
-/* ---- the page's head: the plane beside "For Lark" */
+/* ---- the page's heading: when it went, beside "For Lark" (in the heading's line: bookdesk.css.) */
 #book .bk-title .bk-send {
-  position: absolute;
-  left: calc(100% + 10px);
-  top: 50%;
-  transform: translateY(-50%);
+  position: relative;
+  align-self: center;
   display: inline-flex;
   align-items: center;
   gap: 10px;
@@ -15,101 +13,25 @@
   pointer-events: auto;
   letter-spacing: 0;
   z-index: 3;
+  /* (short of room, after the day and before the page's name: "For Moss" stays whole.) */
+  flex: 0 100 auto;
+  min-width: 0;
 }
-/* (a free page with no label yet: the plane where the title would be) */
-#book .bk-title[data-bare] .bk-send {
-  left: 0;
-}
-#book .bs-plane,
-#book .bs-undo {
-  all: unset;
-  box-sizing: border-box;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 32px;
-  padding: 0 11px 0 8px;
-  border-radius: 999px;
-  background: #fff;
-  color: var(--bk-night);
-  font: 700 13px/1 var(--bk-font);
-  box-shadow:
-    inset 0 0 0 1.5px var(--bk-night),
-    0 2px 0 var(--bk-night);
-  cursor: pointer;
-}
-/* (a finger finds it: the touch target is bigger than it looks) */
-#book .bs-plane::after,
-#book .bs-undo::after {
-  content: '';
-  position: absolute;
-  inset: -7px -4px;
-}
-#book .bs-plane:active,
-#book .bs-undo:active {
-  transform: translateY(2px);
-  box-shadow: inset 0 0 0 1.5px var(--bk-night);
-}
-#book .bs-plane:focus-visible,
-#book .bs-undo:focus-visible {
-  outline: 2px solid var(--bk-night);
-  outline-offset: 2px;
-}
-#book .bs-plane svg {
-  width: 20px;
-  height: 20px;
-  transition: transform 0.2s;
-}
-#book .bs-plane:hover svg {
-  transform: translate(2px, -2px) rotate(-8deg);
-}
-/* the seconds to undo: the plane inside a ring that runs out, and Undo beside it */
-#book .bs-flight {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  height: 32px;
-  padding-left: 34px;
-}
-#book .bs-flight > svg:not(.bs-ring) {
-  position: absolute;
-  left: 7px;
-  top: 7px;
-  width: 18px;
-  height: 18px;
-  color: var(--bk-night);
-}
-#book .bs-ring {
-  position: absolute;
-  left: 0;
-  top: 0;
-  width: 32px;
-  height: 32px;
-  transform: rotate(-90deg);
-}
-#book .bs-ring circle {
-  fill: none;
-  stroke: var(--bk-night);
-  stroke-width: 2.2;
-  stroke-linecap: round;
-  animation: bs-run linear forwards;
-}
-#book .bs-ring .bs-track {
-  stroke: var(--bk-line);
-  animation: none;
-}
-@keyframes bs-run {
-  to {
-    stroke-dashoffset: 87.96px;
-  }
-}
-#book .bs-undo {
-  padding: 0 12px;
-  background: var(--bk-lamp);
+#book .bk-title .bk-name:has(+ .bk-send:not(:empty)) {
+  flex-shrink: 0.001;
 }
 /* when it went, stamped lightly on the head */
+/* (just sent: pressed onto the paper.) */
+#book .bs-stamp[data-fresh],
+#book .bs-when[data-fresh] {
+  animation: bs-stamped 0.24s cubic-bezier(0.3, 1.4, 0.5, 1);
+}
+@keyframes bs-stamped {
+  from {
+    opacity: 0;
+    transform: rotate(-8deg) scale(1.5);
+  }
+}
 #book .bs-stamp {
   display: inline-block;
   padding: 3px 8px;
@@ -120,19 +42,121 @@
   letter-spacing: 0.04em;
   transform: rotate(-3deg);
   opacity: 0.8;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-/* the plane flying off to its face */
-#book .bs-flying {
+/* ---- giving through a face (bookplane.js, bookdogear.js.) */
+/* a sheet's notes in their seconds to undo: gone faint, folded into the plane */
+#book .bs-group[data-going] {
+  opacity: 0.3;
+  transition: opacity 0.3s;
+}
+/* what goes, as a loose sheet over the book: it squares up and folds to a dart along its creases, and the paper plane
+   it makes flies into a face */
+#book .bs-fold {
   position: fixed;
   z-index: 70;
-  width: 24px;
-  height: 24px;
-  color: var(--bk-night);
+  filter: drop-shadow(0 10px 14px rgba(10, 6, 20, 0.28));
   pointer-events: none;
 }
-#book .bs-flying svg {
-  width: 24px;
-  height: 24px;
+#book .bs-fold-sheet {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: 3px;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  box-shadow: inset 0 0 0 1px var(--bk-line);
+}
+#book .bs-fold-on {
+  position: absolute;
+  inset: 0;
+}
+#book .bs-fold-creases {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+}
+#book .bs-fold-creases path {
+  fill: none;
+  stroke: rgba(42, 35, 82, 0.4);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+#book .bs-dart {
+  position: fixed;
+  z-index: 71;
+  filter: drop-shadow(0 5px 6px rgba(10, 6, 20, 0.3));
+  pointer-events: none;
+}
+#book .bs-dart svg {
+  display: block;
+  width: 100%;
+  overflow: visible;
+}
+/* a page carried by its corner: held tilted, its own corner turned, whose it would be over a face */
+#book .bs-fold[data-page] {
+  rotate: -4deg;
+  filter: drop-shadow(0 18px 18px rgba(10, 6, 20, 0.32)) drop-shadow(0 2px 3px rgba(10, 6, 20, 0.16));
+}
+#book .bs-fold[data-page] .bs-fold-sheet {
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+
+/* the page's corner: turned down at the paper's top-right, the page under it showing; held, drawn onto a face */
+#book .bk-dogear {
+  all: unset;
+  position: absolute;
+  top: var(--sat, 0px);
+  right: 0;
+  z-index: 6;
+  width: 30px;
+  height: 30px;
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#book .bk-dogear[hidden] {
+  display: none;
+}
+/* (in hand: the page's copy has it) */
+#book .bk-dogear[data-lifted] i {
+  opacity: 0;
+}
+/* (a finger finds it: the touch target reaches further along the top than it shows) */
+#book .bk-dogear::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 46px;
+  height: 40px;
+}
+#book .bk-dogear i {
+  position: absolute;
+  inset: 0;
+  transform-origin: 100% 0;
+  /* the page under it, then the turned-down flap: the paper's back, shaded towards its fold */
+  background:
+    linear-gradient(225deg, rgba(42, 35, 82, 0.13) 0 50%, transparent 50%),
+    linear-gradient(45deg, #efe3c8 0, #fbf3e2 46%, transparent 50%);
+  filter: drop-shadow(-2px 3px 2px rgba(29, 26, 47, 0.28));
+}
+#book .bk-dogear:focus-visible i {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  #book .bk-dogear:hover i {
+    scale: 1.25;
+    transition: scale 0.15s ease-out;
+  }
 }
 
 /* ---- the notes: under the page's ink (the Pencil writes over them), over its paper */
@@ -149,6 +173,13 @@
   right: 0;
   z-index: 0;
   pointer-events: none;
+}
+/* (columns of notes whose margins add up, never fold into one another: booksheet.js lie() pushes a note down by its
+   top margin.) */
+#book .bs-list,
+#book .bs-group {
+  display: flex;
+  flex-direction: column;
 }
 #book .bs-list {
   position: relative;
@@ -185,8 +216,13 @@
 }
 /* a number Search found: a ring of lamplight round it, breathing out twice, then going
  */
-#book .bs-n[data-lit] {
+#book .bs-n[data-lit],
+#book .bs-body[data-lit] {
   animation: bs-lit 3.2s ease-out;
+}
+/* (a note with no number: the note itself.) */
+#book .bs-body[data-lit] {
+  border-radius: 6px;
 }
 @keyframes bs-lit {
   0%,
@@ -208,7 +244,8 @@
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  #book .bs-n[data-lit] {
+  #book .bs-n[data-lit],
+  #book .bs-body[data-lit] {
     animation-name: bs-lit-still;
   }
   @keyframes bs-lit-still {
@@ -221,6 +258,7 @@
   }
 }
 #book .bs-body {
+  grid-column: 2; /* (with or without its number beside it.) */
   display: flex;
   flex-direction: column;
   align-items: flex-start;
@@ -243,21 +281,36 @@
   color: var(--bk-muted);
   box-shadow: inset 0 0 0 1px var(--bk-line);
 }
-/* the snip as it was cut, a touch askew like a cutting laid on the page */
+/* the snip as it was cut, taped on in a white border a touch askew, each its own way, as a cutting in a scrapbook (a
+   picture taped on the page's look: sketchscraps.js). */
+#book .bs-cut {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 4px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(42, 35, 82, 0.1),
+    0 3px 8px rgba(29, 26, 47, 0.16);
+  transform: rotate(var(--tilt, 0deg));
+}
+#book .bs-cut::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -7px;
+  width: min(36%, 70px);
+  height: 14px;
+  background: rgb(246 236 200 / 80%);
+  box-shadow: 0 1px 1px rgba(42, 35, 82, 0.08);
+  transform: translateX(-50%) rotate(calc(-3deg - var(--tilt, 0deg) * 2));
+}
 #book .bs-snip {
   display: block;
   max-width: 100%;
   height: auto;
-  border-radius: 2px;
-  background: #fff;
-  box-shadow:
-    0 0 0 1px rgba(42, 35, 82, 0.12),
-    0 3px 8px rgba(29, 26, 47, 0.14);
-  transform: rotate(-0.5deg);
   -webkit-user-drag: none;
-}
-#book .bs-note:nth-child(even) .bs-snip {
-  transform: rotate(0.45deg);
 }
 /* the words: small grey type, a text field the Pencil writes over and a keyboard types into */
 #book .bs-words {
@@ -291,6 +344,8 @@
   cursor: default;
 }
 #book .bs-when {
+  align-self: flex-start;
+  transform-origin: left center;
   margin: 0 0 12px 40px;
   color: var(--bk-muted);
   font: 700 11px/1.2 var(--bk-font);
@@ -363,68 +418,15 @@
   display: none;
 }
 
-/* ---- a free page's faces to send it to */
-#book .bs-pick {
-  position: absolute;
-  left: -6px;
-  top: calc(100% + 10px);
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px;
-  width: max-content;
-  max-width: min(320px, 70vw);
-  max-height: 230px;
-  overflow: hidden auto;
-  padding: 8px;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow:
-    inset 0 0 0 1px var(--bk-line),
-    0 12px 30px rgba(10, 6, 20, 0.28);
-  z-index: 4;
-}
-#book .bs-pick button {
-  all: unset;
-  box-sizing: border-box;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  width: 58px;
-  padding: 5px 0;
-  border-radius: 8px;
-  color: var(--bk-night);
-  font: 11px/1.2 var(--bk-font);
-  cursor: pointer;
-}
-#book .bs-pick button:hover,
-#book .bs-pick button:focus-visible {
-  background: var(--bk-paper2);
-}
-#book .bs-pick i {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--bk-paper2) center / cover no-repeat;
-  box-shadow:
-    0 0 0 2px #fff,
-    0 0 0 3px var(--bk-line);
-  font: 700 15px/34px var(--bk-font);
-  font-style: normal;
-  text-align: center;
-  image-rendering: pixelated;
-}
-#book .bs-pick span {
-  max-width: 54px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 @media (prefers-reduced-motion: reduce) {
   #book .bs-note,
-  #book .bs-plane svg {
+  #book .bs-group[data-going],
+  #book .bk-dogear i {
     transition: none;
+  }
+  #book .bs-stamp[data-fresh],
+  #book .bs-when[data-fresh] {
+    animation: none;
   }
 }
 

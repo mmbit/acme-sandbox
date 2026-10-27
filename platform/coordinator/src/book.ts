@@ -3,10 +3,10 @@
 // go through its routes (book.ts for pages, booknotes.ts for sheets and notes, bookslips.ts for slips).
 //   - Four kinds of page: a sheet's page (an HQ page, at its url, owned by the agent whose work it shows: its notes go
 //     on that agent's sheet), a free page (scraps, pictures and sketches, nobody's), a call's page (what was drawn on
-//     a call, its call) and a guest's notes. A page grows downward (h) as it's written on; New page starts the next.
+//     a call, its call) and a guest's notes. A page grows any way as it's written on (x, y, w, h); New page starts the next.
 //   - A page is its ink (shared/review/ink.js strokes in the page's CSS px) and its scraps (pictures taped on), kept
 //     in the data volume, never the repo: book/<id>-s-<random>.png|jpg (0700/0600). Its picture is drawn here
-//     (bookrender.ts), once a change, and kept until the next: book/<id>-<random>.png.
+//     (bookpicture.ts), once a change, and kept until the next: book/<id>-<random>.png.
 //   - A picture can wait on a free page until the board places it (fromReview, waiting): it reaches no page's picture,
 //     agent or call before the board has seen it. Nothing sends one but fromReview's test; HQ's tray shows those
 //     still waiting.
@@ -14,23 +14,23 @@
 //     (bookreads.ts): the board shares its book with the whole team. An invited person's are theirs, outside text.
 //   - The Sketchbook's screens and an invited person's room read and write their sketches, the free pages,
 //     through sketchbook.ts.
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { db } from './db.ts';
+import { db, lacks, once } from './db.ts';
 import { companyDay } from './company.ts';
 import { findAgent } from './jobs.ts';
 import * as pictures from './pictures.ts';
-import { keepFile, refuse, reply } from './uploads.ts';
+import { refuse, reply } from './uploads.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
-import { render } from './bookrender.ts';
-import { PAGE, grownTo, inkOf, isRefused, labelOf, pageSide, type Refused } from './pagechecks.ts';
+import { PAGE, cornerOf, grownTo, inkOf, isRefused, labelOf, pageSide, textsOf, type Refused } from './pagechecks.ts';
 import {
   DIR,
   WAITING_MAX,
   type Scrap,
   full,
   isScrap,
+  notFound,
+  serveFile,
   keepScrap,
   scrapFiles,
   scrapUrl,
@@ -47,12 +47,23 @@ mkdirSync(DIR, { recursive: true, mode: 0o700 });
 // day: the company's day it was made. owner: a sheet's page's agent. url: its HQ page. call: a call's page's.
 // picture: its drawn picture's file in DIR, null until it's drawn again after a change. sent: a sketch's last send
 // (sketchbook.ts). waiting: review mode's pictures on it, not placed yet ([{ file }]). opened: when HQ last read it whole.
+// texts: the words typed on it ([{ x, y, w, text, color }], pagechecks.ts textsOf.)
+// x, y: its top-left, 0,0 (its heading) until it grows up or left, w × h its size from there
 db.exec(`create table if not exists book_pages (id integer primary key autoincrement, who text not null default 'board',
   day text not null, kind text not null, owner text, url text, call integer, label text not null default '',
   archived integer not null default 0, created text not null, updated text not null, w integer not null, h integer not null,
   ink text not null default '[]', strokes integer not null default 0, scraps text not null default '[]', picture text,
-  sent text, opened text, waiting text not null default '[]');
+  sent text, opened text, waiting text not null default '[]', texts text not null default '[]',
+  x integer not null default 0, y integer not null default 0);
   create index if not exists book_pages_day on book_pages (who, day)`);
+once('2026-10-26-book-page-texts', () => {
+  if (lacks('book_pages', 'texts')) db.exec("alter table book_pages add column texts text not null default '[]'");
+});
+once('2026-10-27-book-page-corner', () => {
+  if (!lacks('book_pages', 'x')) return;
+  db.exec('alter table book_pages add column x integer not null default 0');
+  db.exec('alter table book_pages add column y integer not null default 0');
+});
 
 export const KINDS = ['sheet', 'free', 'call', 'guest'] as const;
 type Kind = (typeof KINDS)[number];
@@ -68,6 +79,8 @@ export type Page = {
   archived: number;
   created: string;
   updated: string;
+  x: number;
+  y: number;
   w: number;
   h: number;
   strokes: number;
@@ -77,7 +90,7 @@ export type Page = {
 };
 // Every column but the ink, which only a drawing reads
 export const COLUMNS =
-  'id, who, day, kind, owner, url, call, label, archived, created, updated, w, h, strokes, scraps, picture, sent';
+  'id, who, day, kind, owner, url, call, label, archived, created, updated, x, y, w, h, strokes, scraps, picture, sent';
 // HQ's addresses for the board's routes
 export const BASE = '/api/book';
 
@@ -99,12 +112,13 @@ export function listPages(q: { day?: string }, who = BOARD) {
 export function getPage(id: number, who = BOARD, base = BASE) {
   const p = row(id, who);
   if (!p) return 404;
-  const { ink } = db.prepare('select ink from book_pages where id = ?').get(p.id) as { ink: string };
+  const { ink, texts } = drawnOf(p.id);
   db.prepare('update book_pages set opened = ? where id = ?').run(new Date().toISOString(), p.id);
   const url = (file: string) => scrapUrl(p.id, file, base);
   return {
     ...summary(p),
     ink: JSON.parse(ink),
+    texts: JSON.parse(texts),
     scraps: (JSON.parse(p.scraps) as Scrap[]).map(c => ({ ...c, url: url(c.file) })),
     waiting: waitingOf(p.id).map(c => ({ file: c.file, url: url(c.file) })),
   };
@@ -174,11 +188,11 @@ export function sheetPageFor(owner: string, url: string, w: number, h: number) {
   );
   return row(id)!;
 }
-// POST /api/book/page/save { id, ink, scraps, h?, since? }: the whole ink and the scraps placed on it, and its height
-// once it has grown. Its picture is drawn again when it's next read. Those placed leave waiting; scrap files nothing
-// names go once they're a day old. since: the page's updated as the saver last read or saved it; a page saved since
-// by someone else (a person and the board in the person's book, two screens) is refused, so no save lands over ink it
-// never saw: the saver reads it again and merges (pagemerge.js). (since)
+// POST /api/book/page/save { id, ink, scraps, texts?, x?, y?, w?, h?, since? }: the whole ink, the scraps placed on it,
+// the words typed on it (none sent: those it has stay) and its box once grown (x, y); its picture is drawn again when next read.
+// Those placed leave waiting; scrap files nothing names go once a day old. since: the page's updated as the saver last
+// read or saved it; one saved since by someone else (the person whose book it is, two screens) is refused, and the
+// saver merges (pagemerge.js).
 export const CHANGED = 'this page changed since it was read: read it again';
 export function savePage(b: any, who = BOARD) {
   const p = row(Number(b?.id), who);
@@ -188,8 +202,16 @@ export function savePage(b: any, who = BOARD) {
   if (isRefused(ink)) return ink;
   const scraps = scrapsOf(b.scraps, p.id);
   if (isRefused(scraps)) return scraps;
-  const h = grownTo(b.h, p.h);
+  const h = grownTo(b.h, p.h),
+    w = grownTo(b.w, p.w),
+    x = cornerOf(b.x, p.x),
+    y = cornerOf(b.y, p.y),
+    texts = textsOf(b.texts);
   if (isRefused(h)) return h;
+  if (isRefused(w)) return w;
+  if (isRefused(x)) return x;
+  if (isRefused(y)) return y;
+  if (isRefused(texts)) return texts;
   if (who !== BOARD && bookFull(who)) return [413, BOOK_FULL] as Refused;
   const placed = new Set(scraps.map(c => c.file)),
     waiting = waitingOf(p.id).filter(c => !placed.has(c.file)),
@@ -197,6 +219,9 @@ export function savePage(b: any, who = BOARD) {
   db.prepare(
     'update book_pages set ink = ?, strokes = ?, scraps = ?, waiting = ?, h = ?, picture = null, updated = ? where id = ?',
   ).run(JSON.stringify(ink), ink.length, JSON.stringify(scraps), JSON.stringify(waiting), h, taken.toISOString(), p.id);
+  const typed = texts ? JSON.stringify(texts) : null;
+  const sides = db.prepare('update book_pages set x = ?, y = ?, w = ?, texts = coalesce(?, texts) where id = ?');
+  sides.run(x, y, w, typed, p.id);
   if (p.picture) rmSync(`${DIR}/${p.picture}`, { force: true });
   // A scrap this save takes off gets its day from now, not its upload's: undo in an open page may place it again
   for (const c of JSON.parse(p.scraps) as Scrap[])
@@ -234,48 +259,6 @@ export function deletePage(id: number, who = BOARD) {
   db.prepare('delete from book_pages where id = ?').run(p.id);
   return { ok: true };
 }
-
-// GET /api/book/picture?id=: the page as a picture, drawn here (an image or nothing, never kept in a cache)
-export async function servePicture(req: IncomingMessage, res: ServerResponse, who: string | null = BOARD) {
-  const p = row(Number(new URL(req.url ?? '/', 'http://x').searchParams.get('id')), who);
-  const file = p && (await pictureOf(p));
-  if (!file) return notFound(res);
-  serveFile(res, file);
-}
-// The page's picture's file in DIR: the one kept since its last change, or drawn now and kept. null: the page was
-// deleted while it was drawn.
-export async function pictureOf(p: Page): Promise<string | null> {
-  if (p.picture && existsSync(`${DIR}/${p.picture}`)) return p.picture;
-  const { ink } = db.prepare('select ink from book_pages where id = ?').get(p.id) as { ink: string };
-  const png = await render({ w: p.w, h: p.h, ink: JSON.parse(ink), scraps: JSON.parse(p.scraps) }, DIR);
-  const name = `${p.id}-${randomBytes(4).toString('hex')}.png`;
-  keepFile(`${DIR}/${name}`, png);
-  // (a change while it was drawn, or another draw of the same page kept first: this one goes, and the page's picture
-  // now is the one read)
-  const kept = db
-    .prepare('update book_pages set picture = ? where id = ? and updated = ? and picture is ?')
-    .run(name, p.id, p.updated, p.picture);
-  if (!kept.changes) {
-    rmSync(`${DIR}/${name}`, { force: true });
-    const now = row(p.id, null);
-    return now ? pictureOf(now) : null;
-  }
-  return name;
-}
-// One of DIR's pictures as the answer: an image or nothing, never kept in a cache (a snip's and a slip's too)
-export function serveFile(res: ServerResponse, file: string) {
-  res.writeHead(200, {
-    'content-type': typeOf(file),
-    'cache-control': 'private, no-store',
-    'x-content-type-options': 'nosniff',
-    'content-security-policy': "default-src 'none'",
-  });
-  res.end(readFileSync(`${DIR}/${file}`));
-}
-export const notFound = (res: ServerResponse) => {
-  res.writeHead(404, { 'content-type': 'text/plain' });
-  res.end('not found');
-};
 
 // POST /api/book/scrap?id=<page>: one picture as the body (pictures.ts upload's way), one of the page's scraps once a
 // save places it: { file, url }. (base as getPage's; open: whether a person's book is still theirs past the await)
@@ -359,6 +342,9 @@ const waitingOf = (id: number) =>
   }[];
 
 // ---------------------------------------------------------------- shared
+// A page's ink and typed words, what only a drawing reads
+export const drawnOf = (id: number) =>
+  db.prepare('select ink, texts from book_pages where id = ?').get(id) as { ink: string; texts: string };
 // (who null, any book's: the board's eyes and the agents')
 export const row = (id: number, who: string | null = BOARD) =>
   (Number.isInteger(id) && id > 0
@@ -368,9 +354,11 @@ export const row = (id: number, who: string | null = BOARD) =>
     : undefined) as Page | undefined;
 // What HQ and the agents read of a page. withPicture: HQ's address for its picture (v: its last change, so no browser
 // shows an old one). pictures: how many are taped on it. A call's page has the call's summary on top: what the call's
-// follow-up wrote for the board (calls.reply), null until then.
+// follow-up wrote for the board (calls.reply), null until then; and its agent and when it started (calls.ts), the
+// page's name in the book, null once the call is gone. went: a sheet with notes
+// on it has been sent (its tick in the book's overview.).
 export function summary(p: Page, withPicture = true) {
-  const { id, kind, owner, url, call, label, created, updated, w, h, strokes, sent } = p;
+  const { id, kind, owner, url, call, label, created, updated, x, y, w, h, strokes, sent } = p;
   const placed = (JSON.parse(p.scraps) as unknown[]).length;
   const shown = {
     id,
@@ -383,15 +371,26 @@ export function summary(p: Page, withPicture = true) {
     archived: !!p.archived,
     created,
     updated,
+    x,
+    y,
     w,
     h,
     strokes,
     pictures: placed,
     sent,
-    ...(kind === 'call' ? { summary: callSummary(call) } : {}),
+    went: wentOn(id),
+    ...(kind === 'call' ? callOf(call) : {}),
   };
   return withPicture ? { ...shown, picture: `${BASE}/picture?id=${id}&v=${encodeURIComponent(updated)}` } : shown;
 }
-const callSummary = (call: number | null) =>
-  (db.prepare('select reply from calls where id = ?').get(call) as { reply: string | null } | undefined)?.reply ?? null;
-export const typeOf = (file: string) => (file.endsWith('.png') ? 'image/png' : 'image/jpeg');
+const wentOn = (page: number) =>
+  !!db
+    .prepare(
+      "select 1 from book_notes n join book_sheets s on s.id = n.sheet where n.page = ? and s.status = 'sent' limit 1",
+    )
+    .get(page);
+function callOf(call: number | null) {
+  const found = db.prepare('select reply, agent, ts from calls where id = ?').get(call) as
+    { reply: string | null; agent: string; ts: string } | undefined;
+  return { summary: found?.reply ?? null, agent: found?.agent ?? null, started: found?.ts ?? null };
+}

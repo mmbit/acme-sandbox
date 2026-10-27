@@ -77,7 +77,7 @@ const thin = (l, most) =>
 const inkOut = strokes => strokes.map(l => thin(l, Math.min(1000, Math.floor(12_000 / strokes.length))));
 
 // The mark as the note keeps it: its anchor in document px (the screen's px plus the scroll it was drawn at), with its
-// kind, area and HTML, and whether its first picture is the video's frame
+// kind, area and HTML, and a film's moment
 export function marked(r) {
   const e = r.mark.element,
     v = r.mark.view;
@@ -91,7 +91,7 @@ export function marked(r) {
     kind: e.kind,
     area: onPage(e.area),
     html: e.html ?? '',
-    ...(e.video ? { video: { ...e.video, frame: !!r.framePic && r.pictures[0] === r.framePic } } : {}),
+    ...(e.video ? { video: e.video } : {}),
   };
 }
 // the mark as the polaroid frames it (frame.js): in the screen's px, as the screenshot is

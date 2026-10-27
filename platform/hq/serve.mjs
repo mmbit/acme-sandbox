@@ -4,13 +4,13 @@
 // look of your own: node platform/hq/serve.mjs [port]
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
-import { join, extname, dirname } from 'node:path';
+import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { looks } from './looks.mjs';
+import { filmFiles } from './films/listing.mjs';
+import { typeOf } from '../coordinator/src/types.ts'; // (the types the coordinator serves HQ's files with.)
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml',
-  '.png': 'image/png', '.webmanifest': 'application/manifest+json' };
 
 // read: a path from the repo's root → its bytes (the working tree's, or a commit's); files: bytes that stand in for a path
 export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files = {}) {
@@ -27,14 +27,15 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     // (and review mode's framing rule, which HQ's note thumbnails import, its pen, which the Sketchbook draws with, its
     // paper, the book's too, the platform's sound kit, its button that asks once
     // more and its contrast sums, and the holidays' table and the shared formats the clock imports; the pen; the anchor
-    // and the QR a second screen pairs by; the slips the book's answers are drawn as)
-    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', '__review/paper.js': 'shared/review/paper.js', '__review/anchor.js': 'shared/review/anchor.js', '__review/slip.js': 'shared/review/slip.js', 'shared/qr/qr.js': 'shared/qr/qr.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
+    // and the QR a second screen pairs by; the slips the book's answers are drawn as; the numbers notes show;
+    // the pen's tap)
+    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', '__review/paper.js': 'shared/review/paper.js', '__review/anchor.js': 'shared/review/anchor.js', '__review/slip.js': 'shared/review/slip.js', '__review/notenumbers.js': 'shared/review/notenumbers.js', '__review/tap.js': 'shared/review/tap.js', 'shared/qr/qr.js': 'shared/qr/qr.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
       'shared/holidays/holidays.js': 'shared/holidays/holidays.js', 'shared/format/format.js': 'shared/format/format.js' }[path];
-    // (and the looks HQ ships, read from their folders.)
-    const listed = path === 'renderers/looks.json' && JSON.stringify(looks());
-    const body = path.includes('..') ? null : files[path] ?? (listed || await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
+    // (and the looks HQ ships, read from their folders, and the company's tip films.)
+    const listed = path === 'renderers/looks.json' ? looks() : path === 'films/films.json' ? filmFiles(join(ROOT, 'theme/hq')) : null;
+    const body = path.includes('..') ? null : files[path] ?? (listed ? JSON.stringify(listed) : await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
       : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null));
-    res.writeHead(body ? 200 : 404, { 'content-type': TYPES[extname(path)] || 'application/octet-stream' }).end(body);
+    res.writeHead(body ? 200 : 404, { 'content-type': typeOf(path) ?? 'application/octet-stream' }).end(body);
   });
   await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
   return server;

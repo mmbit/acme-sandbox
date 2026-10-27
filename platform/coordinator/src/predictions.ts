@@ -26,6 +26,7 @@ import { fitIn, wholeSeconds } from './arithmetic.ts';
 import { history, latestGiven } from './sizes.ts';
 import { corrected } from './sizerbias.ts';
 import * as threadorder from './threadorder.ts';
+import * as pastpool from './pastpool.ts';
 
 // slow_agent_ms: the slow size, the one a time told holds to. A row without one gets it from its picks
 // (storedSizes).
@@ -206,28 +207,25 @@ export function heldTo(usual: Outlook, slow: Outlook) {
 }
 
 // Each play reads saved task sizes and measured review times. Legacy tasks without a prediction get one persisted
-// default at first use. Drawn threads have no task yet, so their provisional sizes are cached for the hour.
+// default at first use. Drawn threads have no task yet, so their provisional sizes are made once for each pool of done
+// work: for the hour while the server keeps it (pastpool.ts), else for this read.
 type FromRecord = ReturnType<typeof recordFor>;
-const SPOT_KEPT_MS = 3600_000;
-let spotKept: { made: Map<string, Prediction>; pool?: PastJob[] } | undefined,
-  spotFrom = 0;
-export const keepSpotSizes = () => void (spotKept ??= { made: new Map() });
-// Provisional drawn-thread sizes renew each hour, or last for this read if none are kept.
-function spotSizes(now: number) {
-  if (spotKept && now - spotFrom >= SPOT_KEPT_MS) [spotKept, spotFrom] = [{ made: new Map() }, now];
-  return spotKept ?? { made: new Map<string, Prediction>() };
-}
+const spotMade = new WeakMap<PastJob[], Map<string, Prediction>>();
 export function recordFor(now: number, jobs: Pick<QueuedJob, 'id'>[]) {
   const ids = jobs.flatMap(job => (job.id > 0 ? [job.id] : []));
   const saved = storedSizes(ids);
-  const spot = spotSizes(now);
+  let read: PastJob[] | undefined;
+  const pool = () => (read ??= pastpool.pool(now));
   const kept = (key: string, work: () => Work) => {
-    if (!spot.made.has(key)) spot.made.set(key, predict(work(), (spot.pool ??= pastJobs())));
-    return spot.made.get(key)!;
+    const past = pool(),
+      made = spotMade.get(past) ?? new Map<string, Prediction>();
+    spotMade.set(past, made);
+    if (!made.has(key)) made.set(key, predict(work(), past));
+    return made.get(key)!;
   };
   const predicted = (job: QueuedJob) => {
     recordQueued(job.id, now);
-    return stored(job.id, (spot.pool ??= pastJobs()))!;
+    return stored(job.id, pool())!;
   };
   // (by its owner and words: its placeholder's number moves as other threads are drawn or get a task.)
   const drawn = (p: { agent: string; title: string }) =>

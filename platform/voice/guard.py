@@ -4,7 +4,7 @@ from pathlib import Path
 
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
-# (git, report; ask_to_see, draw; drive, open_work; pin_words and pin_sent gone with HQ's waiting notes)
+# (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
 CALL_TOOLS = ['add', 'ask_to_see', 'call', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job',
               'manage', 'open_work', 'promise', 'reach', 'replace', 'report', 'screen', 'search', 'sketch', 'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']
@@ -44,8 +44,7 @@ def cli_tools(names, builtin, tool_set=None):
 # - the line's own folders and /proc are off limits to its Read, Grep and Glob: the OS keeps the server's token from
 #   it, this is a second fence.
 # If hq_tools.py won't start, the CLI still does (MCP servers are optional): calls work, without its tools.
-# (WebFetch, report and git)
-TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch,WebFetch')  # (WebSearch)
+TOOLS = cli_tools(CALL_TOOLS, 'Read,Grep,Glob,WebSearch,WebFetch')  #.
 # A call out to a partner: no built-in tool and nothing of the company's looked up, so an outsider's words can't steer
 # a look-up (house rule 9). Its screen tool shows only the partner's own screen.
 PARTNER = cli_tools(PARTNER_TOOLS, '', 'partner')

@@ -5,8 +5,10 @@
 // A uid's processes in /proc are therefore the job's, counted together.
 // A job past its share has its heavy run blocked: the command its CLI started that holds the most of what it's past, with
 // everything under it (runsOf), never the CLI. The worker tells the job's agent in that command's own output where to run
-// it instead (the worker's blocks.ts blockRun, the coordinator's blocks.ts). One run per look, so it goes on only while
-// it's still past.
+// it instead (the worker's blocks.ts blockRun, the coordinator's blocks.ts). Each look (sharepass.ts) makes one memory,
+// process or sustained-CPU stop first. A priority helper that was killed or timed out then blocks a live, unprotected
+// run still past the cores, even right after a cores stop (priority.ts, which rechecks each process and counts only
+// the live ones' cores). A disk stop waits for a look with no other stop, though disk use is still sampled.
 // - Memory: a job past mostMb in all, and the job holding the most past shareMb while the worker is starved (no slot
 //   could start long enough, and work is waiting).
 // - Processes: a job with more than `processes` non-CLI processes.
@@ -14,7 +16,8 @@
 //   the CPU between sessions first: sched_autogroup), so the others' come first. Renicing another uid's process takes
 //   CAP_SYS_NICE, which the container hasn't got, so it runs as the slot's uid: lowering one's own priority needs nothing.
 //   A group asked for stays pending, busy or not, until it's at nice 10 or gone. A job past the cores for long (`hot`,
-//   the worker's count) has its busiest run blocked.
+//   the worker's count) has its busiest run blocked. An interrupted priority helper also blocks a busy job's run.
+import type { AccountingFailure } from './accounting.ts';
 import { execFile, spawn } from 'node:child_process';
 import { readFileSync, statSync } from 'node:fs';
 import type { Ids } from './slots.ts';
@@ -41,7 +44,8 @@ export type ProcessSnapshot = ProcStat & {
   writtenCallBytes?: number;
   writableFiles?: WritableFile[];
   storedWriteBytes?: number;
-  diskAccountingError?: string;
+  diskAccountingError?: AccountingFailure;
+  processReadingError?: string;
   group?: Autogroup;
   cores?: number; // (the cores it used since the look before, in a job's use: tally)
 };
@@ -51,6 +55,13 @@ export type JobUse = { uid: number; memoryMb: number; cores: number; processes: 
 
 const CPU_TICKS_PER_SECOND = 100; // clock ticks a second (getconf CLK_TCK)
 const PLAIN_ENV = { PATH: '/usr/bin:/bin' }; // (a slot's command gets nothing of the worker's environment)
+// SIGTERM cannot finish a helper stopped by another process in its slot.
+const slotOptions = (ids: Required<Ids>) => ({
+  ...ids,
+  env: PLAIN_ENV,
+  timeout: 10_000,
+  killSignal: 'SIGKILL' as const,
+});
 
 // The processes of these jobs (each by its slot's ids) as /proc has them now. A page shared by n processes counts 1/n
 // in each one's PSS, so a job's processes add up to what it really holds: forked workers share most of theirs.
@@ -64,6 +75,7 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
       ),
     ),
   );
+  const processReadingErrors = new Map(jobs.map((ids, index) => [ids.uid, read[index].processReadingError]));
   const pss = new Map(read.flatMap(m => [...m.pss]));
   const written = new Map(read.flatMap(m => [...m.written]));
   const calls = new Map(read.flatMap(m => [...m.calls]));
@@ -75,6 +87,7 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
       {
         ...p,
         rssMb,
+        processReadingError: processReadingErrors.get(p.uid),
         writeBytes: written.get(p.pid),
         writeCallBytes: calls.get(p.pid),
         memoryMb,
@@ -85,32 +98,39 @@ export async function processesFor(jobs: Required<Ids>[]): Promise<ProcessSnapsh
   });
 }
 
+type ProcessReading = {
+  pss: Map<number, number>;
+  written: Map<number, number>;
+  calls: Map<number, number>;
+  processReadingError?: string;
+};
+
 // Each process's PSS in MB and storage writes in bytes. Only its own uid may read them (the worker has no CAP_SYS_PTRACE), so it's read as the job's
 // slot, with nothing of the worker's environment. grep goes on past a file it can't read (exit 2).
-function pssOf(pids: number[], ids: Required<Ids>) {
-  if (!pids.length)
-    return Promise.resolve({
-      pss: new Map<number, number>(),
-      written: new Map<number, number>(),
-      calls: new Map<number, number>(),
-    });
+function pssOf(pids: number[], ids: Required<Ids>): Promise<ProcessReading> {
+  if (!pids.length) return Promise.resolve(noReading());
   const files = pids.flatMap(pid => [`/proc/${pid}/smaps_rollup`, `/proc/${pid}/io`]);
-  const options = { ...ids, env: PLAIN_ENV, timeout: 10_000 };
-  return new Promise<{ pss: Map<number, number>; written: Map<number, number>; calls: Map<number, number> }>(
-    (resolve, reject) =>
-      execFile('grep', ['-HE', '^(Pss|write_bytes|wchar):', ...files], options, (err, stdout) => {
-        if (err && typeof err.code !== 'number') return reject(err);
-        const rows = stdout.matchAll(/^\/proc\/(\d+)\/smaps_rollup:Pss:\s+(\d+) kB$/gm);
-        const writes = stdout.matchAll(/^\/proc\/(\d+)\/io:write_bytes:\s+(\d+)$/gm);
-        const calls = stdout.matchAll(/^\/proc\/(\d+)\/io:wchar:\s+(\d+)$/gm);
-        resolve({
-          calls: new Map([...calls].map(m => [Number(m[1]), Number(m[2])])),
-          pss: new Map([...rows].map(m => [Number(m[1]), Number(m[2]) / 1024])),
-          written: new Map([...writes].map(m => [Number(m[1]), Number(m[2])])),
-        });
-      }),
+  return new Promise(resolve =>
+    execFile('grep', ['-HE', '^(Pss|write_bytes|wchar):', ...files], slotOptions(ids), (err, stdout) => {
+      if (err && err.code !== 1 && err.code !== 2) return resolve(noReading(`Process reading unavailable: ${err}`));
+      const rows = stdout.matchAll(/^\/proc\/(\d+)\/smaps_rollup:Pss:\s+(\d+) kB$/gm);
+      const writes = stdout.matchAll(/^\/proc\/(\d+)\/io:write_bytes:\s+(\d+)$/gm);
+      const calls = stdout.matchAll(/^\/proc\/(\d+)\/io:wchar:\s+(\d+)$/gm);
+      resolve({
+        calls: new Map([...calls].map(m => [Number(m[1]), Number(m[2])])),
+        pss: new Map([...rows].map(m => [Number(m[1]), Number(m[2]) / 1024])),
+        written: new Map([...writes].map(m => [Number(m[1]), Number(m[2])])),
+      });
+    }),
   );
 }
+
+const noReading = (processReadingError?: string): ProcessReading => ({
+  pss: new Map(),
+  written: new Map(),
+  calls: new Map(),
+  processReadingError,
+});
 
 // A process whose PSS its own uid can't read either: one that made itself nondumpable (a sandbox does), or one that has
 // ended. Its status is open to all: the memory it holds resident in MB (anonymous, shared and mapped files, what it
@@ -182,7 +202,7 @@ export type Block = {
   share: number;
   root: ProcessSnapshot;
   run: ProcessSnapshot[];
-  accountingError?: string;
+  accountingError?: AccountingFailure;
 };
 
 // Select the run to block, the processes to slow down, and one writable process per session group to slow down.
@@ -212,7 +232,7 @@ export function overShare(
   return { block, slow, groups, pending: new Set(members.map(p => p.group!.id)) };
 }
 
-type ShareLimits = {
+export type ShareLimits = {
   mostMb: number;
   shareMb: number;
   cores: number;
@@ -264,9 +284,13 @@ function selectBlock(jobs: JobUse[], cli: Set<number>, limits: ShareLimits): Blo
             limits.disk!.get(disk.uid)!.accountingError,
           )
         : hot
-          ? weightedBlock(hot, cli, 'cores', hot.cores, limits.cores, p => p.cores ?? 0)
+          ? coresBlock(hot, cli, limits.cores)
           : undefined;
 }
+
+// A busy job's run that used the most cores since the look before
+export const coresBlock = (u: JobUse, cli: Set<number>, cores: number) =>
+  weightedBlock(u, cli, 'cores', u.cores, cores, p => p.cores ?? 0);
 
 function weightedBlock(
   u: JobUse,
@@ -275,7 +299,7 @@ function weightedBlock(
   used: number | null,
   share: number,
   weigh: (p: ProcessSnapshot) => number,
-  scanError?: string,
+  scanError?: AccountingFailure,
 ): Block {
   const weight = (run: ProcessSnapshot[]) => run.reduce((sum, p) => sum + weigh(p), 0);
   const [root, run] = [...runsOf(u.processes, cli)].sort((a, b) => weight(b[1]) - weight(a[1]))[0];
@@ -286,25 +310,31 @@ function weightedBlock(
 // Lowers the priority of what overShare picked, as each process's slot. The kernel takes one group's change in 100 ms
 // from a process without CAP_SYS_ADMIN, machine-wide, and refuses the others (EAGAIN). So the groups go one at a time,
 // GROUP_GAP_MS apart across calls, and a refused one stays below nice 10 for the next look to pick again (pending). Each
-// process is looked at again first: one ended, or moved to a session of its own, is left to the next look too.
+// process is looked at again first: one ended, or moved to a session of its own, is left to the next look too. It
+// returns the jobs (uids) whose helper was killed or timed out before it finished: priority.ts blocks a busy one's run.
 export async function slowDown(jobs: Required<Ids>[], slow: ProcessSnapshot[], groups: ProcessSnapshot[]) {
+  const interrupted = new Set<number>();
   for (const ids of jobs) {
     const pids = slow.filter(p => p.uid === ids.uid).map(p => String(p.pid));
-    if (pids.length) await runAsSlot(ids, 'renice', ['-n', '10', '-p', ...pids]);
+    if (pids.length && (await runAsSlot(ids, 'renice', ['-n', '10', '-p', ...pids]))) interrupted.add(ids.uid);
   }
   for (const p of groups) {
     const ids = jobs.find(j => j.uid === p.uid);
     if (!ids || procStat(p.pid)?.start !== p.start || autogroupOf(p)?.id !== p.group!.id) continue;
     await new Promise(r => setTimeout(r, Math.max(0, groupChangedAt + GROUP_GAP_MS - Date.now())));
-    await runAsSlot(ids, 'sh', ['-c', 'echo 10 > "/proc/$1/autogroup"', 'sh', String(p.pid)]);
+    if (await runAsSlot(ids, 'sh', ['-c', 'echo 10 > "/proc/$1/autogroup"', 'sh', String(p.pid)]))
+      interrupted.add(ids.uid);
     groupChangedAt = Date.now();
   }
+  return interrupted;
 }
 const GROUP_GAP_MS = 120;
 let groupChangedAt = 0;
-// (a process gone meanwhile is skipped, and a group refused is picked again: neither needs an answer)
+// True when a signal or the timeout ended the helper. An ended target or a refused group (EAGAIN) exits with a code.
 const runAsSlot = (ids: Required<Ids>, cmd: string, args: string[]) =>
-  new Promise<void>(resolve => execFile(cmd, args, { ...ids, env: PLAIN_ENV, timeout: 10_000 }, () => resolve()));
+  new Promise<boolean>(resolve =>
+    execFile(cmd, args, slotOptions(ids), err => resolve(Boolean(err?.signal || err?.killed))),
+  );
 
 // A blocked run's processes, each still the one looked at, sent the signal: SIGSTOP freezes it (it neither grows nor
 // starts anything), SIGKILL ends it

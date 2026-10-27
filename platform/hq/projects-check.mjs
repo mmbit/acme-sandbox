@@ -1905,6 +1905,40 @@ for (const look of RENDERERS)
     await shut();
     await finishedAt(was);
 
+    // The CEO's page over home, in its own words (markup in them shown as text): opened from the keyboard, it stays open
+    // across the next read of the board, its key still in focus, so the next Enter closes it.
+    const plan = 'Ship the <img src=x onerror=alert(1)> card & read it Friday';
+    await page.evaluate(async plan => {
+      (await (await import('/shell/data.js')).loadProjects(true)).page = { text: plan };
+      await (await import('/shell/projects.js')).openProjects({ group: 'recurring' });
+    }, plan);
+    await level('Recurring');
+    await tap(page, '[data-up]');
+    await page.waitForSelector('.pj-page');
+    assert.equal(await page.$eval('.pj-page p', p => p.textContent), plan, `${at}: the page's words as written`);
+    assert.equal(await page.$('.pj-page img'), null, `${at}: no markup from the page`);
+    await page.focus('.pj-page > summary');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.pj-page[open]');
+    await page.evaluate(() => {
+      document.querySelector('.pj-page').dataset.painted = 'before';
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    await page.waitForFunction(() => document.querySelector('.pj-page:not([data-painted])'));
+    assert.deepEqual(
+      await page.evaluate(() => [
+        document.querySelector('.pj-page').open,
+        document.activeElement.matches('.pj-page > summary'),
+      ]),
+      [true, true],
+      `${at}: the page still open after a repaint, its key in focus`,
+    );
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('.pj-page:not([open])');
+    await page.evaluate(async () => delete (await (await import('/shell/data.js')).loadProjects(true)).page);
+    await tap(page, '#projects .pj-head [data-leave]');
+    await shut();
+
     // A busy review keeps every colleague visible, the owner crowned, on project and thread tiles.
     await page.evaluate(async () => {
       const { loadProjects } = await import('/shell/data.js');

@@ -14,6 +14,7 @@ import * as chat from './chat.ts';
 import * as pictures from './pictures.ts';
 import * as book from './book.ts';
 import { BOARD, type Page } from './book.ts';
+import { pictureOf, servePicture } from './bookpicture.ts';
 import { isRefused, SAVE_MAX, type Refused } from './pagechecks.ts';
 import { DIR, MAX_SCRAPS, type Scrap } from './pagescraps.ts';
 import { books, openRoom, sendAsGuest } from './sketchpeople.ts';
@@ -48,7 +49,7 @@ export async function sendSketch(id: number, who = BOARD) {
   const p = book.row(id, who);
   if (!p) return 404;
   if (!drawn(p)) return [409, "nothing's drawn on this sketch yet"] as Refused;
-  const file = await book.pictureOf(p);
+  const file = await pictureOf(p);
   if (!file) return 404;
   // (the board reads the line in its intercom too: the CEO finds hq sketch in hq's help)
   const name = p.label ? `“${p.label}” (sketch #${p.id})` : `sketch #${p.id}`,
@@ -65,7 +66,7 @@ export async function sendSketch(id: number, who = BOARD) {
 openRoom({
   list: (who, base) => ({ sketches: listed(who).map(p => sketchOf(p, base)) }),
   get: getSketch,
-  picture: book.servePicture,
+  picture: servePicture,
   scrap: book.serveScrap,
   upload: book.uploadScrap,
   acts: {

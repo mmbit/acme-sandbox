@@ -9,7 +9,8 @@
 //
 //   POST /api/pay/checkout  {amount (cents), currency: 'eur', reference, description, success_url, cancel_url,
 //                            locale?: Stripe's (en, nl, de...; auto by default), customer_email?: prefills Stripe's page,
-//                            countries?: the sale's territory, two-letter codes (NL, BE...)}
+//                            countries?: the sale's territory, two-letter codes (NL, BE...),
+//                            kind?: what the sale is (gift_card), in the payment's metadata}
 //                                    → {id, url, expires_at, countries}
 //                                    It offers only what the shop names (methods()), of what Stripe's dashboard has on.
 //                                    With countries, see "A territory's sale" below; the answer echoes them (null without).
@@ -69,7 +70,9 @@
 //   email, locale?, success_url, cancel_url, revision?}; GET /api/pay/basket?id=bk_...&country=NL, /basket/order?id=cs_...
 //   The basket's view carries its revision (its lines and what the card pays for each); a checkout sent with the one
 //   its page showed is refused (basket_changed) when the basket differs now.
-//   A basket its vouchers pay in full is paid at /checkout itself: its url is the success_url. So is a basket holding the
+//   A basket's gift card (basketGift) pays what's left after its code: the view's
+//   gift_card {ending, pays, left, until} and to_pay, what Stripe charges; gift_dropped {why} when it left the basket.
+//   A basket its vouchers or gift card pay in full is paid at /checkout itself: its url is the success_url. So is a basket holding the
 //   shop's test code (isTestCode, below): a test order, paid nowhere and made nowhere, whose order view says test: true;
 //   and a test basket holding a tester's voucher (testerVoucher, below): a tester order, paid nowhere and made for real,
 //   whose views say tester: true.
@@ -191,6 +194,9 @@ once('payments-number-quantity', () => {
 // it isn't
 for (const column of ['basket_counted', 'checkout_counted'])
   if (!columnsOf('pay_lines').includes(column)) db.exec(`alter table pay_lines add column ${column} text`);
+// gift: what the basket's gift card paid of the line's card (basketGift), in session_lines as the checkout charged it
+for (const table of ['pay_lines', 'session_lines'])
+  if (!columnsOf(table).includes('gift')) db.exec(`alter table ${table} add column gift integer`);
 // number: a basket's order number, the one its customer is told (shared/ordernumber), given as it's paid (settle), to a test
 // order as it's made, and here to every basket paid before numbers
 db.exec('create unique index if not exists payments_number on payments (number) where number is not null');
@@ -351,7 +357,7 @@ export function methods(slug: string) {
   return out;
 }
 // What a Checkout Session can leave out (excluded_payment_method_types), as Stripe's 400 on `link` listed it in test
-// mode on 2026-10-09. A method Stripe adds later isn't here: reportUnnamedMethods() reports it once. One Stripe drops
+// mode on 2026-10-09. A method Stripe adds later isn't here: reportOfferedMethods() reports it once. One Stripe drops
 // makes every checkout fail with a 400 naming excluded_payment_method_types[n]: that name must come out.
 export const EXCLUDABLE = ['card', 'acss_debit', 'affirm', 'afterpay_clearpay', 'alipay', 'au_becs_debit', 'bacs_debit',
   'bancontact', 'blik', 'boleto', 'cashapp', 'crypto', 'customer_balance', 'eps', 'fpx', 'giropay', 'grabpay', 'ideal',
@@ -360,14 +366,18 @@ export const EXCLUDABLE = ['card', 'acss_debit', 'affirm', 'afterpay_clearpay', 
   'scalapay', 'amazon_pay', 'alma', 'twint', 'kr_card', 'naver_pay', 'kakao_pay', 'payco', 'nz_bank_account',
   'samsung_pay', 'billie', 'bizum', 'paypay', 'satispay', 'sequra', 'sunbit'];
 // A session can offer a method the shop doesn't name, other than Link: one Stripe added after EXCLUDABLE was read, or one
-// it can't leave out (Wero today). Each is logged once for the owner, and the checkout goes on.
-function reportUnnamedMethods(slug: string, named: string[], s: any) {
+// it can't leave out (Wero today). Each is logged once for the owner. It can also leave out one the shop names, which HQ
+// didn't: Stripe's dashboard has it off, or a rule of Stripe's took it out of this session. That one is logged every
+// time, as each such buyer can't pay that way. The checkout goes on.
+function reportOfferedMethods(slug: string, reference: string, named: string[], s: any) {
   const shown: string[] = Array.isArray(s?.payment_method_types) ? s.payment_method_types.map(String) : [];
   for (const m of shown) {
     if (named.includes(m) || m === 'link' || warned.has(`offered:${m}`)) continue;
     warned.add(`offered:${m}`);
     log(`${slug}'s checkout offered ${JSON.stringify(m.slice(0, 40))}, which its settings don't name. Either it's new to Stripe and missing from EXCLUDABLE, or Stripe can't leave it out and only the dashboard's switch turns it off.`);
   }
+  const missing = named.filter(m => !shown.includes(m));
+  if (missing.length) log(`${slug}'s checkout for ${reference} (locale ${s?.locale ?? '?'}) offers ${shown.join(', ') || 'nothing'}, without ${missing.join(', ')}, which its settings name and HQ didn't leave out: Stripe's dashboard has it off, or a rule of Stripe's took it out.`);
 }
 // Whether a payment can go through now, for a shop that says so before anyone starts making something: test mode always
 // can (Stripe's test mode or the imitation). Live mode needs a usable live key whose account Stripe says takes charges
@@ -431,7 +441,8 @@ export function serial<T>(key: string, run: () => Promise<T>): Promise<T> {
   queues.set(key, next);
   return next.finally(() => { if (queues.get(key) === next) queues.delete(key); });
 }
-const checkout = (c: Caller, b: any) => serial(`${c.slug}:${c.mode}:${String(b?.reference ?? '')}`, () => openCheckout(c, b));
+// (exported: a company's own sale opens its checkout here)
+export const checkout = (c: Caller, b: any) => serial(`${c.slug}:${c.mode}:${String(b?.reference ?? '')}`, () => openCheckout(c, b));
 
 async function openCheckout(c: Caller, b: any) {
   const amount = b.amount, currency = String(b.currency ?? '').toLowerCase(), reference = String(b.reference ?? '');
@@ -449,7 +460,10 @@ async function openCheckout(c: Caller, b: any) {
   if (c.slug === FRONT && BASKET.test(reference)) return [409, "a basket's checkout is POST /api/pay/basket/checkout"];
   const territory = territoryOf(b.countries);
   if (territory === false) return [400, 'countries: 1-30 different two-letter country codes (NL, BE...)'];
-  const opened = await openSession(c, { reference, amount, currency, items: [{ name: description, amount }], success, cancel, locale, email, territory });
+  // kind: what the sale is, in the payment's metadata for the books (a gift card's is no turnover)
+  const kind = b.kind == null ? null : String(b.kind);
+  if (kind !== null && !/^[a-z_]{1,30}$/.test(kind)) return [400, 'kind: 1-30 lowercase letters or _'];
+  const opened = await openSession(c, { reference, amount, currency, items: [{ name: description, amount }], success, cancel, locale, email, territory, kind });
   return Array.isArray(opened) ? opened : { ...opened, countries: territory?.split(',') ?? null };
 }
 // A territory as a payments row keeps it: its countries sorted and comma-joined, null for none, false when malformed.
@@ -464,7 +478,7 @@ function territoryOf(countries: unknown) {
 // gets a new session; created: written in the same step as the session's row (a basket's lines).
 type Ask = { reference: string; amount: number; currency: string; items: { name: string; amount: number }[]; success: string;
   cancel: string; locale: string; email: string | null; basket?: { id: string; shape: string; created: (session: string) => void };
-  territory?: string | null };
+  territory?: string | null; kind?: string | null };
 // How long a create's idempotency key is reused, and how long its session stays open after the attempt's minute
 const ATTEMPT_MINUTES = 25, SESSION_LIFE_S = 3660;
 async function openSession(c: Caller, a: Ask) {
@@ -494,7 +508,7 @@ async function openSession(c: Caller, a: Ask) {
     view(row, await stripe(c.mode, 'POST', `/v1/checkout/sessions/${row.id}/expire`));
   }
   if (!countCheckout(c)) return [429, 'too many checkouts this hour'];
-  const meta = { product: c.slug, reference };
+  const meta = { product: c.slug, reference, ...(a.kind ? { kind: a.kind } : {}) };
   // The idempotency key names this attempt (the order, its amount, how many sessions it had, the minute it started), and
   // expires_at follows that minute. The attempt is stored before Stripe is asked, so a retry of a create whose answer got
   // lost reuses the key and gets the same session back rather than a second one. After 25 minutes it starts afresh (Stripe
@@ -512,13 +526,14 @@ async function openSession(c: Caller, a: Ask) {
   const key = `checkout-${c.slug}-${c.mode}-${reference}-${amount}-${attempt}-${minute}-${hash}`;
   db.prepare('insert or ignore into checkout_creates (key, product, mode, reference, amount, attempt, minute) values (?, ?, ?, ?, ?, ?, ?)')
     .run(key, c.slug, c.mode, reference, amount, attempt, minute);
+  // (named: what the shop named, readable in the status report beside what Stripe offered)
   const s = await stripe(c.mode, 'POST', '/v1/checkout/sessions', {
-    mode: 'payment', success_url: a.success, cancel_url: a.cancel, client_reference_id: reference, metadata: { ...meta, methods: policy },
+    mode: 'payment', success_url: a.success, cancel_url: a.cancel, client_reference_id: reference, metadata: { ...meta, methods: policy, named: named.join(' ') },
     line_items: a.items.map(item => ({ quantity: 1, price_data: { currency, unit_amount: item.amount, product_data: { name: item.name } } })),
     locale, customer_email: email ?? undefined, payment_intent_data: { metadata: meta, ...(territory ? { capture_method: 'manual' } : {}) },
     expires_at: minute * 60 + SESSION_LIFE_S, excluded_payment_method_types: excluded, ...(territory ? { billing_address_collection: 'required' } : {}),
   }, key);
-  reportUnnamedMethods(c.slug, named, s);
+  reportOfferedMethods(c.slug, reference, named, s);
   const now = new Date().toISOString();
   atOnce(() => {
     db.prepare('insert or replace into payments (id, created, product, mode, reference, amount, currency, status, updated, basket, shape, territory) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
@@ -938,11 +953,14 @@ export type Line = { id: string; created: string; product: string; mode: 'test' 
   session: string | null; card: number | null; saved: number | null; paid_at: string | null; refund: string | null;
   refund_status: string | null; refund_asked: string | null; updated: string;
   offer: number | null; code_saved: number | null; basket_counted: string | null; checkout_counted: string | null;
-  goes_with: string | null; picture: string | null; number: string | null; kept_until: string | null; quantity: number };
+  goes_with: string | null; picture: string | null; number: string | null; kept_until: string | null; quantity: number;
+  gift: number | null };
 // A refusal: its status, the reason in English, and for one a shop's customer can reach, why: a code the shop says in the
 // customer's language, and what those words need to say it (a code's minimum).
-// (a voucher's stall's name for voucher_no_line)
-export type Refused = [status: number, error: string, why?: string, needs?: { minimum?: number; shop?: string; cap?: number }];   // exported:
+// (a voucher's stall's name for voucher_no_line; a sale's most for giftcard_total;
+// a gift card's last day to withdraw and its end date for withdraw_late)
+export type Refused = [status: number, error: string, why?: string, needs?: { minimum?: number; shop?: string; cap?: number; max?: number;
+  day?: string; until?: string }];   // exported:
 // a line's copies each count (thingsIn)
 const MAX_THINGS = 20;
 const SHIPS_IN = 3, CUTOFF = 12;   // when a product doesn't say: Print API's usual making time and cut-off hour
@@ -1055,6 +1073,25 @@ export const basketCode: {
   unusable?: (basket: string) => Refused | null;
   hold?: (basket: string) => { held: (session: string) => void; release: () => void };
   paid?: (pay: any) => void;
+} = {};
+
+// A second payer beside the card: the basket's gift card (a company's gift cards kit fills this). It pays, never
+// discounts: the lines keep their prices and the code comes off first, then the card pays what's left (giftPays), in
+// basket order across the lines (giftOnLines), and Stripe charges the rest. enter: a typed code that is a gift card goes
+// in the basket (its view, or why not), undefined when it's none. shown: the card an open basket holds while it can
+// pay, or the one a session held or spent, with its balance now. The rest as basketCode's: dropped, refresh, unusable,
+// hold; paid: the session's payment, in the same step as its lines, with what the card paid in all; back: a line it
+// paid for was refunded, so its part goes back on the card (once a line).
+export type ShownGift = { ending: string; balance: number; until: string };
+export const basketGift: {
+  enter?: (c: Caller, basket: string, typed: unknown, country?: unknown) => Promise<Awaited<ReturnType<typeof changeBasket>> | undefined>;
+  shown?: (where: { basket?: string; session?: string }) => ShownGift | null;
+  dropped?: (basket: string) => { why: string } | null;
+  refresh?: (basket: string) => Promise<void>;
+  unusable?: (basket: string) => Refused | null;
+  hold?: (basket: string) => { held: (session: string) => void; release: () => void };
+  paid?: (pay: any, pays: number) => void;
+  back?: (line: Line) => void;
 } = {};
 
 // the shop's own lines. A company's kit may put a line of the front's own in a basket,
@@ -1265,13 +1302,15 @@ async function lineView(c: Caller, known: Line, own?: { line: Line; pay: any | n
   let line = own?.line ?? lineRow(known.id)!;
   if (line.status === 'paid') line = await refreshLineRefund(line);
   const open = line.status === 'open' && line.basket ? openSessionOf(line.basket, line.mode) : undefined;
-  const charged = open ? db.prepare('select card, saved, code_saved from session_lines where session = ? and line = ?').get(open.id, line.id) as any : null;
+  const charged = open ? db.prepare('select card, saved, code_saved, gift from session_lines where session = ? and line = ?').get(open.id, line.id) as any : null;
   // refunded: by its card, or closed with no card refund at all (a voucher paid it)
   const paid = line.status === 'paid', refunded = line.refund_status === 'succeeded';
   return { line: line.id, reference: line.reference, claim: claimOf(line.id), status: charged ? 'checkout' : line.status,
     amount: line.amount, currency: line.currency, description: line.description, detail: line.detail, voucher: line.voucher, voucher_value: line.voucher_value,
     offer: !!line.offer, code_saved: paid ? line.code_saved ?? 0 : charged?.code_saved ?? null,
     card: paid ? line.card : charged?.card ?? null, saved: paid ? line.saved : charged?.saved ?? null,
+    // what a gift card pays of card
+    gift: paid ? line.gift ?? 0 : charged ? charged.gift ?? 0 : null,
     in_basket: line.status === 'open' && !!line.basket, paid_at: line.paid_at, ship_by: shipBy(line),
     // the copies its customer asked for: HQ makes its items that many times in the parcel
     quantity: line.quantity,
@@ -1299,6 +1338,7 @@ export async function refundLine(c: Caller, id: string) {
     const held = lineRefundGuards.map(g => g(c, line)).find(Boolean);
     if (held) return [409, held];
     if (!line.card) return closeVoucherLine(c, line);
+    if (line.card === line.gift) return closeGiftLine(c, line);
     lineAskingNow.set(id, (lineAskingNow.get(id) ?? 0) + 1);   // in the same step as the guards
     lineAskedMark(id, true);
     try { const r = await lineRefundAsked(c, line, own.s, asked); lineAskedMark(id, false); return r; }
@@ -1322,6 +1362,17 @@ function closeVoucherLine(c: Caller, line: Line) {
   log(`${line.product} cancelled its ${line.mode} line for ${line.reference}, paid by a voucher it released.`);
   return lineView(c, lineRow(line.id)!);
 }
+// A line its gift card paid in full: the card has nothing to give back, and its part goes back on the gift card at once
+// (refundedLine).
+function closeGiftLine(c: Caller, line: Line) {
+  if (line.refund_status === 'succeeded') return lineView(c, line);
+  atOnce(() => {
+    db.prepare("update pay_lines set refund_status = 'succeeded', updated = ? where id = ?").run(stamp(), line.id);
+    refundedLine(line);
+  });
+  log(`${line.product} cancelled its ${line.mode} line for ${line.reference}, paid by a gift card: its part is back on the card.`);
+  return lineView(c, lineRow(line.id)!);
+}
 async function lineRefundAsked(c: Caller, known: Line, s: any, askedBefore: boolean) {
   let line = await refreshLineRefund(known);
   if (line.refund && !ENDED.has(line.refund_status ?? '')) return lineView(c, line);   // succeeded, or on its way
@@ -1330,7 +1381,8 @@ async function lineRefundAsked(c: Caller, known: Line, s: any, askedBefore: bool
   // asked before and never answered: a refund Stripe made then (its key may be forgotten) is this line's, found by its line
   const lost = askedBefore ? (await stripe(c.mode, 'GET', `/v1/refunds?payment_intent=${encodeURIComponent(pi)}&limit=100`))?.data
     ?.find((r: any) => r?.metadata?.line === line.id && !ENDED.has(r?.status) && r.id !== line.refund) : null;
-  const r = lost ?? await stripe(c.mode, 'POST', '/v1/refunds', { payment_intent: pi, amount: line.card,
+  // (what the card paid, less a gift card's part, which goes back on that card: refundedLine)
+  const r = lost ?? await stripe(c.mode, 'POST', '/v1/refunds', { payment_intent: pi, amount: line.card! - (line.gift ?? 0),
     metadata: { product: c.slug, reference: line.reference, line: line.id } }, line.refund ? `refund-${line.id}-after-${line.refund}` : `refund-${line.id}`);
   line = noteLineRefund(line, r);
   return lineView(c, line);
@@ -1349,7 +1401,9 @@ function noteLineRefund(line: Line, r: any): Line {
 // A refunded line is a cancelled order, and a cancel changes no clock: what the customer made and its order page stay
 // as for any paid line (90 days after the payment, tick), and so does the basket's address (14 days, at most 30) (as
 // cancel() above). The shop's own lines going with it that are free close as refunded: there's nothing to give back.
+// What a gift card paid for the line goes back on it (basketGift.back).
 function refundedLine(line: Line) {
+  if (line.gift) basketGift.back?.(line);
   db.prepare("update pay_lines set refund_status = 'succeeded', updated = ? where goes_with = ? and status = 'paid' and card = 0 and refund_status is null")
     .run(stamp(), line.id);
   forgetHeldWords();   // a voucher-paid line closes here, not through noteLineRefund
@@ -1436,9 +1490,10 @@ export function basketsByDay(mode: 'test' | 'live', from: string, to: string) {
   return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
 }
 export function paidLines(session: string): Line[] {
-  return (db.prepare(`select l.*, sl.card paid_card, sl.saved paid_saved, sl.code_saved paid_code_saved from session_lines sl join pay_lines l on l.id = sl.line
-    where sl.session = ? order by sl.position`).all(session) as any[])
-    .map(({ paid_card, paid_saved, paid_code_saved, ...line }) => ({ ...line, card: paid_card, saved: paid_saved, code_saved: paid_code_saved }));
+  return (db.prepare(`select l.*, sl.card paid_card, sl.saved paid_saved, sl.code_saved paid_code_saved, sl.gift paid_gift from session_lines sl
+    join pay_lines l on l.id = sl.line where sl.session = ? order by sl.position`).all(session) as any[])
+    .map(({ paid_card, paid_saved, paid_code_saved, paid_gift, ...line }) => ({ ...line, card: paid_card, saved: paid_saved, code_saved: paid_code_saved,
+      gift: paid_gift }));
 }
 
 async function addToBasket(c: Caller, b: any) {
@@ -1655,6 +1710,7 @@ export async function basketView(c: Caller, id: string, asked?: unknown) {   // 
   const cap = !paid && basket.tester ? testerVoucher.cap?.(basket.tester) ?? null : null;
   const capped = cap === null ? {} : { tester_cap: { cap, over: testerWorth(lines) > cap } };
   const code = basketCode.shown?.(paid ? { session: paid.id } : { basket: id }) ?? null;
+  const gift = giftOf(paid ? { session: paid.id } : { basket: id }, lines);
   const dayAgo = new Date(Date.now() - DAY_MS).toISOString();
   // a paid basket dropped nothing: a test order's lines are cancelled as it goes through.
   // A line of the shop's own was cancelled by the customer taking it or its thing out, never by a stall
@@ -1663,8 +1719,25 @@ export async function basketView(c: Caller, id: string, asked?: unknown) {   // 
     .map(l => ({ line: l.id, shop: shopName(l.product), why: 'cancelled' }));
   return { basket: id, status: paid ? 'paid' : stillOpen ? 'checkout' : 'open', countries: rules.countries, country: paid?.country ?? country,
     copies: rules.copies,
-    ...summary(lines, code, !!basket.test, paid?.status === 'test' ? paid.created : null, tester), ...capped, dropped,
-    code_dropped: paid ? null : basketCode.dropped?.(id) ?? null };
+    ...summary(lines, code, !!basket.test, paid?.status === 'test' ? paid.created : null, tester, gift), ...capped, dropped,
+    code_dropped: paid ? null : basketCode.dropped?.(id) ?? null, gift_dropped: paid ? null : basketGift.dropped?.(id) ?? null };
+}
+// The basket's gift card as its view shows it: what it pays of the lines' card (a session's: what it paid), and what
+// stays on it after
+type GiftView = { ending: string; until: string; pays: number; left: number };
+function giftOf(where: { basket?: string; session?: string }, lines: { line: Line; card: number }[]): GiftView | null {
+  const card = basketGift.shown?.(where);
+  if (!card) return null;
+  const pays = where.session ? lines.reduce((n, l) => n + (l.line.gift ?? 0), 0) : giftPays(card.balance, lines.reduce((n, l) => n + l.card, 0));
+  return { ending: card.ending, until: card.until, pays, left: where.session ? card.balance : card.balance - pays };
+}
+// What a gift card pays of what the card would: all of it when its balance covers it, else its balance, leaving Stripe
+// at least its least payment (MIN)
+const giftPays = (balance: number, total: number) => (balance >= total ? total : Math.max(0, Math.min(balance, total - MIN)));
+// what it pays of each line, in basket order
+function giftOnLines(cards: number[], pays: number) {
+  let left = pays;
+  return cards.map(card => { const paid = Math.min(card, left); left -= paid; return paid; });
 }
 // code: the basket's code and what it saved in all, and per line offer and code_saved
 // test: the basket holds the shop's test code. Its prices and ship days are a real order's, so the shop shows the page a
@@ -1672,23 +1745,27 @@ export async function basketView(c: Caller, id: string, asked?: unknown) {   // 
 // placed: a test order's time, its ship days' start (shipBy)
 // tester: the basket holds a tester's voucher, or its order did: the card pays nothing for any line, and it's made for real
 // (each line's quantity)
-const summary = (lines: Priced[], code: ShownCode | null, test = false, placed: string | null = null, tester = false) => ({
+// gift_card: the basket's gift card and what it pays (giftOf), to_pay what's left for Stripe
+const summary = (lines: Priced[], code: ShownCode | null, test = false, placed: string | null = null, tester = false, gift: GiftView | null = null) => ({
   lines: lines.map(({ line, card, saved, code_saved }) => ({ line: line.id, product: line.product, shop: shopName(line.product),
     description: line.description, detail: line.detail, amount: line.amount, quantity: line.quantity, voucher_value: line.voucher_value,
-    offer: !!line.offer, code_saved, saved, card,
+    offer: !!line.offer, code_saved, saved, card, gift: line.gift ?? 0,
     goes_with: line.goes_with ?? null,
     ship_by: shipBy(line, placed), order_url: line.order_url, picture: line.picture ?? null,
     refund_status: line.refund_status })),   // set: its product cancelled it and asked for its money back
   total: lines.reduce((n, l) => n + l.card, 0), saved: lines.reduce((n, l) => n + l.saved, 0), ship_by: latest(lines.map(l => shipBy(l.line, placed))),
   code: code && { ...code, saved: lines.reduce((n, l) => n + l.code_saved, 0) }, test, tester,
-  revision: revisionOf(lines, code, test, tester) });
+  gift_card: gift, to_pay: lines.reduce((n, l) => n + l.card, 0) - (gift?.pays ?? 0),
+  revision: revisionOf(lines, code, test, tester, gift?.pays) });
 // What a checkout would charge, in short: its lines in order, what the card pays for each, and the code that takes part
 // (a basket without one keeps the revision it had before codes)
 // (and a test order's mark, so a page that showed a test order never pays the real basket, nor the reverse: basket_changed;
 // (a line of copies carries its quantity)
-const revisionOf = (lines: { line: Line; card: number }[], code: ShownCode | null, test = false, tester = false) => {
+// (and what a gift card pays, when one does)
+const revisionOf = (lines: { line: Line; card: number }[], code: ShownCode | null, test = false, tester = false, gift = 0) => {
   const charged = lines.map(l => (l.line.quantity > 1 ? [l.line.id, l.card, l.line.quantity] : [l.line.id, l.card]));
-  const marked = tester ? [charged, 'tester'] : test ? [charged, 'test'] : code ? [charged, code.code] : charged;
+  const coded = code ? [charged, code.code] : charged;
+  const marked = tester ? [charged, 'tester'] : test ? [charged, 'test'] : gift ? [coded, 'gift', gift] : coded;
   return createHash('sha256').update(JSON.stringify(marked)).digest('hex').slice(0, 16);
 };
 
@@ -1728,8 +1805,14 @@ async function checkoutBasket(c: Caller, b: any) {
     const badCode = basketCode.unusable?.(basket.id);
     if (badCode) return badCode;
     const code = basketCode.shown?.({ basket: basket.id }) ?? null;
-    const charges = priced(lines, deliver.country), total = charges.reduce((n, l) => n + l.card, 0);
-    if (b.revision != null && b.revision !== revisionOf(charges, code))
+    // and its gift card, still good
+    await basketGift.refresh?.(basket.id);
+    const badGift = basketGift.unusable?.(basket.id);
+    if (badGift) return badGift;
+    const charges = priced(lines, deliver.country), due = charges.reduce((n, l) => n + l.card, 0);
+    const gift = giftOf({ basket: basket.id }, charges), gifts = giftOnLines(charges.map(l => l.card), gift?.pays ?? 0);
+    const total = due - (gift?.pays ?? 0);
+    if (b.revision != null && b.revision !== revisionOf(charges, code, false, false, gift?.pays))
       return [409, "the basket changed since its page showed it: show it again (GET /api/pay/basket)", 'basket_changed'];
     if (total > 0 && total < MIN)
       return [409, `the card would pay ${euros(total, 'eur')}, and a card payment is at least ${euros(MIN, 'eur')}: add something to the basket`, 'card_total_low'];
@@ -1737,30 +1820,35 @@ async function checkoutBasket(c: Caller, b: any) {
       + 'take some orders out, pay for the rest, then put them back in a new basket', 'card_total_high'];
     // (a line of copies: one item at its whole price, "2 × " in its name, since its copies needn't cost the same (one may
     // go without the postage saved))
-    const items = charges.filter(l => l.card > 0).map(l => ({ name: `${copiesOf(l.line)}${shopName(l.line.product)}: ${l.line.description}`, amount: l.card }));
+    // (less what the gift card pays of each)
+    const items = charges.map((l, i) => ({ name: `${copiesOf(l.line)}${shopName(l.line.product)}: ${l.line.description}`, amount: l.card - gifts[i] }))
+      .filter(item => item.amount > 0);
     // the names sent to Stripe too: a renamed line gets a new session, and a retry after a lost answer a key of its own
     // (and the code)
-    const shaped = code ? [charges.map(l => [l.line.id, l.card, l.saved]), items, deliver, code.code] : [charges.map(l => [l.line.id, l.card, l.saved]), items, deliver];
+    const shaped = [charges.map(l => [l.line.id, l.card, l.saved]), items, deliver, ...(code ? [code.code] : []), ...(gift ? [gift.ending, gift.pays] : [])];
     const shape = createHash('sha256').update(JSON.stringify(shaped)).digest('hex').slice(0, 16);
     // a code that takes something off is held for the session (codes.ts), from now until the session can't be paid
     const hold = charges.some(l => l.code_saved > 0) ? basketCode.hold?.(basket.id) : undefined;
+    // and so is a gift card that pays something
+    const giftHold = gift?.pays ? basketGift.hold?.(basket.id) : undefined;
     const created = (session: string) => {
-      const insert = db.prepare('insert into session_lines (session, line, position, card, saved, code_saved) values (?, ?, ?, ?, ?, ?)');
-      charges.forEach((l, i) => insert.run(session, l.line.id, i + 1, l.card, l.saved, l.code_saved));
+      const insert = db.prepare('insert into session_lines (session, line, position, card, saved, code_saved, gift) values (?, ?, ?, ?, ?, ?, ?)');
+      charges.forEach((l, i) => insert.run(session, l.line.id, i + 1, l.card, l.saved, l.code_saved, gifts[i] || null));
       // the shop's own lines cost what this checkout charges
       for (const l of charges.filter(x => x.line.goes_with)) db.prepare('update pay_lines set amount = ? where id = ?').run(l.card, l.line.id);
       db.prepare('update payments set deliver = ?, country = ? where id = ?').run(JSON.stringify(deliver), deliver.country, session);
       hold?.held(session);
+      giftHold?.held(session);
       countSteps(basket.id, 'checkout');
     };
     try {
       if (total === 0) return await paidByVouchers(c, basket.id, { shape, success, locale, email, created });
       return await openSession(c, { reference: basket.id, amount: total, currency: 'eur', items, success, cancel, locale, email,
         basket: { id: basket.id, shape, created } });
-    } finally { hold?.release(); }
+    } finally { hold?.release(); giftHold?.release(); }
   });
 }
-// A basket its vouchers pay in full has nothing for the card: it's paid here, without Stripe, as a session of its own
+// A basket its vouchers (or its gift card) pay in full has nothing for the card: it's paid here, without Stripe, as a session of its own
 // (sessionOf), settled at once like a paid one.
 async function paidByVouchers(c: Caller, basket: string, a: { shape: string; success: string; locale: string; email: string;
   created: (session: string) => void }) {
@@ -1924,9 +2012,9 @@ async function basketOrder(c: Caller, id: string) {
   const code = basketCode.shown?.({ session: id }) ?? null;
   // a test order went through as an order, nothing paid: paid and test
   const test = own.row.status === 'test';
+  const charged = lines.map(line => ({ line, card: line.card!, saved: line.saved!, code_saved: line.code_saved ?? 0 }));
   return { session: id, number: orderNumber(id), basket: own.row.basket, paid: v.paid || test, status: v.status, lang: langOf(own.s.locale), country: own.row.country,
-    ...summary(lines.map(line => ({ line, card: line.card!, saved: line.saved!, code_saved: line.code_saved ?? 0 })), code, test, test ? own.row.created : null,
-      isTesterOrder(id)) };
+    ...summary(charged, code, test, test ? own.row.created : null, isTesterOrder(id), giftOf({ session: id }, charged)) };
 }
 
 // ---- reading a basket's session, ending one, and what its payment settles
@@ -1956,14 +2044,16 @@ async function endSession(row: any): Promise<true | Refused> {
 function settle(row: any) {
   const now = stamp();
   for (const charged of db.prepare('select * from session_lines where session = ?').all(row.id) as any[]) {
-    const done = db.prepare("update pay_lines set status = 'paid', session = ?, card = ?, saved = ?, code_saved = ?, paid_at = ?, updated = ? where id = ? and status = 'open'")
-      .run(row.id, charged.card, charged.saved, charged.code_saved, now, now, charged.line).changes;   // code_saved:
+    const done = db.prepare("update pay_lines set status = 'paid', session = ?, card = ?, saved = ?, code_saved = ?, gift = ?, paid_at = ?, updated = ? where id = ? and status = 'open'")
+      .run(row.id, charged.card, charged.saved, charged.code_saved, charged.gift, now, now, charged.line).changes;   // code_saved, gift:
     if (!done && lineRow(charged.line)?.session !== row.id)
       log(`NEEDS A PERSON: basket ${row.reference} was paid (${row.mode}) with line ${charged.line} in it, which was no longer open. Look before anything is made or refunded.`);
   }
   db.prepare("update baskets set status = 'paid', updated = ? where id = ?").run(now, row.basket);
   giveNumber(row.id);
   basketCode.paid?.(row);
+  const gift = (db.prepare('select coalesce(sum(gift), 0) n from session_lines where session = ?').get(row.id) as { n: number }).n;
+  if (gift) basketGift.paid?.(row, gift);
 }
 // Once that's stored: the hooks hear it, with the lines as paid.
 function tellPaid(row: any, s: any) {

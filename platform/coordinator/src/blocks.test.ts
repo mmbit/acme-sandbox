@@ -333,18 +333,26 @@ test('disk warnings keep the grace free of strikes and zero-room stops keep comm
 test('an unavailable disk counter stop reports the accounting error and preserves its receipt', async () => {
   const job = await h.start({ agent: 'bolt' });
   const event = randomUUID();
-  const body = { event, measure: 'disk', used: 65536, share: 0, accountingError: true };
+  const body = { event, measure: 'disk', used: 65536, share: 0, accountingError: { reason: 'process-counters' } };
   const first = await blocked(job.id, body);
   assert.equal(first.status, 200);
   assert.match(first.body.text, /Disk accounting is unavailable/);
   assert.match(first.body.text, /Restore readable process counters/);
   assert.deepEqual((await blocked(job.id, body)).body, first.body);
   assert.equal(first.body.count, 1);
+  assert.equal((await blocked(job.id, { ...body, accountingError: undefined })).status, 409);
+  assert.equal((await blocked(job.id, { ...body, accountingError: { reason: 'worker-ancestor' } })).status, 409);
 });
 
 test('unknown disk usage remains explicit and an accounting-error receipt is idempotent', async () => {
   const job = await h.start({ agent: 'bolt' });
-  const body = { event: randomUUID(), measure: 'disk', used: null, share: 4096, accountingError: true };
+  const body = {
+    event: randomUUID(),
+    measure: 'disk',
+    used: null,
+    share: 4096,
+    accountingError: { reason: 'process-counters' },
+  };
   const first = await blocked(job.id, body);
   assert.equal(first.status, 200);
   assert.match(first.body.text, /Disk accounting is unavailable/);
@@ -359,3 +367,79 @@ test('unknown disk usage remains explicit and an accounting-error receipt is ide
   for (const invalid of [{ measure: 'memory' }, { accountingError: false }, { warning: true }])
     assert.equal((await blocked(job.id, { ...body, ...invalid, event: randomUUID() })).status, 400);
 });
+
+test('worker infrastructure failures add no strikes while three measured overuses still stop the job', async () => {
+  const job = await h.start({ agent: 'bolt' });
+  const other = await h.start({ agent: 'rook' });
+  for (const used of [null, 65536, null, 65536]) {
+    const body = {
+      event: randomUUID(),
+      measure: 'disk',
+      used,
+      share: 0,
+      accountingError: { reason: 'worker-ancestor' },
+    };
+    const first = await blocked(job.id, body);
+    assert.equal(first.status, 200);
+    assert.equal(first.body.count, 0);
+    assert.doesNotMatch(first.body.text, /block \d+ of|past a job's share|HQ is stopping/);
+    assert.deepEqual((await blocked(job.id, body)).body, first.body);
+    assert.equal(stopping(job.id), null);
+  }
+  for (const [index, measure] of ['disk', 'memory', 'processes'].entries()) {
+    const reply = await blocked(job.id, { measure, used: 65536, share: 1 });
+    assert.equal(reply.body.count, index + 1);
+    if (index < 2) {
+      const failure = await blocked(job.id, {
+        measure: 'disk',
+        used: null,
+        share: 1,
+        accountingError: { reason: 'worker-ancestor' },
+      });
+      assert.equal(failure.body.count, index + 1);
+      assert.equal(stopping(job.id), null);
+    }
+  }
+  assert.match(stopping(job.id)!, /blocked 3 times/);
+  assert.equal(stopping(other.id), null);
+  assert.equal((await blocked(other.id, { measure: 'disk', used: 65536, share: 1 })).body.count, 1);
+  assert.equal((await blocked(other.id, { accountingError: { reason: 'worker-ancestor' } })).status, 400);
+});
+
+for (const reason of ['process-counters', 'job-tree', 'write-sampling'])
+  test(`three ${reason} failures stop the job while worker infrastructure failures remain strike-free`, async () => {
+    const job = await h.start({ agent: 'bolt' });
+    const other = await h.start({ agent: 'rook' });
+    for (const count of [1, 2, 3]) {
+      for (const infrastructure of ['worker-ancestor', 'worker-scanner']) {
+        const reply = await blocked(job.id, {
+          measure: 'disk',
+          used: null,
+          share: 1,
+          accountingError: { reason: infrastructure },
+        });
+        assert.equal(reply.status, 200);
+        assert.equal(reply.body.count, count - 1);
+        assert.equal(stopping(job.id), null);
+      }
+      const body = {
+        event: randomUUID(),
+        measure: 'disk',
+        used: reason === 'process-counters' ? 65536 : null,
+        share: 1,
+        accountingError: { reason },
+      };
+      const reply = await blocked(job.id, body);
+      assert.equal(reply.status, 200);
+      assert.equal(reply.body.count, count);
+      assert.deepEqual((await blocked(job.id, body)).body, reply.body, 'a retry adds no strike');
+      if (count < 3) assert.equal(stopping(job.id), null);
+      else {
+        assert.match(stopping(job.id)!, /blocked 3 times/);
+        assert.match(reply.body.text, /HQ is stopping the job/);
+      }
+      assert.equal(stopping(other.id), null);
+    }
+    assert.equal((await blocked(other.id, { accountingError: { reason: 'unknown' } })).status, 400);
+    assert.equal((await blocked(other.id, { measure: 'disk', accountingError: true })).status, 400);
+  });

@@ -915,14 +915,25 @@ test("hq guest drop takes an item off with its agent's replies; the others keep 
   for (const j of [pip, kit, juno]) await end(j);
 });
 
+// (QUOTED: a key with a quote at one end, as saveSecrets keeps it; an option that starts with it bare keeps its own
+// quote, so the page still reads the options.)
 test("a saved key's value in a section title, an option or the before line is stored and shown to the guest as the key's name", async () => {
   const secrets = await import('./secrets.ts'),
-    KEY = 'sk_live_' + 'G7'.repeat(10);
-  secrets.saveSecrets(['STRIPE_LIVE_SECRET_KEY'], { STRIPE_LIVE_SECRET_KEY: KEY });
+    KEY = 'sk_live_' + 'G7'.repeat(10),
+    QUOTED = '"Ex4mpleKey76';
+  secrets.saveSecrets(['STRIPE_LIVE_SECRET_KEY', 'PRINTAPI_LIVE_TOKEN'], {
+    STRIPE_LIVE_SECRET_KEY: KEY,
+    PRINTAPI_LIVE_TOKEN: QUOTED,
+  });
   const tansy = await running('tansy');
   const { path, id } = await shared(tansy, 'Robin', 'Een sleutel', 'robin@example.com', {
     before: `na ${KEY}`,
-    sections: [{ title: `Over ${KEY}`, items: [{ kind: 'question', title: 'Welke?', options: [KEY, 'Geen'] }] }],
+    sections: [
+      {
+        title: `Over ${KEY}`,
+        items: [{ kind: 'question', title: 'Welke?', options: [KEY, 'Geen', QUOTED, 'Ex4mpleKey76 staat erin'] }],
+      },
+    ],
   });
   const rows = JSON.stringify([
     db.prepare('select * from guest_requests where id = ?').get(id),
@@ -931,12 +942,14 @@ test("a saved key's value in a section title, an option or the before line is st
   assert.ok(!rows.includes(KEY));
   assert.match(rows, /na \[STRIPE_LIVE_SECRET_KEY\]/);
   assert.match(rows, /Over \[STRIPE_LIVE_SECRET_KEY\]/);
-  assert.match(rows, /\[\\"\[STRIPE_LIVE_SECRET_KEY\]\\",\\"Geen\\"\]/);
+  assert.match(rows, /\[\\"\[STRIPE_LIVE_SECRET_KEY\]\\",\\"Geen\\",/);
   const p = await guest(path, { cookie: (await signIn(path, '192.0.2.34')).cookie });
   assert.ok(!p.html.includes(KEY));
   assert.match(p.html, /na \[STRIPE_LIVE_SECRET_KEY\]/);
   assert.match(p.html, /Over \[STRIPE_LIVE_SECRET_KEY\]/);
   assert.match(p.html, />\[STRIPE_LIVE_SECRET_KEY\]</);
+  assert.match(p.html, />\[PRINTAPI_LIVE_TOKEN\]</);
+  assert.match(p.html, />Ex4mpleKey76 staat erin</);
   await end(tansy);
 });
 

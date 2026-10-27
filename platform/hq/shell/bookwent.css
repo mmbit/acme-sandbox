@@ -1,0 +1,70 @@
+/* What a send carries, said for a moment under the plane (bookwent.js): a slip of the book's paper taped on, its
+   notes' snips small, and whether the page goes too. */
+#book .bs-went {
+  position: absolute;
+  left: 18px;
+  top: calc(var(--bk-above, 0px) + 54px);
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(330px, calc(100% - 36px));
+  padding: 14px 16px 12px;
+  border-radius: 3px;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  box-shadow:
+    inset 0 0 0 1px var(--bk-line),
+    inset 0 -2px 0 var(--bk-gold),
+    0 10px 24px rgba(29, 26, 47, 0.22);
+  color: var(--bk-night);
+  font: 15px/1.3 var(--bk-font);
+  transform: rotate(-1deg);
+  pointer-events: none;
+}
+#book .bs-went::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: -8px;
+  width: 64px;
+  height: 16px;
+  background: rgb(246 236 200 / 85%);
+  transform: translateX(-50%) rotate(3deg);
+}
+#book .bs-went b {
+  font-size: 17px;
+}
+#book .bs-went-cuts {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+#book .bs-went-cuts i {
+  display: block;
+  padding: 2px;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(29, 26, 47, 0.2);
+  transform: rotate(-2deg);
+}
+#book .bs-went-cuts i:nth-child(even) {
+  transform: rotate(2.5deg);
+}
+#book .bs-went-cuts img {
+  display: block;
+  height: 40px;
+  max-width: 72px;
+  object-fit: cover;
+}
+#book .bs-went-cuts em {
+  color: var(--bk-muted);
+  font: 700 13px/1 var(--bk-font);
+  font-style: normal;
+}
+#book .bs-went small {
+  color: var(--bk-muted);
+  font-size: 12.5px;
+}

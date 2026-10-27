@@ -1,103 +1,106 @@
-/* A second screen (pair.js): the card at the book's foot (the code, then who's paired), the rail's swap, and the other
+/* A second screen (pair.js): the card over the book's paper (the code, then who's paired), the island's swap, and the other
    screen's ink over HQ's page (pairink.js). In the book's own look (booklook.css). */
+/* the card: a .bk-card (bookui.css) floating over the paper beside the book's island, laid out to fit any book's width:
+   its head, the QR beside the words (under them on a narrow book), the field for the other screen's code a row of its
+   own with Join beside it, never clipped. */
 #book .pair-card {
   position: absolute;
-  left: 40px;
-  right: 18px;
-  bottom: 18px;
+  right: calc(var(--bk-square, 5px) + 70px);
+  bottom: calc(var(--bk-square, 5px) + 64px);
   z-index: 7;
-  font: 400 14px/1.35 var(--bk-font);
+  box-sizing: border-box;
+  width: min(380px, calc(100% - var(--bk-square, 5px) - 86px));
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+  padding: 14px 16px 16px;
+  font: 400 14px/1.4 var(--bk-font);
   color: var(--bk-night);
+  animation: pair-in 0.16s ease-out;
 }
-#book .pair-card[data-state='code'] {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 12px 14px;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow:
-    0 0 0 1.5px #e8dcc4,
-    0 4px 12px rgba(29, 26, 47, 0.12);
+#book .pair-card[hidden] {
+  display: none;
 }
-#book .pair-ask,
-#book .pair-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 0;
-  padding: 7px 12px;
-  border: 0;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 0 0 1.5px #e8dcc4;
-  font: inherit;
-  color: inherit;
+@keyframes pair-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
 }
-#book .pair-ask {
-  cursor: pointer;
+#book .pair-head {
+  flex: 1 0 100%;
+  padding-right: 34px;
+  font-size: 17px;
 }
-#book .pair-line {
-  justify-content: space-between;
-}
-#book .pair-line span {
-  flex: 1;
-}
-#book .pair-ask svg,
-#book .pair-line svg {
-  flex: none;
-  width: 20px;
-  height: 20px;
-}
-#book .pair-line button,
-#book .pair-join button {
-  border: 0;
-  border-radius: 14px;
-  padding: 5px 12px;
-  background: var(--bk-night);
-  color: #fff;
-  font: 700 13px var(--bk-font);
-  cursor: pointer;
+#book .pair-x {
+  position: absolute;
+  top: 8px;
+  right: 8px;
 }
 #book .pair-qr {
   flex: none;
-  width: 108px;
-  height: 108px;
+  width: 104px;
+  height: 104px;
+  margin: 0 auto;
 }
 #book .pair-words {
-  display: grid;
-  gap: 4px;
+  flex: 1 1 150px;
   min-width: 0;
-}
-#book .pair-words > b {
-  font-size: 17px;
+  margin: 0;
+  color: var(--bk-muted);
 }
 #book .pair-digits {
   white-space: nowrap;
   letter-spacing: 0.06em;
+  color: var(--bk-night);
 }
 #book .pair-join {
+  flex: 1 0 100%;
   display: flex;
-  gap: 6px;
-  margin-top: 4px;
+  gap: 8px;
+  min-width: 0;
 }
 #book .pair-join input {
-  min-width: 0;
   flex: 1;
-  padding: 5px 9px;
-  border: 1.5px solid #e8dcc4;
-  border-radius: 10px;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 36px;
+  padding: 0 10px;
+  border: 1.5px solid var(--bk-line);
+  border-radius: 9px;
   font: 16px var(--bk-font); /* (16 px: Safari zooms into a smaller field) */
+  letter-spacing: 0.04em;
   color: inherit;
-  background: var(--bk-paper);
+  background: #fff;
+  -webkit-user-select: text;
+  user-select: text;
 }
-#book .pair-x {
-  align-self: start;
-  border: 0;
-  background: none;
-  font: 22px/1 var(--bk-font);
-  color: #5a5478;
-  cursor: pointer;
+#book .pair-join input:focus {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 1px;
+}
+/* waiting, or paired: one line, its phone, its words and Close */
+#book .pair-card[data-state='waiting'],
+#book .pair-card[data-state='paired'],
+#book .pair-card[data-state='away'] {
+  padding: 8px 8px 8px 14px;
+}
+#book .pair-line {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+#book .pair-line span {
+  flex: 1;
+  min-width: 0;
+}
+#book .pair-line > svg {
+  flex: none;
+  width: 20px;
+  height: 20px;
 }
 #book .bk-swap[hidden] {
   display: none;

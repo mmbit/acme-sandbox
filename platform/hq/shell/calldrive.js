@@ -2,15 +2,19 @@
 //   - It suggests opening something ({ type: 'open', id, what, url }): a card "Kit suggests opening …" with Open and Not
 //     now, which blocks nothing and waits until it's tapped. Open makes the call small and opens it: a preview in HQ's
 //     viewer, or one of HQ's own screens by its address (/?open=jobs&job=12, as a notification's: main.js), with a card
-//     to go back to where the board was. The line hears the tap ({ type: 'opened' }), or why it couldn't open.
+//     to go back to where the board was. The line hears the tap ({ type: 'opened', shown }), or why it couldn't open.
+//     Showing is the same step: with the board's screen not shown to the call, the key reads Open and show, and the tap
+//     is the board's choice to show it, as Show my screen is (callscreen.js); nothing else starts a share. What's open
+//     already (the book, the same preview) comes forward as it is, never loaded again, and has no card back: the board
+//     was there.
 //   - It drives what's on screen ({ type: 'drive', id, to | by | point }): shared/review/drive.js (/__review/drive.js,
 //     a part of review mode's, as the Pencil's are) scrolls or points in the agent's ink, on HQ's page or, with a
 //     preview open, in the viewer's frame (review mode there answers: review.js). The line hears whether it could ({ type: 'driven' }). Nothing stops the board taking over: its own
 //     touch, scroll or Pencil works throughout, and the agent rings things with its ink as before (calldraw.js).
 import { esc } from '../util.js';
-import { minimise } from './callscreen.js';
+import { minimise, share, shown } from './callscreen.js';
 import { cardOf } from './calldraw.js';
-import { PREVIEW, closeTool, openLink, viewerOrigin } from './desk.js';
+import { PREVIEW, closeTool, openLink, viewerOrigin, viewerUrl } from './desk.js';
 import { closeProjects } from './projects.js';
 
 const $ = s => document.querySelector(s);
@@ -43,18 +47,19 @@ function openCard(c, ev) {
   c.suggested = ev.id;
   const card = cardOf(c, 'open');
   card.innerHTML = `<p>${esc(c.name)} suggests opening <b>${esc(ev.what ?? 'something')}</b></p>
-    <div class="row"><button type="button" data-open>Open</button><button type="button" data-not>Not now</button></div>`;
-  const answer = (word, why) => {
+    <div class="row"><button type="button" data-open>${shown(c) ? 'Open' : 'Open and show'}</button><button type="button" data-not>Not now</button></div>`;
+  const answer = (word, more = {}) => {
     card.remove();
     if (c.suggested === ev.id) c.suggested = null;
-    c.ws?.send(JSON.stringify({ type: 'opened', id: ev.id, answer: word, ...(why ? { why } : {}) }));
+    c.ws?.send(JSON.stringify({ type: 'opened', id: ev.id, answer: word, shown: shown(c), ...more }));
   };
   card.querySelector('[data-not]').onclick = () => answer('not now');
   card.querySelector('[data-open]').onclick = async () => {
-    const why = await opened(c, ev.url);
-    if (why) return answer('failed', why);
+    const { why, already } = await opened(c, ev.url);
+    if (why) return answer('failed', { why });
+    await share(c); // (the tap's own choice to show, so the call sees what opened)
     answer('open');
-    backCard(c, ev.what, screenOf(ev.url));
+    if (!already) backCard(c, ev.what, screenOf(ev.url));
   };
 }
 // The HQ screen an address opens (its first open), or none
@@ -62,22 +67,30 @@ const screenOf = address => {
   const own = String(address ?? '').startsWith('/') ? new URL(address, location.origin) : null;
   return (own?.pathname === '/' && own.searchParams.get('open')) || null;
 };
-// The work on the board's screen, the call small over it; or why not
+// The work on the board's screen, the call small over it: { why } it couldn't, { already } when it was open and only
+// came forward
 async function opened(c, url) {
   const address = String(url ?? '');
   const own = address.startsWith('/') ? new URL(address, location.origin) : null;
   const tool = screenOf(address);
-  if (!PREVIEW.test(address) && !tool) return `HQ opens only a preview's page or one of its own screens (${address}).`;
+  if (!PREVIEW.test(address) && !tool)
+    return { why: `HQ opens only a preview's page or one of its own screens (${address}).` };
+  const already = tool
+    ? tool === 'book' && document.documentElement.dataset.book !== 'folded'
+    : address === viewerUrl();
   await minimise(c);
-  if (!tool) return void openLink(address);
-  let shown = false;
+  if (!tool) {
+    if (!already) openLink(address);
+    return { already };
+  }
+  let found = false;
   dispatchEvent(
     // (the first open is the screen asked for and the one the line allowed: a later one doesn't open another)
     new CustomEvent('hq:open', {
-      detail: { ...Object.fromEntries(own.searchParams), open: tool, done: ok => (shown = ok) },
+      detail: { ...Object.fromEntries(own.searchParams), open: tool, done: ok => (found = ok) },
     }),
   );
-  return shown ? '' : `HQ has no screen called ${tool}.`;
+  return found ? { already } : { why: `HQ has no screen called ${tool}.` };
 }
 // Back to where the board was: what the agent opened closes (the viewer, or HQ's screen), and the card goes
 function backCard(c, what, screen) {

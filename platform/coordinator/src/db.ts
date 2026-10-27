@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { DATA_DIR, REPO_DIR } from './config.ts';
-import { redact, keysStamp, REDACT_RULES } from './secrets.ts';
+import { redact, redactJson, keysStamp, REDACT_RULES } from './secrets.ts';
 
 // ---- the connection and its helpers
 
@@ -61,6 +61,8 @@ export function prepared(sql: string) {
 export const afterStep = (then: () => void) => (afterSteps.length ? afterSteps.at(-1)!.kept.push(then) : then());
 // Something put back outside the database if the step it's in is rolled back; outside a step, nothing to undo.
 export const onUndo = (then: () => void) => void afterSteps.at(-1)?.undone.push(then);
+// Whether a step is under way, so what's kept in memory goes back with it (onUndo).
+export const inStep = () => afterSteps.length > 0;
 // A job (`job`, its row's alias) that can still merge: open work, or done with its latest pull request still in review.
 // Shared by wait and pause validation and their cycle check.
 export function mergePending(job: string) {
@@ -73,13 +75,18 @@ export function mergePending(job: string) {
 // this connection's own (temp), so the file holds none: report.sh, the backup's copy or an older coordinator open it
 // without redact(). scrub(): the same over what's already written, when a key is saved.
 db.function('redact', { varargs: false }, (t: unknown) => redact(t) as string | null);
-const guarded: [string, string][] = [];
-export function redacted(table: string, ...cols: string[]) {
+// (and a JSON column's, string by string: redactedJson.)
+db.function('redact_json', { varargs: false }, (t: unknown) => redactJson(t) as string | null);
+const guarded: [string, string, string][] = [];
+export function redacted(table: string, ...cols: string[]) { guard('redact', table, cols); }
+// a column that holds JSON (secrets.ts redactJson()).
+export function redactedJson(table: string, ...cols: string[]) { guard('redact_json', table, cols); }
+function guard(fn: string, table: string, cols: string[]) {
   for (const col of cols) {
-    guarded.push([table, col]);
+    guarded.push([table, col, fn]);
     for (const on of ['insert', `update of ${col}`]) db.exec(`create temp trigger if not exists redact_${table}_${col}_${on.split(' ')[0]}
-      after ${on} on main.${table} when new.${col} is not redact(new.${col})
-      begin update ${table} set ${col} = redact(new.${col}) where rowid = new.rowid; end`);
+      after ${on} on main.${table} when new.${col} is not ${fn}(new.${col})
+      begin update ${table} set ${col} = ${fn}(new.${col}) where rowid = new.rowid; end`);
   }
 }
 // scrub() remembers the keys, rules and columns it ran for, and a start runs it only when those changed (a key put in by
@@ -89,7 +96,7 @@ export function redacted(table: string, ...cols: string[]) {
 // keys, while HQ waits for the start.
 export function scrub() {
   const keysAndColumns = scrubbedFor();
-  for (const [t, c] of guarded) db.exec(`update ${t} set ${c} = redact(${c}) where ${c} is not redact(${c})`);
+  for (const [t, c, fn] of guarded) db.exec(`update ${t} set ${c} = ${fn}(${c}) where ${c} is not ${fn}(${c})`);
   remember('scrubbed', keysAndColumns);
 }
 export function scrubOnStart() {
@@ -177,6 +184,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - shown: the line shown for a call (the CEO hears the whole transcript, text).
 // - about_customer, about_keys: the line came from a job that holds a customer's details or heard a call about keys.
 //   Only the board and the CEO's session see it.
+// - card: a card the CEO put on its reply (hq intake, chat.ts card), as JSON.
 // A database from before these columns moved into their tables' creates (a company that last ran the platform before
 // 23 October) gets them first, where the table is there already, before anything below indexes or reads them. A new
 // database has no such tables yet: the creates give them their columns.
@@ -262,7 +270,7 @@ db.exec(`
     customers integer not null default 0, line_times text, walk integer not null default 0);
   create table if not exists chat (id integer primary key, ts text not null, who text not null, text text not null,
     sent integer not null default 0, call integer, shown text, about_customer integer not null default 0,
-    about_keys integer not null default 0);
+    about_keys integer not null default 0, card text);
 `);
 // A done job's routine and its calls, looked up by job for each done job (matching.ts pastJobs): on stale planner
 // statistics each lookup would otherwise read the whole table.
@@ -325,6 +333,9 @@ db.exec(`create index if not exists jobs_pr_loop on jobs (pr, kind, round, sha, 
 // An agent's own work jobs, newest first (memory.ts history: hq history, a call's history tool), without reading other
 // agents' job rows. That query names it with `indexed by`.
 db.exec(`create index if not exists jobs_agent_work on jobs (agent, id) where kind = 'work'`);
+// Whom an agent queued work for lately (jobs.ts inFlight, at each work or chat job's claim): without it the read walks
+// every job's brief and output, seconds when they're off the disk. That query names it with `indexed by`.
+db.exec('create index if not exists jobs_queued_for on jobs (queued_by, created, agent)');
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
 // names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
@@ -375,7 +386,7 @@ db.exec('create table if not exists upstream_owed (job integer primary key)');
 redacted('findings', 'file', 'issue');
 // A push that waits for its round's ruling while that round's panel is out (reviewpushes.ts): the latest per pull request.
 db.exec('create table if not exists review_waiting_pushes (pr integer primary key, push text not null, at text not null)');
-redacted('review_waiting_pushes', 'push');
+redactedJson('review_waiting_pushes', 'push');
 // A pass whose branch had moved on by its ruling, for that push (reviewpushes.ts leavePass)
 db.exec('create table if not exists review_left_passes (ruling integer primary key)');
 // The worker's merge of main into a pull request's reviewed commit, which GitHub merges in its place (review.ts mergeMain).
@@ -430,11 +441,12 @@ db.exec(`create table if not exists call_items (id integer primary key, call int
   ready_at text, said text)`);
 // (the open ones and their jobs, which the queue's every read asks for: jobs.ts BOARD_CALL)
 db.exec('create index if not exists call_items_open on call_items (status, job)');
-// The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL): a few rows, not every pull request's
+// The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL; the statuses
+// are jobs.ts OPEN_PRS): a few rows, not every pull request's
 db.exec("create index if not exists prs_open on prs (branch) where status in ('open', 'stuck', 'board')");
-redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending', 'landing');
-redacted('requests', 'title', 'body', 'answer', 'topic', 'questions');
-redacted('calls', 'lines', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref', 'said'); redacted('events', 'text');
+redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending'); redactedJson('jobs', 'landing');
+redacted('requests', 'title', 'body', 'answer', 'topic'); redactedJson('requests', 'questions');
+redactedJson('calls', 'lines'); redacted('calls', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref', 'said'); redacted('events', 'text'); // (lines)
 // untold: a running job owed the message that its item (call_items.id) was dropped or replaced, until it's sent (ledger.ts
 // tell(): a live call's correction has nobody to send it; a refused send is tried again).
 db.exec('create table if not exists untold (job integer not null, item integer not null, primary key (job, item))');
@@ -479,12 +491,12 @@ db.exec(`create table if not exists book_notes (id integer primary key autoincre
   create index if not exists book_notes_page on book_notes (page);
   create index if not exists book_notes_review on book_notes (review) where review is not null;
   create index if not exists book_notes_asked on book_notes (asked) where asked is not null`);
-redacted('book_notes', 'anchor', 'words', 'said');
+redacted('book_notes', 'words', 'said'); redactedJson('book_notes', 'anchor');
 // A wiped note (booknotes.ts wipeNote) as it was, its row (note, JSON) and the owner of the sheet it was on, kept for its
 // Undo (restoreNote), then forgotten with its snip.
 db.exec(`create table if not exists book_wiped (id integer primary key, who text not null, owner text,
   sheet integer not null, note text not null, wiped integer not null)`);
-redacted('book_wiped', 'note');
+redactedJson('book_wiped', 'note');
 // The jobs carrying a call item and their replacements, which the follow-through check reads every minute
 // (agreements.ts), and a thread's jobs: without these each read every job.
 db.exec(`create index if not exists jobs_item on jobs (item) where item is not null;
@@ -504,6 +516,11 @@ db.exec(`create index if not exists jobs_work_titles on jobs (coalesce(branch, '
 // a row's prompt and output (each a walk through its overflow pages on a cold file).
 db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
   where kind = 'work' and pr is null and status in ('queued', 'running', 'blocked')`);
+// The tasks whose work may still merge, each with its thread, state and branch: a plan change's check for tasks waiting on
+// themselves (redraws.ts selfWaitingTasks, named by `indexed by`) reads them twice per hq job move, never every work job's
+// row (seconds off a cold disk). Kind and pr are columns too: SQLite reads the row for a term the index's where implies.
+db.exec(`create index if not exists jobs_merge_pending on jobs (thread, status, branch, kind, pr)
+  where kind = 'work' and pr is null`);
 // The covering index keeps claim-time history reads (matching.ts pastJobs, named by `indexed by`) off the jobs table's
 // prompt and output overflow pages.
 db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
@@ -623,9 +640,10 @@ db.exec(`create table if not exists pauses (id integer primary key, project text
 redacted('pauses', 'why');
 // A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
 // it once there is one; answered, when the board answered that card; released, when the board let what it holds go in
-// HQ instead.
+// HQ instead; card_job, the card job a visual hold queued; settled, the board's item or card that answered it without
+// that card (visualapproval.ts settle).
 db.exec(`create table if not exists decisions (id integer primary key, name text not null, by text not null, at text not null,
-  request integer, answered text, released text)`);
+  request integer, answered text, released text, card_job integer, settled text)`);
 redacted('decisions', 'name');
 // A review's major visual changes share a decision within their thread. Only their merges wait for it.
  db.exec(`create table if not exists decision_merges (pr integer primary key, decision integer not null,
@@ -718,6 +736,17 @@ once('2026-10-23-expedite', () => {
   if (lacks('jobs', 'expedite')) db.exec('alter table jobs add column expedite integer not null default 0');
   if (lacks('prs', 'expedited')) db.exec('alter table prs add column expedited integer not null default 0');
 });
+// A visual decision's card job (decisions.card_job) and the board's word that settled it without a card (settled:
+// visualapproval.ts settle). Those from before: the latest card job the hold queued, read from its own prompt's first line
+once('2026-10-27-decisions-settled', () => {
+  if (lacks('decisions', 'settled')) db.exec('alter table decisions add column settled text');
+  if (!lacks('decisions', 'card_job')) return;
+  db.exec(`alter table decisions add column card_job integer;
+    update decisions set card_job = (select max(j.id) from jobs j where j.kind = 'work'
+      and j.title = 'Show the visual changes before they go live'
+      and j.prompt like 'Review found a major visual change to something live. Decision #' || decisions.id || ' holds its merge.%')
+    where exists (select 1 from decision_merges m where m.decision = decisions.id)`);
+});
 // A pause's time (pauses.until_time)
 once('2026-10-24-pauses-until-time', () => lacks('pauses', 'until_time') && db.exec('alter table pauses add column until_time text'));
 // When each push was first pushed (pushes.at): those from before, when the first run on that commit was made.
@@ -804,13 +833,14 @@ once('2026-10-26-walk', () => {
   if (lacks('requests', 'walk')) db.exec('alter table requests add column walk integer not null default 0');
   if (lacks('calls', 'walk')) db.exec('alter table calls add column walk integer not null default 0');
 });
+// The card on the CEO's intercom reply in the onboarding (chat.ts card).
+once('2026-10-26-chat-card', () => lacks('chat', 'card') && db.exec('alter table chat add column card text'));
 // A free page sent on its own is a one-off sheet (book_sheets.page), apart from its owner's one open or sending batch.
 once('2026-10-26-book-sheets-page', () => lacks('book_sheets', 'page') && db.exec('alter table book_sheets add column page integer'));
 db.exec(`drop index if exists book_sheets_open;
   drop index if exists book_sheets_owner;
   create unique index if not exists book_sheets_batch on book_sheets (who, coalesce(owner, ''))
     where status in ('open', 'sending') and page is null`);
-// A call about review pins (call_pins) went with HQ's waiting notes: the book took them.
 db.exec('drop table if exists call_pins');
 
 // A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.

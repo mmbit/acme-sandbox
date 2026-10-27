@@ -28,8 +28,9 @@ await watching.stop(); // what's recorded so far sent, then stopped
   (WebP, JPEG where the browser makes no WebP: Safari), and only when it changed. They are rrweb canvas mutations, which
   its replayer draws with `UNSAFE_replayCanvas: true`. rrweb's own `recordCanvas` stays off: it encodes each canvas
   twice on the main thread at every start and resume, which takes 0.7 s on Brownstone and 1.7 s on Holo at an iPad's
-  size and a quarter of the speed (a start takes 0.15 s with `canvas.js`). A page with a policy for workers needs
-  `worker-src blob:`.
+  size and a quarter of the speed (a start takes 0.15 s with `canvas.js`). The worker is `encoder.js`, served beside
+  it from the page's own origin, which a policy without `worker-src` (HQ's) allows; a blob's worker it refused, and no
+  canvas reached a call (job #19916).
 - `onEnd(why)`: `'stopped'`, `'over'` (the call ended), `'full'` (the session's room, 507), `'too big'` (one event
   past what a post holds, 413) or `'unreachable'` (8 MB held while the server couldn't be reached). A post holds at
   most the store's `BATCH_BYTES`, so a big backlog goes in several.
@@ -49,7 +50,7 @@ fewer after an undo, none once sent) says what it shows now (ink.js `shown`). Th
 its next picture. `strokes.js` reads the events back: the strokes on screen at any time (`Inks`, `inkAt`), and draws
 them over a replay in each document's place (`paint`, `placer`), as the mirror and the player do.
 **Kept out:** passwords and hidden fields' values always; anything inside `[data-watchalong-hide]` (an empty box in
-the replay: the call's own controls, key fields). Inside `[data-private]`, for the board too (a person's address,
+the replay: key fields). Inside `[data-private]`, for the board too (a person's address,
 email or phone, a customer's case: mark them where a page shows them): the text, what's typed, every attribute but
 those the replay draws by (`class`, `style`, `id`, sizes and rrweb's own: `DRAWN` in watchalong.js), and pictures
 (`img`, `picture`, `video`, `canvas`, `svg`, a frame, and a marked part of a drawing, like lettering drawn as paths, go
@@ -63,8 +64,8 @@ the replay loads it by it); a link of another kind keeps only its kind (`mailto:
 
 In HQ, the call screen's Show my screen starts one, never minimising (`platform/hq/shell/callscreen.js`:
 `typed: 'shown'`, `canvasFps: 0.5`); its Stop showing and the bubble's Pause
-pause it, and the call's end stops it. The bubble itself (`callbubble.js`) is
-marked `data-watchalong-hide`, as is the call's own layer.
+pause it, and the call's end stops it. The call's own window, its bubble and its cards are recorded as the board
+sees them: the agent's picture is the board's screen (job #19916).
 
 ## In a frame
 

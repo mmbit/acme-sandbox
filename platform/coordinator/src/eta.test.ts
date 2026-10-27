@@ -31,7 +31,8 @@ past('Paint the harbour map in winter', 40, 60);
 past('Paint the harbour map at night', 50, 60);
 
 // Work kit queues now (a hand-off).
-const queued = (title: string) => h.queue({ agent: 'kit', title, engine: 'claude', queuedBy: 'juno' });
+const queued = (title: string, o: { item?: number } = {}) =>
+  h.queue({ agent: 'kit', title, engine: 'claude', queuedBy: 'juno', ...o });
 const seat = (windows: Record<string, unknown> = {}) =>
   h.worker('seat', { seat: 'claude-a', engine: 'claude', state: 'ready', util: 0.1, week: 0.1, ...windows });
 let sizingReader: ReturnType<typeof h.start> | undefined;
@@ -205,14 +206,7 @@ test('a paced seat holds undated work in the play until its pacing lifts, as the
   assert.ok(start > T0 + 24 * HOUR && start < reset, 'held now, and let go before the reset');
   assert.equal(await h.claim('claude', { seat: 'claude-a', pacedUntil: reset }), null, 'nor does the claim start it');
   // (work carrying the board's call item is the board's word: the play starts it now, as the claim does)
-  const carried = queued('Paint the harbour gate, as the board asked');
-  const item = h.db
-    .prepare(
-      `insert into call_items (call, kind, owner, what, quote, ts)
-    values (1, 'task', 'kit', 'Paint the gate', 'Board: paint the gate.', 'x') returning id`,
-    )
-    .get() as { id: number };
-  h.db.prepare('update jobs set item = ? where id = ?').run(item.id, carried);
+  const carried = queued('Paint the harbour gate, as the board asked', { item: h.openItem('kit') });
   await reportCapacity();
   assert.ok(predictions.outlook(T0).get(carried)!.start! < T0 + HOUR, "the play doesn't hold it");
   assert.equal(

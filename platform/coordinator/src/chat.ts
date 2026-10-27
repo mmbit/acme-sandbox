@@ -2,12 +2,14 @@
 // each message, so the CEO remembers the conversation. The CEO's final message of each turn is the reply. What the board
 // says while the CEO is still answering waits, and goes in the next turn. Every line is shown and kept as it is: a key's
 // value is redacted where it's stored (db.ts).
-import { db, once, setting, remember } from './db.ts';
+import { db, once, setting, remember, redactedJson } from './db.ts';
+import { redactJson } from './secrets.ts'; // (and redactedJson: the intake's cards.)
 import { publish } from './events.ts';
 import { createJob, findAgent, preview, holdsCustomerData, handedCustomerData, holdsKeys, handedKeys, callSeat, workerQuiet } from './jobs.ts';   // (customer data; paused)
 import { STANDING } from './jobcodes.ts';
 import { ceo, roles, unstaffed } from './company.ts';
 import * as pictures from './pictures.ts';
+import * as tips from './tips.ts';
 import { DEFAULT_ESTIMATE_SCALE } from '../../worker/src/estimating.ts';
 
 // A calls row named c carries keys if it or any call it resumed concerns a credential card.
@@ -149,8 +151,55 @@ export function fromBoard(text: string, picked: unknown) {
   const p = pictures.waiting(picked);
   if (!p) return 400;
   if (p.missing.length) return [409, 'a picture is no longer waiting to be sent: it was sent already, removed, or went unsent for a day', { missing: p.missing }];
-  return say(text, undefined, undefined, p.ids);
+  const said = say(text, undefined, undefined, p.ids);
+  if (p.ids.length) tips.offer('pin'); // the board's first picture brings the pin's tip
+  return said;
 }
+// The intake's cards: the CEO's turn puts one on its reply with hq intake, and
+// HQ draws it under that line until the board says something after it. switches: what runs by itself, the CEO's
+// pick set, in its words and the board's language; the intercom's one Send sends them as they stand, as the board's next
+// line (says: what that line starts with, then each switch on by its said or name; none: what it says with every switch
+// off). asks: HQ's ask keys, the manual's (tips.js ASKS), each starting the board's sentence. One card a reply: again
+// replaces it.
+type Switch = { name: string; said?: string; what: string; on: boolean };
+export type Card =
+  | { kind: 'switches'; title: string; says: string; none: string; note?: string; switches: Switch[] }
+  | { kind: 'asks' };
+const CARD = 'chat.card';
+redactedJson('chat', 'card'); // (the CEO's words on it, as its line's text)
+const worded = (v: unknown) => typeof v === 'string' && !!v.trim();
+function cardProblem(c: Record<string, unknown>) {
+  if (c.kind === 'asks') return null;
+  if (c.kind !== 'switches') return 'a card is switches or asks';
+  if (!['title', 'says', 'none'].every(k => worded(c[k]))) return 'the switches card needs a title, says and none, each in words';
+  if (c.note !== undefined && !worded(c.note)) return 'its note is words';
+  const s = c.switches;
+  if (!Array.isArray(s) || !s.length) return 'the card has switches';
+  if (!s.every(w => w && worded(w.name) && (w.said === undefined || worded(w.said)) && worded(w.what) && typeof w.on === 'boolean'))
+    return 'each switch has a name (and said if given), what it does and on, true or false';
+  return null;
+}
+export function card(job: number, given: Record<string, unknown>) {
+  const turn = current();
+  if (job !== turn?.id || turn.status !== 'running') return [403, "only the CEO's turn on the intercom puts a card on its reply"] as const;
+  const problem = cardProblem(given);
+  if (problem) return problem;
+  const c: Card = given.kind === 'asks' ? { kind: 'asks' } : {
+    kind: 'switches', title: String(given.title).trim(), says: String(given.says).trim(), none: String(given.none).trim(),
+    ...(given.note ? { note: String(given.note).trim() } : {}),
+    switches: (given.switches as Switch[]).map(w => ({ name: w.name.trim(), ...(w.said ? { said: w.said.trim() } : {}), what: w.what.trim(), on: w.on })),
+  };
+  remember(CARD, redactJson(JSON.stringify({ job, card: c })));
+  return { ok: true, kind: c.kind };
+}
+// The card a turn put on its reply, taken as the turn ends (answered())
+function cardOf(job: number) {
+  const pending = JSON.parse(setting(CARD) ?? 'null') as { job: number; card: Card } | null;
+  if (pending?.job !== job) return null;
+  remember(CARD, null);
+  return pending.card;
+}
+
 // A reply past LONG_REPLY words (about 80 asked, brief()) gets a gentle nudge in the CEO's next turn, never a refusal: the
 // board has read it already. Kept between runs as the reply's word count (the settings table) until a turn hears it,
 // once, even if that turn parks.
@@ -171,12 +220,14 @@ export function answered(job: { id: number; title?: string }, status: string, re
   if (done && job.title === AGAIN) db.prepare('update jobs set title = ? where id = ?').run(CHAT, job.id);
   // (only a turn's own reply counts: one that ended done.)
   if (done) remember(LONG, words(reply) > LONG_REPLY ? String(words(reply)) : null);
+  const card = cardOf(job.id); // (a failed turn's card goes with it.)
   const text = done ? reply
     : again ? "Sorry, I lost my train of thought there. I'm starting over with everything you said, so there's no need to repeat it."
     : heard ? "Sorry, I can't answer right now. Nothing you said is lost: I'll hear all of it with your next message."
     : 'Sorry, something went wrong on my side there.';
-  db.prepare('insert into chat (ts, who, text, sent, about_customer, about_keys) values (?, ?, ?, 1, ?, ?)').run(new Date().toISOString(), ceo(), text,
-    Number(holdsCustomerData(job.id)), Number(holdsKeys(job.id)));
+  // (and its card.)
+  db.prepare('insert into chat (ts, who, text, sent, about_customer, about_keys, card) values (?, ?, ?, 1, ?, ?, ?)').run(new Date().toISOString(), ceo(), text,
+    Number(holdsCustomerData(job.id)), Number(holdsKeys(job.id)), done && card ? JSON.stringify(card) : null);
   publish({ type: 'chat', agent: ceo(), to: 'board', text: preview(text, 160) });   // (a bubble; the intercom has it all)
   if (again) start(AGAIN, job.id);
   else if (done && db.prepare(`select 1 from chat where who in ${HEARD} and sent = 0`).get()) deliver(job.id); // (HEARD)
@@ -292,8 +343,9 @@ export function callNotes(call: number, job: number, notes: string, mins: number
 const following = () => !!db.prepare(`select 1 from calls c join jobs j on j.id = c.job
   where c.agent = ? and j.status in ('queued', 'running', 'blocked')`).get(ceo());   // the follow-up, not the work it handed out
 export const history = () => ({
-  messages: (db.prepare('select id, ts, who, coalesce(shown, text) as text from chat order by id desc limit 60').all() as { id: number }[]).reverse()
-    .map(m => { const ids = pictures.ofLine(m.id); return ids.length ? { ...m, pictures: ids } : m; }),
+  // (a card the CEO put on its line, card().)
+  messages: (db.prepare('select id, ts, who, coalesce(shown, text) as text, card from chat order by id desc limit 60').all() as { id: number; card: string | null }[]).reverse()
+    .map(({ card, ...m }) => { const ids = pictures.ofLine(m.id); return { ...m, ...(ids.length ? { pictures: ids } : {}), ...(card ? { card: JSON.parse(card) } : {}) }; }),
   thinking: ['queued', 'running'].includes(current()?.status ?? '') || following() && 'notes',
   paused: paused(),
   // a new company before its first line: HQ opens the intercom and asks which language to talk in.

@@ -11,17 +11,26 @@ import { noKeys } from '../../../shared/review/anchor.js';
 // on a tablet's core, so undo still answers; every stroke has a point, so it bounds the strokes too. A page that would
 // pass it is refused whole (FULL), and the page says to start a new page.
 export const MAX_POINTS = 120_000;
-// A page grows downward as it's written on (the book), to GROWN_MAX; a new one is a screen or so.
-// (PAGE: a new page's sides, exported for the sheet pages the coordinator makes: book.ts sheetPageFor.)
+// A page grows any way as it's written on (the book), to GROWN_MAX a side; a new one is a screen or so, its top-left at
+// 0,0 where its heading is. Grown up or left, its top-left (x, y) is above or left of that, what's on it staying where
+// it is. (PAGE: a new page's sides, exported for the sheet pages the coordinator makes: book.ts sheetPageFor.)
 export const PAGE = { min: 100, max: 4000 };
-const GROWN_MAX = 20_000,
-  SIZE = { min: 0.5, max: 200 },
+// (GROWN_MAX exported for the answers the store types onto a page: booktyped.ts.)
+export const GROWN_MAX = 20_000;
+const SIZE = { min: 0.5, max: 200 },
   LABEL_MAX = 80;
+// Words typed on a page (the book's text tool): at most TEXTS_MAX boxes a page, each at most TEXT_MAX characters.
+export const TEXTS_MAX = 200,
+  TEXT_MAX = 2000;
+// (a box narrower than this wraps every letter: never one HQ makes)
+const TEXT_W_MIN = 20;
 // A save's JSON: the ink and the scraps (the picture is drawn by the coordinator: bookrender.ts). ink.js writes a
 // point's x, y and pressure to 2 decimals and t in whole ms, at most 40 bytes, and a stroke's colour, size and alpha in
-// under 100, so at most 140 for a stroke of one point. A scrap is its file's name and five numbers, under 200. A note's
+// under 100, so at most 140 for a stroke of one point. A scrap is its file's name and five numbers, under 200. A typed
+// box is four numbers and a colour (under 100) and its words, 6 bytes a character at most as JSON escapes them.
+// A note's
 // body is its snip (a picture in base64, 4 bytes for every 3) and its anchor (ink as a page's, and a little more).
-export const SAVE_MAX = 100 + MAX_POINTS * 140 + MAX_SCRAPS * 200,
+export const SAVE_MAX = 100 + MAX_POINTS * 140 + MAX_SCRAPS * 200 + TEXTS_MAX * (100 + TEXT_MAX * 6),
   NOTE_MAX = Math.ceil(pictures.MAX_BYTES / 3) * 4 + MAX_POINTS * 140 + 64 * 1024;
 export const FULL = 'This page is full: start a new page to keep drawing (undo the last lines to save this one)';
 // (every check refuses the same way: a [status, why] pair)
@@ -33,13 +42,22 @@ export const pageSide = (v: unknown): number | Refused =>
   Number.isInteger(v) && Number(v) >= PAGE.min && Number(v) <= PAGE.max
     ? Number(v)
     : [400, `a page is whole CSS px, ${PAGE.min} to ${PAGE.max} on each side`];
-// A page's height once it has grown: whole CSS px, from what it was made to GROWN_MAX
+// A page's height (or width) once it has grown: whole CSS px, from what it was made to GROWN_MAX. (The width grows too,
+// the page endless every way.)
 export const grownTo = (v: unknown, h: number): number | Refused =>
   v === undefined
     ? h
     : Number.isInteger(v) && Number(v) >= PAGE.min && Number(v) <= GROWN_MAX
       ? Number(v)
       : [400, `a page grows to whole CSS px, at most ${GROWN_MAX}`];
+// A page's left or top once it has grown that way: whole CSS px, 0 or up to GROWN_MAX before its heading; undefined:
+// kept as it was.
+export const cornerOf = (v: unknown, was: number): number | Refused =>
+  v === undefined
+    ? was
+    : Number.isInteger(v) && Number(v) <= 0 && Number(v) >= -GROWN_MAX
+      ? Number(v)
+      : [400, `a page's top-left is whole CSS px, 0 to -${GROWN_MAX}`];
 // A label as one line, trimmed, or the refusal
 export function labelOf(v: unknown): string | Refused {
   if (typeof v !== 'string') return [400, 'a label is text'];
@@ -54,12 +72,37 @@ export function inkOf(v: unknown): Stroke[] | Refused {
   const strokes: Stroke[] = [];
   for (const s of v) {
     const stroke = strokeOf(s);
-    if (!stroke) return [400, 'a stroke is { color: "#rrggbb", size, alpha?, points: [[x, y, pressure, t], ...] }'];
+    if (!stroke)
+      return [400, 'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, points: [[x, y, pressure, t], ...] }'];
     points += stroke.points.length;
     if (points > MAX_POINTS) return [413, FULL];
     strokes.push(stroke);
   }
   return strokes;
+}
+// The words typed on a page as HQ sent them: [{ x, y, w, text, color }], x and y the box's top-left and w the width
+// its words wrap at, in the page's px; every one checked, or the refusal. A box of no words is never kept (HQ drops
+// it), so it's refused here. undefined: none sent (a sketch's save), the page's kept as they are.
+export type Typed = { x: number; y: number; w: number; text: string; color: string };
+export function textsOf(v: unknown): Typed[] | Refused | undefined {
+  if (v === undefined) return undefined;
+  const why = [400, 'texts are a list of { x, y, w, text, color: "#rrggbb" }, x and y on the page'] as Refused;
+  // (x and y either side of the page's heading: it grows every way.)
+  const on = (n: unknown, max: number, min = 0): n is number => typeof n === 'number' && n >= min && n <= max;
+  if (!Array.isArray(v)) return why;
+  if (v.length > TEXTS_MAX) return [413, `a page holds at most ${TEXTS_MAX} typed notes`];
+  const texts: Typed[] = [];
+  for (const t of v) {
+    if (!t || typeof t !== 'object' || !on(t.x, GROWN_MAX, -GROWN_MAX) || !on(t.y, GROWN_MAX, -GROWN_MAX)) return why;
+    if (!on(t.w, GROWN_MAX) || t.w < TEXT_W_MIN) return why;
+    if (typeof t.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(t.color)) return why;
+    if (typeof t.text !== 'string' || !t.text.trim()) return why;
+    if (t.text.includes('\0')) return [400, "a typed note can't hold a NUL character"];
+    if ([...t.text].length > TEXT_MAX) return [400, `a typed note is at most ${TEXT_MAX} characters`];
+    const round = (n: number) => Math.round(n * 100) / 100;
+    texts.push({ x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase() });
+  }
+  return texts;
 }
 function strokeOf(s: any) {
   if (!s || typeof s !== 'object' || typeof s.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(s.color)) return null;
@@ -67,8 +110,11 @@ function strokeOf(s: any) {
   if (s.alpha !== undefined && !(typeof s.alpha === 'number' && s.alpha >= 0 && s.alpha <= 1)) return null;
   const point = (p: unknown) => Array.isArray(p) && p.length === 4 && p.every(Number.isFinite);
   if (!Array.isArray(s.points) || !s.points.length || !s.points.every(point)) return null;
+  if (s.fill !== undefined && s.fill !== true) return null;
   const alpha = s.alpha === undefined ? {} : { alpha: s.alpha };
-  return { color: s.color.toLowerCase(), size: s.size, ...alpha, points: s.points as number[][] };
+  // (a filled shape: its line and its inside, ink.js.)
+  const fill = s.fill ? { fill: true as const } : {};
+  return { color: s.color.toLowerCase(), size: s.size, ...alpha, ...fill, points: s.points as number[][] };
 }
 // A data URL's picture, read by its bytes and stripped as an upload is (pictures.ts), or the refusal
 export function dataUrlPicture(v: unknown): Refused | { type: string; clean: Buffer } {
@@ -91,6 +137,8 @@ export type Anchor = {
   el: { selector: string; tag: string; text: string; box: Box } | null;
   view: Box & { dpr: number };
   ink: Stroke[];
+  // a note on a film: the moment it was stopped at (seconds) and the film's path
+  video?: { time: number; src: string };
 };
 type Box = { x: number; y: number; w: number; h: number };
 const ANCHOR_TEXT = 200,
@@ -120,6 +168,12 @@ export function anchorOf(v: any): Anchor | Refused {
   if (!boxOf(v.view, ['w', 'h', 'x', 'y', 'dpr'])) return [400, "an anchor's view is { w, h, x, y, dpr }, numbers"];
   const ink = inkOf(v.ink);
   if (isRefused(ink)) return ink;
+  const video = v.video;
+  if (
+    video !== undefined &&
+    !(video && finite(video.time) && video.time >= 0 && typeof video.src === 'string' && video.src.length <= URL_MAX)
+  )
+    return [400, "an anchor's video is { time, src }: the film's moment, in seconds, and its path"];
   const box = (b: any) => ({ x: b.x, y: b.y, w: b.w, h: b.h });
   return {
     v: 1,
@@ -127,6 +181,7 @@ export function anchorOf(v: any): Anchor | Refused {
     el: el && { selector: el.selector, tag: el.tag, text: el.text, box: box(el.box) },
     view: { ...box(v.view), dpr: v.view.dpr },
     ink,
+    ...(video ? { video: { time: video.time, src: video.src } } : {}),
   };
 }
 // A note's words, spoken, typed or written (read from handwriting), as one trimmed text, or the refusal

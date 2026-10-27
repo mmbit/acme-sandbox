@@ -20,7 +20,7 @@ function fixture(context: any) {
   });
   const measure = async () => {
     const use = (await shares.measure([{ job: 1, ...ids }], { freeBytes: 0, reserveBytes: 0 })).get(ids.uid)!;
-    if (use.accountingError) throw new Error(use.accountingError);
+    if (use.accountingError) throw new Error(use.accountingError.message);
     return use.used!;
   };
   return { work, root, shares, ids, measure };
@@ -78,7 +78,7 @@ test('root paths reject intermediate symlinks and scans use the slot filesystem 
   symlinkSync(relocated, join(work, 'jobs'));
   const replaced = (await shares.measure([{ job: 1, ...ids }], { freeBytes: 0, reserveBytes: 0 })).get(ids.uid)!;
   assert.equal(replaced.used, null);
-  assert.match(replaced.accountingError!, /ENOTDIR|ELOOP/);
+  assert.match(replaced.accountingError!.message, /ENOTDIR|ELOOP/);
   rmSync(join(work, 'jobs'));
   renameSync(relocated, join(work, 'jobs'));
   shares.close();
@@ -95,7 +95,8 @@ test('root paths reject intermediate symlinks and scans use the slot filesystem 
   try {
     const denied = (await restricted.measure([{ job: 1, ...slot }], { freeBytes: 0, reserveBytes: 0 })).get(slot.uid)!;
     assert.equal(denied.used, null);
-    assert.match(denied.accountingError!, /EACCES/);
+    assert.match(denied.accountingError!.message, /EACCES/);
+    assert.equal(denied.accountingError!.reason, 'job-tree');
     const command = spawn('sleep', ['300'], slot);
     context.after(() => command.kill('SIGKILL'));
     await new Promise<void>((resolve, reject) => {
@@ -117,7 +118,8 @@ test('root paths reject intermediate symlinks and scans use the slot filesystem 
     assert.equal(block.root.pid, command.pid);
     assert.equal(block.measure, 'disk');
     assert.equal(block.used, null);
-    assert.match(block.accountingError!, /EACCES/);
+    assert.match(block.accountingError!.message, /EACCES/);
+    assert.equal(block.accountingError!.reason, 'job-tree');
   } finally {
     restricted.close();
     chmodSync(privateDirectory, 0o700);
@@ -139,4 +141,43 @@ test('slot commands cannot signal the scanner that applies their filesystem perm
   `;
   execFileSync(process.execPath, ['-e', code, String(pid)], { ...ids, env: { PATH: '/usr/bin:/bin' } });
   assert.equal((await measure()).get(ids.uid)!.used, before);
+});
+
+test('disk scans traverse private shared parents without listing them and tolerate an absent tests folder', async context => {
+  const { work, root, shares, ids, measure } = fixture(context);
+  const slot = ids.uid === 0 ? { uid: 65534, gid: 65534 } : ids;
+  // Without root, the owner must also lose read permission to exercise traverse-only access.
+  const permissions = ids.uid === 0 ? 0o711 : 0o111;
+  rmSync(join(work, 'tests', '1'), { recursive: true });
+  writeFileSync(join(root, 'small'), Buffer.alloc(4096));
+  if (ids.uid === 0) chownSync(join(root, 'small'), slot.uid, slot.gid);
+  try {
+    chmodSync(work, permissions);
+    for (const folder of ['jobs', 'homes', 'tests']) {
+      if (ids.uid === 0 && folder !== 'tests') chownSync(join(work, folder, '1'), slot.uid, slot.gid);
+      chmodSync(join(work, folder), permissions);
+    }
+    const use = (await shares.measure([{ job: 1, ...slot }], { freeBytes: 2 ** 30, reserveBytes: 0 })).get(slot.uid)!;
+    assert.equal(use.accountingError, undefined);
+    assert.ok(use.used! >= 4096);
+    assert.ok(use.used! < 65536);
+    if (ids.uid !== 0) assert.equal(await measure(), use.used);
+  } finally {
+    chmodSync(work, 0o700);
+    for (const folder of ['jobs', 'homes', 'tests']) chmodSync(join(work, folder), 0o700);
+  }
+});
+
+test('an inaccessible worker-owned ancestor is an infrastructure failure, not a slot tree denial', async context => {
+  const { work, shares, ids } = fixture(context);
+  const slot = ids.uid === 0 ? { uid: 65534, gid: 65534 } : ids;
+  try {
+    chmodSync(work, ids.uid === 0 ? 0o700 : 0);
+    const use = (await shares.measure([{ job: 1, ...slot }], { freeBytes: 4096, reserveBytes: 0 })).get(slot.uid)!;
+    assert.equal(use.used, null);
+    assert.equal(use.accountingError!.reason, 'worker-ancestor');
+    assert.match(use.accountingError!.message, /EACCES/);
+  } finally {
+    chmodSync(work, 0o700);
+  }
 });

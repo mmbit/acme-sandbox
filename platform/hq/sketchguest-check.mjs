@@ -161,7 +161,7 @@ await hq.context.route(`${base}/__review/*.js`, route => {
     : route.fulfill({ contentType: 'text/javascript; charset=utf-8', body: part });
 });
 await hq.page.goto(`${base}/?intro=0`);
-const chip = hq.page.locator('#book .bk-person[title="Ines’s book"]');
+const chip = hq.page.locator('#book .bk-person[aria-label="Ines’s book"]');
 await chip.waitFor({ timeout: 20000 });
 const read = hq.page.waitForResponse(r => r.url().includes(`/api/book/page?id=${mine.id}`) && r.ok());
 await chip.click();

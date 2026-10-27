@@ -386,7 +386,7 @@ test('a group refused while its job was busy is slowed at the next look, the job
       } catch {
         await new Promise(r => setTimeout(r, 20));
       }
-    await slowDown([me], [], first.groups);
+    assert.deepEqual(await slowDown([me], [], first.groups), new Set(), 'a refused group is retried without blocking');
     const second = await look(0, new Set(first.groups.map(p => p.group!.id)));
     assert.equal(second.own[0].group?.nice, 0, 'refused');
     assert.deepEqual(second.slow, [], 'below the threshold now');
@@ -430,7 +430,7 @@ test('a group refused, then nondumpable for a look while its job is idle, is slo
       } catch {
         await new Promise(r => setTimeout(r, 20));
       }
-    await slowDown([me], [], first.groups);
+    assert.deepEqual(await slowDown([me], [], first.groups), new Set(), 'a refused group is retried without blocking');
     hider.kill('SIGUSR1');
     await new Promise(r => setTimeout(r, 200));
     const hidden = await look(0, first.pending);
@@ -482,7 +482,8 @@ test('unavailable disk counters stop a warned over-share command explicitly, eve
     const block = overShare(uses, new Set(), { ...opts, disk }).block!;
     assert.equal(block.root.pid, 10);
     assert.equal(block.measure, 'disk');
-    assert.match(block.accountingError!, /Disk accounting unavailable.*write counters/);
+    assert.match(block.accountingError!.message, /Disk accounting unavailable.*write counters/);
+    assert.equal(block.accountingError!.reason, 'process-counters');
     assert.equal(overShare(uses, new Set([10]), { ...opts, disk }).block, undefined, 'the CLI remains protected');
     assert.equal(
       overShare(uses, new Set(), { ...opts, disk: new Map([[1501, { ...diskUse, warned: false }]]) }).block,
@@ -521,7 +522,7 @@ test('a live command that denies its slot access to counters is stopped with an 
   assert.equal(now[0].writeBytes, undefined);
   const disk = new Map([[ids.uid, { used: 8192, share: 4096, warned: true, grew: true }]]);
   const block = overShare(tally(now, before, 1000), new Set(), { ...opts, disk }).block!;
-  assert.match(block.accountingError!, /Disk accounting unavailable/);
+  assert.match(block.accountingError!.message, /Disk accounting unavailable/);
 });
 
 test('session growth and another writer do not attribute a pipe-only command as a disk writer', async context => {
@@ -692,6 +693,81 @@ for (const interruption of ['SIGSTOP', 'SIGKILL'] as const)
     const disk = new Map([[affectedIds.uid, { used: 4096, share: 8192, warned: false, grew: false }]]);
     const block = overShare(tally(failed, failed, 1000), new Set(), { ...opts, disk }).block!;
     assert.equal(block.root.pid, affected.pid);
-    assert.match(block.accountingError!, /writable-file sampling failed/);
+    assert.match(block.accountingError!.message, /writable-file sampling failed/);
+    assert.equal(block.accountingError!.reason, 'write-sampling');
     assert.equal(overShare(tally(failed, failed, 1000), new Set([affected.pid!]), { ...opts, disk }).block, undefined);
   });
+
+// ptrace stops each actual executable at exec, avoiding a race with a short-lived grep or renice.
+// slowDown runs no sh for a group whose process is gone, so sh has no 'gone'. A SIGSTOP helper waits out its ten-second
+// timeout, so it runs busy only, and grep is no priority helper.
+const PRIORITY_MODES: Record<string, string[]> = {
+  renice: ['busy', 'idle', 'protected', 'gone'],
+  sh: ['busy', 'idle', 'protected'],
+};
+const outcomeOf = (command: string) =>
+  command === 'grep'
+    ? 'ends before the next sample and leaves healthy enforcement available'
+    : 'cannot defeat priority enforcement or hold healthy resource checks';
+for (const command of ['grep', 'renice', 'sh'])
+  for (const interruption of ['SIGSTOP', 'SIGKILL'])
+    for (const mode of interruption === 'SIGKILL' ? (PRIORITY_MODES[command] ?? ['busy']) : ['busy'])
+      test(`a ${interruption} ${command} helper ${outcomeOf(command)} (${mode})`, async context => {
+        if (command === 'sh' && noSessionGroups) return context.skip(noSessionGroups);
+        const fixture = spawn('python3', [
+          new URL('./shares.trace.py', import.meta.url).pathname,
+          command,
+          interruption,
+          process.execPath,
+          new URL('./shares.fixture.ts', import.meta.url).pathname,
+          command,
+          mode,
+        ]);
+        let output = '';
+        fixture.stdout.on('data', chunk => {
+          output += chunk;
+        });
+        fixture.stderr.on('data', chunk => {
+          output += chunk;
+        });
+        const [code, signal] = await once(fixture, 'close');
+        assert.equal(signal, null, output);
+        assert.equal(code, 0, output);
+      });
+
+test('a priority target that exits before renice needs no block', async () => {
+  const ids = { uid: process.getuid!(), gid: process.getgid!() };
+  const child = spawn('sleep', ['300']);
+  const ended = once(child, 'close');
+  await once(child, 'spawn');
+  const own = (await processesFor([ids])).find(p => p.pid === child.pid)!;
+  child.kill('SIGKILL');
+  await ended;
+  assert.deepEqual(await slowDown([ids], [own], []), new Set());
+});
+
+for (const [mode, behavior] of [
+  ['memory', 'an interrupted helper blocks the surviving command by live cores after a same-uid memory stop'],
+  ['disk', 'a priority block holds the disk stop until the next eligible pass while accounting continues'],
+]) {
+  test(behavior, async () => {
+    const fixture = spawn('python3', [
+      new URL('./shares.trace.py', import.meta.url).pathname,
+      'renice',
+      'SIGKILL',
+      process.execPath,
+      new URL('./sharepass.fixture.ts', import.meta.url).pathname,
+      mode,
+    ]);
+    let output = '';
+    fixture.stdout.on('data', chunk => {
+      output += chunk;
+    });
+    fixture.stderr.on('data', chunk => {
+      output += chunk;
+    });
+    const [code, signal] = await once(fixture, 'close');
+    assert.equal(signal, null, output);
+    assert.equal(code, 0, output);
+  });
+}

@@ -93,7 +93,8 @@ const REPLAY = join(ROOT, 'platform/coordinator/node_modules/@rrweb/replay/dist'
 const files = { 'mock/calls.json': JSON.stringify(CALLS.map(c => ({ ...c, recorded: c.id === CALL.id }))) };
 for (const name of ['player.js', 'scrubber.js', 'strokes.js', 'replay.html', 'replay.js'])
   files[`shared/watchalong/${name}`] = await readFile(join(ROOT, 'shared/watchalong', name));
-for (const name of ['watchalong.js', 'canvas.js'])
+for (const name of ['watchalong.js', 'canvas.js', 'encoder.js'])
+  // (encoder.js)
   files[`shared/watchalong/${name}`] = await readFile(join(ROOT, 'shared/watchalong', name));
 files['shared/watchalong/vendor/rrweb-record.js'] = await readFile(
   join(ROOT, 'platform/coordinator/node_modules/@rrweb/record/dist/record.js'),

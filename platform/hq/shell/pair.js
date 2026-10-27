@@ -1,10 +1,10 @@
 // A second screen: a phone or tablet paired with a desktop for one session by a code the book shows (its QR, and six
 // digits to type). Both are the board's own HQ, signed in as ever; the code only joins them, good once, for a minute.
-// Paired, one screen holds HQ's page full screen and the other the book beside its page, and the rail's swap trades
-// them in a moment, as often as the board likes. Marks and notes are live both ways: a line drawn on either shows on
-// the other as it's drawn (pairink.js), a mark made on the page's screen finishes on the book's (post-it and caret
-// ready there: ring on the phone, type on the computer), and a post-it flicked away goes to the other screen
-// (shared/review/handover.js). A note filed, a sheet changed or a page turned on one reads again on the other; each
+// Paired, one screen holds HQ's page full screen and the other the book beside its page, and the swap on the pairing's
+// card trades them in a moment, as often as the board likes. Marks and notes are live both ways: a line drawn on either
+// shows on the other as it's drawn (pairink.js), a mark goes into the book from the screen it's drawn on as it settles,
+// the other screen's book turning to it, and a post-it flicked away goes to the
+// other screen (shared/review/handover.js). A note filed, a sheet changed or a page turned on one reads again on the other; each
 // screen folds its own book. The channel is the coordinator's (pair.ts): one stream in, posts out, picked up again
 // after a drop; nothing of it is kept.
 import { esc, stylesheet } from '../util.js';
@@ -13,18 +13,20 @@ import { toast } from './hud.js';
 import { qrCode, qrPath } from '/shared/qr/qr.js';
 import { foldBook, openBook, showBookPage } from './book.js';
 import { refreshRail } from './bookrail.js';
+import { button, island, setPressed } from './bookui.js';
 import { forget, heard, mountInk } from './pairink.js';
 
 // A code shows this long before the next replaces it, while the card is open (the coordinator's own minute, less the
 // time a phone takes to read it); the card folds away after this long unused
 const RENEW_MS = 50_000,
   CARD_MS = 4 * 60_000;
-// A mark made on the page's screen goes to the book's this long after its last line, unless it's typed into here
-const SETTLE_MS = 1500;
 const KEPT = 'hq.pair'; // (this tab's pairing, kept across a reload: sessionStorage, so it ends with the tab)
 
+// (a phone with a line drawn on it.)
 const PHONE =
-  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M10.5 18.5h3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="2.5" width="11" height="19" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M9.2 12.6c.9-2 1.9-2.3 2.4-.9s1.4 1.5 3.2-1.2M10.5 18.5h3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+const CLOSE =
+  '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
 const SWAP =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h14l-3.5-3.5M20 16H6l3.5 3.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
@@ -35,7 +37,6 @@ let p = null,
   swapButton = null,
   renewing = 0,
   folding = 0,
-  settling = 0,
   outbox = Promise.resolve(),
   unreached = false, // (a send didn't get there: told once, till one does again)
   opens = {},
@@ -56,19 +57,31 @@ if (asked) {
 export function initPair(follow) {
   opens = follow;
   const leaf = document.querySelector('#book .bk-leaf'),
-    foot = document.querySelector('#book .bk-rail .bk-foot');
-  if (!leaf || !foot) return;
+    isle = document.querySelector('#book .bk-rail') && island('overview');
+  if (!leaf || !isle) return;
   stylesheet('shell/pair.css');
   card = document.createElement('section');
-  card.className = 'pair-card';
+  card.className = 'pair-card bk-card';
   card.setAttribute('aria-label', 'Another screen');
   leaf.append(card);
-  swapButton = document.createElement('button');
-  swapButton.className = 'bk-swap';
+  // Draw from your phone in the overview's head, and, paired, the swap on the pairing's card
+  // (pressed while its card shows; paired, it shows the pairing's card or puts it away)
+  const phone = button({
+    icon: PHONE,
+    label: 'Draw from your phone',
+    pressed: false,
+    onClick: () => {
+      if (p?.paired) setPressed(phone, !(card.hidden = !card.hidden));
+      else if (card.dataset.state === 'code') rest();
+      else ask();
+    },
+  });
+  phone.classList.add('pair-ask');
+  new MutationObserver(() => setPressed(phone, !card.hidden)).observe(card, { attributeFilter: ['hidden'] });
+  swapButton = button({ icon: SWAP, label: 'Swap screens', onClick: swap });
+  swapButton.classList.add('bk-swap');
   swapButton.hidden = true;
-  swapButton.innerHTML = `${SWAP}<span class="sr">Swap screens</span>`;
-  swapButton.addEventListener('click', swap);
-  foot.prepend(swapButton);
+  isle.append(phone);
   mountInk(events => tell(...events));
   card.addEventListener('click', clicked);
   card.addEventListener('submit', e => (e.preventDefault(), join(card.querySelector('input').value)));
@@ -86,16 +99,26 @@ function draw(state, code) {
   if (!card) return;
   card.dataset.state = state;
   const other = p && esc(p.other); // (the other screen's own word for itself: text, never markup)
-  if (state === 'rest')
-    card.innerHTML = `<button class="pair-ask" data-do="ask">${PHONE}<span>Draw from your phone</span></button>`;
+  // (at rest the card's away: Draw from your phone is an icon in the overview's head.)
+  card.hidden = state === 'rest';
+  if (state === 'rest') card.innerHTML = '';
   else if (state === 'code') {
     const link = `${location.origin}/?pair=${code.code}`,
       qr = qrCode(link, { level: 'M' }),
       n = qr.size + 8;
-    card.innerHTML = `<svg class="pair-qr" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" role="img" aria-label="A code to scan"><rect width="${n}" height="${n}" fill="#fff"/><path d="${qrPath(qr)}"/></svg>
-      <div class="pair-words"><b>Draw from your phone</b><span>Point its camera here, or type <b class="pair-digits">${esc(code.code.replace(/(\d{3})(\d{3})/, '$1 $2'))}</b> on it. Good once, for a minute.</span>
-      <form class="pair-join"><input inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="A code from the other screen" aria-label="A code from the other screen"><button>Join</button></form></div>
-      <button class="pair-x" data-do="close" aria-label="Not now">×</button>`;
+    // (laid out to fit any book's width: the QR beside the words, or over them on a narrow book; the field for the
+    // other screen's code a row of its own, Join beside it. pair.css.)
+    card.innerHTML = `<b class="pair-head">Draw from your phone</b>
+      <svg class="pair-qr" viewBox="0 0 ${n} ${n}" shape-rendering="crispEdges" role="img" aria-label="A code to scan"><rect width="${n}" height="${n}" fill="#fff"/><path d="${qrPath(qr)}"/></svg>
+      <p class="pair-words">Point its camera here, or type <b class="pair-digits">${esc(code.code.replace(/(\d{3})(\d{3})/, '$1 $2'))}</b> on it. Good once, for a minute.</p>
+      <form class="pair-join"><input inputmode="numeric" autocomplete="one-time-code" maxlength="7" placeholder="Or its code here" aria-label="A code from the other screen"></form>`;
+    const x = button({ icon: CLOSE, label: 'Not now' });
+    x.classList.add('pair-x');
+    x.dataset.do = 'close';
+    const go = button({ text: 'Join' });
+    go.type = 'submit';
+    card.querySelector('.pair-join').append(go);
+    card.append(x);
   } else if (state === 'waiting') card.innerHTML = `<p class="pair-line">${PHONE}<span>Joining…</span></p>`;
   else if (state === 'paired' || state === 'away')
     card.innerHTML = `<p class="pair-line">${PHONE}<span>${
@@ -104,7 +127,13 @@ function draw(state, code) {
         : p.side === 'a'
           ? `Your ${other} draws here · live both ways`
           : `Paired with your ${other} · live both ways`
-    }</span><button data-do="end">Close</button></p>`;
+    }</span></p>`;
+  if (state === 'paired' || state === 'away') {
+    const close = button({ text: 'Close', label: 'Close the pairing' });
+    close.classList.add('bk-quiet');
+    close.dataset.do = 'end';
+    card.querySelector('.pair-line').append(swapButton, close);
+  }
 }
 function clicked(e) {
   const what = e.target.closest('[data-do]')?.dataset.do;
@@ -204,6 +233,7 @@ function got({ tag, payload = {} }) {
   else if (tag === 'take') take(payload);
   else if (tag === 'book') refreshRail();
   else if (tag === 'turn') showBookPage(payload.page);
+  else if (tag === 'noted') document.dispatchEvent(new CustomEvent('book:paged', { detail: { page: payload.page } }));
   else if (tag === 'open') follow(payload);
 }
 function state(now) {
@@ -245,10 +275,12 @@ function role(r) {
   sessionStorage.setItem(KEPT, JSON.stringify({ pair: p.pair, key: p.key, side: p.side, role: p.role }));
   if (p.role === 'book') openBook();
   else foldBook();
-  swapButton.title =
+  swapButton.setAttribute(
+    'aria-label',
     p.role === 'book'
       ? `Swap: the book to your ${p.other}, the page here`
-      : `Swap: the book here, the page to your ${p.other}`;
+      : `Swap: the book here, the page to your ${p.other}`,
+  );
 }
 function swap() {
   if (!p?.paired) return;
@@ -280,16 +312,18 @@ function hear() {
   document.addEventListener('pencil:mark', e => {
     const mark = (lastMark = e.detail?.mark ?? null);
     tell({ tag: 'mark', payload: { mark } });
-    // a mark made here, on the page's screen, finishes on the book's once the pen has rested, its words said so far
-    // with it (one being typed into here stays, and so does one the other screen sent here to finish)
-    clearTimeout(settling);
-    if (p?.paired && p.role === 'page' && mark && !mark.typed && !mark.taken)
-      settling = setTimeout(handOver, SETTLE_MS);
+    // (a mark made here goes into the book from here as it settles, and the other screen's book turns to it: below.
   });
   document.addEventListener('pencil:flick', () => handOver());
   // notes and sheets changed here: the other screen's book reads them again
   const changed = () => tell({ tag: 'book', payload: {} });
   document.addEventListener('pencil:note', changed);
+  document.addEventListener('pencil:wiped', changed);
+  // (a note made here: the other screen's book reads its day again at its page.)
+  document.addEventListener(
+    'pencil:note',
+    e => e.detail?.page && tell({ tag: 'noted', payload: { page: e.detail.page } }),
+  );
   document.addEventListener('book:wrote', changed);
   // (the book says which page it shows each time it comes to rest: only a new one goes across)
   document.addEventListener('book:turn', ({ detail: { page } }) => {
@@ -303,7 +337,6 @@ function hear() {
 }
 // (a mark that doesn't reach the other screen opens here again)
 function handOver() {
-  clearTimeout(settling);
   if (!p?.paired) return;
   const other = p.other;
   const reply = mark =>

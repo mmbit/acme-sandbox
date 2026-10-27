@@ -1,5 +1,5 @@
 // node --test src/pad.test.ts   (throwaway DATA_DIR and the test company): the CEO's page (hq pad) and the goal mark on a
-// project (hq project goal), through the agents' routes and HQ's projects view.
+// project (hq project goal), through the agents' routes and HQ's projects view, and the page through the real hq script.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
@@ -45,6 +45,35 @@ test('the CEO marks a project a goal and takes the mark off; the projects view s
   assert.equal(await goalOf(), true);
   assert.equal((await h.agent('projects/goal', juno.token, { id: 'due', goal: false })).status, 200);
   assert.equal(await goalOf(), false);
+  await h.finish(juno);
+  await h.finish(kit);
+});
+
+test('hq pad prints the page, its CEO rewrites it from stdin, and --history lists every version (bin/hq)', async () => {
+  const juno = await h.start({ agent: 'juno', title: 'The plan' });
+  const kit = await h.start({ agent: 'kit', title: 'Some work' });
+  const page = 'Goal: first paying customers.\nNext: read the walk on Thursday.';
+  const wrote = await h.hq({ ...juno, stdin: `${page}\n` }, 'pad', 'write', '-');
+  assert.equal(wrote.code, 0, wrote.out);
+  const shown = await h.hq(kit, 'pad');
+  assert.equal(shown.code, 0);
+  assert.match(
+    shown.out,
+    new RegExp(`^${page}\n\n\\(written \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC, juno's #${juno.id}\\)`),
+  );
+  const history = (await h.hq(kit, 'pad', '--history')).out;
+  assert.ok(history.startsWith('== ') && history.includes(`UTC, juno's #${juno.id}\n${page}\n`), history);
+
+  const refused = await h.hq({ ...kit, stdin: 'My plan instead' }, 'pad', 'write', '-');
+  assert.notEqual(refused.code, 0, "only the CEO's jobs write it");
+  assert.match((await h.hq(kit, 'pad')).out, /^Goal: first paying customers\./, 'the page is as it was');
+  for (const bad of [
+    ['pad', 'write'],
+    ['pad', 'write', 'page.md'],
+    ['pad', '--history', 'x'],
+    ['pad', 'read'],
+  ])
+    assert.notEqual((await h.hq(kit, ...bad)).code, 0, bad.join(' '));
   await h.finish(juno);
   await h.finish(kit);
 });

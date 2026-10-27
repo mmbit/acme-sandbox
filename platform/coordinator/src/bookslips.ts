@@ -2,6 +2,8 @@
 //   - A note whose words end in a question mark asks now: its owner answers it within seconds in a quick run (chat.ts),
 //     outside the queue, and the answer is clipped onto the note as a slip. Only a note the board wrote in HQ asks: one
 //     a product page's own code could have posted proves nothing until the board's send (feedback.ts).
+//   - Words the board types in a box on a page that end in a question mark ask the same way, and the answer is typed onto
+//     the page under them (booktyped.ts.).
 //   - A slip: an agent's answer on a note (hq answer), with a picture or a preview's link if it has one. A tick closes
 //     it; anything written under it is a reply, a new note on the owner's sheet, anchored where the note was.
 //   - A slip can name an artifact (hq answer --artifact): what it made that runs, shown on the slip as artifacts.ts lists
@@ -19,11 +21,11 @@ import { findAgent, jobAgent, type Reader } from './jobs.ts';
 import * as feedback from './feedback.ts';
 import { onQuickRun, quickRun } from './chat.ts';
 import { keepFile } from './uploads.ts';
-import { BOARD, notFound, serveFile } from './book.ts';
+import { BOARD } from './book.ts';
 import { addNote, note, sheetRow, shown, type Note } from './booknotes.ts';
 import { keep } from './booksheets.ts';
 import { dataUrlPicture, isRefused, type Refused } from './pagechecks.ts';
-import { DIR } from './pagescraps.ts';
+import { DIR, notFound, serveFile } from './pagescraps.ts';
 import * as artifacts from './artifacts.ts';
 
 const SLIP_MAX = 4000,

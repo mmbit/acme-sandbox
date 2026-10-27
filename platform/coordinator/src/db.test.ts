@@ -145,8 +145,8 @@ test('the normal startup migration removes old command values and preserves bloc
   await start(directory, repo);
   await start(directory, repo);
   const db = new DatabaseSync(`${directory}/hq.db`);
-  assert.deepEqual({ ...db.prepare('select job, measure, used, share from blocks').get() },
-    { job: 7, measure: 'memory', used: 3100, share: 2560 });
+  assert.deepEqual({ ...db.prepare('select job, measure, used, share, accounting_error, accounting_failure_reason from blocks').get() },
+    { job: 7, measure: 'memory', used: 3100, share: 2560, accounting_error: 0, accounting_failure_reason: null });
   db.close();
   assert.ok(!readFileSync(`${directory}/hq.db`).includes('fixture-retained-command'), 'old command bytes are erased too');
 });

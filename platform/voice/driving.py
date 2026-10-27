@@ -26,12 +26,14 @@ OPEN_WORDS = {
     'asked': ('Suggested: HQ shows the board your suggestion to open {what}, with Open and Not now. Carry on talking: '
               'their answer comes with a later turn.'),
     'tapped': {
-        'open': ("(They tapped Open on {what}: it's on their screen now, with a way back to where they were. drive "
-                 'scrolls and points, draw rings.)'),
+        'open': ("(They tapped Open on {what}: it's on their screen now, and {seen}. drive scrolls and points, draw "
+                 'rings.)'),
         'not now': '(They tapped Not now on your suggestion to open {what}.)',
         'failed': "(HQ couldn't open {what} on their screen. {why})",
     },
     'unsaid': "It didn't say why.",
+    # (their tap shows their screen too, as Show my screen does)
+    'seen': {True: 'you see their screen with it', False: "their screen isn't shown to you"},
     'none': "You can open work on the board's screen only on the board's own calls in HQ.",
     'waiting': 'Your suggestion to open {what} is still waiting for their answer: it comes with a later turn.',
     'away': "HQ isn't connected just now (the board's connection dropped): try again in a moment.",
@@ -113,7 +115,8 @@ class Driving:
         if not self.waiting or self.waiting['id'] != event.get('id') or answer not in OPEN_WORDS['tapped']:
             return
         why = one_line(event.get('why')) or OPEN_WORDS['unsaid']
-        self.answered.append(OPEN_WORDS['tapped'][answer].format(what=self.waiting['what'], why=why))
+        seen = OPEN_WORDS['seen'][event.get('shown') is True]
+        self.answered.append(OPEN_WORDS['tapped'][answer].format(what=self.waiting['what'], why=why, seen=seen))
         self.waiting = None
         self.call.nudge()
 

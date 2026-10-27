@@ -43,8 +43,8 @@ import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile
 import { DiskShares } from './disk.ts';
 import { warnDisk } from './diskwarnings.ts';
 import { Reload } from './reload.ts';
-import { sampleWrites } from './diskwrites.ts';
-import { cliProcesses, processesFor, overShare, slowDown, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
+import { cliProcesses, processesFor, overShare, tally, type JobUse, type ProcessSnapshot } from './shares.ts';
+import { enforceShares } from './sharepass.ts';
 import { memoryWatch, type MemoryCause, type MemoryVerdict } from './lowmemory.ts';
 import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
@@ -186,7 +186,8 @@ type Memory = { verdict: MemoryVerdict; cause?: MemoryCause };
 
 async function watchShares() {
   const watch: RoomWatch = { waiting: 0, reportedAt: 0, answeredAt: 0, reporting: false };
-  let before: ProcessSnapshot[] = [], at = Date.now(), pending = new Set<string>();   // (the session groups asked for: overShare)
+  let before: ProcessSnapshot[] = [], at = Date.now();
+  const pending = new Set<string>();   // (the session groups asked for: overShare)
   const diskShares = new DiskShares(WORK);
   const hotSince = new Map<number, number>();   // each job (uid) past the cores, since when
   const memoryOf = memoryWatch(LOW_MEMORY_MB, MEMORY_BACK_MB);
@@ -194,6 +195,13 @@ async function watchShares() {
     await sleep(SHARES_MS);
     try {
       const jobs = slotJobs(), procs = await processesFor(jobs), t = Date.now();
+      const processReadingErrors = new Map<number, string>();
+      for (const p of procs) if (p.processReadingError) processReadingErrors.set(p.uid, p.processReadingError);
+      for (const [uid, processReadingError] of processReadingErrors) {
+        const line = `Shares uid ${uid}: ${processReadingError}`;
+        log(line);
+        capacityTrial.note(line);
+      }
       const intervalMs = t - at, uses = tally(procs, before, intervalMs);
       const previous = before; before = procs; at = t;
       const short = !room(false);
@@ -207,16 +215,11 @@ async function watchShares() {
       const hot = new Set([...hotSince].filter(([, since]) => t - since >= JOB_HOT_MS).map(([uid]) => uid));
       for (const pid of diskShares.scanners()) cli.add(pid);
       const limits = { mostMb: JOB_MOST_MB, shareMb: JOB_SHARE_MB, cores: JOB_CORES, processes: JOB_PROCESSES, starved, hot, workerSessionId: SESSION };
-      const { block, slow, groups, pending: still } = overShare(uses, cli, limits, pending);
-      pending = still;
-      await blockShare(block, jobs, procs);
-      if (block?.measure === 'cores') hotSince.delete(block.uid);
-      await slowDown(jobs, slow, groups);
-      // Descriptor sampling cannot delay this pass's memory, process or CPU enforcement.
-      await sampleWrites(procs, jobs);
-      const diskUses = tally(procs, previous, intervalMs);
-      const disk = await sampleDisk(diskShares, jobs, diskUses, cli);
-      if (!block) await blockShare(overShare(diskUses, cli, { ...limits, disk }).block, jobs, procs);
+      await enforceShares({
+        jobs, procs, previous, intervalMs, uses, cli, limits, pending, hotSince,
+        applyBlock: block => blockShare(block, jobs, procs),
+        disk: diskUses => sampleDisk(diskShares, jobs, diskUses, cli),
+      });
       capacityTrial.record(() => sampleCapacity(jobs, uses, intervalMs, t));
     } catch (err) { log('shares:', err); capacityTrial.note(`Shares failed: ${err}`); }
   }

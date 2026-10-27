@@ -23,6 +23,7 @@ import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wrappedMenuLines } from '../../shared/review/lines.mjs';
+import { foldBySpine } from './bookchrome.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -89,7 +90,7 @@ function book(path, body, q) {
   if (path === '/api/book/notes') return { notes: booked.filter(n => n.page === +q.get('page')) };
   if (path === '/api/book/page') {
     const p = pages.find(x => x.id === +q.get('id'));
-    return p && { ...p, ink: [], scraps: [] };
+    return p && { ...p, ink: [], scraps: [], texts: [] }; // (texts)
   }
   if (path === '/api/book/page/save') {
     const p = pages.find(x => x.id === body.id);
@@ -157,7 +158,8 @@ await context.route(`${base}/api/**`, async r => {
   const url = new URL(r.request().url()),
     path = url.pathname;
   if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
-  if (path === '/api/requests' || path === '/api/gazette') return r.fulfill({ json: [] });
+  // nobody invited: the book's rail draws no faces and no sheets when this fails
+  if (['/api/requests', '/api/gazette', '/api/book/people'].includes(path)) return r.fulfill({ json: [] });
   if (path === '/api/preview/link') return r.fulfill({ json: { url: r.request().postDataJSON().url } });
   if (path === '/api/review/shares') return r.fulfill({ json: [] }); // (no outside links: shares-check.mjs has those)
   if (path === '/api/book/snip') {
@@ -305,9 +307,9 @@ async function atBoltsSheet(on, words) {
     );
 }
 
-// the rail's arrow puts the spread away (folded, on a phone)
+// a flick of the spine puts the spread away (folded, on a phone.)
 async function foldAway(on) {
-  await on.click('#book .bk-arrow');
+  await foldBySpine(on);
   await on.waitForSelector('html[data-book=folded]', { state: 'attached' });
   await on.waitForTimeout(700); // (HQ laid out again after it)
 }
@@ -1106,7 +1108,16 @@ assert.ok(await tab.isHidden('review-mode .sheet'), 'and its sheet stays away');
 await tab.click('review-mode .side .x');
 await tab.click('review-mode .fab', { force: true });
 await tab.waitForSelector('review-mode .veil:not([hidden])', { timeout: 3000 });
-await tab.keyboard.press('Escape');
+// the next post-it is its own: nothing of the cancelled change touches it
+const nextHeadline = await tab.locator('h1').boundingBox();
+await tab.mouse.click(nextHeadline.x + 40, nextHeadline.y + nextHeadline.height / 2);
+await tab.waitForSelector('review-mode .sheet:not([hidden])');
+await tab.fill('review-mode textarea', 'The next one');
+await tab.waitForTimeout(800);
+assert.equal(await tab.inputValue('review-mode textarea'), 'The next one', 'the next post-it keeps its words');
+assert.ok(await tab.isEnabled('review-mode .send'), 'and can be pinned');
+assert.equal(edits.length, editsBefore);
+await tab.click('review-mode [data-cancel]');
 await tab.waitForSelector('review-mode .veil', { state: 'hidden' });
 // hq note: the note as review mode posted it, the board's now, put on Bolt's sheet by the real coordinator (the test
 // company, a throwaway DATA_DIR), sent with the plane (its ten seconds over), and read back by the real hq

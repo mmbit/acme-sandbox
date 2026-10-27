@@ -24,7 +24,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash, createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { db, redacted } from './db.ts';
+import { db, redacted, redactedJson } from './db.ts';
 import { publish } from './events.ts';
 import { ORIGIN, PUBLIC_HOST, REPO_DIR } from './config.ts';
 import { brand, brandLook, ceo, companyFormats, names } from './company.ts';
@@ -68,7 +68,7 @@ if (!(db.prepare('pragma table_info(guest_people)').all() as { name: string }[])
   db.exec('alter table guest_people add column invited_by text');
 // what a request says and the guest's words: the guest, the agent and the board read them
 redacted('guest_requests', 'title', 'body', 'before');
-redacted('guest_items', 'section', 'title', 'detail', 'options', 'answer', 'unit');
+redacted('guest_items', 'section', 'title', 'detail', 'answer', 'unit'); redactedJson('guest_items', 'options');
 redacted('guest_messages', 'text');
 redacted('guests', 'title');
 

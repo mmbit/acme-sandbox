@@ -1,10 +1,9 @@
 // book-check.mjs's handwriting story (shared/review/written.js, the coordinator's handwriting.ts), held like an iPad mini
 // with the book open, the reader and the voice line played, the board saying nothing: words written with the Pencil on
-// HQ's page are read once the pen rests (one reading, of the ink alone): they fill the post-it and stand beside the ink
-// as type, and Send puts them in the book as written; changed in the post-it first, they're the board's typed words,
-// and the type goes; a note sent before its words were read takes them as they come, and the book shows them there,
-// editable, unless the board typed others there first; a reading refused, before Send or after, or words read that the
-// book didn't take, are told.
+// HQ's page are read once the pen rests (one reading, of the ink alone), and the note that goes into the book as the
+// mark settles has them as written; a note in before its words were read takes them as they come, and the book shows
+// them there, editable, unless the board typed others there first; a reading refused, or words read that the book
+// didn't take, are told. (no post-it)
 import assert from 'node:assert/strict';
 
 // c: book-check's { hqOnStore, ui, reader, hush, posts, notes, pages, ceo (the CEO's name), noErrorsIn, shot }
@@ -13,12 +12,10 @@ export async function writtenStory(browser, c) {
     before = { notes: c.notes.length, pages: c.pages.length };
   c.hush(true);
   try {
-    const s = { ...c, page };
+    const s = { ...c, page, seen: c.posts.filter(p => p.path === '/api/book/note').length };
     await readAndSent(s);
-    await changedFirst(s);
     await readLate(s);
     await typedLate(s);
-    await refused(s);
     await notTaken(s);
     await refusedSent(s);
     c.noErrorsIn(errors);
@@ -31,61 +28,47 @@ export async function writtenStory(browser, c) {
   }
 }
 
-// Written, the pen resting: one reading of the ink alone, its words in the post-it and beside the ink as type; Send
-// keeps them, said 'written', and the type stays
+// Written, the pen resting: one reading of the ink alone, before the type of its words shows; the note in the book
+// has them, said 'written'
 async function readAndSent(s) {
-  const { page, reader, ui } = s;
+  const { page, reader } = s;
   reader.words = '+ same for the Sunday one?';
   const read = reader.inks.length; // (earlier stories' marks were read too)
-  const box = await write(page, 120, 300),
-    field = page.locator(ui('textarea'));
-  // (at once: the stand-in reads as soon as the pen rests, and WebKit's post-it shows only once its screenshot's in)
+  const box = await write(page, 120, 300);
   assert.equal(await typeBeside(page, box), 0, 'no type before the words are read');
-  await page.waitForSelector(ui('.sheet:not([hidden])'));
-  await until(() => field.inputValue(), reader.words, 'the words read fill the post-it');
+  await send(s);
+  const id = s.notes.at(-1).id;
+  await until(
+    () => JSON.stringify([s.notes.at(-1).words, s.notes.at(-1).said]),
+    JSON.stringify([reader.words, 'written']),
+    'the words read are the note’s, as written',
+  );
+  assert.equal(s.notes.at(-1).id, id);
   assert.equal(reader.inks.length, read + 1, 'one reading, once the pen rested');
   const ink = await picture(page, reader.inks.at(-1));
   assert.ok(ink.dark > 100 && ink.light > ink.dark * 4, `the ink alone, dark on white (${JSON.stringify(ink)})`);
   assert.ok(ink.width >= box.w && ink.height >= box.h, `the whole ink, at least as drawn (${JSON.stringify(ink)})`);
-  assert.ok((await typeBeside(page, box)) > 50, 'the words stand beside the ink as type');
   await s.shot('book-written-read', page);
-  const sent = await send(s);
-  assert.deepEqual([sent.words, sent.said], [reader.words, 'written']);
-  await page.waitForTimeout(300);
-  assert.ok((await typeBeside(page, box)) > 50, 'in the book, the words stay beside the ink as type');
 }
 
-// Read, then changed in the post-it: the board's own words go, typed, and no type stands beside the ink
-async function changedFirst(s) {
-  const { page, reader, ui } = s;
-  reader.words = 'Sunday too';
-  const box = await write(page, 120, 470),
-    field = page.locator(ui('textarea'));
-  await until(() => field.inputValue(), reader.words, 'read');
-  await field.fill('Sunday too, and Monday');
-  await page.waitForTimeout(100);
-  assert.equal(await typeBeside(page, box), 0, 'the words changed: no type beside the ink');
-  const sent = await send(s);
-  assert.deepEqual([sent.words, sent.said], ['Sunday too, and Monday', 'typed']);
-}
-
-// Sent before the pen rested: read at Send, the words come after the note went in, as its words, and the book shows
-// them on the CEO's sheet, to be written over
+// Read slowly: the words come after the note went in, as its words, and the book shows them on the CEO's sheet, to be
+// written over
 async function readLate(s) {
   const { page, reader, posts } = s;
   Object.assign(reader, { words: 'Lighter ink', ms: 2500 });
   const read = reader.inks.length;
   await write(page, 120, 640);
   const sent = await send(s);
-  assert.equal(sent.words, '', 'sent with no words yet');
-  assert.equal(reader.inks.length, read + 1, 'its lines read at Send');
+  assert.equal(sent.words, '', 'in the book with no words yet');
+  assert.equal(reader.inks.length, read + 1, 'its lines read');
   const id = s.notes.at(-1).id;
   await until(
     () => JSON.stringify(posts.find(p => p.path === '/api/book/note/edit' && p.body.id === id)?.body ?? null),
     JSON.stringify({ id, words: 'Lighter ink', said: 'written', was: '' }),
     'the words read go in the note',
   );
-  const face = page.locator(`#book nav [title^="For ${s.ceo}"]`);
+  // (by its name: the book has no title= since its own tooltips.)
+  const face = page.locator(`#book nav [aria-label^="For ${s.ceo}"]`);
   await face.click();
   await inBook(s).waitFor({ timeout: 5000 });
   const words = inBook(s).getByRole('textbox');
@@ -94,7 +77,7 @@ async function readLate(s) {
   await s.shot('book-written-late', page);
 }
 
-// Sent before the pen rested, and words typed on its note in the book while it's read: they're the board's, and the
+// Read slowly, and words typed on its note in the book while it's read: they're the board's, and the
 // words read, coming later, don't go over them (the store refuses an edit made for the words it had)
 async function typedLate(s) {
   const { page, reader, posts } = s;
@@ -115,33 +98,7 @@ async function typedLate(s) {
   assert.equal(await words.inputValue(), 'Darker, please', '...in the book too');
 }
 
-// A reading refused (the day's are used) with the post-it open: it says so, not a blank like ink with no writing; a
-// line more, read, puts the words in and the message goes
-async function refused(s) {
-  const { page, reader, ui } = s;
-  Object.assign(reader, {
-    words: 'Hi',
-    ms: 1000,
-    refused: [429, "handwriting is read 300 times a day, and today's are used"],
-  });
-  await write(page, 300, 390);
-  await page.waitForSelector(ui('.sheet:not([hidden])'));
-  const msg = page.locator(ui('.msg'));
-  await until(
-    () => msg.textContent(),
-    "Your handwriting wasn’t read: handwriting is read 300 times a day, and today's are used.",
-    'the post-it says why the words are missing',
-  );
-  reader.refused = null;
-  await write(page, 360, 240); // (above the post-it, open below the first line)
-  await until(() => page.locator(ui('textarea')).inputValue(), 'Hi', 'read this time');
-  assert.equal(await msg.textContent(), '', 'the failure no longer told beside the words read');
-  await page.locator(ui('[data-cancel]')).dispatchEvent('click');
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden' });
-  reader.refused = null;
-}
-
-// Words read after Send that the book didn't take (it failed): the board is told on the page
+// Words read after the note went in that the book didn't take (it failed): the board is told on the page
 async function notTaken(s) {
   const { page, reader, ui } = s;
   Object.assign(reader, { words: 'Lighter ink', ms: 1500 });
@@ -159,7 +116,7 @@ async function notTaken(s) {
   }
 }
 
-// A reading refused that comes after Send: the page says so, or the note would look like ink with no writing
+// A reading refused: the page says so, or the note would look like ink with no writing
 async function refusedSent(s) {
   const { page, reader, ui } = s;
   Object.assign(reader, { ms: 2500, refused: [504, 'the reader took too long'] });
@@ -179,9 +136,12 @@ async function refusedSent(s) {
 
 // ---- the Pencil and what it leaves
 
-// The last note sent, in the book's open sheet of the CEO's
+// The last note sent, in the book's open sheet of the CEO's: the last on its page (numbered only beside others there:
 const inBook = s =>
-  s.page.getByRole('region', { name: `For ${s.ceo}` }).getByRole('group', { name: `Note ${s.notes.at(-1).n}` });
+  s.page
+    .getByRole('region', { name: `For ${s.ceo}` })
+    .getByRole('group')
+    .last();
 
 // "Hi" written at x, y with the pen, three lines in a row, as Safari hands them over. Returns the ink's box.
 async function write(page, x, y) {
@@ -216,14 +176,13 @@ async function write(page, x, y) {
     }, pts);
   return { x, y, w: 36, h: 40 };
 }
-// Send on the post-it (headless WebKit paints and hit-tests a popping-in post-it late: the button's own click), the
-// note it sent
-async function send({ page, ui, posts }) {
-  const noted = posts.filter(p => p.path === '/api/book/note').length;
-  await page.locator(ui('.send')).dispatchEvent('click');
-  await page.waitForSelector(ui('.sheet'), { state: 'hidden', timeout: 15_000 });
-  await until(() => posts.filter(p => p.path === '/api/book/note').length, noted + 1, 'the note went in the book');
-  return posts.filter(p => p.path === '/api/book/note')[noted].body;
+// The pen rested: the note that went in the book as the mark settled, the one after the last one this story saw
+async function send(s) {
+  const notes = () => s.posts.filter(p => p.path === '/api/book/note'),
+    noted = s.seen;
+  await until(() => notes().length, noted + 1, 'the note went in the book');
+  s.seen = noted + 1;
+  return notes()[noted].body;
 }
 // How many of review mode's ink pixels to the right of a box are type's dark (marks.js TYPE_INK), not the ink's red
 const typeBeside = (page, b) =>

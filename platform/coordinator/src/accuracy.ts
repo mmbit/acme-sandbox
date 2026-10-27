@@ -3,7 +3,7 @@
 // lately, each job sized from the jobs done before it was queued, beside the simpler ways it could be done.
 import { db } from './db.ts';
 import { workBranch } from './jobs.ts';
-import { FEWEST, LATEST, PICKS, pastJobs, picksFor, ranked, sizeOf, wordsOf, type PastJob } from './matching.ts';
+import { FEWEST, LATEST, PICKS, pastJobs, picksFor, rankedFirst, sizeOf, wordsOf, type PastJob } from './matching.ts';
 import { mean, median } from './arithmetic.ts';
 
 const MINUTE_MS = 60_000,
@@ -16,8 +16,9 @@ export function report(ask: { days?: unknown }) {
   if (!Number.isInteger(days) || days < 1 || days > 30) return 400;
   const since = new Date(Date.now() - days * DAY_MS).toISOString();
   const { ways, byThread, bySchedule } = replayed(days, since);
+  const kept = db.prepare(KEPT).all(since) as Kept[];
   return {
-    ...{ days, agent_time: agentTime(since), eta: etas(since) },
+    ...{ days, agent_time: agentTime(kept), eta: etas(kept) },
     ...{ matching: ways, matching_by_thread: byThread, matching_by_schedule: bySchedule },
   };
 }
@@ -41,16 +42,19 @@ type Kept = {
   merged_at: string | null;
   pr: number | null;
 };
-// Work that ended done since then, with its prediction, its runs and its latest pull request.
-const KEPT = `select p.*, j.agent, j.title, j.finished, r.started, r.spent_ms, pr.merged_at, pr.number pr
-  from predictions p join jobs j on j.id = p.job
-  join (select job, min(started) started, sum((julianday(ended) - julianday(started)) * 86400000) spent_ms from runs
-    where ended is not null group by job) r on r.job = j.id
+// Work that ended done since then, with its prediction, its ended runs and its latest pull request. Each job's runs are
+// summed in a subquery: joined to every job's sums, the planner scans them all again per job. The jobs are read through
+// db.ts jobs_history, never their rows, which hold the briefs.
+const KEPT = `select * from (select p.*, j.agent, j.title, j.finished,
+    (select min(started) from runs where job = j.id and ended is not null) started,
+    (select sum((julianday(ended) - julianday(started)) * 86400000) from runs where job = j.id and ended is not null)
+      spent_ms,
+    pr.merged_at, pr.number pr
+  from predictions p cross join jobs j indexed by jobs_history on j.id = p.job
   left join prs pr on pr.number = (select max(number) from prs where branch = ${workBranch('j')})
-  where j.status = 'done' and j.finished >= ? and p.made <= j.finished`;
+  where j.kind = 'work' and j.status = 'done' and j.finished >= ? and p.made <= j.finished) where started is not null`;
 
-function agentTime(since: string) {
-  const kept = db.prepare(KEPT).all(since) as Kept[];
+function agentTime(kept: Kept[]) {
   const misses = kept.map(k => ({ k, by: factor(k.agent_ms, k.spent_ms) }));
   const worst = misses.sort((a, b) => Math.abs(b.by) - Math.abs(a.by)).slice(0, WORST);
   return {
@@ -68,8 +72,8 @@ function agentTime(since: string) {
 // An ETA holds or misses by the time its work merged (or ended, with no pull request), and what moved is read from the
 // prediction's own steps: a later start, a longer run (waits for a seat on the way included), a longer review, and the
 // time the board took on cards the work waited on, which isn't ours.
-function etas(since: string) {
-  const kept = (db.prepare(KEPT).all(since) as Kept[]).filter(k => k.eta !== null && (k.pr === null || k.merged_at));
+function etas(all: Kept[]) {
+  const kept = all.filter(k => k.eta !== null && (k.pr === null || k.merged_at));
   const misses = kept.map(k => {
     const landed = Date.parse(k.merged_at ?? k.finished);
     return { k, landed, late: landed - k.eta! };
@@ -132,43 +136,50 @@ function replayed(days: number, since: string) {
 
 // Each work job done since then, sized from the jobs done before it was queued: the way HQ matches now, the words alone
 // over everyone's work (their median), and the agent's latest of the origin alone.
+// The jobs done before each one was queued are the first of them all by when they finished, found once per job: every
+// way matches against that same list, so matching.ts's work on a pool (its groups, its titles' index) is done once.
 function replay(since: string) {
-  const all = pastJobs().sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
+  // (a copy: the pool is shared)
+  const all = [...pastJobs()].sort((a, b) => Date.parse(a.finished) - Date.parse(b.finished));
   const tried = all.filter(j => j.finished >= since).slice(-REPLAYED);
-  const ways: [string, (j: PastJob, before: PastJob[]) => number | null][] = [
-    ['agent, kind and words (the mean)', (j, before) => sizeOf(picksFor(j, before).picks)?.agent_ms ?? null],
+  const countBefore = new Map(
+    tried.map(j => {
+      const n = all.findIndex(p => p.finished >= j.created);
+      return [j, n < 0 ? all.length : n];
+    }),
+  );
+  const before = new Map(tried.map(j => [j, all.slice(0, countBefore.get(j))]));
+  const ways: [string, (j: PastJob) => number | null][] = [
+    ['agent, kind and words (the mean)', j => sizeOf(picksFor(j, before.get(j)!).picks)?.agent_ms ?? null],
     [
       'words alone (the median)',
-      (j, before) =>
+      j =>
         median(
-          ranked(before, wordsOf(j.title))
+          rankedFirst(all, countBefore.get(j)!, wordsOf(j.title))
             .slice(0, PICKS)
             .map(p => p.agent_ms),
         ),
     ],
-    ['agent and kind alone (the mean)', (j, before) => mean(latestOfOrigin(j, before).map(p => p.agent_ms))],
+    ['agent and kind alone (the mean)', j => mean(latestOfOrigin(j, before.get(j)!).map(p => p.agent_ms))],
   ];
   const found = ways.map(([way, size]) => {
     const pairs: [number, number][] = [];
     for (const j of tried) {
-      const predicted = size(
-        j,
-        all.filter(p => p.finished < j.created),
-      );
+      const predicted = size(j);
       if (predicted === null) continue;
       pairs.push([predicted, j.agent_ms]);
     }
     return { way, ...spread(pairs) };
   });
-  const byThread = replayByThread(tried, all);
-  const bySchedule = replayBySchedule(tried, all);
+  const byThread = replayByThread(tried, before);
+  const bySchedule = replayBySchedule(tried, all, before);
   return { ways: found, byThread, bySchedule };
 }
-function replayByThread(tried: PastJob[], all: PastJob[]) {
+function replayByThread(tried: PastJob[], beforeOf: Map<PastJob, PastJob[]>) {
   // The work done in a thread with FEWEST or more of its jobs done before it was queued: sized the way HQ matches now,
   // and from its thread's done jobs alone (the same matching, within the thread), to see which is the better basis.
   const threaded = tried.flatMap(j => {
-    const before = all.filter(p => p.finished < j.created);
+    const before = beforeOf.get(j)!;
     const own = j.thread ? before.filter(p => p.thread === j.thread) : [];
     return own.length >= FEWEST ? [{ j, before, own }] : [];
   });
@@ -186,13 +197,13 @@ function replayByThread(tried: PastJob[], all: PastJob[]) {
 // The scheduled jobs done, sized the way HQ matches now (on their entry's runs, matching.ts runsLike) and on the matching
 // alone, as before; the rest the same two ways, which only the scheduled jobs'
 // slots, no longer words of their titles, can tell apart.
-function replayBySchedule(tried: PastJob[], all: PastJob[]) {
+function replayBySchedule(tried: PastJob[], all: PastJob[], beforeOf: Map<PastJob, PastJob[]>) {
   const unscheduled = new Map(all.map(j => [j, { ...j, entry: null, routine: null, slot: null }]));
   const replayed = (jobs: PastJob[]) => {
     const runs: [number, number][] = [],
       matching: [number, number][] = [];
     for (const j of jobs) {
-      const before = all.filter(p => p.finished < j.created);
+      const before = beforeOf.get(j)!;
       const now = sizeOf(picksFor(j, before).picks);
       const alone = sizeOf(
         picksFor(

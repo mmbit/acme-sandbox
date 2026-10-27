@@ -2,14 +2,16 @@
 // places them and swept once nothing names them. DIR holds the book's other files too: a page's picture, a note's snip
 // and a slip's picture.
 import { randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, statSync } from 'node:fs';
+import type { ServerResponse } from 'node:http';
 import { DATA_DIR } from './config.ts';
 import { keepFile } from './uploads.ts';
 import { pictureSize } from '../../../shared/pictures/size.ts';
 import type { Refused } from './pagechecks.ts';
 
 export const DIR = `${DATA_DIR}/book`;
-// A scrap may hang off the page a little (SCRAP_XY), and be up to three times the page's longer side (SCRAP_SIDE: HQ's
+// A scrap lies anywhere a page grows to, either side of its heading, and may hang off it a little (SCRAP_XY),
+// and be up to three times the page's longer side (SCRAP_SIDE: HQ's
 // own resize, sketchscraps.js). MAX_SCRAPS on a page: HQ holds
 // each decoded, up to 16 MB at 2,000 px, twice while it draws the page: 40 stays inside what Safari lets an iPad's tab
 // hold. MAX_SCRAP_FILES a page, placed or not: disk, at most pictures.MAX_BYTES each and kept SWEEP_MS once nothing
@@ -19,7 +21,7 @@ export const MAX_SCRAPS = 40,
   WAITING_MAX = 12;
 const MAX_SCRAP_FILES = 60;
 export const SWEEP_MS = 24 * 3600_000;
-const SCRAP_XY = { min: -4000, max: 24_000 },
+const SCRAP_XY = { min: -24_000, max: 24_000 },
   SCRAP_SIDE = { min: 4, max: 12000 },
   TILT = 180;
 
@@ -73,3 +75,20 @@ export function sweep(id: number, keep: string[]) {
     if (!keep.includes(file) && statSync(`${DIR}/${file}`).mtimeMs < Date.now() - SWEEP_MS)
       rmSync(`${DIR}/${file}`, { force: true });
 }
+
+// One of DIR's pictures as the answer: an image or nothing, never kept in a cache (a snip's and a slip's too).
+// (moved here from book.ts)
+export function serveFile(res: ServerResponse, file: string) {
+  res.writeHead(200, {
+    'content-type': typeOf(file),
+    'cache-control': 'private, no-store',
+    'x-content-type-options': 'nosniff',
+    'content-security-policy': "default-src 'none'",
+  });
+  res.end(readFileSync(`${DIR}/${file}`));
+}
+export const notFound = (res: ServerResponse) => {
+  res.writeHead(404, { 'content-type': 'text/plain' });
+  res.end('not found');
+};
+export const typeOf = (file: string) => (file.endsWith('.png') ? 'image/png' : 'image/jpeg');

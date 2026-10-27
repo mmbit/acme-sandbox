@@ -7,6 +7,7 @@
 import { db } from './db.ts';
 import { companyDay, companyMoment } from './company.ts';
 import { announceRequest } from './push.ts';
+import * as tips from './tips.ts';
 import * as approvals from './approvals.ts';
 import { followsUp } from './ledger.ts';
 import * as wakes from './wakes.ts';
@@ -57,11 +58,12 @@ export function snoozeRequest(id: number, day: unknown) {
   if (!db.prepare("select 1 from requests where id = ? and status = 'open'").get(id)) return 404;
   if (day === null) {
     // it comes back as a new card through `changed`: a hidden_until of now would have sweep() ring it for an urgent one
-    db.prepare('update requests set hidden_until = null, changed = ? where id = ? and hidden_until > ?').run(
-      now,
-      id,
-      now,
-    );
+    const back = db
+      .prepare(
+        'update requests set hidden_until = null, changed = ? where id = ? and hidden_until > ? returning kind, agent',
+      )
+      .get(now, id, now) as { kind: string; agent: string | null } | undefined;
+    if (back && !heldFor(id)) tips.cardShows(back);
     return { ok: true, until: null };
   }
   const until = typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day) ? hiddenUntil(day) : null;
@@ -71,12 +73,13 @@ export function snoozeRequest(id: number, day: unknown) {
 }
 
 // The cards for later, soonest back first: what the desk phone's Later list shows (no text: Bring back shows it whole).
-// Each says its day on the company's clock (`day`), which is the day the phone shows, wherever the phone is.
+// Each says its day on the company's clock (`day`), which is the day the phone shows, wherever the phone is. A tip
+// waiting its day (tips.ts) isn't one the board put aside. A tip put off with Later is. (tips)
 export function listLaterRequests() {
   const rows = db
     .prepare(
       `select id, created, agent, kind, title, topic, hidden_until from requests
-  where status = 'open' and not ${HELD} and hidden_until > ? order by hidden_until, id`,
+  where status = 'open' and not ${tips.WAITING_ITS_DAY} and not ${HELD} and hidden_until > ? order by hidden_until, id`,
     )
     .all(new Date().toISOString()) as { hidden_until: string }[];
   return rows.map(r => ({ ...r, day: companyDay(Date.parse(r.hidden_until)) }));
@@ -171,17 +174,18 @@ function release(now: string) {
   return letGo;
 }
 
-// A card ringing the board's devices as it shows (announceRequest), from its row
+// A card ringing the board's devices as it shows (announceRequest), and bringing its tip (tips.ts), from its row
 type Ringing = {
   id: number;
   kind: string;
+  agent: string | null;
   title: string;
   urgency: string;
   approves: string | null;
   hidden_until: string | null;
 };
-const RINGING = 'id, kind, title, urgency, approves, hidden_until';
-const ring = (r: Ringing) =>
+const RINGING = 'id, kind, agent, title, urgency, approves, hidden_until';
+function ring(r: Ringing) {
   announceRequest({
     id: r.id,
     kind: r.kind,
@@ -189,3 +193,5 @@ const ring = (r: Ringing) =>
     urgency: r.urgency,
     grant: r.approves ? approvals.describe(r.approves) : undefined,
   });
+  tips.cardShows(r);
+}

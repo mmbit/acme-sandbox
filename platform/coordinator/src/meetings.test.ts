@@ -19,6 +19,7 @@ const { codeOf } = await import('./jobcodes.ts');
 const { PROMPT_CHARS } = await import('./smallmodel.ts');
 const summary = await import('./summary.ts');
 const forecast = await import('./forecast.ts');
+const ledger = await import('./ledger.ts');
 
 beforeEach(async () => {
   db.exec(`delete from jobs; delete from messages; delete from meetings; delete from meeting_seats; delete from meeting_lines;
@@ -173,6 +174,14 @@ test("a due meeting's board item keeps its live seats ahead of earlier dated wor
   assert.ok(seats.some(s => s.job === next?.id));
   assert.notEqual(next?.id, started?.id);
   assert.equal(status(dated), 'queued');
+});
+
+test("a due meeting's board item leaves its seats once the follow-up carrying it is cancelled", async () => {
+  const { meeting, dated, followUp, claim } = await dueBesideDated();
+  h.carriedItem(followUp, 'juno');
+  assert.ok(ledger.cancelJob(followUp, 'The plan was made on the call'));
+  await gathers(meeting, claim);
+  assert.equal((await claim('claude#4'))?.id, dated, 'nothing waits for the seats: the earlier dated work goes first');
 });
 
 // A meeting due on a paced runner, dated work queued before it, and the chair's follow-up after its seat. claim is a

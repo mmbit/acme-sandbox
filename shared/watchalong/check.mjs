@@ -21,6 +21,7 @@ const SHOTS = shotsAt > 0 ? process.argv[shotsAt + 1] : `${tmpdir()}/watchalong-
 const RECORDER = {
   '/watchalong.js': `${REPO}/shared/watchalong/watchalong.js`,
   '/canvas.js': `${REPO}/shared/watchalong/canvas.js`,
+  '/encoder.js': `${REPO}/shared/watchalong/encoder.js`,
   '/strokes.js': `${REPO}/shared/watchalong/strokes.js`,
   '/ink.js': `${REPO}/shared/review/ink.js`,
 };
@@ -61,7 +62,8 @@ const CANVAS = 9;
 const batches = [];
 const desk = await serve('127.0.0.1', (path, body) => {
   if (path === '/events') return batches.push(JSON.parse(body)) && ['{}', 'application/json'];
-  if (path === '/') return [deskPage(shop.origin), 'text/html'];
+  // (workers as HQ's policy allows them, its own origin's only: a blob's was refused, and no canvas reached a call.
+  if (path === '/') return [deskPage(shop.origin), 'text/html', { 'content-security-policy': "worker-src 'self'" }];
   if (path === '/replay') return [replayPage(), 'text/html'];
   if (path === '/replay.js') return [readFileSync(`${MODULES}/@rrweb/replay/dist/replay.js`), 'text/javascript'];
   if (path === '/replay.css') return [readFileSync(`${MODULES}/@rrweb/replay/dist/style.css`), 'text/css'];
@@ -321,13 +323,13 @@ function recorderFile(path) {
   return RECORDER[path] ? [readFileSync(RECORDER[path]), 'text/javascript'] : null;
 }
 
-// A server on its own origin, answering by path: [body, type] or null for a 404
+// A server on its own origin, answering by path: [body, type, headers?] or null for a 404
 async function serve(host, answer) {
   const server = createServer(async (req, res) => {
     let body = '';
     for await (const chunk of req) body += chunk;
     const answered = answer(new URL(req.url, 'http://x').pathname, body);
-    res.writeHead(answered ? 200 : 404, { 'content-type': answered?.[1] ?? 'text/plain' });
+    res.writeHead(answered ? 200 : 404, { 'content-type': answered?.[1] ?? 'text/plain', ...answered?.[2] });
     res.end(answered?.[0] ?? 'not found');
   });
   await new Promise(resolve => server.listen(0, host, resolve));

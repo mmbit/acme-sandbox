@@ -1,5 +1,5 @@
 // The board's review notes (feedback.ts in the coordinator): one in full with its screenshot (hq note), and the ones sent
-// to this agent's jobs listed. (hq pin, for a call about review pins, went with HQ's waiting notes)
+// to this agent's jobs listed.
 import * as api from './api.ts';
 import { savePrivately } from './files.ts';
 import { minute, oneLine, print, shown, stop, text } from './output.ts';

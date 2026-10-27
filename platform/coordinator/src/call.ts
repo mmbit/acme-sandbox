@@ -283,7 +283,7 @@ export const calls = () => (db.prepare(`select c.id, c.ts, c.agent, c.request, c
 // where each one's line ends. The open items come before the parts that can grow (the company right now), so an
 // over-long briefing cuts those first (fit()).
 // `restarted`: the call this session takes over (context()), and what's on its list already. carried: the calls it
-// carries on from (carriedOn()), and `call` this one. (A call about review pins went with HQ's waiting notes)
+// carries on from (carriedOn()), and `call` this one.
 function prompt(lang: BoardLanguage, agent: string, req?: Req, restarted = 0, phone = false, carried: number[] = [], call = restarted) {
   const head = `${instructions(lang, agent, phone)}
 ## You

@@ -108,7 +108,7 @@ export function orderingSnapshot(
     planned.filter(p => p.placeholder),
     rows,
   );
-  const waits = placement.waits;
+  const { waits, inOrder } = placement;
   const answers = answerTimes(now),
     lag = deployLag(now);
   const reviewing = rows.filter(row => row.kind === 'work' && row.status === 'done').map(row => row.thread);
@@ -124,7 +124,7 @@ export function orderingSnapshot(
   const byPr = Map.groupBy(rows, row => row.pr);
   const holds = new Map([...new Set(rows.map(row => row.thread))].map(thread => [thread, pauses.holding(thread)]));
   const queued = rows.map((row, index) => {
-    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds });
+    const job = queuedJob(row, { open, waits, answers, lag, paused, due, held, now, byPr, holds, inOrder });
     if (row.id < 0) job.orderId = lastId + index + 1;
     job.reviewPlan = rounds(row);
     job.opensReview = job.reviewPlan !== undefined;
@@ -138,13 +138,14 @@ export function orderingSnapshot(
 function queueRows(now: number) {
   // jobs_queue holds every jobs column here, by state then id: open work and the done work in review are read without
   // a row's brief and output, and prs_plan finds the pull requests in review without their verdicts (db.ts).
+  // (board: the order's first lane, jobs.ts LANE)
   const columns = `j.id, j.agent, j.title, j.step, j.round, j.kind, j.status, j.engine, j.for_seat, j.downtime,
     j.after, j.request, j.not_before, j.held_by, j.created, j.branch, j.pr, j.seat, j.thread,
     coalesce(j.finished, (select max(ended) from runs where job = j.id)) finished,
     (select coalesce(sum((julianday(coalesce(ended, $now)) - julianday(started)) * 86400000), 0) from runs where job = j.id) spent_ms,
     (select json_group_array(request) from (${jobs.openCards('j.id')})) cards,
     (select json_group_array(json_object('kind', kind, 'arg', arg)) from wakes where job = j.id and met is null) wakes,
-    ${ORIGIN} origin, ${jobs.BOARD_CALL('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through, ${jobs.pauseLets('j')} pause_lets,
+    ${ORIGIN} origin, ${jobs.LANE('j')} board, ${jobs.FOLLOW_THROUGH('j')} follow_through, ${jobs.pauseLets('j')} pause_lets,
     (select p.heard_by from sorts x join proposals p on p.id = x.proposal where x.job = j.id and p.status = 'open') sorter`;
   const inReview = `select w.id from prs p indexed by prs_plan cross join jobs w on w.branch = p.branch
     where p.status in ${jobs.OPEN_PRS} union select cast(substr(p.branch, 5) as integer) from prs p indexed by prs_plan
@@ -230,6 +231,7 @@ type Context = {
   now: number;
   byPr: Map<number | null, Row[]>;
   holds: Map<string | null, ReturnType<typeof pauses.holding>>;
+  inOrder: ReturnType<typeof threadorder.placing>['inOrder'];
 };
 
 // What a job waits for: its --after, its further waits and cards (jobs.ts READY), its wakes (hq job --when), and the
@@ -272,9 +274,10 @@ function unplanned(row: Row): QueuedJob {
   };
 }
 
-// Its --after and its further waits (hq waits add)
+// Its --after and its further waits (hq waits add). An --after on a task before it in its own thread is the thread's
+// order (threadorder.ts afterInOrder).
 function waitForJobs(job: QueuedJob, row: Row, c: Context) {
-  if (row.after) {
+  if (row.after && !c.inOrder(row, row.after)) {
     job.after = c.open.has(row.after) ? row.after : released(row.after) ? 'released' : 'never';
     waitForBranch(job, row.after, c);
   }

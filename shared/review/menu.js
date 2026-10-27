@@ -58,6 +58,8 @@ export async function refresh(r) {
   try {
     const mine = new URL('mine', r.ROUTE);
     if (!r.outside) mine.searchParams.set('page', location.href);
+    // (on HQ, the sheet the board's last note went to)
+    if (r.book && r.lastOwner) mine.searchParams.set('owner', r.lastOwner);
     const res = await fetch(mine, { credentials: 'same-origin', cache: 'no-store' });
     if (res.ok) {
       r.state = await res.json();
@@ -226,6 +228,8 @@ export function setupMenu(r) {
     r.host.style.display = r.covered ? 'none' : 'block';
   });
   if (r.covered) r.host.style.display = 'none'; // (covered while it loaded)
+  // HQ's feature tip asks where the pin is ('review:pin'): the pin goes in the event's detail.
+  if (r.summoned) addEventListener('review:pin', e => !r.covered && !r.fab.hidden && (e.detail.pin = r.fab));
   for (const b of [r.sendButton, r.sideSend]) b.onclick = () => submit(r, b);
   r.bookButton.onclick = () => openBook(r);
   r.again.onclick = () => again(r);

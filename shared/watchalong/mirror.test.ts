@@ -185,6 +185,15 @@ test("a mirror opens with what the screen still shows: from the last full snapsh
     frame(60, png),
   ];
   assert.deepEqual(shown(events), [...page(20), ink, drawn(45, 6), other(50), frame(60, png)]);
+  // a clear off the corner, or without area, wipes nothing: the picture before it stays
+  const clear = (at: number, args: number[]): RecordedEvent => ({
+    type: 3,
+    timestamp: at,
+    data: { source: 9, id: 8, type: 0, commands: [{ property: 'clearRect', args }] },
+  });
+  const before = clear(65, [0, 0, 400, 300]);
+  const partial = [clear(70, [5, 5, 10, 10]), clear(80, [0, 0, 0, 0])];
+  assert.deepEqual(shown([...page(0), before, ...partial]), [...page(0), before, ...partial]);
   // (no full snapshot yet: all of it)
   assert.deepEqual(shown([frame(10, png), frame(20, png)]), [frame(20, png)]);
 });
@@ -317,3 +326,92 @@ test(
     await hanging.closeAll();
   },
 );
+
+// What changes after a live mirror opens is on its screen: a box added (rrweb
+// played every live event as a fast-forward into its virtual DOM, and the screen kept the page as the share found it),
+// shown as it ends its fade in (rrweb holds a page's CSS animations where they start), at the screen's size since; and
+// a past moment at its own size.
+test(
+  "what changed after a live mirror opened is shown, faded in, at the screen's new size; a past moment at its size",
+  { skip },
+  async () => {
+    const sharp = createRequire(COORDINATOR)('sharp') as Sharp;
+    const start = Date.now();
+    const box = element(7, 'div', {
+      style: 'position: absolute; left: 0; top: 0; width: 100%; height: 100%; background: #00ff00; animation: in 60s',
+    });
+    const keyframes = element(8, 'style', {}, [
+      { id: 9, type: 3, textContent: '@keyframes in { from { opacity: 0 } to { opacity: 1 } }', isStyle: true },
+    ]);
+    const later: RecordedEvent[] = [
+      {
+        type: 3,
+        timestamp: start + 20,
+        data: {
+          source: 0,
+          texts: [],
+          attributes: [],
+          removes: [],
+          adds: [
+            { parentId: 3, nextId: null, node: keyframes },
+            { parentId: 4, nextId: null, node: box },
+          ],
+        },
+      },
+      { type: 3, timestamp: start + 30, data: { source: 4, width: 300, height: 400 } },
+    ];
+    const green = async (picture: { bytes: Buffer; width: number; height: number } | undefined) => {
+      const data = await sharp(picture!.bytes).raw().toBuffer();
+      const at = (Math.round(picture!.height / 2) * picture!.width + Math.round(picture!.width / 2)) * 3;
+      const [r, g, b] = data.subarray(at, at + 3);
+      return g > 200 && r < 60 && b < 60;
+    };
+    await mirrors.open(8, page(start), NONE);
+    mirrors.feed(8, later);
+    const live = await mirrors.now(8, { long: 400 });
+    assert.deepEqual([live?.width, live?.height], [300, 400], "live: the screen's new size");
+    assert.ok(await green(live), 'live: the box added since it opened, faded in');
+    const past = await mirrors.at([...page(start), ...later], start + 40, { long: 400 }, NONE);
+    assert.deepEqual([past?.width, past?.height], [300, 400], "a past moment: the screen's size then");
+    assert.ok(await green(past), 'a past moment: the box, faded in');
+  },
+);
+
+// A stroke on a surface whose dry ink is in recorded canvas pictures (the
+// Sketchbook's page) is drawn where it was drawn only until a canvas picture after it holds it: the page may have moved
+// since (the window narrowed, the page turned), and the ink stayed over HQ.
+test('a pictured stroke is drawn over the screen until a canvas picture after it holds it', { skip }, async () => {
+  const sharp = createRequire(COORDINATOR)('sharp') as Sharp;
+  const red = await sharp({ create: { width: 400, height: 300, channels: 3, background: '#ff0000' } })
+    .png()
+    .toBuffer();
+  const start = Date.now();
+  const stroke = {
+    color: '#0000ff',
+    size: 12,
+    points: [
+      [20, 100, 0.8, 0],
+      [380, 100, 0.8, 100],
+    ],
+  };
+  const ink = (at: number, payload: Record<string, unknown>): RecordedEvent => ({
+    type: 5,
+    timestamp: at,
+    data: { tag: 'ink', payload: { n: 1, id: 1, left: 0, top: 0, stroke, ...payload } },
+  });
+  const blueAt = async (picture: { bytes: Buffer } | undefined) => {
+    const data = await sharp(picture!.bytes).raw().toBuffer();
+    const [r, g, b] = data.subarray((100 * 400 + 200) * 3, (100 * 400 + 200) * 3 + 3);
+    return b > 180 && r < 90 && g < 90;
+  };
+  await mirrors.open(
+    9,
+    [...page(start), ink(start + 10, { phase: 'start' }), ink(start + 110, { phase: 'end', pictured: true })],
+    NONE,
+  );
+  assert.ok(await blueAt(await mirrors.now(9, { long: 400 })), 'drawn until a picture holds it');
+  mirrors.feed(9, [frame(start + 150, red)]);
+  assert.ok(await blueAt(await mirrors.now(9, { long: 400 })), 'a picture taken as it ended may not hold it yet');
+  mirrors.feed(9, [frame(start + 500, red)]);
+  assert.ok(!(await blueAt(await mirrors.now(9, { long: 400 }))), 'a picture after it holds it: not drawn again');
+});

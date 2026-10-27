@@ -8,7 +8,7 @@
 // a piece of work on the board's screen and drives it (calldrive.js).
 import { esc } from '../util.js';
 import { loadLanguage } from './data.js';
-import { hush, cue, cueRepeating } from './audio.js';
+import { hush, cue, cueRepeating, cueInto } from './audio.js';
 import { CallAudio } from './callaudio.js';
 import * as world from '../world/world.js';
 import { toast } from './hud.js';
@@ -62,13 +62,8 @@ export async function callAgent(
   });
   openLayer(c);
   hush(true, 'call');
-  // it rings from the tap until the line picks up, as a phone does, and the handset clacks then (FROM_LINE.call)
-  c.stopRinging = cueRepeating('ringing', 5);
   if (onIntercom) say(''); // (the last call's "the line dropped" goes)
-  $('#call-skip').onclick = () => {
-    stopPlayback(c);
-    c.ws?.send(JSON.stringify({ type: 'interrupt' }));
-  };
+  // (the board interrupts by speaking: the line clears the voice, FROM_LINE.clear.)
   $('#call-end').onclick = () => endCall();
   startPictures(c);
   callSay('Starting the microphone…');
@@ -78,6 +73,7 @@ export async function callAgent(
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);
   }
+  if (call === c) ring(c);
   const l = await loadLanguage(world.dev).catch(() => null); // the board's language, which the line speaks and hears
   if (call !== c) return;
   if (!l) return endCall('The language can’t be read right now. Try again in a moment.');
@@ -89,6 +85,12 @@ export async function callAgent(
   connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}) }); // (walk)
 }
 
+// It rings until the line picks up, as a phone does, and the handset clacks then (FROM_LINE.call): in the call's own
+// sound, where its voice is heard
+function ring(c) {
+  cueInto(c.audio.voice);
+  c.stopRinging = cueRepeating('ringing', 5);
+}
 const microphoneFix = err =>
   err.name === 'NotAllowedError'
     ? `Check ${names.hq}’s microphone permission, then call again.`
@@ -328,6 +330,7 @@ function endCall(why) {
   c.over = true;
   clearTimeout(c.ring);
   c.stopRinging?.();
+  cueInto(null);
   // (how the voice played here, numbers only, and its timeline in seconds after the line picked up)
   const { played, timeline } = c.audio.report(c.t0);
   if (c.ws?.readyState === 1) c.ws.send(JSON.stringify({ type: 'bye', played, timeline }));

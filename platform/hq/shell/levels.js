@@ -122,7 +122,7 @@ export function holds(view, work) {
   return view.thread ? at === 'thread' : view.project ? at === 'project' : view.business ? at === 'business' : true;
 }
 // The element in focus under el, found again after a paint by what it does: one of the keys `names` marks by its value,
-// a thread's time or a job's steps
+// a thread's time, a job's steps or the CEO's page
 export function focusOf(el, names) {
   const focused = el.contains(document.activeElement) ? document.activeElement : null;
   const name = focused && names.find(n => focused.hasAttribute(n));
@@ -130,9 +130,7 @@ export function focusOf(el, names) {
     ? `[${name}="${CSS.escape(focused.getAttribute(name))}"]`
     : focused?.matches('.pj-eta > summary')
       ? `.pj-eta[data-eta="${CSS.escape(focused.parentElement.dataset.eta)}"] > summary`
-      : focused?.matches('.pj-steps > summary')
-        ? '.pj-steps > summary'
-        : null;
+      : (['.pj-steps > summary', '.pj-page > summary'].find(s => focused?.matches(s)) ?? null);
   return selector && { selector, index: [...el.querySelectorAll(selector)].indexOf(focused) };
 }
 // Once the keys coming in under el (moveIn), and any other motion there that ends, are over, or SETTLE_MS on: a repaint

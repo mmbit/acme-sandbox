@@ -3,7 +3,7 @@
 // serves one thread (jobs.thread), and the work it leads to inherits it (jobs.ts threadFrom).
 import { db, prepared } from './db.ts';
 import { ceo, projects, type Project } from './company.ts';
-import { deskLets, loopBranch, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts';
+import { deskLets, loopJobs, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts';
 import { shedRefusal } from './pauses.ts';
 import { publish } from './events.ts';
 import { anyProject, checkThreadName, noProject, taskClash, threadClash } from './names.ts';
@@ -240,7 +240,7 @@ export function placeOn(job: number, id: string): Thread | string {
   const { lead } = db.prepare(`select ${WORK_LEAD} lead from jobs j where j.id = ?`).get(job) as { lead: number };
   const loop = { job, lead, branch: `job/${lead}` };
   const moving = `(thread is null or thread not in (select id from threads where status = 'open'))
-    and (id in ($job, $lead) or ${loopBranch('jobs')} = $branch)`;
+    and (id in ($job, $lead) or id in ${loopJobs('$branch')})`;
   const on = db
     .prepare(`select distinct thread from jobs where ${moving} and (thread is not null or not ${deskLets('jobs')})`)
     .all(loop) as { thread: string | null }[];

@@ -10,6 +10,8 @@ const { db } = h;
 const { tick } = await import('./schedule.ts');
 const predictions = await import('./predictions.ts');
 const accuracy = await import('./accuracy.ts');
+const matching = await import('./matching.ts');
+const { inOneStep } = await import('./db.ts');
 
 const MINUTE = 60_000,
   HOUR = 60 * MINUTE,
@@ -182,4 +184,92 @@ test("a title in the board's German is matched on its own words, its small words
   done('dex', 'Der Newsletter für die Woche', 40);
   const job = h.queue({ agent: 'dex', title: 'Die Speisekarte für den Laden und das Menü', queuedBy: 'juno' });
   assert.deepEqual(storedFor(job).basis.words, ['speisekarte', 'laden']); // (für is in the newsletter's title too)
+});
+
+test("a pool's first jobs ranked on the whole pool's index rank as they would alone (hq estimate --accuracy)", async () => {
+  const { pastJobs, ranked, rankedFirst } = await import('./matching.ts');
+  // (page is the rarer term in the first three jobs, board in all five)
+  done('kit', 'A page', 10);
+  done('kit', 'The board', 20);
+  done('kit', 'The board again', 30);
+  done('kit', 'Another page', 40);
+  done('kit', 'One more page', 50);
+  const pool = pastJobs(),
+    ids = (jobs: { id: number }[]) => jobs.map(j => j.id);
+  for (let n = 0; n <= pool.length; n++)
+    assert.deepEqual(ids(rankedFirst(pool, n, ['board', 'page'])), ids(ranked(pool.slice(0, n), ['board', 'page'])));
+});
+
+test('the done jobs are read again only where their rows changed, and always as a whole read gives them', () => {
+  const { pastJobs } = matching;
+  const ids = () => (db.prepare('select id from jobs').all() as { id: number }[]).map(r => r.id);
+  // (a read of every job by id: the same rows by another path than the kept pool's)
+  const same = () => assert.deepEqual(pastJobs(), pastJobs(ids()));
+  const [a, b, c] = ['Paint the harbour', 'Glaze the tiles', 'Box the prints'].map((title, i) =>
+    h.pastJob({ title, merged: T - DAY, run: { started: T - (2 + i) * HOUR, ended: T - (1 + i) * HOUR } }),
+  );
+  const first = pastJobs();
+  assert.equal(pastJobs(), first);
+  same();
+
+  db.prepare("update jobs set title = 'Paint the old harbour' where id = ?").run(a);
+  const changed = pastJobs();
+  assert.equal(
+    changed.find(j => j.id === b),
+    first.find(j => j.id === b),
+  );
+  same();
+
+  // each kind of change it's read from: usage, a pull request, a run under way, a scheduled run, a replacement link, a
+  // credential call, a job no longer done
+  const changes = [
+    () =>
+      db
+        .prepare(
+          `insert into usage (job, ts, engine, models, input, cache_write, cache_read, output, cost, totals)
+          values (?, 'now', 'claude', '[]', 1, 0, 0, 1, 2.5, '{}')`,
+        )
+        .run(b),
+    () => db.prepare("update prs set status = 'closed', merged_at = null where branch = ?").run(`job/${c}`),
+    () => db.prepare("insert into runs (job, seat, started) values (?, 'claude-a', 'now')").run(c),
+    () => db.prepare("insert into schedule_runs (id, slot, job) values ('tidy', '2026-10-17', ?)").run(b),
+    () => db.prepare('insert into job_replacements (job, replaces) values (?, ?)').run(b, a),
+    () => {
+      const { lastInsertRowid } = db
+        .prepare(
+          "insert into requests (created, agent, kind, title, body, status) values ('now', 'kit', 'credential', 'k', 'k', 'answered')",
+        )
+        .run();
+      db.prepare("insert into calls (ts, agent, lines, job, request) values ('now', 'kit', '[]', ?, ?)").run(
+        a,
+        lastInsertRowid,
+      );
+    },
+    () => db.prepare("update jobs set status = 'failed' where id = ?").run(a),
+  ];
+  for (const change of changes) {
+    const before = pastJobs();
+    change();
+    assert.notEqual(pastJobs(), before);
+    same();
+  }
+
+  // a change in a step rolled back leaves the pool as it was
+  const kept = pastJobs();
+  assert.throws(() =>
+    inOneStep(() => {
+      db.prepare("update jobs set title = 'Box the old prints' where id = ?").run(b);
+      assert.equal(pastJobs().find(j => j.id === b)!.title, 'Box the old prints');
+      throw new Error('undone');
+    }),
+  );
+  assert.equal(pastJobs().find(j => j.id === b)!.title, kept.find(j => j.id === b)!.title);
+  same();
+
+  // a pool older than the changes still noted is read whole
+  pastJobs();
+  db.prepare("update jobs set title = 'Glaze the blue tiles' where id = ?").run(b);
+  db.exec('delete from past_changes');
+  db.prepare('update jobs set engine = engine where id = ?').run(c);
+  assert.equal(pastJobs().find(j => j.id === b)!.title, 'Glaze the blue tiles');
 });

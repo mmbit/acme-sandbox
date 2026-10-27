@@ -9,7 +9,9 @@
   const clamp = (x, a = 0, b = 1) => Math.min(b, Math.max(a, x));
   const infos = {};
   const clipUrl = (src) => new URL(src, location.href).pathname;
-  const info = (src, h) => (infos[src + h] ??= fetch(`/__clipinfo?src=${encodeURIComponent(clipUrl(src))}&h=${h}`).then((r) => r.json()));
+  // a clip the page can't have says which, not that its 404 isn't JSON
+  const info = (src, h) => (infos[src + h] ??= fetch(`/__clipinfo?src=${encodeURIComponent(clipUrl(src))}&h=${h}`)
+    .then(async (r) => (r.ok ? r.json() : Promise.reject(new Error(`demo.clip ${clipUrl(src)}: ${r.status} ${await r.text()}`)))));
 
   const demo = (window.demo = {
     fps: cfg.fps, duration: cfg.duration, width: cfg.width, height: cfg.height, data: cfg.data,

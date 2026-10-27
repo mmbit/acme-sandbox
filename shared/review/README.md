@@ -26,11 +26,16 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 - the page path and the viewport (size, scroll position, pixel ratio, browser).
 
 **On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
-behind the board's sign-in. Its notes go on the board's sheet in the book for the Process role, as a preview's go on
-its owner's (The flow, below). A page that loads the tool itself (its script tag has `data-summoned`) hears the menu's
-Open the book as its `review:book` event (detail: whose sheet).
+behind the board's sign-in. Each note goes on the board's sheet in the book for the agent whose work it's on (what's
+drawn on names them, `data-owner`), else the CEO's, as a preview's go on its owner's (The flow, below); the post-it's
+Send names that sheet ("Send to Juno"), and the menu names the sheet the last note went to (the CEO's before one).
+A page that loads the tool itself (its script tag has `data-summoned`) hears the menu's Open the book as its
+`review:book` event (detail: whose sheet). (the owners: job #19219)
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
-pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes.
+pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. Such a page also
+summons the pin and puts it away (`review:summon`, detail `true` or `false`): HQ shows it while its book is open
+beside the page (and on a phone, where the book has no room beside it), never folded; the Pencil writes either way,
+and a preview's own pin is always there.
 
 **The menu**: the pin stays just the pin; beside it a small round button carries
 the count of notes not sent yet and opens a small menu in the guest pages' look (their colours, `guests.ts` palette,
@@ -78,7 +83,7 @@ modules beside it with no dependencies, one concern each: `tool.js` puts them to
 Cmd+Z), `dock.js` the pin, `menu.js` its menu, `notes.js` My notes, `change.js` changing a note, `surface.js` the page
 while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
 `pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js` and `faces.js`) the
-screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `gestures.js`, `marks.js`, `markpage.js` and `written.js` the Pencil on HQ and its numbered
+screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `join.js`, `gestures.js`, `marks.js`, `marktaps.js`, `markpage.js`, `markshows.js`, `markfollow.js` and `written.js` the Pencil on HQ and its numbered
 marks (below), `slip.js` and `markslips.js` the answers on them, `base.js` what they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js` and `ink.js`
 are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
@@ -132,46 +137,63 @@ handwriting-to-text. A mouse draws with the pin, as everywhere. HQ's page is `<b
 (platform/hq/shell/book.js): the tool lives in `<body>`, so it's the page's width and the book's spread covers it with
 the page; over a dialog it leaves the book's room (`--book-room`); a pen or two fingers on the book are the book's.
 
-- **A mark** is the lines drawn while its post-it is open. Its first line pops up the post-it (the polaroid developing
-  as more lines come) and starts the mic, whose words go in its note; they can be typed instead. **Send** puts the note
-  on its sheet in the board's book (`marks.js`: `POST /api/book/note` with the anchor, the words and how they came,
-  `spoken` or `typed`, and a snip of the page around the mark with its lines, 24 px of margin); **Cancel** drops it.
-  A note whose screenshot failed or was still developing after 9 s goes without its snip, and the post-it says so. The
-  book's notes take no pictures: the post-it takes none pasted, dropped or from a film's frame.
-  HQ's page is a sheet's page in today's book for its address (made at its first note, `page/new`), for the CEO until
-  the sheets thread gives each screen its owner.
-- **Numbered:** the mark's number on its sheet sits in a red disc at its top left on the page, from its first line (the
-  one it will have) to the sheet's send. The page's open notes are drawn again on every visit, each on its element where
-  that is now (anchor.js), so they follow the page as it scrolls or reflows, and their numbers follow the sheet.
+- **A mark** is the lines drawn while the pen keeps coming back: its first line starts the mic once it can't be a tap,
+  as a pen held still does (a pulse at the pen's last point while it listens; a tap never asks for the mic, house rule
+  7), and the words said go in its note. **Rest the pen** 1.5 s and the mark is done
+  (`settle.js`, the one way from a mark to the book, on a call or not): its note goes on its sheet in the board's book
+  (`marks.js`: `POST /api/book/note` with the anchor, the words and how they came, and a snip of the page around the
+  mark with its lines, 24 px of margin), and its ink **lifts** off the page into the book (`lift.js`: the book answers
+  `pencil:landing` with where it lands, its page turned there, or the folded book's handle, which hears `book:landed`;
+  `platform/hq/shell/booklanding.js`). No post-it and no Send: a mouse's mark with the pin goes the same way once the
+  mouse rests; a page with no book keeps the post-it. HQ's page is a sheet's page in today's book for its owner (made at its first
+  note, `page/new`).
+- **Hairlines:** every note in the book shows on HQ's page as a faint hairline of its ink, sent or not, so the page is
+  clean for the next mark (`marks.js`). A finger's tap on one opens its card (`marktaps.js`): its words, where it is
+  ("For Lark, not sent", "On your call with Juno", "Sent Tue 09:12") and its answers. HQ keeps one address whatever
+  screen is open, so a hairline shows only while what it was drawn on is on the screen (`markshows.js`): its element
+  found again (the element itself, else its selector), mostly the words it had, taking room, and on top at the mark's
+  middle (not under another screen or a dialog). The marks are drawn again as the page changes what it shows
+  (`markfollow.js`).
+- **Join, wipe, undo:** a line drawn on or beside a hairline joins its note (`join.js`: the note's ink and the new lines
+  one mark, then `note/edit` with its ink, the snip cut again and the words added). A scribble over a mark or a
+  hairline wipes its note, from the book too; over a sent note's, only the hairline clears, on this screen. A two-finger
+  tap or Cmd/Ctrl+Z takes back the last thing: a line, a lift, a join, a wipe, a clear. A finger pressed inside a
+  hairline's ring and dragged onto the open book tapes its snip there (`carry.js`), the note left as it is.
+- **A pen's tap** is a click, never ink (`tap.js`, shared with the book): lifted within 300 ms, never 10 px from where
+  it touched, it clicks what's under it, focused, on HQ's page and over a dialog. (`pentouch.js` has the pen's and the
+  fingers' touches.)
+- **Not for ink**: a page's floating control marked `data-no-ink` (HQ's minimised call) takes the pen as a finger, to
+  drag or tap, never ink (`pencil.js` theirs).
 - **Written words**: once the pen rests 1.2 s, the mark's lines go as a
   picture of the ink alone, dark on white, to `POST /api/book/read` (the coordinator's `handwriting.ts`: a small model
-  on a seat says whether it's writing and what it says). The words fill the post-it's field while it holds no words
-  typed or said, stand beside the ink as type (`marks.js`), and Send keeps them as `written` (changed first: `typed`).
-  Lines sent before they were read are read at Send, and their words go in the note when they come (`note/edit`, then
+  on a seat says whether it's writing and what it says). The words are the note's while it holds no words
+  typed or said, stand beside the ink as type (`marks.js`), and the note keeps them as `written` (changed first:
+  `typed`). Lines that went before they were read are read as they go, and their words go in the note when they come (`note/edit`, then
   `pencil:words` on the document for the book). Never on a call: its agent sees the ink.
 - **Hold the pen still** on one spot for half a second and talk: a red pulse at its tip, the words landing there as a
-  note (a pin on what's under it) as the pen lifts. Nothing heard, no note.
-- **Scribble over a mark** to wipe it (from its sheet too); **ring something** and the mark is on what's inside the
-  ring. **A two-finger tap** (or Cmd/Ctrl+Z off a text field) takes back the last thing: a line, a note sent to the
-  sheet, a wipe (the same note back, whole, last on its sheet). Nothing asks "are you sure?". A wipe or undo the book
-  refuses changes nothing, and the step stays to take back.
+  note (a pin on what's under it) as the pen lifts, on a call too (the call's own hearing). Nothing heard, no note.
+- **Ring something** and the mark is on what's inside the ring. A wiped note comes back whole with an undo, last on
+  its sheet. Nothing asks "are you sure?". A wipe or undo the book refuses changes nothing, and the step stays to take
+  back.
 - The document hears `pencil:note` (`{ id, n, page, call }`) as each note goes into the book, for the book and a call.
 - **A second screen** (`handover.js`; HQ's `shell/pair.js` pairs a phone or tablet with a desktop by the book's code):
   while `<html data-paired>`, the Pencil tells `pencil:mark` (the open mark as an anchor and its words, or null) at each
   change and `pencil:flick` when its post-it is thrown away by its paper; `pencil:hand` `{ take: mark, reply }` opens a
   mark from the other screen here, post-it and caret ready, and `{ give: true, reply }` lets the open mark go. Nothing
-  goes across on a call.
+  goes across on a call. On HQ a mark goes into the book from the screen it's drawn on as it settles, its ink drifting
+  off that screen, and the other screen's book turns to it (`pair.js` tells it the note's page; `pencil:wiped` has it
+  read a wiped note's page again).
 
 **On a call** (`callnotes.js`; HQ's `shell/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and
 `call:ink`): a mark goes on the call's page in the book (`kind: 'call'`, made at the call's first mark by either side,
-its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`), not on a sheet. No post-it and
-no mic of its own: the words the call heard while it was drawn are its words, and it goes in once the Pencil has stayed
-up 1.5 s (a circle and its arrow are one note); HQ's call then sends it to the agent. The agent's ring (its `draw`
-tool) is drawn round what it names on the board's screen, or round one of the call's notes, in its own ink with its
-words beside it, kept as its note on the call's page (`by`). A held-still voice note isn't needed on a call: the call is
-listening. Its snip goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`)
-painted over (`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book
-doesn't take stays, the pin's tip says so, and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
+its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`; the book shows them on that
+page), not on a sheet. No mic of its own: the words the call heard while it was drawn (or while the pen was held still,
+a voice note) are its words; it settles and lifts as every mark does, and HQ's call then sends it to the agent. The
+agent's ring (its `draw` tool) is drawn round what it names on the board's screen, or round one of the call's notes, in
+its own ink with its words beside it, kept as its note on the call's page (`by`), then lifts into the book too. Its snip
+goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`) painted over
+(`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book doesn't take
+stays, the pin's tip says so (the pin back while it speaks, even with the book folded), and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
 
 **Answers** (`slip.js`, `markslips.js`; the coordinator's `bookslips.ts`): an agent's answer clips onto its note as a
 slip, typed under a paper clip, with then and now: the note's snip beside the same place cut again from the live page
@@ -220,7 +242,8 @@ start there).
 1. The board pins a note on `<slug>.preview.<zone>`, or on `cycles.preview.<zone>`, whose notes HQ files by the
    cycle folder the page is in (`cycles/<folder>`), its owner the agent who made the folder: the first agent on a desk
    whose commit added a file to it (`owed.ts` maker()), else the CEO, who hands it on; a page in no folder is
-   **Venture cycle pages**, the CEO's. HQ's own pages are the Process role's. The note goes on the board's open sheet
+   **Venture cycle pages**, the CEO's. HQ's own pages are the CEO's unless what's marked names an agent (job #19219).
+   The note goes on the board's open sheet
    in its book for that owner, on today's sheet page for them (one a day, whatever the page's address: `book.ts`
    sheetPageFor), as a book note: its anchor, its words, and a snip, the screenshot cut around the mark with the
    pictures added under it (`platform/coordinator/src/bookreview.ts`). It does **not** go to an agent, and its words ask

@@ -24,9 +24,8 @@ export const LOADING_MS = 1_000; // (exported: the owner's answer takes no longe
 // The longest a step may take: opening a mirror with the recording so far, taking in a batch, a picture, a past moment.
 // A hard limit, as a step that never ends held every later picture of its session behind it, silently, until the
 // server restarted; 15 s as the voice line waits that long for any answer of the coordinator's (platform/voice/
-// server.py's hq()), so a later one reaches nobody. A mirror opens from what the replay still shows (shown), so opening
-// again late in a long share fits too: from the whole recording, HQ's canvas frames (0.5 a second, 40 KB each) took
-// past 15 s from 30 minutes, its first picture waiting on 900 frames' pictures
+// server.py's hq()), so a later one reaches nobody. A mirror opens with what the screen still shows (shown): the whole
+// recording of a 30-minute share, with HQ's canvas frames (0.5 a second, 40 KB each), takes past 15 s to open.
 export const STEP_MS = 15_000;
 
 // A tap to ring, a part of the screen (fractions of it, 0 to 1) to zoom into, and the long side in px
@@ -278,8 +277,9 @@ const FULL_SNAPSHOT = 2,
   META = 4;
 
 // The events a live mirror opens with: what the screen still shows, from the full snapshot last taken (upTo), each
-// canvas's pictures but its latest. A picture that starts by wiping its whole canvas (canvas.js's, at the canvas's own
-// size) leaves nothing of the ones before it, and each costs the replay a picture to decode.
+// canvas's pictures but its latest. A picture that starts by wiping its canvas leaves nothing of the ones before it,
+// and each costs the replay a picture to decode. canvas.js wipes with a clearRect from the corner at the canvas's
+// size. That size isn't known here, so any clearRect from the corner with an area counts as a wipe.
 export function shown(events: RecordedEvent[]) {
   const since = upTo(events, Infinity);
   const latest = new Map<number, number>();

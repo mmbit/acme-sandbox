@@ -27,6 +27,7 @@ let payerListReply: unknown;
 let chargesEnabled = false;   // the live account, as Stripe has it: activated or not
 let printerBusy = false;   // Print API answering 429
 let addedMethod = '';   // a method Stripe switched on after EXCLUDABLE was read: the next session offers it too
+let droppedMethod = '';   // a method Stripe took out of the next session, the shop's setting naming it
 let feeLookup: 'unsettled' | 'refused' | 'held' | null = null;   // a charge whose balance transaction isn't in yet, a key that may not read it, or a lookup Stripe sits on
 const heldFees: (() => void)[] = [];   // the held lookups: each answers when called
 const scripted = new Map<string, string[]>();
@@ -59,6 +60,7 @@ const stripe = createServer(async (q, s) => {
     if (feeLookup === 'unsettled' && q.url!.startsWith('/v1/payment_intents/')) out.latest_charge.balance_transaction = null;
     if (loseCreate && q.url === '/v1/checkout/sessions') { loseCreate = false; lostId = out.id; return s.destroy(); } // made, answer lost
     if (addedMethod && q.url === '/v1/checkout/sessions') out.payment_method_types.push(addedMethod);
+    if (droppedMethod && q.url === '/v1/checkout/sessions') out.payment_method_types = out.payment_method_types.filter((m: string) => m !== droppedMethod);
     s.end(JSON.stringify(out));
   } catch (e: any) { s.writeHead(e.status ?? 500); s.end(JSON.stringify({ error: { message: e.message.replace(/^Stripe: /, '') } })); }
 });
@@ -548,6 +550,23 @@ test('a method Stripe switches on after the list was read is reported once, and 
     }
   } finally { addedMethod = ''; }
   assert.equal(logged('checkout offered "new_pay"'), 1, 'once per method, for the owner');
+});
+
+test("a named method Stripe takes out of a session is logged for each checkout, and the session says what HQ named", async () => {
+  writeFileSync(`${DATA}/secrets/STRIPE_TEST_RESTRICTED_KEY`, 'rk_test_abc123');
+  settings('ideal,bancontact');
+  const ok = await call('/api/pay/checkout', as('pebblet'), order({ reference: 'bud-drop-0', locale: 'nl' }));
+  assert.equal(ok.status, 200, ok.text);
+  assert.equal(stripeSession(ok.json.id).metadata.named, 'card ideal bancontact', "what the status report shows beside Stripe's offer");
+  assert.equal(logged('without '), 0, 'every named method offered: nothing logged');
+  droppedMethod = 'ideal';
+  try {
+    for (const ref of ['bud-drop-1', 'bud-drop-2']) {
+      const c = await call('/api/pay/checkout', as('pebblet'), order({ reference: ref, locale: 'en' }));
+      assert.equal(c.status, 200, c.text);
+    }
+  } finally { droppedMethod = ''; }
+  assert.equal(logged('(locale en) offers card, bancontact, link, without ideal, which its settings name'), 2, 'once per checkout: each is a buyer without iDEAL');
 });
 
 test("the imitation takes the methods to leave out as Stripe does: never link, nor a name it doesn't know", () => {

@@ -5,7 +5,7 @@
 import { db, inOneStep, planChange } from './db.ts';
 import { ceo } from './company.ts';
 import { oneLine } from './agreements.ts';
-import { deskLets, inProcess, loopBranch, WORK_LEAD } from './jobs.ts';
+import { deskLets, inProcess, loopJobs, WORK_LEAD } from './jobs.ts';
 import { dropped, finished } from './windows.ts';
 import { findProject, findThread, ownerOf, type Thread } from './projects.ts';
 import { publish } from './events.ts';
@@ -218,7 +218,7 @@ function notifyNeeds(from: string[], to: string, by: { agent: string; job: numbe
 class NeedNoticeError extends Error {}
 
 // The jobs on the lead's branch: its reviews and fix rounds
-const LOOP = `${loopBranch('jobs')} = $branch`;
+const LOOP = `id in ${loopJobs('$branch')}`;
 
 const mayMove = (agent: string, ...owners: (string | undefined)[]) =>
   agent === ceo() || inProcess(agent) || owners.includes(agent);

@@ -2,8 +2,9 @@
 // in WebKit, its voice line played.
 // Finished work on the desk phone whose maker offered a walk-through: the card says "Walk me through it", and its tap
 // rings the maker about the card as a walk-through (the line hears walk with the card). Picked up, a page opens in
-// today's book by itself. The agent suggests opening a screen of HQ's: a card with Open and Not now; Open makes the call
-// small and opens it, the line hears so, and a card leads back. The agent points at something there (its pointer, with
+// today's book by itself. The agent suggests opening a screen of HQ's: a card with Open and show and Not now; the one tap
+// makes the call small, opens it and shows the board's screen (the watch-along starts), the line hears both, and a card
+// leads back. The book suggested while it's open already just stays as it is, no card back and no second share. The agent points at something there (its pointer, with
 // its name, at what it named) and a drive at words nowhere on screen comes back not done, with why; Back closes what it
 // opened. Hung up with nothing written, the page goes by itself, no card asked; a second walk-through the board rings
 // on is kept, with the card that offers to throw it away.
@@ -57,15 +58,24 @@ async function walkedThrough(s) {
   );
   const walkPage = s.pages.findLast(p => p.kind === 'call');
 
-  // the agent suggests opening one of HQ's screens: the card waits, then Open shows it with the call small
+  // the agent suggests opening one of HQ's screens: the card waits, then Open and show opens it with the call small and
+  // the board's screen shown, in the one tap
+  let starts = 0;
+  page.on('request', r => r.url().endsWith('/api/watchalong/start') && starts++);
   s.line.send({ type: 'open', id: 1, what: 'your computer', url: '/?open=computer' });
   const suggested = page.locator('#call-cards [data-card="open"]');
   await suggested.waitFor();
   assert.match(await suggested.innerText(), /suggests opening your computer/);
   await s.shot('book-walk-suggested', page);
-  await suggested.getByRole('button', { name: 'Open' }).click();
+  assert.equal(starts, 0, 'nothing shown before the tap');
+  await suggested.getByRole('button', { name: 'Open and show' }).click();
   const opened = await heard(s, 'opened', e => e.id === 1);
-  assert.equal(opened.answer, 'open', 'the line hears the board opened it');
+  assert.deepEqual(
+    [opened.answer, opened.shown, starts],
+    ['open', true, 1],
+    'the one tap opens it and shows the screen',
+  );
+  await page.waitForSelector('.callbubble .cb-eye:not([hidden])');
   await page.waitForSelector('.callbubble', { state: 'visible' });
   await page.waitForSelector('#tool .device.computer', { state: 'visible' });
   const back = page.locator('#call-cards [data-card="back"]');
@@ -78,12 +88,42 @@ async function walkedThrough(s) {
   await back.getByRole('button', { name: /Back/ }).click();
   await page.waitForSelector('#tool .device.computer', { state: 'detached', timeout: 3000 });
 
+  await openAlready(s, page, () => starts);
+
   // hung up with nothing written: the page goes by itself, and nothing asks
   await page.click('.callbubble .cb-hangup');
   for (let i = 0; i < 60 && !deleted(s, walkPage.id); i++) await page.waitForTimeout(250);
   assert.ok(deleted(s, walkPage.id), "the empty walk-through's page thrown away as the call ends");
   assert.equal(await page.locator('#call-cards [data-card="page"]').count(), 0, 'no card about a page that is gone');
   await page.close();
+}
+
+// The book suggested while it's open: the key is Open (the screen is shown already), and the tap leaves the book as it
+// is, its paper the same, with no card back and no second share
+async function openAlready(s, page, starts) {
+  await page.click('.bk-lip');
+  await page.waitForFunction(() => document.documentElement.dataset.book !== 'folded');
+  await page.waitForTimeout(1000); // (its slide in)
+  const before = await page.evaluate(() => {
+    document.querySelector('.bk-paper').dataset.kept = 'yes';
+    return document.documentElement.dataset.book;
+  });
+  s.line.send({ type: 'open', id: 5, what: 'your book', url: '/?open=book' });
+  const suggested = page.locator('#call-cards [data-card="open"]');
+  await suggested.waitFor();
+  assert.equal(await suggested.locator('[data-open]').innerText(), 'Open', 'shown already: the key only opens');
+  await suggested.locator('[data-open]').click();
+  const opened = await heard(s, 'opened', e => e.id === 5);
+  assert.deepEqual([opened.answer, opened.shown], ['open', true]);
+  await page.waitForTimeout(500);
+  const after = await page.evaluate(() => ({
+    book: document.documentElement.dataset.book,
+    kept: document.querySelector('.bk-paper')?.dataset.kept,
+    back: !!document.querySelector('#call-cards [data-card="back"]'),
+  }));
+  assert.deepEqual(after, { book: before, kept: 'yes', back: false }, 'the open book only came forward');
+  assert.equal(starts(), 1, 'no second share');
+  await page.evaluate(() => import('/shell/book.js').then(m => m.foldBook())); // (the book keeps its state for the next)
 }
 
 // Its pointer at what it names, with its name; words nowhere on screen come back not done, with why

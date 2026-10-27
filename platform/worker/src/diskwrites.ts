@@ -1,4 +1,5 @@
 // Command-specific regular-file writes, including files on memory-backed filesystems.
+import type { AccountingFailure } from './accounting.ts';
 import { execFile } from 'node:child_process';
 import type { Ids } from './slots.ts';
 import type { ProcessSnapshot } from './shares.ts';
@@ -38,7 +39,10 @@ export async function sampleWrites(processes: ProcessSnapshot[], jobs: Required<
         for (const process of owned) process.writableFiles = files.get(process.pid);
       } catch (failure) {
         for (const process of owned)
-          process.diskAccountingError = `Disk accounting unavailable: writable-file sampling failed: ${failure}`;
+          process.diskAccountingError = {
+            reason: 'write-sampling',
+            message: `Disk accounting unavailable: writable-file sampling failed: ${failure}`,
+          };
       }
     }),
   );
@@ -93,12 +97,15 @@ export const diskWrites = (process: ProcessSnapshot, use: DiskUse) =>
       ? process.writtenBytes || process.storedWriteBytes || 0
       : 0;
 
-export function diskAccountingError(run: ProcessSnapshot[]) {
+export function diskAccountingError(run: ProcessSnapshot[]): AccountingFailure | undefined {
   const unavailable = run.find(process => process.writtenBytes === undefined || process.writtenCallBytes === undefined);
   return (
     run.find(process => process.diskAccountingError)?.diskAccountingError ??
     (unavailable
-      ? `Disk accounting unavailable for process ${unavailable.pid}: cannot read its write counters`
+      ? {
+          reason: 'process-counters',
+          message: `Disk accounting unavailable for process ${unavailable.pid}: cannot read its write counters`,
+        }
       : undefined)
   );
 }
