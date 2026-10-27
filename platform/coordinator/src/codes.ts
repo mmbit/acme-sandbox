@@ -13,14 +13,15 @@
 // The front's routes, with its payments token (payments.ts's headers):
 //   POST /api/pay/basket/code        {basket, code, country?}  the basket's code (a new one replaces the old)
 //   POST /api/pay/basket/code/remove {basket, country?}        the basket without one
-// Both answer the basket's view. A refusal carries `why`: code_unknown, code_used, code_expired, code_in_use (held by
-// another basket's open checkout), code_minimum (the basket's lines not on offer come to less than the code needs) or
-// code_tries (429), or the basket's own (basket_gone, already_paid); a code_minimum carries the code's `minimum`
-// (cents); a stall's voucher's: voucher_used, voucher_expired, voucher_gone (refunded, or its refund still with a
-// person), voucher_cheaper (worth more than its stall's lines here), voucher_no_line (none of its stall's without a
-// voucher, with the stall's name in `shop`) or voucher_second (each such line's order has another voucher already). A
-// code that goes bad in a basket (used elsewhere, expired, or under its minimum once a line went out) leaves it, and
-// the view says so until another code goes in or the code is removed: code_dropped {code, why}.
+// Both answer the basket's view. A refusal carries `why`: code_unknown (gift_unknown or voucher_unknown when typed in a
+// gift card's or a stall voucher's shape), code_used, code_expired,
+// code_in_use (held by another basket's open checkout), code_minimum (the basket's lines not on offer come to less than
+// the code needs) or code_tries (429), or the basket's own (basket_gone, already_paid); a code_minimum carries the
+// code's `minimum` (cents); a stall's voucher's: voucher_used, voucher_expired, voucher_gone (refunded, or its refund
+// still with a person), voucher_cheaper (worth more than its stall's lines here), voucher_no_line (none of its stall's
+// without a voucher, with the stall's name in `shop`) or voucher_second (each such line's order has another voucher
+// already). A code that goes bad in a basket (used elsewhere, expired, or under its minimum once a line went out)
+// leaves it, and the view says so until another code goes in or the code is removed: code_dropped {code, why}.
 //
 // The life of a basket's code: opening a checkout holds it for that session, and another basket can't take it while
 // the session can still be paid. The payment marks it used in the same step as the basket's lines. A session that ends
@@ -350,7 +351,13 @@ async function enterCode(c: Caller, body: any) {
     const byVoucher = await payments.payLineByVoucher(c, basket.id, body.code, body.country);
     if (byVoucher) return byVoucher;
     for (const key of keys) misses.set(key, [...recent(key), Date.now()]);
-    return [404, 'no such code', 'code_unknown'] as Refused;
+    // a miss in a gift card's or a stall voucher's shape is said as theirs
+    const why = payments.basketGift.shaped?.(body.code)
+      ? 'gift_unknown'
+      : payments.basketVoucher.shaped?.(c.mode, body.code)
+        ? 'voucher_unknown'
+        : 'code_unknown';
+    return [404, 'no such code', why] as Refused;
   }
   await refreshHolder(found, basket.id);
   const refused = unusableFor(found.id, basket.id) ?? underMinimum(found, basket.id);

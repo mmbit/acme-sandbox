@@ -61,8 +61,11 @@ test('hq pad prints the page, its CEO rewrites it from stdin, and --history list
     shown.out,
     new RegExp(`^${page}\n\n\\(written \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC, juno's #${juno.id}\\)`),
   );
+  const next = 'Goal: first paying customers.\nNext: the walk is read; the letter goes out.';
+  assert.equal((await h.hq({ ...juno, stdin: `${next}\n` }, 'pad', 'write', '-')).code, 0);
   const history = (await h.hq(kit, 'pad', '--history')).out;
-  assert.ok(history.startsWith('== ') && history.includes(`UTC, juno's #${juno.id}\n${page}\n`), history);
+  const version = (text: string) => `== \\d{4}-\\d\\d-\\d\\d \\d\\d:\\d\\d UTC, juno's #${juno.id}\\n${text}`;
+  assert.match(history, new RegExp(`^${version(next)}\n\n${version(page)}(\n|$)`), 'both versions, newest first');
 
   const refused = await h.hq({ ...kit, stdin: 'My plan instead' }, 'pad', 'write', '-');
   assert.notEqual(refused.code, 0, "only the CEO's jobs write it");

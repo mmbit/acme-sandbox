@@ -141,8 +141,9 @@ async function readGroup(g: { note: number; page: number; strokes: Stroke[] }): 
 // A stroke as the store knows it again: its points' hash
 const keyOf = (s: Stroke) => createHash('sha256').update(JSON.stringify(s.points)).digest('base64url').slice(0, 22);
 
-// The strokes in lines of writing: strokes whose boxes come within NEAR_PX of each other, and theirs, are one
-function linesOf(strokes: Stroke[]) {
+// The strokes in lines of writing: strokes whose boxes come within NEAR_PX of each other, and theirs, are one (the
+// Notebook carries an old page's ink into groups by the same rule, notebookcarry.ts)
+export function linesOf(strokes: Stroke[]) {
   const boxes = strokes.map(s => boxOf([s])),
     group = strokes.map((_, i) => i);
   const top = (i: number): number => (group[i] === i ? i : (group[i] = top(group[i])));

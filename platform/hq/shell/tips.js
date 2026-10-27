@@ -10,7 +10,9 @@
 //   opens   where Show me opens HQ before its steps, when the control sits deeper than three presses: a computer app and
 //           its options (desk.js openComputer)
 //   steps   Show me: one to three controls, each a CSS selector (or a function finding it, given the event's details)
-//           and what to say beside it. Pressing one goes on to the next, and pressing the last ends the tip
+//           and what to say beside it. Pressing one goes on to the next, and pressing the last ends the tip. A step
+//           whose work is already done as Show me starts says so (done(): the pin already out), and Show me goes
+//           without it
 //   about   a tip about the desk phone's cards: which card has its steps' controls. Show me keeps the phone open on the
 //           first such card, and a tip with none has no Show me
 //   acts    the last control acts for real: its step says what it does, and Got it ends the tip without pressing it
@@ -30,6 +32,12 @@ const pin = () => {
   dispatchEvent(ask);
   return ask.detail.pin ?? null;
 };
+// What brings the pin: the book's pin key, among its controls (pinsummon.js), or the book's handle while it's folded
+// (opened, the key is there, and beside HQ the opening brings the pin). Where the open book covers HQ (a phone's
+// spread) the pin is the key that leaves HQ with it.
+const book = () => document.documentElement.dataset.book;
+const pinWay = () => document.querySelector(book() === 'folded' ? '#book .bk-lip' : '#book .bk-pin');
+const pinOrKey = () => (book() === 'spread' ? document.querySelector('#book .bk-pin') : pin());
 
 export const TIPS = [
   {
@@ -38,7 +46,7 @@ export const TIPS = [
     when: 'the first artifact comes in',
     title: 'Your first artifact is in: share it for notes',
     lines: () =>
-      'Invite anyone to leave notes on it, each on a link of their own. When everyone has sent theirs, the notes come back to you as a deck.',
+      'Invite anyone to leave notes on it, each on a link of their own. Their notes land in your book as they write them, beside yours.',
     opens: { app: 'artifacts' },
     steps: [
       { at: '#tool .applist a.open', say: 'Open your artifact' },
@@ -49,16 +57,18 @@ export const TIPS = [
   {
     key: 'endnow',
     name: 'End now',
-    when: 'the first share with one person still to send',
-    title: 'One person still has notes to send',
-    lines: ({ waiting } = {}) =>
-      `The notes come to you as a deck once everyone has sent theirs. ${waiting ? `${waiting} hasn’t yet. ` : ''}End now sends you the deck with what’s in.`,
+    // (no event: a guest's notes go into the book as they're made, so no share waits on its last person. The Library's
+    // manual.)
+    when: 'none: the Library’s manual',
+    title: 'End a share before its date',
+    lines: () =>
+      'A share stays open until its date, its notes in your book as they come. End now closes it at once: nobody can add notes after.',
     opens: { app: 'notes', shown: 'shared' },
     steps: [
       { at: inShare('summary'), say: 'Open the share' },
       {
         at: inShare('[data-end]'),
-        say: 'End now sends you the deck with what’s in. It asks once more, and nobody can send notes after.',
+        say: 'End now closes it. It asks once more, and nobody can add notes after.',
       },
     ],
     acts: true,
@@ -100,8 +110,11 @@ export const TIPS = [
     when: 'the first picture the board pastes on the intercom',
     title: 'Pin a note right on HQ',
     lines: () =>
-      'Instead of a screenshot, you can pin a note on the part of HQ it’s about, and it stays where you put it. The red pin in HQ’s corner does it.',
-    steps: [{ at: pin, say: 'Press the pin, then tap where your note goes' }],
+      'Instead of a screenshot, you can pin a note on the part of HQ it’s about, and it stays where you put it. The pin comes from the book’s controls.',
+    steps: [
+      { at: pinWay, say: 'The pin comes from the book: press here', done: () => !!pin() },
+      { at: pinOrKey, say: 'Then press the pin, and tap where your note goes' },
+    ],
   },
   {
     key: 'notifications',

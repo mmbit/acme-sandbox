@@ -44,8 +44,9 @@ where it suffices.
 - **The board's book replaces the first Sketchbook, and HQ's own review notes go into it** (26 October): HQ's first
   Sketchbook screens are gone for every company, and a note pinned on one of HQ's own screens goes to the board's book
   (`/api/book`) rather than Reviews, with no setting: one way for both companies. Knop doesn't use the first
-  Sketchbook (the board moved the pencil work to Onlyonery on 24 October). The guest room's Sketchbook stays, off where
-  brand.yaml says `computer: { sketchbook: false }`.
+  Sketchbook (the board moved the pencil work to Onlyonery on 24 October). The guest room's Sketchbook stays, a
+  setting of its own: brand.yaml `guest: { sketchbook: false }` shuts it, and left out it follows
+  `computer: { sketchbook }` as before.
 
 ## Open
 

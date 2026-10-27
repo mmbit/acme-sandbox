@@ -9,7 +9,7 @@ import * as predictions from './predictions.ts';
 import { heldTo } from './predictions.ts';
 import { onPublish } from './events.ts';
 import { priceAhead } from './headroom.ts';
-import * as pastpool from './pastpool.ts';
+import { readPastAhead } from './matching.ts';
 import {
   play as playQueue,
   PLAY_VERSION,
@@ -175,13 +175,12 @@ export const afterEach = (after: (f: Forecast) => void) => void played.push(afte
 
 // The server's start: every change HQ publishes plays the queue again SETTLE_MS later, once for a burst, unless a play
 // came in between (hq job plays its own: moves.ts). An agent's own steps and status change nothing the play reads: a
-// running job's would play the queue every SETTLE_MS. Work sized on the spot keeps its size for the hour, on the done
-// work read ahead of the first play (pastpool.ts), and the seats' readings are priced ahead of it, both a slice at a
-// time (headroom.ts priceAhead).
+// running job's would play the queue every SETTLE_MS. The done work is read ahead of the first play (matching.ts
+// readPastAhead), and the seats' readings are priced ahead of it, both a slice at a time (headroom.ts priceAhead).
 export function start() {
   if (watching) return;
   watching = true;
-  pastpool.readAhead();
+  void readPastAhead();
   priceAhead().catch(err => console.error('Could not price the seat readings:', err));
   onPublish((e, by) => {
     if ((e.type === 'log' || e.type === 'status') && by !== 'agent') playSoon();

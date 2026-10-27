@@ -366,36 +366,38 @@ class HqTools(unittest.TestCase):
     def test_ask_to_see_and_draw_ask_the_voice_line_in_words_only_on_the_boards_call(self):
         """ On the board's call: the line's answer in words (what it did, or its
         refusal); arguments of another shape never reach the line; a partner's call has neither tool, and a call
-        without the line's socket (the phone) says so; hq never gets the key."""
+        without the line's socket (the phone) says so; hq never gets the key. A ring is a box on the agent's picture of
+        the screen."""
         import hq_tools
         path, asked = line_socket(self, [{'ok': 'Asked: ...'}, {'error': 'Their screen is shown already.'},
-                                         {'ok': 'Drawn: ...'}, {'error': 'No “Basket” on their page.'}, {'ok': 'Drawn: ...'}])
+                                         {'ok': 'Drawn: ...'}, {'error': 'Nothing there on their screen.'}, {'ok': 'Drawn: ...'}])
+        tile, whole = {'x': 0.25, 'y': 0.5, 'width': 0.2, 'height': 0.125}, {'x': 0, 'y': 0, 'width': 1, 'height': 1}
         with tempfile.TemporaryDirectory() as d:
             env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('ask_to_see', {'what': 'the pricing  page'}), ('ask_to_see', {'what': 'the basket'}),
-                            ('draw', {'ring': 'Add to basket', 'words': 'this one'}), ('draw', {'ring': 'Basket'}),
-                            ('draw', {'note': 2, 'words': None}),
+                            ('draw', {'at': tile, 'words': 'this one'}), ('draw', {'at': tile}),
+                            ('draw', {'at': whole, 'words': None}),
                             ('ask_to_see', {}), ('ask_to_see', {'what': ' '}), ('ask_to_see', {'what': 'x' * 121}),
-                            ('draw', {}), ('draw', {'ring': 'Add', 'note': 2}), ('draw', {'note': 0}), ('draw', {'note': True}),
-                            ('draw', {'note': '2'}), ('draw', {'ring': ''}), ('draw', {'ring': 'Add', 'words': 'w' * 81}),
-                            ('draw', {'ring': 'Add', 'colour': 'red'}), env=env)
+                            ('draw', {}), ('draw', {'ring': 'Add'}), ('draw', {'note': 2}), ('draw', {'at': {**tile, 'x': 0.9}}),
+                            ('draw', {'at': {**tile, 'height': 0}}), ('draw', {'at': {'x': 0.5, 'y': 0.5}}),
+                            ('draw', {'at': tile, 'words': 'w' * 81}), ('draw', {'at': tile, 'colour': 'red'}), env=env)
             msgs = [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}}
-                    for i, (n, a) in enumerate((('ask_to_see', {'what': 'the shop'}), ('draw', {'ring': 'Add'})))]
+                    for i, (n, a) in enumerate((('ask_to_see', {'what': 'the shop'}), ('draw', {'at': tile})))]
             partner = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
                                      capture_output=True, text=True, timeout=60)
-            phone = self.call(('ask_to_see', {'what': 'the shop'}), ('draw', {'ring': 'Add'}), env=self.env(d, 'http://127.0.0.1:9'))
+            phone = self.call(('ask_to_see', {'what': 'the shop'}), ('draw', {'at': tile}), env=self.env(d, 'http://127.0.0.1:9'))
             self.assertFalse(Path(d, 'hq.log').exists(), 'none of them runs hq')
         replies = [(r['result']['isError'], r['result']['content']) for r in out[1:]]
         self.assertEqual(replies[:5], [(False, [{'type': 'text', 'text': 'Asked: ...'}]),
                                        (True, [{'type': 'text', 'text': 'Their screen is shown already.'}]),
                                        (False, [{'type': 'text', 'text': 'Drawn: ...'}]),
-                                       (True, [{'type': 'text', 'text': 'No “Basket” on their page.'}]),
+                                       (True, [{'type': 'text', 'text': 'Nothing there on their screen.'}]),
                                        (False, [{'type': 'text', 'text': 'Drawn: ...'}])])
         self.assertEqual([error for error, _ in replies[5:]], [True] * 11)
         self.assertEqual(asked, [{'ask_to_see': 'the pricing page', 'key': 'key-1'}, {'ask_to_see': 'the basket', 'key': 'key-1'},
-                                 {'draw': {'ring': 'Add to basket', 'note': None, 'words': 'this one'}, 'key': 'key-1'},
-                                 {'draw': {'ring': 'Basket', 'note': None, 'words': ''}, 'key': 'key-1'},
-                                 {'draw': {'ring': None, 'note': 2, 'words': ''}, 'key': 'key-1'}])
+                                 {'draw': {'at': tile, 'words': 'this one'}, 'key': 'key-1'},
+                                 {'draw': {'at': tile, 'words': ''}, 'key': 'key-1'},
+                                 {'draw': {'at': {k: float(v) for k, v in whole.items()}, 'words': ''}, 'key': 'key-1'}])
         self.assertTrue(all(json.loads(line)['result']['isError'] for line in partner.stdout.splitlines()), 'neither for a partner')
         self.assertEqual([reply['result']['content'][0]['text'] for reply in phone[1:]],
                          [hq_tools.ASK_WORDS['none'], hq_tools.INK_WORDS['none']])
@@ -408,18 +410,18 @@ class HqTools(unittest.TestCase):
         import hq_tools
         page = 'https://teacups.preview.onlyonery.com/p/2'
         path, asked = line_socket(self, [{'ok': 'Suggested: ...'}, {'error': 'Your suggestion to open ... is still waiting.'},
-                                         {'ok': 'Scrolled: ...'}, {'error': 'Nothing on their screen says “Gift wrap”.'},
+                                         {'ok': 'Scrolled: ...'}, {'error': 'Nothing to point at there.'},
                                          {'ok': 'Scrolled: ...'}])
         with tempfile.TemporaryDirectory() as d:
             env = agent_env({'PATH': fake_hq(d)['PATH']}, 'http://127.0.0.1:9', SIGN_IN_FD, 'call-token', 'juno', (path, 'key-1'), **FOLDERS)
             out = self.call(('open_work', {'what': 'the teacup  page', 'address': page}),
                             ('open_work', {'what': 'job 12', 'address': '/?open=jobs&job=12'}),
-                            ('drive', {'to': 'Price'}), ('drive', {'point': 'Gift wrap'}), ('drive', {'by': 'bottom'}),
+                            ('drive', {'to': 'Price'}), ('drive', {'point': {'x': 0.4, 'y': 0.6}}), ('drive', {'by': 'bottom'}),
                             ('open_work', {'what': 'it', 'address': 'https://onlyonery.com/'}),
                             ('open_work', {'what': 'it', 'address': '/?open=settings'}), ('open_work', {'address': page}),
                             ('open_work', {'what': 'it', 'address': page, 'new_tab': True}), ('open_work', {'what': 'x' * 121, 'address': page}),
                             ('drive', {}), ('drive', {'to': 'Price', 'by': 'down'}), ('drive', {'by': 'sideways'}),
-                            ('drive', {'point': ''}), ('drive', {'point': 3}), env=env)
+                            ('drive', {'point': 'Gift wrap'}), ('drive', {'point': {'x': 1.5, 'y': 0}}), env=env)
             msgs = [{'jsonrpc': '2.0', 'id': i, 'method': 'tools/call', 'params': {'name': n, 'arguments': a}}
                     for i, (n, a) in enumerate((('open_work', {'what': 'it', 'address': page}), ('drive', {'by': 'down'})))]
             partner = subprocess.run([*HQ_TOOLS, 'partner'], input=''.join(json.dumps(m) + '\n' for m in msgs), env=env,
@@ -430,12 +432,12 @@ class HqTools(unittest.TestCase):
         self.assertEqual(replies[:5], [(False, [{'type': 'text', 'text': 'Suggested: ...'}]),
                                        (True, [{'type': 'text', 'text': 'Your suggestion to open ... is still waiting.'}]),
                                        (False, [{'type': 'text', 'text': 'Scrolled: ...'}]),
-                                       (True, [{'type': 'text', 'text': 'Nothing on their screen says “Gift wrap”.'}]),
+                                       (True, [{'type': 'text', 'text': 'Nothing to point at there.'}]),
                                        (False, [{'type': 'text', 'text': 'Scrolled: ...'}])])
         self.assertEqual([content[0]['text'] for _, content in replies[5:]], [hq_tools.OPEN_WORDS['shape']] * 5 + [hq_tools.DRIVE_WORDS['shape']] * 5)
         self.assertEqual(asked, [{'open_work': {'what': 'the teacup page', 'address': page}, 'key': 'key-1'},
                                  {'open_work': {'what': 'job 12', 'address': '/?open=jobs&job=12'}, 'key': 'key-1'},
-                                 {'drive': {'to': 'Price'}, 'key': 'key-1'}, {'drive': {'point': 'Gift wrap'}, 'key': 'key-1'},
+                                 {'drive': {'to': 'Price'}, 'key': 'key-1'}, {'drive': {'point': {'x': 0.4, 'y': 0.6}}, 'key': 'key-1'},
                                  {'drive': {'by': 'bottom'}, 'key': 'key-1'}])
         self.assertTrue(all(json.loads(line)['result']['isError'] for line in partner.stdout.splitlines()), 'neither for a partner')
         self.assertEqual([reply['result']['content'][0]['text'] for reply in phone[1:]],

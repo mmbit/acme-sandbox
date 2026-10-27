@@ -47,7 +47,7 @@ import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
 import { openAt } from './book.js';   // (review mode's Open the book: bookAt.)
-import { layout } from './booklayout.js';   // (the pin's summon.)
+import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
 import { ASKS } from './tips.js';
@@ -116,6 +116,9 @@ export function initDesk() {
   addEventListener('keydown', e => { if (e.key !== 'Escape') return; if (callInFront()) minimiseCall(); else if (open) closeTool(); });   // (a call in front goes small)
   addEventListener('message', fromViewer);
   loadPin();
+  // (a card answered in the book, or the book changed on the store: the cards read again, so one answered there leaves
+  // the open list.)
+  document.addEventListener('book:changed', refreshRequests);
   document.addEventListener('visibilitychange', () => { if (document.hidden && voice && voice.phase !== 'sending') finishVoice(); });
 }
 function show(kind, html, force = false) {
@@ -222,16 +225,9 @@ function loadPin() {
   const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
   script.dataset.summoned = '';
   script.dataset.book = '';   // the Pencil writes on HQ's pages, its notes in the board's book.
-  script.onload = () => { coverPin(!!viewing); summonPin(); };
+  script.onload = () => { coverPin(!!viewing); tellPin(); };
   document.head.append(script);
-  document.addEventListener('book:layout', summonPin);
-}
-// On HQ the open book summons the pin, and folding the book puts it away (the board, 2026-10-26): the Pencil writes
-// either way, the pin is the mouse's (and a finger's) way in beside the book. A screen with no room for a page beside
-// the book (a phone: open, it covers HQ) keeps its pin, its only way to mark HQ.
-function summonPin() {
-  const besideNever = layout(innerWidth, innerHeight, { mode: 'open', book: null }).mode === 'spread';
-  dispatchEvent(new CustomEvent('review:summon', { detail: besideNever || document.documentElement.dataset.book !== 'folded' }));
+  mountPinSummon();   // (away till the board summons it)
 }
 // HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
 // closes and only one pin ever shows
@@ -239,10 +235,11 @@ const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: o
 // The book open beside the page (and the viewer over it), at the sheet for an owner: review mode's Open the book, in the
 // viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows what's
 // on the sheet before anything goes.
-export function bookAt(owner) {
+// at: a place in the book to land on instead, { day, page, note } (a card's On the page: book.js's openAt).
+export function bookAt(owner, at = null) {
   if (typeof owner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(owner)) return;
   sfx.blip();
-  openAt(owner);
+  openAt(owner, at);
 }
 // Share for outside notes: the people
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
@@ -333,42 +330,33 @@ function wireCap(box, s, redraw) {
   });
 }
 export const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
-// (a share that ended with everyone in but reopens)
-// (as HTML, its job a link)
-export const untilLine = s => s.reopens ? `Everyone has sent their notes: ${went(s)}. Until ${esc(dayTime(s.ends))}, anyone who sent theirs can add more, which opens it again; End now stops that.`
-  : esc(s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
-  : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. Once everyone has sent their notes and taken a plan, they go to ${s.owner}.`
-  : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. Once everyone has sent their notes and ordered, they go to ${s.owner}.`
-  : `Until ${dayTime(s.ends)}. Once everyone has sent their notes, they go to ${s.owner}.`);
-// a share's people and End now (none before the first invite)
-function reviewState(s, p) {
-  if (s.view) return p.opened ? 'Opened it' : 'Hasn’t opened it yet';
-  if (p.sent) return `Sent ${noteCount(p.notes)}${ordered(s, p)}`;
-  if (p.notes) return `${noteCount(p.notes)} so far${ordered(s, p)}`;
-  if (p.opened) return `Opened it, no notes yet${ordered(s, p)}`;
-  return `Hasn’t opened it yet${ordered(s, p)}`;
-}
+// An open share's line (as HTML): until when, and where its notes go: each one, as it's written, on the board's sheet
+// for the page's owner in its book.
+const intoBook = s => `Their notes go on your sheet for ${s.owner} in your book as they write them.`;
+export const untilLine = s => esc(s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
+  : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. ${intoBook(s)}`
+  : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. ${intoBook(s)}`
+  : `Until ${dayTime(s.ends)}. ${intoBook(s)}`);
+// a share's people and End now (none before the first invite): whether each opened it, and a tester's order
+const reviewState = (s, p) => `${p.opened ? 'Opened it' : 'Hasn’t opened it yet'}${ordered(s, p)}`;
 // a tester's order, once placed: the stalls it was from, or the plan and tiers it took
 const ordered = (s, p) => !s.tester ? '' : s.pays === 'plan' ? (p.ordered ? ` · took ${p.ordered.join(' with ')}` : ' · no plan yet')
   : p.ordered ? ` · ordered${p.ordered.length ? ` from ${p.ordered.join(', ')}` : ''}` : ' · no order yet';
 // (titled, and Recent: everyone shared with lately who isn't on it)
-export const shareHtml = s => `${peopleHtml((s?.people ?? []).map(p => ({ ...p, state: reviewState(s, p) })), true, { invite: !s?.reopens, titled: true, again: recent.filter(r => !s?.people.some(p => sameName(p.name, r.name))) })}${s ? '<p class="row acts"><button type="button" data-end>End now</button></p>' : ''}`;
+export const shareHtml = s => `${peopleHtml((s?.people ?? []).map(p => ({ ...p, state: reviewState(s, p) })), true, { titled: true, again: recent.filter(r => !s?.people.some(p => sameName(p.name, r.name))) })}${s ? '<p class="row acts"><button type="button" data-end>End now</button></p>' : ''}`;
 // The people the board shared with in the last three weeks, by name and its title for them (loadPeople), as Share and
 // Reviews last loaded them: the box's Recent, a tap invites one again
 let recent = [];
 export const loadRecent = () => loadPeople(world.dev).then(list => { recent = list; }, () => { /* Recent stays as it was: the box and Reviews work without it */ });
 const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 export const noteCount = n => `${+n} ${+n === 1 ? 'note' : 'notes'}`;
-// where an ended share's notes went, as HTML
-export const went = s => s.job ? `${esc(`${noteCount(s.notes)} to ${s.owner}`)} · job ${jobNameLink(s.job, s.job_code)}` : esc(s.notes ? `${noteCount(s.notes)} on their way to ${s.owner}` : s.view ? 'view only' : 'no notes');
 // Send link, Remove, Invite and End now on a share (in the viewer's box, or a share in Reviews): o.redraw(share, what to
 // say, as HTML) draws it again, o.page and o.days() make a new one with the first invite
 export function wireShare(el, s, o) {
   const busy = holdReviews;
   const after = (next, text) => {
-    const said = next.ended && !s?.ended ? `Everyone has sent their notes: ${went(next)}.` : text;
-    o.redraw(next.ended && !next.reopens ? null : next, said);
-    return said;
+    o.redraw(next.ended ? null : next, text);
+    return text;
   };
   wirePeople(el, {
     send: (name, button, out) => { const p = s?.people.find(x => x.name === name); if (p?.link) share({ url: p.link }, out); },
@@ -388,9 +376,8 @@ export function wireShare(el, s, o) {
   if (end) end.onclick = async () => {
     if (!end.dataset.sure) { end.dataset.sure = 1; end.textContent = 'Tap again to end it'; sfx.blip(); return; }
     end.disabled = true; msg().textContent = 'Ending…';
-    let done;
-    try { done = await busy(() => endShare(world.dev, s.id)); } catch { tell(msg(), 'That didn’t go through. Try again in a minute.'); end.disabled = false; return; }
-    sfx.blip(); o.redraw(null, `Ended: ${went(done)}.`);
+    try { await busy(() => endShare(world.dev, s.id)); } catch { tell(msg(), 'That didn’t go through. Try again in a minute.'); end.disabled = false; return; }
+    sfx.blip(); o.redraw(null, 'Ended: their links no longer open it.');
   };
 }
 // Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, or asking for the book
@@ -551,6 +538,26 @@ function shown(r) {
 // Finished work its maker offers to walk the board through (hq ask --walk): the card's call is that walk-through, in
 // those words.
 const walkButton = r => `<div class="row btns walk"><button class="talk" id="call-about" title="${esc(who(r.agent))} walks you through it, on a call">${PHONE}<span>Walk me through it</span></button></div>`;
+// A card about a note or a page (hq ask --note, --page): On the page, the note's snip, whose and where it is, its words,
+// and Open in the book, which lands on it there (bookAt). It shows in the book too, under the note, answered in either
+// place.
+function placeHtml(r) {
+  const p = r.place, where = placeName(p.url);
+  const said = p.note
+    ? `Your note ${esc(String(p.n))} for ${esc(who(p.owner))}, on ${esc(where)}${p.words ? `: “${esc(p.words)}”` : ''}`
+    : `${esc(who(r.agent))}’s question about ${esc(where)}, in the book under ${esc(who(r.agent))}’s ring`;
+  return `<div class="on-page">${p.snip ? `<img src="${esc(p.snip)}" alt="Your note as you marked it" loading="lazy">` : ''}<div><b class="op-k">On the page</b><p>${said}</p>${
+    p.page ? '<button class="op-open" data-in-book>Open in the book</button>' : ''}</div></div>`;
+}
+// A page's place in words: HQ's own, or a preview by its name
+function placeName(url) {
+  try {
+    const u = new URL(url, location.origin);
+    return u.origin === location.origin ? 'HQ' : u.host.split('.')[0];
+  } catch {
+    return url;
+  }
+}
 function renderPhone() {
   if (openingCard != null) return;
   const el = $('#phone-screen'), reqs = store.list; if (!el) return;
@@ -584,22 +591,28 @@ function renderPhone() {
   const shownCard = back ? { ...card, choices: [], options: [], recommend: '' } : card;
   const asked = !keys && r.questions?.length ? r.questions : null; // questions as fields
   const pics = !login && !asking && !keys && !back && r.kind !== 'credential' && r.kind !== 'mail' && !call ? cardTray(r) : null; // pictures with the answer, as on the intercom: the cards jobs.ts takesPictures lets take them
+  // the Call key shows its phone and the name alone: the desk phone is never wider than 440 px.
+  // the Share key shows its icon and its word as plain text.
   el.innerHTML = `
     ${pagerHtml(reqs)}
     ${asideNote()}<article class="req u-${esc((r.urgency || '').replace(/\s+/g, '-'))}">
       <p class="meta"><span class="tag-k">${esc(r.kind || 'request')}</span> ${r.agent ? `from <b>${esc(who(r.agent))}</b> · ` : ''}${esc(ago(r.created))}${r.urgency ? ` · <em>${esc(r.urgency)}</em>` : ''}</p>
       <h3>${withJobLinks(r.title)}</h3>
       ${deck ? `<a class="signin" href="${esc(deck)}" target="_blank" rel="noopener">Open the presentation ↗</a>` : ''}
-      ${pairsHtml(card.pairs)}${cardHtml(r, shownCard, clipsHtml(unpaired) + picsHtml(unpaired) + filesHtml(r))}${guest ? guestHtml(r) : ''}
+      ${pairsHtml(card.pairs)}${cardHtml(r, shownCard, clipsHtml(unpaired) + picsHtml(unpaired) + filesHtml(r) + (r.place ? placeHtml(r) : ''))}${guest ? guestHtml(r) : ''}
       ${r.grants ? `<p class="grant">${esc(r.grants)}</p>` : ''}
       ${login ? '' : mail ? mailHtml(r, mail) : call ? callHtml(call, true) : asking ? `<label class="key" data-private>${esc(guest.name)}’s email address<input type="email" id="guest-email" autocomplete="off" spellcheck="false"></label><p class="hint">Asked once. The page sends a code there before it shows anything, and never shows the address.</p>`
         : keys ? (address ? addressPickHtml(r, address) : '') + keys.map((k, i) => AGE.test(k) ? ageHtml(r, k, saved.has(k)) : `<label class="key"${address ? ' data-private' : ' data-watchalong-hide'}>${esc(address ? ADDRESS_PARTS[i] : keyLabel(k))}${saved.has(k) ? ' <b class="saved">saved ✓</b>' : ''}<input type="${address ? 'text' : 'password'}" data-key="${esc(k)}" autocomplete="${address ? ADDRESS_FILL[i] : 'off'}" spellcheck="false"${saved.has(k) ? ' placeholder="Saved. Type here only to replace it."' : ''}></label>${refusedKeys.get(r.id)?.[k] ? `<p class="hint refused">${SIGNS.problem}<span>${esc(refusedKeys.get(r.id)[k])}</span></p>` : ''}`).join('')
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
       <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
-      ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
+      ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}Share</button>` : ''}<span class="msg" id="answer-msg"></span></div>
     </article>`;
   wirePager(el);
+  el.querySelector('[data-in-book]')?.addEventListener('click', () => {
+    const { day, page, note, owner } = r.place;
+    bookAt(owner ?? r.agent, { day, page, note });
+  });
   wireCard(el, r, card, keys); wireAge(el, r); wirePics(el, { pairs: card.pairs }); wireSnooze(el, r); wireAside(el); paintLines();
   const fields = [...el.querySelectorAll('#answer, [data-key]')];
   if (address) wireAddress(el, address);
@@ -914,15 +927,14 @@ const nameHtml = p => {
   return `<b class="named">${esc(p.name)}${plus}</b>${badge}`;
 };
 const againHtml = list => list.length ? `<p class="again">${list.map(r => `<button type="button" data-again="${esc(r.name)}">${esc(r.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}</button>`).join('')}</p>` : '';
-// open: Remove on each; o.invite: the Invite form (open, unless the share only reopens)
+// open: Remove on each, and the Invite form
 function peopleHtml(list, open, o = {}) {
-  const invite = o.invite ?? open;
   // (no switch for their own Sketchbook: every invited person has one, and their notes join the board's book.)
   const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
       <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
   // (Recent atop the form)
   return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
-    ${invite ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" data-private placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false"><button>Invite</button></form>` : ''}
+    ${open ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" data-private placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false"><button>Invite</button></form>` : ''}
     <p class="msg" role="status"></p></div>`;
 }
 const refused = err => err.refusal?.error ? `${cap(err.refusal.error)}.` : 'That didn’t go through. Try again.';
@@ -1679,19 +1691,21 @@ function zipLine(r, i, z) {
   if (z.state === 'failed') return `Couldn’t unpack ${z.name}: ${z.error}.`;
   if (z.state !== 'imported') return '';
   const left = z.imported.leftOut.bytes ? `, leaving out ${bytes(z.imported.leftOut.bytes)} a computer can rebuild` : '';
-  return `${z.name}: ${z.imported.folders} folders, ${bytes(z.imported.bytes)}${left}`;
+  const what = z.imported.folders ? `${z.imported.folders} folders` : `${z.imported.files} ${z.imported.files === 1 ? 'file' : 'files'}`;
+  return `${z.name}: ${what}, ${bytes(z.imported.bytes)}${left}`;
 }
+// Any file: a zip, or a single file the server keeps as it is
 const zipBox = (r, i, z) => `
     <label class="photo file zip${z.state === 'imported' ? ' is-saved' : ''}" data-zip-field="${i}" data-zip="${r.id}:${i}">
       <span class="thumb">${BOX}</span>
       <span class="pl">${esc(z.label)}${z.optional ? ' <i>(optional)</i>' : ''}${z.state === 'imported' ? ' <b class="saved">imported ✓</b>' : ''}<small class="fn">${esc(zipLine(r, i, z))}</small></span>
       <span class="act">${z.state === 'imported' ? 'Replace' : z.state === 'uploading' ? 'Pick again' : 'Pick zip'}</span>
-      <input type="file" accept=".zip,application/zip" data-zip-input="${i}" aria-label="${esc(z.label)}${z.optional ? ' (optional)' : ''}">
+      <input type="file" data-zip-input="${i}" aria-label="${esc(z.label)}${z.optional ? ' (optional)' : ''}">
     </label>`;
 function zipFields(r) {
   if (!r.zips?.length) return '';
   return `<div class="photos files" role="group" aria-label="Zips">${r.zips.map((z, i) => zipBox(r, i, z)).join('')}
-    <p class="hint">Pick the zip as it is. It goes in parts: if the connection drops, it carries on by itself, or pick the same file again. The server unpacks it as it arrives, and leaves out what a computer can rebuild, like node_modules.</p></div>`;
+    <p class="hint">Pick the zip as it is, or a single file. It goes in parts: if the connection drops, it carries on by itself, or pick the same file again. The server unpacks it as it arrives, and leaves out what a computer can rebuild, like node_modules.</p></div>`;
 }
 function wireZips(el, r) {
   const msg = (t, problem = false) => { const m = $('#answer-msg'); if (problem) tell(m, t); else if (m) m.textContent = t; };
@@ -1734,7 +1748,8 @@ function wireZips(el, r) {
         if (latest().state === 'imported') sfx.blip();
       } catch (err) {
         const status = +String(err?.message ?? '').match(/\d{3}$/)?.[0];
-        msg(status === 507 ? 'The server has no room for a zip that big. Try a smaller one, without node_modules.'
+        msg(status === 507 && err.refusal?.short === 'disk' ? 'The server is short of disk space right now. Pick the file again in a few minutes.'
+          : status === 507 ? 'The server has no room for a zip that big. Try a smaller one, without node_modules.'
           : status === 409 || status === 404 ? 'This request was already answered or closed, or the last zip is still being unpacked.'
           : status ? `The server couldn’t take the zip (error ${status}). Pick it again to carry on.` : 'The connection dropped for too long. Pick the same file again to carry on.', true);
         learn(await loadZipField(world.dev, r.id, i).catch(() => ({})));

@@ -185,14 +185,20 @@ test("a mirror opens with what the screen still shows: from the last full snapsh
     frame(60, png),
   ];
   assert.deepEqual(shown(events), [...page(20), ink, drawn(45, 6), other(50), frame(60, png)]);
-  // a clear off the corner, or without area, wipes nothing: the picture before it stays
+  // a clear off the corner, or without area, wipes nothing: the picture before it stays. Each misses the rule by one
+  // condition, so the test fails if any of them changes
   const clear = (at: number, args: number[]): RecordedEvent => ({
     type: 3,
     timestamp: at,
     data: { source: 9, id: 8, type: 0, commands: [{ property: 'clearRect', args }] },
   });
   const before = clear(65, [0, 0, 400, 300]);
-  const partial = [clear(70, [5, 5, 10, 10]), clear(80, [0, 0, 0, 0])];
+  const partial = [
+    [5, 0, 400, 300],
+    [0, 5, 400, 300],
+    [0, 0, 0, 300],
+    [0, 0, 400, 0],
+  ].map((args, i) => clear(70 + i, args));
   assert.deepEqual(shown([...page(0), before, ...partial]), [...page(0), before, ...partial]);
   // (no full snapshot yet: all of it)
   assert.deepEqual(shown([frame(10, png), frame(20, png)]), [frame(20, png)]);

@@ -130,9 +130,24 @@ test('a snapshot is kept hourly and at a thread none had, and kept 30 days', () 
 test('kept snapshots omit titles without changing the play or the live forecast', async () => {
   const f = forecastAt(T0 + 40 * DAY, 999, ['hq/title-free']);
   snapshots.keep(f);
-  const [saved] = snapshots.since(f.now);
+  const saved = (await snapshots.listSince(f.now))[0].read();
   assert.equal(saved.snapshot.jobs[0].title, '');
   assert.equal(f.snapshot.jobs[0].title, 'Paint the harbour');
   const { play } = await import('./eta.ts');
   assert.deepEqual(play(saved.snapshot, new Map(saved.sizes.usual)), play(f.snapshot, f.sizes.usual));
+});
+
+test('a snapshot pruned while a backtest runs is still played: the request keeps the rows it listed', async () => {
+  h.db.exec('delete from play_snapshots');
+  const landed = T0 + 45 * DAY;
+  const job = landedAt(landed);
+  snapshots.keep(forecastAt(landed - 70 * MIN, job));
+  const listed = await snapshots.listSince(landed - DAY);
+  // (as keep() prunes those past KEEP_DAYS while the request waits for its next turn)
+  h.db.exec('delete from play_snapshots');
+  const { score } = await import('./backtest.ts');
+  const { play } = await import('./eta.ts');
+  const [hour] = await score(listed, new Map([[job, landed]]), play);
+  assert.equal(hour.count, 1);
+  assert.deepEqual(JSON.parse(listed[0].json().toString()), listed[0].read());
 });

@@ -328,7 +328,6 @@ test("a tester's voucher pays one plan for its own tester, up to its invite's am
   const over = await redeem(tess, typed, { plan: 'plan', tiers: ['more'], period: 6 });
   assert.deepEqual([over.status, over.json.why, over.json.cap], [409, 'tester_cap', 3000]);
   assert.equal(shares.orderOf(shares.people(share.id).find(p => p.guest === 'Tess')!), null, 'refused, nothing spent');
-  assert.equal(shares.allIn(share.id), false);
 
   const sessions = () =>
     payments.imitation('GET', '/v1/checkout/sessions?limit=100', new URLSearchParams()).data.length;
@@ -357,15 +356,6 @@ test("a tester's voucher pays one plan for its own tester, up to its invite's am
   assert.equal((await redeem(tess, voucher, { plan: 'plan', period: 6 })).json.why, 'code_used', "it can't pay twice");
   assert.deepEqual(shares.orderedFrom(shares.people(share.id).find(p => p.guest === 'Tess')!), ['Basic']);
 
-  // its notes sent, it's everyone's order and notes: the invite ends
-  const sent = await send(
-    '/__review/submit',
-    { host: HOST, cookie: session, origin: `https://${HOST}`, 'content-type': 'application/json' },
-    {},
-  );
-  assert.equal(sent.status, 200, sent.text);
-  feedback.gather();
-  assert.equal(shares.byId(share.id)!.ended_by, 'everyone');
   t.mock.timers.setTime(Date.parse(paid.json.paid_until) + 60_000);
   assert.deepEqual(await held(tess), { held: false }, 'it never renews');
   t.mock.timers.reset();

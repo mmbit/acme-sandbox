@@ -1,6 +1,6 @@
 // How the copy keeps the page's flow (copy.js): margins that collapse through a box's ends, ::before and ::after with
 // their sticky places, and text that stays on one line.
-import { inlineUrls } from './snapshot.js';
+import { inlineUrls } from './inline.js';
 
 // A length in a computed style, in px
 export const pixels = (style, property) => parseFloat(style.getPropertyValue(property)) || 0;

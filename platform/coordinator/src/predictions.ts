@@ -26,7 +26,6 @@ import { fitIn, wholeSeconds } from './arithmetic.ts';
 import { history, latestGiven } from './sizes.ts';
 import { corrected } from './sizerbias.ts';
 import * as threadorder from './threadorder.ts';
-import * as pastpool from './pastpool.ts';
 
 // slow_agent_ms: the slow size, the one a time told holds to. A row without one gets it from its picks
 // (storedSizes).
@@ -208,14 +207,14 @@ export function heldTo(usual: Outlook, slow: Outlook) {
 
 // Each play reads saved task sizes and measured review times. Legacy tasks without a prediction get one persisted
 // default at first use. Drawn threads have no task yet, so their provisional sizes are made once for each pool of done
-// work: for the hour while the server keeps it (pastpool.ts), else for this read.
+// work (matching.ts pastJobs: a new one once done work changes).
 type FromRecord = ReturnType<typeof recordFor>;
 const spotMade = new WeakMap<PastJob[], Map<string, Prediction>>();
 export function recordFor(now: number, jobs: Pick<QueuedJob, 'id'>[]) {
   const ids = jobs.flatMap(job => (job.id > 0 ? [job.id] : []));
   const saved = storedSizes(ids);
   let read: PastJob[] | undefined;
-  const pool = () => (read ??= pastpool.pool(now));
+  const pool = () => (read ??= pastJobs());
   const kept = (key: string, work: () => Work) => {
     const past = pool(),
       made = spotMade.get(past) ?? new Map<string, Prediction>();

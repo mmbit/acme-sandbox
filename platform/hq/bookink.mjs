@@ -101,7 +101,7 @@ async function tab(c, context, errors) {
   );
   await page.goto(`${c.base}/?intro=0${c.look}`);
   await page.waitForSelector('#loading.gone');
-  await page.waitForSelector('review-mode .fab');
+  await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away till summoned: job #20358)
   await c.settled(page, 'open');
   assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), !c.look, 'the look');
   return { page, feed };

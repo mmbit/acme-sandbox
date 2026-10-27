@@ -3265,6 +3265,9 @@ NOTES = {41: (2, 'this  feels\nhigh', {'type': 'image/png', 'data': DOT}), 42: (
 TEACUPS = '/projects/teacups'
 
 
+# A ring the agent aims at on its picture of the board's screen (drawing.py)
+AIM = {'at': {'x': 0.1, 'y': 0.2, 'width': 0.3, 'height': 0.1}}
+
 @unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
 class BoardDrawing(Juno):
     """The board draws on its own call (call 7): its notes come from the coordinator's note route (`NOTES`, anything else
@@ -3276,6 +3279,8 @@ class BoardDrawing(Juno):
     def coordinator(self, method, path, body=None):
         if path == 'screen-turn':
             return {'on': self.screen_on, 'paused': False, 'lines': [], 'last': 0, 'version': 0}
+        if path == 'screen':
+            return {'picture': {'type': 'image/jpeg', 'data': JPEG}, 'line': '#3 17:00:00 page /'}
         self.fetched.append(path)
         note_id = int(path.split('id=')[1].split('&')[0])
         if path != f'note?id={note_id}&call=7' or note_id not in NOTES:
@@ -3383,7 +3388,7 @@ class BoardDrawing(Juno):
         await self.turn('Stopped.')
         self.call.away = True
         self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}), {'error': server.ASK_WORDS['away']})
-        self.assertEqual(await self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}), {'error': server.INK_WORDS['away']})
+        self.assertEqual(await self.call.drawing.ink_tool({'draw': AIM}), {'error': server.INK_WORDS['away']})
         self.call.reconnected()
         self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}))
         self.assertEqual(self.told('ask'), [{'id': 1, 'what': 'the shop'}])
@@ -3398,29 +3403,69 @@ class BoardDrawing(Juno):
             self.call.drawing.inked({'type': 'inked', 'id': self.inks[-1]['id'], **answer})
         return await tool
 
-    async def test_a_ring_goes_to_hq_and_the_tool_answers_with_hqs_word(self):
+    async def test_a_ring_goes_to_hq_where_the_agent_aimed_and_the_tool_answers_with_hqs_word(self):
         self.new_call(ink_seconds=1)
         self.inks = []
-        self.assertEqual(await self.ink({'ring': 'Add to basket', 'words': 'this one'}, {'drawn': True}),
-                         {'ok': 'Drawn: a ring round “Add to basket” on their page, in your ink, with “this one” beside it. '
-                                "It stays on this call's page in the book."})
-        # (a ring in a preview: HQ says where it is, in place of the book)
-        in_preview = await self.ink({'ring': 'Gift wrap'}, {'drawn': True, 'why': "It's on the preview, not kept."})
-        self.assertEqual(in_preview, {'ok': "Drawn: a ring round “Gift wrap” on their page, in your ink. It's on the "
-                                            'preview, not kept.'})
-        self.assertEqual(await self.ink({'note': 2}, {'drawn': False, 'why': 'There is no note 2 on this page.'}),
-                         {'error': 'There is no note 2 on this page.'})
-        self.assertEqual(await self.ink({'ring': 'Basket'}), {'error': server.INK_WORDS['late']})
+        tile = {'x': 0.25, 'y': 0.5, 'width': 0.2, 'height': 0.125}
+        self.assertEqual(await self.ink({'at': tile, 'words': ' this  one '}, {'drawn': True}),
+                         {'ok': "Drawn: a ring where you aimed on their screen, in your ink, with “this one” beside it. It "
+                                "follows what it's on as they scroll, and goes when that does or the call ends."})
+        # (HQ's word on it goes with it)
+        in_preview = await self.ink({'at': {'x': 0, 'y': 0, 'width': 1, 'height': 1}}, {'drawn': True, 'why': 'In the preview.'})
+        self.assertTrue(in_preview['ok'].endswith('or the call ends. In the preview.'), in_preview)
+        why = 'There is nothing there on their screen.'
+        self.assertEqual(await self.ink({'at': tile}, {'drawn': False, 'why': why}), {'error': why})
+        self.assertEqual(await self.ink({'at': tile}), {'error': server.INK_WORDS['late']})
         self.call.drawing.inked({'type': 'inked', 'id': 4, 'drawn': True})  # (too late: let be)
-        self.assertEqual(await self.ink({'ring': 'x', 'note': 2}), {'error': server.INK_WORDS['shape']})
-        self.assertEqual(self.inks, [{'id': 1, 'ring': 'Add to basket', 'note': None, 'words': 'this one'},
-                                     {'id': 2, 'ring': 'Gift wrap', 'note': None, 'words': ''},
-                                     {'id': 3, 'ring': None, 'note': 2, 'words': ''}, {'id': 4, 'ring': 'Basket', 'note': None, 'words': ''}])
-        tool = asyncio.create_task(self.call.drawing.ink_tool({'draw': {'ring': 'Checkout'}}))
+        # (a box on the picture, inside it, with some size: never words for HQ to look for)
+        for shape in ({'ring': 'Add to basket'}, {'note': 2}, {}, {'at': {'x': 0.5, 'y': 0.5}},
+                      {'at': {**tile, 'x': 0.9}}, {'at': {**tile, 'width': 0}}, {'at': {**tile, 'y': -0.1}},
+                      {'at': {**tile, 'x': '0.5'}}, {'at': {**tile, 'x': True}}, {'at': tile, 'words': 'w' * 81},
+                      {'at': tile, 'colour': 'red'}, {'at': {**tile, 'z': 1}}):
+            self.assertEqual(await self.call.drawing.ink_tool({'draw': shape}), {'error': server.INK_WORDS['shape']}, shape)
+        self.assertEqual(self.inks, [{'id': 1, 'at': tile, 'words': 'this one'},
+                                     {'id': 2, 'at': {'x': 0.0, 'y': 0.0, 'width': 1.0, 'height': 1.0}, 'words': ''},
+                                     {'id': 3, 'at': tile, 'words': ''}, {'id': 4, 'at': tile, 'words': ''}])
+        tool = asyncio.create_task(self.call.drawing.ink_tool({'draw': AIM}))
         while len(self.told('ink')) < 5:
             await asyncio.sleep(0.01)
         await asyncio.to_thread(self.call.end)  # (hung up while HQ draws it: from the hang-up's thread)
         self.assertEqual(await asyncio.wait_for(tool, 1), {'error': server.INK_WORDS['ended']})
+
+    async def test_after_its_own_scroll_the_agent_looks_again_before_it_rings(self):
+        # (scroll it into view, a fresh picture, aim from that)
+        self.new_call(ink_seconds=1)
+        self.inks = []
+        drive = asyncio.create_task(self.call.driving.drive_tool({'drive': {'by': 'down'}}))
+        while not self.told('drive'):
+            await asyncio.sleep(0.01)
+        self.call.driving.driven({'type': 'driven', 'id': self.told('drive')[-1]['id'], 'done': True})
+        self.assertEqual(await drive, {'ok': f"Scrolled: their screen is a screen further down. {server.DRIVE_WORDS['look']}"})
+        self.assertEqual(await self.call.drawing.ink_tool({'draw': AIM}), {'error': server.INK_WORDS['moved']})
+        self.assertEqual(self.told('ink'), [], 'nothing drawn from the picture before the scroll')
+        # (a picture of the screen now, with a turn: aimed from that, it's drawn)
+        self.call.screen_sent({'after': 3, 'pictures': [{'id': 'screen', 'data': 'jpeg'}], 'version': 2, 'heard': set()})
+        self.assertIn('ok', await self.ink(AIM, {'drawn': True}))
+
+    async def test_a_zoom_after_its_own_scroll_is_no_picture_to_aim_from(self):
+        # (it aims in fractions of the whole screen: a region of the new one, or a moment before, isn't that)
+        self.new_call(ink_seconds=1)
+        self.inks = []
+        drive = asyncio.create_task(self.call.driving.drive_tool({'drive': {'by': 'down'}}))
+        while not self.told('drive'):
+            await asyncio.sleep(0.01)
+        self.call.driving.driven({'type': 'driven', 'id': self.told('drive')[-1]['id'], 'done': True})
+        await drive
+        for looked in ({'region': {'x': 0.5, 'y': 0, 'width': 0.5, 'height': 0.5}}, {'at': '#2'}):
+            self.assertIn('picture', await self.call.screen_tool(looked), looked)
+            self.assertEqual(await self.call.drawing.ink_tool({'draw': AIM}), {'error': server.INK_WORDS['moved']}, looked)
+            self.assertEqual(await self.call.driving.drive_tool({'drive': {'point': {'x': 0.4, 'y': 0.6}}}),
+                             {'error': server.DRIVE_WORDS['look']}, looked)
+        self.assertEqual(self.told('ink'), [])
+        self.assertEqual(len(self.told('drive')), 1, 'only the scroll went to HQ')
+        # (the whole screen now: aimed from that, it's drawn)
+        self.assertIn('picture', await self.call.screen_tool({}))
+        self.assertIn('ok', await self.ink(AIM, {'drawn': True}))
 
     async def test_hqs_note_tap_and_ring_answer_reach_the_call_on_its_websocket(self):
         old = server.Line(Socket([]))  # (HQ's connection, dropped: what's sent on it is lost)
@@ -3429,7 +3474,7 @@ class BoardDrawing(Juno):
         server.CALLS['c1'] = {'call': self.call, 'line': old, 'timer': None}
         self.call.send_event = lambda e: server.CALLS['c1']['line'].send(json.dumps(e))
         self.assertIn('ok', await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}))
-        ink = asyncio.create_task(self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}))
+        ink = asyncio.create_task(self.call.drawing.ink_tool({'draw': AIM}))
         await asyncio.sleep(0.05)
         resumed = Socket([json.dumps(m) for m in ({'resume': 'c1'}, {'type': 'note', 'id': 41}, {'type': 'asked', 'id': 1, 'answer': 'show'},
                                                   {'type': 'inked', 'id': 2, 'drawn': True})])
@@ -3451,7 +3496,7 @@ class BoardDrawing(Juno):
         for callout, phone in ((12, False), (0, True)):
             self.call.callout, self.call.phone = callout, phone
             self.assertEqual(await self.call.drawing.ask_tool({'ask_to_see': 'the shop'}), {'error': server.ASK_WORDS['none']})
-            self.assertEqual(await self.call.drawing.ink_tool({'draw': {'ring': 'Add'}}), {'error': server.INK_WORDS['none']})
+            self.assertEqual(await self.call.drawing.ink_tool({'draw': AIM}), {'error': server.INK_WORDS['none']})
         self.assertEqual(self.told('ask') + self.told('ink'), [])
 
 
@@ -3535,26 +3580,38 @@ class BoardDriving(Juno):
             self.call.driving.driven({'type': 'driven', 'id': self.moves[-1]['id'], **answer})
         return await tool
 
+    def looked(self):
+        """A picture of the board's screen now goes to the agent with a turn."""
+        self.call.screen_sent({'after': 3, 'pictures': [{'id': 'screen', 'data': 'jpeg'}], 'version': 2, 'heard': set()})
+
     async def test_a_move_goes_to_hq_and_the_tool_answers_with_hqs_word(self):
         self.moves = []
-        self.assertEqual(await self.move({'to': ' Price '}, {'done': True}), {'ok': 'Scrolled: “Price” is in view on their screen.'})
-        self.assertEqual(await self.move({'point': 'Add to basket'}, {'done': True, 'why': 'It was off their screen:\nHQ scrolled to it.'}),
-                         {'ok': 'Pointed: your pointer is on “Add to basket” on their screen. It was off their screen: HQ scrolled to it.'})
+        look = server.DRIVE_WORDS['look']
+        self.assertEqual(await self.move({'to': ' Price '}, {'done': True}),
+                         {'ok': f'Scrolled: “Price” should be in view on their screen. {look}'})
+        # (it points from a picture of the screen it scrolled, never from one before: refused till it has one)
+        self.assertEqual(await self.call.driving.drive_tool({'drive': {'point': {'x': 0.5, 'y': 1}}}), {'error': look})
+        self.looked()
+        self.assertEqual(await self.move({'point': {'x': 0.5, 'y': 1}}, {'done': True, 'why': 'Over the preview.'}),
+                         {'ok': 'Pointed: your pointer is where you aimed on their screen. Over the preview.'})
         for by, done in (('down', 'a screen further down'), ('up', 'a screen further up'), ('top', 'at the top of the page'),
                          ('bottom', 'at the bottom of the page')):
-            self.assertEqual(await self.move({'by': by}, {'done': True}), {'ok': f'Scrolled: their screen is {done}.'})
-        why = 'Nothing on their screen says “Gift wrap”: they\'re on /projects.'
-        self.assertEqual(await self.move({'point': 'Gift wrap'}, {'done': False, 'why': why}), {'error': why})
+            self.assertEqual(await self.move({'by': by}, {'done': True}), {'ok': f'Scrolled: their screen is {done}. {look}'})
+        why = 'Their screen has nothing to point at there.'
+        self.looked()
+        self.assertEqual(await self.move({'point': {'x': 0.2, 'y': 0.3}}, {'done': False, 'why': why}), {'error': why})
         self.assertEqual(await self.move({'to': 'Gift wrap'}, {'done': 'yes'}), {'error': server.DRIVE_WORDS['failed'] + '.'})
         with unittest.mock.patch.object(driving, 'DRIVE_SECONDS', 0.05):
             self.assertEqual(await self.move({'to': 'Reviews'}), {'error': server.DRIVE_WORDS['late']})
         self.call.driving.driven({'type': 'driven', 'id': 10, 'done': True})  # (too late: let be)
         for shape in ({'to': 'Price', 'by': 'down'}, {'by': 'left'}, {'point': ''}, {'to': 'x' * 121}, {'point': 2}, {}, 'down',
-                      {'scroll': 'down'}):
+                      {'scroll': 'down'}, {'point': 'Add to basket'}, {'point': {'x': 0.5}}, {'point': {'x': 2, 'y': 0}},
+                      {'point': {'x': 0.5, 'y': 0.5, 'w': 1}}):
             self.assertEqual(await self.call.driving.drive_tool({'drive': shape}), {'error': server.DRIVE_WORDS['shape']}, shape)
-        self.assertEqual(self.moves, [{'id': 1, 'to': 'Price'}, {'id': 2, 'point': 'Add to basket'}, {'id': 3, 'by': 'down'},
+        self.assertEqual(self.moves, [{'id': 1, 'to': 'Price'}, {'id': 2, 'point': {'x': 0.5, 'y': 1.0}}, {'id': 3, 'by': 'down'},
                                       {'id': 4, 'by': 'up'}, {'id': 5, 'by': 'top'}, {'id': 6, 'by': 'bottom'},
-                                      {'id': 7, 'point': 'Gift wrap'}, {'id': 8, 'to': 'Gift wrap'}, {'id': 9, 'to': 'Reviews'}])
+                                      {'id': 7, 'point': {'x': 0.2, 'y': 0.3}}, {'id': 8, 'to': 'Gift wrap'},
+                                      {'id': 9, 'to': 'Reviews'}])
         tool = asyncio.create_task(self.call.driving.drive_tool({'drive': {'by': 'down'}}))
         while len(self.told('drive')) < 10:
             await asyncio.sleep(0.01)
@@ -3568,7 +3625,7 @@ class BoardDriving(Juno):
         server.CALLS['c1'] = {'call': self.call, 'line': old, 'timer': None}
         self.call.send_event = lambda e: server.CALLS['c1']['line'].send(json.dumps(e))
         self.assertIn('ok', await self.suggest('the teacup page', TEACUP_PAGE))
-        move = asyncio.create_task(self.call.driving.drive_tool({'drive': {'point': 'Price'}}))
+        move = asyncio.create_task(self.call.driving.drive_tool({'drive': {'to': 'Price'}}))
         await asyncio.sleep(0.05)
         resumed = Socket([json.dumps(m) for m in ({'resume': 'c1'}, {'type': 'opened', 'id': 1, 'answer': 'open'},
                                                   {'type': 'driven', 'id': 2, 'done': False, 'why': 'No “Price” on their screen.'})])
@@ -3857,7 +3914,7 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         suggest = lambda what, address: {'name': 'mcp__hq__open_work', 'input': {'what': what, 'address': address}}
         move = lambda **asked: {'name': 'mcp__hq__drive', 'input': asked}
         script = [suggest('the teacup page', TEACUP_PAGE), 'Have a look.',
-                  move(to='Price'), move(point='Gift wrap'), move(by='down'), 'That is the page.',
+                  move(to='Price'), move(point={'x': 0.4, 'y': 0.6}), move(by='down'), 'That is the page.',
                   suggest('job 12', '/?open=jobs&job=12'), 'Or job 12.', suggest('job 12', '/?open=jobs&job=12'), 'Fine.',
                   'Sorry about that.']
 
@@ -3887,7 +3944,7 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
                 self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
         model = ThreadingHTTPServer(('127.0.0.1', 0), Model)
         threading.Thread(target=model.serve_forever, daemon=True).start()
-        moved = [{'done': True}, {'done': False, 'why': 'Nothing on their screen says “Gift wrap”.'}, None]  # (None: no answer)
+        moved = [{'done': True}, {'done': False, 'why': 'Nothing to point at there.'}, None]  # (None: no answer)
 
         async def hq_side(event):
             """HQ on the call's WebSocket: it moves the board's screen as `moved` says."""
@@ -3923,8 +3980,8 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
         self.assertIn(server.OPEN_WORDS['asked'].format(what='the teacup page'), last[1])
         self.assertIn(server.OPEN_WORDS['tapped']['open'].format(what='the teacup page', seen=server.OPEN_WORDS['seen'][False]),
                       last[2])
-        self.assertIn('Scrolled: “Price” is in view on their screen.', last[3])
-        self.assertIn('Nothing on their screen says “Gift wrap”.', last[4])
+        self.assertIn('Scrolled: “Price” should be in view on their screen.', last[3])
+        self.assertIn('Nothing to point at there.', last[4])
         self.assertIn(server.DRIVE_WORDS['late'], last[5])
         self.assertEqual(last[6].count('(They tapped'), 1, 'once (the CLI sends the turns before it with it)')
         self.assertIn('(They tapped Not now on your suggestion to open job 12.)', last[8])
@@ -3933,7 +3990,7 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
                                         {'type': 'open', 'id': 5, 'what': 'job 12', 'url': '/?open=jobs&job=12'},
                                         {'type': 'open', 'id': 6, 'what': 'job 12', 'url': '/?open=jobs&job=12'}])
         self.assertEqual([e for e in self.events if e['type'] == 'drive'],
-                         [{'type': 'drive', 'id': 2, 'to': 'Price'}, {'type': 'drive', 'id': 3, 'point': 'Gift wrap'},
+                         [{'type': 'drive', 'id': 2, 'to': 'Price'}, {'type': 'drive', 'id': 3, 'point': {'x': 0.4, 'y': 0.6}},
                           {'type': 'drive', 'id': 4, 'by': 'down'}])
 
     def opens(self):

@@ -18,6 +18,7 @@ import {
   openSync,
   closeSync,
   readFileSync,
+  existsSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -33,6 +34,9 @@ import { harness } from '../../coordinator/src/harness.ts';
 process.env.DEPLOY_BUILD_RESERVE_GB = '25';
 const h = await harness('disk-shares');
 const ids = { uid: process.getuid!(), gid: process.getgid!() };
+// the tests that measure a writer need the kernel's per-process I/O counters, which a lent tests helper's kernel lacks
+const noIoCounters =
+  !existsSync('/proc/self/io') && 'needs per-process I/O counters (task_io_accounting) in the kernel';
 const limits = {
   mostMb: Infinity,
   shareMb: Infinity,
@@ -112,6 +116,44 @@ test(
   },
 );
 
+// A deploy cuts a run off and HQ hands the job to another slot, its folders with it (worker.ts own): the next look
+// measures it as that slot. Without root, the first slot is one the scan can't become, so its look fails as an
+// unreadable tree would.
+test('a job taken up again in another slot is measured as that slot', async context => {
+  const rootWorker = process.getuid!() === 0;
+  // (as root under /tmp, as the 0711 test above; without root, /tmp may not be writable: the run's own temp folder)
+  const work = mkdtempSync(rootWorker ? '/tmp/disk-moved-' : join(tmpdir(), 'disk-moved-'));
+  context.after(() => rmSync(work, { recursive: true, force: true }));
+  chmodSync(work, 0o755);
+  const [first, next] = rootWorker
+    ? [
+        { uid: 65001, gid: 65001 },
+        { uid: 65002, gid: 65002 },
+      ]
+    : [{ uid: ids.uid + 1, gid: ids.gid }, ids];
+  const roots = ['jobs', 'homes', 'tests'].map(folder => join(work, folder, '7'));
+  const hand = (slot: typeof first) => {
+    if (rootWorker) for (const root of roots) execFileSync('chown', ['-R', `${slot.uid}:${slot.gid}`, root]);
+  };
+  for (const root of roots) {
+    mkdirSync(root, { recursive: true });
+    chmodSync(join(root, '..'), 0o711);
+    chmodSync(root, 0o700);
+  }
+  writeFileSync(join(roots[0], 'cache'), Buffer.alloc(48 * 1024));
+  const shares = new DiskShares(work);
+  context.after(() => shares.close());
+  const look = async (slot: typeof first) =>
+    (await shares.measure([{ job: 7, ...slot }], { freeBytes: 0, reserveBytes: 0 })).get(slot.uid)!;
+  hand(first);
+  const before = await look(first);
+  if (rootWorker) assert.equal(before.accountingError, undefined);
+  hand(next);
+  const after = await look(next);
+  assert.equal(after.accountingError, undefined);
+  assert.equal(after.used, allocated(roots));
+});
+
 test('the server reserve uses the actual database size and keeps room for a deploy build', async () => {
   const { body, status } = await h.worker('disk');
   assert.equal(status, 200);
@@ -121,6 +163,7 @@ test('the server reserve uses the actual database size and keeps room for a depl
 });
 
 test('a job hears disk cleanup instructions before its continued writer is stopped, leaving another job and cleanup running', async context => {
+  if (noIoCounters) return context.skip(noIoCounters);
   const work = temporary(context);
   const hog = await h.start({ agent: 'bolt' });
   const other = await h.start({ agent: 'rook' });
@@ -376,6 +419,7 @@ test('a recorded disk warning survives a lost reply and lost hook acknowledgment
 });
 
 test('a failed job scan stops only its own command and leaves a warned writer measured and enforceable', async context => {
+  if (noIoCounters) return context.skip(noIoCounters);
   const rootWorker = process.getuid!() === 0;
   const work = mkdtempSync(join(tmpdir(), 'disk-failure-'));
   chmodSync(work, 0o755);

@@ -83,8 +83,11 @@ mail: { domain: example.com, boardOnly: [board], groups: [board, hello] }
 # neutral. Files go in theme/guest/ (svg, png, woff2) and are served at /guest/theme/<file>, only those named here.
 # logoHeight: px (a pixel wordmark at a whole multiple of its height stays crisp, with pixelated: true); a font file has
 # a weight and a style (normal or italic); colours: #hex; buttonRadius: px (0 to 40, a pill without it);
-# dark: false for a brand with no dark variant (then no logoDark either).
+# dark: false for a brand with no dark variant (then no logoDark either). sketchbook: false keeps the Sketchbook every
+# invited person has of their own off their door's page; left out, it opens where HQ's own does (computer:
+# { sketchbook }).
 # guest:
+#   sketchbook: true
 #   logo: wordmark.svg
 #   logoDark: wordmark-dark.svg
 #   logoHeight: 45

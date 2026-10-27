@@ -18,8 +18,8 @@
 // there as that picture, nothing drawn on the page.
 import { anchorOf, found, landing, placer, roundOf } from './anchor.js';
 import { aim, boxOfLines, marked, viewNow } from './mark.js';
-import { under } from './surface.js';
-import { reset } from './tool.js';
+import { under } from './layer.js';
+import { reset } from './acts.js';
 import { expose } from './snapshot.js';
 import { snapped } from './postit.js';
 import * as marks from './marks.js';
@@ -31,9 +31,9 @@ const FLICK_SPEED = 0.8,
 const WORDS_MS = 150;
 
 const paired = () => 'paired' in document.documentElement.dataset;
-// The open mark as it goes across, or null: none, a change of an old note, or a call's
+// The open mark as it goes across, or null: none, or a call's
 const open = r =>
-  r.mode === 'note' && r.mark?.element && !r.editing && !r.call
+  r.mode === 'note' && r.mark?.element && !r.call
     ? {
         anchor: marked(r),
         round: roundNow(r),

@@ -171,6 +171,8 @@ export const FILMS = {
     scale: 0.6,
     play: async hq => {
       await hq.wait(0.5);
+      await hq.tap('#book .bk-lip'); // (folded in the films: opened beside HQ, the book brings the pin, pinsummon.js)
+      await hq.wait(1);
       await hq.tap(pin);
       await hq.wait(0.6);
       await hq.tap([520, 150]);

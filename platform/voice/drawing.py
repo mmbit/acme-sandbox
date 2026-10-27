@@ -3,9 +3,12 @@
 The board draws with the Pencil on HQ's pages, and each note it draws comes to the line as it lifts the Pencil
 (server.py Call.note: the agent gets it as it gets a shared picture, the page around the note as its picture and the
 note's words in front of the board's). The agent asks to see the board's screen (ask_to_see) and draws a ring in its own
-ink on the board's page (draw): both tools ask through the line's screen socket, as the sketch tool does, and only on
-the board's own calls. HQ shows the ask as a card with Show and Not now, which blocks nothing, and draws the ring; it
-answers both on the call's WebSocket (server.py app_call: 'asked', 'inked')."""
+ink on the board's screen (draw), aimed from its picture of that screen: it says where on the picture, and HQ draws the
+ring exactly there, never choosing a target itself (the AI decides, not an algorithm). Both
+tools ask through the line's screen socket, as the sketch tool does, and only on the board's own calls. HQ shows the ask
+as a card with Show and Not now, which blocks nothing, and draws the ring; it answers both on the call's WebSocket
+(server.py app_call: 'asked', 'inked'). A ring only catches the board's eye: it follows what it's on as the board
+scrolls and goes with it, and with the call; it's never kept."""
 import itertools
 
 from answers import Answers
@@ -13,9 +16,9 @@ from answers import Answers
 # What the agent's words may hold: what it asks to see and what it rings, as HQ's card and the ring's label show them,
 # and the few words it writes beside a ring
 WHAT_MOST, BESIDE_MOST = 120, 80
-# A ring is drawn in the board's browser as soon as HQ finds the words on its page: HQ answers well within this, and the
-# agent waits for it mid-reply (the line's tick holds the call), so past it the agent hears HQ didn't answer and says
-# what it meant in words instead.
+# A ring is drawn in the board's browser as soon as HQ has it: HQ answers well within this, and the agent waits for it
+# mid-reply (the line's tick holds the call), so past it the agent hears HQ didn't answer and says what it meant in
+# words instead.
 INK_SECONDS = 5
 # What the line says to the agent about the board's notes, in front of the board's words (the board's own turn, so in
 # its voice), and in a restarted session's recap
@@ -44,23 +47,28 @@ ASK_WORDS = {
     'gone': "This session can't ask any more: the call ended, or its session was restarted.",
     'failed': "The ask couldn't be sent just now",
 }
-# What the agent hears about its rings on the board's page
+# What the agent hears about its rings on the board's screen
 INK_WORDS = {
-    'drawn': 'Drawn: {ring} on their page, in your ink{beside}. {told}',
-    # (what HQ says of a ring it drew, or this: HQ says a ring in a preview isn't kept.)
-    'kept': "It stays on this call's page in the book.",
-    'ring': 'a ring round “{ring}”',
-    'note': 'a ring round their note {note}',
+    'drawn': ("Drawn: a ring where you aimed on their screen, in your ink{beside}. It follows what it's on as they "
+              "scroll, and goes when that does or the call ends. {told}"),
     'beside': ', with “{words}” beside it',
-    'late': "HQ didn't answer: the ring may not be on their page. Say what you meant in words.",
+    'late': "HQ didn't answer: the ring may not be on their screen. Say what you meant in words.",
     'ended': 'The call ended before HQ drew it.',
     'none': "You can draw only on the board's own calls in HQ.",
     'away': "HQ isn't connected just now (the board's connection dropped): say what you mean in words.",
-    'shape': (f'draw takes ring (the words it rings, at most {WHAT_MOST} characters) or note (its number on this '
-              f"call's page), not both, and words beside it (at most {BESIDE_MOST} characters)"),
+    'shape': (f'draw takes at (the box to ring on your latest picture of their whole screen: x, y, width and height, '
+              f'each a fraction of the picture from 0 to 1 from its top left) and words beside it (at most '
+              f'{BESIDE_MOST} characters)'),
+    # (scroll it into view, look again, aim from that picture.)
+    'moved': ("You moved their screen since your last picture of it: look at it now (the screen tool) and aim from "
+              'that picture.'),
     'gone': "This session can't draw any more: the call ended, or its session was restarted.",
     'failed': "The ring couldn't be drawn just now",
 }
+# A spot on the picture of the board's whole screen, as fractions of its width and height from its top left (the
+# screen tool's region is in the same terms)
+SPOT = ('x', 'y')
+BOX = ('x', 'y', 'width', 'height')
 
 
 def one_line(text):
@@ -87,18 +95,37 @@ def what_asked(what):
     return what if 0 < len(what) <= WHAT_MOST else None
 
 
+def fraction(value):
+    return type(value) in (int, float) and 0 <= value <= 1
+
+
+def spot_asked(spot):
+    """A spot on the picture of the board's screen ({x, y}, fractions), or None if it isn't one."""
+    if not isinstance(spot, dict) or set(spot) != set(SPOT) or not all(fraction(spot[k]) for k in SPOT):
+        return None
+    return {k: float(spot[k]) for k in SPOT}
+
+
+def box_asked(box):
+    """A box on the picture of the board's screen ({x, y, width, height}, fractions), inside it and with some size, or
+    None if it isn't one."""
+    if not isinstance(box, dict) or set(box) != set(BOX) or not all(fraction(box[k]) for k in BOX):
+        return None
+    box = {k: float(box[k]) for k in BOX}
+    inside = box['x'] + box['width'] <= 1.0001 and box['y'] + box['height'] <= 1.0001
+    return box if inside and box['width'] > 0 and box['height'] > 0 else None
+
+
 def ink_asked(draw):
-    """A ring the agent asks for ({ring, note, words}: exactly one of ring, the words it rings, and note, its number on
-    the call's page), cleaned, or None if it isn't one."""
-    if not isinstance(draw, dict) or set(draw) - {'ring', 'note', 'words'}:
+    """A ring the agent asks for ({at, words}: the box it aims at on its picture of the board's screen, and the words
+    beside it), cleaned, or None if it isn't one."""
+    if not isinstance(draw, dict) or set(draw) - {'at', 'words'}:
         return None
-    ring, note, words = draw.get('ring'), draw.get('note'), draw.get('words')
+    words = draw.get('words')
     words = one_line(words) if isinstance(words, str) else '' if words is None else None
-    if (ring is None) == (note is None) or words is None or len(words) > BESIDE_MOST:
+    if not (at := box_asked(draw.get('at'))) or words is None or len(words) > BESIDE_MOST:
         return None
-    if ring is not None and not (ring := what_asked(ring)) or note is not None and not (type(note) is int and note >= 1):
-        return None
-    return {'ring': ring, 'note': note, 'words': words}
+    return {'at': at, 'words': words}
 
 
 def refused(call, words):
@@ -120,6 +147,9 @@ class Drawing:
         self.waiting = None  # the ask the board hasn't answered yet ({id, what}): one at a time
         self.answered = []   # the agent's words on the board's taps, for its next turn
         self.inks = Answers(INK_WORDS)  # each ring HQ hasn't answered yet
+        # The agent moved the board's screen (driving.py) since its last picture of the whole of it: it looks before it
+        # rings or points (a zoom is no such picture: server.py screen_tool)
+        self.moved = False
 
     async def ask_tool(self, asked):
         """The agent's ask_to_see tool (hq_tools.py, through the line's socket): HQ shows the ask, and the tool answers
@@ -152,20 +182,25 @@ class Drawing:
         return '\n'.join(answered)
 
     async def ink_tool(self, asked):
-        """The agent's draw tool (hq_tools.py, through the line's socket): HQ draws the ring on the board's page and says
-        it did, or why not; the tool waits for that up to its call's ink_seconds (INK_SECONDS). Refused where the line
-        can't draw (refused)."""
+        """The agent's draw tool (hq_tools.py, through the line's socket): HQ draws the ring where the agent aimed on its
+        picture of the board's screen and says it did, or why not; the tool waits for that up to its call's ink_seconds
+        (INK_SECONDS). Refused where the line can't draw (refused), and once the agent has moved the board's screen
+        since its last picture of it: aimed from that picture, the ring would miss."""
         if refusal := refused(self.call, INK_WORDS):
             return {'error': refusal}
         if not (ink := ink_asked(asked.get('draw'))):
             return {'error': INK_WORDS['shape']}
+        if self.moved:
+            return {'error': INK_WORDS['moved']}
         answer = await self.inks.ask(self.call, {'type': 'ink', 'id': next(self.ids), **ink}, self.call.limits.ink_seconds)
         if 'error' in answer:
             return answer
-        ring = INK_WORDS['ring'].format(ring=ink['ring']) if ink['ring'] else INK_WORDS['note'].format(note=ink['note'])
         beside = INK_WORDS['beside'].format(words=ink['words']) if ink['words'] else ''
-        told = answer['said'] or INK_WORDS['kept']
-        return {'ok': INK_WORDS['drawn'].format(ring=ring, beside=beside, told=told)}
+        return {'ok': INK_WORDS['drawn'].format(beside=beside, told=answer['said']).strip()}
+
+    def looked(self):
+        """The agent has a picture of the board's whole screen as it is now: it aims from that."""
+        self.moved = False
 
     def inked(self, event):
         """HQ's answer to a ring: drawn (with what HQ says of it), or why not, in HQ's words. One for a ring that isn't

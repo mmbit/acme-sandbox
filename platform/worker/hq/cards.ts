@@ -20,6 +20,7 @@ const CARD_USAGE = `[KEY,KEY | live:<slug> | site:<slug>] [--address] [--photo "
 export const ask = {
   help: `
    hq ask <kind> <urgency> "title" <body-file> ${CARD_USAGE} [--when deployed:<job>]... [--walk]
+                                                     [--note <n> | --page <address>]
                                                      ask the board now; prints the request id (session stays alive).
                                                      Every card has a topic, a word or two the board's list of open
                                                      cards groups it under (e.g. billing, hosting): an open card's
@@ -118,8 +119,16 @@ export const ask = {
                                                      "Walk me through it". Its tap rings you about the card, on a call
                                                      that opens a page in the board's book (kept only if it writes on
                                                      it): open the work on its screen, drive it and ring things as you
-                                                     talk`,
-  // (--walk)
+                                                     talk
+                                                     A card about a note the board sent you: --note <n> (its number in
+                                                     your brief), and the card shows in the board's book too, clipped
+                                                     under that note, its choices and questions answered there or on
+                                                     the desk phone: one answer closes both. This is how to ask the
+                                                     board about a note (an answer of yours that ends in a question
+                                                     asks nothing). About a page with no note on it: --page <address>
+                                                     (a path on HQ, or a preview's https address): the book clips it
+                                                     on your sheet page of the day, under your ring`,
+  // (--walk; --note, --page)
   // (topics:, zips, --visible-from; --address; --questions; notice; --when)
   // (a pick-many, --file)
   // (Before and after; pictures in pairs on any card)
@@ -130,7 +139,7 @@ export const ask = {
     const { visibleFrom, questions, when } = card.request;
     await checkCard(card.bodyPath, card.back, { visibleFrom, questions, when });
     const refusal =
-      "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides).";
+      "The coordinator didn't take the request. A --topic is 1 to 40 characters. Photo, document and zip fields need 1 to 8 different labels of 1 to 80 characters, and can't go with keys or an approval; --documents-to names one of the company's own addresses, not one for the board alone; an approval grants live:<slug> or site:<slug> only (several slugs comma-separated); --product and --back name products (products/<slug>), never on a card for keys; --address goes on a credential card asking for four of a company tool's own keys; --decides names an awaited CEO decision or your review-assigned visual decision; a notice asks nothing (no keys, approval, fields or --decides); --note names a note of the board's sent to you, by its number in your brief, --page a path on HQ or a preview's https address, never both."; // (--note, --page)
     const filed = await api.orStop(api.postJson('request', api.withSpeaker(card.request)), refusal);
     const id = text(filed.id);
     if (filed.held)
@@ -166,6 +175,10 @@ export const request = {
     if (card.request.walk)
       stop(
         "Nothing was filed: --walk offers a walk-through of finished work, which a parked job hasn't got. Ask with hq ask --walk once the work's done.",
+      );
+    if (card.request.note !== undefined || card.request.page !== undefined)
+      stop(
+        'Nothing was filed: --note and --page go with hq ask (the book shows the card while your job goes on). Ask with hq ask, queue the step that needs the answer with hq job --after request:<id>, and finish this job.',
       );
     if (card.request.when)
       stop(
@@ -228,6 +241,8 @@ async function readCard(given: string[], command: string): Promise<Card> {
     stop(`Nothing was filed: the body file ${bodyPath} can't be read (a file's path; - isn't stdin).`);
   const body = readText(bodyPath).replace(/\n+$/, '');
   if (body.trim() === '') stop(`Nothing was filed: the body file ${bodyPath} is empty. The card's text goes in it.`);
+  if (flags.note !== '' && !/^\d+$/.test(flags.note))
+    stop(`Nothing was filed: --note is a note's number, the number in your brief (not "${flags.note}").`);
   const request = {
     kind,
     urgency,
@@ -247,6 +262,8 @@ async function readCard(given: string[], command: string): Promise<Card> {
     ...(flags.decides !== '' && { decides: Number(flags.decides) }),
     ...(flags.when.length > 0 && { when: flags.when }),
     ...(flags.walk && { walk: true }),
+    ...(flags.note !== '' && { note: Number(flags.note) }), // (note, page)
+    ...(flags.page !== '' && { page: flags.page }),
   };
   return { bodyPath, back: flags.back, request };
 }
@@ -302,6 +319,8 @@ type CardFlags = {
   when: string[];
   address: boolean;
   walk: boolean;
+  note: string; // (note, page)
+  page: string;
 };
 
 // (--product-shot: a photo field marked as a product photo)
@@ -329,6 +348,8 @@ const NEEDS = new Map([
   ['--visible-from', 'a day (2026-10-13)'],
   ['--decides', 'a decision (hq decision)'],
   ['--when', 'work going live (deployed:<job>)'],
+  ['--note', "a note's number (from your brief)"], // (--note, --page)
+  ['--page', "a page's address (a path on HQ, or a preview's https address)"],
 ]);
 
 // The flags that take no value: an address card, and a walk-through offered
@@ -337,27 +358,32 @@ const SWITCHES = new Map<string, 'address' | 'walk'>([
   ['--walk', 'walk'],
 ]);
 
+// A card's flags before any is read (out of takeCardFlags)
+const noFlags = (): CardFlags => ({
+  topic: '',
+  approves: '',
+  photos: [],
+  documents: [],
+  zips: [],
+  documentsTo: '',
+  questions: '',
+  files: [],
+  products: [],
+  back: [],
+  visibleFrom: '',
+  decides: '',
+  when: [],
+  address: false,
+  walk: false,
+  note: '',
+  page: '',
+});
+
 // --topic, --approves <grant>, --photo / --optional-photo / --product-shot / --optional-product-shot "label",
 // --document / --optional-document "label" with --documents-to <address> (each field with its address), --zip /
 // --optional-zip "label", and --product / --back <slug>
 function takeCardFlags(given: string[]) {
-  const flags: CardFlags = {
-    topic: '',
-    approves: '',
-    photos: [],
-    documents: [],
-    zips: [],
-    documentsTo: '',
-    questions: '',
-    files: [],
-    products: [],
-    back: [],
-    visibleFrom: '',
-    decides: '',
-    when: [],
-    address: false,
-    walk: false,
-  };
+  const flags = noFlags();
   const args: string[] = [];
   for (let i = 0; i < given.length; i++) {
     const flag = given[i];
@@ -383,6 +409,8 @@ function takeCardFlags(given: string[]) {
     else if (flag === '--when') flags.when.push(value);
     else if (flag === '--questions') flags.questions = value;
     else if (flag === '--file') flags.files.push(value);
+    else if (flag === '--note') flags.note = value;
+    else if (flag === '--page') flags.page = value;
     else flags.documentsTo = value;
   }
   checkDocuments(flags);

@@ -8,6 +8,8 @@ import { oneLine } from './agreements.ts';
 import { deskLets, inProcess, loopJobs, WORK_LEAD } from './jobs.ts';
 import { dropped, finished } from './windows.ts';
 import { findProject, findThread, ownerOf, type Thread } from './projects.ts';
+import { threadClash } from './names.ts';
+import { oneTask } from './made.ts';
 import { publish } from './events.ts';
 import { shedRefusal } from './pauses.ts';
 import * as redraws from './redraws.ts';
@@ -16,7 +18,9 @@ import * as predictionlog from './predictionlog.ts'; // (its table, whose thread
 
 // hq thread move <project>/<slug> <project>: the thread becomes <project>/<slug> there, and everything that names it
 // follows: its jobs, proposals, pause (a paused thread stays paused, and the call item it carries with it) and prediction
-// records. Its window is on its own row. The thread, or why not.
+// records. Its window is on its own row. An open thread's name must be free in the product it moves to (names.ts
+// threadClash; HQ's one-task threads aside, as when they're made). The thread,
+// or why not.
 export function moveThread(id: string, to: string, agent: string, why = ''): Thread | string {
   why = oneLine(why);
   const thread = findThread(id);
@@ -30,6 +34,8 @@ export function moveThread(id: string, to: string, agent: string, why = ''): Thr
     moved = `${project.id}/${from.slice(thread.project.length + 1)}`;
   const taken = findThread(moved);
   if (taken && taken.id !== from) return `${moved} is a thread already`;
+  const clash = thread.status === 'open' && !oneTask(from) ? threadClash(project, thread.name, from) : undefined;
+  if (clash) return clash;
   const held = shedRefusal(from, { project: project.id }, agent, why);
   if (held) return held;
   const changed = redraws.withoutLoop(from, () => newId(from, moved, project.id));

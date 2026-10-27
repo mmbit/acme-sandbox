@@ -13,7 +13,7 @@ export type DiskUse = {
 type Owner = { job: number; uid: number; gid?: number };
 
 export class DiskShares {
-  private jobs = new Map<number, { tree: DiskScan; warned: boolean; bytes?: number }>();
+  private jobs = new Map<number, { tree: DiskScan; ids: string; warned: boolean; bytes?: number }>();
 
   private work: string;
   constructor(work: string) {
@@ -29,15 +29,7 @@ export class DiskShares {
       }
     const uses = new Map<number, DiskUse>();
     for (const { job, uid, gid } of jobs) {
-      let state = this.jobs.get(job);
-      if (!state) {
-        const tree = new DiskScan(
-          ['jobs', 'homes', 'tests'].map(folder => join(this.work, folder, String(job))),
-          { uid, gid: gid ?? uid },
-        );
-        state = { tree, warned: false };
-        this.jobs.set(job, state);
-      }
+      const state = this.jobState(job, uid, gid);
       try {
         const used = await state.tree.measure();
         uses.set(uid, { used, share: 0, warned: state.warned, grew: state.bytes !== undefined && used > state.bytes });
@@ -64,6 +56,25 @@ export class DiskShares {
       if (use.used !== null && use.used <= share) this.jobs.get(job)!.warned = use.warned = false;
     }
     return uses;
+  }
+
+  // A job taken up again in another slot has its folders handed to that slot, so its scan starts again as that slot:
+  // the last one's can't open them (EACCES). The scan's owner and the cache key
+  // come from one value, so the two can't disagree.
+  private jobState(job: number, uid: number, gid?: number) {
+    const owner = { uid, gid: gid ?? uid };
+    const ids = `${owner.uid}:${owner.gid}`;
+    let state = this.jobs.get(job);
+    if (state?.ids !== ids) {
+      state?.tree.close();
+      const tree = new DiskScan(
+        ['jobs', 'homes', 'tests'].map(folder => join(this.work, folder, String(job))),
+        owner,
+      );
+      state = { tree, ids, warned: false };
+      this.jobs.set(job, state);
+    }
+    return state;
   }
 
   scanners() {

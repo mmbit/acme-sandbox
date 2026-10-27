@@ -32,46 +32,58 @@ export type Play = (
 // What hq estimate --backtest --save writes: the kept snapshots and each of their work jobs that landed since.
 export type Saved = { days: number; version: number; snapshots: snapshots.Kept[]; landed: [number, number][] };
 
-// hq estimate --backtest [--days n]: the server's play on the snapshots of the last n days (7).
+// hq estimate --backtest [--days n]: the server's play on the snapshots of the last n days (7). They are listed first,
+// and each is read whole again when a play needs it.
 export async function report(ask: { days?: unknown }, now = Date.now()) {
-  const kept = keptOver(ask, now);
-  if (typeof kept === 'number') return kept;
-  const landed = landings(workIn(kept.snapshots));
-  const leads = await score(kept.snapshots, landed, play);
-  const rounds = await scoreRounds(kept.snapshots, play);
+  const days = daysOf(ask);
+  if (days === undefined) return 400;
+  const listed = await snapshots.listSince(now - days * DAY_MS);
+  const landed = landedIn(listed);
+  const leads = await score(listed, landed, play);
+  const rounds = await scoreRounds(listed, play);
   const coverage = {
     planner_snapshots: rounds.snapshots,
-    legacy_snapshots: kept.snapshots.length - rounds.snapshots,
+    legacy_snapshots: listed.length - rounds.snapshots,
   };
-  return { days: kept.days, version: PLAY_VERSION, snapshots: kept.snapshots.length, leads, rounds, coverage };
+  return { days, version: PLAY_VERSION, snapshots: listed.length, leads, rounds, coverage };
 }
 
 // hq estimate --backtest --save <file>: the snapshots and the landings, for a play on a branch (scripts/backtest.ts).
-export function saved(ask: { days?: unknown }, now = Date.now()): Saved | number {
-  const kept = keptOver(ask, now);
-  if (typeof kept === 'number') return kept;
-  const landed = landings(workIn(kept.snapshots));
-  return { days: kept.days, version: PLAY_VERSION, snapshots: kept.snapshots, landed: [...landed] };
+// It is a Saved's JSON, built from each snapshot's stored text without parsing it, and sent as it is (server.ts send).
+export async function saved(ask: { days?: unknown }, now = Date.now()) {
+  const days = daysOf(ask);
+  if (days === undefined) return 400;
+  const listed = await snapshots.listSince(now - days * DAY_MS);
+  const landed = landedIn(listed);
+  const rows: Buffer[] = [];
+  const pause = snapshots.paced();
+  for (const l of listed) {
+    rows.push(l.json());
+    await pause();
+  }
+  return Buffer.concat([
+    Buffer.from(`{"days":${days},"version":${PLAY_VERSION},"snapshots":[`),
+    ...rows.flatMap((row, n) => (n ? [COMMA, row] : [row])),
+    Buffer.from(`],"landed":${JSON.stringify([...landed])}}`),
+  ]);
 }
+const COMMA = Buffer.from(',');
 
-function keptOver(ask: { days?: unknown }, now: number) {
+const landedIn = (listed: snapshots.Listed[]) => landings([...new Set(listed.flatMap(l => l.work.map(j => j.id)))]);
+
+function daysOf(ask: { days?: unknown }) {
   const days = ask.days === undefined ? 7 : Number(ask.days);
-  if (!Number.isInteger(days) || days < 1 || days > snapshots.KEEP_DAYS) return 400;
-  return { days, snapshots: snapshots.since(now - days * DAY_MS) };
+  return Number.isInteger(days) && days >= 1 && days <= snapshots.KEEP_DAYS ? days : undefined;
 }
-
-const workIn = (kept: snapshots.Kept[]) => [
-  ...new Set(kept.flatMap(k => k.snapshot.jobs.filter(j => j.kind === 'work').map(j => j.id))),
-];
 
 // One job's prediction at one lead, and its landing.
 export type Sample = { lead: string; merged: number | null; held: number | null; landed: number };
 
-// The play on each snapshot a job's lead falls on (each snapshot played once, both paces), by lead. A play of a day's
-// queue takes tens of milliseconds, so the server answers other requests between two.
-export async function score(kept: snapshots.Kept[], landed: Map<number, number>, playIt: Play) {
-  const ordered = kept.filter(k => k.snapshot.planner === 3).sort((a, b) => a.at - b.at);
-  const work = ordered.map(k => new Set(k.snapshot.jobs.filter(j => j.kind === 'work').map(j => j.id)));
+// The play on each snapshot a job's lead falls on (each snapshot read whole and played once, both paces), by lead. The
+// server answers other requests between two plays.
+export async function score(listed: snapshots.Listed[], landed: Map<number, number>, playIt: Play) {
+  const ordered = listed.filter(l => l.planner === 3).sort((a, b) => a.at - b.at);
+  const work = ordered.map(l => new Set(l.work.map(j => j.id)));
   const picks = LEADS.flatMap(({ lead, ms }) =>
     [...landed].flatMap(([job, at]) => {
       const i = ordered.findLastIndex((k, n) => k.at <= at - ms && k.at > at - ms - SPAN_MS && work[n].has(job));
@@ -80,7 +92,7 @@ export async function score(kept: snapshots.Kept[], landed: Map<number, number>,
   );
   const plays = new Map<number, { usual: Map<number, Outlook>; slow: Map<number, Outlook> }>();
   for (const i of new Set(picks.map(p => p.i))) {
-    const { snapshot, sizes } = ordered[i];
+    const { snapshot, sizes } = ordered[i].read();
     plays.set(i, {
       usual: playIt(snapshot, new Map(sizes.usual), { pace: 'usual' }),
       slow: playIt(snapshot, new Map(sizes.slow), { pace: 'slow' }),

@@ -4,12 +4,10 @@
 // zoom is off 100% its % shows at the row's right end, a tap back to 100%. Ctrl/⌘ with +, − and 0 zoom too, while the
 // book has the pointer or the focus (never HQ's page's own zoom). (Your book: job
 // #19223; the overview and the zoom's % in the row: job #19861)
-import { button, island, setPressed, MOD } from './bookui.js';
+import { button, island, setPressed, MOD, lineIcon as svg } from './bookui.js';
 import { esc } from '../util.js';
 import { dayName, nameOf } from './bookhead.js';
 
-const svg = d =>
-  `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
 const ICONS = {
   // (the day's pages laid out: four leaves in a grid)
   overview: svg(

@@ -5,9 +5,9 @@
 // The board's menu says whose sheet a note there joins ("For Bolt · 1 on the sheet"), every line on one line on a phone,
 // and its Open the book opens HQ's book at Bolt's sheet (on a phone its spread, over the viewer; after a late goodbye
 // too); in a tab of its own it opens HQ at that sheet; its general note goes pinned to nothing. Reviews' Sent (HQ's mock): each sheet sent as one
-// block, no ticks, Send or Discard. An outside reviewer keeps My notes: a sidebar with a dozen screenshots loaded as it
-// scrolls (phone and desktop), Change, Redraw, Delete, Escape; Shift + drag draws a rectangle, a circle in every other
-// way; pictures pasted, dropped and taken off a note (scaled on the device), in My notes and kept by a change. A note
+// block, no ticks, Send or Discard. An outside reviewer's menu is a general note and where their notes go, asking
+// nothing of theirs back; Shift + drag draws a rectangle, a circle in every other way; pictures pasted, dropped and
+// taken off a note (scaled on the device), and a note cancelled while one is read goes nowhere. A note
 // with pictures, put on its sheet and sent by the real coordinator, is one snip with the pictures under the screenshot,
 // which hq note saves. A shelf's note posts to the shelf's own path. HQ itself always has the same tool, its notes going
 // into the book; while the viewer shows a preview, only the preview's pin shows.
@@ -185,10 +185,8 @@ await context.route(`${PRODUCT}/**`, r => {
   if (path === '/__review/notes') return r.fulfill({ json: bookNote(r.request().postDataJSON()) });
   if (path === '/__review/mine') {
     askedMine.push(url.searchParams.get('page'));
-    return r.fulfill({ json: { book: OWNER, notes: onSheet().length, list: [], sent: false, more: false } });
+    return r.fulfill({ json: { book: OWNER, notes: onSheet().length } });
   }
-  if (path === '/__review/edit' || path === '/__review/delete')
-    return r.fulfill({ status: 404, json: { error: 'not a note of yours still to go' } });
   return r.fulfill({ contentType: 'text/html', body: PAGE });
 });
 await page.goto(`${base}/?intro=0`);
@@ -212,7 +210,8 @@ const showsMark = (img, mark, viewportWidth) =>
     },
     [mark, viewportWidth],
   );
-async function pinNote(where, text, startPin, mouse = page.mouse) {
+// counts: the board's menu counts it (an outsider's has no count)
+async function pinNote(where, text, startPin, mouse = page.mouse, counts = true) {
   await startPin();
   await where.waitForSelector('review-mode .veil:not([hidden])');
   const h1 = await where.locator('h1').boundingBox();
@@ -229,8 +228,9 @@ async function pinNote(where, text, startPin, mouse = page.mouse) {
   const count = () => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent;
   const was = await where.evaluate(count);
   await where.click('review-mode .send');
+  await where.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
   // pinned: the pin counts it
-  await where.waitForFunction(`(${count})() !== ${JSON.stringify(was)}`, null, { timeout: 20_000 });
+  if (counts) await where.waitForFunction(`(${count})() !== ${JSON.stringify(was)}`, null, { timeout: 20_000 });
 }
 // nothing of review mode's covers the page after a pin: only its pin (the dock) is there
 const overPage = where =>
@@ -424,8 +424,8 @@ await own.waitForFunction(
 );
 await own.close();
 
-// ---- an outside reviewer on a share, in a browser of their own: their notes wait on the share as theirs (My notes),
-// each screenshot and picture served from HQ's host (guests.ts's review-shot door)
+// ---- an outside reviewer on a share, in a browser of their own: each note goes as it's pinned (on the board's sheet,
+// the coordinator's), and their menu says so, asking the coordinator nothing of theirs back
 const guest = await openPage(browser, { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, hasTouch: true });
 await guest.context.addInitScript(() => {
   const a = Element.prototype.attachShadow;
@@ -433,266 +433,59 @@ await guest.context.addInitScript(() => {
     return a.call(this, { ...o, mode: 'open' });
   };
 });
-const theirs = [],
-  photos = new Map(),
-  edits = []; // their notes; a note's id → its screenshot, as review mode sent it
-const note = (text, extra = {}) => ({
-  id: ++lastId,
-  created: new Date().toISOString(),
-  page: '/',
-  note: text,
-  element: {
-    v: 1,
-    url: `${PRODUCT}/`,
-    el: { tag: 'h1', selector: 'h1', text: 'Hello' },
-    ink: [],
-    kind: 'pin',
-    area: null,
-  },
-  viewport: {},
-  shot: false,
-  status: 'outside',
-  ...extra,
-});
-const waiting = () => theirs.filter(n => n.status === 'outside');
-// A note's pictures as the coordinator keeps them: the ones a change keeps by name, new ones (data URLs) under a name of
-// their own
-let pictureNames = 0;
-const pictured = (id, list, had = []) =>
-  list.map(
-    p =>
-      had.find(q => q.file === p) ?? {
-        file: `${id}-p-${++pictureNames}.${p.startsWith('data:image/png') ? 'png' : 'jpg'}`,
-        data: p,
-      },
-  );
-const shotUrl = id => `${base}/guest/review-shot/${id}`;
-await guest.context.route(`${base}/guest/review-shot/**`, r => {
-  const url = new URL(r.request().url()),
-    id = +url.pathname.split('/').pop(),
-    pic = url.searchParams.get('pic');
-  const picture = pic && theirs.find(n => n.id === id)?.pictures?.find(p => p.file === pic);
-  if (pic)
-    return picture
-      ? r.fulfill({
-          contentType: picture.data.slice(5, picture.data.indexOf(';')),
-          body: Buffer.from(picture.data.split(',')[1], 'base64'),
-        })
-      : r.fulfill({ status: 404, body: '' });
-  return photos.has(id)
-    ? r.fulfill({ contentType: 'image/jpeg', body: Buffer.from(photos.get(id).split(',')[1], 'base64') })
-    : r.fulfill({ status: 404, body: '' });
-});
+const theirs = [], // their notes, as review mode posted them
+  GONE = ['/__review/mine', '/__review/submit', '/__review/more', '/__review/edit', '/__review/delete'],
+  askedGone = [];
 await guest.context.route(`${PRODUCT}/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, outsideJs)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
   if (path === '/__review/notes') {
-    const body = r.request().postDataJSON(),
-      added = note(body.note, { posted: body });
-    if (body.shot) {
-      Object.assign(added, { element: body.element, viewport: body.viewport, shot: true });
-      photos.set(added.id, body.shot);
-    }
-    if (body.element?.kind === 'general')
-      added.element = { v: 1, url: body.page, el: null, ink: [], kind: 'general', area: null };
-    if (body.pictures?.length) added.pictures = pictured(added.id, body.pictures);
-    theirs.push(added);
-    return r.fulfill({ json: { ok: true, id: added.id } });
+    const body = r.request().postDataJSON();
+    theirs.push({ note: body.note, element: body.element, posted: body });
+    return r.fulfill({ json: { ok: true, id: ++lastId } });
   }
-  // their notes still to go, as review mode's menu reads and changes them; ?shots: with each one's screenshot
-  if (path === '/__review/mine') {
-    const withShots = new URL(r.request().url()).searchParams.has('shots');
-    // (as feedback.ts mine() gives them: the anchor, and what frames the screenshot)
-    const markOf = ({ element: e }) =>
-      e.kind === 'general'
-        ? null
-        : { v: e.v, url: e.url, el: e.el, view: e.view, ink: e.ink, kind: e.kind, area: e.area };
-    const list = waiting().map(n => ({
-      id: n.id,
-      note: n.note,
-      page: n.page,
-      kind: n.element.kind,
-      text: n.element.el?.text ?? '',
-      ...(withShots
-        ? {
-            here: true,
-            mark: markOf(n),
-            shot: n.shot
-              ? {
-                  url: shotUrl(n.id),
-                  mark: {
-                    kind: n.element.kind,
-                    area: n.element.area,
-                    el: n.element.el && { box: n.element.el.box },
-                    view: n.element.view,
-                  },
-                }
-              : null,
-            pictures: (n.pictures ?? []).map(p => ({ file: p.file, url: `${shotUrl(n.id)}?pic=${p.file}` })),
-          }
-        : {}),
-    }));
-    return r.fulfill({ json: { notes: list.length, list, sent: false, more: false } });
-  }
-  if (path === '/__review/edit' || path === '/__review/delete') {
-    const body = r.request().postDataJSON(),
-      { id, note: words } = body,
-      n = waiting().find(x => x.id === id);
-    if (!n) return r.fulfill({ status: 404, json: { error: 'not a note of yours still to go' } });
-    Object.assign(n, path.endsWith('edit') ? { note: words } : { status: 'deleted' });
-    if (path.endsWith('edit')) edits.push(body);
-    if (body.element) {
-      Object.assign(n, { element: body.element, viewport: body.viewport });
-      if (body.shot) photos.set(n.id, body.shot);
-    } // (a mark drawn again)
-    if (body.pictures) n.pictures = pictured(n.id, body.pictures, n.pictures);
-    return r.fulfill({ json: { ok: true } });
+  // (none of these is an outsider's: the coordinator's 404)
+  if (GONE.includes(path)) {
+    askedGone.push(path);
+    return r.fulfill({ status: 404, json: { error: 'not found' } });
   }
   return r.fulfill({ contentType: 'text/html', body: PAGE });
 });
 const tab = guest.page,
   context2 = guest.context;
 await tab.goto(`${PRODUCT}/`);
-await pinNote(tab, 'Seen in a browser tab', () => tab.click('review-mode .fab', { force: true }), tab.mouse);
-await tab.click('review-mode .more');
-assert.deepEqual(
-  await items(tab),
-  ['General note', 'My notes', 'Send my notes'],
-  'an outsider keeps My notes and Send my notes',
+await pinNote(tab, 'Seen in a browser tab', () => tab.click('review-mode .fab', { force: true }), tab.mouse, false);
+assert.ok(
+  theirs.some(n => n.note === 'Seen in a browser tab'),
+  'their note went as it was pinned',
 );
-assert.equal(await tab.textContent('review-mode .menu .cap'), 'Review · 1 note to send');
+await tab.click('review-mode .more');
+assert.deepEqual(await items(tab), ['General note'], "an outsider's menu: a general note");
+assert.equal(await tab.textContent('review-mode .menu .cap'), 'Review · to Testco’s book');
+assert.equal(await tab.textContent('review-mode .more .count'), '', 'no count of theirs');
 assert.deepEqual(await tab.evaluate(wrappedMenuLines), [], 'no line of the menu wraps on a phone');
+await shot('menu-outsider', tab);
 await tab.click('review-mode [data-general]');
 await tab.waitForSelector('review-mode .sheet:not([hidden])');
 await tab.fill('review-mode textarea', 'The pages greet in two different ways');
 await tab.click('review-mode .send');
 await tab.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
-const theirGeneral = theirs.find(n => n.note === 'The pages greet in two different ways');
-await tab.waitForFunction(
-  n => document.querySelector('review-mode').shadowRoot.querySelector('.more .count').textContent === n,
-  String(waiting().length),
+assert.equal(
+  theirs.find(n => n.note === 'The pages greet in two different ways')?.element.kind,
+  'general',
+  'their general note, pinned to nothing',
 );
 assert.equal(
   booked.filter(n => /Seen in a browser tab|greet/.test(n.words)).length,
   2,
-  "the board's own two, and none of theirs, in the book",
+  "the board's own two, and none of theirs, in the board's played book",
 );
-// My notes: the sidebar, every note with its screenshot (a general note has none), the words in full and the page; they
-// change one's words there, and delete another (two taps)
-const tabNote = theirs.find(n => n.note === 'Seen in a browser tab'),
-  general = theirGeneral;
-const side = async where => {
-  await where.click('review-mode .more');
-  await where.click('review-mode [data-list]');
-  await where.waitForSelector('review-mode .side:not([hidden]) li');
-  // (once it has slid in)
-  return where.$eval('review-mode .side', async el => {
-    await Promise.all(el.getAnimations().map(a => a.finished));
-    const r = el.getBoundingClientRect();
-    return [r.left, r.right, innerWidth];
-  });
-};
-const entries = where =>
-  where.$$eval('review-mode .side li', ls =>
-    ls.map(l => ({
-      words: l.querySelector('.words')?.textContent,
-      where: l.querySelector('.where')?.textContent,
-      shot: l.querySelector('.shot img')?.src ?? null,
-      loaded: (l.querySelector('.shot img')?.naturalWidth ?? 0) > 0,
-      framed: !!l.querySelector('.shot img.framed'),
-    })),
-  );
 await tab.setViewportSize({ width: 1280, height: 800 });
-const [left, right, width] = await side(tab);
-assert.ok(right === width && left > width / 2, `a sidebar on the right of a desktop (${left}–${right} of ${width})`);
-assert.ok(await tab.isHidden('review-mode .dock'), 'the pin steps aside while it is open');
-assert.match(await tab.textContent('review-mode .side .cap'), /^My notes · \d+ to send$/);
-await tab.waitForFunction(
-  () =>
-    [...document.querySelector('review-mode').shadowRoot.querySelectorAll('.side .shot img')]
-      .slice(0, 1)
-      .every(i => i.naturalWidth > 0),
-  null,
-  { timeout: 10_000 },
-);
-const listed = await entries(tab);
-const pinnedEntry = listed.find(e => e.words === 'Seen in a browser tab'),
-  generalEntry = listed.find(e => e.words === 'The pages greet in two different ways');
-assert.ok(pinnedEntry && generalEntry, JSON.stringify(listed));
-assert.equal(pinnedEntry.shot, shotUrl(tabNote.id), "its screenshot comes from HQ's host, not the product's");
-assert.ok(pinnedEntry.loaded && pinnedEntry.framed, 'the screenshot is there, framed on the mark');
-assert.equal(pinnedEntry.where, 'On “Hello, whoever you are” · /');
-assert.deepEqual(
-  [generalEntry.shot, generalEntry.where],
-  [null, 'General note · written on /'],
-  'a general note has no screenshot',
-);
-await shot('my-notes-desktop', tab);
-// a tap on a screenshot shows it bigger; Escape puts it away, then the sidebar
-await tab.click(`review-mode .side li:has-text("Seen in a browser tab") .shot`);
-await tab.waitForSelector('review-mode .zoom:not([hidden])');
-assert.ok(
-  await tab.$eval('review-mode .zoom img', i => {
-    const r = i.getBoundingClientRect();
-    return i.naturalWidth > 0 && r.height > innerHeight / 2 && r.top >= 0 && r.bottom <= innerHeight;
-  }),
-  'the whole screen, bigger, and all of it in view',
-);
-await shot('my-notes-zoom', tab);
-await tab.keyboard.press('Escape');
-assert.ok(
-  (await tab.isHidden('review-mode .zoom')) && (await tab.isVisible('review-mode .side')),
-  'Escape puts the picture away first',
-);
-// Change: the note's own sheet (a general note's without a photo or a mark), and Save goes back to My notes
-await tab.click('review-mode .side li:has-text("The pages greet") button:has-text("Change")');
-await tab.waitForSelector('review-mode .sheet:not([hidden])');
-assert.ok(
-  (await tab.isHidden('review-mode .side')) &&
-    (await tab.isHidden('review-mode .redraw')) &&
-    (await tab.isHidden('review-mode .polaroid')),
-);
-assert.equal(await tab.inputValue('review-mode .sheet textarea'), 'The pages greet in two different ways');
-assert.equal(await tab.textContent('review-mode .send'), 'Save');
-await tab.fill('review-mode .sheet textarea', 'The pages greet in two different ways: pick one');
-await tab.click('review-mode .send');
-await tab.waitForSelector('review-mode .side:not([hidden]) .words:has-text("pick one")');
-assert.equal(general.note, 'The pages greet in two different ways: pick one');
-assert.equal(edits.at(-1).element, undefined, 'words alone');
-// Delete, two taps
-const del = 'review-mode .side li:has-text("Seen in a browser tab") button:has-text("Delete")';
-await tab.click(del);
-assert.equal(
-  await tab.textContent('review-mode .side li:has-text("Seen in a browser tab") .acts .sure'),
-  'Tap again to delete',
-);
-assert.equal(tabNote.status, 'outside', 'the first tap only asks');
-await tab.click('review-mode .side li:has-text("Seen in a browser tab") .acts .sure');
-await tab.waitForSelector('review-mode .side li:has-text("Seen in a browser tab")', { state: 'detached' });
-assert.equal(tabNote.status, 'deleted');
-await tab.waitForFunction(
-  n => document.querySelector('review-mode').shadowRoot.querySelector('.more .count').textContent === n,
-  String(waiting().length),
-);
-await tab.click('review-mode .side .x');
-assert.ok(
-  (await tab.isHidden('review-mode .side')) && (await tab.isVisible('review-mode .fab')),
-  'its button closes it, and the pin is back',
-);
 
 // ---- Shift + drag draws a rectangle: its four corners are the line (the pen's, ink.js), and the note is a circle's in
-// every other way. Without Shift, the freehand line. Change brings the mark back on the element, Redraw marks it again
-// (Escape there puts the sheet back), and a note pinned on another page opens that page first
-// (the ink on screen: how much of it, and whether there's some within 5 px of a point.)
-const ink = () =>
-  tab.$eval('review-mode', h => {
-    const c = h.shadowRoot.querySelector('.ink');
-    return c
-      .getContext('2d')
-      .getImageData(0, 0, c.width, c.height)
-      .data.filter((v, i) => i % 4 === 3 && v > 128).length;
-  });
+// every other way. Without Shift, the freehand line.
+// (the ink on screen: whether there's some within 5 px of a point.)
 const inkNear = ([x, y]) =>
   tab.$eval(
     'review-mode',
@@ -784,151 +577,12 @@ assert.ok(
   circled.element.kind === 'circle' && circled.element.ink[0].points.length >= 16,
   'without Shift, the freehand line',
 );
-// Change: the rectangle back where it was, on its element
-await side(tab);
-await tab.click('review-mode .side li:has-text("Box this line") button:has-text("Change")');
-await tab.waitForSelector('review-mode .sheet:not([hidden])');
-assert.ok(await tab.isHidden('review-mode .side'), 'the sidebar steps aside');
-assert.equal(await tab.inputValue('review-mode .sheet textarea'), 'Box this line');
-await tab.waitForFunction(() => {
-  const c = document.querySelector('review-mode').shadowRoot.querySelector('.ink');
-  return c
-    .getContext('2d')
-    .getImageData(0, 0, c.width, c.height)
-    .data.some(v => v);
-});
-assert.ok(await inkOn(edges), 'the rectangle is back around the line');
-await shot('change-rectangle', tab);
-// Redraw: Escape puts the sheet back as it was; then a circle around the headline replaces it
-await tab.click('review-mode .redraw');
-await tab.waitForSelector('review-mode .veil:not([hidden])');
-assert.ok((await tab.isHidden('review-mode .sheet')) && !(await ink()), 'the sheet and the old mark step aside');
-await tab.keyboard.press('Escape');
-await tab.waitForSelector('review-mode .sheet:not([hidden])');
-assert.ok(
-  (await inkOn(edges)) && (await tab.inputValue('review-mode .sheet textarea')) === 'Box this line',
-  'Escape: the sheet and the mark as they were',
-);
-await tab.click('review-mode .redraw');
-await draw(oval(20));
-assert.ok(
-  (await ink()) > 100 && (await inkOn(oval(20).slice(0, 1))),
-  'the new circle stays on the page with the sheet',
-);
-await tab.locator('review-mode .polaroid .img :is(img, canvas)').waitFor();
-await tab.fill('review-mode .sheet textarea', 'Circle this headline instead');
-await tab.click('review-mode .send');
-await tab.waitForSelector('review-mode .side:not([hidden]) .words:has-text("Circle this headline instead")', {
-  timeout: 20_000,
-});
-const redrawn = edits.at(-1);
-assert.ok(
-  redrawn.element.kind === 'circle' &&
-    redrawn.element.ink[0].points.length >= 20 &&
-    redrawn.shot?.startsWith('data:image/jpeg') &&
-    redrawn.page === `${PRODUCT}/`,
-  'the new mark goes with its screenshot',
-);
-assert.ok(
-  (await tab.isHidden('review-mode .sheet')) && !(await ink()),
-  'saved: back to My notes, no mark left on the page',
-);
-// a note pinned on another page: Change opens that page, then its sheet and its mark there
-const away = note('On the other page', {
-  page: '/elsewhere?x=1',
-  element: circled.element,
-  viewport: circled.viewport,
-});
-theirs.push(away);
-await tab.keyboard.press('Escape');
-await side(tab);
-await Promise.all([
-  tab.waitForURL(`${PRODUCT}/elsewhere?x=1`),
-  tab.click('review-mode .side li:has-text("On the other page") button:has-text("Change")'),
-]);
-await tab.waitForSelector('review-mode .sheet:not([hidden])', { timeout: 10_000 });
-assert.equal(await tab.inputValue('review-mode .sheet textarea'), 'On the other page');
-await tab.waitForFunction(() => {
-  const c = document.querySelector('review-mode').shadowRoot.querySelector('.ink');
-  return c
-    .getContext('2d')
-    .getImageData(0, 0, c.width, c.height)
-    .data.some(v => v);
-});
-assert.ok(await inkOn([oval(16)[0], oval(16)[4], oval(16)[12]]), 'its circle on that page');
-await tab.click('review-mode [data-cancel]');
-await tab.waitForSelector('review-mode .side:not([hidden])');
-await tab.keyboard.press('Escape');
-assert.ok(await tab.isVisible('review-mode .fab'), 'Never mind… goes back to My notes, Escape closes it');
 
-// ---- a dozen notes: one scrolling list, the screenshots loaded as it scrolls, on a desktop and on a phone
-const photo = [...photos.values()][0],
-  pinnedOne = theirs.find(n => n.shot);
-for (let i = 1; i <= 12; i++) {
-  const n = note(`Dozen note ${i}: ${'a few more words to make it wrap onto a second line '.repeat(i % 3)}`, {
-    element: pinnedOne.element,
-    viewport: pinnedOne.viewport,
-    shot: true,
-  });
-  photos.set(n.id, photo);
-  theirs.push(n);
-}
-async function dozen(where, what) {
-  const on = where;
-  await side(where);
-  // (the screenshots asked for: review.js gives each its src as it comes near the view; the page may show one it has
-  // already without asking HQ again)
-  const asked = () => where.$$eval('review-mode .side li .shot img', i => i.filter(x => x.getAttribute('src')).length);
-  const total = await where.$$eval('review-mode .side li .shot', s => s.length);
-  assert.ok(total >= 12, `${what}: every note's screenshot in the list (${total})`);
-  await where.waitForTimeout(800);
-  const first = await asked();
-  assert.ok(
-    first > 0 && first < total,
-    `${what}: the first screenshots load at once, the rest wait (${first} of ${total})`,
-  );
-  await shot(`my-notes-${what}`, on);
-  // a phone's sidebar is the whole width
-  const [l, r, w] = await where.$eval('review-mode .side', el => {
-    const b = el.getBoundingClientRect();
-    return [b.left, b.right, innerWidth];
-  });
-  if (w < 560) assert.deepEqual([l, r], [0, w], `${what}: the whole width on a phone`);
-  for (let i = 0; i < 40 && (await asked()) < total; i++) {
-    await where.$eval('review-mode .side ol', ol => ol.scrollBy(0, 500));
-    await where.waitForTimeout(120);
-  }
-  assert.equal(await asked(), total, `${what}: scrolled to the end, every screenshot loaded`);
-  assert.ok(
-    await where.$$eval('review-mode .side li .shot img', i => i.every(x => x.complete && x.naturalWidth > 0)),
-    `${what}: and every one shows`,
-  );
-  assert.ok(
-    await where.$eval('review-mode .side ol', ol => {
-      ol.scrollTop = ol.scrollHeight;
-      return (
-        ol.lastElementChild.getBoundingClientRect().bottom <=
-        Math.min(innerHeight, ol.getBoundingClientRect().bottom) + 1
-      );
-    }),
-    `${what}: the last note scrolls into view`,
-  );
-  await where.waitForTimeout(200);
-  await shot(`my-notes-${what}-end`, on);
-  await on.keyboard.press('Escape');
-  assert.ok(await where.isHidden('review-mode .side'), `${what}: Escape closes it`);
-}
-await dozen(tab, 'desktop-tab');
+// ---- pictures of the reviewer's own on a note, on a phone: a big screenshot pasted, a phone's photo and a sketch
+// dropped, the sketch taken off again. Each is scaled down on the device and goes with the note. The same note as the
+// board's, put on its sheet and sent by the real coordinator: one snip, the pictures under the screenshot, which hq
+// note saves
 await tab.setViewportSize({ width: 390, height: 844 });
-await dozen(tab, 'phone-tab');
-await dozen(tab, 'desktop-tab');
-await tab.setViewportSize({ width: 390, height: 844 });
-await dozen(tab, 'phone-tab');
-
-// ---- pictures of the reviewer's own on a note: a big screenshot pasted, a phone's photo and a sketch dropped, the
-// sketch taken off again. Each is scaled down on the device and goes with the note; My notes shows them and a change
-// keeps them. The same note as the board's, put on its sheet and sent by the real coordinator: one snip, the pictures
-// under the screenshot, which hq note saves
 const picturedAt = tab.url();
 await tab.click('review-mode .fab', { force: true });
 await tab.waitForSelector('review-mode .veil:not([hidden])');
@@ -1030,55 +684,13 @@ assert.ok(
   pictureNote.posted.pictures.every(p => p.length < 2_000_000),
   'each fits what the coordinator keeps',
 );
-// My notes: under the note's words, a tap shows one bigger
-await side(tab);
-const pictureEntry = `review-mode .side li:has-text("Warmer, like these")`;
-await tab.waitForFunction(
-  sel =>
-    [...document.querySelector('review-mode').shadowRoot.querySelectorAll('.side li')]
-      .find(l => l.textContent.includes(sel))
-      ?.querySelectorAll('.pics img').length === 2,
-  'Warmer, like these',
-  { timeout: 10_000 },
-);
-await tab.locator(`${pictureEntry} .pics button`).first().scrollIntoViewIfNeeded();
-await tab.waitForFunction(
-  () =>
-    [...document.querySelector('review-mode').shadowRoot.querySelectorAll('.side .pics img')].some(
-      i => i.naturalWidth > 0,
-    ),
-  null,
-  { timeout: 10_000 },
-);
-await tab.click(`${pictureEntry} .pics button >> nth=1`);
-await tab.waitForSelector('review-mode .zoom:not([hidden])');
-assert.match(await tab.$eval('review-mode .zoom img', i => i.src), /\?pic=\d+-p-\d+\.jpg$/, 'the photo, bigger');
-await shot('my-notes-pictures', tab);
-await tab.keyboard.press('Escape');
-// Change keeps them, and one taken off there goes
-await tab.click(`${pictureEntry} button:has-text("Change")`);
+// Cancel while a picture dropped on a note is still read: nothing goes, and the pin starts the next note (the read
+// held here.)
+await tab.click('review-mode .fab', { force: true });
+await tab.waitForSelector('review-mode .veil:not([hidden])');
+await tab.mouse.click(headline.x + 40, headline.y + headline.height / 2);
 await tab.waitForSelector('review-mode .sheet:not([hidden])');
-await tab.waitForFunction(
-  () =>
-    [...document.querySelector('review-mode').shadowRoot.querySelectorAll('.sheet .pics img')].filter(
-      i => i.naturalWidth > 0,
-    ).length === 2,
-  null,
-  { timeout: 10_000 },
-);
-await tab.click('review-mode .sheet .pics li:nth-child(1) .x');
-await tab.click('review-mode .send');
-await tab.waitForSelector('review-mode .side:not([hidden])');
-assert.deepEqual(
-  edits.at(-1).pictures,
-  [pictureNote.pictures.at(-1).file],
-  'the photo kept by its name, the screenshot gone',
-);
-assert.equal(pictureNote.pictures.length, 1);
-// Cancel while a picture dropped on the change is still read: nothing saved, and the pin starts the next note (the
-// read held here.)
-await tab.click(`${pictureEntry} button:has-text("Change")`);
-await tab.waitForSelector('review-mode .sheet:not([hidden])');
+await tab.fill('review-mode textarea', 'Never sent');
 await tab.evaluate(() => {
   const decode = (window.unheld = HTMLImageElement.prototype.decode),
     held = new Promise(res => (window.letRead = res));
@@ -1095,7 +707,7 @@ const heldDrop = await tab.evaluateHandle(async () => {
 });
 await tab.locator('review-mode .sheet').dispatchEvent('drop', { dataTransfer: heldDrop });
 await tab.waitForSelector('review-mode .sheet .pics li.busy');
-const editsBefore = edits.length;
+const postedBefore = theirs.length;
 await tab.click('review-mode .send');
 await tab.click('review-mode [data-cancel]');
 await tab.evaluate(() => {
@@ -1103,9 +715,8 @@ await tab.evaluate(() => {
   HTMLImageElement.prototype.decode = window.unheld;
 });
 await tab.waitForTimeout(800);
-assert.equal(edits.length, editsBefore, 'the cancelled change saved nothing');
+assert.equal(theirs.length, postedBefore, 'the cancelled note went nowhere');
 assert.ok(await tab.isHidden('review-mode .sheet'), 'and its sheet stays away');
-await tab.click('review-mode .side .x');
 await tab.click('review-mode .fab', { force: true });
 await tab.waitForSelector('review-mode .veil:not([hidden])', { timeout: 3000 });
 // the next post-it is its own: nothing of the cancelled change touches it
@@ -1119,6 +730,7 @@ assert.ok(await tab.isEnabled('review-mode .send'), 'and can be pinned');
 assert.equal(edits.length, editsBefore);
 await tab.click('review-mode [data-cancel]');
 await tab.waitForSelector('review-mode .veil', { state: 'hidden' });
+assert.deepEqual(askedGone, [], "the outsider's tool asked for nothing that's gone");
 // hq note: the note as review mode posted it, the board's now, put on Bolt's sheet by the real coordinator (the test
 // company, a throwaway DATA_DIR), sent with the plane (its ten seconds over), and read back by the real hq
 const coordinator = `
@@ -1193,13 +805,7 @@ await context.route(`${SHELF}/**`, r => {
   if (path === '/hello/__review/coach') return r.fulfill({ json: { show: false } });
   if (path === '/hello/__review/mine')
     return r.fulfill({
-      json: {
-        book: OWNER,
-        notes: toShelf.filter(p => p.endsWith('/notes')).length,
-        list: [],
-        sent: false,
-        more: false,
-      },
+      json: { book: OWNER, notes: toShelf.filter(p => p.endsWith('/notes')).length },
     });
   if (path.includes('/__review/') && r.request().method() === 'POST') {
     toShelf.push(path);
@@ -1227,7 +833,7 @@ await context.route(`${base}/__review/**`, r => {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, reviewJs)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/__review/mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } }); // (HQ's notes are the book's)
+  if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } }); // (HQ's notes are the book's:)
   if (path === '/__review/notes') {
     onHq.push(path);
     return r.fulfill({ json: { ok: true, id: ++lastId } });
@@ -1247,7 +853,12 @@ const hq = await context.newPage();
 hq.on('pageerror', e => errors.push(e.message));
 await hq.goto(`${base}/?intro=0`);
 await until(hq, '#loading.gone');
-await hq.waitForSelector('review-mode .fab'); // (signed in, HQ always has it)
+await hq.waitForSelector('review-mode .fab', { state: 'attached' }); // (signed in, HQ always has it)
+// away as HQ loads, the phone's pin comes with the book's pin control, which folds the book onto HQ (pinsummon.js)
+await hq.click('#book .bk-lip');
+await hq.waitForFunction(() => document.documentElement.dataset.book === 'spread');
+await hq.click('#book .bk-pin');
+await hq.waitForSelector('review-mode .fab');
 assert.equal(
   await hq.$eval('review-mode .fab', b => getComputedStyle(b).position),
   'absolute',
@@ -1347,5 +958,5 @@ await context.unrouteAll({ behavior: 'ignoreErrors' }); // (HQ still polling as 
 await browser.close();
 server.close();
 console.log(
-  `notes-check: Reviews' Sent (each sheet one block, no ticks, Send or Discard); the board's note pinned in HQ's viewer going on Bolt's sheet in the book, nothing over the page and no Send on the slim bar, the polaroid framed on the pin, the screen and touch points kept; the board's menu "For Bolt · 1 on the sheet" every line on one line on a phone, its Open the book opening HQ's book at Bolt's sheet over the viewer on a phone (after a late goodbye too) and, in a tab of its own, HQ at that sheet; the board's general note pinned to nothing; an outsider's menu, My notes as a sidebar with a dozen screenshots loaded as it scrolls (phone and desktop), Change, Redraw, Delete, Escape, Shift's rectangle and the freehand circle; pictures pasted, dropped and taken off a note (scaled on the device), in My notes and kept by a change; that note sent from the board's sheet by the real coordinator as one snip with its pictures, saved by hq note; a shelf's note on its own path; the pin always on HQ itself (its note on its sheet in the book), one pin over a framed preview (HQ's covered note taking nothing pasted or dropped)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `notes-check: Reviews' Sent (each sheet one block, no ticks, Send or Discard); the board's note pinned in HQ's viewer going on Bolt's sheet in the book, nothing over the page and no Send on the slim bar, the polaroid framed on the pin, the screen and touch points kept; the board's menu "For Bolt · 1 on the sheet" every line on one line on a phone, its Open the book opening HQ's book at Bolt's sheet over the viewer on a phone (after a late goodbye too) and, in a tab of its own, HQ at that sheet; the board's general note pinned to nothing; an outsider's menu (a general note, and where their notes go, asking nothing of theirs back), Shift's rectangle and the freehand circle; pictures pasted, dropped and taken off a note (scaled on the device), a note cancelled while one is read going nowhere; that note sent from the board's sheet by the real coordinator as one snip with its pictures, saved by hq note; a shelf's note on its own path; the pin always on HQ itself (its note on its sheet in the book), one pin over a framed preview (HQ's covered note taking nothing pasted or dropped)${shots ? ` (screenshots in ${shots})` : ''}`,
 );

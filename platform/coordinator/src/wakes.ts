@@ -13,7 +13,7 @@ import * as windows from './windows.ts';
 // call a job was queued on has ended (server.ts), never --when's either.
 // sorted: HQ's own job from a template, sorted into the plan by its owner (sorting.ts), which meets it; never --when's.
 export type Wake = { kind: 'deploy' | 'recreated' | 'deployed' | 'at' | 'followed' | 'ended' | 'sorted'; arg: string };
-type WakeRow = Wake & { job: number; since: number };
+export type WakeRow = Wake & { job: number; since: number };
 type Deploy = {
   file: string;
   sha: string;
@@ -259,17 +259,6 @@ const toCome = (branch: string) =>
 function metBy(w: WakeRow, now: number): string | null {
   if (w.kind === 'sorted') return null; // (sorting.ts meets it)
   if (w.kind === 'at') return Number(w.arg) <= now ? `the time came (${clock(Number(w.arg))})` : null;
-  if (w.kind === 'deploy') {
-    const n = Number(w.arg),
-      deploy = successfulDeploysSince(w.since)[n - 1];
-    return deploy
-      ? `${n === 1 ? 'a deploy' : `${n} deploys`} since it was queued, the last: ${describeDeploy(deploy)}`
-      : null;
-  }
-  if (w.kind === 'recreated') {
-    const deploy = successfulDeploysSince(w.since).find(x => (JSON.parse(x.recreated) as string[]).includes(w.arg));
-    return deploy ? `a deploy recreated ${w.arg}: ${describeDeploy(deploy)}` : null;
-  }
   if (w.kind === 'followed') {
     const call = db.prepare('select status, processed_at, job from calls where id = ?').get(Number(w.arg)) as
       { status: string; processed_at: string | null; job: number | null } | undefined;
@@ -285,11 +274,53 @@ function metBy(w: WakeRow, now: number): string | null {
       { status: string; ts: string } | undefined;
     return !call || call.status !== 'live' || Date.parse(call.ts) > w.since ? `call #${w.arg} ended` : null;
   }
-  const done = deployed(w.arg);
-  if (!done) return null;
-  if ('never' in done) return `${workOf(w.arg)}'s work will never deploy: ${done.never}`;
-  const { pr, deploy } = done;
-  return `${workOf(w.arg)}'s work (pull request #${pr.number}, merged ${clock(pr.merged_at!)}) is deployed: ${describeDeploy(deploy)}`;
+  const met = meeting(w);
+  if (!met) return null;
+  if ('never' in met) return `${workOf(w.arg)}'s work will never deploy: ${met.never}`;
+  const { deploy, pr } = met;
+  if (pr)
+    return `${workOf(w.arg)}'s work (pull request #${pr.number}, merged ${clock(pr.merged_at!)}) is deployed: ${describeDeploy(deploy)}`;
+  if (w.kind === 'recreated') return `a deploy recreated ${w.arg}: ${describeDeploy(deploy)}`;
+  const n = Number(w.arg);
+  return `${n === 1 ? 'a deploy' : `${n} deploys`} since it was queued, the last: ${describeDeploy(deploy)}`;
+}
+
+// The deploy that meets a deploy:, recreated: or deployed: wake (a deployed: one's with the work's pull request, or why
+// it never will deploy), or null while it waits or for a wake no deploy meets. metBy says it and metAt dates it, so both
+// answer the same.
+function meeting(w: WakeRow): { deploy: Deploy; pr?: PullRequestRow } | { never: string } | null {
+  if (w.kind === 'deployed') return deployed(w.arg);
+  if (w.kind !== 'deploy' && w.kind !== 'recreated') return null;
+  const since = successfulDeploysSince(w.since);
+  const deploy =
+    w.kind === 'deploy'
+      ? since[Number(w.arg) - 1]
+      : since.find(x => (JSON.parse(x.recreated) as string[]).includes(w.arg));
+  return deploy ? { deploy } : null;
+}
+
+// When a stored wake was met (ms): its time, or the end of the deploy that met it (meeting), or null while it waits or
+// when no record dates it: a call's follow-up or end, met at the claim's sweep near the job's start. A sorted wake can
+// hold its job more than once: its spans are sortedSpans'. For hq estimate --calibration's threads (threadwaits.ts).
+export function metAt(w: WakeRow): number | null {
+  if (w.kind === 'at') return Number(w.arg);
+  const met = meeting(w);
+  return met && 'deploy' in met ? Date.parse(met.deploy.finished) : null;
+}
+
+// The spans a sorted wake held its job (ms), one per proposal it waited for (sorting.ts sorts.job; a job held again
+// waits for a new one): the first from the job's queuing (from null), a later one from its proposal's making, each
+// until that proposal was decided (null while open).
+export function sortedSpans(job: number) {
+  const proposals = db
+    .prepare(
+      'select p.created, p.decided from sorts s join proposals p on p.id = s.proposal where s.job = ? order by p.id',
+    )
+    .all(job) as { created: string; decided: string | null }[];
+  return proposals.map((p, i) => ({
+    from: i === 0 ? null : Date.parse(p.created),
+    until: p.decided === null ? null : Date.parse(p.decided),
+  }));
 }
 
 // A job's or pull request's work (a deployed: wake's arg) merged and deployed: its pull request and the first deploy that

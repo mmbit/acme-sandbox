@@ -19,16 +19,19 @@ const RINGS = [
   { x: 250, y: 300, rx: 80, ry: 45 },
   { x: 250, y: 470, rx: 80, ry: 45 },
 ];
+const HELD = [250, 620]; // (where the pen's held still on a call: below the rings, clear of the call's bubble)
 
 const ui = s => `review-mode >> css=${s}`;
 
-// c: book-check's { hqIn, base, MINI, settled, posts, pages, notes, snips, org, penOn, ring, inkAt, shot, noErrorsIn }
+// c: book-check's { hqIn, inLooks, base, MINI, settled, posts, pages, notes, snips, org, penOn, ring, inkAt, shot,
+// noErrorsIn }
 export function circleStories(c) {
   return {
     'a ring off a call rests into the book, a line beside it joins it, a scribble takes one out, Cmd+Z puts it back, a finger carries one onto the book':
       browser => offCallStory({ ...c, browser }),
+    // (in Wire too: its call bubble sits elsewhere.)
     "a ring on a call rests into the call's page in the book, HQ keeps a hairline; held still, a voice note": browser =>
-      onCallStory({ ...c, browser }),
+      c.inLooks(browser, (look, shot) => onCallStory({ ...c, browser, look, shot })),
     "a mouse's ring with the pin on HQ rests into the book too, no post-it": browser => mouseStory({ ...c, browser }),
     'a quick pen tap clicks what is under it, on HQ and on a dialog, and leaves no ink': browser =>
       tapStory({ ...c, browser }),
@@ -119,6 +122,11 @@ async function hairCarried(c, page, ring) {
     'a hairline carried onto the book: its snip taped there',
   );
   assert.ok(!c.posts.slice(from).some(p => p.path.startsWith('/api/book/note')), '...its note left as it was');
+  // (the still once the snip is taped on the page and the turn to it is over, not caught mid-turn)
+  const taped = () => c.posts.slice(from).some(p => p.path === '/api/book/page/save' && p.body.scraps?.length);
+  for (let i = 0; i < 40 && !taped(); i++) await page.waitForTimeout(250);
+  assert.ok(taped(), '...taped on a page of the book');
+  await c.settled(page, 'open');
   await c.shot('circle-carried', page);
 }
 // ...its snip gone from the book meanwhile (another screen joined a line to it): the book says the picture didn't
@@ -176,6 +184,7 @@ async function mouseStory(c) {
 async function mouseRing(c, page) {
   const mouse = { x: 250, y: 630, rx: 70, ry: 35 },
     before = noted(c).length;
+  await page.click('#book .bk-pin'); // (away till the board summons it: job #20358)
   await page.locator(ui('.fab')).dispatchEvent('click'); // (it bobs: never still for Playwright's click)
   await page.waitForSelector(ui('.veil:not([hidden])'));
   const loop = c.ring(mouse.x, mouse.y, mouse.rx, mouse.ry);
@@ -193,7 +202,7 @@ async function mouseRing(c, page) {
 async function onCallStory(c) {
   const context = await c.hqIn(c.browser, c.MINI),
     line = await playLine(context),
-    { page, errors, done } = await hqOpen(c, context, '&open=intercom');
+    { page, errors, done } = await hqOpen(c, context, `&open=intercom${c.look}`);
   try {
     await page.click('#call');
     await page.waitForFunction(() => !document.querySelector('#call-screenshare')?.disabled, null, {
@@ -218,25 +227,30 @@ async function onCallStory(c) {
         .waitFor({ state: 'attached', timeout: 5000 });
       await cleared(c, page, ring, `ring ${i + 1}`);
     }
-    // the pen held still while talking: a voice note there, its words the call's
-    const from = noted(c).length;
-    await c.penOn(page)([[560, 600]], { lift: false });
-    await page.waitForSelector(ui('.listen:not([hidden])'), { timeout: 3000 });
-    line.send({ type: 'heard', text: 'Hold this one' });
-    await page.waitForTimeout(300);
-    await page.evaluate(() => window.__lift());
-    const voice = await nextNote(c, page, from, SETTLE_MS);
-    assert.deepEqual(
-      [voice.words, voice.anchor.ink.length],
-      ['Hold this one', 0],
-      'a voice note held still, its words',
-    );
-    await heardNotes(page, line, RINGS.length + 1);
+    await heldStill(c, page, line);
     await c.shot('circle-on-call', page);
     c.noErrorsIn(errors);
   } finally {
     await done();
   }
+}
+// The pen held still while talking, on HQ's page (not on the call's own bubble, which takes no ink, in either look): a
+// voice note there, its words the call's
+async function heldStill(c, page, line) {
+  const from = noted(c).length;
+  assert.equal(
+    await page.evaluate(([x, y]) => !!document.elementFromPoint(x, y)?.closest('[data-no-ink]'), HELD),
+    false,
+    'the pen held still on HQ’s page',
+  );
+  await c.penOn(page)([HELD], { lift: false });
+  await page.waitForSelector(ui('.listen:not([hidden])'), { timeout: 3000 });
+  line.send({ type: 'heard', text: 'Hold this one' });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__lift());
+  const voice = await nextNote(c, page, from, SETTLE_MS);
+  assert.deepEqual([voice.words, voice.anchor.ink.length], ['Hold this one', 0], 'a voice note held still, its words');
+  await heardNotes(page, line, RINGS.length + 1);
 }
 // The call's line has heard n notes
 async function heardNotes(page, line, n) {

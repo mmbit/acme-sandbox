@@ -127,25 +127,29 @@ const server = await serve(undefined, 0, files),
 const out = mkdtempSync(join(tmpdir(), 'projects-check-')),
   browser = await playwright().chromium.launch();
 const texts = (page, sel) => page.$$eval(sel, els => els.map(e => e.textContent.replace(/\s+/g, ' ').trim()));
-// The header: the logo whole and the tools clear of it, and on a phone the tools in at most two rows beside it over the
-// projects, so they start high
+// The header: the logo whole and readable and the tools clear of it, and on a phone the tools in at most two rows beside
+// it over the projects, so they start high
 async function header(page, at, phone, projects = false) {
   const h = await page.evaluate(() => {
     const box = s => document.querySelector(s).getBoundingClientRect(),
       b = box('#hud .brand'),
       // Wire can render the logo inline while hiding its image.
-      logo = [...document.querySelectorAll('#hud .brand :is(img, svg.logo)')]
-        .map(e => e.getBoundingClientRect())
-        .find(r => r.width) ?? { width: 0 },
-      tools = [...document.querySelectorAll('#hud .tools > *')]
-        .filter(e => e.offsetParent)
-        .map(e => e.getBoundingClientRect());
+      img = [...document.querySelectorAll('#hud .brand :is(img, svg.logo)')].find(e => e.getBoundingClientRect().width),
+      logo = img?.getBoundingClientRect() ?? { width: 0 },
+      // (its own width at the height it's drawn: a narrow page may shrink it, but to half of that at most)
+      shape =
+        img?.tagName === 'IMG'
+          ? img.naturalWidth / img.naturalHeight
+          : img?.viewBox.baseVal.width / img?.viewBox.baseVal.height,
+      keys = [...document.querySelectorAll('#hud .tools > *')].filter(e => e.offsetParent),
+      tools = keys.map(e => e.getBoundingClientRect());
     const word = document.querySelector('#hud .brand b');
     return {
-      logo: logo.width > 0 && logo.left >= b.left - 0.5 && logo.right <= b.right + 0.5,
+      logo: logo.width >= (shape * logo.height) / 2 && logo.left >= b.left - 0.5 && logo.right <= b.right + 0.5,
       word: !word.offsetParent || word.scrollWidth <= word.clientWidth + 1,
       clear: tools.every(t => t.left >= b.right),
-      rows: new Set(tools.map(t => Math.round(t.top))).size,
+      // (by where each key is laid out: a look's key that's on may sit down on its lip, in its row)
+      rows: new Set(keys.map(e => e.offsetTop)).size,
       bottom: box('#hud').bottom,
     };
   });
@@ -294,20 +298,24 @@ for (const look of RENDERERS)
     assert.equal(await page.$('#views'), null, `${at}: no switch`);
     assert.ok(await page.$eval('#projects', e => e.hidden), `${at}: the projects view is hidden at first`);
     await header(page, at, device === 'phone');
+    // (and on a 320 px phone, where the tools may take a third row)
+    if (device === 'phone') {
+      await page.setViewportSize({ width: 320, height: h });
+      await header(page, `${at}, 320 px`, true);
+      await page.setViewportSize({ width: w, height: h });
+    }
     await tap(page, '#btn-computer');
     await page.waitForSelector('[data-app=notes]');
     assert.deepEqual(await page.$$('[data-app=projects], [data-app=jobs]'), [], `${at}: no Projects or Jobs app`);
     await tap(page, '#tool [data-close]');
     await page.waitForSelector('#tool', { state: 'hidden' });
-    // (the logo's width aside: its clock may turn a minute in between.)
+    // (the logo's width aside: its clock may turn a minute in between. Where each is laid out: a look's key that's on
+    // may sit down on its lip.)
     const hudBoxes = () =>
       page.$$eval('#hud .brand, #hud .tools > *', els =>
         els
           .filter(e => e.offsetParent)
-          .map(e => {
-            const { x, y, width, height } = e.getBoundingClientRect();
-            return [e.id, x, y, e.id ? width : null, height];
-          }),
+          .map(e => [e.id, e.offsetLeft, e.offsetTop, e.id ? e.offsetWidth : null, e.offsetHeight]),
       );
     const before = await hudBoxes();
     await tap(page, '#btn-projects');

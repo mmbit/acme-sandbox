@@ -1,7 +1,10 @@
-// Review's visual judgment and the before/after card that releases its merge decision.
+// Review's visual judgment and the before/after card that releases its merge decision, or the board's word the CEO
+// cites in its place.
 import { db } from './db.ts';
 import * as decisions from './decisions.ts';
-import { createJob, endRequest, threadOf } from './jobs.ts';
+import { createJob, endRequest, threadOf, ENDED_ITEMS } from './jobs.ts';
+import { ceo } from './company.ts';
+import { publish } from './events.ts';
 import { cancelJob } from './ledger.ts';
 import { heldDecided, returnFeedback } from './review.ts';
 import { reviewSettings } from './reviewsettings.ts';
@@ -48,20 +51,50 @@ export function closed(pr: number) {
   if (decision.needsCard) prepareCard(decision.id, decision.author);
 }
 
-// hq decision settle (decisions.ts settle): the board's own word already said Go live, so the held merges go on, and the
-// card job the hold queued, if it hasn't run, ends as void, as does the card if one is open: the board isn't asked again.
-// A card job already running finds the decision answered when it files (jobs.ts createRequest).
+// hq decision settle <id> item:<n> | card:<n>: the CEO settles a visual hold without the card it waits for, citing the
+// board's word given elsewhere, a call's item still standing or a card the board answered. Nothing here reads what that
+// word said (an item's free text, another card's answer), so whether it means Go live is the CEO's judgment: the decision
+// keeps the citation (settled) and the log line names it. The held merges go on; the card job the hold queued, if it
+// hasn't run, ends as void, as does the card if one is open. A card job already running finds the decision answered
+// when it files (jobs.ts createRequest). The answer is what ended and the held pull requests, or why not.
 export async function settle(id: number, word: string, by: string) {
-  const settled = decisions.settle(id, word, by);
-  if (typeof settled === 'string') return settled;
-  const why = `the board already said Go live on its ${settled.said}`;
-  const cardJob =
-    settled.cardJob && cancelJob(settled.cardJob, `decision #${id} is settled: ${why}`) ? settled.cardJob : null;
-  const open = settled.card && db.prepare("select 1 from requests where id = ? and status = 'open'").get(settled.card);
-  const card = open ? settled.card : null;
+  if (by !== ceo()) return `only the CEO (${ceo()}) settles a decision on the board's word`;
+  const d = decisions.openDecision(id);
+  if (typeof d === 'string') return d;
+  if (!decisions.mergeDecision(id))
+    return `decision #${id} holds no visual change: only the board's answer on its card lets it go`;
+  const [, kind, n] = /^(item|card):([0-9]+)$/.exec(word) ?? [];
+  if (!kind) return "name the board's word as item:<n> (a call's item) or card:<n> (a card the board answered)";
+  const cited = kind === 'item' ? boardItem(Number(n)) : boardCard(Number(n));
+  if (typeof cited === 'string') return cited;
+  db.prepare('update decisions set answered = ?, settled = ? where id = ?').run(new Date().toISOString(), word, id);
+  const why = `the CEO (${by}) cited the board's ${cited.said} as its Go live`;
+  publish({ type: 'log', agent: by, text: `Decision #${id} "${d.name}" settled: ${why}` });
+  const cardJob = d.card_job && cancelJob(d.card_job, `decision #${id} is settled: ${why}`) ? d.card_job : null;
+  const open = d.request && db.prepare("select 1 from requests where id = ? and status = 'open'").get(d.request);
+  const card = open ? d.request : null;
   if (card) endRequest(card, `Settled without this card: ${why}`);
-  await heldDecided(settled.merges);
-  return { ok: true as const, merges: settled.merges.map(pr => pr.number), cardJob, card };
+  const merges = decisions.decisionMerges(id);
+  await heldDecided(merges);
+  return { ok: true as const, merges: merges.map(pr => pr.number), cardJob, card };
+}
+
+// A call's item the board said, still standing (not dropped or replaced)
+function boardItem(n: number) {
+  const item = db.prepare('select what, status from call_items where id = ?').get(n) as
+    { what: string; status: string } | undefined;
+  if (!item) return `there's no call item #${n}`;
+  if (ENDED_ITEMS.includes(item.status)) return `item #${n} was ${item.status}: it's no standing word of the board's`;
+  return { said: `item #${n} ("${item.what}")` };
+}
+
+// A card the board itself answered: a guest's answer, or a card closed without one, isn't the board's word
+function boardCard(n: number) {
+  const card = db.prepare('select title, kind, status from requests where id = ?').get(n) as
+    { title: string; kind: string; status: string } | undefined;
+  if (!card) return `there's no card #${n}`;
+  if (card.status !== 'answered' || card.kind === 'guest') return `card #${n} wasn't answered by the board`;
+  return { said: `card #${n} ("${card.title}")` };
 }
 
 function prepareCard(id: number, author: string) {

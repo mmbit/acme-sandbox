@@ -69,13 +69,18 @@ export function wireTip(el, r, phone) {
   const show = el.querySelector('[data-show-me]');
   if (show) show.onclick = () => runTip(tip, r.details, phone);
 }
-// Show me: HQ opened where the tip's steps start, then its steps. Also the Library's manual's (manual.js).
+// Show me: HQ opened where the tip's steps start, then its steps, those already done left out (tips.js done). Also the
+// Library's manual's (manual.js).
 export function runTip(tip, details, phone) {
   sfx.press();
   if (tip.about) phone.toCard();
   else if (tip.opens) phone.open(tip.opens);
   else phone.close();
-  showMe(tip.steps, details, phone.end);
+  showMe(
+    tip.steps.filter(s => !s.done?.()),
+    details,
+    phone.end,
+  );
 }
 
 // Settings › Tips: one switch, for the whole company. Off files the tips waiting with the answered cards.

@@ -22,7 +22,8 @@ checks types. Whatever they enforce isn't repeated here.
 - **Prettier decides formatting.** Nobody formats by hand, and review doesn't discuss it.
 - **The gates hold what a change adds:** a new or already formatted file, the lines you edit, a type error you cause
   anywhere, a file or function it makes cross a size limit. Older code waits for its area's pass.
-- **The only overrides:** an ESLint disable comment that says why (`-- strips the terminal's colour codes`), and
+- **The only overrides:** an ESLint disable comment that says why (`-- strips the terminal's colour codes`), its
+  size-limit twin in Python and shell (`# max-lines -- why`, `# max-lines-per-function -- why` above a function), and
   `// prettier-ignore` on a table that reads better aligned.
 
 ## Naming
@@ -68,8 +69,8 @@ For comments, docs, commit messages and UI text alike.
   layer.
 - **Size limits.** A function past 50 lines, or a file past 400 (tests aside), splits by concern: in the change that
   crosses the line, or the area's next pass. The gates hold it: a file that crosses 400, and a long function that's new
-  or newly long (one moved under its old name stays old). A data table or a page's markup takes a disable comment that
-  says why. A long file gets `// ---- storage` markers until its pass.
+  or newly long (one moved under its old name stays old), in Python too, and in shell its file. A data table or a page's markup takes a disable comment that says why. A long file gets
+  `// ---- storage` markers until its pass.
 
 ## Platform and product
 

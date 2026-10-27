@@ -9,8 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { looks } from './looks.mjs';
 import { filmFiles } from './films/listing.mjs';
 import { typeOf } from '../coordinator/src/types.ts'; // (the types the coordinator serves HQ's files with.)
+import { BOARD_EXTRAS, OPEN_EXTRAS, REVIEW_PARTS, extraFile } from './extras.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '../..');
+const EXTRAS = { ...BOARD_EXTRAS, ...OPEN_EXTRAS, ...REVIEW_PARTS };
 
 // read: a path from the repo's root → its bytes (the working tree's, or a commit's); files: bytes that stand in for a path
 export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files = {}) {
@@ -21,19 +23,12 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
     const path = !asked || asked.endsWith('/') ? `${asked}index.html` : asked;
     // (and a company's own HQ apps at /kits/<name>/…, from kits/<name>/hq/)
     const kit = /^kits\/([a-z0-9][a-z0-9-]*)\/(.+)$/.exec(path);
-    // (and the keys' motion, the statistics and the signs Slate shares, shared/tactile/, shared/stats/ and shared/signs/
-    // with the contrast sums it imports.)
-    const sharedKit = /^shared\/(tactile|stats|signs|contrast)\/[a-z]+\.js$/.test(path);
-    // (and review mode's framing rule, which HQ's note thumbnails import, its pen, which the Sketchbook draws with, its
-    // paper, the book's too, the platform's sound kit, its button that asks once
-    // more and its contrast sums, and the holidays' table and the shared formats the clock imports; the pen; the anchor
-    // and the QR a second screen pairs by; the slips the book's answers are drawn as; the numbers notes show;
-    // the pen's tap)
-    const review = { '__review/frame.js': 'shared/review/frame.js', '__review/ink.js': 'shared/review/ink.js', '__review/paper.js': 'shared/review/paper.js', '__review/anchor.js': 'shared/review/anchor.js', '__review/slip.js': 'shared/review/slip.js', '__review/notenumbers.js': 'shared/review/notenumbers.js', '__review/tap.js': 'shared/review/tap.js', 'shared/qr/qr.js': 'shared/qr/qr.js', 'foley.js': 'shared/demo/foley.js', 'ask.js': 'shared/ask/ask.js', 'contrast.js': 'shared/contrast/contrast.js',
-      'shared/holidays/holidays.js': 'shared/holidays/holidays.js', 'shared/format/format.js': 'shared/format/format.js' }[path];
+    // (and the files outside platform/hq its pages load by their address, extras.mjs, with every part of review mode's,
+    // as the board gets them on HQ's host.)
+    const extra = extraFile(EXTRAS, `/${path}`) ?? (/^__review\/[a-z]+\.js$/.test(path) ? `shared/review/${path.slice('__review/'.length)}` : undefined);
     // (and the looks HQ ships, read from their folders, and the company's tip films.)
     const listed = path === 'renderers/looks.json' ? looks() : path === 'films/films.json' ? filmFiles(join(ROOT, 'theme/hq')) : null;
-    const body = path.includes('..') ? null : files[path] ?? (listed ? JSON.stringify(listed) : await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : review ? read(review) : sharedKit ? read(path)
+    const body = path.includes('..') ? null : files[path] ?? (listed ? JSON.stringify(listed) : await (kit ? read(`kits/${kit[1]}/hq/${kit[2]}`) : extra ? read(extra)
       : read(`theme/hq/${path}`).catch(() => read(`platform/hq/${path}`))).catch(() => null));
     res.writeHead(body ? 200 : 404, { 'content-type': typeOf(path) ?? 'application/octet-stream' }).end(body);
   });

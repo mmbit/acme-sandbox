@@ -16,7 +16,7 @@ export function showMe(steps, details, done) {
   const veil = Object.assign(document.createElement('div'), { className: 'showme-veil' }),
     ring = Object.assign(document.createElement('div'), { className: 'showme-ring' }),
     step = Object.assign(document.createElement('div'), { className: 'showme-step', role: 'dialog' });
-  document.body.append(veil, ring, step);
+  document.documentElement.append(over(veil, ring, step));
   const press = e => current?.control && hits(current.control, e) && pressed();
   document.addEventListener('click', press, true);
   current = { steps, details, i: -1, done, veil, ring, step, control: null, frame: 0, press };
@@ -26,13 +26,22 @@ export function showMe(steps, details, done) {
 export const showingMe = () => !!current;
 export function stopShowMe() {
   if (!current) return;
-  const { veil, ring, step, frame, press } = current;
+  const { veil, frame, press } = current;
   cancelAnimationFrame(frame);
   document.removeEventListener('click', press, true);
-  veil.remove();
-  ring.remove();
-  step.remove();
+  veil.parentNode.remove();
   current = null;
+}
+// Show me's layers on <html>, over the book (book.js) as well as HQ's page: in <body> its layout containment would stack
+// them under the book, where a control can be (the pin's key). They wear the look's colours and type, set on <body>.
+const LOOK = ['--paper', '--ink', '--gold', '--shadow', '--r-lg'];
+function over(...layers) {
+  const look = getComputedStyle(document.body),
+    el = document.createElement('div');
+  el.style.cssText = `display:contents;font-family:${look.fontFamily}`;
+  for (const v of LOOK) el.style.setProperty(v, look.getPropertyValue(v));
+  el.append(...layers);
+  return el;
 }
 
 // The next step: its control found (waiting for its page to open), then the ring, the step and the hole on it

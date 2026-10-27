@@ -11,7 +11,6 @@ const forecast = await import('./forecast.ts');
 const redraws = await import('./redraws.ts');
 const ordering = await import('./ordering.ts');
 const predictions = await import('./predictions.ts');
-const pastpool = await import('./pastpool.ts');
 await import('./predictionlog.ts');
 // (its schedule_runs, which the play's matching reads for a scheduled job: the server loads it)
 await import('./schedule.ts');
@@ -162,7 +161,6 @@ function openQueue({ addJob, run, pr }: ReturnType<typeof jobInserts>, prs: numb
 before(async () => {
   await h.capacity({ claude: 4 });
   grow();
-  pastpool.keep();
 });
 
 test("the queue's play at HQ's size, briefs and all, takes well under a second", t => {

@@ -6,7 +6,7 @@ import * as tips from './tips.ts';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createReadStream, existsSync, readdirSync, readFileSync } from 'node:fs';
-import { normalize } from 'node:path';
+import { basename, dirname, normalize } from 'node:path';
 import { pipeline } from 'node:stream/promises';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -101,6 +101,7 @@ import { servePicture } from './bookpicture.ts';   // (and their pictures.)
 import { notFound } from './pagescraps.ts';   // (its files)
 import { bookFor, people as bookPeople } from './sketchpeople.ts';   // (and invited people's)
 import * as booknotes from './booknotes.ts';   // and its sheets and notes
+import * as bookasks from './bookasks.ts';   // and the desk-phone cards about its notes and pages
 import * as booksheets from './booksheets.ts';   // and its sheets going out.
 import * as bookreads from './bookreads.ts';   // and the agents' and calls' reads of its pages
 import * as bookslips from './bookslips.ts';   // and the answers clipped onto its notes
@@ -109,6 +110,10 @@ import * as booksearch from './booksearch.ts';   // and its Search.
 import './bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as booktyped from './booktyped.ts';   // and a question typed on its page, answered under it
 import * as sketchbook from './sketchbook.ts';   // and the Sketchbook, its free pages
+import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
+import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
+import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
+import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
 import { NOTE_MAX, SAVE_MAX } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
@@ -152,6 +157,7 @@ import * as guests from './guests.ts';
 import { cardProblem } from '../../hq/shell/cardcheck.js';
 import { pairsOf, pictureFile } from '../../hq/shell/media.js';
 import { looks } from '../../hq/looks.mjs';
+import { BOARD_EXTRAS, OPEN_EXTRAS } from '../../hq/extras.mjs';
 import { filmFiles } from '../../hq/films/listing.mjs';
 import * as apps from './apps.ts';
 import * as artifacts from './artifacts.ts';
@@ -160,6 +166,7 @@ import * as care from './care.ts';   // Care, the board's support desk
 import * as outbox from './outbox.ts';   // emails to outside parties, drafted by agents, sent by the board
 import * as mailforward from './mailforward.ts';   // the bookkeeping mail's copies to the board's own address, and Finance's books to it.
 import * as cardFiles from './cardfiles.ts';   // files on a card, to download
+import * as reviewBriefs from './reviewbriefs.ts';   // review runs' briefs a week after their pull request settled
 import * as callouts from './callouts.ts';   // calls out to partners, filed by agents, approved by the board
 import * as callcard from './callcard.ts';   // their card on the desk phone, Call and Don't call
 import * as callsweep from './callsweep.ts';   // the dial, and the sweep every minute
@@ -453,6 +460,24 @@ const api: Record<string, BoardRoute> = {
   'POST /api/sketches/archive': (q, s, b) => refusal(sketchbook.archiveSketch(b)),
   'POST /api/sketches/delete': (q, s, b) => refusal(book.deletePage(Number(b.id))),
   'POST /api/sketches/send': async (q, s, b) => refusal(await sketchbook.sendSketch(Number(b.id))),
+  // the Notebook: the shelf, a notebook's pages, a page's groups, a page sent (notebook*.ts; a group's elements are board
+  // rows, for their size.).
+  'GET /api/notebooks': () => notebook.listNotebooks(),
+  'POST /api/notebooks/archive': (q, s, b) => refusal(notebook.archiveNotebook(b)),
+  'GET /api/notebooks/pages': (q, s, b) => refusal(notebook.listPages(b)),
+  'POST /api/notebooks/pages/create': (q, s, b) => refusal(notebook.createPage(b)),
+  'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
+  'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
+  'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
+  'POST /api/notebooks/pages/send': async (q, s, b) => refusal(await notebooksend.sendPage(b)),
+  'POST /api/notebooks/pages/undo': (q, s, b) => refusal(notebooksend.undoSend(b)),
+  'GET /api/notebooks/pages/groups': (q, s, b) => refusal(notebookgroups.listGroups(b)),
+  'POST /api/notebooks/groups/move': (q, s, b) => refusal(notebookgroups.moveGroup(b)),
+  'POST /api/notebooks/groups/delete': (q, s, b) => refusal(notebookgroups.deleteGroup(b)),
+  'POST /api/notebooks/replies/delete': (q, s, b) => refusal(notebooksend.deleteReply(b)),
+  'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
+  'POST /api/notebooks/groups/join': (q, s, b) => refusal(notebookgroups.joinGroups(b)),
+  'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
   'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title }),
   'GET /api/seats': () => seats.listSeats(),
@@ -468,7 +493,7 @@ const api: Record<string, BoardRoute> = {
   // (the intake's first question, Settings › Language).
   'GET /api/language': () => language.language(),
   'POST /api/language': (q, s, b) => refusal(language.setLanguage(b?.lang)),
-  'GET /api/requests': () => tips.onPhone(jobs.listRequests().map(guests.card).map(outbox.card).map(callcard.card)),   // (callcard; tips)
+  'GET /api/requests': () => tips.onPhone(jobs.listRequests().map(guests.card).map(outbox.card).map(callcard.card).map(bookasks.card)),   // (callcard; tips; bookasks)
   'GET /api/requests/archive': q => { const a = jobs.listArchive(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('before')) || undefined);
     return { ...a, cards: a.cards.map(guests.card).map(outbox.card).map(callcard.card) }; },
   // Cards for later (later.ts): the ones off the desk phone until a day, and the board's snooze on a card (day:
@@ -1076,8 +1101,8 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // hq decision show <id>: the waiting visual changes, for their card author (decisions.ts).
   'GET /api/agent/decisions/show': (b, me) => refusal(decisions.show(Number(b.id), me.agent)),
   'POST /api/agent/decisions/link': (b, me) => refusal(decisions.link(Number(b.id), Number(b.card), me.agent)),
-  // hq decision settle <id> item:<n> | card:<n>: a visual decision the board's own word already answered
-  // (visualapproval.ts)
+  // hq decision settle <id> item:<n> | card:<n>: the CEO settles a visual decision, citing the board's word given
+  // elsewhere (visualapproval.ts)
   'POST /api/agent/decisions/settle': async (b, me) =>
     refusal(await visualapproval.settle(Number(b.id), String(b.word ?? ''), me.agent)),
   // hq propose: new work proposed to a project's owner, out of the queue; hq inbox: the open proposals waiting for the
@@ -1269,9 +1294,14 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     if (problem) return new Refused(400, problem);
     const files = cardFiles.read(b.files); // files to download
     if (typeof files === 'string') return new Refused(400, files);
-    return refusal(jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
+    // (the note or page it's about, which the book shows it under)
+    const place = bookasks.place(b, agent);
+    if (typeof place === 'string') return new Refused(400, place);
+    const card = jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
-      address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk }));   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
+      address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
+    if (typeof card === 'object' && !Array.isArray(card)) bookasks.filed(agent, place.page);
+    return refusal(card);
   },
   'POST /api/agent/request-answer': (b, me) => refusal(jobs.requestAnswer(Number(b.id), me.id)),
   // (only cards agents file, and a team member's only from its own job: its name isn't unique. An email card: its drafter
@@ -1377,8 +1407,6 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // reviewer's for the jobs its share's notes went to (feedback.ts noteFor).
   'GET /api/agent/note': (b, me) => feedback.noteFor(Number(b.id), me),
   // hq notes [<slug>]: the notes hq note would give this agent, listed (feedback.ts sentTo).
-  // hq reviewers <share> [--from <n>]: who was on a share, and the jobs its notes went to (feedback.ts reviewersOf).
-  'GET /api/agent/reviewers': (b, me) => feedback.reviewersOf(Number(b.share), me, Number(b.from) || 1),
   'GET /api/agent/notes': (b, me) => feedback.sentTo(me, b.slug ? String(b.slug) : undefined, b.before ? Number(b.before) : undefined),
   // hq note <id> fixed [job:<n>] "...": a job marks a note hq notes lists for its agent fixed (feedback.ts markFixed).
   'POST /api/agent/note-fixed': (b, me) => {
@@ -1733,9 +1761,6 @@ const anyHost = routes({
   'POST /__preview/handoff': async ({ req, res, jsonBody }) => preview.handOn(req, res, await jsonBody()),
   // Review mode on a product host (feedback.ts): the board's key, not the HQ session, opens it
   '* /__review/*': ({ req, res }) => feedback.product(req, res),
-  // ...whose sidebar shows an outsider's screenshot from here, HQ's host, for their own guest desk session (the board's:
-  // Reviews' own, behind the login)
-  [`GET ${feedback.SHOT_PATH}*`]: ({ req, res }) => feedback.outsiderShot(req, res),
   '* /*': ({ req, res, url }) => onHost(req, res, url),
 });
 // A shelf's review mode on the front's preview door (/<slug>/__review/*), and the cycles' pages, which get it from here
@@ -1746,8 +1771,12 @@ function onHost(req: IncomingMessage, res: ServerResponse, url: URL) {
   return hq(req, res, url);
 }
 
-// The platform's shared browser files HQ's looks import
-const SHARED_FILES: Record<string, string> = { '/foley.js': 'demo', '/ask.js': 'ask', '/contrast.js': 'contrast' };
+// A table of HQ's extra files (platform/hq/extras.mjs) as routes, a folder's by its files' names (feedback.ts answers
+// review mode's parts).
+const extraRoutes = (table: Record<string, string>): RouteTable => Object.fromEntries(Object.entries(table).map(([address, file]) =>
+  address.endsWith('/')
+    ? [`GET ${address}:file([a-z]+\\.js)`, (request: RouteRequest) => hqFile(`${REPO_DIR}/${file}`, `/${request.params.file}`)(request)]
+    : [`GET ${address}`, hqFile(`${REPO_DIR}/${dirname(file)}`, `/${basename(file)}`)]));
 // The board's own rows, from HQ's pages and its apps (kits.ts)
 const board: RouteTable = {
   '* /api/events': ({ res }) => subscribe(res),
@@ -1772,16 +1801,12 @@ const board: RouteTable = {
   'POST /api/pictures': ({ req, res }) => pictures.upload(req, res), // a picture for the intercom or a call
   'GET /api/pictures/file': ({ req, res }) => pictures.serve(req, res),
   // a call's walk-through to watch back, with its notes and items as the call log has them (callviews.ts forBoard),
-  // and the player's files: rrweb's replayer in a page of its own (REPLAY_CSP).
+  // and rrweb's replayer, which the player's page (HQ's extras) runs in a page of its own (REPLAY_CSP).
   'GET /api/calls/recording': ({ res, url }) => {
     const id = Number(url.searchParams.get('call')), listed = call.calls().find(c => c.id === id);
     if (!listed) return send(res, 404, { error: 'not found' });
     return callviews.forBoard(res, id, { agent: listed.agent, ts: listed.ts, request: listed.request, notes: listed.processed ? listed.reply : null, items: listed.items });
   },
-  'GET /shared/watchalong/player.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/player.js'),
-  'GET /shared/watchalong/scrubber.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/scrubber.js'),
-  [`GET ${REPLAY_PAGE}`]: hqFile(`${REPO_DIR}/shared/watchalong`, '/replay.html'),
-  'GET /shared/watchalong/replay.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/replay.js'),
   'GET /shared/watchalong/vendor/rrweb-replay.js': async ({ res }) => send(res, 200, await readFile(new URL('replay.js', watchalong.REPLAY)), TYPES['.js']),
   'GET /shared/watchalong/vendor/rrweb-replay.css': async ({ res }) => send(res, 200, await readFile(new URL('style.css', watchalong.REPLAY)), TYPES['.css']),
   // a page's ink and scraps, a note with its snip, and the pictures to show: a page's drawn here, a scrap, a snip and a
@@ -1796,6 +1821,13 @@ const board: RouteTable = {
   'GET /api/book/scrap': ({ req, res }) => book.serveScrap(req, res, null),
   'GET /api/book/snip': ({ req, res }) => booknotes.serveSnip(req, res),
   'GET /api/book/slip/picture': ({ req, res }) => bookslips.serveSlipPicture(req, res),
+  // a notebook group's elements, a scrap with its snip, a reply with its ink, and a group's pictures
+  'POST /api/notebooks/groups/create': boardJson((q, s, b) => refusal(notebookgroups.createGroup(b)), SAVE_MAX),
+  'POST /api/notebooks/groups/edit': boardJson((q, s, b) => refusal(notebookgroups.editGroup(b)), SAVE_MAX),
+  'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(notebookgroups.createScrap(b)), NOTE_MAX),
+  'POST /api/notebooks/groups/reply': boardJson(async (q, s, b) => refusal(await notebooksend.replyTo(b)), NOTE_MAX),
+  'POST /api/notebooks/pictures': ({ req, res }) => notebookpictures.uploadPicture(req, res),
+  'GET /api/notebooks/pictures': ({ req, res }) => notebookpictures.servePicture(req, res),
   // a paired device's stream, and its events for the other one, over HQ's JSON cap when a mark carries its strokes
   // (pair.ts).
   'GET /api/pair/live': ({ req, res, url }) => {
@@ -1852,21 +1884,7 @@ const board: RouteTable = {
   'GET /renderers/looks.json': ({ res }) => send(res, 200, looks(HQ_DIR)),
   // the company's tip films, by file name
   'GET /films/films.json': ({ res }) => send(res, 200, filmFiles(THEME_DIR)),
-  ...Object.fromEntries(Object.entries(SHARED_FILES).map(([path, folder]) => [`GET ${path}`, hqFile(`${REPO_DIR}/shared/${folder}`, path)])),
-  // the holidays' one table and the shared formats (money, days and times), which HQ's clock imports by their paths in
-  // the repo
-  'GET /shared/holidays/holidays.js': hqFile(`${REPO_DIR}/shared/holidays`, '/holidays.js'),
-  'GET /shared/format/format.js': hqFile(`${REPO_DIR}/shared/format`, '/format.js'),
-  // and the QR a second screen pairs by, which main.js loads through pair.js: without it HQ never starts
-  'GET /shared/qr/qr.js': hqFile(`${REPO_DIR}/shared/qr`, '/qr.js'),
-  // and the keys' motion Slate shares with the brand guide
-  'GET /shared/tactile/:file([a-z]+\\.js)': request =>
-    hqFile(`${REPO_DIR}/shared/tactile`, `/${request.params.file}`)(request),
-  // and the statistics' drawing and motion Slate shares with it too
-  'GET /shared/stats/:file([a-z]+\\.js)': request => hqFile(`${REPO_DIR}/shared/stats`, `/${request.params.file}`)(request),
-  // and the signs (the ring's colour, by the contrast sums it imports by their path)
-  'GET /shared/signs/signs.js': hqFile(`${REPO_DIR}/shared/signs`, '/signs.js'),
-  'GET /shared/contrast/contrast.js': hqFile(`${REPO_DIR}/shared/contrast`, '/contrast.js'),
+  ...extraRoutes(BOARD_EXTRAS),
   // a company's own HQ apps (kits/<name>/hq/, at /kits/<name>/…, from the copy its routes run from)
   'GET /kits/:kit([a-z0-9][a-z0-9\\-]*)/*': request => {
     const { kit } = request.params;
@@ -1930,11 +1948,7 @@ const hq = routes({
   'POST /api/watchalong/events': sameOrigin(({ req, res }) => watchalong.addEvents(req, res)),
   // a guest's walk-through, on the join link's own token (callline.ts).
   'POST /api/watchalong/join': sameOrigin(boardJson((q, s, b) => callline.startWatching(String(b.token ?? '')))),
-  'GET /shared/watchalong/watchalong.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/watchalong.js'),
-  'GET /shared/watchalong/canvas.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/canvas.js'),
-  // (its encoder, a worker HQ's policy lets run)
-  'GET /shared/watchalong/encoder.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/encoder.js'),
-  'GET /shared/watchalong/strokes.js': hqFile(`${REPO_DIR}/shared/watchalong`, '/strokes.js'),
+  ...extraRoutes(OPEN_EXTRAS),
   'GET /shared/watchalong/vendor/rrweb-record.js': async ({ res }) => send(res, 200, await readFile(watchalong.RECORDER), TYPES['.js']),
   // On Air's podcast feeds and their sound, for podcast apps: by the show's key, never the board's session (onair.ts)
   '* /onair/*': sameOrigin(({ req, res, url }) => {
@@ -2006,8 +2020,9 @@ for (const k of ['setInterval', 'setTimeout'] as const) {
 
 const calloutSweep = () => callsweep.sweep().catch(err => console.error('Could not sweep the calls out:', err));
 const cardFilesSweep = () => { try { cardFiles.sweep(); } catch (err) { console.error("Could not clear old cards' files:", err); } };
+const reviewBriefsSweep = () => { try { reviewBriefs.sweep(); } catch (err) { console.error("Could not clear old review runs' briefs:", err); } };
 const owedSweep = () => { try { owed.sweep(); } catch (err) { console.error('Could not check what the board is owed:', err); } };
-const shareSweep = () => { try { feedback.gather(); } catch (err) { console.error('Could not end the shares due:', err); } };
+const shareSweep = () => { try { feedback.endDue(); } catch (err) { console.error('Could not end the shares due:', err); } };
 const laterSweep = () => {
   try { later.sweep(); } catch (err) { console.error('Could not look at the cards for later:', err); }
   try { tips.sweep(); } catch (err) { console.error('Could not look for the tips time brings:', err); }
@@ -2072,6 +2087,8 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   notices.start(); // an account's notices of the last day without a job get one, then every 10 minutes
   // a card's files a month after it closed
   cardFilesSweep(); setInterval(cardFilesSweep, 3_600_000);
+  // review runs' briefs a week after their pull request settled
+  reviewBriefsSweep(); setInterval(reviewBriefsSweep, 60_000);
   callsweep.start(); setInterval(calloutSweep, 60_000); // a dial cut off ends failed; then what's due is dialled, and old transcripts go
   kits.start(); // the company's own parts' timers (kits.ts)
   plans.start(); // open plan checkouts read every 2 minutes
@@ -2091,7 +2108,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   threadends.closeSettled();
   messages.sweep(); setInterval(messages.sweep, 60_000); // unread messages of a job whose finish stopped halfway become jobs
   setInterval(owedSweep, 60_000); // a product's return whose job ended gets a follow-up (owed.ts)
-  setInterval(shareSweep, 60_000); // an outside reviewer's link past its date ends, and its notes go to the owner (feedback.ts gather)
+  setInterval(shareSweep, 60_000); // an outside reviewer's link past its date ends (feedback.ts endDue)
   setInterval(laterSweep, 60_000); // a card for later that shows now rings, if it's urgent (later.ts), and the tips time brings come (tips.ts)
   // new work gets its estimate (predictions.ts), and the queue is played (forecast.ts, again a moment after every change),
   // first a moment after the start: until then a request plays it, and hq job twice; its moved predictions written each

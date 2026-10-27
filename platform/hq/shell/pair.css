@@ -5,11 +5,12 @@
    own with Join beside it, never clipped. */
 #book .pair-card {
   position: absolute;
-  right: calc(var(--bk-square, 5px) + 70px);
+  /* (beside the islands' stack, one column or two: --bk-stack, bookui.js.) */
+  right: calc(var(--bk-square, 5px) + var(--bk-stack, 52px) + 18px);
   bottom: calc(var(--bk-square, 5px) + 64px);
   z-index: 7;
   box-sizing: border-box;
-  width: min(380px, calc(100% - var(--bk-square, 5px) - 86px));
+  width: min(380px, calc(100% - var(--bk-square, 5px) - var(--bk-stack, 52px) - 34px));
   display: flex;
   flex-wrap: wrap;
   align-items: center;

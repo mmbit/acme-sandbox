@@ -9,32 +9,34 @@ import * as predictionlog from './predictionlog.ts';
 import { byLead, LEADS, type Sample } from './backtest.ts';
 import { spread } from './accuracy.ts';
 import { db } from './db.ts';
-import { biasOf, WINDOW_MS as BIAS_WINDOW_MS } from './sizerbias.ts';
+import { usualOf, WINDOW_MS as BIAS_WINDOW_MS } from './sizerbias.ts';
 import { threadTimes } from './threadtime.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
-export function report(ask: { days?: unknown }, now = Date.now()) {
+// Its parts each run in a turn of HQ's thread of their own, so the server answers other requests between them.
+export async function report(ask: { days?: unknown }, now = Date.now()) {
   const days = ask.days === undefined ? 7 : Number(ask.days);
   if (!Number.isInteger(days) || days < 1 || days > 30) return 400;
   const since = new Date(now - days * DAY_MS).toISOString(),
     lookback = new Date(now - days * DAY_MS - BIAS_WINDOW_MS).toISOString();
   const recent = pastJobs().filter(j => j.finished >= lookback);
   const done = recent.filter(j => j.finished >= since);
-  return {
-    days,
-    sizes: sizeMisses(done, recent),
-    eta: etaMisses(done.map(j => j.id)),
-    threads: threadTimes(since),
-  };
+  const sizes = await sizeMisses(done, recent);
+  await turn();
+  const eta = await etaMisses(done.map(j => j.id));
+  await turn();
+  return { days, sizes, eta, threads: threadTimes(since) };
 }
+const turn = () => new Promise(setImmediate);
 
 // ---- layer 1: the sizes
 
 type Sized = { j: PastJob; size: JobSize };
 
-function sizeMisses(done: PastJob[], recent: PastJob[]) {
+async function sizeMisses(done: PastJob[], recent: PastJob[]) {
   const sizes = latestSizes();
+  await turn();
   const sized = sizedOf(done, sizes);
   const queued = queuedHow(sized.map(s => s.j.id));
   return {
@@ -87,21 +89,49 @@ function queuedHow(ids: number[]) {
 // sizer's together, else as given.
 function givenSizes(sized: Sized[], measured: Sized[]) {
   const pairOf = (s: Sized): [number, number] => [s.size.agent_ms, s.j.agent_ms];
-  // (each one's finish parsed once)
+  // (by finish, each one's parsed once)
   const pool = measured
     .filter(m => m.size.by !== 'tool' && !m.size.revised && m.j.agent_ms > 0)
-    .map(m => ({ ...m, finished: Date.parse(m.j.finished) }));
+    .map(m => ({ by: m.size.by, finished: Date.parse(m.j.finished), pair: pairOf(m) }))
+    .sort((a, b) => a.finished - b.finished);
+  const everyone = usualIn(pool),
+    own = new Map([...Map.groupBy(pool, m => m.by)].map(([by, list]) => [by, usualIn(list)]));
   const given = sized.filter(s => s.size.by !== 'tool');
   const corrected = given.map(s => {
     // (the CEO's revision plays as given)
     if (s.size.revised) return pairOf(s);
     const at = Date.parse(s.size.at);
-    const before = pool.filter(m => m.finished < at && m.finished >= at - BIAS_WINDOW_MS);
-    const own = before.filter(m => m.size.by === s.size.by).map(pairOf);
-    const bias = biasOf(own, true) ?? biasOf(before.map(pairOf), false);
-    return [s.size.agent_ms * (bias?.usual ?? 1), s.j.agent_ms] as [number, number];
+    const usual = own.get(s.size.by)?.(at - BIAS_WINDOW_MS, at) ?? everyone(at - BIAS_WINDOW_MS, at);
+    return [s.size.agent_ms * (usual ?? 1), s.j.agent_ms] as [number, number];
   });
   return { given_sizes: spread(given.map(pairOf)), given_sizes_corrected: spread(corrected) };
+}
+
+// The usual bias (sizerbias.ts usualOf) of the pool's jobs that finished from `from` until before `to`, from running
+// sums over the pool, which is sorted by finish.
+function usualIn(pool: { finished: number; pair: [number, number] }[]) {
+  const given = [0],
+    took = [0];
+  for (const { pair } of pool) {
+    given.push(given.at(-1)! + pair[0]);
+    took.push(took.at(-1)! + pair[1]);
+  }
+  // (the first job that finished at `at` or later)
+  const index = (at: number) => {
+    let low = 0,
+      high = pool.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (pool[middle].finished < at) low = middle + 1;
+      else high = middle;
+    }
+    return low;
+  };
+  return (from: number, to: number) => {
+    const first = index(from),
+      end = index(to);
+    return usualOf(end - first, given[end] - given[first], took[end] - took[first]);
+  };
 }
 
 // The folder (its first two levels: platform/coordinator, products/acme) the job's pull request changed most files
@@ -121,8 +151,9 @@ export function areaOf(j: Pick<PastJob, 'pr' | 'files'>) {
 
 // For each job that landed and each lead, the log's row standing that long before the landing (the last one written
 // by then): a row stands until the next one moves it.
-function etaMisses(jobs: number[]) {
+async function etaMisses(jobs: number[]) {
   const landed = landings(jobs);
+  await turn();
   // (each job's own rows, in order)
   const rows = Map.groupBy(predictionlog.ofJobs([...landed.keys()]), r => r.job);
   const samples: Sample[] = [];

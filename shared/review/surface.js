@@ -7,11 +7,11 @@
 import { ACCENT, PIN, button, keep, kept } from './base.js';
 import * as inkjs from './ink.js';
 import { uncoach } from './dock.js';
-import { shut } from './menu.js';
-import { showMark } from './change.js';
+import { shut } from './acts.js';
 import { compose, develop } from './postit.js';
 import { aim, boxOfLines } from './mark.js';
 import { unpicture } from './pictures.js';
+import { under } from './layer.js';
 import { paint as paintMarks } from './marks.js';
 
 const UNDO =
@@ -50,7 +50,7 @@ export const CSS = `
       .drop { position: absolute; width: 34px; height: 34px; margin: -30px 0 0 -6px; color: ${ACCENT}; filter: drop-shadow(0 2px 0 #fff); animation: land .4s cubic-bezier(.3,1.6,.5,1); pointer-events: none; }
       @keyframes land { from { transform: translateY(-40px) scale(1.4); opacity: 0 } }`;
 
-// (the ink and the outline sit outside the veil, so a mark shows while its note is changed; Redraw in the sheet)
+// (the ink and the outline sit outside the veil)
 export const HTML = `<div class="veil" hidden><div class="bar"><div class="hint"><i>${PIN}</i><span>Tap anything <small>or draw on it</small></span></div>
         <div class="strip" role="toolbar" aria-label="Inks"><span class="sep"></span><button class="undo" aria-label="Undo the last line" title="Undo" disabled>${UNDO}</button></div></div></div>
       <canvas class="halo" data-watchalong-hide></canvas>
@@ -65,9 +65,9 @@ export function paintInk(r, lines) {
   inkjs.draw(inkjs.fit(r.inkCanvas), lines, { halo: true });
   inkjs.shown(r.inkCanvas, lines, { halo: true });
 }
-export const redrawInk = r => (r.editing ? showMark(r) : paintInk(r, r.strokes));
+export const redrawInk = r => paintInk(r, r.strokes);
 export function pick(r) {
-  r.undoTo = { mark: r.mark, shot: r.shot, exposure: r.exposure, editing: r.editing };
+  r.undoTo = { mark: r.mark, shot: r.shot, exposure: r.exposure };
   r.mode = 'pick';
   r.strokes = [];
   r.veil.hidden = false;
@@ -77,20 +77,6 @@ export function pick(r) {
   r.more.hidden = true;
   paintInk(r, []);
   r.hl.hidden = true;
-}
-// what's under the finger, inside open shadow roots too: a tap in a chat's panel is the bubble or button there, not
-// the chat's empty host element at the page's end
-export function under(r, x, y) {
-  let el =
-    document.elementsFromPoint(x, y).find(e => e !== r.host && e !== document.documentElement && e !== document.body) ||
-    document.body;
-  for (let root; (root = el.shadowRoot);) {
-    // the topmost of its own (ours is on top of everything)
-    const inner = root.elementsFromPoint(x, y).find(e => e.getRootNode() === root);
-    if (!inner) break;
-    el = inner;
-  }
-  return el;
 }
 function stroked(r, stroke, e) {
   if (e.pointerType === 'pen') r.penSeen = true;
@@ -136,7 +122,7 @@ export function undo(r) {
     }
   }
   if (r.framePic) unpicture(r, r.framePic);
-  ({ mark: r.mark, shot: r.shot, exposure: r.exposure, editing: r.editing } = r.undoTo);
+  ({ mark: r.mark, shot: r.shot, exposure: r.exposure } = r.undoTo);
   r.framePic = null;
   r.root.querySelectorAll('.drop').forEach(d => d.remove());
   r.mode = 'pick';
@@ -145,7 +131,6 @@ export function undo(r) {
   r.veil.classList.remove('marked');
   r.undoButton.disabled = true;
   redrawInk(r);
-  if (r.editing) paintInk(r, []);
 }
 
 // the inks on the strip, the one last chosen in hand. An invited person's first ink is their own colour, the one their
@@ -180,7 +165,7 @@ function penOnPage(r) {
   addEventListener(
     'pointerdown',
     e => {
-      const resting = r.mode === 'idle' && !r.covered && !r.fab.hidden && r.fab.isConnected && r.side.hidden;
+      const resting = r.mode === 'idle' && !r.covered;
       penDown = e.pointerType === 'pen' && e.isPrimary && resting && !e.composedPath().includes(r.host) ? e : null;
     },
     true,

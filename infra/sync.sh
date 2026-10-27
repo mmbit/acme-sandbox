@@ -282,10 +282,47 @@ bring_up() {
       { echo "worker: new code, reloading its process (its jobs go on)"; reloaded=worker; $compose kill -s SIGUSR2 worker; }; } &&
     keep_limits
 }
+# The build cache goes whole or not at all, before the deploy's build. A partial
+# prune breaks it, whatever it means to keep: a build that finds a step cached doesn't mark the steps beneath it used, so
+# a prune by age or least recent use (an `until` filter, --keep-storage) drops steps today's images stand on, and from
+# then on every deploy rebuilds every image and recreates every container, the worker and its jobs included, until the
+# whole cache goes.
+# So it goes whole when the disk has under the floor plus a full rebuild free (that rebuild comes next and must stay
+# above the floor), and only if what it gives back leaves the disk above that line once the rebuild has taken its share:
+# otherwise the rebuild puts it straight back under, and every deploy rebuilds everything.
+# Under 5 GB free, where HQ refuses outside files (storage.ts FLOOR), it goes whenever that leaves more room after the
+# rebuild than there is now.
+# Docker's own cache GC is off (harden.sh): it prunes by least recent use too. "== disk" in the report says what holds
+# the rest.
+floorBytes=$((10 << 30))
+rebuildBytes=$((15 << 30)) # a full rebuild adds about 15 GB of cache
+prune_cache() {
+  local cacheSize reclaimable reclaimBytes freeBytes line after freed
+  # (Docker's sizes are SI, its "Reclaimable" the part no image shares; buildx's prune says "Total:", the classic one
+  # "Total reclaimed space:")
+  read -r cacheSize reclaimable < <(docker system df --format '{{.Type}} {{.Size}} {{.Reclaimable}}' |
+    sed -n 's/^Build Cache //p')
+  [ -n "$reclaimable" ] || { echo "build cache kept whole: docker system df gave no build cache size"; return 0; }
+  reclaimBytes=$(numfmt --from=si "$(echo "${reclaimable%B}" | tr a-z A-Z)") ||
+    { echo "build cache kept whole: its reclaimable size ($reclaimable) unread"; return 0; }
+  freeBytes=$(($(df --output=avail -k / | tail -1) * 1024))
+  line=$((floorBytes + rebuildBytes)) after=$((freeBytes + reclaimBytes - rebuildBytes))
+  if [ "$freeBytes" -ge "$line" ]; then
+    echo "build cache kept whole: $cacheSize ($reclaimable its own), $((freeBytes >> 30)) GB free"
+  elif [ "$after" -ge "$line" ] || { [ "$freeBytes" -lt $((5 << 30)) ] && [ "$after" -gt "$freeBytes" ]; }; then
+    freed=$(docker builder prune -af 2>&1 | sed -n 's/^Total\( reclaimed space\)\{0,1\}:[[:space:]]*//p')
+    echo "build cache pruned whole: ${freed:-?} of $cacheSize, $((freeBytes >> 30)) GB free, under" \
+      "$((line >> 30)) GB: this deploy builds every image afresh"
+  else
+    echo "build cache kept whole: $cacheSize, $((freeBytes >> 30)) GB free, under $((line >> 30)) GB, but the" \
+      "$reclaimable it would give back wouldn't outlast the rebuild: the disk needs room the cache can't give"
+  fi
+}
 log=$(mktemp)
 {
   echo "deploy $commit at $(date -Is)"
   ./infra/call-times.sh   # the board's call timings, before a recreated voice container starts its log afresh
+  prune_cache
   bring_up
 } > "$log" 2>&1
 deployed=$?
@@ -307,45 +344,12 @@ elif [ "$deployed" = 0 ] && [ "$up" = 0 ]; then
   deployed=$?
 fi
 echo "exit $deployed at $(date -Is)" >> "$log"
-# The images a rebuild replaced go after every deploy, whether it worked or not.
-# The build cache keeps the steps this deploy used, and loses the rest only past a budget, least recently used first.
-# Every deploy builds every image ($compose build, above), so the steps today's
-# images stand on are the ones used since this run started ($SECONDS), and keeping them costs the next deploy nothing:
-# it builds only what changed. Pruning them too flipped every deploy (24 Oct, 13:25-13:59 UTC): the whole cache went
-# under 15 GB free, the rebuild filled it straight back (15 GB), free space fell under the line again, and each deploy
-# rebuilt every image and recreated every container, the worker included.
-# The budget is a quarter of the disk, the cache's share, less whatever would leave under 10 GB free; under 10 GB the
-# unused images go too. Only under 5 GB free, where HQ refuses outside files (storage.ts FLOOR) and a build may not
-# fit, does the prune reach the steps this deploy used, oldest first, all of them if it must.
-# Docker's own cache GC is off (harden.sh): it trims to about 10% of the disk, under what today's images stand on.
-# The status report's "== disk" says what holds the rest.
-# (buildx's builder prune says "Total:", the classic one "Total reclaimed space:")
-cacheSize=$(docker system df --format '{{.Type}} {{.Size}}' 2>/dev/null | sed -n 's/^Build Cache //p')
-cacheSizeUpper=$(echo "$cacheSize" | tr a-z A-Z)
-cacheBytes=$(numfmt --from=si "${cacheSizeUpper%B}" 2>/dev/null || echo 0)
-freeBytes=$(($(df --output=avail -k / | tail -1) * 1024))
-floorBytes=$((10 << 30))
-cacheBudget=$(($(df --output=size -k / | tail -1) * 1024 / 4))
-budgetReason="a quarter of the disk"
-if [ $((cacheBytes + freeBytes - floorBytes)) -lt "$cacheBudget" ]; then
-  cacheBudget=$((cacheBytes + freeBytes - floorBytes))
-  budgetReason="$((floorBytes >> 30)) GB free"
-fi
-# (--keep-storage 0 is no budget at all)
-[ "$cacheBudget" -ge $((1 << 20)) ] || cacheBudget=$((1 << 20))
+# The images a rebuild replaced go after every deploy, whether it worked or not; under the floor, every unused image
+# too. (The build cache went whole or stayed before the build: prune_cache, above.)
 oldImages=-f
-[ "$freeBytes" -ge "$floorBytes" ] || oldImages=-af
-keepUsed="--filter until=${SECONDS}s" keptNote="the steps this deploy used kept"
-[ "$freeBytes" -ge $((5 << 30)) ] || keepUsed= keptNote="under 5 GB free: the steps this deploy used too"
-oldImagesFreed=$(docker image prune $oldImages 2>&1 | sed -n 's/^Total reclaimed space: //p')
-if [ "$cacheBytes" -le "$cacheBudget" ]; then
-  echo "pruned after the deploy: old images $oldImagesFreed, build cache 0B (kept whole: ${cacheSize:-?})" >> "$log"
-else
-  cacheFreed=$(docker builder prune -af $keepUsed --keep-storage "$((cacheBudget >> 20))mb" 2>&1 |
-    sed -n 's/^Total\( reclaimed space\)\{0,1\}:[[:space:]]*//p')
-  echo "pruned after the deploy: old images $oldImagesFreed, build cache $cacheFreed (oldest first, of ${cacheSize:-?}," \
-    "toward $((cacheBudget >> 20)) MB, $budgetReason; $keptNote)" >> "$log"
-fi
+[ $(($(df --output=avail -k / | tail -1) * 1024)) -ge "$floorBytes" ] || oldImages=-af
+echo "pruned after the deploy: old images $(docker image prune $oldImages 2>&1 | sed -n 's/^Total reclaimed space: //p')" \
+  >> "$log"
 ./infra/report.sh "$log"
 # HQ's record of the deploy, for the jobs that wait for one (hq job --when): after the report, so a job it starts finds
 # this deploy's in hq report.

@@ -98,6 +98,12 @@
   /* (one width for every island in the stack: the widest's) */
   align-items: stretch;
 }
+/* (too short for one column even then: what doesn't fit goes on in a second to the left, the book's own island at its
+   foot. bookui.js decides.) */
+#book .bk-islands.bk-two {
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+}
 #book .bk-island {
   flex-shrink: 0;
 }
@@ -105,11 +111,12 @@
 #book .bk-island[data-island='book'] {
   margin-top: auto;
 }
-/* (centred in the paper the stack leaves beside it, so a narrow book's row never runs under the stack) */
+/* (centred in the paper the stack leaves beside it, so a narrow book's row never runs under the stack: --bk-stack, its
+   width, bookui.js.) */
 #book .bk-island[data-island='pages'] {
   position: absolute;
-  left: calc(50% - 35px);
-  max-width: calc(100% - 96px);
+  left: calc(50% - var(--bk-stack, 52px) / 2 - 9px);
+  max-width: calc(100% - var(--bk-stack, 52px) - 44px);
   bottom: max(12px, env(safe-area-inset-bottom));
   transform: translateX(-50%);
 }

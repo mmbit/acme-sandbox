@@ -1,7 +1,8 @@
 // The screenshot's copy of the page (snapshot.js): every visible element with its computed style inlined, fixed and
 // sticky boxes pinned where they are on screen, scrolled boxes held at their scroll.
 import { inTopLayer } from './layer.js';
-import { drawnFrame, inline, inlineUrls } from './snapshot.js';
+import { inline, inlineUrls } from './inline.js';
+import { drawn } from './pictures.js';
 import { edgeChild, passes, pixels, through, pseudo, copyText } from './flow.js';
 import { faceOf } from './faces.js';
 
@@ -309,3 +310,12 @@ const contentBox = (b, cs) => ({
   bottom: b.bottom - parseFloat(cs.borderBottomWidth) - parseFloat(cs.paddingBottom),
   left: b.left + parseFloat(cs.borderLeftWidth) + parseFloat(cs.paddingLeft),
 });
+// a video's frame as it shows now, about the size it's shown at
+function drawnFrame(v) {
+  const b = v.getBoundingClientRect(),
+    k = Math.min(
+      1,
+      (Math.max(b.width, b.height) * Math.min(devicePixelRatio || 1, 2)) / Math.max(v.videoWidth, v.videoHeight),
+    );
+  return drawn(v, v.videoWidth * k, v.videoHeight * k, false);
+}

@@ -19,6 +19,8 @@ compose="docker compose -f $root/infra/compose.yaml -f $root/infra/generated/pro
   # coordinator's database stops writing, and below 10 GB free mail keeps attachment names only (mail.ts STORAGE)
   echo; echo "== disk (free space, then what holds it: Docker, the volumes, the jobs' folders and homes)"
   df -h --output=size,used,avail,pcent /; echo; docker system df 2>&1; echo
+  # the biggest images, so a report says which grew
+  docker image ls --format '{{.Size}} {{.Repository}}:{{.Tag}}' 2>&1 | sort -h | tail -n 8; echo
   work=$(docker volume inspect -f '{{.Mountpoint}}' infra_work 2>/dev/null)
   # the biggest folders two levels down (jobs/<n>, homes/<n>, legacy/...), and the other places that grow
   [ -n "$work" ] && timeout 120 nice ionice -c3 du -xh -d2 "$work" 2>/dev/null | sort -h | tail -n 12 | sed "s|$work|work volume|"
@@ -364,63 +366,10 @@ PY
     echo   # (the heading comes from campaigns.py)
     timeout 30 $compose exec -T "$p" node --disable-warning=ExperimentalWarning src/campaigns.ts --json 2>/dev/null | python3 $root/infra/campaigns.py "${p#product-}"
   done
-  # Page loads, visitors and visits on the live products that count through HQ (shared/metrics: the stalls), per day on
-  # the company's clock (the one each deploy publishes, clock.ts) and source (the ad label or search engine the visit
-  # landed with). Only HQ's counts, checked words already, so nothing a product prints reaches the report.
+  # Page loads, visitors and visits on the live products that count through HQ, and every page load by where it came
+  # from: infra/visitors.mjs, run by the coordinator's node from stdin.
   steps+=", visitors $(date -u +%T)"
-  echo; echo "== live products: page loads, visitors and visits, last 7 days (HQ's counts; per day on the company's clock and the source each visit landed with)"
-  timeout 40 $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
-    import { DatabaseSync } from 'node:sqlite';
-    import { readFileSync } from 'node:fs';
-    const db = new DatabaseSync('/data/hq.db', { timeout: 5000, readOnly: true });
-    const timeZone = readFileSync('/data/time-zone', 'utf8');
-    const from = new Intl.DateTimeFormat('sv-SE', { timeZone }).format(Date.now() - 6 * 864e5);
-    const rows = db.prepare(\`select product, day, campaign, sum(iif(step = 'page', n, 0)) loads, sum(iif(step = 'visitor', n, 0)) visitors,
-      sum(iif(step = 'visit', n, 0)) visits, max(step != 'page') seen from metric_counts where mode = 'live' and step in ('page', 'visitor', 'visit')
-      and day >= ? group by product, day, campaign order by day desc, product, campaign\`).all(from);
-    // a product's days before its first visitor or visit were not counted (the switch was off): a dash, not 0
-    const since = {};
-    for (const r of rows) if (r.seen && !(since[r.product] <= r.day)) since[r.product] = r.day;
-    const counted = r => r.product in since && r.day >= since[r.product];
-    if (!rows.length) console.log('No page loads in these days.');
-    else {
-      console.log('| product | day | source | page loads | visitors | visits |');
-      console.log('|---|---|---|---|---|---|');
-      for (const r of rows.slice(0, 100)) console.log('| ' + [r.product, r.day, r.campaign || '(none)', r.loads,
-        counted(r) ? r.visitors : '-', counted(r) ? r.visits : '-'].join(' | ') + ' |');
-      if (rows.length > 100) console.log('(' + (rows.length - 100) + ' more rows, past the 100 the report shows: the oldest days)');
-      console.log('A visitor is one internet address and browser in a day, a visit their page loads with under 30 minutes between, and a person back on another day counts again; -: not counted (METRICS_VISITORS in company/infra.env was off).');
-    }"
-  # Every load of those pages by where it came from, a column per source seen: a person's by the kind of page that sent
-  # them, or the crawler, fetcher or prefetch that made it, which the page loads above leave out (shared/metrics
-  # loadSource and fetchedBy). Only HQ's counts, in its own checked words.
-  # (the company's clock, like the table above)
-  echo; echo "== live products: every page load by where it came from, last 7 days (HQ's counts; prefetch and agent-<name> aren't in the page loads above)"
-  timeout 40 $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module -e "
-    import { DatabaseSync } from 'node:sqlite';
-    import { readFileSync } from 'node:fs';
-    const db = new DatabaseSync('/data/hq.db', { timeout: 5000, readOnly: true });
-    const timeZone = readFileSync('/data/time-zone', 'utf8');
-    const from = new Intl.DateTimeFormat('sv-SE', { timeZone }).format(Date.now() - 6 * 864e5);
-    const rows = db.prepare(\`select product, day, campaign source, sum(n) n from metric_counts where mode = 'live' and step = 'load'
-      and day >= ? group by product, day, campaign\`).all(from);
-    // a person's sources first, then the prefetches, then the crawlers and fetchers; (not kept): a source HQ no longer keeps
-    const kind = s => s.startsWith('agent-') ? 2 : s === 'prefetch' ? 1 : 0;
-    const sources = [...new Set(rows.map(r => r.source || '(not kept)'))].sort((a, b) => kind(a) - kind(b) || a.localeCompare(b));
-    const days = new Map();
-    for (const r of rows) {
-      const key = r.day + ' ' + r.product;
-      if (!days.has(key)) days.set(key, { day: r.day, product: r.product, n: {} });
-      days.get(key).n[r.source || '(not kept)'] = r.n;
-    }
-    const lines = [...days.values()].sort((a, b) => b.day.localeCompare(a.day) || a.product.localeCompare(b.product));
-    if (!lines.length) console.log('No loads counted by source in these days.');
-    else {
-      console.log('| product | day | ' + sources.join(' | ') + ' |');
-      console.log('|---|---|' + sources.map(() => '---|').join(''));
-      for (const l of lines) console.log('| ' + [l.product, l.day, ...sources.map(s => l.n[s] ?? 0)].join(' | ') + ' |');
-      console.log('none: no referrer; stall: its own pages; shop: other pages of the shop; a social network by name (meta: Facebook or Instagram); other: any other site.');
-    }"
+  timeout 80 $compose exec -T coordinator node --disable-warning=ExperimentalWarning --input-type=module < "$root/infra/visitors.mjs"
   # A day's warnings and errors per service, counted: the tails below are 40 lines, so a night's fault scrolls out.
   steps+=", error counts $(date -u +%T)"
   echo; echo "== errors, last 24 hours (warnings and errors per service, counted; infra/log_errors.py)"

@@ -2,7 +2,7 @@
 // it goes with the note (its anchor, anchor.js, in document px, with review mode's own: the kind, the drawn area, the
 // element's HTML). While the note is open the mark stays in the screen's px, as its lines are drawn.
 import { V, box, isPrivate, noKeys, selector, textOf } from './anchor.js';
-import { under } from './surface.js';
+import { under } from './layer.js';
 
 // where lines are: the box around all their points
 export function boxOfLines(lines) {
@@ -15,6 +15,12 @@ export function boxOfLines(lines) {
     w: Math.max(...xs) - Math.min(...xs),
     h: Math.max(...ys) - Math.min(...ys),
   };
+}
+// Whether an area (screen px) comes within px of lines' box: on them, or that close beside.
+export function nearLines(area, lines, px) {
+  if (!lines.length) return false;
+  const b = boxOfLines(lines);
+  return area.x < b.x + b.w + px && area.x + area.w > b.x - px && area.y < b.y + b.h + px && area.y + area.h > b.y - px;
 }
 
 // The element as it goes, in the screen's px: its HTML without form values, like the screenshot (hidden and password
@@ -49,7 +55,6 @@ export function aim(r) {
   Object.assign(mark, { el, area });
   if (!mark.element) return; // (compose describes it)
   mark.element = { ...mark.element, ...describe(el), area: box(area) };
-  if (r.editing) r.editing.mark = { ...marked(r), live: el };
 }
 
 // the screen too, as a big screen with a half-width window reads as a small laptop; touch points tell an iPad from a Mac

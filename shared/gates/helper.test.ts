@@ -1,6 +1,7 @@
 // node --test shared/gates/helper.test.ts
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -257,4 +258,29 @@ test("tests too slow for the helper's limit fail as such, naming the files still
   assert.equal(atLimit.status, 1, atLimit.out);
   assert.match(atLimit.out, /^Tests failed: too slow for the helper's 30-minute limit on attic/m);
   assert.doesNotMatch(atLimit.out, /They run here instead|Tests passed:/);
+});
+
+// The check waiting on its helper (up to half an hour) holds the worker's memory all that time, so it must never keep
+// the bundle it sent: lentsend.ts sends it from a process that ends with the send.
+// Here a ~32 MB bundle, which the check sending it itself would hold all of.
+test("a check waiting on its helper doesn't hold the bundle it sent: the upload's own process ends with the send", async () => {
+  const peak = [
+    "import { readFileSync } from 'node:fs';",
+    "import { onLent } from './lent.ts';",
+    "import { git } from './repo.ts';",
+    "const kb = (field: string) => Number(readFileSync('/proc/self/status', 'utf8').match(new RegExp(field + ':\\\\s+(\\\\d+)'))![1]);",
+    "const root = process.cwd(), before = kb('VmRSS');",
+    "const check = { what: 'Peak', script: 'peak', args: [], minutes: 1, bring: [], tools: [] };",
+    "const ran = await onLent(root, { ...check, base: git(root, 'rev-parse', 'main').trim(), tree: git(root, 'rev-parse', 'HEAD^{tree}').trim() });",
+    "console.log(JSON.stringify({ output: ran?.output, grewMb: (kb('VmHWM') - before) / 1024 }));",
+  ].join('\n');
+  const { run } = clone(
+    { 'shared/gates/peak.ts': peak, 'shared/gates/tests-on-helper.sh': 'echo "ran $1"\n' },
+    { 'big.txt': randomBytes(24 * 2 ** 20).toString('base64') },
+  );
+  const ran = run(await playedHq(), 'peak.ts');
+  assert.equal(ran.status, 0, ran.out);
+  const { output, grewMb } = JSON.parse(ran.out.trim().split('\n').at(-1)!);
+  assert.equal(output, 'ran peak\n');
+  assert.ok(grewMb < 16, `the check's peak grew ${grewMb} MB while it sent the bundle`);
 });

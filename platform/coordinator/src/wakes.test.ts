@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { harness, type Running } from './harness.ts';
+import type { WakeRow } from './wakes.ts';
 
 const h = await harness('wakes');
 const { db } = h;
@@ -58,6 +59,12 @@ const starts = async (id: number) => {
   await h.finish(job!);
   return job!.note as string;
 };
+// When the threads' waiting split (threadwaits.ts) dates a job's wake: the end of the deploy its start named, by sha
+const datesDeploy = (id: number, sha: string) => {
+  const w = db.prepare('select job, kind, arg, since from wakes where job = ?').get(id) as WakeRow;
+  const { finished } = db.prepare('select finished from deploys where sha = ?').get(sha) as { finished: string };
+  assert.equal(wakes.metAt(w), Date.parse(finished), `metAt dates the deploy that met #${id}'s ${w.kind} wake`);
+};
 
 test('--when deploy:2 holds the job until two deploys begun since have finished (a failed one not counted), then it starts and reads what happened', async () => {
   const bolt = await running('bolt');
@@ -81,6 +88,7 @@ test('--when deploy:2 holds the job until two deploys begun since have finished 
     await starts(id),
     /starts now: 2 deploys since it was queued, the last: deploy bbbbbbbbb .*\(recreated: coordinator, worker\)/,
   );
+  datesDeploy(id, 'bbbbbbbbb1');
   assert.deepEqual(readdirSync(DEPLOYS), [], "each record's file goes once HQ has taken it in");
   await h.finish(bolt);
 });
@@ -93,6 +101,7 @@ test('--when recreated:<service> waits for a deploy that recreates that containe
   await deploy({ sha: 'ccccccc', recreated: ['caddy', 'worker'] });
   assert.equal(ready(id), true);
   assert.match(await starts(id), /a deploy recreated worker: deploy ccccccc/);
+  datesDeploy(id, 'ccccccc');
   const typo = await queue(bolt, '--when', 'recreated:workr', 'bolt', 'Typo');
   assert.notEqual(typo.code, 0);
   assert.match(typo.out, /no workr container \(caddy, coordinator, worker\)/);
@@ -136,6 +145,7 @@ test('--when deployed:<job> or deployed:pr:<n> waits for that work to merge and 
     await starts(id),
     new RegExp(`#${work.id}'s work \\(pull request #501, merged .*\\) is deployed: deploy ddddddd`),
   );
+  datesDeploy(id, 'ddddddd');
   const byPr = await queue(bolt, '--when', 'deployed:pr:501', 'bolt', 'Already live');
   assert.equal(ready(byPr.id), true, 'merged and deployed before it was queued');
   await starts(byPr.id);

@@ -324,7 +324,7 @@ test('a removed tester’s voucher pays nothing', async () => {
   assert.equal(off.json.total, 3995);
 });
 
-// A tester's Send my notes, as review mode sends it from the shop's preview: a session of theirs on its host
+// A tester's session on the shop's preview host, as its door hands it on
 const PREVIEW_HOST = 'front.preview.company.test';
 function sessionFor(share: number, guest: string) {
   const session = `session-${guest}`;
@@ -337,17 +337,6 @@ function sessionFor(share: number, guest: string) {
   );
   return session;
 }
-const sendNotes = (session: string) =>
-  call(
-    '/__review/submit',
-    {
-      host: PREVIEW_HOST,
-      origin: `https://${PREVIEW_HOST}`,
-      cookie: `ps=${session}`,
-      'content-type': 'application/json',
-    },
-    {},
-  );
 const testerInvite = (name: string) =>
   feedback.inviteToShare({
     page: `https://${PREVIEW_HOST}/`,
@@ -357,23 +346,19 @@ const testerInvite = (name: string) =>
     tester: true,
   }) as any;
 
-test('a tester who sends their notes before ordering keeps their voucher, and the invite ends once they’ve ordered', async () => {
+test('a tester who has ordered keeps the invite open until its date or the board’s End', async () => {
   for (const s of shares.list()) if (!s.ended) feedback.endShare({ id: s.id });
   const share = testerInvite('Mia');
-  const sent = await sendNotes(sessionFor(share.id, 'Mia'));
-  assert.equal(sent.status, 200, sent.text);
-  assert.equal(shares.byId(share.id)!.ended, null, 'still open: Mia hasn’t ordered');
-  feedback.gather();
-  assert.equal(shares.byId(share.id)!.ended, null);
-
   const mia = shares.people(share.id)[0];
   const b = await basket();
   assert.equal((await enter(b.id, shown(mia.voucher!))).status, 200);
   const paid = await checkout(b.id, 'test', { email: 'mia@example.com' });
   assert.equal(paid.status, 200, paid.text);
   assert.equal(shares.people(share.id)[0].ordered, paid.json.id);
-  feedback.gather();
-  assert.ok(shares.byId(share.id)!.ended, 'everyone has sent their notes and ordered');
+  feedback.endDue();
+  assert.equal(shares.byId(share.id)!.ended, null, 'still open: her notes may come after her order');
+  feedback.endShare({ id: share.id });
+  assert.equal(shares.byId(share.id)!.ended_by, 'board');
 });
 
 // The chat's route on the preview (Caddy asks with ?board=1): a tester uses the support chat there as a customer would; an

@@ -2,7 +2,16 @@
 // session on the guest desk)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, rmSync, statSync, truncateSync, utimesSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  truncateSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import sharp from 'sharp';
 import { harness } from './harness.ts';
 
@@ -562,4 +571,45 @@ test("an invited person's request that comes in after their book was taken back 
   const kept = ((await h.board('/api/sketches')).body.guests as any[]).find(g => g.name === 'Hester').sketches[0];
   assert.deepEqual([kept.label, kept.pictures], ['', 0]);
   assert.ok(!scrapsOf(mine.id).length, 'no scrap kept');
+});
+
+test("a person's book keeps their name at their address once a page is in it; an empty one keeps nothing", async () => {
+  // invited at one address, with nothing else of theirs open: the board may name someone else so at another
+  assert.ok(!Array.isArray(guests.invite('Rafa', 'rafa@example.org')));
+  assert.ok(people.hasBook('Rafa'), 'a book from the invite');
+  assert.ok(!Array.isArray(guests.invite('Rafa', 'rafa.other@example.org')), 'an empty book keeps no name');
+  // a page in the new book, and the name stays with the person who has it
+  const rafas = people.whoOf(people.grantOf('Rafa')!),
+    page = book.createPage({ w: 800, h: 600, kind: 'free' }, rafas) as { id: number };
+  const refused = guests.invite('Rafa', 'rafa@example.org');
+  assert.ok(Array.isArray(refused) && refused[0] === 409, 'a book with a page in it keeps the name');
+  assert.equal(guests.emailOf('Rafa'), 'rafa.other@example.org');
+  // its page gone, the book is empty again and keeps nothing
+  book.deletePage(page.id, rafas);
+  assert.ok(!Array.isArray(guests.invite('Rafa', 'rafa@example.org')));
+});
+
+test("an invited person's request that comes in after the company shut the books changes nothing", async () => {
+  const ida = await invited('Ida');
+  const mine = (await as(ida.cookie)(`${room}/api/create`, { w: 800, h: 600 })).body;
+  const brandFile = `${h.repo}/company/brand.yaml`,
+    brandBefore = existsSync(brandFile) ? readFileSync(brandFile, 'utf8') : '';
+  const q = request(`${base}${room}/api/label`, {
+    method: 'POST',
+    headers: { cookie: ida.cookie, origin: ORIGIN, 'content-type': 'application/json' },
+  });
+  const status = new Promise<number>((resolve, reject) =>
+    q.on('response', r => (r.resume(), resolve(r.statusCode!))).on('error', reject),
+  );
+  q.flushHeaders();
+  await new Promise(r => setTimeout(r, 100));
+  writeFileSync(brandFile, `${brandBefore}\nguest: { sketchbook: false }\n`);
+  try {
+    q.end(JSON.stringify({ id: mine.id, label: 'Too late' }));
+    assert.equal(await status, 403);
+  } finally {
+    writeFileSync(brandFile, brandBefore);
+  }
+  const kept = ((await h.board('/api/sketches')).body.guests as any[]).find(g => g.name === 'Ida').sketches[0];
+  assert.equal(kept.label, '');
 });

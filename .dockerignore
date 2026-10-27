@@ -17,6 +17,8 @@
 !platform/hq/util.js
 # the looks HQ ships, which the coordinator answers renderers/looks.json with
 !platform/hq/looks.mjs
+# and HQ's extra files, which it answers too
+!platform/hq/extras.mjs
 # and the company's tip films, which it answers films/films.json with
 !platform/hq/films/listing.mjs
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)

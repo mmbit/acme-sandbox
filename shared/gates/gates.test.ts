@@ -15,11 +15,14 @@ const CONFIGS = [
   'tsconfig.json',
   '.prettierignore',
   'shared/gates/brand.ts',
+  'shared/gates/imports.ts',
   'shared/gates/gates.ts',
   'shared/gates/lent.ts',
+  'shared/gates/lentsend.ts',
   'shared/gates/output.ts',
   'shared/gates/repo.ts',
   'shared/gates/sizes.ts',
+  'shared/gates/spans.py',
   'shared/demo/renders.mjs',
 ];
 
@@ -170,6 +173,46 @@ test('a long function or file with a disable comment that says why passes', () =
     },
   );
   assert.equal(status, 0, out);
+});
+
+// Python and shell files of `n` lines, and a Python function of `n` lines (its def included)
+const pyLines = (n: number) => Array.from({ length: n }, (_, i) => `C${i} = ${i}\n`).join('');
+const shLines = (n: number) => Array.from({ length: n }, (_, i) => `echo ${i}\n`).join('');
+const pyFn = (name: string, n: number) => `def ${name}():\n${'    print(1)\n'.repeat(n - 1)}`;
+
+test('a change that takes a Python or shell file past 400 lines fails; its tests, an already long one and one that says why pass', () => {
+  const { status, out } = gates(
+    { 'lib/short.py': pyLines(400), 'lib/long.py': pyLines(450), 'lib/run.sh': shLines(400), 'lib/test_a.py': '' },
+    {
+      'lib/short.py': pyLines(401),
+      'lib/long.py': pyLines(460),
+      'lib/run.sh': shLines(401),
+      'lib/new.py': pyLines(401),
+      'lib/test_a.py': pyLines(500),
+      'lib/table.py': `# max-lines -- a table of every postcode\n${pyLines(410)}`,
+    },
+  );
+  assert.equal(status, 1, out);
+  assert.match(out, /lib\/short\.py:401: File has too many lines \(401\).*\(max-lines\)/);
+  assert.match(out, /lib\/run\.sh:401: File has too many lines \(401\)/);
+  assert.match(out, /lib\/new\.py:401: /);
+  assert.doesNotMatch(out, /long\.py|test_a\.py|table\.py/);
+});
+
+test('a Python function that grows past 50 lines or is new fails; an old one moved or grown, or one that says why, passes', () => {
+  const why = '# max-lines-per-function -- one form, field by field\n@staticmethod\n';
+  const { status, out } = gates(
+    { 'lib/old.py': pyFn('budget', 50) + pyFn('orders', 60) + pyFn('report', 70) },
+    {
+      'lib/old.py': pyFn('budget', 51) + pyFn('report', 80),
+      'lib/orders.py': pyFn('orders', 60),
+      'lib/new.py': `class Ledger:\n${pyFn('invoices', 51).replace(/^/gm, '    ')}${why}${pyFn('form', 80)}`,
+    },
+  );
+  assert.equal(status, 1, out);
+  assert.match(out, /lib\/old\.py:1: Function 'budget' has too many lines \(51\).*\(max-lines-per-function\)/);
+  assert.match(out, /lib\/new\.py:2: Function 'Ledger\.invoices' has too many lines \(51\)/);
+  assert.doesNotMatch(out, /orders|report|form/);
 });
 
 test('a type error the change causes in a file it never touched fails it', () => {

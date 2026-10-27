@@ -1,26 +1,13 @@
 // hq estimate --calibration's threads: the pull requests merged lately, grouped by their thread (one with no thread is
 // its own group), with the tasks, agents, pull requests and review rounds each took, and its wall-clock from its first
 // task's creation to its last merge split into work, review and waiting, overlapping runs counted once. Also the
-// hand-offs between threads: a task queued --after another branch's job waits for that job's review and merge.
+// hand-offs between threads: a task queued --after another branch's job waits for that job's review and merge. And
+// what the waiting was (threadwaits.ts).
 import { db } from './db.ts';
-import { median } from './arithmetic.ts';
+import { minutes, share } from './arithmetic.ts';
 import { covered, type Span } from './playtime.ts';
-
-const MINUTE_MS = 60_000;
-
-type Merge = { number: number; branch: string; merged: number };
-type Job = {
-  id: number;
-  kind: string;
-  agent: string;
-  pr: number | null;
-  round: number | null;
-  created: number;
-  after: number | null;
-  thread: string | null;
-  branch: string;
-};
-type Group = { key: string; prs: Merge[]; tasks: Job[]; work: Job[]; reviews: Job[] };
+import { waitingSplit } from './threadwaits.ts';
+import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './threadgroups.ts';
 
 export function threadTimes(since: string) {
   const lately = (db.prepare(MERGED).all(since) as MergeRow[]).map(mergeOf);
@@ -30,7 +17,11 @@ export function threadTimes(since: string) {
   const merges = mergesOn([...lately, ...after].map(x => x.branch));
   const groups = grouped(lately, jobs, merges);
   const tasks = groups.flatMap(g => g.tasks);
-  return { ...summed(groups, runs), handoffs: handoffs(tasks, after, merges, runs) };
+  return {
+    ...summed(groups, runs),
+    handoffs: handoffs(tasks, after, merges, runs),
+    ...waitingSplit(groups, runs, merges),
+  };
 }
 
 // ---- the rows, ids first and then each row by its id
@@ -56,11 +47,11 @@ const jobsById = (ids: number[]) =>
   (
     db
       .prepare(
-        `select id, kind, agent, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch
-        from jobs where id in (select value from json_each(?))`,
+        `select id, kind, agent, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
+        coalesce(seq, id) seq, finished from jobs where id in (select value from json_each(?))`,
       )
-      .all(JSON.stringify(ids)) as (Omit<Job, 'created'> & { created: string })[]
-  ).map(r => ({ ...r, created: Date.parse(r.created) }));
+      .all(JSON.stringify(ids)) as (Omit<Job, 'created' | 'finished'> & { created: string; finished: string | null })[]
+  ).map(r => ({ ...r, created: Date.parse(r.created), finished: r.finished === null ? null : Date.parse(r.finished) }));
 
 // Each job's ended runs, in order.
 function runsOf(ids: number[]) {
@@ -104,8 +95,6 @@ function mergesOn(branches: string[]) {
     m => m.branch,
   );
 }
-const firstMergeAfter = (merges: Map<string, Merge[]>, branch: string, at: number) =>
-  merges.get(branch)?.find(m => m.merged >= at);
 
 // ---- the threads
 
@@ -140,8 +129,7 @@ function grouped(lately: Merge[], jobs: Job[], merges: Map<string, Merge[]>) {
 function summed(groups: Group[], runs: Map<number, Span[]>) {
   const spansOf = (jobs: Job[]) => jobs.flatMap(j => runs.get(j.id) ?? []);
   const times = groups.map(g => {
-    const start = Math.min(...g.tasks.map(t => t.created)),
-      end = Math.max(...g.prs.map(p => p.merged));
+    const { start, end } = spanOf(g);
     const work = covered(spansOf(g.work), start, end);
     const review = covered(spansOf([...g.work, ...g.reviews]), start, end) - work;
     return { work, review, waiting: end - start - work - review };
@@ -188,9 +176,3 @@ function handoffs(
     start: minutes(waits.map(w => w.start)),
   };
 }
-
-const minutes = (values: number[]) => ({
-  total: Math.round(values.reduce((sum, v) => sum + v, 0) / MINUTE_MS),
-  median: values.length ? Math.round(median(values)! / MINUTE_MS) : null,
-});
-const share = (n: number) => Math.round(n * 100) / 100;

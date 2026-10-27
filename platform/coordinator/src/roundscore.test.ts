@@ -9,6 +9,7 @@ import type { Kept } from './snapshots.ts';
 process.env.DATA_DIR = mkdtempSync(`${tmpdir()}/roundscore-`);
 const { play } = await import('./eta.ts');
 const { scoreRounds } = await import('./roundscore.ts');
+const { listedOf } = await import('./snapshots.ts');
 const MINUTE_MS = 60_000;
 
 function work(id: number, due: number | null = 1_000_000): QueuedJob {
@@ -93,7 +94,10 @@ test('the rounds report counts each windowed job once and keeps unmerged jobs in
   const large = kept(2 * MINUTE_MS, [work(4)], 45, 90);
   const legacy = kept(3 * MINUTE_MS, [work(5)]);
   delete legacy.snapshot.planner;
-  const report = await scoreRounds([early, late, large, legacy], play);
+  const report = await scoreRounds(
+    [early, late, large, legacy].map(k => listedOf(k)),
+    play,
+  );
   assert.equal(report.snapshots, 3);
   assert.equal(report.total_snapshots, 4);
   assert.deepEqual(report.groups, [
@@ -105,10 +109,10 @@ test('the rounds report counts each windowed job once and keeps unmerged jobs in
 test('old snapshots explicitly have no played-round sample', async () => {
   const old = kept(0, [work(1)]);
   delete old.snapshot.planner;
-  const report = await scoreRounds([old], play);
+  const report = await scoreRounds([listedOf(old)], play);
   assert.equal(report.snapshots, 0);
   const { score } = await import('./backtest.ts');
-  const leads = await score([old], new Map([[1, 80 * MINUTE_MS]]), play);
+  const leads = await score([listedOf(old)], new Map([[1, 80 * MINUTE_MS]]), play);
   assert.ok(leads.every(lead => lead.count === 0));
   assert.deepEqual(
     report.groups.map(group => [group.count, group.median_minutes, group.worst_minutes]),
@@ -153,7 +157,7 @@ test('the historical score uses the slow measured review run for its held time',
       stop: 1,
     },
   ];
-  const [hour] = await score([input], new Map([[1, 80 * MINUTE_MS]]), play);
+  const [hour] = await score([listedOf(input)], new Map([[1, 80 * MINUTE_MS]]), play);
   assert.equal(hour.count, 1);
   assert.equal(hour.late_share, 1);
   assert.equal(hour.held_share, 1);

@@ -1,12 +1,30 @@
 // The pen and fingers on HQ's page, for the Pencil (pencil.js): the pen down, then moved, draws; held still, listens;
 // a quick tap is a click (tap.js); two fingers tapped together undo.
-import { under } from './surface.js';
+import { under } from './layer.js';
 import { audioContext, canRecord, startMic, stopMic } from './dictation.js';
-import { cancel } from './tool.js';
+import { reset } from './acts.js';
 import { TAP_MS as PEN_TAP_MS, TAP_PX, distance, isTap } from './tap.js';
-import { begin, free, offPage, theirs, undo } from './pencil.js';
 import { file, settleSoon } from './settle.js';
 import { across } from './postit.js';
+
+// (offPage, theirs and free)
+// A touch beside HQ's page, on the book (outside <body>, platform/hq/shell/book.js): the book's, never the page's ink.
+export const offPage = e => !e.composedPath().includes(document.body);
+// Where a pen's touch belongs to the page or the browser, not the ink: review mode's own UI, the book, text fields
+// (Scribble writes in them) and what the page marks data-no-ink (a floating control the pen works as a finger does)
+export function theirs(r, e) {
+  const path = e.composedPath();
+  if (path.includes(r.host) || offPage(e)) return true;
+  const t = path[0];
+  return !!(
+    t instanceof Element &&
+    t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [data-no-ink]')
+  );
+}
+// The pen may draw now: on the page, nothing of review mode's over it (a mouse's marking has its own veil), while the
+// last mark goes in too (settle.js).
+export const free = r =>
+  !r.covered && r.veil.hidden && r.sheet.hidden && (r.mode === 'idle' || r.mode === 'note' || r.mode === 'sending');
 
 // px a pen moves before it draws: less is a tap, the page's own (and so is a quick one lifted short of tap.js's TAP_PX)
 const MOVE = 4;
@@ -44,11 +62,11 @@ function tapped(r, e) {
 const FOCUSABLE = 'a[href], button, input, select, textarea, summary, [tabindex], [contenteditable]';
 // The pen would begin a new mark: nothing open, or only the last mark going in
 const fresh = r => r.mode === 'idle' || (r.mode === 'sending' && !r.nextLines.length);
-const penDown = (r, p) => e => {
+const penDown = (r, p, begin) => e => {
   if (e.pointerType !== 'pen' || !e.isPrimary || !free(r) || theirs(r, e)) return;
   r.penSeen = true;
   Object.assign(p, { down: e, drawing: false, reach: 0 });
-  p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p), HOLD_MS);
+  p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), HOLD_MS);
   // off a call the mic listens from a new mark's first line, once it can't be a tap, or a held note (on one, the call
   // hears: callnotes.js): a tap never opens it (house rule 7). Its audio context is made here, at the pen's touch, a
   // gesture, so Safari lets it run; a paired page's mark goes to the other screen with no mic
@@ -104,13 +122,14 @@ const penUp = (r, p) => e => {
   if (held) letGo(r);
   if (drew || held) noClick();
 };
-export function setupTouch(r) {
-  pen(r);
-  twoFingerTap(r);
+// begin, undo: pencil.js's, a new mark begun and the last thing taken back
+export function setupTouch(r, { begin, undo }) {
+  pen(r, begin);
+  twoFingerTap(r, undo);
 }
-function pen(r) {
+function pen(r, begin) {
   const p = { down: null, drawing: false, timer: 0, mic: null, ctx: null };
-  addEventListener('pointerdown', penDown(r, p), true);
+  addEventListener('pointerdown', penDown(r, p, begin), true);
   addEventListener('pointermove', penMove(r, p), true);
   addEventListener('pointerup', penUp(r, p), true);
   addEventListener('pointercancel', penUp(r, p), true);
@@ -123,7 +142,7 @@ function pen(r) {
 }
 
 // Two fingers tapped together, anywhere on the page: undo
-function twoFingerTap(r) {
+function twoFingerTap(r, undo) {
   let tap = null;
   const fingers = e => [...e.touches].filter(t => t.touchType !== 'stylus');
   addEventListener(
@@ -162,7 +181,7 @@ function twoFingerTap(r) {
 
 // Hold still to talk: a pin where the pen is, a red pulse at its tip, the words heard (the mic, or on a call the
 // call's own hearing: callnotes.js); lifted, the words land as its note (settle.js)
-function hold(r, e, p) {
+function hold(r, e, p, begin) {
   r.holding = { x: e.clientX, y: e.clientY, fresh: r.mode === 'idle' };
   Object.assign(r.listen.style, { left: `${e.clientX}px`, top: `${e.clientY}px` });
   r.listen.hidden = false;
@@ -184,5 +203,5 @@ async function letGo(r) {
   await stopMic(r);
   if (r.mark !== mark || r.mode !== 'note') return;
   if (r.text.value.trim()) file(r);
-  else if (canRecord) cancel(r); // (nothing heard: no note)
+  else if (canRecord) reset(r); // (nothing heard: no note)
 }

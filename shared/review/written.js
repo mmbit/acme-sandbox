@@ -104,7 +104,7 @@ function took(r, mark, words) {
   settle(r, mark);
 }
 
-// The mark's note in the book (pencil.js toBook): words read since go in it, if it went with none or with an earlier
+// The mark's note in the book (settle.js toBook): words read since go in it, if it went with none or with an earlier
 // reading's
 export function sent(r, mark, note) {
   mark.lines = [...r.strokes];

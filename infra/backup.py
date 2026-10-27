@@ -31,9 +31,10 @@ that goes wrong with it can fail the night. It's about 5 to 10 GB of the bucket 
 as the repo grows: on a night it would take the bucket past R2's free tier, or leave no room for the database's
 backups until what's in the bucket has expired, the repo's copy is skipped (the database's has gone already). Last come
 the renders git leaves out (shared/demo/renders.mjs: the films and tracks jobs pushed, kept in the worker's store by
-sha256): each once, as its own object renders/<sha256>.age, never deleted, as many as the same room allows a night (the
-rest wait for the next). Their room reserves database backups, but none for repo copies: renders can keep delaying the
-repo's copies even after older copies expire, as they take the room that frees (repo_warn reports the gap). The archive is encrypted to the board's age public key as it is written (the database
+sha256): each once, as its own object renders/<sha256>.age, never deleted, up to infra.env's BACKUP_RENDERS_GB in all
+and as many as the same room allows a night (the rest wait for the next). Their room reserves database backups, but none
+for repo copies: within that ceiling, renders can keep delaying the repo's copies even after older copies expire, as they
+take the room that frees (repo_warn reports the gap). The archive is encrypted to the board's age public key as it is written (the database
 copy on the way in is root-only, or inside the coordinator, and deleted before the upload), so this server can write
 backups but never read them; only the board's private key (in its password manager) opens one.
 
@@ -91,7 +92,12 @@ BIG_FILE_DAYS = 365   # a big file gone from the server leaves the bucket this l
 BIG_FILE_KEY = re.compile(r'big-files/[0-9a-f]{64}\.age')
 RENDERS = 'renders'  # in the worker's work volume (worker.ts RENDERS): each render a job pushed, named by its sha256
 RENDER_MAX_BYTES = 2 ** 30   # renders.ts RENDER_MAX: the store holds none bigger
-RENDERS_MAX_BYTES = 3e9      # renders/ holds at most this, for good (none is deleted)
+# The most renders/ holds, for good (none is deleted): the company's own choice (company/infra.env's BACKUP_RENDERS_GB, a
+# whole number of GB; 3 unset). The room check alone keeps next month's database backups but not the repo's copies, so a
+# flood of renders (a job pushing films in a loop, each up to RENDER_MAX_BYTES) would take for good the room the repo's next
+# full copy needs. Any other value (or a line infra-env.sh skips): no render goes, and the status says why.
+RENDERS_SETTING = INFRA.get('BACKUP_RENDERS_GB') or '3'
+RENDERS_MAX_BYTES = int(RENDERS_SETTING) * 1e9 if re.fullmatch(r'[1-9][0-9]*', RENDERS_SETTING) else None
 RENDERS_STALE_SECONDS = 36 * 3600   # a render waiting this long to go off the server: the board hears
 # A product's data volume (products.py's product-<slug>-data, in Compose's project): only its backup/ folder goes in.
 PRODUCT_VOLUME = re.compile(r'infra_product-([a-z0-9][a-z0-9-]*)-data')
@@ -956,8 +962,10 @@ def renders_copy(r2, store_fd, work, recipient, listing, status, room, save):
     unverified = status.setdefault('renders_unverified', {})
     due, done, up, complete = [], set(), 0, False
     def fits(size):
+        if RENDERS_MAX_BYTES is None or 'BACKUP_RENDERS_GB' in SKIPPED:   #.
+            raise RenderCapacityError("not uploaded: company/infra.env's BACKUP_RENDERS_GB isn't a whole number of GB")
         if held + up + size > RENDERS_MAX_BYTES:
-            raise RenderCapacityError(f'not uploaded: the renders would pass their {RENDERS_MAX_BYTES / 1e9:.0f} GB')
+            raise RenderCapacityError(f"not uploaded: the renders would pass their {RENDERS_MAX_BYTES / 1e9:.0f} GB (BACKUP_RENDERS_GB)")
         if up + size > room:
             raise RenderCapacityError(f"not uploaded: the renders would take the bucket past {LIMIT} (with next month's database backups)")
     try:

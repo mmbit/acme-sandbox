@@ -8,7 +8,7 @@
 // limit is that check's result (limitIsResult), never one to run again here, where nothing would stop it.
 //
 import { execFile, execFileSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, openAsBlob, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
@@ -29,6 +29,7 @@ export class HqUnreachable extends Error {}
 const BUNDLE = 'tests.bundle';
 const FILES = 'files.tar.gz';
 const execute = promisify(execFile);
+const SEND = new URL('./lentsend.ts', import.meta.url).pathname;
 
 // What a check sends: what it's called in its notes, the base and the tree to check, its script in shared/gates with its
 // arguments, the helper's time limit, the files it brings back (in the tree the bundle unpacks to, beside the repo), and
@@ -92,7 +93,7 @@ export async function onLent(root: string, check: LentCheck): Promise<LentRun | 
   };
   process.once('SIGTERM', onStop);
   try {
-    const sent = await sendRun(root, call, check);
+    const sent = await sendRun(root, check);
     if (typeof sent === 'string') return said(`the helper refused the run: ${sent}`);
     stop = () => void stopAndExit(call, sent);
     if (stopAsked) await stopAndExit(call, sent);
@@ -155,7 +156,7 @@ async function outcomeOf(call: Call, sent: number, check: LentCheck, said: (why:
 }
 
 // The run asked of the helper: its id, or HQ's words when it refused it
-async function sendRun(root: string, call: Call, check: LentCheck): Promise<number | string> {
+async function sendRun(root: string, check: LentCheck): Promise<number | string> {
   const dir = mkdtempSync(join(tmpdir(), 'lent-bundle-'));
   const command =
     `export LENT_UNTIL=$(($(date +%s) + ${Math.round(check.minutes * 60)})) && ` +
@@ -171,23 +172,19 @@ async function sendRun(root: string, call: Call, check: LentCheck): Promise<numb
     minutes: check.minutes,
   };
   try {
-    const run = {
-      method: 'POST',
-      headers: { 'x-run': Buffer.from(JSON.stringify(spec)).toString('base64url') },
-      body: await bundleOf(root, check, dir),
-    };
-    // (the answer read inside: a connection lost after its headers is HQ unreached too)
-    return await reaching(async () => {
-      const sent = await call('/api/agent/runs', run);
-      return sent.ok ? ((await sent.json()) as { id: number }).id : await sent.text();
-    }, true);
+    const header = Buffer.from(JSON.stringify(spec)).toString('base64url');
+    // (sent from a process of its own, which ends with the send and takes the bundle's memory with it: lentsend.ts;
+    const { stdout } = await execute(process.execPath, [SEND, await bundleOf(root, check, dir), header]);
+    const said = JSON.parse(stdout) as { id?: number; refused?: string; unreached?: string };
+    if (said.unreached !== undefined) throw new HqUnreachable(said.unreached);
+    return said.id ?? said.refused!;
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
 }
 
 // The bundle a run carries: the base and the tree, each a commit of its own on refs/tests/change (the base its parent,
-// with none before it), in a git bundle, and the tools when there are any, as a gzipped tar
+// with none before it), in a git bundle, and the tools when there are any, as a gzipped tar: its file
 async function bundleOf(root: string, check: LentCheck, dir: string) {
   const env = {
     ...process.env,
@@ -215,7 +212,7 @@ async function bundleOf(root: string, check: LentCheck, dir: string) {
   for (const [name, content] of Object.entries(check.inputs ?? {})) writeFileSync(join(dir, name), content);
   const packed = [BUNDLE, ...(check.tools.length ? ['tools'] : []), ...Object.keys(check.inputs ?? {})];
   await execute('tar', ['-czf', join(dir, 'bundle.tar.gz'), '-C', dir, ...packed]);
-  return openAsBlob(join(dir, 'bundle.tar.gz'));
+  return join(dir, 'bundle.tar.gz');
 }
 
 // The files a run brought back, by name

@@ -93,7 +93,6 @@ const COMMANDS: Record<string, Command> = {
   phone,
   note: feedback.note,
   notes: feedback.notes,
-  reviewers: feedback.reviewers,
   route: feedback.route,
   preview,
   run: runs.run,

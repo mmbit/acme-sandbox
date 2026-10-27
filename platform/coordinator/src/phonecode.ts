@@ -232,7 +232,6 @@ const tellOnce = (text: string) => {
 const WORDS = `products/${FRONT}/care/phone-code-email.yaml`;
 const ANSWER_WORDS = `products/${FRONT}/care/phone-answer-email.yaml`;
 const LOOK = `products/${FRONT}/care/email-look.yaml`;
-const UNFINISHED = /<<[\s\S]*?>>/;
 // The email in the asked language (English when the words have none), its slots filled with values (each words file's
 // own, and no other {word}), or what's wrong with the words. An order_page left empty takes its line with it
 // (for both emails)
@@ -242,16 +241,15 @@ function render(file: string, mode: string, asked: string, values: Record<string
     t = words[lang];
   if (!t || typeof t.subject !== 'string' || typeof t.body !== 'string')
     return `${file} has no ${lang} subject and body`;
-  const unknown = `${t.subject}\n${t.body}`.match(/\{[a-z_]+\}/g)?.find(slot => !(slot.slice(1, -1) in values));
+  // (mailpage's slots)
+  const { slot, notSlot } = mailpage.slotsOf(Object.keys(values));
+  const unknown = `${t.subject}\n${t.body}`.match(notSlot)?.[0];
   if (unknown) return `${unknown} in ${file} isn't a slot HQ fills`;
-  const marker = mode === 'live' ? `${t.subject}\n${t.body}`.match(UNFINISHED)?.[0] : undefined;
+  const marker = mode === 'live' ? `${t.subject}\n${t.body}`.match(mailpage.UNFINISHED)?.[0] : undefined;
   if (marker) return `${file}, ${lang}, still holds ${marker}: its words aren't final yet`;
   const look = mailpage.readLook(LOOK);
   if (typeof look === 'string') return look;
-  const subject = t.subject
-    .replace(/\{([a-z_]+)\}/g, (_: string, slot: string) => values[slot])
-    .replace(/\s+/g, ' ')
-    .trim();
+  const subject = mailpage.subjectOf(t.subject, slot, values);
   const body =
     values.order_page === ''
       ? t.body

@@ -73,11 +73,13 @@ export function ask(id: number) {
   db.prepare('update book_notes set asked = ? where id = ?').run(job, n.id);
   return job;
 }
+// ("If only the board can decide it, ask with hq ask ... --note")
 const questionBrief = (text: string) => `The board wrote a question on a page in HQ, in its book, for you. Answer it \
 now: your final message is the answer, exactly as the board reads it, clipped onto its note. Plain words, the answer \
 first, about 60 words. \`hq note <id>\` saves the note's snip (the page around its mark) if the words don't say \
 enough. If it needs work rather than an answer, say what you'd do: the board sends it with its sheet. Don't queue \
-work, change files or ask the board for it.
+work or change files. If only the board can decide it, ask with \`hq ask ... --note <id>\` (a card clipped under the \
+note in its book, and on its desk phone) and say so in your answer: an answer that ends in a question asks nothing.
 
 ${text}`;
 // Its answer, clipped on (a run that failed leaves the note as it was: the board asks again)

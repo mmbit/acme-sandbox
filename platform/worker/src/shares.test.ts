@@ -38,6 +38,9 @@ const opts = { mostMb: 2560, shareMb: 1536, cores: 4, processes: 400, starved: f
 const launch = { pid: 10, start: '100' };
 // the tests that slow real sessions need the kernel's session groups, which a lent tests helper's kernel lacks
 const noSessionGroups = !existsSync('/proc/self/autogroup') && 'needs session groups (sched_autogroup) in the kernel';
+// and the tests that measure real writes need its per-process I/O counters, which it lacks too
+const noIoCounters =
+  !existsSync('/proc/self/io') && 'needs per-process I/O counters (task_io_accounting) in the kernel';
 
 test("a uid's processes count together: its memory now, and its cores since the last look", () => {
   const before = [proc(10, 1501, 200, 1000), proc(11, 1501, 900, 500)];
@@ -526,6 +529,7 @@ test('a live command that denies its slot access to counters is stopped with an 
 });
 
 test('session growth and another writer do not attribute a pipe-only command as a disk writer', async context => {
+  if (noIoCounters) return context.skip(noIoCounters);
   const work = mkdtempSync('/dev/shm/disk-attribution-');
   context.after(() => rmSync(work, { recursive: true, force: true }));
   async function command(file?: string): Promise<ChildProcessWithoutNullStreams> {
@@ -600,6 +604,7 @@ test('a writable file shared with another process does not attribute shared offs
 });
 
 test('duplicated writable descriptors stay compact and preserve command write attribution', async context => {
+  if (noIoCounters) return context.skip(noIoCounters);
   const work = mkdtempSync(`${tmpdir()}/disk-descriptors-`);
   context.after(() => rmSync(work, { recursive: true, force: true }));
   const child = spawn('python3', [

@@ -19,6 +19,7 @@ import { ask, listedOnce, slipsOf, type Listed } from './bookslips.ts'; // (list
 import { guestOf } from './sketchpeople.ts';
 import { linksOf, setLink, unlink } from './booklinks.ts';
 import { onCall } from './bookcalls.ts';
+import { asksOn } from './bookasks.ts';
 
 // The ten seconds to undo a send, and how many notes a sheet holds (its task's brief quotes each)
 export const SEND_MS = 10_000;
@@ -34,6 +35,7 @@ export type Sheet = {
   sent: string | null;
   job: number | null;
   page: number | null;
+  notebook_page: number | null;
 };
 export type Note = {
   id: number;
@@ -57,7 +59,7 @@ export type Note = {
 // POST /api/book/note { page, anchor, words?, said?, snip?, to?, by? }: a note on a page of the book, on its owner's
 // open sheet (to: another agent's, or null for the pages nobody owns' sheet). asking: whether its words may ask now
 // (the board's own, in HQ). { note, sheet, asked }: asked, its question's quick run.
-// A call's page's notes go on the call's own sheet, never sent; by: its agent, for the agent's ink (bookcalls.ts). The
+// A call's page's notes go on the call's own sheet, never sent; the agent's ink is never a note (bookcalls.ts). The
 // board's question there asks now as anywhere, the call's agent answering it on the page as well as on the line (the
 // board on call #239: being on a call changes nothing about how the book works.)
 // (answers: the slip it's a reply under, replyTo's. by: who wrote it, the book's own person unless an invited guest's
@@ -72,16 +74,17 @@ export function addNote(b: any, who = BOARD, asking = true, answers: number | nu
   if (isRefused(said)) return said;
   const snip = b.snip == null ? null : dataUrlPicture(b.snip);
   if (isRefused(snip)) return snip;
-  const call = page.kind === 'call' ? onCall(page, b.by, who) : null;
+  // (a call's agent's ink isn't kept)
+  if (b.by !== undefined) return [400, "a note is the book's own: by isn't given"] as Refused;
+  const call = page.kind === 'call' ? onCall(page) : null;
   if (isRefused(call)) return call;
-  if (!call && b.by !== undefined) return [400, "only a call's page has notes by its agent"] as Refused;
   const owner = b.to === undefined ? page.owner : b.to;
   if (!call && owner !== null && !(typeof owner === 'string' && findAgent(owner)))
     return [400, 'to is an agent, or null for nobody'] as Refused;
   const sheet = call ? sheetRow(call.sheet, who)! : openSheet(who, owner);
   if (count(sheet.id) >= MAX_NOTES) return [413, `a sheet holds ${MAX_NOTES} notes: send it first`] as Refused;
-  const id = insertNote(sheet.id, page.id, call?.by ?? by, anchor, said, snip, answers);
-  const asked = asking && (call?.by ?? by) === BOARD && asks(said.words) ? ask(id) : null; // (call: job #19916)
+  const id = insertNote(sheet.id, page.id, by, anchor, said, snip, answers);
+  const asked = asking && by === BOARD && asks(said.words) ? ask(id) : null; // (call: job #19916)
   return { note: shown(note(id)!), sheet: sheetOf(sheet.id), asked };
 }
 export function insertNote(
@@ -136,8 +139,7 @@ export function editNote(b: any, who = BOARD) {
     new Date().toISOString(),
     n.id,
   );
-  // (a guest's note never asks, corrected or not, nor a call's agent's ink. company: a call's asks, job #19916, not
-  // upstream yet)
+  // (a guest's note never asks, corrected or not, nor a call's agent's ink)
   const asked = n.by === BOARD && asks(said.words) && !asks(n.words) ? ask(n.id) : null;
   return { note: shown(note(n.id)!), asked };
 }
@@ -281,11 +283,11 @@ export function serveSnip(req: IncomingMessage, res: ServerResponse, who = BOARD
 
 // ---------------------------------------------------------------- shared
 // The open sheet (or the one in its seconds to undo) of an owner's in a book, made if there's none (never a page sent
-// on its own's one-off)
+// on its own's one-off, nor a notebook page's send's)
 function openSheet(who: string, owner: string | null) {
   const found = db
     .prepare(
-      "select * from book_sheets where who = ? and owner is ? and status in ('open', 'sending') and page is null",
+      "select * from book_sheets where who = ? and owner is ? and status in ('open', 'sending') and page is null and notebook_page is null",
     )
     .get(who, owner) as Sheet | undefined;
   if (found) return found;
@@ -353,6 +355,8 @@ export function shown(n: Note, listed: Listed = listedOnce()) {
     links: linksOf(n.id),
     // an invited person's note on the board's sheet: their name tag and colour
     guest: guestOf(n.by),
+    // the desk-phone cards about it, which the book shows under it
+    asks: asksOn(n.id),
     // whose sheet it's on (null: nobody's), and whether that's a call's
     ...onSheet(n.sheet),
   };

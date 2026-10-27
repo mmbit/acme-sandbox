@@ -1,6 +1,6 @@
 // The Pencil's gestures (pencil.js): a scribble over a mark wipes it, a ring marks what's inside it.
 import { boxOfLines } from './mark.js';
-import { under } from './surface.js';
+import { under } from './layer.js';
 
 // A scribble: a line going back and forth over itself, far longer than the box it fills
 export function scribbled(points) {

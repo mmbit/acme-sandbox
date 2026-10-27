@@ -377,7 +377,7 @@ TOOLS += [
                     'description': "its number, '12', or a few words of its label"}}}},
 ]
 # The board drawing on its call: the agent asks to see the board's screen, and
-# rings something on the board's page in its own ink, through the line too (drawing.py: HQ shows the ask and draws the
+# rings something on the board's screen in its own ink, through the line too (drawing.py: HQ shows the ask and draws the
 # ring, and the line keeps what waits for HQ's answer).
 WORDS = {'type': 'string', 'minLength': 1, 'maxLength': WHAT_MOST}
 TOOLS += [
@@ -386,15 +386,18 @@ TOOLS += [
      'answer comes with a later turn, and once they tap Show their screen comes with each turn.',
      'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
          'what': {**WORDS, 'description': 'the one thing you want to see, in a few words'}}}},
-    {'name': 'draw', 'description': "Draw on the board's page in your own ink: a ring round something it can see, named "
-     "by its visible words (a button's label, a heading, a price), or round its note N on this call's page; words go "
-     "beside the ring in your hand (a few words, or none). On HQ's own pages it's kept on the call's page in the book; in "
-     "a preview they have open it rings words there, until the call ends. Use it to point, "
-     "the way you'd point at a screen.",
-     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
-         'ring': {**WORDS, 'description': 'the words on their screen to ring, as they show there (or note, not both)'},
-         'note': {'type': 'integer', 'minimum': 1, 'description': "the board's note to ring, by its number on this "
-                  "call's page (or ring, not both)"},
+    # (aimed from the picture, drawn where aimed.)
+    {'name': 'draw', 'description': "Ring something on the board's screen in your own ink, to catch its eye, the way "
+     "you'd point at a screen: aim from your latest picture of their whole screen, and HQ draws the ring exactly where "
+     'you aim, with your words beside it in your hand (a few words, or none). Ring only what that picture shows: if '
+     "it isn't in view, scroll it into view first (drive), look at the screen now (screen), then aim from that "
+     "picture. The ring follows what it's on as they scroll and goes when that goes or the call ends: it's never kept.",
+     'inputSchema': {'type': 'object', 'required': ['at'], 'additionalProperties': False, 'properties': {
+         'at': {'type': 'object', 'required': ['x', 'y', 'width', 'height'], 'additionalProperties': False,
+                'properties': {k: FRACTION for k in ('x', 'y', 'width', 'height')},
+                'description': "the box round what you ring, on your latest picture of their whole screen, in "
+                "fractions of the picture's width and height (0 to 1) from its top left, as the screen tool's region: "
+                '{x: 0.5, y: 0, width: 0.5, height: 0.5} is the top right quarter'},
          'words': {'type': 'string', 'maxLength': BESIDE_MOST, 'description': 'a few words beside the ring, or none'}}}},
 ]
 # The agent driving a piece of work on the board's screen: it suggests opening
@@ -418,14 +421,19 @@ TOOLS += [
                      "as its link gives it, or one of HQ's screens: /?open=jobs&job=<id>, /?open=phone&card=<id>, "
                      '/?open=book (the book as it is), /?open=book&owner=<agent>, /?open=projects, /?open=computer, /?open=gazette, /?open=intercom'}}}},
     {'name': 'drive', 'description': "Move the board's screen while you talk them through what's on it: scroll the "
-     "words you're about to talk about into view (to), scroll a screen down or up or to the top or bottom of the page "
-     '(by), or put your pointer on something (point), named by the words it shows (a heading, a label, a price). One '
-     "move at a time, with exactly one of to, by and point; HQ answers once it has moved, or why not. They're moving "
-     "it too: if they've scrolled or gone somewhere else, go with them rather than pulling them back.",
+     "words you're about to talk about into view (to, named by the words it shows: a heading, a label, a price), "
+     'scroll a screen down or up or to the top or bottom of the page (by), or put your pointer on a spot you aim at on '
+     'your latest picture of their whole screen (point). One move at a time, with exactly one of to, by and point; HQ '
+     'answers once it has moved, or why not. After a scroll, look at the screen now (screen) before you point or ring: '
+     "aim from what it shows. They're moving it too: if they've scrolled or gone somewhere else, go with them rather "
+     'than pulling them back.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
          'to': {**WORDS, 'description': 'the words on their page to scroll into view, as they show there'},
          'by': {'type': 'string', 'enum': list(BY), 'description': 'a screen down or up, or to the top or bottom'},
-         'point': {**WORDS, 'description': 'the words on their screen to point at, as they show there'}}}},
+         'point': {'type': 'object', 'required': ['x', 'y'], 'additionalProperties': False,
+                   'properties': {'x': FRACTION, 'y': FRACTION},
+                   'description': "the spot to point at on your latest picture of their whole screen, in fractions of "
+                   "its width and height (0 to 1) from its top left"}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on

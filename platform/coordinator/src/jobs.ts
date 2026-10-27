@@ -2747,6 +2747,9 @@ type NewCard = {
   holds?: string[];
   files?: cardFiles.CardFile[];
   walk?: unknown;
+  // the book note (its id) or the page (its address) it's about, as bookasks.ts place() found them
+  note?: number | null;
+  page?: string | null;
 };
 export function createRequest(r: NewCard) {
   const topic = topicOf(r.topic);
@@ -2782,6 +2785,8 @@ export function createRequest(r: NewCard) {
   owed.tag(id, about, back, r.job);
   if (decides !== null) decisions.link(decides, id, r.agent!);
   publish({ type: 'log', agent: r.agent ?? roles().process, text: `Asked the board: ${r.title}` });
+  // (one about a note or a page shows in the book too: it reads its sheets again.)
+  if (r.note != null || r.page != null) publish({ type: 'book', agent: r.agent ?? roles().process, text: 'ask' });
   const shows = !hidden.at && !r.holds?.length;
   if (shows) {
     announceRequest({
@@ -2844,8 +2849,8 @@ function insertCard(
   // r.customers: a card a gated tool writes about one customer, with their details in it (customerCard)
   const { lastInsertRowid } = db
     .prepare(
-      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, customers, topic, hidden_until, address, questions, walk)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `insert into requests (created, agent, job, kind, title, body, urgency, seat, secrets, pr, approves, photos, documents, zips, customers, topic, hidden_until, address, questions, walk, note, page)
+    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       new Date().toISOString(),
@@ -2868,6 +2873,8 @@ function insertCard(
       r.address === true ? 1 : null,
       box.questions,
       r.walk === true ? 1 : 0, // its maker's walk-through offered (walkthroughs.ts)
+      r.note ?? null, // (note, page)
+      r.page ?? null,
     ); // (hidden_until, address, questions, walk)
   if (r.files?.length) cardFiles.keep(Number(lastInsertRowid), r.files);
   for (const work of r.holds ?? [])
@@ -3060,6 +3067,10 @@ export function answerRequest(
   answerHeard(req, withFiles, gotIt);
   return { ok: true };
 }
+// A card about a note or a page, answered on the desk phone or in the book, or taken off the desk phone unanswered, is
+// gone from both: the book reads it again.
+const bookReadsAgain = (req: { agent: string | null; note: number | null; page: string | null }) =>
+  (req.note != null || req.page != null) && publish({ type: 'book', agent: req.agent ?? roles().process, text: 'ask' });
 
 // A card's questions, each answered (questions.js: Yes, a number, an option or a short text), lead the agent's answer, one
 // line each; what the board typed follows them. null: one has no answer (an optional one may be left blank).
@@ -3170,6 +3181,7 @@ function answerRecorded(req: any, answer: string, asked: Asked[] | null, picture
   );
   if (asked) db.prepare('update requests set questions = ? where id = ?').run(JSON.stringify(asked), req.id);
   pictures.answered(pictureIds);
+  bookReadsAgain(req);
 }
 
 // Who hears the answer: the asker, the jobs waiting for the card, the panel, or a parked job resuming
@@ -3399,6 +3411,9 @@ export function closeRequest(id: number, agent: string, job?: number) {
     )
     .run(new Date().toISOString(), id, agent, job ?? null, job ?? null);
   if (!r.changes) return 404;
+  bookReadsAgain(
+    db.prepare('select agent, note, page from requests where id = ?').get(id) as Parameters<typeof bookReadsAgain>[0],
+  );
   owed.withdrawn(id); // a --back card taken off before the board saw it brought nothing back
   endParked(id, `its request #${id} was closed by ${agent}`);
   unanswered(id, `${agent} closed it`);
@@ -3408,11 +3423,13 @@ export function closeRequest(id: number, agent: string, job?: number) {
 // HQ ends a card whose matter ended by itself (watch.ts): an open one leaves the desk phone as HQ's doing, and an answered
 // one keeps the board's answer as it was. closing: HQ's line about it, kept apart from the answer.
 export function endRequest(id: number, closing: string) {
-  const req = db.prepare('select status from requests where id = ?').get(id) as { status: string } | undefined;
+  const req = db.prepare('select status, agent, note, page from requests where id = ?').get(id) as
+    { status: string; agent: string | null; note: number | null; page: string | null } | undefined;
   if (!req) return 404;
   db.prepare('update requests set closing = ? where id = ?').run(closing, id);
   if (req.status !== 'open') return { ok: true };
   db.prepare("update requests set status = 'done', answered = ? where id = ?").run(new Date().toISOString(), id);
+  bookReadsAgain(req);
   owed.withdrawn(id);
   endParked(id, `HQ took its request #${id} off the desk phone`);
   unanswered(id, closing);

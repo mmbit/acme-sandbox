@@ -242,7 +242,7 @@ function later(clip, k) {
     if (clip.key !== k) return;
     clip.key = null;
     if (k === 'v') return paste(clip);
-    if (k === 'c' ? copy(clip) : cut(clip)) navigator.clipboard?.writeText(clip.word).catch(() => {});
+    if (k === 'c' ? copy(clip) : cut(clip)) copied(clip);
   });
 }
 // Where the pointer was last over the paper, for a paste
@@ -312,8 +312,18 @@ function pasteBeside(clip) {
     d = STEP_PX / sel.book.scale;
   return paste(clip, clip.held, null, [(b.x0 + b.x1) / 2 + d, (b.y0 + b.y1) / 2 + d]);
 }
-// (copied by the bar: the clip's word on the system's clipboard too, so ⌘V knows it)
-const copied = clip => navigator.clipboard?.writeText(clip.word).catch(() => {});
+// (copied by the bar or a key with no event: the clip's word on the system's clipboard too, so ⌘V knows it; a clipboard
+// that refuses it, the page says so, as ⌘V may then find other words there.)
+const copied = clip =>
+  navigator.clipboard
+    ?.writeText(clip.word)
+    .catch(e =>
+      said(
+        clip.sel.book,
+        clip.held.page,
+        `The copy didn’t reach the clipboard, so ${MOD}+V may not paste it: ${e.message}`,
+      ),
+    );
 
 // Paste offered where a Pencil tapped bare paper, when the clip holds something (booktape.js's bubble)
 function offer(clip, [x, y]) {

@@ -663,8 +663,12 @@ async function transcriptAndBubble() {
   for (let i = 1; i <= 8; i++) await page.mouse.move(b.x + 20 - i * 40, b.y + b.h / 2 - i * 90);
   await page.mouse.up(); await page.waitForTimeout(1200);
   seen.dragged = await bubble(page);
-  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' });
-  seen.reopened = true;
+  // (talked on while minimised: opened again, the transcript is at its newest line, and follows the next.)
+  for (let i = 1; i <= 4; i++) { send(line, 'heard', `Minimised question ${i}?`); line.send(JSON.stringify({ type: 'state', state: 'thinking' })); send(line, 'said', `Minimised answer ${i}, long enough to take a line or two in the box.`); await page.waitForTimeout(30); }
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(500);
+  seen.reopened = await transcript(page);
+  send(line, 'heard', 'And one more after it opened?'); await page.waitForTimeout(200);
+  seen.followed = await transcript(page);
   await context.close();
   seen.phoneErrors = errors;
 
@@ -696,6 +700,8 @@ async function transcriptAndBubble() {
   assert.deepEqual(seen.takenBack.lines.slice(-2), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post? …']], 'a turn taken back shows the board\'s first words twice');
   assert.deepEqual(seen.answeredAgain.lines.slice(-3), [['agent', 'Both are.'], ['board', 'Is it on the shop? And in the post?'], ['agent', 'It is.']], 'a turn taken back and answered isn\'t one line and its answer');
   assert.deepEqual(seen.takenBackAfterSaid.lines.slice(-2), [['agent', 'It is.'], ['board', 'Is it paid? And sent? …']], 'a turn taken back after the reply began isn\'t one board line');
+  assert.ok(seen.reopened.newest && seen.reopened.lines.at(-1)[1].startsWith('Minimised answer 4'), `opened from the bubble, the transcript isn't at its newest line: ${JSON.stringify(seen.reopened)}`);
+  assert.ok(seen.followed.newest, `opened from the bubble, the transcript doesn't follow the next line: ${JSON.stringify(seen.followed)}`);
   const face = x => x.figure && x.hangUp;
   assert.ok(face(seen.phoneQuiet) && !seen.phoneQuiet.moves, `on a phone the bubble isn't the agent's still figure: ${JSON.stringify(seen.phoneQuiet)}`);
   assert.ok(seen.phoneTalking.moves, `the bubble's figure doesn't move with the voice: ${JSON.stringify(seen.phoneTalking)}`);
@@ -703,7 +709,7 @@ async function transcriptAndBubble() {
   assert.ok(face(seen.pen) && seen.pen.eye && seen.pen.pause, `the Pencil didn't make the bubble with the figure, its eye and Pause in it: ${JSON.stringify(seen.pen)}`);
   assert.ok(face(seen.key) && seen.key.w === seen.pen.w && seen.key.h === seen.pen.h, `minimised by its key, the bubble isn't the Pencil's: ${JSON.stringify([seen.pen, seen.key])}`);
   assert.ok(seen.phoneQuiet.w < seen.key.w, `on a phone the bubble isn't drawn smaller: ${JSON.stringify([seen.phoneQuiet, seen.key])}`);
-  console.log('ok: the call\'s little screen and its transcript (in order, scrolling, the newest in view); the bubble one form, the figure, on a phone and with the Pencil');
+  console.log('ok: the call\'s little screen and its transcript (in order, scrolling, the newest in view, also opened from the bubble); the bubble one form, the figure, on a phone and with the Pencil');
 }
 await transcriptAndBubble();
 

@@ -262,6 +262,7 @@ async function checkLook(look) {
   assert.deepEqual(ended.at(-1), { id: 5, shown: false }, `${look}: Got it filed it`);
   if (every) {
     await checkEvery(page, ended, events, list);
+    await checkPinOut(page, ended, cards => (list = cards));
     await checkNothingToShow(page, ended, cards => (list = cards));
   }
   assert.deepEqual(errors, [], `${look}: no page errors`);
@@ -300,23 +301,28 @@ async function checkEvery(page, ended, events, list) {
         .waitForSelector('.showme-step:not([hidden])', { timeout: 5000 })
         .catch(() => assert.fail(`${tip.key}: step ${i + 1} found no control`));
       await page.waitForTimeout(400);
-      const { ring, control, said } = await page.evaluate(
+      const { ring, control, said, onTop } = await page.evaluate(
         ([key, i, details]) =>
           import('/shell/tips.js').then(({ tipOf }) => {
             const at = tipOf(key).steps[i].at;
             const found = (typeof at === 'function' ? [at(details)] : [...document.querySelectorAll(at)]).find(
               e => e && e.getBoundingClientRect().width > 0,
             );
+            const words = document.querySelector('.showme-step p'),
+              w = words.getBoundingClientRect();
             return {
               ring: document.querySelector('.showme-ring').getBoundingClientRect().toJSON(),
               control: found?.getBoundingClientRect().toJSON(),
-              said: document.querySelector('.showme-step p').textContent,
+              said: words.textContent,
+              // (nothing over the step's words, the book beside HQ either)
+              onTop: !!document.elementFromPoint(w.x + w.width / 2, w.y + w.height / 2)?.closest('.showme-step'),
             };
           }),
         [tip.key, i, list.find(c => c.id === id).details],
       );
       assert.ok(control, `${tip.key}: step ${i + 1}'s control is on the page`);
       assert.equal(said, tip.steps[i].say, `${tip.key}: step ${i + 1} says its words`);
+      assert.ok(onTop, `${tip.key}: step ${i + 1}'s words over HQ and the book`);
       assert.ok(
         ring.left <= control.left + 1 &&
           ring.right >= control.right - 1 &&
@@ -334,6 +340,31 @@ async function checkEvery(page, ended, events, list) {
     if (tip.key === 'pin') await page.keyboard.press('Escape'); // (the pin's press opened review mode for a note)
     console.log(`tips-check: ${tip.key}'s Show me, ${tip.steps.length} real control${tip.steps.length > 1 ? 's' : ''}`);
   }
+}
+
+// The pin's Show me with the pin already out (the book open beside HQ): only the pin's step, its key left alone, so the
+// pin it rings is there
+async function checkPinOut(page, ended, setList) {
+  if ((await page.getAttribute('html', 'data-book')) === 'folded') await page.click('#book .bk-lip');
+  const out = () => {
+    const ask = new CustomEvent('review:pin', { detail: {} });
+    dispatchEvent(ask);
+    return !!ask.detail.pin;
+  };
+  await page.waitForFunction(out, null, { timeout: 5000 });
+  setList([tipCard(30, 'pin')]);
+  await page.evaluate(() => import('/shell/desk.js').then(m => m.openPhone(30)));
+  await page.click('#phone-screen .req.tip [data-show-me]');
+  await page.waitForSelector('.showme-step:not([hidden])', { timeout: 5000 });
+  assert.equal(await page.textContent('.showme-step b'), 'Show me', 'pin, already out: one step');
+  assert.equal(await page.textContent('.showme-step p'), tipOf('pin').steps[1].say, "pin, already out: the pin's step");
+  assert.ok(await page.evaluate(out), 'pin, already out: still out');
+  const ring = await page.$eval('.showme-ring', e => e.getBoundingClientRect().toJSON());
+  await page.mouse.click(ring.left + ring.width / 2, ring.top + ring.height / 2);
+  await page.waitForFunction(() => !document.querySelector('.showme-veil'));
+  assert.deepEqual(ended.at(-1), { id: 30, shown: true }, 'pin, already out: pressing it filed the tip');
+  await page.keyboard.press('Escape'); // (the pin's press opened review mode for a note)
+  console.log("tips-check: the pin's Show me with the pin already out, one step");
 }
 
 // A tip about the phone with no card that has its control draws no Show me, and a control that isn't on screen now gets

@@ -7,7 +7,7 @@
 // bookpages.js mounts them and asks, on a press on the paper: hand mode (mode()) pans; press(e) true: taken here;
 // otherwise the pen draws with ink().
 import { stylesheet } from '../util.js';
-import { island } from './bookui.js';
+import { stackLeft } from './bookui.js';
 import { scrapBoxOf } from './bookrow.js';
 import { scrapAt, slid } from './bookscrap.js';
 import { drawScrap } from './sketchscraps.js';
@@ -152,8 +152,7 @@ function doubled(st, e, at) {
 // comes first at the press's height
 function roomTo(st, e) {
   const desk = st.book.desk.getBoundingClientRect(),
-    tools = island('tools').getBoundingClientRect(),
-    right = Math.min(desk.right, tools.width ? tools.left : desk.right) - 16;
+    right = Math.min(desk.right, stackLeft() ?? desk.right) - 16;
   return st.book.at(right, e.clientY)?.x ?? st.book.shown().x1;
 }
 function isDot(stroke, at) {

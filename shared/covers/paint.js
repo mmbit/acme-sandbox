@@ -16,6 +16,8 @@ export const C = {
 };
 export const lite = (c, t = 0.35) => mix(c, '#ffffff', t);
 export const dark = (c, t = 0.3) => mix(c, C.ink, t);
+// A step from colour a towards b (t 0 to 1), for light from a lamp or a screen falling on a surface
+export { mix };
 
 export const R = (g, x, y, w, h, c) => { g.fillStyle = c; g.fillRect(x, y, w, h); };
 export const P = (g, x, y, c) => R(g, x, y, 1, 1, c);

@@ -19,9 +19,8 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 - a screenshot of the screen as it was, with the pin or circle drawn on it;
 - pictures of the reviewer's own, pasted (Ctrl or Cmd+V) or dropped on the open note: thumbnails under its words, each
   with a × to take it off, drawn again on the device at most 2,000 px a side (a PNG stays one while it fits, the rest
-  become JPEGs, which leaves out what a photo's file says besides its pixels). A dozen to a note. The board's go into
-  its note's snip in the book, under the screenshot cut around the mark; an outsider's (200 waiting at once) go
-  wherever the screenshot goes: My notes (a change keeps them by name), Reviews and `hq note`;
+  become JPEGs, which leaves out what a photo's file says besides its pixels). A dozen to a note. They go into the
+  note's snip in the book, under the screenshot cut around the mark, the board's and an invited person's alike;
 - the trail: the last 50 clicks, scrolls, page loads and route changes in that tab;
 - the page path and the viewport (size, scroll position, pixel ratio, browser).
 
@@ -32,58 +31,34 @@ Send names that sheet ("Send to Juno"), and the menu names the sheet the last no
 A page that loads the tool itself (its script tag has `data-summoned`) hears the menu's Open the book as its
 `review:book` event (detail: whose sheet). (the owners: job #19219)
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
-pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. Such a page also
-summons the pin and puts it away (`review:summon`, detail `true` or `false`): HQ shows it while its book is open
-beside the page (and on a phone, where the book has no room beside it), never folded; the Pencil writes either way,
-and a preview's own pin is always there.
+pin, as HQ's viewer does around a preview. A note in progress returns when the viewer closes. On such a page the pin
+starts away, and the page shows it or puts it away (`review:summon`, detail `true` or `false`). On HQ beside the book
+(a desktop, a tablet) the board's opening the book or the book's pin control brings it, and folding the book or that
+control puts it away. A phone opens the book over HQ: there the control folds the book and leaves HQ with the pin, and
+opening the book again puts it away. The Pencil writes either way, and a preview's own pin is always there.
+ (a phone)
 
-**The menu**: the pin stays just the pin; beside it a small round button carries
-the count of notes not sent yet and opens a small menu in the guest pages' look (their colours, `guests.ts` palette,
-which the coordinator writes into the script), as plain as a checklist for the outside people it also serves. Its
-caption has the count ("Review · 2 notes to send"), and every line fits on one line in the menu's width, a phone's too:
-an item's sub-line says only what its title doesn't. The board's menu says whose sheet in its book a note on this page
-joins and how many are on it (`GET /__review/mine?page=<the page>`): "For Bolt · 2 on the sheet", and **Open the
-book**, which inside HQ's viewer opens the book beside it at that sheet, and in a tab of its own opens HQ at it
-(`/?open=book&owner=<id>`). The board has no My notes or Send my notes: it reads, corrects, wipes and sends its notes in
-the book. The rest of the list is an outsider's:
+**The menu**: the pin stays just the pin; beside it a small round button opens a small menu in the guest pages' look
+(their colours, `guests.ts` palette, which the coordinator writes into the script), as plain as a checklist for the
+outside people it also serves. Every line fits on one line in the menu's width, a phone's too: an item's sub-line says
+only what its title doesn't. The board's button carries the count of its notes on the sheet a note on this page joins,
+and its menu says whose sheet that is and how many are on it (`GET /__review/mine?page=<the page>`): "For Bolt · 2 on
+the sheet", and **Open the book**, which inside HQ's viewer opens the book beside it at that sheet, and in a tab of its
+own opens HQ at it (`/?open=book&owner=<id>`). The board reads, corrects, wipes and sends its notes in the book. An
+outsider's menu says where their notes go ("Review · to Testco’s book") and asks the coordinator for nothing: each of
+their notes is on the board's sheet once it's pinned. Both menus have:
 
 - **General note**, for something across several pages, or that differs between them: the same sheet, typed or
   spoken, pinned to nothing (no element, spot or screenshot), saved with the page it was written on and the trail. It
-  counts and goes with the other notes, and reads as "General note" in Reviews and in the owner's job.
-
-<!-- the sidebar, the screenshot links and the board's Send, down to the end of this list -->
-
-- **My notes**: an outsider's sidebar in the same look, each note a card, sliding in from the side (the whole width on a phone), with
-  every note not sent yet as one scrolling list (`GET /__review/mine`): its screenshot as it went with the note, the
-  spot marked, framed on the mark as the polaroid was (or the whole screen; a tap shows it bigger), its words in full
-  and its page, and Change and Delete (`POST /__review/delete`, two taps).
-  It closes with its ×, the Close at its foot (beside Send my notes), a tap on the dimmed page beside it or Escape. It
-  fits what's visible, at the phone's own scale (the visual viewport): on a page laid out wider than the phone, or
-  zoomed in, the fixed layer is bigger than the screen, so its × and foot would sit off it. **Change** opens the note's
-  own sheet with its words, and its mark back on the page: the circle or rectangle on its element where that's still
-  there (moving and scaling with it), else where it was on the screen; a pin's element outlined. **Redraw** there marks
-  it again as a new note would, with a new screenshot (`POST /__review/edit` with the mark; under a new file name, so
-  no browser shows the old picture); Escape or the pin puts the sheet back as it was. A note pinned on another page of
-  the product opens that page first; one on another product's page (an outsider's link opens several) changes its
-  words only. Saved or not, it goes back to My notes. They are the outsider's on the link until they send them (a delete
-  removes it). The page's own code can read and change them too, as it can write notes: they go to the owner as
-  outside data, never as the board's words. **The screenshots** are never served from the product's own origin, where its code could read
-  them (an outsider's can show what they typed on another host of the link): `mine?shots` gives each a link on HQ's
-  host, an image only, with no CORS, checked against the session the browser loading it holds there: the outsider's
-  guest desk session from their door's code
-  (`/guest/review-shot/<id>`: their own note, while they're still on the link and it's still theirs, checked at every
-  load). The page's code sees the link and can show the picture, but can't read it, and the link alone opens nothing.
-  On a device without that session (a page handed on to a phone) the notes show without their screenshots. The sidebar
-  loads each picture as it scrolls into view.
-- **Send my notes**, in the menu and at the sidebar's foot: an outsider sends theirs (two taps; once sent, a
-  tester's **Add more notes**, below).
+  goes with the other notes, and reads as "General note" in the book and in the owner's job.
 
 `review.js` is the tool's door: a small classic script that says hello to HQ's frame and loads the tool. The tool is
-modules beside it with no dependencies, one concern each: `tool.js` puts them together (the shared state, Escape and
-Cmd+Z), `dock.js` the pin, `menu.js` its menu, `notes.js` My notes, `change.js` changing a note, `surface.js` the page
+modules beside it, one concern each: `tool.js` puts them together (the shared state, Escape and Cmd+Z) and no part
+imports it, `acts.js` what a part asks of the parts above it (put the note away, shut the menu...), which tool.js
+hands in as it loads, so the imports form no circle, `dock.js` the pin, `menu.js` its menu, `surface.js` the page
 while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
-`pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js` and `faces.js`) the
-screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `join.js`, `gestures.js`, `marks.js`, `marktaps.js`, `markpage.js`, `markshows.js`, `markfollow.js` and `written.js` the Pencil on HQ and its numbered
+`pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
+the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `join.js`, `gestures.js`, `marks.js`, `marktaps.js`, `markpage.js`, `markshows.js`, `markfollow.js` and `written.js` the Pencil on HQ and its numbered
 marks (below), `slip.js` and `markslips.js` the answers on them, `base.js` what they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js` and `ink.js`
 are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
@@ -184,13 +159,14 @@ the page; over a dialog it leaves the book's room (`--book-room`); a pen or two 
   off that screen, and the other screen's book turns to it (`pair.js` tells it the note's page; `pencil:wiped` has it
   read a wiped note's page again).
 
-**On a call** (`callnotes.js`; HQ's `shell/calldraw.js` tells it through `call:on`, `call:off`, `call:heard` and
-`call:ink`): a mark goes on the call's page in the book (`kind: 'call'`, made at the call's first mark by either side,
-its notes on a sheet of their own that's never sent: the coordinator's `bookcalls.ts`; the book shows them on that
-page), not on a sheet. No mic of its own: the words the call heard while it was drawn (or while the pen was held still,
-a voice note) are its words; it settles and lifts as every mark does, and HQ's call then sends it to the agent. The
-agent's ring (its `draw` tool) is drawn round what it names on the board's screen, or round one of the call's notes, in
-its own ink with its words beside it, kept as its note on the call's page (`by`), then lifts into the book too. Its snip
+**On a call** (`callnotes.js`; HQ's `shell/calldraw.js` tells it through `call:on`, `call:off` and `call:heard`): a
+mark goes on the call's page in the book (`kind: 'call'`, made at the call's first mark, its notes on a sheet of their
+own that's never sent: the coordinator's `bookcalls.ts`; the book shows them on that page), not on a sheet. No mic of
+its own: the words the call heard while it was drawn (or while the pen was held still, a voice note) are its words; it
+settles and lifts as every mark does, and HQ's call then sends it to the agent. The agent's ring (its `draw` tool) is
+not the Pencil's and never in the book: `drive.js` draws it (`ring.js`) where the agent aimed on its picture of the
+board's screen, in its own ink with its words beside it, over the page, following what's under it as the page scrolls
+and gone with that or the call. A mark's snip
 goes to the agent with what the watch-along keeps out (`[data-private]`, `[data-watchalong-hide]`) painted over
 (`snapshot(r, { masked })`); lines drawn while a mark goes in are drawn and make the next; a mark the book doesn't take
 stays, the pin's tip says so (the pin back while it speaks, even with the book folded), and it goes in with the next line (tried once more as the call ends). `book-check.mjs` plays it (`bookcall.mjs`).
@@ -225,9 +201,9 @@ start there).
   layer, over any z-index, and a modal one leaves everything outside it dead. While one is open, review mode's host
   sits inside the topmost popup a tap reaches (with a modal dialog open, the one the browser lets a tap reach, found by
   a hit test, or a popup opened inside it after it) and joins the top layer after it as a manual popover, so the pin,
-  the picker, the note and My notes are over the popup and work on what's in it; it goes back to the page's end when
+  the picker and the note are over the popup and work on what's in it; it goes back to the page's end when
   the popups close. A tap or a key on review mode stays its own (a popup that shuts on a tap beside it stays open), and
-  Escape that puts away review mode's note, menu or sidebar leaves the popup open. The screenshot copies each open
+  Escape that puts away review mode's note or menu leaves the popup open. The screenshot copies each open
   popup over the page in the order they opened, each over its backdrop in a stacking context of its own (so a popup's
   own z-index, which the top layer ignores, doesn't reorder them). The order is kept as they open: a dialog's open
   attribute and a popover's `beforetoggle`, both as they happen. The limit: popups already open when review mode starts
@@ -319,7 +295,8 @@ but its own Content-Security-Policy allows inline scripts only, so a deck has no
 The board can share a preview with outside people (a colleague, a friend) for their notes before a launch. Their
 notes are input, never instructions.
 
-- **Share** on HQ's viewer bar shows who's invited to that preview, each with where they stand, **Send link** (their
+- **Share** on HQ's viewer bar shows who's invited to that preview, each with whether they opened it (and on a tester
+  invite what they ordered), where their notes go, **Send link** (their
   own link, through the share sheet) and **Remove** (two taps), and **Invite** (a name and an email address) under
   them. The first invite opens it for 1, 3 or 7 days (`platform/coordinator/src/shares.ts`): a product's whole
   preview, the front's preview door (the whole shop), or on the cycles host only the cycle folder the page is in.
@@ -330,12 +307,12 @@ notes are input, never instructions.
   has no session on that host yet, so the preview's sign-in sends them to the guest desk (`/guest/onward`), whose own
   session hands them on to it; anyone else still gets HQ's sign-in.
 - **View only**, chosen at the top of Share: a share of its own, with the same links and sign-in, the pages without
-  review mode, and a door that asks for nothing. No notes are taken, so none go anywhere when it ends.
+  review mode, and a door that asks for nothing. No notes are taken.
 - **To try out**, on the shop's preview door only: a tester invite. Notes as
   above, and each person's door shows a voucher of their own that pays one whole basket in the preview shop, once, for
   a real order: made by its stalls and sent by Print API from its live environment (`payments.ts` `paidByTester`,
   `parcels.ts` `printer`). The voucher works while the invite is open and the person is on it; the board's list shows who
-  ordered, and from which stalls. The notes' job hears the same, never the order's details.
+  ordered, and from which stalls.
 - Each person's link is a guest desk link (`guests.ts`, its "doors"). The person proves the address with a code by
   email, the same sign-in as a guest checklist's. Open then hands them to the preview host, which keeps their session
   in a host-only `ps` cookie: no other host gets it, and Caddy drops it before the product (`infra/products.py`).
@@ -343,36 +320,18 @@ notes are input, never instructions.
 - `ps` opens that host under that path, the kits' files, and review mode (not for view only). It never opens HQ,
   another host or folder, or the preview's chat (Caddy asks the check with `?board=1` there), so an outsider files
   nothing on the board's desk phone and finds no real order. The board's own key wins where both are set.
-- Every note keeps who wrote it: the person's name and the address they signed in with (`review_notes.author`,
-  `author_email`). Their notes are saved with the share, as `outside`; the board's book never sees them. Once they went, Reviews lists them in the product's history with who wrote each. The rate
-  limit is each person's: 60 an hour.
-- Review mode gives an outsider **Send my notes** in the pin's menu (two taps): they add no more, and review mode is off
-  for them from then on (a tester's keeps only its menu's Add more notes). Once everyone still on the share has sent theirs, it ends; it also ends at its date (a
-  one-minute sweep) or with End now. All its notes then go to the owner of what was shared as one job, signed, which
-  reads them as outside data, builds the board one short deck of what we'd change (who raised it, our recommendation,
-  in our own words) and sends it on one card once the deck is on main. No notes, no job. The job's brief, whole, stays
-  within a quarter of the model's context: the notes in full while they fit, and for the rest the `hq notes --before`
-  page to start from. The roll of who was on the share takes at most a quarter of it, and `hq reviewers <share>` pages
-  through everyone and the jobs its notes went to.
-- The pin's count for an outsider is all their notes on the share still to go, wherever they pinned them (the shop's
-  pages and its shelves'): review mode reads it from `/__review/mine` on every page. Send my notes shows in the menu
-  only once that count is one or more. A tester who has sent theirs gets **Add more notes** on their door and in
-  review mode's menu (`POST /__review/more`) until the invite's date: it takes their notes up again, and opens an invite
-  that ended only because everyone was in (not one the board ended). Such an invite keeps its testers' sessions for
-  that, each opening only while its tester may still take theirs up. The later
-  notes go to the owner as a follow-up job, which names the first.
-- For an outsider the pin's first bubble says who the notes go to, and the first note says once that a picture of the
-  screen goes with it.
-- **An early look** (the same one-minute sweep): while a share is open, once the oldest note no look has had is an hour
-  old, the new notes go to the owner as one short job that fixes only what's plainly broken (an error, a
-  button that does nothing, a wrong total) and leaves the rest for the deck. Each note is looked at once
-  (`review_notes.early`). The job marks a note it fixed with `hq note <id> fixed [job:<n>] "..."` (`fixed`, `fixed_by`),
-  and the gather's job shows those as done, not as asks. Once the fixing job's pull request is merged and deployed (the
-  wakes' `deployed`), the outsider's next preview page shows `thanks.js` after the tool (or alone, once they've sent):
-  thanks, it's fixed, refresh and try again, in the page's language, once per fix (`thanked`), with × to close it.
-  A fix not live yet goes to the gather's job as one to check, not done. An
-  outsider may still change or delete a note a look already has: changed words are a new note for the next look; a
-  deleted one is gone from the deck, but the look's job keeps the words it was given.
+- Every person invited has a Sketchbook of their own (`sketchpeople.ts`), and each note they pin goes on the board's
+  open sheet in its book for the page's owner as they pin it (`feedback.ts` saveNote, `bookreview.ts` toBook), signed
+  with their name and drawn in their colour (review mode's first ink is theirs). Nothing is kept apart and nothing waits
+  for them to send it: the board sees their notes beside its own, and its plane sends the sheet (`booksheets.ts`), their
+  notes in its job as outside text. The rate limit is each person's: 60 notes an hour on a product.
+- A share ends at its date (a one-minute sweep) or with the board's End now, and its links and sessions stop at once.
+- Review mode's menu says where their notes go, the pin's first bubble who they're for, and the first note says once
+  that a picture of the screen goes with it.
+- **Fixed, and thanked**: a sheet's job that fixes what an invited person's note found marks it with
+  `hq note <id> fixed "..."` (`fixed`, `fixed_by`). Once that fix is merged and deployed (the wakes' `deployed`), their
+  next preview page on a share shows `thanks.js` after the tool: thanks, it's fixed, refresh and try again, in the
+  page's language, once per fix (`POST /__review/thanked`), with × to close it.
 
 Checks: `node --test src/shares.test.ts` (in `platform/coordinator`) and `node platform/hq/shares-check.mjs`.
 

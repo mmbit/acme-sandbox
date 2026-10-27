@@ -3,15 +3,14 @@
 // Finished work on the desk phone whose maker offered a walk-through: the card says "Walk me through it", and its tap
 // rings the maker about the card as a walk-through (the line hears walk with the card). Picked up, a page opens in
 // today's book by itself. The agent suggests opening a screen of HQ's: a card with Open and show and Not now; the one tap
-// makes the call small, opens it and shows the board's screen (the watch-along starts), the line hears both, and a card
-// leads back. The book suggested while it's open already just stays as it is, no card back and no second share. The agent points at something there (its pointer, with
-// its name, at what it named) and a drive at words nowhere on screen comes back not done, with why; Back closes what it
-// opened. Hung up with nothing written, the page goes by itself, no card asked; a second walk-through the board rings
-// on is kept, with the card that offers to throw it away.
-// A walk-through of a preview: Open shows it in HQ's viewer, with review mode
-// running in the frame; the agent's pointer and its ring land round what it named inside the preview, the ring in its
-// ink with its words beside it and nothing on HQ's own page; a ring off the frame's screen scrolls there first; a ring
-// round a note is refused there; hung up, the ring and pointer go from the preview.
+// makes the call small, opens it and shows the board's screen (the watch-along starts), the line hears both, and nothing
+// is left over it (no card). The book suggested while it's open already just stays as it is, no second share. The agent
+// points where it aims on its picture of the screen (its pointer, with its name) and a drive to words nowhere on the
+// page comes back not done, with why. Hung up with nothing written, the page goes by itself, no card asked; a second
+// walk-through the board rings on is kept, with the card that offers to throw it away.
+// A walk-through of a preview: Open shows it in HQ's viewer, with review mode running in the frame; the agent's pointer
+// and its ring land where it aimed inside the preview, the ring in its ink with its words beside it and nothing on HQ's
+// own page, following what it's on as the preview scrolls; hung up, the ring and pointer go from the preview. (aimed:
 import assert from 'node:assert/strict';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { heard, playLine } from './bookcall.mjs';
@@ -78,15 +77,10 @@ async function walkedThrough(s) {
   await page.waitForSelector('.callbubble .cb-eye:not([hidden])');
   await page.waitForSelector('.callbubble', { state: 'visible' });
   await page.waitForSelector('#tool .device.computer', { state: 'visible' });
-  const back = page.locator('#call-cards [data-card="back"]');
-  await back.waitFor();
-  assert.match(await back.innerText(), /opened your computer/);
+  await page.waitForTimeout(500);
+  assert.equal(await page.locator('#call-cards [data-card]').count(), 0, 'nothing left over what opened');
 
   await pointed(s, page);
-
-  // Back: what it opened closes
-  await back.getByRole('button', { name: /Back/ }).click();
-  await page.waitForSelector('#tool .device.computer', { state: 'detached', timeout: 3000 });
 
   await openAlready(s, page, () => starts);
 
@@ -119,43 +113,45 @@ async function openAlready(s, page, starts) {
   const after = await page.evaluate(() => ({
     book: document.documentElement.dataset.book,
     kept: document.querySelector('.bk-paper')?.dataset.kept,
-    back: !!document.querySelector('#call-cards [data-card="back"]'),
   }));
-  assert.deepEqual(after, { book: before, kept: 'yes', back: false }, 'the open book only came forward');
+  assert.deepEqual(after, { book: before, kept: 'yes' }, 'the open book only came forward');
   assert.equal(starts(), 1, 'no second share');
   await page.evaluate(() => import('/shell/book.js').then(m => m.foldBook())); // (the book keeps its state for the next)
 }
 
-// Its pointer at what it names, with its name; words nowhere on screen come back not done, with why
+// Its pointer where it aimed, with its name; words nowhere on the page come back not done, with why
 async function pointed(s, page) {
-  s.line.send({ type: 'drive', id: 2, point: 'Artifacts' });
+  const t = await page.evaluate(() => {
+    const named = [...document.querySelectorAll('#tool *')].find(
+      el => el.children.length === 0 && el.textContent.trim() === 'Artifacts',
+    );
+    const b = named.getBoundingClientRect();
+    return { l: b.left, r: b.right, top: b.top, b: b.bottom, W: innerWidth, H: innerHeight };
+  });
+  const spot = { x: (t.l + 8) / t.W, y: (t.top + t.b) / 2 / t.H };
+  s.line.send({ type: 'drive', id: 2, point: spot });
   const pointed = await heard(s, 'driven', e => e.id === 2);
   assert.equal(pointed.done, true, `pointed (${JSON.stringify(pointed)})`);
   await page.waitForFunction(() => !document.querySelector('.hq-pointer').getAnimations().length); // (its glide)
   const at = await page.evaluate(() => {
-    const p = document.querySelector('.hq-pointer svg').getBoundingClientRect(),
-      named = [...document.querySelectorAll('#tool *')].find(
-        el => el.children.length === 0 && el.textContent.trim() === 'Artifacts',
-      );
-    const t = named.getBoundingClientRect();
+    const p = document.querySelector('.hq-pointer svg').getBoundingClientRect();
     return {
       x: p.left,
       y: p.top,
-      t: { l: t.left, r: t.right, top: t.top, b: t.bottom },
       name: document.querySelector('.hq-pointer b').textContent,
       called: document.querySelector('.callbubble').getAttribute('aria-label').replace('Call with ', ''),
     };
   });
   assert.ok(
-    at.x >= at.t.l - 4 && at.x <= at.t.r + 4 && at.y >= at.t.top - 30 && at.y <= at.t.b + 4,
-    `the pointer is at what it named (${JSON.stringify(at)})`,
+    Math.abs(at.x - spot.x * t.W) < 3 && Math.abs(at.y - spot.y * t.H) < 3,
+    `the pointer is where it aimed (${JSON.stringify({ at, t })})`,
   );
   assert.equal(at.name, at.called, 'with its name');
   await s.shot('book-walk-pointed', page);
   s.line.send({ type: 'drive', id: 3, to: 'a heading nowhere at all' });
   const missed = await heard(s, 'driven', e => e.id === 3);
   assert.equal(missed.done, false);
-  assert.match(missed.why, /Nothing on their screen says/);
+  assert.match(missed.why, /Nothing on their page says/);
 }
 
 // A second walk-through, written on: its page stays, with the card that keeps or throws it away
@@ -233,33 +229,36 @@ async function previewOpened(s) {
   return { page, walkPage, frame: page.frame({ url: /hello\.preview\.test/ }) };
 }
 
-// Its pointer, at what it named in the preview, and nothing on HQ's own page
+// Its pointer, where it aimed in the preview, and nothing on HQ's own page
 async function pointedInPreview(s, page, frame) {
-  s.line.send({ type: 'drive', id: 5, point: 'Gift wrap' });
+  const named = (await seen(page, frame, 'h1', 'Gift wrap')).named;
+  const W = await page.evaluate(() => [innerWidth, innerHeight]);
+  s.line.send({ type: 'drive', id: 5, point: { x: (named.x + 8) / W[0], y: (named.y + named.b) / 2 / W[1] } });
   assert.equal((await heard(s, 'driven', e => e.id === 5)).done, true, 'pointed in the preview');
   await frame.waitForFunction(() => !document.querySelector('.hq-pointer').getAnimations().length);
   const pointer = await seen(page, frame, '.hq-pointer svg', 'Gift wrap');
   assert.ok(
-    pointer.box.x >= pointer.named.x - 4 &&
-      pointer.box.x <= pointer.named.r + 4 &&
-      Math.abs(pointer.box.y - pointer.named.y) < 30,
-    `the pointer at what it named, as the board sees it (${JSON.stringify(pointer)})`,
+    Math.abs(pointer.box.x - (named.x + 8)) < 4 && Math.abs(pointer.box.y - (named.y + named.b) / 2) < 4,
+    `the pointer where it aimed, as the board sees it (${JSON.stringify({ pointer, named })})`,
   );
   assert.equal(await page.locator('body > .hq-pointer').count(), 0, "nothing pointed at on HQ's own page");
 }
 
-// Its ring round it, in its ink, its words beside it, kept out of the book; off the frame's screen, scrolled there
-// first; a note isn't the preview's to ring
+// Its ring where it aimed, round the label, in its ink, its words beside it, kept out of the book; it follows the label
+// as the preview scrolls
 async function ringedInPreview(s, page, frame) {
   const notesBefore = s.posts.filter(p => p.path === '/api/book/note').length;
-  s.line.send({ type: 'ink', id: 6, ring: 'Gift wrap', note: null, words: 'this one' });
+  const named = (await seen(page, frame, 'h1', 'Gift wrap')).named;
+  const [W, H] = await page.evaluate(() => [innerWidth, innerHeight]);
+  const at = { x: named.x / W, y: named.y / H, width: (named.r - named.x) / W, height: (named.b - named.y) / H };
+  s.line.send({ type: 'ink', id: 6, at, words: 'this one' });
   const inked = await heard(s, 'inked', e => e.id === 6);
   assert.equal(inked.drawn, true, `ringed in the preview (${JSON.stringify(inked)})`);
-  assert.match(inked.why, /not kept in the book/, 'the line hears the ring is the preview’s, not the book’s');
+  await page.waitForTimeout(1000); // (drawn as a hand would)
   const ring = await seen(page, frame, '.hq-ring svg path:last-child', 'Gift wrap');
   assert.ok(
     ring.box.x < ring.named.x && ring.box.r > ring.named.r && ring.box.y < ring.named.y && ring.box.b > ring.named.b,
-    `the ring round what it named, as the board sees it (${JSON.stringify(ring)})`,
+    `the ring round where it aimed, as the board sees it (${JSON.stringify(ring)})`,
   );
   const look = await frame.evaluate(() => ({
     ink: document.querySelector('.hq-ring svg path:last-child').getAttribute('fill'),
@@ -274,18 +273,16 @@ async function ringedInPreview(s, page, frame) {
   );
   assert.equal(look.words, `${name}: this one`, 'its words beside it, with its name');
   assert.equal(s.posts.filter(p => p.path === '/api/book/note').length, notesBefore, "no note on HQ's call page");
+  assert.equal(await page.locator('body > .hq-ring').count(), 0, "nothing ringed on HQ's own page");
   await s.shot('book-walk-preview-ring', page);
-  s.line.send({ type: 'ink', id: 7, ring: 'Pick-up point', note: null, words: '' });
-  const below = await heard(s, 'inked', e => e.id === 7);
-  assert.match(below.why, /scrolled to it first/);
-  const scrolled = await seen(page, frame, '.hq-ring svg path:last-child', 'Pick-up point');
+  await frame.evaluate(() => scrollBy(0, 30));
+  await page.waitForTimeout(300);
+  const scrolled = await seen(page, frame, '.hq-ring svg path:last-child', 'Gift wrap');
+  assert.ok(scrolled.named.y < ring.named.y - 10, 'the preview scrolled');
   assert.ok(
-    scrolled.named.y > scrolled.frame.y && scrolled.named.b < scrolled.frame.b,
-    `on the board's screen (${JSON.stringify(scrolled)})`,
+    scrolled.box.x < scrolled.named.x && scrolled.box.y < scrolled.named.y && scrolled.box.b > scrolled.named.b,
+    `the ring followed the label (${JSON.stringify(scrolled)})`,
   );
-  s.line.send({ type: 'ink', id: 8, ring: null, note: 1, words: '' });
-  const noted = await heard(s, 'inked', e => e.id === 8);
-  assert.deepEqual([noted.drawn, /preview open/.test(noted.why)], [false, true], 'a note ring refused in a preview');
 }
 // Where the last thing drawn in the preview's frame is, and what it named, on HQ's page as the board sees it
 async function seen(page, frame, drawn, words) {

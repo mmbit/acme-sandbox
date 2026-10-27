@@ -1,6 +1,6 @@
-// The call's agent's ring: a loop in its ink round what it names, as a hand draws one. On HQ's own pages the Pencil
-// draws it and keeps it on the call's page (callnotes.js); in a preview in HQ's viewer drive.js draws it here, over the
-// page, until the call ends or the page goes.
+// The call's agent's ring: a loop in its ink where it aims on its picture of the board's screen, as a hand draws one.
+// drive.js draws it, on HQ's own page or a preview in HQ's viewer, over the page and never kept: it catches the board's
+// eye until what it's on goes, or the call ends.
 import { svg } from './ink.js';
 
 // This far round its target, a hand-drawn loop that overshoots its start a little
@@ -38,12 +38,11 @@ export function ringAround(b, color, seed) {
   return { color, size: 4, points };
 }
 
-// ---- a ring over a page that isn't HQ's: a layer of its own that follows its element as the page scrolls, the agent's
-// name and words beside it. The watch-along records it, so the agent sees its own ring.
+// ---- a ring over the page: a layer of its own at a box on the screen (px), following what's under its middle as the
+// page scrolls, the agent's name and words beside it. The watch-along records it, so the agent sees its own ring.
 const rings = new Set();
-export async function ringOver(el, { color = '#7b5ea7', name = '', words = '' }) {
-  const b = el.getBoundingClientRect(),
-    stroke = ringAround({ x: 0, y: 0, w: b.width, h: b.height }, color, Date.now());
+export async function ringAt(b, { color = '#7b5ea7', name = '', words = '' }) {
+  const stroke = ringAround({ x: 0, y: 0, w: b.w, h: b.h }, color, Date.now());
   const layer = document.createElement('div'),
     tag = words ? document.createElement('p') : null;
   layer.className = 'hq-ring';
@@ -59,14 +58,14 @@ export async function ringOver(el, { color = '#7b5ea7', name = '', words = '' })
   if (tag) {
     // (beside it on the right, else under it)
     tag.textContent = name ? `${name}: ${words}` : words;
-    const right = b.right + RING_PAD + TAG_W < innerWidth;
+    const right = b.x + b.w + RING_PAD + TAG_W < innerWidth;
     Object.assign(
       tag.style,
-      right ? { left: `${b.width + RING_PAD + 6}px`, top: '4px' } : { left: '0', top: `${b.height + RING_PAD + 6}px` },
+      right ? { left: `${b.w + RING_PAD + 6}px`, top: '4px' } : { left: '0', top: `${b.h + RING_PAD + 6}px` },
     );
     layer.append(tag);
   }
-  const ring = { el, layer };
+  const ring = { layer, ...under(b) };
   rings.add(ring);
   follow();
   place(ring);
@@ -74,6 +73,18 @@ export async function ringOver(el, { color = '#7b5ea7', name = '', words = '' })
   if (tag) keepOnScreen(tag);
   await unroll(layer, stroke, b);
 }
+// What the ring follows: what's under its middle (never a ring or pointer of the call's own), and where the ring sits
+// from it, with what it had scrolled (a ring on a scrolling box's own space moves with what scrolls in it)
+function under(b) {
+  const el =
+    document.elementsFromPoint(b.x + b.w / 2, b.y + b.h / 2).find(e => !e.closest('[data-call-ink], .hq-pointer')) ??
+    document.documentElement;
+  const at = el.getBoundingClientRect();
+  return { el, dx: b.x - at.left, dy: b.y - at.top, scrolled: scrolledOf(el) };
+}
+// (the page's own scroller moves its box with it already)
+const scrolledOf = el =>
+  el === document.scrollingElement ? { x: 0, y: 0 } : { x: el.scrollLeft || 0, y: el.scrollTop || 0 };
 // The words kept on the screen, as they were first placed (under the ring, at its left edge, they would run off a narrow
 // screen's right edge): moved left to end inside it, and above the ring when there's no room under it
 function keepOnScreen(tag) {
@@ -96,7 +107,9 @@ function unroll(layer, stroke, b) {
     reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const drawUntil = t => {
     const shown = { ...stroke, points: stroke.points.filter(p => p[3] <= t) };
-    layer.querySelector('svg').outerHTML = svg([shown], b.width, b.height, { halo: true });
+    layer.querySelector('svg').outerHTML = svg([shown], b.w, b.h, { halo: true });
+    // (its size kept against a page's own rule for its icons, HQ's 18 px)
+    Object.assign(layer.querySelector('svg').style, { width: `${b.w}px`, height: `${b.h}px` });
   };
   return new Promise(done => {
     const frame = () => {
@@ -109,7 +122,7 @@ function unroll(layer, stroke, b) {
   });
 }
 
-// Each ring where its element is now: moved as anything scrolls or the screen turns, gone with its element
+// Each ring where what it's on is now: moved as anything scrolls or the screen turns, gone with it
 let following = false;
 function follow() {
   if (following) return;
@@ -124,10 +137,13 @@ function follow() {
   addEventListener('resize', again);
 }
 function place(ring) {
-  if (!ring.el.isConnected) {
+  const b = ring.el.isConnected && ring.el.getBoundingClientRect();
+  if (!b?.width && !b?.height) {
     ring.layer.remove();
     return rings.delete(ring);
   }
-  const b = ring.el.getBoundingClientRect();
-  ring.layer.style.transform = `translate(${b.left}px, ${b.top}px)`;
+  const now = scrolledOf(ring.el),
+    x = b.left + ring.dx - (now.x - ring.scrolled.x),
+    y = b.top + ring.dy - (now.y - ring.scrolled.y);
+  ring.layer.style.transform = `translate(${x}px, ${y}px)`;
 }

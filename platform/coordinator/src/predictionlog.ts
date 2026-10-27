@@ -121,12 +121,15 @@ function lastOf(row: LogRow) {
   return last.get(key);
 }
 
-// Every row of these jobs, each job's oldest first (hq estimate --calibration).
+// Every row of these jobs, each job's oldest first, with only the columns hq estimate --calibration reads.
 export function ofJobs(jobs: number[]) {
   write();
   return db
-    .prepare('select * from prediction_log where job in (select value from json_each(?)) order by job, at, id')
-    .all(JSON.stringify(jobs)) as LogRow[];
+    .prepare(
+      `select job, at, merged, held from prediction_log where job in (select value from json_each(?))
+      order by job, at, id`,
+    )
+    .all(JSON.stringify(jobs)) as (Pick<LogRow, 'at' | 'merged' | 'held'> & { job: number })[];
 }
 
 // A thread's ETA as the log had it at `at`: its latest row by then (merged null: no merge in sight then), or undefined

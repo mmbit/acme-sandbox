@@ -1,21 +1,18 @@
 #!/usr/bin/env node
 // Outside notes end to end, on phones: the board opens Share in the viewer and invites two people (the days choice shows
-// before the first invite only); the box lists both with Send link and Remove. Each, in a fresh browser (no preview key),
-// signs in with the code from their email, opens the preview, pins a note (the second also a general note, from the pin's
-// menu) and taps Send my notes twice in that menu: it's in reach beside the pin, and once sent the pin is away, a
-// thank-you shows and the menu keeps only Add more notes, every line of it on one line. They reach nothing else.
-// After the first has sent theirs nothing is queued; Reviews opens on My notes, and its Shared folds the share to one
-// line (people, notes sent, until when) that opens to its people (not the notes), and Invite and Remove work there too.
-// After the second, the owner's job holds both people's notes, each signed, and the share stays in Reviews with End now:
-// the first's link says Sent, thank you, and its Add more notes takes them up again; a later note goes as a follow-up job.
-// The board's End now closes it for good: Reviews lists the ended share and the notes with who wrote them, the links are
-// shut, and a link says why.
+// before the first invite only); the box lists both with Send link and Remove, and says their notes go on its sheet for
+// the owner in its book. Each, in a fresh browser (no preview key), signs in with the code from their email, opens the
+// preview, pins a note (the second also a general note, from the pin's menu): each goes on the board's open sheet for
+// the owner as it's pinned, signed, and the pin's menu says where they go, every line of it on one line. They reach
+// nothing else. Reviews' Shared folds the share to one line (people, until when) that opens to its people (whether each
+// opened it, not their notes), and Invite and Remove work there too. The board's End now closes it: Reviews lists the
+// ended share, the links are shut, and a link says so.
 // Then a deck shared view only: its box offers the people shared with lately (Recent), a tap invites one again, and a
 // plus on a name gives them a title, a badge on their row; no review mode, and
 // its "try the demo" opens the demo on the product's host. Then the
 // shop shared to try out: the tester's door is a greeting and four steps (the company's own last), the voucher in the
 // first with a button that copies it, a quieter aside on what happens to their notes, and a small line with the company's
-// own note and until when, on a phone and on a desktop.
+// own note and until when, on a phone and on a desktop; her notes in the shop go on the board's sheet too.
 //   node platform/hq/shares-check.mjs [--shots dir]
 // The real coordinator (the test company, a throwaway DATA_DIR) behind a stand-in for Caddy on https://*.company.test (a
 // self-signed certificate): forward_auth before a product's pages, /__preview and /__review/* straight to the coordinator,
@@ -77,6 +74,7 @@ await mkdir(`${data}/secrets`);
 await writeFile(`${data}/secrets/CARE_EMAIL_API_KEY`, 'lm-key-0123456789abcdefghij');
 const { app } = await import('../coordinator/src/server.ts');
 const { db } = await import('../coordinator/src/db.ts');
+const booksheets = await import('../coordinator/src/booksheets.ts');
 db.prepare('insert or replace into sessions (token, expires) values (?, ?)').run('board-session', Date.now() + 3600e3);
 const coordinatorPort = await listen(createServer(app));
 
@@ -176,7 +174,7 @@ const shared = async page => {
   return d.url;
 };
 const codeFor = address => /(\d{6})/.exec(mails.findLast(m => [m.to].flat().includes(address)).text)[1];
-// Reviews' Shared: its one open share folded to a line (its people, notes sent, until when), tapped open
+// Reviews' Shared: its one open share folded to a line (its people, until when), tapped open
 async function unfold(page, line) {
   await page.click('[data-shown=shared]');
   await page.waitForSelector('[data-shown=shared][aria-checked=true]');
@@ -218,12 +216,23 @@ async function invite(page, scope, name, email) {
   await page.click(`${scope} .invites form.invite > button`);
   await said(page, scope, `${name} invited. Send link sends them theirs.`);
 }
-const outsideJobs = () =>
-  db.prepare("select id, agent, title, prompt from jobs where title like 'Outside notes on %'").all();
 const tool = sel => `review-mode >> ${sel}`;
+// A note on one of the board's open sheets in its book, with whose sheet it is and who wrote it, once it's there
+const onSheet = words =>
+  booksheets
+    .sheets()
+    .open.flatMap(sh => sh.notes.map(n => ({ owner: sh.owner, words: n.words, guest: n.guest?.name ?? null })))
+    .find(n => n.words === words);
+async function booked(words) {
+  for (const end = Date.now() + 20_000; Date.now() < end; await new Promise(r => setTimeout(r, 200))) {
+    const n = onSheet(words);
+    if (n) return n;
+  }
+  throw new Error(`not on a sheet in the book: ${words}`);
+}
 
 // An outside reviewer in a browser of their own: the code by email, the door, the preview, a note
-async function reviewer(link, address, note) {
+async function reviewer(link, name, address, note) {
   const { page } = await context();
   await page.goto(link);
   assert.match(await page.textContent('main'), new RegExp(`${address[0]}••••@example\\.org`));
@@ -232,7 +241,7 @@ async function reviewer(link, address, note) {
   await page.fill('#code', codeFor(address));
   await page.click('button:has-text("Open the page")');
   await page.waitForSelector('text=for your notes');
-  assert.match(await page.textContent('main'), /tap Send my notes/);
+  assert.match(await page.textContent('main'), /nothing to send/);
   await page.click('a:has-text("Open Hello")');
   await page.waitForURL(`${PRODUCT}/`);
   assert.deepEqual(
@@ -242,13 +251,12 @@ async function reviewer(link, address, note) {
   );
   await page.waitForSelector(tool('.coach:not([hidden])'));
   assert.equal(await page.textContent(tool('.coach b')), 'Tap the red pin to leave a note for the Testco crew');
-  assert.ok(await page.isHidden(tool('[data-mine]')), 'no Send my notes before a note');
-  await pinNote(page, note, true);
+  await pinNote(page, note, name, true);
   return page;
 }
-// A note pinned to the page's heading, the first of the page's notes still to go (first: the browser's first, which asks
-// for no personal details)
-async function pinNote(page, note, first = false) {
+// A note pinned to the page's heading, on the board's sheet for the owner, signed (first: the browser's first, which
+// asks for no personal details)
+async function pinNote(page, note, name, first = false) {
   await page.click(tool('.fab'), { force: true }); // (it bobs while the coach is up)
   const h1 = await page.locator('h1').boundingBox();
   await page.mouse.click(h1.x + 40, h1.y + h1.height / 2);
@@ -256,15 +264,11 @@ async function pinNote(page, note, first = false) {
   if (first) assert.match(await page.textContent(tool('.msg')), /Please don’t type personal details/);
   await page.fill(tool('textarea'), note);
   await page.click(tool('.send'));
-  await page.waitForFunction(
-    () => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent === '1',
-    null,
-    { timeout: 20_000 },
-  );
-  assert.equal(db.prepare('select status from review_notes where note = ?').get(note).status, 'outside');
+  await page.waitForSelector(tool('.sheet'), { state: 'hidden', timeout: 20_000 });
+  assert.deepEqual(await booked(note), { owner: 'bolt', words: note, guest: name }, `${name}'s note, on Bolt's sheet`);
 }
 // A general note from the pin's menu: the same sheet, without a photo or an element
-async function generalNote(page, words, count) {
+async function generalNote(page, words, name) {
   await page.click(tool('.more'));
   await page.click(tool('[data-general]'));
   await page.waitForSelector(tool('.sheet:not([hidden])'));
@@ -272,76 +276,22 @@ async function generalNote(page, words, count) {
   assert.ok(await page.isHidden(tool('.polaroid')), 'no photo with a general note');
   await page.fill(tool('textarea'), words);
   await page.click(tool('.send'));
-  await page.waitForFunction(
-    n => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent === n,
-    String(count),
-    { timeout: 20_000 },
+  await page.waitForSelector(tool('.sheet'), { state: 'hidden', timeout: 20_000 });
+  assert.deepEqual(
+    await booked(words),
+    { owner: 'bolt', words, guest: name },
+    `${name}'s general note, on Bolt's sheet`,
   );
-  const saved = db.prepare('select element, shot, status from review_notes where note = ?').get(words);
-  assert.deepEqual([JSON.parse(saved.element).kind, saved.shot, saved.status], ['general', null, 'outside']);
 }
 // The pin's menu as it shows now
 const items = page => page.$$eval(tool('.menu .items button:not([hidden])'), b => b.map(x => x.firstChild.textContent));
-// Their Send my notes, two taps in the pin's menu: in reach on a phone and clear of the pin; the first only asks; after the
-// second the pin is away and a thank-you shows, and on their next page too the tool is only its menu's Add more notes
-async function sendMine(page, name, shot, count = 1) {
-  // another page of theirs counts the note too: the count is the coordinator's, not the page's
-  const again = await page.context().newPage();
-  await again.goto(page.url());
-  await again.waitForFunction(
-    n => document.querySelector('review-mode')?.shadowRoot.querySelector('.count')?.textContent === n,
-    String(count),
-    { timeout: 20_000 },
-  );
-  await again.close();
-  // (once the pin's boing at the new count has played; in the pin's menu)
+// An outsider's menu: a general note, and where their notes go, every line on one line
+async function outsiderMenu(page, name) {
   await page.click(tool('.more'));
-  const where = await page.evaluate(async () => {
-    const pin = document.querySelector('review-mode').shadowRoot.querySelector('.fab');
-    await Promise.all(
-      pin
-        .getAnimations()
-        .filter(a => a.effect.getTiming().iterations !== Infinity)
-        .map(a => a.finished.catch(() => {})),
-    );
-    const root = document.querySelector('review-mode').shadowRoot,
-      done = root.querySelector('[data-mine]'),
-      d = done.getBoundingClientRect(),
-      f = root.querySelector('.fab').getBoundingClientRect();
-    return {
-      text: done.firstChild.textContent,
-      inView: d.left >= 0 && d.top >= 0 && d.right <= innerWidth && d.bottom <= innerHeight && d.width > 0,
-      onTop: root.elementFromPoint(d.x + d.width / 2, d.y + d.height / 2) === done,
-      clear: d.right <= f.left || d.left >= f.right || d.bottom <= f.top || d.top >= f.bottom,
-      at: [d, f].map(r => [r.left, r.top, r.right, r.bottom].map(Math.round).join(',')).join(' / '),
-    };
-  });
-  const { at, ...seen } = where;
-  assert.deepEqual(
-    seen,
-    { text: 'Send my notes', inView: true, onTop: true, clear: true },
-    `${name}'s Send my notes (${at})`,
-  );
-  assert.match(await page.textContent(tool('[data-mine] small')), /Testco/);
-  assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, every line on one line on a phone`);
-  if (shot) await shot(page, `${name.toLowerCase()}-send-my-notes`);
-  await page.click(tool('[data-mine]'));
-  assert.equal(await page.$eval(tool('[data-mine]'), b => b.firstChild.textContent), 'Tap again to send');
-  assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, asking again`);
-  const person = () => db.prepare('select submitted from review_share_people where guest = ?').get(name);
-  assert.equal(person().submitted, null, 'the first tap only asks');
-  await page.click(tool('[data-mine]'));
-  await page.waitForSelector(tool('.tip.show'));
-  assert.equal(await page.textContent(tool('.tip')), 'Sent to the Testco crew. Thank you!');
-  assert.ok(await page.isHidden(tool('.fab')), 'the pin is away');
-  assert.ok(person().submitted);
-  if (shot) await shot(page, `${name.toLowerCase()}-sent`);
-  await page.reload();
-  await page.waitForSelector(tool('.more'));
-  assert.ok(await page.isHidden(tool('.fab')), `${name} pins no more notes`);
-  await page.click(tool('.more'));
-  assert.deepEqual(await items(page), ['Add more notes'], `${name}'s menu, sent`);
-  assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, sent, on one line each`);
+  assert.deepEqual(await items(page), ['General note'], `${name}'s menu`);
+  assert.equal(await page.textContent(tool('.menu .cap')), 'Review · to Testco’s book');
+  assert.equal(await page.textContent(tool('.more .count')), '', 'no count of theirs');
+  assert.deepEqual(await page.evaluate(wrappedMenuLines), [], `${name}'s menu, every line on one line`);
   await page.click(tool('.more'));
 }
 
@@ -397,7 +347,10 @@ try {
   // two invites: the first opens it for the day chosen, after which the days go and the box says until when
   await invite(hq, BOX, 'Sam', 'sam@example.org');
   assert.equal(await hq.$(`${BOX} [data-days]`), null, 'the days show before the first invite only');
-  assert.match(await hq.textContent(`${BOX} .dim`), /^Until .*Once everyone has sent their notes, they go to Bolt\.$/);
+  assert.match(
+    await hq.textContent(`${BOX} .dim`),
+    /^Until .*Their notes go on your sheet for Bolt in your book as they write them\.$/,
+  );
   const ends = Date.parse(db.prepare('select ends from review_shares').get().ends) - Date.now();
   assert.ok(ends > 86_000e3 && ends <= 86_400e3, 'open for 1 day');
   await invite(hq, BOX, 'Kim', 'kim@example.org');
@@ -419,11 +372,11 @@ try {
   }
   assert.notEqual(links.Sam, links.Kim);
 
-  // ---- Sam: a note, Send my notes; nothing goes to the owner while Kim hasn't sent hers
-  const sam = await reviewer(links.Sam, 'sam@example.org', 'The headline is lovely, but where do I start?');
+  // ---- Sam: a note, on Bolt's sheet as he pins it; his menu says where it went
+  const sam = await reviewer(links.Sam, 'Sam', 'sam@example.org', 'The headline is lovely, but where do I start?');
   await shot(sam, 'note');
-  await sendMine(sam, 'Sam', shot);
-  assert.deepEqual(outsideJobs(), [], 'nothing queued while Kim has not sent hers');
+  await outsiderMenu(sam, 'Sam');
+  await shot(sam, 'sam-menu');
   // nothing else: another preview host and HQ send Sam to the board's login
   await sam.goto('https://cycles.preview.company.test/');
   assert.equal(new URL(sam.url()).pathname, '/login');
@@ -432,17 +385,16 @@ try {
   await hq.click('#viewer [data-close]');
   await hq.click('#btn-computer');
   await hq.click('[data-app=notes]');
-  // (Reviews opens on My notes, the board's own: the share is under Shared, folded to one line)
-  await hq.waitForSelector('[data-shown=mine][aria-checked=true]');
+  // (Reviews opens on Sent, the board's own: the share is under Shared, folded to one line)
+  await hq.waitForSelector('[data-shown=sent][aria-checked=true]');
   assert.equal(await hq.textContent('[data-shown=shared] i'), '1');
-  assert.equal(!!(await hq.$('section.share')), false, 'no share among My notes');
-  assert.equal(await hq.$$eval('[data-note]', b => b.length), 0, "the outsiders' notes are not among the board's");
+  assert.equal(!!(await hq.$('section.share')), false, 'no share under Sent');
   const SEC = 'section.share';
-  await unfold(hq, /^Sam, Kim · 1 note sent · until /);
+  await unfold(hq, /^Sam, Kim · until /);
   await hq.waitForSelector(`${SEC} .invites li`);
   assert.match(await hq.textContent(`${SEC} h3`), /Outside notes on Hello \(platform test\)/);
   assert.deepEqual(await rows(hq, SEC), [
-    ['Sam', 'Sent 1 note', true, true],
+    ['Sam', 'Opened it', true, true],
     ['Kim', 'Hasn’t opened it yet', true, true],
   ]);
   await invite(hq, SEC, 'Lee', 'lee@example.org');
@@ -467,129 +419,42 @@ try {
     ['Sam', 'Kim'],
   );
   assert.ok(db.prepare("select removed from review_share_people where guest = 'Lee'").get().removed);
-  assert.deepEqual(outsideJobs(), [], 'removing Lee, who sent nothing, leaves the share waiting on Kim');
 
-  // ---- Kim: a note and a general note, Send my notes; now everyone has, so the share ends and the owner's job has both, each signed
-  const kim = await reviewer(links.Kim, 'kim@example.org', 'Could the card come in green?');
-  await generalNote(kim, 'The pages say thanks in two different ways', 2);
-  await shot(kim, 'kim-general-note-sent');
-  await sendMine(kim, 'Kim', shot, 2);
-  const [job] = outsideJobs();
-  assert.ok(job, "the owner's job, once everyone has sent theirs");
-  assert.equal(job.agent, 'bolt');
-  assert.match(job.title, /^Outside notes on Hello \(platform test\): 3 from Sam and Kim$/);
-  assert.match(
-    job.prompt,
-    /By: Sam \(sam@example\.org\), an outside reviewer\nNote \(typed on the preview page\): The headline is lovely, but where do I start\?/,
-  );
-  assert.match(
-    job.prompt,
-    /By: Kim \(kim@example\.org\), an outside reviewer\nNote \(typed on the preview page\): Could the card come in green\?/,
-  );
-  assert.match(job.prompt, /everyone sent their notes/);
-  assert.match(
-    job.prompt,
-    /By: Kim \(kim@example\.org\), an outside reviewer\nNote \(typed on the preview page\): The pages say thanks in two different ways\nGeneral note: pinned to nothing/,
-  );
+  // ---- Kim: a note and a general note, each on Bolt's sheet, signed hers
+  const kim = await reviewer(links.Kim, 'Kim', 'kim@example.org', 'Could the card come in green?');
+  await generalNote(kim, 'The pages say thanks in two different ways', 'Kim');
+  await shot(kim, 'kim-general-note');
+  await outsiderMenu(kim, 'Kim');
 
-  // ---- Reviews (at its next refresh): everyone has sent theirs, and until its date whoever did may add more, so the
-  // share stays among the open ones, with End now
-  await hq.waitForFunction(
-    sel => document.querySelector(sel)?.textContent.startsWith('Everyone has sent their notes'),
-    `${SEC} > details > .dim`,
-    { timeout: 30_000 },
-  );
-  assert.match(
-    await hq.textContent(`${SEC} > details > .dim`),
-    new RegExp(
-      `^Everyone has sent their notes: 3 notes to Bolt · job #${job.id}\\. Until .*, anyone who sent theirs can add more, which opens it again; End now stops that\\.$`,
-    ),
-  );
-  assert.deepEqual(await rows(hq, SEC), [
-    ['Sam', 'Sent 1 note', true, true],
-    ['Kim', 'Sent 2 notes', true, true],
-  ]);
-  assert.equal(await hq.textContent(`${SEC} [data-end]`), 'End now');
-  assert.equal(await hq.$('section.shares'), null, 'nothing ended for good');
-  await fits(hq, SEC, 'Reviews, everyone sent');
-  await shot(hq, 'reviews-everyone-sent');
-
-  // ---- Sam's link: Sent, thank you, and its Add more notes takes them up again; a later note goes as a follow-up
-  await sam.goto(links.Sam);
-  await sam.waitForSelector('text=Sent, thank you');
-  assert.match(
-    await sam.textContent('main'),
-    /went to Testco’s crew\. Thought of more\? Add more notes opens it again/,
-  );
-  await fits(sam, '.card', 'the door, sent');
-  await shot(sam, 'door-sent');
-  await sam.click('a:has-text("Add more notes")');
-  await sam.waitForURL(`${PRODUCT}/`);
-  await sam.waitForSelector(tool('.fab:not([hidden])'));
-  assert.equal(db.prepare('select ended from review_shares').get().ended, null, 'open again');
-  await pinNote(sam, 'The footer could say who made it');
-  await sendMine(sam, 'Sam');
-  const later = outsideJobs().find(j => j.id !== job.id);
-  assert.ok(later, 'the later note, once everyone is in again');
-  assert.match(later.title, /^Outside notes on Hello \(platform test\): 1 from Sam$/);
-  assert.match(later.prompt, /whoever took their notes up again sent them/);
-  assert.match(later.prompt, new RegExp(`a follow-up to the first ones \\(job #${job.id}\\)`));
-  assert.match(later.prompt, /Note \(typed on the preview page\): The footer could say who made it/);
-
-  // ---- the board's End now (two taps) closes it for good: the ended share and the notes with who wrote them
-  await hq.waitForFunction(
-    ([sel, n]) => document.querySelector(sel)?.textContent.includes(`job #${n}`),
-    [`${SEC} > details > .dim`, later.id],
-    { timeout: 30_000 },
-  );
+  // ---- the board's End now (two taps) closes it: the ended share, under Shared, with who was on it
   await hq.click(`${SEC} [data-end]`);
   assert.equal(await hq.textContent(`${SEC} [data-end]`), 'Tap again to end it');
   await hq.click(`${SEC} [data-end]`);
   const ended = await hq.waitForSelector('section.shares li.old', { timeout: 30_000 });
-  assert.match(
-    await ended.textContent(),
-    new RegExp(`Hello \\(platform test\\).*4 notes to Bolt · job #${later.id}.*Sam, Kim`, 's'),
-  );
+  assert.match(await ended.textContent(), /Hello \(platform test\).*Sam, Kim/s);
   assert.equal(await hq.$(SEC), null, 'no open share left');
-  await hq.click('[data-shown=mine]');
-  await hq.waitForSelector('section.notes li.old');
-  const history = await hq.$$eval('section.notes li.old', li => li.map(x => x.textContent.replace(/\s+/g, ' ')));
-  assert.ok(
-    history.some(t => /The headline is lovely.*by Sam \(sam@example\.org\)/.test(t)),
-    `Sam's note, signed: ${history}`,
+  // on a phone: each ended row shows its words, not just its by-line, and fits its box
+  const clipped = await hq.$$eval('section.shares li.old', li =>
+    li
+      .filter(x => {
+        const b = x.querySelector('b');
+        return b.clientWidth < Math.min(b.scrollWidth, 120) || x.scrollWidth > x.clientWidth;
+      })
+      .map(x => x.textContent.replace(/\s+/g, ' ').trim()),
   );
-  assert.ok(
-    history.some(t => /Could the card come in green\?.*by Kim \(kim@example\.org\)/.test(t)),
-    `Kim's note, signed: ${history}`,
-  );
-  assert.ok(
-    history.some(t => /The pages say thanks in two different ways.*General note · by Kim/.test(t)),
-    `Kim's general note reads as one: ${history}`,
-  );
-  // on a phone: each ended row shows its words (who was on the share, the note), not just its by-line, and fits its box
-  const clipped = () =>
-    hq.$$eval('section.shares li.old, section.notes li.old', li =>
-      li
-        .filter(x => {
-          const b = x.querySelector('b');
-          return b.clientWidth < Math.min(b.scrollWidth, 120) || x.scrollWidth > x.clientWidth;
-        })
-        .map(x => x.textContent.replace(/\s+/g, ' ').trim()),
-    );
-  assert.deepEqual(await clipped(), [], 'ended rows readable on a phone');
-  // (the ended share, under Shared)
-  await hq.click('[data-shown=shared]');
-  await hq.waitForSelector('section.shares li.old');
-  assert.deepEqual(await clipped(), [], 'ended shares readable on a phone');
+  assert.deepEqual(clipped, [], 'ended shares readable on a phone');
   await hq.$eval('section.shares', s => s.scrollIntoView({ block: 'start' }));
   await shot(hq, 'reviews-ended');
-  // and their ways in have closed; Kim's link says why
+  // their notes stay on Bolt's sheet in the book, for the board to send
+  for (const words of ['The headline is lovely, but where do I start?', 'Could the card come in green?'])
+    assert.equal((await booked(words)).owner, 'bolt');
+  // and their ways in have closed; Kim's link says so
   for (const page of [sam, kim]) {
     await page.goto(`${PRODUCT}/`);
     assert.equal(new URL(page.url()).pathname, '/login');
   }
   await kim.goto(links.Kim);
-  assert.equal(await kim.textContent('h1'), 'These notes were sent and this invite has ended.');
+  assert.equal(await kim.textContent('h1'), 'This invite has ended.');
 
   // ---- a deck, view only, for Robin: no review mode, and the deck's demo opens on its own host
   await hq.evaluate(href => {
@@ -744,7 +609,7 @@ try {
     'it’s actually made and sent to your address',
   );
   assert.match(steps[1], /red pin.*confirmation page/);
-  assert.match(steps[2], /Send my notes/);
+  assert.match(steps[2], /nothing to send/);
   assert.equal(steps[3], 'Tell us how unpacking it went at hello@example.com!');
   assert.ok(await tess.$('ol.steps > li:first-child .voucher'), 'the voucher sits in step 1');
   // under the steps, quieter than them, what happens to their notes
@@ -771,99 +636,17 @@ try {
   await tess.click('a:has-text("Open The shop")');
   await tess.waitForURL('https://front.preview.company.test/');
   await tess.waitForSelector(tool('.fab'));
-  // ---- in the tool itself: Tess pins a note and writes a general note; My
-  // notes is a sidebar with the pinned one's screenshot, served from HQ's host for her own guest desk session (never
-  // the shop's own origin; its code can't read it); she changes the general note's words there, then sends from its
-  // foot, and Add more notes right there brings the pin back
-  await tess.click(tool('.fab'), { force: true });
-  const tessH1 = await tess.locator('h1').boundingBox();
-  await tess.mouse.click(tessH1.x + 40, tessH1.y + tessH1.height / 2);
-  await tess.waitForSelector(tool('.polaroid canvas')); // (a new mark's screenshot is drawn there)
-  await tess.fill(tool('textarea'), 'The headline could be warmer');
-  await tess.click(tool('.send'));
-  await tess.waitForFunction(
-    () => document.querySelector('review-mode').shadowRoot.querySelector('.count').textContent === '1',
-    null,
-    { timeout: 20_000 },
-  );
-  await generalNote(tess, 'The privacy pages differ from app to app', 2);
+  // ---- in the tool itself: Tess pins a note and writes a general note, each on Bolt's sheet as she writes it, and her
+  // menu says where they go, on a desktop too
+  await pinNote(tess, 'The headline could be warmer', 'Tess');
+  await generalNote(tess, 'The privacy pages differ from app to app', 'Tess');
+  await outsiderMenu(tess, 'Tess');
   await tess.click(tool('.more'));
-  assert.deepEqual(await items(tess), ['General note', 'My notes', 'Send my notes']);
-  assert.equal(await tess.textContent(tool('.menu .cap')), 'Review · 2 notes to send');
-  assert.deepEqual(await tess.evaluate(wrappedMenuLines), [], "Tess's menu, on a desktop");
   await shot(tess, 'menu-tester-desktop');
-  await tess.click(tool('[data-list]'));
-  await tess.waitForSelector(tool('.side li .shot img'));
-  await tess.waitForFunction(
-    () => document.querySelector('review-mode').shadowRoot.querySelector('.side .shot img').naturalWidth > 0,
-    null,
-    { timeout: 10_000 },
-  );
-  const tessShot = await tess.$eval(tool('.side .shot img'), i => i.src);
-  assert.match(
-    tessShot,
-    /^https:\/\/hq\.company\.test\/guest\/review-shot\/\d+\?v=\d+\.jpg$/,
-    "the screenshot comes from HQ's host",
-  );
-  assert.equal(await tess.$$eval(tool('.side li'), l => l.length), 2);
-  assert.equal(await tess.$$eval(tool('.side .shot'), l => l.length), 1, 'the general note has no screenshot');
-  // the shop's own code can't read it: no CORS from HQ's host
-  assert.equal(
-    await tess.evaluate(
-      u =>
-        fetch(u).then(
-          () => 'read',
-          () => 'refused',
-        ),
-      tessShot,
-    ),
-    'refused',
-  );
-  // and her link, handed on, is nothing without her session
-  const { context: strangerCtx, page: stranger } = await context();
-  assert.equal((await stranger.goto(tessShot)).status(), 404, 'her link, without her session, is nothing');
-  await strangerCtx.close();
-  await shot(tess, 'my-notes-desktop');
-  // Change: the pinned note's sheet with its element outlined on the page again
-  await tess.click(tool('.side li:has-text("The headline") button:has-text("Change")'));
-  await tess.waitForSelector(tool('.sheet:not([hidden]) .polaroid img'));
-  assert.ok(
-    (await tess.isVisible(tool('.hl'))) && (await tess.isVisible(tool('.redraw'))),
-    'the headline outlined, and it can be marked again',
-  );
-  await tess.waitForTimeout(1500); // (the photo develops)
-  await shot(tess, 'change-tester-desktop');
-  await tess.click(tool('[data-cancel]'));
-  await tess.waitForSelector(tool('.side:not([hidden]) li'));
-  await tess.click(tool('.side li:has-text("The privacy pages") button:has-text("Change")'));
-  assert.equal(await tess.inputValue(tool('.sheet textarea')), 'The privacy pages differ from app to app');
-  await tess.fill(tool('.sheet textarea'), 'The privacy pages differ from app to app: one would do');
-  await tess.click(tool('.send'));
-  await tess.waitForSelector(tool('.side:not([hidden]) .words:has-text("one would do")'));
-  assert.deepEqual(
-    db
-      .prepare("select note from review_notes where author = 'Tess' order by id")
-      .all()
-      .map(n => n.note),
-    ['The headline could be warmer', 'The privacy pages differ from app to app: one would do'],
-  );
-  await tess.setViewportSize({ width: 390, height: 844 });
-  await shot(tess, 'my-notes-tester-phone');
-  await tess.click(tool('.side footer [data-send]'));
-  assert.equal(await tess.$eval(tool('.side footer [data-send]'), b => b.firstChild.textContent), 'Tap again to send');
-  await tess.click(tool('.side footer [data-send]'));
-  await tess.waitForSelector(tool('.tip.show'));
-  assert.ok(await tess.isHidden(tool('.side')), 'sent: the sidebar is put away');
-  assert.ok(await tess.isHidden(tool('.fab')), 'sent: the pin is away');
   await tess.click(tool('.more'));
-  assert.deepEqual(await items(tess), ['Add more notes']);
-  await shot(tess, 'menu-tester-sent');
-  await tess.click(tool('[data-again]'));
-  await tess.waitForSelector(tool('.fab:not([hidden])'));
-  assert.equal(await tess.textContent(tool('.more .count')), '2');
   assert.deepEqual(pageErrors.flat(), []);
   console.log(
-    'shares-check: two invited from the viewer on a phone, each signs in, pins a note (the second a general note too, from the pin’s menu) and sends it (Send my notes in the menu, in reach, then only Add more notes); nothing queued until both sent, then one job with both signed; Invite and Remove in Reviews; the first’s link takes their notes up again and a later note goes as a follow-up, until the board’s End now; the ended share and the signed notes listed; a deck shared view only opens its demo on the product host, without review mode; the shop shared to try out, its vouchers’ amount changed after the invite, gives the tester a greeting and four steps on her door (one bold part, the company’s own last) and a quieter aside on her notes, her voucher up to it in the first with a copy button, then opens with the pin; her pinned note and general note in the My notes sidebar (the screenshot from HQ’s host, unreadable by the page), the general one changed there and both sent from its foot, and taken up again there',
+    'shares-check: two invited from the viewer on a phone, each signs in and pins a note (the second a general note too, from the pin’s menu), each on the board’s sheet for the owner as it’s pinned, signed, the menu saying where they go; Invite and Remove in Reviews; the board’s End now closes it, the ended share listed and the links shut; a deck shared view only opens its demo on the product host, without review mode; the shop shared to try out, its vouchers’ amount changed after the invite, gives the tester a greeting and four steps on her door (one bold part, the company’s own last) and a quieter aside on her notes, her voucher up to it in the first with a copy button, then opens with the pin, and her notes go on the board’s sheet too',
   );
 } catch (err) {
   console.error(err);

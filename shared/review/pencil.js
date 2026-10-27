@@ -12,11 +12,10 @@
 //   - A two-finger tap takes back the last thing, whatever it was (Cmd or Ctrl+Z too). Nothing asks "are you sure?".
 // The pen's touches are pentouch.js's. The book hears each note as it's made ('pencil:note').
 import * as inkjs from './ink.js';
-import { aim, boxOfLines, marked } from './mark.js';
+import { aim, boxOfLines } from './mark.js';
 import { compose, develop, towards } from './postit.js'; // (towards)
-import { expose } from './snapshot.js';
 import { canRecord } from './dictation.js';
-import { cancel } from './tool.js';
+import { reset } from './acts.js';
 import { ACCENT } from './base.js';
 import * as marks from './marks.js';
 import { followPage } from './markfollow.js';
@@ -24,10 +23,10 @@ import { followPage } from './markfollow.js';
 import * as hairline from './hairline.js';
 import { inside, ringed, scribbled } from './gestures.js';
 // (the pen's touches, a mark's end and a note joined.)
-import { setupTouch } from './pentouch.js';
+import { setupTouch, theirs } from './pentouch.js';
 import { setupSettle } from './settle.js';
 import { hairTaps } from './marktaps.js';
-import { joining, rejoin, unjoin } from './join.js';
+import { joining, unjoin } from './join.js';
 import { setupCarry } from './carry.js';
 // (handwriting read into type.)
 import * as written from './written.js';
@@ -44,31 +43,8 @@ export const CSS = `
 // pen's events reach it from the window (penDown...), so a tap on review mode's own buttons stays theirs)
 export const HTML = `<i class="listen" hidden aria-hidden="true"></i><i class="pencil" hidden></i>${hairline.HTML}`;
 
-// A touch beside HQ's page, on the book (outside <body>, platform/hq/shell/book.js): the book's, never the page's ink.
-export const offPage = e => !e.composedPath().includes(document.body);
-// Where a pen's touch belongs to the page or the browser, not the ink: review mode's own UI, the book, text fields
-// (Scribble writes in them) and what the page marks data-no-ink (a floating control the pen works as a finger does:
-export function theirs(r, e) {
-  const path = e.composedPath();
-  if (path.includes(r.host) || offPage(e)) return true;
-  const t = path[0];
-  return !!(
-    t instanceof Element &&
-    t.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [data-no-ink]')
-  );
-}
-// The pen may draw now: on the page, nothing of review mode's over it (a mouse's marking has its own veil), while the
-// last mark goes in too (settle.js)
-export const free = r =>
-  !r.covered &&
-  r.side.hidden &&
-  r.zoom.hidden &&
-  r.veil.hidden &&
-  r.sheet.hidden &&
-  (r.mode === 'idle' || r.mode === 'note' || r.mode === 'sending');
-
 // A line the Pencil finished, in the screen's px
-export function lifted(r, stroke) {
+function lifted(r, stroke) {
   r.pencil.clear();
   // (a line drawn while the last mark goes into the book waits, drawn, for it: settle.js.)
   if (r.mode === 'sending') {
@@ -115,16 +91,15 @@ function scribbledOut(r, area) {
   }
   if (hit) return true;
   // (over a sent note's hairline: only the hairline clears.)
-  const went = r.mode === 'idle' && marks.sentAt(r, area);
+  const went = r.mode === 'idle' && marks.sentHairAt(r, area);
   if (!went) return false;
   moved(r);
   marks.clearHair(r, went);
   r.steps.push({ kind: 'unclear', n: went });
   return true;
 }
-// (exported for a mark from a second screen: handover.js.)
-export function begin(r) {
-  r.undoTo = { mark: null, shot: null, exposure: null, editing: null };
+function begin(r) {
+  r.undoTo = { mark: null, shot: null, exposure: null };
   r.markNumber = r.mark.joins?.n ?? null;
   marks.paint(r);
   const mark = r.mark;
@@ -151,47 +126,15 @@ function flash(r, el) {
   setTimeout(() => (r.hl.hidden = true), 700);
 }
 
-// The mark's note into the book (its words once any still being said are in), a new one or the note it joins changed
-// (join.js), as it settles (settle.js) or by the post-it's Send. Its lines then show as its hairline. Returns { note,
-// snip, photoless: whether it went without its photo (the screenshot failed, or was still developing after 9 s), for
-// the post-it to say so }; null if the mark was let go while it developed (another maybe begun: never that one's
-// lines).
-export async function toBook(r) {
-  // (handwriting: the lines not read yet are read now, and words read as written are said 'written')
-  written.readNow(r);
-  const mark = r.mark,
-    words = r.text.value.trim(),
-    said = !words ? null : r.spoken && !r.typed ? 'spoken' : !r.typed && words === mark.written ? 'written' : 'typed',
-    general = mark.kind === 'general';
-  const taken = general ? null : await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), 9000))]);
-  if (r.mark !== mark) return null;
-  // (a mark from the other screen keeps its picture there: handover.js.)
-  const snip =
-    mark.snap ??
-    (taken &&
-      marks.snipOf(
-        { c: expose(r, taken, r.mark), k: taken.k },
-        r.strokes.length ? boxOfLines(r.strokes) : r.mark.element.rect,
-      ));
-  const anchor = general ? { ...marked(r), el: null } : marked(r);
-  const fields = { anchor, live: r.mark.el, words, said, snip },
-    note = mark.joins ? await rejoin(r, mark.joins, fields) : await marks.post(r, fields);
-  if (!mark.joins) r.steps.push({ kind: 'note', id: note.id });
-  written.sent(r, mark, note);
-  mark.filed = true;
-  marks.paint(r);
-  return { note, snip, photoless: (!general || 'snap' in mark) && !snip };
-}
-
 // Wiping: the mark being made goes with its post-it; one on its sheet goes from it too. Both come back with an undo.
 function wipeOpen(r) {
   r.steps.push({ kind: 'unwipeOpen', strokes: r.strokes, mark: r.mark, words: r.text.value });
-  cancel(r);
+  reset(r);
 }
 // ...and a mark joining a note: the note goes, from the book too.
 function wipeJoined(r) {
   const m = r.mark.joins;
-  cancel(r);
+  reset(r);
   return wipeMark(r, m);
 }
 async function wipeMark(r, m) {
@@ -214,7 +157,7 @@ export async function undo(r) {
     moved(r);
     return;
   }
-  if (r.mode === 'note') return cancel(r);
+  if (r.mode === 'note') return reset(r);
   if (r.mode !== 'idle') return;
   const step = r.steps.pop();
   if (!step) return;
@@ -253,8 +196,9 @@ export function setupPencil(r) {
     ink: () => inkjs.INKS[r.inkNow],
     end: stroke => lifted(r, stroke),
   });
-  setupTouch(r);
-  setupSettle(r);
+  // (what the pen's touches and a mark's end do with the Pencil's own, handed in: they never import it.)
+  setupTouch(r, { begin, undo });
+  setupSettle(r, { lifted });
   setupHandover(r, { begin });
   hairTaps(r);
   carry(r);
@@ -272,7 +216,7 @@ function carry(r) {
         [now] = marks.openLines(r, [then]);
       return { then: then.points, now: now.points, shot: r.exposure };
     },
-    carried: () => r.mode === 'note' && !r.text.value.trim() && cancel(r),
+    carried: () => r.mode === 'note' && !r.text.value.trim() && reset(r),
     onPage: e => !theirs(r, e),
   });
 }

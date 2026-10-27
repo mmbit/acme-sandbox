@@ -124,10 +124,11 @@ export const decision = {
                                                      its card (hq ask ... --decides <id>) lets it go
    hq decision show <id>                             the assigned card author reads its waiting pull requests
    hq decision link <id> <card>                      the open card that asks it, filed already or in place of another
-   hq decision settle <id> item:<n> | card:<n>       the CEO settles a visual decision the board already answered in its
-                                                     own words (a call's item, a card it answered): the held merges go
-                                                     on, and its queued card job and open card, if any,
-                                                     end`,
+   hq decision settle <id> item:<n> | card:<n>       the CEO settles a visual decision without its card, citing the
+                                                     board's word given elsewhere (a call's item, a card it answered)
+                                                     as its Go live: the CEO's judgment, recorded with the word. The
+                                                     held merges go on, and its queued card job and open card, if
+                                                     any, end`,
 
   async run(given: string[]) {
     if (given[0] === 'show') return show(given.slice(1));
@@ -175,7 +176,7 @@ async function settle([id, word, ...rest]: string[]) {
     Boolean,
   );
   print(
-    `Decision #${id} is settled on the board's ${word.replace(':', ' #')}: ${
+    `Decision #${id} is settled, citing the board's ${word.replace(':', ' #')}: ${
       settled.merges.length
         ? settled.merges.map(n => `PR #${n}`).join(', ') + ' go on to merge'
         : 'no pull request waits on it now'

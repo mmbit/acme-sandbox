@@ -2,7 +2,7 @@
 import { matchesGlob } from 'node:path';
 import { db, redacted } from './db.ts';
 import { org, roles } from './company.ts';
-import { findAgent } from './jobs.ts';
+import { findAgent, OPEN_PRS } from './jobs.ts';
 import { withPicks } from './models.ts';
 import * as panel from './panel.ts';
 import * as findings from './findings.ts';
@@ -386,12 +386,14 @@ export function rulingProblem(pr: number, blocking: unknown) {
   }
 }
 
+// Read from indexes (db.ts prs_open, jobs_pr_loop), never a brief or report.
 export function pending() {
   return db
     .prepare(
-      `select j.id, j.kind, j.status, j.pr, j.round, j.branch, j.sha from jobs j join prs p on p.number = j.pr
-    where j.stage = 'triage' and j.status = 'done' and p.status = 'open' and p.round = j.round and p.sha = j.sha
-    and j.id > p.since and j.voided is null and not exists (select 1 from review_triage where job = j.id)
+      `select j.id, j.kind, j.status, j.pr, j.round, j.branch, j.sha from prs p indexed by prs_open
+    join jobs j indexed by jobs_pr_loop on j.pr = p.number
+    where j.stage = 'triage' and j.status = 'done' and p.status in ${OPEN_PRS} and p.status = 'open' and p.round = j.round
+    and p.sha = j.sha and j.id > p.since and j.voided is null and not exists (select 1 from review_triage where job = j.id)
     and not exists (select 1 from job_replacements where replaces = j.id)`,
     )
     .all() as { id: number; kind: string; status: string; pr: number; round: number; branch: string; sha: string }[];

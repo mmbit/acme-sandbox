@@ -1,7 +1,7 @@
 // A line drawn on or beside a note's hairline joins that note (pencil.js): the note opens again as the mark being made,
 // its ink and the new lines one mark, and as it settles (settle.js) the note is changed in the book, its ink, its snip
 // cut again and the words said since added, rather than a new one made. Undo puts the note back as it was.
-import { boxOfLines } from './mark.js';
+import { nearLines } from './mark.js';
 import { send } from './markpage.js';
 import * as marks from './marks.js';
 
@@ -14,14 +14,7 @@ const NEAR_PX = 24;
 export function joining(r, area) {
   const near = m => {
     const ink = marks.placed(m);
-    if (!ink.length || !marks.showsNow(r, m, ink)) return false;
-    const b = boxOfLines(ink);
-    return (
-      area.x < b.x + b.w + NEAR_PX &&
-      area.x + area.w > b.x - NEAR_PX &&
-      area.y < b.y + b.h + NEAR_PX &&
-      area.y + area.h > b.y - NEAR_PX
-    );
+    return nearLines(area, ink, NEAR_PX) && marks.showsNow(r, m, ink);
   };
   const ours = x => (r.call ? x.by !== r.call.agent : !x.onCall);
   const m = [...(r.marks ?? [])].reverse().find(x => ours(x) && near(x));

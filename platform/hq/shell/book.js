@@ -38,18 +38,21 @@ let placed = null; // where the parts are on the screen now (placeOf's shape), m
 let laid = null; // where they're laid out ({ edge, width, room }, the leaf's width as set): a move is a transform from it
 let moving = []; // the slide or fade under way: its animations
 
+// The book's styles (and the sheets' notes on its pages). (out of initBook)
+const STYLES = [
+  'shell/book.css',
+  'shell/booklook.css',
+  'shell/booksheet.css',
+  'shell/bookfaces.css', // (the faces)
+  'shell/booksearch.css', // (Search)
+  'shell/bookui.css', // (the controls' one style)
+  'shell/bookdesk.css', // (the page, its heading, the overview)
+  'shell/bookwent.css', // (what a send carries)
+  'shell/bookasks.css', // (the desk phone's cards in the book)
+];
+
 export async function initBook() {
-  // (and the sheets' notes on its pages)
-  await Promise.all([
-    stylesheet('shell/book.css'),
-    stylesheet('shell/booklook.css'),
-    stylesheet('shell/booksheet.css'),
-    stylesheet('shell/bookfaces.css'), // (the faces)
-    stylesheet('shell/booksearch.css'), // (Search)
-    stylesheet('shell/bookui.css'), // (the controls' one style)
-    stylesheet('shell/bookdesk.css'), // (the page, its heading, the overview)
-    stylesheet('shell/bookwent.css'), // (what a send carries)
-  ]);
+  await Promise.all(STYLES.map(href => stylesheet(href)));
   mountRoot();
   state = recall(store, shape());
   mountRail(parts.rail, {
@@ -61,6 +64,9 @@ export async function initBook() {
   pages = mountPages(parts.paper, { dev: world.dev, shape });
   // (Search, in the overview's head: a find opens its page at its note.)
   mountSearch(island('overview'), { dev: world.dev, find: at => pages.find(at) });
+  // (a note or page asked from elsewhere, the desk phone's Open in the book: the book lands on it as on a find, its day's
+  // row turned to its note, the number lit.)
+  document.addEventListener('book:find', e => pages.find(e.detail));
   // (a page made or thrown away outside the book, a call's: calldraw.js, markpage.js, which send book:paged: today's read
   // again, at that page if it's new; the rail reads its sheets again too. Not book:changed, which an answer or a slip
   // sends and which must leave the page the board is on.)
@@ -77,14 +83,18 @@ export async function initBook() {
   dragLip();
   mountHandle(parts.lip, { open: openBook, openOn });
   mountLanding({ pages, lip: parts.lip, paper: parts.paper, layout: bookLayout });
-  // A turn or a new window size: the shape's own remembered state, laid out at once (nothing slides). Watched on
-  // <html>'s box, which follows the window whether or not a resize event comes with it.
+  watchSize();
+}
+// A turn or a new window size: the shape's own remembered state, laid out at once (nothing slides). Watched on <html>'s
+// box, which follows the window whether or not a resize event comes with it. One that lands mid-slide or mid-fade
+// settles the board's move: still the board's act (the pin's summon).
+function watchSize() {
   let size = `${innerWidth}x${innerHeight}`;
   new ResizeObserver(() => {
     if (`${innerWidth}x${innerHeight}` === size) return;
     size = `${innerWidth}x${innerHeight}`;
     state = recall(store, shape());
-    show(layout(innerWidth, innerHeight, state));
+    show(layout(innerWidth, innerHeight, state), { act: moving.length > 0 });
   }).observe(document.documentElement);
 }
 
@@ -109,12 +119,15 @@ export const openBook = () => go({ ...state, mode: 'open' });
 export const foldBook = () => go({ ...state, mode: 'folded' });
 // Open the book at an owner's sheet (null: nobody's, the CEO's), turned to once its pages are laid out for the paper's
 // new width: a turn before that would be undone by the row laid out again. (desk.js's bookAt, the lip.: was desk.js's)
-export function openAt(owner) {
+// at: a place to land on instead, { day, page, note }: a find of its note on its page of that day, scrolled to and lit,
+// or the page alone (a desk-phone card's Open in the book.)
+export function openAt(owner, at = null) {
+  const [name, detail] = at?.page ? ['book:find', at] : ['book:face', { owner }];
   document.addEventListener(
     'book:layout',
     () =>
       requestAnimationFrame(() =>
-        requestAnimationFrame(() => document.dispatchEvent(new CustomEvent('book:face', { detail: { owner } }))),
+        requestAnimationFrame(() => document.dispatchEvent(new CustomEvent(name, { detail }))),
       ),
     { once: true },
   );
@@ -143,7 +156,7 @@ function go(next) {
     opening = drawn.mode === 'folded' && to.mode !== 'folded';
   if (matchMedia('(prefers-reduced-motion: reduce)').matches) return fade(to);
   if (same(placed, placeOf(to))) {
-    show(to);
+    show(to, { act: true });
     if (opening) openCover();
     return;
   }
@@ -171,7 +184,7 @@ function glide(to) {
   placed = target;
   const mine = moving;
   mine[0].finished.then(
-    () => moving === mine && show(to),
+    () => moving === mine && show(to, { act: true }),
     () => {},
   );
 }
@@ -182,14 +195,14 @@ function fade(to) {
     timing = { duration: FADE_MS, easing: 'ease-out' };
   if (to.mode !== 'folded' || drawn.mode === 'folded') {
     const coming = drawn.mode === 'folded';
-    show(to);
+    show(to, { act: true });
     if (coming) moving = book.map(el => el.animate([{ opacity: 0 }, { opacity: 1 }], timing));
     return;
   }
   moving = book.map(el => el.animate([{ opacity: 1 }, { opacity: 0 }], { ...timing, fill: 'forwards' }));
   const mine = moving;
   mine[0].finished.then(
-    () => moving === mine && show(to),
+    () => moving === mine && show(to, { act: true }),
     () => {},
   );
 }
@@ -266,8 +279,9 @@ function tones() {
   parts.table.style.setProperty('--bk-ground', ground);
   parts.table.style.setProperty('--bk-check', page.getPropertyValue(dark ? '--paper' : '--ink').trim());
 }
-// The layout settled: placed, told to the page (data-book on <html>, and a book:layout event for whoever lays out by it)
-function show(l) {
+// The layout settled: placed, told to the page (data-book on <html>, and a book:layout event for whoever lays out by it,
+// act true when the board moved the book, not a new window size or HQ's start: the pin's summon, pinsummon.js)
+function show(l, { act = false } = {}) {
   drawn = l;
   place(placeOf(l), l.mode);
   document.documentElement.dataset.book = l.mode;
@@ -276,7 +290,7 @@ function show(l) {
   // in the spread the book covers HQ's page on purpose: it can't be tapped through
   document.body.inert = l.mode === 'spread';
   if (l.mode === 'folded') hideCover();
-  document.dispatchEvent(new CustomEvent('book:layout', { detail: { ...l } }));
+  document.dispatchEvent(new CustomEvent('book:layout', { detail: { ...l, act } }));
 }
 
 // The spine: wherever it's let go the book stays, folded only where it's too narrow to draw on and spread only where
