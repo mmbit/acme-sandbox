@@ -35,8 +35,6 @@ test('with too few sized jobs done, a given size plays as given', () => {
 test("a sizer's sizes play at what its jobs took for the time it gave", () => {
   sizedJob(60, 20);
   sizedJob(60, 40);
-  // (an hour on, the kept bias is read again)
-  mock.timers.tick(HOUR);
   // eleven jobs given 60 min: ten took 20, one 40 (together 240 of 660); four in five took a third or less, under the
   // usual, so the slow size is the usual
   const played = bias.corrected(90 * MIN, 'juno');
@@ -79,4 +77,12 @@ test('hq when plays the size it was given at the asker’s bias, and says so', a
   assert.equal(answer.body.size.given_minutes, 90);
   assert.equal(answer.body.size.agent_minutes, Math.round(bias.corrected(90 * MIN, 'juno').agent_ms / MIN));
   assert.equal(answer.body.size.bias.by, 'juno');
+});
+
+test('a job sized and done after the bias was read reaches it at the next read', () => {
+  assert.equal(bias.corrected(HOUR, 'reel').bias?.own, false, "none of reel's own yet");
+  // reel's own jobs, given an hour, took half
+  for (let i = 0; i < bias.LEAST; i++) sizedJob(60, 30, 'reel');
+  const played = bias.corrected(HOUR, 'reel');
+  assert.deepEqual([played.agent_ms, played.bias?.own, played.bias?.jobs], [30 * MIN, true, bias.LEAST]);
 });

@@ -146,6 +146,9 @@ export function expand(c) {
   if (!c.small) return;
   c.small = false;
   c.layer.hidden = false;
+  // (the transcript went on while it was hidden, where nothing scrolls: it opens at its newest line, and so follows on.
+  const lines = c.layer.querySelector('#call-lines');
+  if (lines) lines.scrollTop = lines.scrollHeight;
   const device = c.layer.querySelector('.device'),
     to = device.getBoundingClientRect();
   const shift = bubbleShift(c, to);

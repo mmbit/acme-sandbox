@@ -25,8 +25,8 @@ const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
 // an invited reviewer's, as feedback.ts product() serves it to a share's session: the company's name in (here the
-// product's), notes not sent yet.
-const outsiderJs = reviewJs.replace('{{OUTSIDE}}', 'Hello').replace('{{SENT}}', '');
+// product's).
+const outsiderJs = reviewJs.replace('{{OUTSIDE}}', 'Hello');
 const PAGE = `<!doctype html><meta name="viewport" content="width=device-width, initial-scale=1"><title>Hello</title>
   <style>body { font: 20px system-ui; margin: 32px; background: #fdfaf3; } h1 { margin-top: 90px; font-size: 44px; } main { height: 2400px; }
     button { font: inherit; padding: 14px 24px; border-radius: 12px; border: 0; background: #2b2230; color: #fff; }</style>
@@ -111,8 +111,7 @@ function product(r, tool) {
   const path = new URL(r.request().url()).pathname;
   if (fulfilPart(r, path, tool)) return;
   if (path === '/__review/coach') return r.fulfill({ json: { show: false } });
-  if (path === '/__review/mine')
-    return r.fulfill({ json: { notes: posted.length, list: [], sent: false, more: false } });
+  if (path === '/__review/mine') return r.fulfill({ json: { notes: posted.length } });
   if (path === '/__review/notes') {
     posted.push(r.request().postDataJSON());
     return r.fulfill({ json: { ok: true, id: posted.length } });
@@ -297,11 +296,11 @@ await page.mouse.move(more.x + 18, more.y + 18);
 await page.mouse.down();
 await page.mouse.move(more.x - 100, more.y - 300, { steps: 8 });
 await page.mouse.up();
-await page.waitForTimeout(500); // (it springs to its side of the screen at that height)
+await page.waitForTimeout(500); // (it rests where it's let go)
 const [mx, my] = await dockAt();
 assert.ok(
-  mx === fx && Math.abs(my - (fy - 318)) < 4,
-  `the pin moved up with its handle, from where it was held (${fx},${fy} → ${mx},${my})`,
+  Math.abs(mx - (fx - 118)) < 4 && Math.abs(my - (fy - 318)) < 4,
+  `the pin moved with its handle, from where it was held (${fx},${fy} → ${mx},${my})`,
 );
 assert.equal(await page.locator(inUi('.menu')).isVisible(), false, 'a drag opens no menu');
 const touch = await page.locator(inUi('.more')).boundingBox();
@@ -442,7 +441,7 @@ if (shots) {
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, reviewJs)) return;
-    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } });
+    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
     return r.fulfill({ json: { show: false } });
   });
   await hqPage.setViewportSize({ width: 744, height: 1133 });

@@ -85,8 +85,9 @@
   pointer-events: none;
   white-space: nowrap;
   color: var(--bk-night);
-  /* (clear of the controls floating at the paper's right edge, however narrow the book: what doesn't fit trails off.) */
-  max-width: calc(var(--paper-w, 100%) - 88px);
+  /* (clear of the controls floating at the paper's right edge, one column or two (--bk-stack, bookui.js), however
+     narrow the book: what doesn't fit trails off.) */
+  max-width: calc(var(--paper-w, 100%) - var(--bk-stack, 52px) - 36px);
 }
 #book .bk-title .bk-date {
   /* (short of room, the day gives way first: the page's name says what it is.) */

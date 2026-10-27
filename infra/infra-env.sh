@@ -13,12 +13,12 @@
 # scripts need goes on this list (an infra/ change, the high-risk panel); other well-formed keys are for the coordinator
 # and infra's Python (company.ts, company.py), which read them as data: here they're left out, and named on stderr.
 # SERVED_FROM_REPO (products.py's routes), so the company's file reads whole. BACKUP_PRODUCTS_MB, BACKUP_BUCKET_GB (backup.py:
-# the latter).
+# the latter), BACKUP_RENDERS_GB (backup.py).
 # IMPORTS_MAX_GB, IMPORTS_MIN_FREE_GB (compose.yaml's coordinator, zips.ts). CODEX_SEAT_RUNS (compose.yaml's worker).
 # EMAIL_LIST_ROUTE (listmail.ts). METRICS_VISITORS (products.py).
 # DEPLOY_BUILD_RESERVE_GB (compose.yaml): the measured temporary build peak, excluded from job disk shares.
 # WORKER_MEMORY (compose.yaml): finite worker RAM and combined RAM/swap ceiling, in Compose byte-size syntax.
-INFRA_ENV_KEYS=' SERVER_NAME SERVER BACKUP_BUCKET BACKUP_LEFT_OUT BACKUP_PRODUCTS_MB BACKUP_BUCKET_GB AGENT_EMAIL_DOMAIN AGENTS_EMAIL CARE_COOKIES EMAIL_SERVICE PAYMENT_METHODS SEATS SEAT_MOVES CARE_CREDIT_USD CARE_CREDIT_AT CARE_CREDIT_OTHERS_USD CARE_CREDIT_MONTHLY_USD CARE_CREDIT_MONTHLY_FROM SERVED_FROM_REPO IMPORTS_MAX_GB IMPORTS_MIN_FREE_GB DEPLOY_BUILD_RESERVE_GB CODEX_SEAT_RUNS EMAIL_LIST_ROUTE METRICS_VISITORS WORKER_MEMORY '
+INFRA_ENV_KEYS=' SERVER_NAME SERVER BACKUP_BUCKET BACKUP_LEFT_OUT BACKUP_PRODUCTS_MB BACKUP_BUCKET_GB BACKUP_RENDERS_GB AGENT_EMAIL_DOMAIN AGENTS_EMAIL CARE_COOKIES EMAIL_SERVICE PAYMENT_METHODS SEATS SEAT_MOVES CARE_CREDIT_USD CARE_CREDIT_AT CARE_CREDIT_OTHERS_USD CARE_CREDIT_MONTHLY_USD CARE_CREDIT_MONTHLY_FROM SERVED_FROM_REPO IMPORTS_MAX_GB IMPORTS_MIN_FREE_GB DEPLOY_BUILD_RESERVE_GB CODEX_SEAT_RUNS EMAIL_LIST_ROUTE METRICS_VISITORS WORKER_MEMORY '
 infra_env_file=${INFRA_ENV:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/company/infra.env}
 INFRA_ENV_SKIPPED=' '
 if [ -r "$infra_env_file" ]; then

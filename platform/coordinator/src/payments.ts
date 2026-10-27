@@ -972,13 +972,15 @@ export const lineVoucher: ((c: Caller, reference: string, voucher: number) => nu
 // find: the voucher a typed code is, with its stall, or undefined when it's no stall's (counting nothing: the code box
 // counts its wrong tries); spend: spends it on a line's order and answers what it pays, or why not; move: a changed
 // design's line takes the place of the one its voucher pays (addToBasket's replaces), so the voucher pays the new line's
-// order instead and answers what it pays there, or why not.
+// order instead and answers what it pays there, or why not. shaped: whether a typed code has a stall voucher's shape,
+// for the code box's words on a miss.
 type StallVoucherStatus = 'unused' | 'spent' | 'refunding' | 'refunded' | 'refund_failed' | 'settled';
 export type StallVoucher = { product: string; voucher: number; value: number; usable: boolean; spent_on: string | null; status: StallVoucherStatus };
 export const basketVoucher: {
   find?: (mode: 'test' | 'live', typed: unknown) => StallVoucher | undefined;
   spend?: (line: Line, typed: unknown) => number | Refused;
   move?: (from: Line, to: Line) => number | Refused;
+  shaped?: (mode: 'test' | 'live', typed: unknown) => boolean;
 } = {};
 // Tester vouchers pay in test mode on their product's preview, in a basket or for a plan (plans.ts).
 // find: the typed voucher's code on that product (the shop unless named), or undefined. It counts no wrong tries.
@@ -1078,13 +1080,15 @@ export const basketCode: {
 // A second payer beside the card: the basket's gift card (a company's gift cards kit fills this). It pays, never
 // discounts: the lines keep their prices and the code comes off first, then the card pays what's left (giftPays), in
 // basket order across the lines (giftOnLines), and Stripe charges the rest. enter: a typed code that is a gift card goes
-// in the basket (its view, or why not), undefined when it's none. shown: the card an open basket holds while it can
+// in the basket (its view, or why not), undefined when it's none; shaped: whether a typed code has a gift card's shape,
+// for the code box's words on a miss. shown: the card an open basket holds while it can
 // pay, or the one a session held or spent, with its balance now. The rest as basketCode's: dropped, refresh, unusable,
 // hold; paid: the session's payment, in the same step as its lines, with what the card paid in all; back: a line it
 // paid for was refunded, so its part goes back on the card (once a line).
 export type ShownGift = { ending: string; balance: number; until: string };
 export const basketGift: {
   enter?: (c: Caller, basket: string, typed: unknown, country?: unknown) => Promise<Awaited<ReturnType<typeof changeBasket>> | undefined>;
+  shaped?: (typed: unknown) => boolean;
   shown?: (where: { basket?: string; session?: string }) => ShownGift | null;
   dropped?: (basket: string) => { why: string } | null;
   refresh?: (basket: string) => Promise<void>;

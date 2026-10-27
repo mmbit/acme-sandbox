@@ -27,7 +27,7 @@ import { playwright } from '../../shared/browser/browser.mjs';
 import { HOLIDAYS, holidaysOn } from '../../shared/holidays/holidays.js';
 import * as world from './world/world.js';
 import { buildLayout } from './renderers/brownstone/layout.js';
-import { RAIL, shapeOf } from './shell/booklayout.js';
+import { shapeOf } from './shell/booklayout.js';
 
 const arg = k => {
   const i = process.argv.indexOf(k);
@@ -212,7 +212,7 @@ function* variants(room) {
 // Where the room stands in an org's building on HQ's page beside the folded book (the page checks it stands there too).
 function placeIn(o, room) {
   world.setOrg({ ...o, machines }, true);
-  const r = buildLayout(world, VIEW.width - RAIL, VIEW.height).rooms.find(x => x.src === room.id),
+  const r = buildLayout(world, VIEW.width, VIEW.height).rooms.find(x => x.src === room.id),
     last = r.lv.rooms.filter(x => x.wing === r.wing).at(-1);
   return placeName({ wing: r.wing, end: last === r });
 }

@@ -1,16 +1,18 @@
 // A decision of the board's, named ahead of its card ("pick the art direction"), and what waits for it: a pause on each
 // project or thread it blocks (pauses.ts), which holds their queued work, reviews and fixes until the board answers the
-// card that asks it. Nothing else ends it: an agent, the CEO too, can't read it as met. Work it doesn't block goes on.
+// card that asks it. Work it doesn't block goes on. Nothing else ends it, with one exception: the CEO may settle a visual
+// hold on merges without its card, citing the board's word given elsewhere (visualapproval.ts settle). No agent's own
+// reading of it as met ends one.
 import { db, inOneStep } from './db.ts';
 import { publish } from './events.ts';
 import * as pauses from './pauses.ts';
 import { ceo } from './company.ts';
 import { oneLine } from './agreements.ts';
-import { ENDED_ITEMS } from './jobs.ts';
 
 const NAME_MAX = 120;
 
 type Decision = { id: number; name: string; by: string; at: string; request: number | null };
+type DecisionRow = Decision & { answered: string | null; released: string | null; card_job: number | null };
 
 // hq decision "name" --blocks <project | project/thread>...: the CEO names it and blocks what depends on it, all of it
 // or nothing. The answer is the decision and its pauses, or why not.
@@ -88,9 +90,9 @@ export function awaited() {
   });
 }
 
-function openDecision(id: number): Decision | string {
-  const d = db.prepare('select * from decisions where id = ?').get(id) as
-    (Decision & { answered: string | null; released: string | null }) | undefined;
+// (exported for visualapproval.ts settle)
+export function openDecision(id: number): DecisionRow | string {
+  const d = db.prepare('select * from decisions where id = ?').get(id) as DecisionRow | undefined;
   if (!d) return `there's no decision #${id}`;
   if (d.answered || d.released) return `decision #${id} was ${d.answered ? 'answered' : 'let go'} already`;
   return d;
@@ -159,46 +161,6 @@ export function retireMerge(pr: number) {
   });
 }
 
-// hq decision settle <id> item:<n> | card:<n>: a visual decision the board already answered in its own words, a call's
-// item or a card it answered, settled by the CEO without the card it waits for. Only the board's word settles it, never
-// an agent's: the item or card is the record, and the CEO only ties it to the decision. The answer is what the settling
-// leaves to end (the card job the hold queued, its open card) and the held pull requests, or why not.
-export function settle(id: number, word: string, by: string) {
-  if (by !== ceo()) return `only the CEO (${ceo()}) settles a decision on the board's word`;
-  const d = openDecision(id);
-  if (typeof d === 'string') return d;
-  if (!mergeDecision(id))
-    return `decision #${id} holds no visual change: only the board's answer on its card lets it go`;
-  const [, kind, n] = /^(item|card):([0-9]+)$/.exec(word) ?? [];
-  if (!kind) return "name the board's word as item:<n> (a call's item) or card:<n> (a card the board answered)";
-  const given = kind === 'item' ? boardItem(Number(n)) : boardCard(Number(n));
-  if (typeof given === 'string') return given;
-  const { said } = given;
-  const at = new Date().toISOString();
-  db.prepare('update decisions set answered = ?, settled = ? where id = ?').run(at, word, id);
-  publish({ type: 'log', agent: by, text: `Decision #${id} "${d.name}" settled on the board's ${said}` });
-  const { card_job } = db.prepare('select card_job from decisions where id = ?').get(id) as { card_job: number | null };
-  return { cardJob: card_job, card: d.request, said, merges: merges(id) };
-}
-
-// A call's item the board said, still standing (not dropped or replaced)
-function boardItem(n: number) {
-  const item = db.prepare('select what, status from call_items where id = ?').get(n) as
-    { what: string; status: string } | undefined;
-  if (!item) return `there's no call item #${n}`;
-  if (ENDED_ITEMS.includes(item.status)) return `item #${n} was ${item.status}: it's no standing word of the board's`;
-  return { said: `item #${n} ("${item.what}")` };
-}
-
-// A card the board itself answered: a guest's answer, or a card closed without one, isn't the board's word
-function boardCard(n: number) {
-  const card = db.prepare('select title, kind, status from requests where id = ?').get(n) as
-    { title: string; kind: string; status: string } | undefined;
-  if (!card) return `there's no card #${n}`;
-  if (card.status !== 'answered' || card.kind === 'guest') return `card #${n} wasn't answered by the board`;
-  return { said: `card #${n} ("${card.title}")` };
-}
-
 export const mergeQuestions = [
   {
     title: 'Go live with these visual changes?',
@@ -231,8 +193,8 @@ export const heldMerge = (pr: number) =>
     )
     .get(pr) as { id: number; request: number | null } | undefined;
 
-// The held pull requests still open, by their decision
-const merges = (id: number) =>
+// The held pull requests still open, by their decision (visualapproval.ts settle)
+export const decisionMerges = (id: number) =>
   db
     .prepare(
       `select p.number, p.branch, p.author from prs p join decision_merges m on m.pr = p.number

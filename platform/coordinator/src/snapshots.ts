@@ -53,12 +53,60 @@ export function keep(f: forecast.Forecast) {
   for (const t of threads) seen.add(t);
 }
 
-// The kept inputs since then, oldest first.
-export function since(from: number): Kept[] {
-  const rows = db.prepare('select at, version, input from play_snapshots where at >= ? order by at').all(from) as {
-    at: number;
-    version: number;
-    input: Uint8Array;
-  }[];
-  return rows.map(r => ({ at: r.at, version: r.version, ...JSON.parse(gunzipSync(r.input).toString()) }));
+// A kept row, and the two ways it is read back: parsed into a Kept, or as a Kept's JSON from its stored text, neither
+// parsed nor decoded (hq estimate --backtest --save). The stored text is `input` above, so a Kept's JSON is that with
+// `at` and `version` put first.
+type Row = { at: number; version: number; input: Uint8Array };
+const parsed = (r: Row): Kept => ({ at: r.at, version: r.version, ...JSON.parse(gunzipSync(r.input).toString()) });
+const jsonOf = (r: Row) =>
+  Buffer.concat([Buffer.from(`{"at":${r.at},"version":${r.version},`), gunzipSync(r.input).subarray(1)]);
+
+// A kept input as the backtest picks from them: its time, its planner and its work jobs, and its whole input, parsed
+// again for a play or as its JSON for a file.
+export type Listed = {
+  at: number;
+  planner: Snapshot['planner'];
+  work: { id: number; due: number | null; planned: boolean }[];
+  read: () => Kept;
+  json: () => Buffer;
+};
+export const listedOf = (k: Kept, read = () => k, json = () => Buffer.from(JSON.stringify(k))): Listed => ({
+  at: k.at,
+  planner: k.snapshot.planner,
+  work: k.snapshot.jobs
+    .filter(j => j.kind === 'work')
+    .map(j => ({ id: j.id, due: j.due, planned: Boolean(j.reviewPlan) })),
+  read,
+  json,
+});
+
+// The kept inputs since then listed, oldest first. Their stored rows are read in one go and kept with the listing, so
+// one that keep() prunes while the request runs is still there to play; each is parsed in turn and dropped after its
+// listing, so the server answers other requests between a few and holds one parsed input at a time.
+export async function listSince(from: number) {
+  const rows = db.prepare('select at, version, input from play_snapshots where at >= ? order by at').all(from) as Row[];
+  const listed: Listed[] = [];
+  const pause = paced();
+  for (const row of rows) {
+    listed.push(
+      listedOf(
+        parsed(row),
+        () => parsed(row),
+        () => jsonOf(row),
+      ),
+    );
+    await pause();
+  }
+  return listed;
 }
+
+// A pause for the server's other requests, each time this turn of its thread has run TURN_MS.
+export function paced() {
+  let turn = performance.now();
+  return async () => {
+    if (performance.now() - turn < TURN_MS) return;
+    await new Promise(setImmediate);
+    turn = performance.now();
+  };
+}
+const TURN_MS = 50;

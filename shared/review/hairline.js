@@ -1,7 +1,7 @@
 // Hairlines: a sent note's ink kept on HQ's page, faint and thin, with no number (marks.js places them as it places
 // open marks). A finger's tap on one opens a small card beside it: what was said, when it went, and the answers clipped
 // onto it. The maths here is plain (hairline.test.js); the card lives in review mode's closed shadow root, as the post-it
-// does.
+// does. A mark's note becomes its hairline at once, with no fade.
 // The answers are slips (slip.js): then and now, a tick box, a reply written under them; an open note answered on its
 // sheet (a question) opens the same card from its number.
 import { CSS as SLIP_CSS, slipHtml, wireSlips } from './slip.js';
@@ -81,44 +81,6 @@ export function drawHairlines(g, lines) {
     g.stroke();
   }
   g.restore();
-}
-
-// A mark whose sheet just went fades into its hairline, its ink and number together, eased, well under half a second;
-// at once where less motion is asked for. kept: the page's marks open before (id → element); r.numbers: the numbers
-// they showed (marks.js paint).
-const FADE_MS = 320;
-export function fadeWent(r, kept) {
-  const went = r.sent.filter(n => kept.has(n.id)).map(n => [n.id, r.numbers?.get(n.id) ?? null]);
-  if (went.length && !matchMedia('(prefers-reduced-motion: reduce)').matches)
-    r.fade = { going: new Map(went), at: performance.now() };
-}
-// How strong a fading mark's ink still is, t of the way through: 1 to 0, eased in and out
-export const fadeLeft = t => (t >= 1 ? 0 : t <= 0 ? 1 : 1 - t * t * (3 - 2 * t));
-// ...drawn over its hairline on a layer of its own (r.fadeCanvas), so its ink and their white edge fade as one, frame
-// by frame till it's gone. hairs: the page's hairlines ({ note, lines }); on: marks.js's { number(g, lines, n): its disc at the lines, again() }
-export function fading(r, g, hairs, on) {
-  const t = r.fade ? (performance.now() - r.fade.at) / FADE_MS : 1,
-    going = t < 1 ? hairs.filter(h => r.fade.going.has(h.note.id)) : [];
-  if (!going.length) return void (r.fade = null);
-  const c = (r.fadeCanvas ??= document.createElement('canvas')),
-    f = c.getContext('2d');
-  [c.width, c.height] = [g.canvas.width, g.canvas.height];
-  f.setTransform(g.getTransform());
-  draw(
-    f,
-    going.flatMap(h => h.lines),
-    { halo: true },
-  );
-  for (const h of going) if (r.fade.going.get(h.note.id)) on.number(f, h.lines, r.fade.going.get(h.note.id));
-  g.save();
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.globalAlpha = fadeLeft(t);
-  g.drawImage(c, 0, 0);
-  g.restore();
-  r.fadeFrame ||= requestAnimationFrame(() => {
-    r.fadeFrame = 0;
-    on.again();
-  });
 }
 
 // ---- the card

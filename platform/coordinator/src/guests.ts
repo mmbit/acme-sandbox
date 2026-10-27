@@ -1104,11 +1104,10 @@ function opening(token: string) {
 // Copy button that guest.js turns on. A door's words may also be numbered steps under a greeting, with the code in the
 // first step, and a small line after them (steps, small). A step's **…** is bold: the only markup a door's words take,
 // made after escaping. Under the steps, a quieter aside may say more in a few lines under its own heading (aside). A door
-// closed for good may say why in one line (shut), in place of the page that says the link opens nothing: more than that it
-// ended only to the guest's own verified session (own).
+// closed for good may say why in one line (shut), in place of the page that says the link opens nothing.
 export type Door = { guest: string; open: boolean; words: (lang: Lang) => { title: string; text: string; button: string;
   code?: { label: string; value: string }; steps?: string[]; aside?: { title: string; lines: string[] }; small?: string };
-  go: () => string | null; shut?: (lang: Lang, own: boolean) => string;
+  go: () => string | null; shut?: (lang: Lang) => string;
   // a call to talk it through, as a second button beside the first: its words and where it goes
   talk?: (lang: Lang) => { button: string; go: string } | null };
 // A door that can't open now because its module's setup is broken (its message says how): the guest's page says so plainly,
@@ -1120,7 +1119,7 @@ const doorOf = (link: string) => doors.map(find => find(link)).find(Boolean);
 export const doorLink = (name: string) => { const token = sign(`door:${name}`); return { url: `${ORIGIN}/guest/${token}`, link: sha256(token) }; };
 
 // The guest a request's own session on /guest/ is for (the g cookie), while they still have an address and aren't
-// revoked (review mode's screenshots, feedback.ts outsiderShot)
+// revoked
 export function signedIn(req: IncomingMessage) {
   const token = cookies(req).g;
   const session = token
@@ -1205,7 +1204,7 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
   // (a door's go is a plain link: a form whose answer leads to another site would break the page's form-action rule)
   const posts = step === 'send' || step === 'verify';
   if (g?.email && !g.revoked && !d.open && d.shut && (!step || step === 'go') && req.method === 'GET')
-    return html(res, 404, langOf(g), `<div class="card"><h1>${esc(d.shut(langOf(g), verified(req, g.name)))}</h1></div>`);
+    return html(res, 404, langOf(g), `<div class="card"><h1>${esc(d.shut(langOf(g)))}</h1></div>`);
   if (!g?.email || g.revoked || !d.open || step === 'item' || step === 'ask' || step === 'invite' || (req.method === 'POST') !== posts) return gone(res);
   const url = `/guest/${token}`;
   if (!step) return doorPage(req, res, url, d, g);

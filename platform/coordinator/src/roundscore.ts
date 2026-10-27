@@ -1,7 +1,7 @@
 // Windowed work's played push-to-merge time, counted once per job from its latest kept input.
 import { median } from './arithmetic.ts';
 import type { Play } from './backtest.ts';
-import type { Kept } from './snapshots.ts';
+import type { Listed } from './snapshots.ts';
 
 const MINUTE_MS = 60_000;
 const SMALL_MS = 30 * MINUTE_MS;
@@ -9,15 +9,14 @@ const SMALL_MS = 30 * MINUTE_MS;
 type Duration = { job: number; small: boolean; milliseconds: number | null };
 
 // Old snapshots cannot supply the run sizes and panel for played rounds, so replay excludes them.
-export async function scoreRounds(kept: Kept[], playIt: Play) {
-  const available = kept.filter(k => k.snapshot.planner === 3).sort((a, b) => a.at - b.at);
+export async function scoreRounds(listed: Listed[], playIt: Play) {
+  const available = listed.filter(l => l.planner === 3).sort((a, b) => a.at - b.at);
   const latest = new Map<number, number>();
-  for (const [i, { snapshot }] of available.entries())
-    for (const job of snapshot.jobs)
-      if (job.kind === 'work' && job.due !== null && job.reviewPlan) latest.set(job.id, i);
+  for (const [i, { work }] of available.entries())
+    for (const job of work) if (job.due !== null && job.planned) latest.set(job.id, i);
   const durations: Duration[] = [];
   for (const i of new Set(latest.values())) {
-    const { snapshot, sizes } = available[i];
+    const { snapshot, sizes } = available[i].read();
     const usual = new Map(sizes.usual);
     const outlooks = playIt(snapshot, usual);
     for (const [job, index] of latest) {
@@ -31,7 +30,7 @@ export async function scoreRounds(kept: Kept[], playIt: Play) {
   }
   return {
     snapshots: available.length,
-    total_snapshots: kept.length,
+    total_snapshots: listed.length,
     small_up_to_minutes: SMALL_MS / MINUTE_MS,
     groups: [
       summarize(

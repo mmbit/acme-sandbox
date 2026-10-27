@@ -48,8 +48,13 @@ export function keepScrap(id: number, p: { type: string; clean: Buffer }) {
   keepFile(`${DIR}/${file}`, p.clean);
   return file;
 }
-// The scraps as HQ placed them, every one checked, or the refusal: kept whole or not at all, like the ink
-export function scrapsOf(v: unknown, id: number): Scrap[] | Refused {
+// The scraps as HQ placed them, every one checked, or the refusal: kept whole or not at all, like the ink. ours: whether
+// a file is one the page may place (a notebook group's pictures are named their own way: notebookgroups.ts)
+export function scrapsOf(
+  v: unknown,
+  id: number,
+  ours = (file: unknown) => isScrap(id, file) && existsSync(`${DIR}/${file}`),
+): Scrap[] | Refused {
   if (!Array.isArray(v)) return [400, 'scraps is a list of pictures on the page'];
   if (v.length > MAX_SCRAPS) return [400, `a page holds at most ${MAX_SCRAPS} pictures`];
   const scraps: Scrap[] = [],
@@ -58,7 +63,7 @@ export function scrapsOf(v: unknown, id: number): Scrap[] | Refused {
     typeof n === 'number' && Number.isFinite(n) && n >= r.min && n <= r.max;
   const round = (n: number) => Math.round(n * 100) / 100;
   for (const c of v) {
-    if (!c || typeof c !== 'object' || !isScrap(id, c.file) || !existsSync(`${DIR}/${c.file}`))
+    if (!c || typeof c !== 'object' || !ours(c.file))
       return [400, 'a picture on the page is one uploaded to this page'];
     if (seen.has(c.file)) return [400, 'a picture is on the page once'];
     seen.add(c.file);

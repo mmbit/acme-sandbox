@@ -53,20 +53,22 @@ const week = (seat: Seat) => ({ week: seat.week ?? undefined, weekResets: seat.w
 // now (aim). Worked out once a moment, since only the play's advance uses a seat.
 export type Moment = ReturnType<typeof at>;
 export function at(seats: Seat[], now: number) {
-  const aims = new Map(seats.map(s => [s, aim(s, seats, now)]));
+  const windows = seats.map(windowsOf);
+  const aims = new Map(seats.map((s, i) => [s, aim(s, windows, i, now)]));
   const paced = new Map(seats.map(s => [s, pacedUntil(week(s), aims.get(s), now)]));
   return { seats, now, aims, paced };
 }
 
 // The level a seat's pacing aims for, as the worker works it out (pace.ts paceTo): its stop level, or its limit while
 // another ready seat of its engine is under its own and keeps the reserve (reserveElsewhere). Read from the seats'
-// simulated use, so the reserve passes on as the play fills a seat, as it does in the worker.
-function aim(seat: Seat, seats: Seat[], now: number) {
-  const windows = seats.map(windowsOf),
-    own = windows[seats.indexOf(seat)]!;
+// simulated use (their windows, read once for all of them), so the reserve passes
+// on as the play fills a seat, as it does in the worker.
+function aim(seat: Seat, windows: Windows[], index: number, now: number) {
+  const own = windows[index]!;
   return paceTo(own, seat.pacing, reserveElsewhere(own, windows, now));
 }
-const windowsOf = (s: Seat) => ({
+type Windows = ReturnType<typeof windowsOf>;
+export const windowsOf = (s: Seat) => ({
   engine: s.engine,
   state: s.state,
   util: s.fiveHour ?? undefined,
@@ -206,13 +208,23 @@ export function consume(seat: Seat, ms: number, row?: { kind: string }) {
   if (seat.week !== null && rates.week !== null) seat.week += (rates.week * ms) / HOUR_MS;
 }
 
-// Pacing changes and window resets compete with the running work's priced exhaustion.
-export function seatEvent(seat: Seat, seats: Seat[], now: number, running: number | { kind: string }[]) {
+// Pacing changes and window resets compete with the running work's priced exhaustion. windows: the seats' (windowsOf),
+// read once for a moment's seats. A seat's renewed five hours here renews its own.
+export function seatEvent(
+  seat: Seat,
+  seats: Seat[],
+  now: number,
+  running: number | { kind: string }[],
+  windows = seats.map(windowsOf),
+) {
   const count = typeof running === 'number' ? running : running.length;
-  if (count && seat.fiveHourResets !== null && seat.fiveHourResets <= now)
+  const index = seats.indexOf(seat);
+  if (count && seat.fiveHourResets !== null && seat.fiveHourResets <= now) {
     seat.fiveHourResets = nextWindowReset(seat.fiveHourResets, now, false);
+    windows[index] = windowsOf(seat);
+  }
   const events = [seat.until, seat.fiveHourResets, seat.weekResets].filter((t): t is number => t !== null && t > now);
-  for (const change of [paceChange(week(seat), aim(seat, seats, now), now), drainLifts(windowsOf(seat), now)])
+  for (const change of [paceChange(week(seat), aim(seat, windows, index, now), now), drainLifts(windows[index]!, now)])
     if (change !== undefined) events.push(change);
   if (count && available(seat, now) && !seat.credits) {
     const rates =

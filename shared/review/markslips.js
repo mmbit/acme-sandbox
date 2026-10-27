@@ -1,12 +1,10 @@
-// The answers on an HQ page's notes (marks.js draws the marks): a slip's corner under a number, the card a tap opens
-// on an open mark with an answer (hairline.js), what its slips do, and the same place cut again from the live page for
-// an answer's "then and now" (slip.js).
+// The answers on an HQ page's notes (marks.js draws the marks, a slip's corner under a number with them): the card a
+// tap opens on an open mark with an answer (hairline.js), what its slips do, and the same place cut again from the live
+// page for an answer's "then and now" (slip.js).
 import { placed, showsNow, snipOf, whereNow } from './marks.js'; // (showsNow)
 import { send } from './markpage.js';
 import { snapshot } from './snapshot.js';
 
-// Whether a note (or a mark) has an answer not yet ticked
-export const answered = n => (n.slips ?? []).some(s => !s.ticked);
 // The open marks with an answer, as a tap finds them: their lines and their number's disc
 export const answeredNow = r =>
   (r.marks ?? [])
@@ -24,29 +22,6 @@ export const slipActs = {
   tick: (id, ticked) => send('/slip/tick', { id, ticked }).then(changed),
   reply: (id, words) => send('/slip/reply', { id, words }).then(answer => (changed(), answer)),
 };
-// A slip's corner peeking out under a note's number: a little paper with a clip
-export function tab(g, b) {
-  const x = Math.max(12, b.x - 6) + 6,
-    y = Math.max(12, b.y - 6) + 4;
-  g.save();
-  g.translate(x, y);
-  g.rotate(0.12);
-  g.fillStyle = '#fffdf6';
-  g.shadowColor = 'rgba(42,35,82,.3)';
-  g.shadowBlur = 3;
-  g.shadowOffsetY = 1;
-  g.fillRect(0, 0, 18, 13);
-  g.shadowColor = 'transparent';
-  g.strokeStyle = '#2a2352';
-  g.lineWidth = 1;
-  for (const dy of [4, 7, 10]) {
-    g.beginPath();
-    g.moveTo(3, dy);
-    g.lineTo(dy === 10 ? 10 : 15, dy);
-    g.stroke();
-  }
-  g.restore();
-}
 
 // The same place cut again from the live page, for an answer's "then and now": each note on this page whose newest
 // answer has no cut since it came (none for a preview's: its own picture is its now), cut once its mark is on the screen

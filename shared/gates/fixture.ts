@@ -31,6 +31,7 @@ export function clone(before: Record<string, string>, after: Record<string, stri
     'shared/gates/suites.ts',
     'shared/gates/repo.ts',
     'shared/gates/lent.ts',
+    'shared/gates/lentsend.ts',
     'shared/gates/timings.ts',
   ])
     cpSync(join(repo, path), join(dir, path));

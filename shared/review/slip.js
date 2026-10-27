@@ -176,3 +176,29 @@ export function slipUnder(points, slips) {
     cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   return slips.find(s => cx >= s.x && cx <= s.x + s.w && cy >= s.y && cy <= s.y + s.h) ?? null;
 }
+
+// Whether a note (or a mark) has an answer not yet ticked
+export const answered = n => (n.slips ?? []).some(s => !s.ticked);
+// A slip's corner peeking out under a note's number: a little paper with a clip
+export function tab(g, b) {
+  const x = Math.max(12, b.x - 6) + 6,
+    y = Math.max(12, b.y - 6) + 4;
+  g.save();
+  g.translate(x, y);
+  g.rotate(0.12);
+  g.fillStyle = '#fffdf6';
+  g.shadowColor = 'rgba(42,35,82,.3)';
+  g.shadowBlur = 3;
+  g.shadowOffsetY = 1;
+  g.fillRect(0, 0, 18, 13);
+  g.shadowColor = 'transparent';
+  g.strokeStyle = '#2a2352';
+  g.lineWidth = 1;
+  for (const dy of [4, 7, 10]) {
+    g.beginPath();
+    g.moveTo(3, dy);
+    g.lineTo(dy === 10 ? 10 : 15, dy);
+    g.stroke();
+  }
+  g.restore();
+}

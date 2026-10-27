@@ -32,7 +32,8 @@ async function report(saved: Saved) {
   const here = await import('../src/eta.ts');
   const there = await import(`${scratch}/platform/coordinator/src/eta.ts`);
   const landed = new Map(saved.landed);
-  const complete = saved.snapshots.filter(k => k.snapshot.planner === 3);
+  const snapshots = await import('../src/snapshots.ts');
+  const complete = saved.snapshots.filter(k => k.snapshot.planner === 3).map(k => snapshots.listedOf(k));
   console.log(`Planner inputs: ${complete.length}/${saved.snapshots.length} snapshots, ${landed.size} landings.`);
   console.log('Legacy inputs are excluded. Replay those with a tree from before calibration.');
   const score = async (name: string, play: Play) => ({

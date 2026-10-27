@@ -24,8 +24,8 @@ const FRAMELESS =
 const NO_ROOM_FOR_FRAME =
   'A note takes a dozen pictures at most, so the film’s frame stays off: the note keeps its moment, without a picture of it.';
 
-// r.pictures: each { file } kept on a change or { data } new (once ready), with its thumbnail; r.framePic: the one that
-// is a video's frame, added with this mark
+// r.pictures: each { data } (once ready), with its thumbnail; r.framePic: the one that is a video's frame, added with
+// this mark
 function addPictures(r, files) {
   const images = files.filter(f => f.type.startsWith('image/'));
   if (images.length < files.length) r.msg.textContent = 'Only pictures go with a note.';
@@ -72,21 +72,16 @@ export function unpicture(r, p) {
   r.pictures = r.pictures.filter(q => q !== p);
   p.li.remove();
 }
-// what goes with the note, once every picture is drawn: the names of the ones kept, the new ones as data URLs
-// (null if one of them couldn't be read while the note was waiting: it goes nowhere without it, and the message says why)
+// what goes with the note, once every picture is drawn: each as a data URL (null if one of them couldn't be read
+// while the note was waiting: it goes nowhere without it, and the message says why)
 export async function picturesNow(r, waiting) {
   await Promise.all(waiting.map(p => p.ready));
-  return waiting.some(p => p.failed) ? null : r.pictures.flatMap(p => (p.file ? [p.file] : p.data ? [p.data] : []));
+  return waiting.some(p => p.failed) ? null : r.pictures.flatMap(p => (p.data ? [p.data] : []));
 }
-export function showPictures(r, list) {
+export function clearPictures(r) {
   r.pictures = [];
   r.picList.replaceChildren();
   r.framePic = null;
-  for (const { file, url } of list) {
-    const p = { file };
-    p.li = thumbnail(r, p, url);
-    r.pictures.push(p);
-  }
 }
 async function scaled(file) {
   const src = URL.createObjectURL(file),
@@ -129,9 +124,8 @@ export function drawn(img, w, h, png) {
     return null;
   }
 }
-// A new note for the book (the Pencil on HQ, postit.js booked) takes no pictures: the book's notes have none. A change
-// to one of review mode's own notes still does.
-const booksNote = r => r.book && !r.editing;
+// A new note for the book (the Pencil on HQ, postit.js booked) takes no pictures: the book's notes have none.
+const booksNote = r => r.book;
 
 // the paused video's frame, as the note's first picture (its × takes it off like any other)
 // (what to tell the board when no frame went: a film from another site without CORS taints the canvas, and a note

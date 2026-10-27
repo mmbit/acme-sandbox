@@ -71,7 +71,7 @@ no outline either, so draw them inside `fg`; people outline themselves.
 | | `figure`: small, 5 × 10, for wide shots and cutaways (stand, walk, wave, carry) | `foot` |
 | | `bust`: head and shoulders, 32 wide, for a portrait (`mouth`: smile, open, flat) | off the frame's foot |
 | | `cat`, `prop` (HQ's desk things), `agent` (a sprite without outline) | |
-| **Paint** (`paint.js`) | `W`, `H`, `FLOOR`, `C`, `lite`, `dark`, `R`, `P`, `box`, `disc`, `line`, `shadow`, `text`, `textWidth`, `fg`, `sprite` (rows of characters, one per pixel) | |
+| **Paint** (`paint.js`) | `W`, `H`, `FLOOR`, `C`, `lite`, `dark`, `mix` (a step from one colour to another), `R`, `P`, `box`, `disc`, `line`, `shadow`, `text`, `textWidth`, `fg`, `sprite` (rows of characters, one per pixel) | |
 | **Logo** (`logo.js`) | `wordmark`: the company's logo from `company/brand.yaml` (its pixels, the accent mark and its seam), in its colours or those given; `logo()`: its pixels and colours | |
 
 Every person, figure and bust is the team member's own look from `company/org.yaml`. Any other id draws an invented

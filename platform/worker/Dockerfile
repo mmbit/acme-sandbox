@@ -1,6 +1,8 @@
 # The worker: runs agent jobs with Claude Code, Codex and the other CLIs a seat can run, plus the tools agents need to build,
 # test and make media (ffmpeg, Playwright + Chromium, ImageMagick, Python, SQLite).
-FROM node:24.22.1-bookworm
+# Its first layers are a stage of their own, `tests`: the push tests' image on a lent machine (a `tests` run kind's, by
+# digest), so they run there on the same Node, tools and Chromium as here (.github/workflows/tests-image.yml publishes it).
+FROM node:24.22.1-bookworm AS tests
 # (python3-yaml: infra's tests, which the worker runs on every push: shared/gates/tests.ts)
 # APT_FRESH reruns this layer for a security fix; libbrotli1 comes with the base image, so it's named to take
 # bookworm-security's 1.0.9-2+deb12u1 (CVE-2026-111497, a Brotli decoder overflow behind curl and git, DLA-4855-1).
@@ -11,9 +13,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright DISABLE_AUTOUPDATER=1 CI=1
 # Pinned: a rebuild installs exactly what was reviewed (bump deliberately).
+RUN npm install -g playwright@1.63.0 && playwright install --with-deps chromium
+
+FROM tests
 # (codex 0.157.1 to 0.160.1: the first that knows GPT-6.1 Sol)
-RUN npm install -g @anthropic-ai/claude-code@2.1.293 @openai/codex@0.160.1 playwright@1.63.0 \
-    && playwright install --with-deps chromium
+RUN npm install -g @anthropic-ai/claude-code@2.1.293 @openai/codex@0.160.1
 # The other CLIs a seat can run (src/clis/), root's so no job replaces them: Mistral's Vibe (Python 3.12, which uv
 # brings, as Debian 12 has 3.11) and Google's Antigravity CLI (a Go binary, checked against its manifest's sha512; it
 # also never updates itself: AGY_CLI_DISABLE_AUTO_UPDATE, clis/agy.ts).

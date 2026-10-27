@@ -34,7 +34,7 @@ const anchor = (color = '#ff5a5f') => ({
 const note = (body: Record<string, unknown>) =>
   h.board('/api/book/note', { anchor: anchor(), words: '', said: 'spoken', ...body });
 
-test("a call's page: the board's notes and the agent's ink numbered on it, never on a sheet to send; the line reads the board's", async () => {
+test("a call's page: the board's notes numbered on it, never on a sheet to send, never the agent's ink; the line reads them", async () => {
   const { call, token } = await h.liveCall('juno');
   const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
   assert.deepEqual([page.kind, page.call, page.summary, page.agent], ['call', call, null, 'juno']);
@@ -53,15 +53,17 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
       kind: 'chat',
     },
   );
-  const two = (
-    await note({ page: page.id, anchor: anchor('#7b5ea7'), words: 'or with shipping in?', said: 'typed', by: 'juno' })
-  ).body;
-  assert.deepEqual([two.note.n, two.note.by, two.sheet.id], [2, 'juno', one.sheet.id]);
-  assert.match((await note({ page: page.id, by: 'lark' })).body.error, /the call's agent \(juno\)/);
+  // (the agent's rings are never kept)
+  for (const by of ['juno', 'lark']) {
+    const theirs = await note({ page: page.id, anchor: anchor('#7b5ea7'), words: 'this one', by });
+    assert.deepEqual([theirs.status, theirs.body.error], [400, "a note is the book's own: by isn't given"]);
+  }
+  const two = (await note({ page: page.id, words: 'or with shipping in?', said: 'typed' })).body;
+  assert.deepEqual([two.note.n, two.note.by, two.sheet.id], [2, 'board', one.sheet.id]);
   const sheetPage = (
     await h.board('/api/book/page/new', { kind: 'sheet', owner: 'juno', url: '/?open=desk', w: 800, h: 600 })
   ).body;
-  assert.match((await note({ page: sheetPage.id, by: 'juno' })).body.error, /only a call's page/);
+  assert.equal((await note({ page: sheetPage.id, by: 'juno' })).status, 400);
 
   // the agent's own open sheet goes on beside the call's, which is never listed to send, nor sent
   const own = (await note({ page: sheetPage.id, said: 'typed' })).body;
@@ -89,7 +91,7 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
   );
   assert.equal((await h.board('/api/book/calls?pages=')).status, 400);
   assert.match((await h.board('/api/book/send', { id: one.sheet.id })).body.error, /stay on its page/);
-  // ...nor moved to a sheet that is, and the agent's own ink written over as a question asks nothing
+  // ...nor moved to a sheet that is, and a question written over again asks no second time
   const moved = await h.board('/api/book/note/move', { id: one.note.id, to: 'juno' });
   assert.equal(moved.status, 409);
   assert.match(moved.body.error, /stays on its call's page/);
@@ -104,13 +106,12 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
   ).body;
   assert.equal(typeof late.asked, 'number');
 
-  // the voice line reads the board's note, on this live call only, never the agent's own ink
+  // the voice line reads the board's note, on this live call only
   const read = await h.voice(`note?id=${one.note.id}&call=${call}`);
   assert.equal(read.status, 200);
   assert.deepEqual([read.body.n, read.body.words, read.body.url], [1, 'This feels high?', '/?open=projects']);
   assert.equal(read.body.picture.type, 'image/png');
   assert.equal((await sharp(Buffer.from(read.body.picture.data, 'base64')).metadata()).width, 20);
-  assert.equal((await h.voice(`note?id=${two.note.id}&call=${call}`)).status, 404, "the agent's own ink");
   assert.equal((await h.voice(`note?id=${own.note.id}&call=${call}`)).status, 404, "a sheet's note");
   assert.equal((await h.voice(`note?id=${one.note.id}&call=${call + 1}`)).status, 404, 'another call');
 
@@ -141,4 +142,45 @@ test("a call's page is given to an agent on its own, as a free page is: its seco
   const sending = (await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).body;
   assert.deepEqual([sending.owner, sending.status, sending.page], ['kit', 'sending', page.id]);
   assert.deepEqual((await h.board('/api/book/undo', { id: sending.id })).body, { id: sending.id, status: 'undone' });
+});
+
+// The agent's rings that older calls kept as notes on their pages: gone once, the board's
+// notes and ink untouched, and a page left with nothing of the board's goes with them.
+test("the agent's rings kept on calls' pages go, and the board's notes and ink stay", async () => {
+  const { insertNote } = await import('./booknotes.ts');
+  const { dropAgentInk } = await import('./bookcalls.ts');
+  const ringed = async (strokes = 0) => {
+    const { call } = await h.liveCall('juno');
+    const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
+    db.prepare('update book_pages set strokes = ? where id = ?').run(strokes, page.id);
+    const sheet = Number(
+      db
+        .prepare("insert into book_sheets (who, owner, status, created) values ('board', 'juno', 'call', ?)")
+        .run(new Date().toISOString()).lastInsertRowid,
+    );
+    const ring = insertNote(
+      sheet,
+      page.id,
+      'juno',
+      anchor('#7b5ea7') as any,
+      { words: 'this', said: 'written' },
+      null,
+      null,
+    );
+    return { page: page.id, sheet, ring };
+  };
+  const theirsAlone = await ringed(),
+    besideTheBoards = await ringed(),
+    onItsInk = await ringed(3);
+  const boards = (await note({ page: besideTheBoards.page, words: 'Too dark' })).body.note;
+  assert.equal(dropAgentInk(), 3);
+  const pageOf = (id: number) => db.prepare('select 1 from book_pages where id = ?').get(id);
+  const notesOn = (id: number) =>
+    (db.prepare('select id from book_notes where page = ?').all(id) as { id: number }[]).map(n => n.id);
+  assert.ok(!pageOf(theirsAlone.page), 'a page with only its rings goes');
+  assert.ok(!db.prepare('select 1 from book_sheets where id = ?').get(theirsAlone.sheet));
+  assert.deepEqual(notesOn(besideTheBoards.page), [boards.id], "the board's note stays, the ring goes");
+  assert.ok(pageOf(onItsInk.page), "a page with the board's ink stays");
+  assert.deepEqual(notesOn(onItsInk.page), []);
+  assert.equal(dropAgentInk(), 0, 'nothing left');
 });

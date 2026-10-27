@@ -5,7 +5,7 @@ import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
 import * as threadends from './threadends.ts';
-import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf, stillHolds } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
+import { createJob, createRequest, findAgent, inProcess, failedNote, holdsCustomerData, replacementOf, stillHolds, OPEN_PRS } from './jobs.ts';   // (failedNote) (holdsCustomerData) (stillHolds)
 import { mergePullRequest, closePullRequest, pullRequestState, landed, pullRequestDiff } from './github.ts';
 import * as ledger from './ledger.ts';
 import * as pauses from './pauses.ts';
@@ -695,10 +695,12 @@ const branchOf = (pr: number) => (db.prepare('select branch from prs where numbe
 const owesDiagnosis = (job: number) => !!db.prepare('select 1 from upstream_owed where job = ?').get(job);
 const oweDiagnosis = (job: number) => db.prepare('insert or ignore into upstream_owed (job) values (?)').run(job);
 
-// The consolidator's ruling on a round: its finished consolidation of exactly the commit that round reviewed.
+// The consolidator's ruling on a round: its finished consolidation of exactly the commit that round reviewed. Found by
+// db.ts jobs_pr_loop, so only that one job's row is read, not the brief and report of every review in the round (as
+// sweepRuling.)
 function ruling(pr: number, round: number, sha: string | null | undefined) {
   if (!sha) return undefined;
-  const j = db.prepare(`select id, stage, output from jobs where kind = 'consolidate' and coalesce(stage, '') != 'triage' and status = 'done' and pr = ? and round = ? and sha = ?
+  const j = db.prepare(`select id, stage, output from jobs indexed by jobs_pr_loop where kind = 'consolidate' and coalesce(stage, '') != 'triage' and status = 'done' and pr = ? and round = ? and sha = ?
     and id > (select review_since from prs where number = ?)
     and voided is null order by id desc limit 1`).get(pr, round, sha, pr) as { id: number; stage: string | null; output: string | null } | undefined;
   // (misjudged)
@@ -1322,7 +1324,10 @@ const deciding = new Set<number>();
 export async function actOnRulings() {
   for (const job of reviewtriage.pending()) await reviewFinished(job);
   for (const n of waiting.all()) if (!deciding.has(n)) replayWaiting(n);   // (a restart between a ruling and its push)
-  for (const pr of db.prepare("select * from prs where status = 'open' and sha is not null").all() as Pr[]) {
+  // (the open ones by db.ts prs_open, not every pull request's row. Its `status in` term repeats the index's own where
+  // on purpose: SQLite uses a partial index only when the query states that term itself, so `status = 'open'` alone
+  // fails `indexed by` at prepare ('no query solution') and stops this sweep every run.)
+  for (const pr of db.prepare(`select * from prs indexed by prs_open where status in ${OPEN_PRS} and status = 'open' and sha is not null`).all() as Pr[]) {
     if (deciding.has(pr.number)) continue;
     const action = sweepAction(pr);
     if (!action || action.author?.going) continue;
@@ -1384,7 +1389,7 @@ export function sweepAction(
 function sweepRuling(pr: Pick<Pr, 'number' | 'round' | 'sha' | 'since'>) {
   const job = db
     .prepare(
-      `select id, kind, status, pr, round, branch, sha, output, stage from jobs where kind = 'consolidate' and coalesce(stage, '') != 'triage' and status = 'done'
+      `select id, kind, status, pr, round, branch, sha, output, stage from jobs indexed by jobs_pr_loop where kind = 'consolidate' and coalesce(stage, '') != 'triage' and status = 'done'
     and pr = ? and round = ? and sha = ? and id > ? and voided is null order by id desc limit 1`,
     )
     .get(pr.number, pr.round, pr.sha, pr.since) as

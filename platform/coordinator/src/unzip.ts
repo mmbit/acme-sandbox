@@ -34,6 +34,17 @@ const LINK_MODE = 0o120000;
 // Far more than any real zip's directory needs (about 100 bytes a file), and little enough to read into memory
 const MAX_DIRECTORY = 256 * 1024 * 1024;
 
+// Whether the file starts as a zip does: with a file's local header, or the end record of an empty zip
+export async function isZip(path: string) {
+  const file = await open(path);
+  try {
+    const head = await readAt(file, 0, 4).catch(() => Buffer.alloc(0));
+    return head.length === 4 && [LOCAL, END].includes(head.readUInt32LE(0));
+  } finally {
+    await file.close();
+  }
+}
+
 export async function listEntries(path: string): Promise<ZipEntry[]> {
   const file = await open(path);
   try {

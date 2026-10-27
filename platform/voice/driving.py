@@ -2,14 +2,15 @@
 
 On the board's own HQ call the agent suggests opening a piece of work (open_work: a preview page or one of HQ's
 screens) and, once the board has opened it, drives it while it talks (drive: scrolls words into view, scrolls a screen
-at a time, points at words), ringing things with drawing.py's draw. Both tools ask through the line's screen socket, as
+at a time, points where it aims on its picture of the screen), ringing things with drawing.py's draw. A scroll means a
+fresh look before the next ring (drawing.py moved). Both tools ask through the line's screen socket, as
 draw does. HQ shows the suggestion as a card with Open and Not now, which blocks nothing, and moves the board's screen;
 the board can scroll, draw or take over at any moment, as HQ never blocks its own touch. HQ answers both on the call's
 WebSocket (server.py app_call: 'opened', 'driven')."""
 import itertools, re
 
 from answers import Answers
-from drawing import WHAT_MOST, one_line, refused, what_asked
+from drawing import WHAT_MOST, one_line, refused, spot_asked, what_asked
 
 # What the agent may open: a preview page (HQ's own PREVIEW in platform/hq/shell/desk.js, whose viewer opens it) or one
 # of HQ's screens as its deep link (main.js's tools: /?open=jobs&job=<id> and the like). Nothing else reaches HQ.
@@ -46,19 +47,22 @@ OPEN_WORDS = {
 # What the agent hears about moving the board's screen
 DRIVE_WORDS = {
     'done': {
-        'to': 'Scrolled: “{words}” is in view on their screen.',
+        'to': 'Scrolled: “{words}” should be in view on their screen.',
         'down': 'Scrolled: their screen is a screen further down.',
         'up': 'Scrolled: their screen is a screen further up.',
         'top': 'Scrolled: their screen is at the top of the page.',
         'bottom': 'Scrolled: their screen is at the bottom of the page.',
-        'point': 'Pointed: your pointer is on “{words}” on their screen.',
+        'point': 'Pointed: your pointer is where you aimed on their screen.',
     },
+    # (after a scroll: what the agent rings, it aims from a fresh picture.)
+    'look': 'Look at their screen now (the screen tool) before you point at or ring anything on it.',
     'late': "HQ didn't answer: their screen may not have moved. Say what you meant in words.",
     'ended': 'The call ended before HQ moved their screen.',
     'none': "You can move the board's screen only on the board's own calls in HQ.",
     'away': "HQ isn't connected just now (the board's connection dropped): say what you mean in words.",
-    'shape': (f'drive takes one of to (the words to scroll into view), point (the words to point at), each at most '
-              f'{WHAT_MOST} characters, or by ({", ".join(BY)})'),
+    'shape': (f'drive takes one of to (the words to scroll into view, at most {WHAT_MOST} characters), by '
+              f'({", ".join(BY)}) or point (x and y: the spot on your latest picture of their whole screen, each a '
+              'fraction of the picture from 0 to 1 from its top left)'),
     'gone': "This session can't move the board's screen any more: the call ended, or its session was restarted.",
     'failed': "Their screen couldn't be moved just now",
 }
@@ -82,6 +86,8 @@ def move_asked(drive):
     (kind, value), = drive.items()
     if kind == 'by':
         return {kind: value} if value in BY else None
+    if kind == 'point':
+        return {kind: spot} if (spot := spot_asked(value)) else None
     return {kind: words} if (words := what_asked(value)) else None
 
 
@@ -127,17 +133,24 @@ class Driving:
 
     async def drive_tool(self, asked):
         """The agent's drive tool (hq_tools.py, through the line's socket): HQ moves the board's screen and says it did,
-        or why not; the tool waits for that up to DRIVE_SECONDS. Refused where the line can't drive (drawing.refused)."""
+        or why not; the tool waits for that up to DRIVE_SECONDS. Refused where the line can't drive (drawing.refused),
+        and a point once the agent has moved the board's screen since its last picture of it: aimed from that picture,
+        it would miss (drawing.py moved)."""
         if refusal := refused(self.call, DRIVE_WORDS):
             return {'error': refusal}
         if not (move := move_asked(asked.get('drive'))):
             return {'error': DRIVE_WORDS['shape']}
+        (kind, value), = move.items()
+        if kind == 'point' and self.call.drawing.moved:
+            return {'error': DRIVE_WORDS['look']}
         answer = await self.moves.ask(self.call, {'type': 'drive', 'id': next(self.ids), **move}, DRIVE_SECONDS)
         if 'error' in answer:
             return answer
-        (kind, value), = move.items()
         done = DRIVE_WORDS['done'][value if kind == 'by' else kind].format(words=value)
-        return {'ok': ' '.join(filter(None, (done, answer['said'])))}
+        scrolled = kind != 'point'
+        if scrolled:
+            self.call.drawing.moved = True
+        return {'ok': ' '.join(filter(None, (done, answer['said'], scrolled and DRIVE_WORDS['look'])))}
 
     def driven(self, event):
         """HQ's answer to a move: done (maybe with a word on how, as when it scrolled to words off their screen), or why

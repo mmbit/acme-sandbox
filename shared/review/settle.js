@@ -6,19 +6,26 @@
 // told, and it goes in with the next line. This is the one way from a mark to the book: a different flow changes it
 // here.
 import { stopMic } from './dictation.js';
-import { reset } from './tool.js';
+import { reset } from './acts.js';
 import { say } from './dock.js';
-import { lifted, toBook } from './pencil.js';
 import { lift } from './lift.js';
 import * as marks from './marks.js';
+import { boxOfLines, marked } from './mark.js';
+import { expose } from './snapshot.js';
+import { rejoin } from './join.js';
+import * as written from './written.js';
 
 // The Pencil up this long and the mark is done: about a breath, so a circle and the arrow after it stay one note
 export const SETTLE_MS = 1500;
 // How long the Pencil's tip says a mark couldn't go into the book
 const TOLD_MS = 8000;
+// lifted, handed in by pencil.js: a line the Pencil finished, for the lines drawn while a mark went in (redrawn: the next
+// mark's).
+let liftedLine;
 
-export function setupSettle(r) {
+export function setupSettle(r, { lifted }) {
   Object.assign(r, { nextLines: [], markAt: 0, nextAt: 0, settleTimer: 0, filing: null, unheard: null });
+  liftedLine = lifted;
   // the Pencil down (or a mouse on the marking veil) holds the mark open; each line it ends gives it SETTLE_MS more.
   // (Down while the last mark goes in: the next mark's first line, its words heard from here.)
   addEventListener(
@@ -56,7 +63,7 @@ export function file(r) {
       reset(r);
       r.markAt = r.nextAt; // (a pen still down now lifts into the next mark: its words count from its pen-down)
       if (next.length) {
-        for (const line of next) lifted(r, line);
+        for (const line of next) liftedLine(r, line);
         settleSoon(r);
       }
       return true;
@@ -66,7 +73,7 @@ export function file(r) {
       if (r.mark !== mark) return false;
       r.mode = 'note';
       r.unheard = err?.status ? null : tried;
-      for (const line of r.nextLines.splice(0)) lifted(r, line);
+      for (const line of r.nextLines.splice(0)) liftedLine(r, line);
       const why = err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.';
       say(r, `${why} The mark stays here, and goes in with your next line.`, TOLD_MS);
       return false;
@@ -94,4 +101,36 @@ async function heardNow(r) {
     .trim();
   Object.assign(r, { spoken: !!words, typed: false });
   r.text.value = words;
+}
+
+// The mark's note into the book (its words once any still being said are in), a new one or the note it joins changed
+// (join.js), as it settles (file) or by the post-it's Send (postit.js). Its lines then show as its hairline. Returns
+// { note, snip, photoless: whether it went without its photo (the screenshot failed, or was still developing after
+// 9 s), for the post-it to say so }; null if the mark was let go while it developed (another maybe begun: never that
+// one's lines).
+export async function toBook(r) {
+  // (handwriting: the lines not read yet are read now, and words read as written are said 'written')
+  written.readNow(r);
+  const mark = r.mark,
+    words = r.text.value.trim(),
+    said = !words ? null : r.spoken && !r.typed ? 'spoken' : !r.typed && words === mark.written ? 'written' : 'typed',
+    general = mark.kind === 'general';
+  const taken = general ? null : await Promise.race([r.shot, new Promise(res => setTimeout(() => res(null), 9000))]);
+  if (r.mark !== mark) return null;
+  // (a mark from the other screen keeps its picture there: handover.js.)
+  const snip =
+    mark.snap ??
+    (taken &&
+      marks.snipOf(
+        { c: expose(r, taken, r.mark), k: taken.k },
+        r.strokes.length ? boxOfLines(r.strokes) : r.mark.element.rect,
+      ));
+  const anchor = general ? { ...marked(r), el: null } : marked(r);
+  const fields = { anchor, live: r.mark.el, words, said, snip },
+    note = mark.joins ? await rejoin(r, mark.joins, fields) : await marks.post(r, fields);
+  if (!mark.joins) r.steps.push({ kind: 'note', id: note.id });
+  written.sent(r, mark, note);
+  mark.filed = true;
+  marks.paint(r);
+  return { note, snip, photoless: (!general || 'snap' in mark) && !snip };
 }

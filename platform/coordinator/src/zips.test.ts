@@ -317,6 +317,57 @@ test("a zip that can't be imported says why on the card, and its upload goes", a
   assert.deepEqual(leftovers(), []);
 });
 
+// The board's sequences on card #625, one field
+test('a single file is kept as it is, and a small zip after it or after a failed one is imported', async () => {
+  const { id } = await ask();
+  const pick = async (file: Buffer, name: string) => {
+    const query = zipQuery(id, file, 0, `${name}:${file.length}:1`).replace(
+      'name=forty.zip',
+      `name=${encodeURIComponent(name)}`,
+    );
+    const sent: Sent = await h.send(query, { ...board, 'content-length': String(file.length) }, file);
+    assert.equal(sent.status, 200, JSON.stringify(sent.json));
+    return imported(id);
+  };
+  const page = Buffer.from('<!doctype html><title>Ink</title>\n'.repeat(50));
+  const kept = await pick(page, 'Ink_notebook open prototype.html');
+  assert.equal(kept.state, 'imported', kept.error);
+  assert.deepEqual(filesIn(kept.imported.folder).sort(), ['Ink_notebook open prototype.html', '_import.md']);
+  assert.deepEqual(readFileSync(`${kept.imported.folder}/Ink_notebook open prototype.html`), page);
+  assert.equal(statSync(`${kept.imported.folder}/Ink_notebook open prototype.html`).mode & 0o777, 0o644);
+  const small = makeZip([
+    { name: 'ink/index.html', data: page },
+    { name: 'ink/app.js', data: APP },
+  ]);
+  assert.ok(small.length < 10_000);
+  const zipped = await pick(small, 'Ink.zip');
+  assert.equal(zipped.state, 'imported', zipped.error);
+  assert.deepEqual(filesIn(zipped.imported.folder).sort(), ['_import.md', 'ink/app.js', 'ink/index.html']);
+  // a .zip that isn't one still says so, and the small zip after it goes in
+  assert.match((await pick(Buffer.from('not a zip at all'), 'Ink.zip')).error, /isn't a zip/);
+  assert.equal((await pick(small, 'Ink.zip')).state, 'imported');
+  // a key on its own is never kept
+  assert.match((await pick(Buffer.from('ANTHROPIC_API_KEY=x\n'), '.env')).error, /keys/);
+  // nor one named like the note the server writes beside the files
+  assert.match((await pick(Buffer.from('# mine\n'), '_import.md')).error, /rename it/);
+  assert.deepEqual(leftovers(), []);
+});
+
+test('a disk short of room says so, not that the zip is too big', async () => {
+  const { id } = await ask();
+  const zip = makeZip(CONCEPTS);
+  const { maxStored, minFree } = zips.ROOM;
+  try {
+    zips.ROOM.minFree = Number.MAX_SAFE_INTEGER;
+    assert.deepEqual((await post(id, zip, 0, zip.subarray(0, 1000))).json.short, 'disk');
+    zips.ROOM.minFree = minFree;
+    zips.ROOM.maxStored = 1000;
+    assert.deepEqual((await post(id, zip, 0, zip.subarray(0, 1000))).json.short, 'imports');
+  } finally {
+    Object.assign(zips.ROOM, { maxStored, minFree });
+  }
+});
+
 test('a zip starts only with room for it, and a card that leaves the desk phone loses its half-sent zip', async () => {
   const { id, job } = await ask();
   const zip = makeZip(CONCEPTS);

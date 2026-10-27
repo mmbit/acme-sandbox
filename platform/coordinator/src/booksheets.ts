@@ -17,6 +17,7 @@ import * as booksend from './booksend.ts';
 import { linksOf, setLink, withLinks } from './booklinks.ts';
 import { outsideBrief, outsidersOn } from './bookguests.ts'; // (invited people's notes on the board's sheet)
 import { listedOnce } from './bookslips.ts';
+import { pageAsks } from './bookasks.ts';
 import * as writing from './bookwriting.ts';
 
 // GET /api/book/sheets: the open sheets (and those in their seconds to undo), then the latest SENT_LISTED sent, each
@@ -33,7 +34,12 @@ export function sheets(who = BOARD) {
     .prepare("select id from book_sheets where who = ? and status = 'sent' order by id desc limit ?")
     .all(who, SENT_LISTED) as { id: number }[];
   const listed = listedOnce();
-  return { open: open.map(s => sheetOf(s.id, listed)), sent: sent.map(s => sheetOf(s.id, listed)) };
+  return {
+    open: open.map(s => sheetOf(s.id, listed)),
+    sent: sent.map(s => sheetOf(s.id, listed)),
+    // (the cards about a page with no note on it, each on its sheet page, in the board's own book)
+    asks: who === BOARD ? pageAsks() : [],
+  };
 }
 // GET /api/book/calls?pages=<id,id>: the sheets of these call pages' notes, never sent (bookcalls.ts), for the book to
 // show them on the pages it has open, however old the call.
@@ -80,11 +86,12 @@ export async function sendPage(b: any, who = BOARD) {
   return sent;
 }
 // POST /api/book/undo { id }: a send taken back within its seconds; the sheet is open again (a page sent on its own:
-// booksend.ts undoPage.)
+// booksend.ts undoPage; a notebook page's: notebooksend.ts undoSend.)
 export function undo(id: number, who = BOARD) {
   const s = sheetRow(id, who);
   if (!s) return 404;
   if (s.page) return booksend.undoPage(s);
+  if (s.notebook_page) return [409, "a notebook page's send is undone on its page"] as Refused;
   if (s.status === 'sending' && s.send_at! > Date.now()) {
     db.prepare("update book_sheets set status = 'open', send_at = null where id = ? and status = 'sending'").run(s.id);
     writing.dropSpots(s.id);
@@ -227,7 +234,8 @@ export function keep(n: Note, job: number | null) {
   return { ...kept, from: { ...from, review: kept.id } };
 }
 // (outsiders: invited people some of the notes are from; previews: whether some were typed on a product's preview,
-// whose own code could have written one: routing.ts provenance; --artifact:
+// whose own code could have written one: routing.ts provenance; --artifact; "A question for the board about a note is a
+// card", hq ask --note)
 const taskBrief = (
   texts: string[],
   outsiders: string[],
@@ -241,6 +249,8 @@ When a note is done or answered, clip your answer onto it: \`hq answer <id> "wha
 words for the board, a sentence or two; \`--picture <file>\` or \`--link <preview url>\` to show it, \`--artifact <id>\` \
 for something new that runs, an app or a page, by its id in HQ's artifacts). The board ticks it, or writes a reply under \
 it, which comes back to you as a new note.
+A question for the board about a note is a card, never an answer that ends in a question: \`hq ask ... --note <id>\` \
+clips it under the note in the book, and on its desk phone; one answer closes both.
 ${outsideBrief(outsiders)}${previews ? `\n${routing.provenance('Each note on a preview (a page off HQ)')}\n` : ''}
 ${texts.join('\n\n')}`;
 

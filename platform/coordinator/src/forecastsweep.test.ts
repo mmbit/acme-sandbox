@@ -7,7 +7,6 @@ import { harness } from './harness.ts';
 const h = await harness('forecastsweep');
 const forecast = await import('./forecast.ts');
 const predictions = await import('./predictions.ts');
-const pastpool = await import('./pastpool.ts');
 
 const MIN = 60_000,
   HOUR = 60 * MIN;
@@ -28,7 +27,6 @@ test("new work keeps the size the plays showed since it was queued, and the minu
   ] as const)
     past(title, minutes);
   await h.worker('seat', { seat: 'claude-a', engine: 'claude', state: 'ready', util: 0.1 });
-  pastpool.keep(); // as the server keeps it (forecast.ts start).
   const id = h.queue({ agent: 'kit', title: 'Paint the harbour map for the harbourmaster', engine: 'claude' });
   // the play after its queueing sizes it on the spot; a done job like it ends after that
   forecast.refresh(T0);

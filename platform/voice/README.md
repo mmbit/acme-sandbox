@@ -154,8 +154,10 @@ with the board's next words or alone after the quiet, its words in a line in fro
 against the 20 MB (one that doesn't fit goes without it, and the agent hears so). HQ hears `received` or `failed`
 (`unreadable`, `too many`), again on a resume. The agent's `ask_to_see` sends HQ an `ask` (its card, Show and Not now,
 blocking nothing) and answers at once; the board's tap (`asked`) reaches the agent with its next turn, or alone after
-the quiet. Its `draw` sends an `ink` (a ring round words on the board's page, or round its note N) and waits up to 5 s
-for HQ's `inked`. Both go through the screen socket and are refused on a call out (rule 9), on the phone and while
+the quiet. Its `draw` sends an `ink` (a ring at a box the agent aims at on its picture of the board's screen, in
+fractions of the picture: HQ draws it there and chooses nothing; it follows what it's on as the page scrolls, goes with
+it and with the call, and is never kept) and waits up to 5 s for HQ's `inked`. After the agent's own scroll (`drive`)
+it is refused until the agent has a picture of the screen as it is now. Both go through the screen socket and are refused on a call out (rule 9), on the phone and while
 HQ's connection is down; an ask also while the screen is shown or another ask waits.
 The transcript is written to the line's volume as the call goes, the board's words as each piece is heard, even ones
 not answered yet: while the board talks on, a pause that sounds finished sends the message so far and its next words take it back, so a

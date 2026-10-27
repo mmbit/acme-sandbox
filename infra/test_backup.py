@@ -1105,6 +1105,30 @@ sys.exit(backup.main(['backup.py', 'run', *sys.argv[3:]]))
           and unreadable_store_status['renders_pending'] == 0 and unreadable_store_status['renders_ok_at'] == room_restored_status['renders_ok_at']
           and rw[0] is None and rw[1], f"a renders' store that can't be read: the board hears after 36 hours ({rw[1]})")
 
+    # ---- the renders' ceiling: the company's BACKUP_RENDERS_GB (whole GB), 3 unset; any other value holds every render
+    # back and says why, while the night itself still goes
+    for value, gb in {'8': 8, '': 3, '0': None, '2.5': None, '8GB': None}.items():
+        env_file = f'{tmp}/infra-renders-{len(value)}.env'
+        open(env_file, 'w').write(f'SERVER_NAME=t\nSERVER=t-1\nBACKUP_BUCKET=t\nBACKUP_RENDERS_GB={value}\n')
+        r = subprocess.run([sys.executable, '-c', 'import backup; print(backup.RENDERS_MAX_BYTES)'], cwd=here,
+                           env={**os.environ, 'INFRA_ENV': env_file}, capture_output=True, text=True)
+        check(r.stdout.split() == [str(gb * 1e9 if gb else None)], f'BACKUP_RENDERS_GB={value!r}: {r.stdout.strip()} bytes')
+    waiting = os.urandom(10_000)
+    open(f'{tmp}/work/{backup.RENDERS}/{(sha := hashlib.sha256(waiting).hexdigest())}', 'wb').write(waiting)
+    waiting_key = backup.render_key(sha)
+    cap, backup.RENDERS_MAX_BYTES = backup.RENDERS_MAX_BYTES, None
+    try:
+        time.sleep(1.1)
+        stn = backup.run(dict(opts))
+    finally:
+        backup.RENDERS_MAX_BYTES = cap
+    held_back = waiting_key not in r2.listing()
+    time.sleep(1.1)
+    sto = backup.run(dict(opts))
+    check(stn['state'] == 'ok' and held_back and stn['renders_pending'] == 1 and 'BACKUP_RENDERS_GB' in stn['renders_error']
+          and waiting_key in r2.listing() and sto['renders_pending'] == 0 and sto['renders_error'] is None,
+          f"BACKUP_RENDERS_GB not a whole number: the night goes, the render waits and the status names the setting ({stn['renders_error']})")
+
     # ---- the records, night after night: one upload each, new mail next night, an invoice's copy gone after 8 years
     r2 = backup.R2(KEYS['BACKUP_R2_ENDPOINT'], KEY_ID, SECRET)
     held = {k: v for k, v in r2.listing().items() if k.startswith('records/')}

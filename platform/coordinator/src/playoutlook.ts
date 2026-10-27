@@ -10,6 +10,9 @@ export function outlook(play: Play, row: QueuedJob, horizonDays: number): Outloo
   const chain = ancestors(play, terminal);
   const waits = chain.flatMap(r => [...r.waits, ...(r.held ? [r.held.by] : [])]);
   for (const edge of precedence(row).jobs) waits.push({ on: 'job', job: edge.job });
+  // (its pull request's own queued work, as stages of its review: its fix tasks, its owner's sort that draws them;
+  for (const id of play.stages.get(row.id) ?? [])
+    if (id > 0 && id !== row.id && play.runs.get(id)!.row.kind === 'work') waits.push({ on: 'job', job: id });
   const merged = terminal.state === 'done' ? terminal.done : null;
   if (merged === null && !waits.some(w => w.on === 'stalled')) waits.push({ on: 'horizon', days: horizonDays });
   const cards = [...new Map(chain.flatMap(r => r.row.cards).map(c => [c.request, c])).values()];

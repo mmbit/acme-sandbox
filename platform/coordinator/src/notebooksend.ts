@@ -1,0 +1,189 @@
+// A notebook page sent in: each of its groups goes to its agent as a note, the way the book's sheets go (booksheets.ts
+// delivers them): the groups cut from one agent's work as one task for them, the rest through the CEO's routing check,
+// which decides who takes each. SEND_MS to undo, then it's theirs; the page stays, read-only, marked sent, and a fresh
+// page takes new groups. A reply written under an answer goes at once, with the same seconds to undo. Each send's sheets
+// are its own (book_sheets.notebook_page), never an owner's batch on the old book's pages.
+import { rmSync } from 'node:fs';
+import { db, inOneStep } from './db.ts';
+import { BOARD } from './book.ts';
+import { render } from './bookrender.ts';
+import { DIR } from './pagescraps.ts';
+import { SEND_MS, insertNote, note, sheetRow, type Note } from './booknotes.ts';
+import { deliverDue } from './booksheets.ts';
+import { changed, gone, newPage, pageOf, pageRow, shut } from './notebook.ts';
+import { insertGroup, partsOf, putAside, row, type Group } from './notebookgroups.ts';
+import { boxOf } from './notebookparts.ts';
+import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
+
+// Room round a group's picture, in page px
+const PAD = 24;
+
+// POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first
+export async function sendPage(b: any, who = BOARD) {
+  const p = pageRow(Number(b?.id), who);
+  if (!p) return 404;
+  if (shut(p)) return [409, 'this page has been sent'] as Refused;
+  const sendable = () =>
+    db
+      .prepare(
+        "select * from notebook_groups where page = ? and parent is null and deleted is null and status = 'open' order by id",
+      )
+      .all(p.id) as Group[];
+  const groups = sendable();
+  if (!groups.length) return [409, 'nothing on this page to send'] as Refused;
+  const snips = await Promise.all(groups.map(snipOf));
+  // (a group changed, gone or added while its pictures were drawn: sent as the board sees it now, so read again)
+  const now = pageRow(p.id, who),
+    after = sendable();
+  if (
+    !now ||
+    shut(now) ||
+    after.length !== groups.length ||
+    after.some((g, i) => g.id !== groups[i].id || g.updated !== groups[i].updated)
+  )
+    return [409, 'the page changed while it was being sent: send it again'] as Refused;
+  inOneStep(() => {
+    const sheets = new Map<string | null, number>();
+    groups.forEach((g, i) => {
+      const sheet = sheets.get(g.owner) ?? newSheet(who, g.owner, p.id);
+      sheets.set(g.owner, sheet);
+      const id = insertNote(sheet, p.id, g.by, anchorOf(g), saidOf(g), snips[i], null);
+      db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
+    });
+    // (its seconds start once its notes are on it: a sheet goes with what was on it at the tap, booksheets.ts deliver)
+    const at = Date.now() + SEND_MS;
+    for (const sheet of sheets.values())
+      db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(at, sheet);
+    db.prepare('update book_pages set send_at = ?, fresh = ? where id = ?').run(at, newPage(p.notebook), p.id);
+    changed(p.notebook, p.id);
+  });
+  deliverLater();
+  return pageOf(pageRow(p.id, who)!);
+}
+// POST /api/notebooks/pages/undo { id }: a send taken back within its seconds; the page is open again, and the fresh
+// page the send made goes while it's blank and untitled
+export function undoSend(b: any, who = BOARD) {
+  const p = pageRow(Number(b?.id), who);
+  if (!p) return 404;
+  if (p.send_at === null) return [409, "this page hasn't been sent"] as Refused;
+  if (gone(p)) return [409, 'too late to undo: the page has gone'] as Refused;
+  const groups = db
+    .prepare('select * from notebook_groups where page = ? and parent is null and note is not null')
+    .all(p.id) as Group[];
+  inOneStep(() => {
+    for (const g of groups) {
+      const n = note(g.note!);
+      if (!n || sheetRow(n.sheet, null)?.status !== 'sending') continue;
+      unsend(n);
+      db.prepare("update notebook_groups set status = 'open', note = null where id = ?").run(g.id);
+    }
+    db.prepare('update book_pages set send_at = null, fresh = null where id = ?').run(p.id);
+    db.prepare(
+      `delete from book_pages where id = ? and send_at is null and label = ''
+      and not exists (select 1 from notebook_groups g where g.page = book_pages.id)`,
+    ).run(p.fresh);
+    changed(p.notebook, p.id);
+  });
+  return pageOf(pageRow(p.id, who)!);
+}
+// POST /api/notebooks/groups/reply { answer, words?, said?, ink? }: the board's reply under an agent's answer (a slip):
+// a reply group under the answered group, gone to the agent who answered in SEND_MS (deleteReply takes it back)
+export async function replyTo(b: any, who = BOARD) {
+  const slip = db.prepare('select id, note, by from book_slips where id = ?').get(Number(b?.answer)) as
+    { id: number; note: number; by: string } | undefined;
+  const answered =
+    slip && (db.prepare('select * from notebook_groups where note = ?').get(slip.note) as Group | undefined);
+  const p = answered && pageRow(answered.page, who);
+  if (!slip || !answered || !p) return 404;
+  const said = wordsOf(b.words, b.said ?? 'written');
+  if (isRefused(said)) return said;
+  const ink = b.ink === undefined ? [] : inkOf(b.ink);
+  if (isRefused(ink)) return ink;
+  if (!said.words && !ink.length) return [400, 'a reply has words or ink'] as Refused;
+  const top = answered.parent === null ? answered : row(answered.parent)!;
+  const parts = { ink, texts: [], pictures: [] };
+  const snip = ink.length ? await snipOf({ ...top, ...partsJson(parts) }) : null;
+  const reply = inOneStep(() => {
+    const g = insertGroup(p, 'reply', who, parts, {
+      parent: top.id,
+      answers: slip.id,
+      words: said.words,
+      said: said.said,
+    });
+    const sheet = newSheet(who, slip.by, p.id),
+      id = insertNote(sheet, p.id, who, anchorOf(top), said, snip, slip.id);
+    db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
+    db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(Date.now() + SEND_MS, sheet);
+    return g;
+  });
+  deliverLater();
+  return { id: reply.id, parent: top.id };
+}
+// POST /api/notebooks/replies/delete { id }: a reply taken back in its seconds, its note and sheet gone, never sent;
+// kept aside as a deleted group is
+export function deleteReply(b: any, who = BOARD) {
+  const g = row(Number(b?.id));
+  const p = g && g.kind === 'reply' && pageRow(g.page, who);
+  if (!g || !p || g.deleted !== null) return 404;
+  const n = note(g.note!)!,
+    s = sheetRow(n.sheet, null)!;
+  if (s.status !== 'sending' || s.send_at! <= Date.now())
+    return [409, 'too late to take back: the reply has gone'] as Refused;
+  inOneStep(() => {
+    unsend(n);
+    putAside(g, p);
+  });
+  return { ok: true, id: g.id };
+}
+
+// ---------------------------------------------------------------- shared
+const deliverLater = () => setTimeout(deliverDue, SEND_MS + 50).unref();
+// A sheet of the book's for one send's groups of one owner (null: the routing check's), from this notebook page: its
+// own, never the owner's batch
+const newSheet = (who: string, owner: string | null, page: number) =>
+  Number(
+    db
+      .prepare('insert into book_sheets (who, owner, created, notebook_page) values (?, ?, ?, ?)')
+      .run(who, owner, new Date().toISOString(), page).lastInsertRowid,
+  );
+function unsend(n: Note) {
+  if (n.snip) rmSync(`${DIR}/${n.snip}`, { force: true });
+  db.prepare('delete from book_notes where id = ?').run(n.id);
+  db.prepare('delete from book_sheets where id = ? and not exists (select 1 from book_notes where sheet = ?)').run(
+    n.sheet,
+    n.sheet,
+  );
+}
+// Where a group's note is: a scrap where it was cut, a drawing its place on the notebook page
+function anchorOf(g: Group): Anchor {
+  if (g.anchor) return JSON.parse(g.anchor) as Anchor;
+  const box = boxOf(partsOf(g)) ?? { x: 0, y: 0, w: 0, h: 0 };
+  return { v: 1, url: `/api/book/picture?id=${g.page}`, el: null, view: { ...box, dpr: 2 }, ink: [] };
+}
+// A group's words as its note's: its post-it's, else its typed words
+const saidOf = (g: Group) => {
+  const typed = (JSON.parse(g.texts) as { text: string }[]).map(t => t.text).join('\n');
+  return g.words ? { words: g.words, said: g.said } : { words: typed, said: typed ? 'typed' : null };
+};
+const partsJson = (p: { ink: unknown[]; texts: unknown[]; pictures: unknown[] }) => ({
+  ink: JSON.stringify(p.ink),
+  texts: JSON.stringify(p.texts),
+  pictures: JSON.stringify(p.pictures),
+});
+// The group drawn alone, with a little room round it: its note's snip, what the agent sees of it (null: a scrap whose
+// picture was split off is its words only)
+async function snipOf(g: Group) {
+  const parts = partsOf(g),
+    box = boxOf(parts);
+  if (!box) return null;
+  const drawn = {
+    x: box.x - PAD,
+    y: box.y - PAD,
+    w: box.w + 2 * PAD,
+    h: box.h + 2 * PAD,
+    ink: parts.ink as never,
+    scraps: parts.pictures,
+    texts: parts.texts as never,
+  };
+  return { type: 'image/png', clean: await render(drawn, DIR) };
+}

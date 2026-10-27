@@ -30,9 +30,10 @@
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
-// The pin (bookpin.mjs): summoned by the open book, away while it's folded; a note's sheet and review
-// mode's menu naming one owner. Carried and let go, it stays exactly where it's
-// dropped, the same button while it's held.
+// The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone; summoned by opening the book or the book's
+// pin control (on a phone, the control folds the book onto HQ with the pin), away again folded or with the control; an
+// artifact's pin as it was; a note's sheet and review mode's menu naming one owner. Carried and let go, it stays
+// exactly where it's dropped, the same button while it's held.
 // Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, stand beside the ink as type and
 // go into the book as written; read late, they still reach the note.
 // Ink on HQ's screens (bookink.mjs): a ring shows on the screen it was drawn on only, in this tab and another, notes left
@@ -54,6 +55,7 @@ import { walkStory } from './bookwalk.mjs';
 import { pairStory } from './bookpair.mjs';
 import { phoneStory } from './bookphone.mjs';
 import { slipStory } from './bookslip.mjs';
+import { askStory } from './bookask.mjs';
 import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
 import { mouseStories } from './bookmouse.mjs';
@@ -65,7 +67,7 @@ import { bodyStories } from './bookbody.mjs';
 import { inkStory } from './bookink.mjs';
 import { sentStory, phoneSendStory } from './booksent.mjs'; // (phoneSendStory: job #19631)
 import { sendFaceStories } from './booksendface.mjs';
-import { pinStory } from './bookpin.mjs';
+import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
 import { chromeStories } from './bookchrome.mjs';
 import { circleStories } from './bookcircle.mjs';
 import { liftStories } from './booklift.mjs';
@@ -374,7 +376,7 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
   await context.route(`${base}/__review/**`, r => {
     const path = new URL(r.request().url()).pathname;
     if (fulfilPart(r, path, reviewJs)) return;
-    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0, list: [], sent: false, more: false } });
+    if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
     return r.fulfill({ json: { show: false } });
   });
   await context.route(`${base}/api/**`, async r => {
@@ -386,6 +388,9 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
     // (nobody invited: the rail draws its faces only once it has read who has a book.)
     if (url.pathname === '/api/book/people') return r.fulfill({ json: [] });
     if (url.pathname === '/api/watchalong/start') return r.fulfill({ json: { id: 1, events: null } });
+    // (no first visit: HQ asks the intercom whether to welcome the board, and with no answer it lays 'coordinator
+    // unreachable' over every still.)
+    if (url.pathname === '/api/chat') return r.fulfill({ json: { messages: [], welcome: false } });
     if (url.pathname === '/api/book/scrap') {
       const req = r.request();
       if (req.method() === 'GET') {
@@ -772,15 +777,26 @@ function STORIES() {
         ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
         ...{ shot, settled, fingerTap, noErrorsIn },
       }),
-    "the open book summons the pin, a note's sheet and the menu name one owner; dropped, it stays": browser =>
+    "a card about a note: on the desk phone with the note, Open in the book on it, answered by a tap under it in the book; a key's only on the desk phone":
+      browser =>
+        inLooks(browser, (look, shot) =>
+          askStory({
+            ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
+            ...{ shot, settled, noErrorsIn, look },
+          }),
+        ),
+    "the pin comes as the book opens, a note's sheet and the menu name one owner; dropped, it stays": browser =>
       inLooks(browser, (look, shot) =>
         pinStory({
           ...{ browser, hqIn, base, MINI, settled, shot, posts, pages, org, penOn, ring, noErrorsIn, look },
         }),
       ),
+    'the pin away as HQ loads on a desktop and a phone, summoned and put away; an artifact keeps its own': browser =>
+      pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
     ...circleStories({
       hqIn,
+      inLooks,
       base,
       MINI,
       settled,
@@ -1524,9 +1540,11 @@ async function bookStories(browser, which) {
   return failed;
 }
 
-// (--stories: Chromium, which this machine has; the whole check's first part is WebKit's)
+// (--stories: Chromium, which this machine has; the whole check's first part is WebKit's. Chromium's microphone is its
+// fake one, allowed: the words of a ring come over the voice line only once the mic starts.)
+const FAKE_MIC = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
 const browser = await (only
-  ? playwright().chromium.launch({ args: ['--disable-dev-shm-usage'] })
+  ? playwright().chromium.launch({ args: ['--disable-dev-shm-usage', ...FAKE_MIC] })
   : playwright().webkit.launch());
 let context = await hqIn(browser);
 
@@ -1887,7 +1905,7 @@ assert.deepEqual(
 assert.equal(posts.filter(p => p.path === '/api/book/note').length, 2, '...not a new one in its place');
 noErrors();
 
-// ---- a call drawing in (bookcall.mjs)
+// ---- a call drawing in (bookcall.mjs; the agent's ink, aimed: bookaim.mjs.)
 await context.close();
 context = await hqIn(browser);
 await callStory({ context, open, page: () => page, pen, ring, ui, posts, pages, org, pixels, grab, shot });
@@ -1916,9 +1934,7 @@ await browser.close();
 
 // ---- the ring, its number and Send in Wire, in Chromium: Linux's headless WebKit has no en-CA dates (its ICU writes
 // 10/26/2026 for HQ's YYYY-MM-DD), so Wire's calendar can't start there and HQ shows Brownstone instead (Safari has them)
-const chromium = await playwright().chromium.launch({
-  args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'],
-});
+const chromium = await playwright().chromium.launch({ args: FAKE_MIC });
 context = await hqIn(chromium);
 await open('/?intro=0&renderer=wire');
 assert.equal(await page.evaluate(() => document.body.classList.contains('brownstone')), false, 'Wire is the look');
@@ -1955,6 +1971,6 @@ await chromium.close();
 server.close();
 // (Search; handwriting; a morning, a picture dragged in, every width)
 console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), the mark a hairline once it's in, in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a scribble wiping a mark and a two-finger tap bringing it back with its words and snip; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring in its own ink, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card, its pointer at what it named, a miss told, Back, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink round what it named inside the frame, scrolled there first when it's off the screen, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), the mark a hairline once it's in, in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a scribble wiping a mark and a two-finger tap bringing it back with its words and snip; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone at hang-up, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
 );
 if (failed) process.exitCode = 1;

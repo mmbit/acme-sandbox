@@ -106,6 +106,20 @@ test('a moved thread takes its jobs and pause along, and its old id keeps findin
   assert.equal(projects.findThread(otherSound)?.id, otherSound);
 });
 
+test("a thread doesn't move to where a project or another open thread has its name", () => {
+  reset();
+  const tune = started('tune');
+  const melody = projects.createThread({ project: 'shop', name: 'Thread tune', goal: 'It works', slug: 'melody' });
+  assert.equal(typeof melody, 'object');
+  assert.match(String(regroup.moveThread(tune, 'shop', 'juno')), /the open thread shop\/melody/);
+  const named = projects.createThread({ project: 'game', name: 'The tools', goal: 'It works', slug: 'kit' });
+  assert.match(String(regroup.moveThread((named as { id: string }).id, 'tools', 'juno')), /the project tools/);
+  assert.deepEqual([projects.findThread(tune)?.id, projects.findThread('game/kit')?.id], [tune, 'game/kit']);
+  // a done thread's name holds no level, so it moves
+  assert.equal(typeof plan.done(tune, 'juno'), 'object');
+  assert.equal(typeof regroup.moveThread(tune, 'shop', 'juno'), 'object');
+});
+
 test("a thread is its project's owner's to move: a new owner takes over every thread in it", async () => {
   reset();
   const levels = started('levels');

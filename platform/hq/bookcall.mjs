@@ -4,16 +4,18 @@
 // the call's page (not a sheet) with the words the call heard, and down the call's own socket to the line as the Pencil
 // stays up; the agent asks to see a page by name, the card waits with Show and Not now while the call goes on, nothing
 // of the screen gone until Show, and Show starts the watch-along; the pen drags the small call and taps it open, never
-// inking it, its corner clear of the zoom buttons, and tells the line it's down and lifted once shown; the agent's ring lands on the page in its own ink, kept on the call's page with its
-// words, and a ring round words nowhere on screen comes back not drawn, with why; hung up, the call's page is offered
-// to throw away, and one tap does. Along the way: a private part under the ring is painted over in what the agent
-// gets; a line drawn while a mark goes in is drawn and makes the next note, with only the words said since its
+// inking it, its corner clear of the zoom buttons, and tells the line it's down and lifted once shown; the agent's ring
+// lands where it aimed on its picture of the screen, in its own ink with its words, never in the book; the agent's
+// projects view opens alone, no card over it and the intercom closed under it, a ring round a tile there (bookaim.mjs);
+// hung up, the agent's rings go, and the call's page is offered to throw away, and one tap does. Along the way: a
+// private part under the ring is painted over in what the agent gets; a line drawn while a mark goes in is drawn and makes the next note, with only the words said since its
 // pen-down; a mark the book didn't take stays, the board is told, and it goes in with the next line, but one whose
 // connection dropped as the call ended isn't sent twice (a line drawn after it goes in on its own, also after one of
 // that mark's lines was undone, and the board is told the book may still have that one). The cards in the look asked
 // for (look: Wire's keys).
 import assert from 'node:assert/strict';
 import { penOnTheBubble } from './bookbubble.mjs';
+import { openedClean, openedPreview, theirInk } from './bookaim.mjs'; // (openedPreview)
 
 const SETTLE_MS = 1500; // (callnotes.js)
 const MASK = [0x8c, 0x8c, 0x8c]; // (snapshot.js)
@@ -36,6 +38,8 @@ export async function callStory(c) {
   await askToSee(s);
   await penOnTheBubble(s);
   await theirInk(s);
+  await openedClean(s);
+  await openedPreview(s);
   await lostAtTheEnd(s);
   await thrownAway(s);
   await drawnAfterTheLoss(s);
@@ -243,32 +247,6 @@ async function askToSee(s) {
   assert.equal(await card.count(), 0);
 }
 
-// The agent's ink: a ring round words on the board's screen, in its own colour, kept on the call's page; words nowhere
-// on screen come back not drawn, with why
-async function theirInk(s) {
-  const { page } = s;
-  const words = await page.evaluate(() => {
-    const el = [...document.querySelectorAll('#hud button, #hud a')].find(
-      e => e.offsetWidth && /^[A-Za-z][\w ]{2,20}$/.test(e.textContent.trim()),
-    );
-    return el?.textContent.trim();
-  });
-  assert.ok(words, 'something with words on it on HQ');
-  s.line.send({ type: 'ink', id: 2, ring: words, note: null, words: 'or this one?' });
-  assert.deepEqual(await heard(s, 'inked', e => e.id === 2), { type: 'inked', id: 2, drawn: true });
-  const theirs = lastNote(s);
-  assert.equal(theirs.by, s.org.company.ceo, "the agent's ink is its own note on the call's page");
-  assert.equal(theirs.words, 'or this one?');
-  const color = theirs.anchor.ink[0].color;
-  assert.notEqual(color.toLowerCase(), '#ff5a5f', 'never in the board’s red');
-  assert.ok(theirs.anchor.el?.text.includes(words), 'anchored on what it named');
-  assert.ok(await inkedAt(s, theirs.anchor.ink[0].points[0], color), `the agent's ring shows in its colour (${color})`);
-  await s.shot(s.named('book-call-ink'), page);
-  s.line.send({ type: 'ink', id: 3, ring: 'nothing anywhere says this', note: null, words: '' });
-  const missed = await heard(s, 'inked', e => e.id === 3);
-  assert.equal(missed.drawn, false);
-  assert.match(missed.why, /Nothing on their screen says/);
-}
 // Whether the screen shows a colour near a point of the document
 async function inkedAt(s, [x, y], color) {
   const [sx, sy] = await s.page.evaluate(() => [scrollX, scrollY]);
@@ -292,6 +270,7 @@ async function lostAtTheEnd(s) {
   // (clear of the notes' hairlines: a ring beside one joins it, join.js.)
   await s.pen(s.ring(560, 520, 70, 30));
   await page.waitForTimeout(SETTLE_MS + 800);
+  const rings = await page.locator('.hq-ring').count();
   await page.click('.callbubble .cb-hangup');
   await page
     .locator(s.ui('.tip.show'))
@@ -300,6 +279,12 @@ async function lostAtTheEnd(s) {
   await page.waitForTimeout(500);
   page.off('request', count);
   assert.equal(sent.length, 1, 'the mark whose connection dropped went once, not again as the call ended');
+  // (the agent's rings go with the call)
+  assert.deepEqual(
+    [rings > 0, await page.locator('.hq-ring').count()],
+    [true, 0],
+    "the agent's rings gone at the hang-up",
+  );
 }
 
 // A call again: the connection dropped as a ring goes in (undo: with an arrow, undone after), a line drawn after it,

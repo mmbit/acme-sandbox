@@ -23,6 +23,7 @@ import { mountDogEar } from './bookdogear.js';
 import { mountFaces } from './booksheetface.js';
 import { pageBox } from './bookrow.js';
 import { slipsHtml, tickLine, wire as wireSlips } from './bookslips.js';
+import { asksHtml, pageAsksHtml, wireAsks } from './bookslips.js';
 import { keep } from './bookedit.js'; // (steps filtered in place, for Redo)
 
 // a note's words are saved this long after the last letter (and at once when the field is left)
@@ -134,13 +135,18 @@ function draw(sh, v) {
   const fresh = new Set(
     groups.filter(g => g.sheet.status === 'sent' && sh.deadlines.has(g.sheet.id)).map(g => g.sheet.id),
   );
+  // (the desk phone's cards about this page, with no note on it)
+  const pageAsks = (sh.sheets.asks ?? []).filter(a => a.on === v.page.id);
   slot.innerHTML = `${creased ? creaseHtml(v.page) : ''}<div class="bs-list">${groups
     .map(g => groupHtml(sh, g, groups.length > 1, numbers, fresh))
-    .join('')}</div><svg class="bs-links" aria-hidden="true"></svg>`;
+    .join('')}${pageAsksHtml(pageAsks)}</div><svg class="bs-links" aria-hidden="true"></svg>`;
   head(sh, v, groups, creased, fresh);
   for (const id of fresh) sh.deadlines.delete(id);
   for (const field of slot.querySelectorAll('textarea.bs-words')) words(sh, v, field);
   wireSlips(sh, slot);
+  // (and the cards about its notes and itself, answered here as on the desk phone)
+  const asks = [...groups.flatMap(g => g.notes.flatMap(({ note }) => note.asks ?? [])), ...pageAsks];
+  wireAsks(slot, sh.dev, new Map(asks.map(a => [a.id, a])));
   for (const img of slot.querySelectorAll('img.bs-snip')) img.addEventListener('load', () => snipSize(sh, v, img));
   // (a slip's pictures make the page longer as they come.)
   for (const img of slot.querySelectorAll('.answer-slip img')) img.addEventListener('load', () => settle(sh, v));
@@ -182,7 +188,7 @@ function noteHtml(sh, sheet, n, away, shown) {
           open ? '' : ' readonly'
         }>${esc(n.words)}</textarea>`
       : ''
-  }${slipsHtml(n)}</div></article>`;
+  }${slipsHtml(n)}${asksHtml(n)}</div></article>`; // (asksHtml)
 }
 // A cutting's tilt: a degree or so either way, the same for a note each time it's drawn
 const tiltOf = id => (((id * 7919) % 23) / 22 - 0.5) * 2.4;

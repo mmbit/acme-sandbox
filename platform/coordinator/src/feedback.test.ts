@@ -461,7 +461,7 @@ test("review mode's menu for the board: whose sheet a note there joins and how m
   await call('/__review/notes', { method: 'POST', body: note({ note: 'Same everywhere', element: GENERAL_MARK }) });
   const mine = await call(`/__review/mine?page=${encodeURIComponent(`${ORIGIN}/shop`)}`);
   assert.equal(mine.status, 200);
-  assert.deepEqual(mine.json(), { book: { owner: 'bolt', name: 'Bolt' }, notes: 2, list: [], sent: false, more: false });
+  assert.deepEqual(mine.json(), { book: { owner: 'bolt', name: 'Bolt' }, notes: 2 });
   assert.equal((await call('/__review/mine', { key: null })).status, 404, 'only with the key');
   // the board corrects and wipes its notes in the book: the page can't
   assert.equal((await call('/__review/edit', { method: 'POST', body: { id: first, note: 'A warmer red, please' } })).status, 404);
@@ -552,7 +552,7 @@ test("on HQ itself the board's sign-in opens review mode: its notes go on the CE
   // the menu names the sheet they're on, and once a note went to someone's sheet on HQ, that one (?owner=: the Pencil's
   // last); an id that's nobody on a desk names the page's own
   const menu = async (q = '') => (await call(`/__review/mine?page=${encodeURIComponent(`${HQ_ORIGIN}/`)}${q}`, board)).json();
-  assert.deepEqual(await menu(), { book: { owner: 'juno', name: 'Juno' }, notes: 2, list: [], sent: false, more: false });
+  assert.deepEqual(await menu(), { book: { owner: 'juno', name: 'Juno' }, notes: 2 });
   assert.deepEqual((await menu('&owner=bolt')).book, { owner: 'bolt', name: 'Bolt' });
   assert.deepEqual((await menu('&owner=nobody')).book, { owner: 'juno', name: 'Juno' });
   // (a sheet of the CEO's goes to their routing check, one job for what's waiting to be routed: booksheets.ts jobFor)

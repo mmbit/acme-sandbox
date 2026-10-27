@@ -110,6 +110,7 @@ async function selects(browser, c) {
     const placed = await savedWhere(c, free.id, p => p.ink.length === 1 && p.scraps.length === 1);
     await page.waitForTimeout(c.settle);
     await selectsAndMoves(page, c, free, placed, [x, y]);
+    await refusedCopy(page, c, free);
     const pasted = await cutsAndPastes(page, c, free, box);
     // (cut and pasted on its own page, the picture keeps its file: it's on the page once again)
     assert.equal(pasted.scraps[0].file, placed.scraps[0].file, 'the cut picture pasted keeps its file');
@@ -140,6 +141,24 @@ async function selectsAndMoves(page, c, free, placed, [x, y]) {
   assert.ok(Math.abs(moved.scraps[0].x - placed.scraps[0].x - 60) < 2, 'the picture moved with the selection');
   assert.ok(Math.abs(moved.ink[0].points[0][0] - placed.ink[0].points[0][0] - 60) < 2, 'and the line with it');
   await c.shot('book-draw-moved', page);
+}
+// The bar's Copy, then its Cut, with a clipboard that refuses them (an unfocused document's): the page says so each
+// time, and the cut is taken back and picked again.
+async function refusedCopy(page, c, free) {
+  const bar = page.locator('#book .bk-sel-bar');
+  for (const name of ['Copy', 'Cut']) {
+    // (the refusal's own words tell this one's message from the last)
+    const why = `${name} refused here.`;
+    await page.evaluate(why => {
+      navigator.clipboard.writeText = () => Promise.reject(new DOMException(why, 'NotAllowedError'));
+    }, why);
+    await bar.getByRole('button', { name }).click();
+    await page.getByRole('status').filter({ hasText: 'clipboard' }).filter({ hasText: why }).waitFor({ timeout: 2000 });
+  }
+  await savedWhere(c, free.id, p => p.ink.length === 0 && p.scraps.length === 0);
+  await page.keyboard.press('Control+z');
+  await savedWhere(c, free.id, p => p.ink.length === 1 && p.scraps.length === 1);
+  await page.keyboard.press('Control+a');
 }
 // Cut: gone; pasted where the pointer is: back, as one more step each. Returns the page as saved after the paste.
 async function cutsAndPastes(page, c, free, box) {

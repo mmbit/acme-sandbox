@@ -62,7 +62,7 @@ test("the sweep throws away a walk-through's page nobody wrote on once its call 
     await page(live.call),
     await page(plain.call),
   ];
-  // the agent's ring alone doesn't keep a page; the board's note does
+  // the board's note keeps a page (the agent's rings are never in the book)
   const anchor = {
     v: 1,
     url: 'https://hq.example.com/',
@@ -70,10 +70,6 @@ test("the sweep throws away a walk-through's page nobody wrote on once its call 
     view: { w: 800, h: 600, x: 0, y: 0, dpr: 2 },
     ink: [],
   };
-  assert.equal(
-    (await h.board('/api/book/note', { page: p1.id, anchor, words: '', said: 'typed', by: 'kit' })).status,
-    200,
-  );
   assert.equal((await h.board('/api/book/note', { page: p2.id, anchor, words: 'Bigger?', said: 'typed' })).status, 200);
   // the pages are old, so only the hang-up's own minute can hold one back
   h.db

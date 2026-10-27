@@ -1,7 +1,8 @@
 // Done jobs like a piece of work, the ones an estimate stands on: jobs of the same origin by the same agent, the words
 // of its title deciding which, each word weighed by how rare it is among past titles. A scheduled job stands on its own
 // schedule entry's runs first.
-import { db, inStep, onUndo, prepared } from './db.ts';
+import { db } from './db.ts';
+import { keptPool, type Notes, type RowAlias } from './keptpool.ts';
 // (the runs table, which the pool is read from and counted on)
 import './agenttime.ts';
 import { keysCondition } from './chat.ts';
@@ -63,10 +64,10 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // those jobs (an estimate's references: sizes.ts), their runs and usage read by job instead of every one; without, the
 // runs and usage of done work only.
 // Whether a job replaces another is read from the replacement links as one set (`in`), so no job's row is fetched for it..
+// (the done work: past() sums its runs and usage, readPastAhead lists it)
+const DONE_WORK = `select id from jobs indexed by jobs_history where kind = 'work' and status = 'done'`;
 const past = (only = false) => {
-  const of = only
-    ? 'where job in (select value from json_each(:only))'
-    : `where job in (select id from jobs indexed by jobs_history where kind = 'work' and status = 'done')`;
+  const of = only ? 'where job in (select value from json_each(:only))' : `where job in (${DONE_WORK})`;
   return `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
@@ -88,7 +89,34 @@ const past = (only = false) => {
   order by r.job`;
 };
 
-export const pastJobs = (only?: number[]): PastJob[] => (only ? readPast(only) : keptPool());
+// The notes of past()'s kept pool (keptpool.ts): for each table it reads, the done jobs a row of it is read into. A row
+// of jobs, runs or usage is its done work job's, a scheduled run or a replacement link its job's, a pull request its
+// branch's jobs'. A call, or a credential request, is any job's (null: the pool is read whole), since a call's chain of resumes
+// may reach it. A new call is only its own job's: nothing resumes it yet.
+const DONE = (row: string) => `${row}.kind = 'work' and ${row}.status = 'done'`,
+  OF_DONE = (row: RowAlias) =>
+    `select ${row}.job where exists (select 1 from jobs d where d.id = ${row}.job and ${DONE('d')})`,
+  OF_JOB = (row: RowAlias) => `select ${row}.job where ${row}.job is not null`;
+const NOTES: Notes = {
+  jobs: { of: row => `select ${row}.id where ${DONE(row)}` },
+  runs: { of: OF_DONE },
+  usage: { of: OF_DONE },
+  prs: {
+    of: row =>
+      `select id from jobs indexed by jobs_work_branch where kind = 'work' and ${workBranch('jobs')} = +${row}.branch`,
+  },
+  calls: { of: () => 'select null', added: OF_JOB('new') },
+  requests: { of: row => `select null where ${row}.kind = 'credential' or ${row}.secrets is not null` },
+  schedule_runs: { of: OF_JOB },
+  job_replacements: { of: OF_JOB },
+};
+const keptPast = keptPool('past', past, readPast, NOTES);
+export const pastJobs = (only?: number[]): PastJob[] => (only ? readPast(only) : keptPast.pool());
+// The server's start (forecast.ts start): the done work read ahead of the first play, a slice at a time, so no play
+// after a start reads it all at once. (a slice reads in 13-30 ms warm on a copy at HQ's size, 70 ms cold)
+const SLICE = 500;
+export const readPastAhead = () =>
+  keptPast.seed(() => (db.prepare(`${DONE_WORK} order by id`).all() as { id: number }[]).map(r => r.id), SLICE);
 function readPast(only?: number[]) {
   const sql = past(only !== undefined),
     rows = (only ? db.prepare(sql).all({ only: JSON.stringify(only) }) : db.prepare(sql).all()) as unknown as (PastJob &
@@ -98,83 +126,6 @@ function readPast(only?: number[]) {
     timing_flags: timingFlags({ outcomes, invalid_runs, unknown_seats, is_replacement, runs: job.runs }),
   }));
 }
-
-// Every done job is kept as one pool, and only the jobs whose rows changed are read again: each new work job is sized
-// on it (predictions.ts recordQueued), and so are the minute's sweep, the play and hq estimate, and reading it whole for
-// each took 0.2 s warm and seconds cold. Triggers note each change to what it's read from in past_changes, with its job:
-// a done work job's columns here, a run or usage row of one, a pull request of its branch, a new call of it, a
-// scheduled run, a replacement link. A change to a call, or a credential request, that a call's chain of resumes may
-// reach notes no job: the pool is read whole again. The notes keep the latest KEPT_CHANGES; a pool older than those is
-// read whole too. A pool read in a step goes once the step is undone; one read in any other transaction isn't kept, so
-// a change rolled back never leaves it standing. Callers share the pool: they never change it.
-let kept: { seen: number; pool: PastJob[] } | undefined;
-function keptPool() {
-  const changes = kept
-    ? (prepared('select id, job from past_changes where id > ? order by id').all(kept.seen) as Change[])
-    : [];
-  if (kept && !changes.length) return kept.pool;
-  const seen = changes.at(-1)?.id ?? lastChange(),
-    jobs = new Set(changes.map(c => c.job)),
-    pool =
-      kept && !jobs.has(null) && noneLost(kept.seen)
-        ? [...kept.pool.filter(j => !jobs.has(j.id)), ...readPast([...jobs] as number[])].sort((a, b) => a.id - b.id)
-        : readPast();
-  if (!db.isTransaction || inStep()) {
-    kept = { seen, pool };
-    onUndo(() => (kept = undefined));
-  }
-  return pool;
-}
-type Change = { id: number; job: number | null };
-const KEPT_CHANGES = 10_000;
-// (autoincrement: a note's number is never given again, even once the notes before it are gone)
-db.exec('create table if not exists past_changes (id integer primary key autoincrement, job integer)');
-const lastChange = () => (prepared('select max(id) n from past_changes').get() as { n: number | null }).n ?? 0;
-// (whether every change after `seen` is still noted)
-const noneLost = (seen: number) =>
-  ((prepared('select min(id) n from past_changes').get() as { n: number | null }).n ?? 0) <= seen + 1;
-const DONE = (row: string) => `${row}.kind = 'work' and ${row}.status = 'done'`,
-  OF_DONE = (row: string) => `exists (select 1 from jobs d where d.id = ${row}.job and ${DONE('d')})`,
-  ON_BRANCH = (row: string) =>
-    `select id from jobs indexed by jobs_work_branch where kind = 'work' and coalesce(branch, 'job/' || id) = +${row}.branch`,
-  KEYS = (row: string) => `${row}.kind = 'credential' or ${row}.secrets is not null`,
-  PAST_COLUMNS = `id, agent, title, engine, created, finished, stage, round, queued_by, pr, branch, thread, customers,
-    about_keys, kind, status, instead_of`;
-// (the trigger's event, the jobs it notes and when it counts: always unless said)
-const NOTED: [name: string, on: string, jobs: string, when?: string][] = [
-  ['job_added', 'insert on jobs', 'values (new.id)', DONE('new')],
-  ['job_changed', `update of ${PAST_COLUMNS} on jobs`, 'values (old.id), (new.id)', `${DONE('old')} or ${DONE('new')}`],
-  ['job_removed', 'delete on jobs', 'values (old.id)', DONE('old')],
-  ['run_added', 'insert on runs', 'values (new.job)', OF_DONE('new')],
-  ['run_changed', 'update on runs', 'values (old.job), (new.job)', `${OF_DONE('old')} or ${OF_DONE('new')}`],
-  ['run_removed', 'delete on runs', 'values (old.job)', OF_DONE('old')],
-  ['usage_added', 'insert on usage', 'values (new.job)', OF_DONE('new')],
-  ['usage_changed', 'update on usage', 'values (old.job), (new.job)', `${OF_DONE('old')} or ${OF_DONE('new')}`],
-  ['usage_removed', 'delete on usage', 'values (old.job)', OF_DONE('old')],
-  ['pr_added', 'insert on prs', ON_BRANCH('new')],
-  [
-    'pr_changed',
-    'update of number, branch, status, merged_at, files, added, removed on prs',
-    `${ON_BRANCH('old')} union ${ON_BRANCH('new')}`,
-  ],
-  ['pr_removed', 'delete on prs', ON_BRANCH('old')],
-  ['call_added', 'insert on calls', 'values (new.job)', 'new.job is not null'],
-  ['call_changed', 'update of job, resumes, request on calls', 'values (null)'],
-  ['call_removed', 'delete on calls', 'values (null)'],
-  ['request_added', 'insert on requests', 'values (null)', KEYS('new')],
-  ['request_changed', 'update of kind, secrets on requests', 'values (null)'],
-  ['request_removed', 'delete on requests', 'values (null)', KEYS('old')],
-  ['schedule_run_added', 'insert on schedule_runs', 'values (new.job)', 'new.job is not null'],
-  ['schedule_run_changed', 'update on schedule_runs', 'values (old.job), (new.job)'],
-  ['schedule_run_removed', 'delete on schedule_runs', 'values (old.job)'],
-  ['replacement_added', 'insert on job_replacements', 'values (new.job)'],
-  ['replacement_removed', 'delete on job_replacements', 'values (old.job)'],
-];
-for (const [name, on, jobs, when] of NOTED)
-  db.exec(`create trigger if not exists past_${name} after ${on} ${when ? `for each row when ${when}` : ''} begin
-    insert into past_changes (job) ${jobs};
-    delete from past_changes where id <= (select max(id) from past_changes) - ${KEPT_CHANGES};
-  end`);
 
 export const cleanPastJobs = (pool: PastJob[] = pastJobs()) =>
   pool.filter(job => !job.timing_flags?.length && !job.customers && !job.about_keys);

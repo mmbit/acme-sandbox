@@ -59,6 +59,7 @@ import { REPO_DIR } from './config.ts';
 import { db } from './db.ts';
 import { type Caller, type Refused, reply, json, lineOf, log, ownLine, ownUrl, ownSession, productRequest, retireHooks, serial, StripeError } from './payments.ts';   // lines:
 import * as mailout from './mailout.ts';
+import * as mailpage from './mailpage.ts';
 
 type Attachment = NonNullable<mailout.Mail['attachments']>[number];
 
@@ -174,9 +175,8 @@ const SLOTS: Record<string, { takes: string; fill: (v: unknown, a: Ask) => strin
     return items.length && items.every(t => t !== null) ? formatsOf(a).list(items as string[], a.lang) : null;
   } },
 };
-const UNFINISHED = /<<[\s\S]*?>>/;
-const SLOT = new RegExp(`\\{(${Object.keys(SLOTS).join('|')})\\}`, 'g');
-const NOT_SLOT = new RegExp(`\\{(?!(${Object.keys(SLOTS).join('|')})\\})[a-z_]+\\}`);
+// (mailpage's slots)
+const { slot: SLOT, notSlot: NOT_SLOT } = mailpage.slotsOf(Object.keys(SLOTS));
 // An order's fact, {fact:name}: plain text, its own lines kept, without a link.
 const FACT = /\{fact:([^{}]*)\}/g, FACT_NAME = /^[a-z][a-z0-9_]{0,30}$/, LINK = /:\/\/|\bwww\./i, FACT_MAX = 2000;
 const factOf = (v: unknown) => {
@@ -208,8 +208,8 @@ function render(a: Ask, kind: string, slots: Record<string, unknown>) {
   }
   const attachments = files(a.slug, t.attachments, `products/${a.slug}/care/order-emails.yaml, ${kind}.${a.lang}.attachments`);
   if (typeof attachments === 'string') return [400, attachments] as [number, string];
-  const subject = t.subject.replace(FILLED, (_, slot) => values[slot]).replace(/\s+/g, ' ').trim();
-  const unfinishedFact = Object.entries(values).some(([slot, value]) => slot.startsWith('fact:') && UNFINISHED.test(value));
+  const subject = mailpage.subjectOf(t.subject, FILLED, values);
+  const unfinishedFact = Object.entries(values).some(([slot, value]) => slot.startsWith('fact:') && mailpage.UNFINISHED.test(value));
   return { subject, text: t.body.replace(FILLED, (_, slot) => values[slot]).trim() + '\n', attachments, unfinishedFact };
 }
 // what test mode shows of the files: their names
@@ -340,7 +340,7 @@ async function emailOrder(c: Caller, b: any): Promise<Refused | object> {
   // live words that aren't final yet never go: no try is counted, so the ask after they're filled in sends it. An
   // order's fact that isn't final is held back the same way.
   const t = template(c.slug, kind, lang), words = t ? `${t.subject}\n${t.body}` : '';
-  const marker = words.match(UNFINISHED)?.[0];
+  const marker = words.match(mailpage.UNFINISHED)?.[0];
   if (c.mode === 'live' && (marker || unfinishedFact)) {
     const why = marker ? `products/${c.slug}/care/order-emails.yaml, ${kind}.${lang}, still holds ${marker}: its words aren't final yet`
       : `the order's facts for its ${kind} email contain unfinished fields: they aren't final yet`;

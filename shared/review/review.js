@@ -14,12 +14,8 @@
   // For an outside reviewer (a link the board shared) the coordinator writes in the company's name: whose crew the notes go to.
   const OUTSIDE = '{{OUTSIDE}}',
     outside = !OUTSIDE.startsWith('{{');
-  // ...and whether they already sent their notes (then the tool is only its menu's Add more notes)
-  const SENT = outside && '{{SENT}}' === '1';
-  // ...and for one the board invited into its book (sketchpeople.ts grant): their notes join the board's sheet as they
-  // write them (IN_BOOK), drawn in their own colour (INK, #rrggbb).
-  const IN_BOOK = outside && '{{IN_BOOK}}' === '1',
-    THEIRS = '{{INK}}',
+  // Their notes join the board's sheet as they write them (sketchpeople.ts), drawn in their own colour (INK, #rrggbb).
+  const THEIRS = '{{INK}}',
     INK = outside && /^#[0-9a-f]{6}$/i.test(THEIRS) ? THEIRS : null;
   // The menus' colours are the guest pages': the coordinator writes in the company's
   // (guests.ts palette); served as the file is, the guest pages' neutral ones
@@ -35,8 +31,8 @@
   // menu's Open the book as a 'review:book' event (detail: whose sheet). A
   // 'review:cover' event (detail true, then false) hides the tool while the page frames another page with its own pin.
   // A 'review:pin' event gets the pin itself in its detail.
-  // Such a page may also summon the pin and put it away ('review:summon', detail true or false: HQ's book open or folded;
-  // the Pencil writes either way).
+  // Such a page summons the pin and puts it away ('review:summon', detail true or false: on HQ, the board's opening the
+  // book or the book's pin control; the Pencil writes either way); the pin starts away there.
   const summoned = !!document.currentScript?.hasAttribute('data-summoned');
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book
   // (pencil.js).
@@ -54,8 +50,6 @@
     framed,
     OUTSIDE,
     outside,
-    SENT,
-    IN_BOOK,
     INK,
     LOOK: LOOK.startsWith('{{') ? NEUTRAL : LOOK,
     ROUTE,
@@ -63,7 +57,7 @@
     book,
     toHq,
     covered: false,
-    away: false,
+    away: summoned,
   };
   // (heard from the start: a cover asked for while the tool still loads holds once it's up)
   addEventListener('review:cover', e => (config.covered = !!e.detail));

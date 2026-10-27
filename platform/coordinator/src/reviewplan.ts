@@ -2,7 +2,7 @@
 import { db, prepared } from './db.ts';
 import { sweepAction, officeOnly, RULING_SWEEP_MS } from './review.ts';
 import { org, roles, ceo } from './company.ts';
-import { workBranchOf } from './jobs.ts';
+import { OPEN_JOBS, workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
 import { fitIn, mean, wholeSeconds } from './arithmetic.ts';
 import type { ReviewPlan, ReviewStage } from './rounds.ts';
@@ -74,12 +74,12 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
     const panel = pr?.panel ?? (pr && own.length && !own.some(run => run.kind === 'review') ? 'check' : 'triage');
     const current = Math.max(1, pr?.round ?? 1);
     const fixing = own.some(run => run.round === current && run.kind === 'work' && isOpen(run));
-    const undrawn = pr && !fixing && undrawnFix(pr, record.undrawn);
-    if (undrawn) return undrawn;
-    const count = Math.max(current + Number(fixing), record.counts.get(pr?.review_class ?? panel) ?? 1);
+    const undrawn = pr && !fixing ? record.undrawn.get(pr.number) : undefined;
+    if (undrawn && !undrawn.sorter) return undrawnFix(pr!, undrawn.owner);
+    const count = Math.max(current + Number(fixing || !!undrawn), record.counts.get(pr?.review_class ?? panel) ?? 1);
     const selection = pr ? record.selections.get(pr.number) : undefined;
     const reviewers = panelMembers(
-      own.filter(run => run.round === current),
+      own.filter(run => run.round === current && run.id > (pr?.since ?? 0)),
       selection,
     );
     return buildPlan({
@@ -93,29 +93,37 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
       record,
       actors: { ...actors, consolidator: selection?.consolidator ?? actors.consolidator },
       work,
+      sorter: undrawn?.sorter,
     });
   };
 }
 
-// Ruled "changes" with its findings in the owner's inbox and no fix task drawn: no merge until someone draws one
-function undrawnFix(pr: PullRequest, undrawn: Map<number, string>): ReviewPlan | undefined {
-  const owner = undrawn.get(pr.number);
-  if (owner === undefined) return undefined;
+// Ruled "changes" with its findings in the owner's inbox and no fix task drawn. While the owner's planning job holds
+// them, its sort is the round's next stage, then the fix it draws and the next round (buildPlan), so the thread's window
+// orders the sort and the thread has a finish; heard nowhere else (an owner's session, the CEO's summary), no merge
+// until someone draws one.
+function undrawnFix(pr: PullRequest, owner: string): ReviewPlan {
   return {
     ...{ panel: pr.panel ?? 'records', count: 0, stages: [], terminal: null, unresolved: true },
     waiting: `its review asked for changes and no fix task is drawn (findings:${pr.number}, ${owner}'s to decide)`,
   };
 }
 
-// Each pull request whose round's "changes" ruling waits in its owner's inbox, and that owner
+// Each pull request whose round's "changes" ruling waits in its owner's inbox, that owner, and the owner's open
+// planning job that holds it (proposals.ts tell), if one does
 const undrawnOwners = () =>
   new Map(
     (
       prepared(
-        `select r.pr, r.project from review_inbox r join proposals q on q.id = r.proposal join prs p on p.number = r.pr
+        `select r.pr, r.project, j.id, j.agent, j.engine from review_inbox r join proposals q on q.id = r.proposal
+        join prs p on p.number = r.pr left join planning_jobs s on s.job = q.heard_by
+        left join jobs j on j.id = s.job and j.status in ${OPEN_JOBS}
         where q.status = 'open' and r.decision = 'changes' and p.round = r.round and p.status in ('open', 'stuck')`,
-      ).all() as { pr: number; project: string | null }[]
-    ).map(u => [u.pr, ownerOf(u)]),
+      ).all() as ({ pr: number; project: string | null } & (Sorter | { id: null; agent: null; engine: null }))[]
+    ).map(({ pr, project, ...sorter }) => [
+      pr,
+      { owner: ownerOf({ project }), sorter: sorter.id === null ? undefined : sorter },
+    ]),
   );
 
 function resolutionOf(action: ReturnType<typeof sweepAction>, now: number) {
@@ -256,22 +264,26 @@ type Context = {
   record: ReturnType<typeof records>;
   actors: ReturnType<typeof panelActors>;
   work: Work;
+  // the owner's planning job holding the round's undrawn findings (undrawnFix): the stage before its fix
+  sorter?: Sorter;
 };
+type Sorter = { id: number; agent: string; engine: string };
 function buildPlan(context: Context): ReviewPlan {
   const stages: ReviewStage[] = [];
   let preceding: string[] = [];
+  const since = context.pr?.since ?? 0;
+  if (context.sorter)
+    preceding = [
+      addStage(context, stages, `${context.current}:sort`, 'work', context.sorter.agent, [], context.sorter),
+    ];
   for (let round = context.current; round <= context.count; round++) {
-    const own = context.own.get(round) ?? [];
+    // A round restarted on its own number (a kept touch-up's push, a merge check, the whole panel called) leaves its
+    // reads and rulings before prs.since behind; its fix tasks stay, whenever they were drawn.
+    const own = (context.own.get(round) ?? []).filter(run => run.kind === 'work' || run.id > since);
     const fixing = own.some(run => run.kind === 'work' && isOpen(run));
     const checking = own.find(run => run.kind === 'consolidate' && run.stage !== 'ruling' && isOpen(run));
-    // A push's triage after the ruling (a kept touch-up's) opens the round again: only a ruling since it rules it, so
-    // the reviews that triage queues and the ruling after them are stages, not a round with nothing left to run.
-    const triaged = own.findLastIndex(run => run.stage === 'triage' && run.status !== 'cancelled');
     const ruled =
-      fixing ||
-      own.some(
-        (run, i) => i > triaged && run.kind === 'consolidate' && run.stage !== 'triage' && run.status === 'done',
-      );
+      fixing || own.some(run => run.kind === 'consolidate' && run.stage !== 'triage' && run.status === 'done');
     if (!ruled) preceding = addReads(context, stages, round, own, preceding, checking);
     if (!ruled) {
       const known = own.findLast(run => run.kind === 'consolidate' && run.stage !== 'triage' && isOpen(run));
@@ -300,8 +312,8 @@ function buildPlan(context: Context): ReviewPlan {
   };
 }
 
-// A ruled round's check queued since (the merge check after main came in, a push's new triage) is what resolves it: a
-// stage of its own, so the work waiting on the merge gives it its window, not a stall with none.
+// A ruled round's consolidation queued since its ruling (the retry of a ruling whose verdict couldn't be read) is what
+// resolves it: a stage of its own, so the work waiting on the merge gives it its window, not a stall with none.
 function addChecks(context: Context, stages: ReviewStage[], round: number, own: Run[], preceding: string[]) {
   for (const check of own.filter(run => run.kind === 'consolidate' && isOpen(run))) {
     const measurement = check.stage === 'triage' ? 'triage' : 'consolidate';
@@ -355,7 +367,7 @@ function addStage(
   kind: ReviewStage['kind'],
   agent: string,
   after: string[],
-  known?: Run,
+  known?: Pick<Run, 'id' | 'agent' | 'engine'>,
   measurement: string = kind,
 ) {
   const engine = known?.engine ?? (kind === 'work' ? context.work.engine : context.actors.engines.get(agent)!);

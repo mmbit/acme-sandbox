@@ -166,6 +166,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // - changed: when its open text last changed (shown as new again).
 // - closing: HQ's line on a card whose matter ended by itself (endRequest).
 // - hidden_until: kept off the desk phone until then (later.ts), still open.
+// - note, page: the book note or the page it's about (hq ask --note, --page): it shows in the book too (bookasks.ts).
 //
 // prs: each pull request the review loop runs (review.ts).
 // - since: the last job id before its current round started (only later runs are that round's).
@@ -252,7 +253,8 @@ db.exec(`
     kind text not null, title text not null, body text not null, urgency text not null default 'today',
     status text not null default 'open', answer text, seat text, secrets text, approves text, pr integer, photos text,
     documents text, zips text, address integer, questions text, customers integer not null default 0, answered text,
-    changed text, topic text, heard_by integer, closing text, hidden_until text, walk integer not null default 0);
+    changed text, topic text, heard_by integer, closing text, hidden_until text, walk integer not null default 0,
+    note integer, page text);
   create table if not exists prs (number integer primary key, branch text not null, author text not null,
     round integer not null default 0, status text not null default 'open', verdict text, sha text,
     since integer not null default 0, review_since integer not null default 0,
@@ -475,10 +477,11 @@ redacted('note_routes', 'text');
 // seconds to undo, until send_at, in ms) or sent; or call: a call's page's notes, numbered there and never sent (the
 // agent on the call heard them: bookcalls.ts), one such sheet a call's page beside its owner's open one. page: a free
 // page sent on its own, its one-off sheet (booksend.ts sendPage), never an owner's batch: an owner has one open or
-// sending batch (book_sheets_batch, below the columns added since). (page)
+// sending batch (book_sheets_batch, below the columns added since). notebook_page: the notebook page whose send made
+// it (notebooksend.ts), one sheet per send and owner, never an owner's batch either. (page)
 db.exec(`create table if not exists book_sheets (id integer primary key autoincrement, who text not null default 'board',
   owner text, status text not null default 'open', created text not null, send_at integer, sent text, job integer,
-  page integer);
+  page integer, notebook_page integer);
   create index if not exists book_sheets_job on book_sheets (job) where job is not null`);
 // The book's notes (booknotes.ts), each on a sheet and a page, here beside their sheets so every reader has them.
 // (by: who wrote it, the board or an invited person. review: its sent note on HQ, feedback.ts, once it went to a job.
@@ -639,9 +642,9 @@ db.exec(`create table if not exists pauses (id integer primary key, project text
   create table if not exists pause_wakes (job integer primary key, pause integer not null)`);
 redacted('pauses', 'why');
 // A decision of the board's named ahead of its card (decisions.ts), which pauses wait for: request, the card that asks
-// it once there is one; answered, when the board answered that card; released, when the board let what it holds go in
-// HQ instead; card_job, the card job a visual hold queued; settled, the board's item or card that answered it without
-// that card (visualapproval.ts settle).
+// it once there is one; answered, when the board answered that card (or the CEO settled it); released, when the board
+// let what it holds go in HQ instead; card_job, the card job a visual hold queued; settled, the board's item or card the
+// CEO cited to settle it without that card (visualapproval.ts settle).
 db.exec(`create table if not exists decisions (id integer primary key, name text not null, by text not null, at text not null,
   request integer, answered text, released text, card_job integer, settled text)`);
 redacted('decisions', 'name');
@@ -736,8 +739,9 @@ once('2026-10-23-expedite', () => {
   if (lacks('jobs', 'expedite')) db.exec('alter table jobs add column expedite integer not null default 0');
   if (lacks('prs', 'expedited')) db.exec('alter table prs add column expedited integer not null default 0');
 });
-// A visual decision's card job (decisions.card_job) and the board's word that settled it without a card (settled:
-// visualapproval.ts settle). Those from before: the latest card job the hold queued, read from its own prompt's first line
+// A visual decision's card job (decisions.card_job) and the board's word the CEO cited to settle it without a card
+// (settled: visualapproval.ts settle). Those from before: the latest card job the hold queued, read from its own
+// prompt's first line.
 once('2026-10-27-decisions-settled', () => {
   if (lacks('decisions', 'settled')) db.exec('alter table decisions add column settled text');
   if (!lacks('decisions', 'card_job')) return;
@@ -835,12 +839,24 @@ once('2026-10-26-walk', () => {
 });
 // The card on the CEO's intercom reply in the onboarding (chat.ts card).
 once('2026-10-26-chat-card', () => lacks('chat', 'card') && db.exec('alter table chat add column card text'));
+// A card about a note in the board's book (requests.note, the book note's id) or a page (requests.page, its address):
+// it shows in the book too (bookasks.ts).
+once('2026-10-26-requests-place', () => {
+  if (lacks('requests', 'note')) db.exec('alter table requests add column note integer');
+  if (lacks('requests', 'page')) db.exec('alter table requests add column page text');
+});
+db.exec('create index if not exists requests_note on requests (note) where note is not null');
 // A free page sent on its own is a one-off sheet (book_sheets.page), apart from its owner's one open or sending batch.
 once('2026-10-26-book-sheets-page', () => lacks('book_sheets', 'page') && db.exec('alter table book_sheets add column page integer'));
+// A notebook page's send makes sheets of its own (book_sheets.notebook_page), apart from the batch too.
+once('2026-10-27-book-sheets-notebook-page', () => {
+  if (lacks('book_sheets', 'notebook_page')) db.exec('alter table book_sheets add column notebook_page integer');
+  db.exec('drop index if exists book_sheets_batch');
+});
 db.exec(`drop index if exists book_sheets_open;
   drop index if exists book_sheets_owner;
   create unique index if not exists book_sheets_batch on book_sheets (who, coalesce(owner, ''))
-    where status in ('open', 'sending') and page is null`);
+    where status in ('open', 'sending') and page is null and notebook_page is null`);
 db.exec('drop table if exists call_pins');
 
 // A minute is the worker's reporting cadence. Two weekly windows keep observations on both sides of a reset.

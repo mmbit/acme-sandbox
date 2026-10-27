@@ -354,6 +354,34 @@ test('wrong codes are limited per basket and hour, and then even a right one wai
   await codes.tick(Date.now() + 3_700_000);
 });
 
+test("a miss in a gift card's or a stall voucher's shape is said as theirs, and counts as a wrong try", async () => {
+  const own = codes.codeOf(await order(), 'order')!;
+  const basket = await basketOf([await line('pebblet')]);
+  payments.basketGift.shaped = typed => /^GIFT/.test(String(typed));
+  payments.basketVoucher.shaped = (mode, typed) => mode === 'test' && /^STALL/.test(String(typed));
+  try {
+    const missed = [];
+    for (const typed of ['OTTER 0001', 'GIFT-ABCD-EFGH-JKMN', 'STALL-7KQ2-XW9P', 'OTTER 00012', 'nothing like it'])
+      missed.push(await enter(basket, typed));
+    assert.deepEqual(
+      missed.map(r => [r.status, r.json.why]),
+      [
+        [404, 'code_unknown'],
+        [404, 'gift_unknown'],
+        [404, 'voucher_unknown'],
+        [404, 'code_unknown'],
+        [404, 'code_unknown'],
+      ],
+    );
+    for (let i = 0; i < 5; i++) await enter(basket, i % 2 ? `GIFT-${i}` : `STALL-${i}`);
+    assert.equal((await enter(basket, own.code)).status, 429, 'ten wrong tries, whatever their shape');
+  } finally {
+    delete payments.basketGift.shaped;
+    delete payments.basketVoucher.shaped;
+    await codes.tick(Date.now() + 3_700_000);
+  }
+});
+
 test('a test code never works in a live basket', async () => {
   const own = codes.codeOf(await order(), 'order')!;
   approvals.record('live:front', 701);

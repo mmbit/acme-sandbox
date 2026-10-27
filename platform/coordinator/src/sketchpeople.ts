@@ -9,7 +9,7 @@ import * as chat from './chat.ts';
 import * as pictures from './pictures.ts';
 import * as guests from './guests.ts';
 import { REPO_DIR } from './config.ts';
-import { ceo, names } from './company.ts';
+import { brand, ceo, names } from './company.ts';
 import { findAgent } from './jobs.ts';
 import { hqDir } from './files.ts';
 import { reply } from './uploads.ts';
@@ -18,17 +18,16 @@ import { FULL, isRefused, type Refused } from './pagechecks.ts';
 import { DIR, isScrap } from './pagescraps.ts';
 
 // Invited people's Sketchbooks: one row per person given one, at the address they had then. A sketch of theirs is who
-// 'guest:<id>'. Withdrawn: taken back by the board's switch, before every invite gave a book (job #19223); given again at
-// the same address, the same book comes back. A guest the board names at another address later is someone else: a new
+// 'guest:<id>'. Withdrawn: a book taken back, which nothing does any more but older rows may say; given again at the
+// same address, the same book comes back. A guest the board names at another address later is someone else: a new
 // grant, an empty book.
 db.exec(`create table if not exists sketch_guests (id integer primary key autoincrement, guest text not null collate nocase,
   email text not null collate nocase, granted text not null, withdrawn text)`);
 
 // Everyone invited (guests.ts invite: on a share, a checklist, or by a guest asking a colleague) has a book of their
-// own at the address they have now, with no switch (the one they had there before comes back as it was). The same grant
-// puts the notes they write on a preview the board shares with them on the board's open sheet for its owner
-// (feedback.ts, a share's note), in their colour with their name (guestOf). (every
-// invite gives a book; job #18531's switch, their notes into the board's book, gone)
+// own at the address they have now (the one they had there before comes back as it was): the board draws with them in
+// it, so it is given, never asked for. The same grant puts the notes they write on a preview the board shares with them
+// on the board's open sheet for its owner (feedback.ts, a share's note), in their colour with their name (guestOf).
 export function give(name: string) {
   const email = guests.emailOf(name);
   if (!email || grantOf(name)) return;
@@ -44,7 +43,7 @@ export function give(name: string) {
     );
 }
 guests.addWelcome(give);
-// (and everyone invited before, once: their book now, whatever the switch said)
+// (and everyone already invited, once: a book each, whatever an older row said)
 once('2026-10-26-a-book-each', () => {
   const invited = db.prepare('select name from guests where email is not null and revoked is null').all();
   for (const { name } of invited as { name: string }[]) give(name);
@@ -63,7 +62,7 @@ export function grantOf(name: string) {
 export const hasBook = (name: string) => !!grantOf(name);
 export const whoOf = (g: Grant) => `guest:${g.id}`;
 // (and a book with a page in it holds them at that address: guests.ts gives the name to someone else only once nothing
-// does. An empty one holds nothing: given at an invite, it would hold every name for good.)
+// does. An empty one holds nothing: every invite gives a book, so an empty one holding would keep every name for good.)
 guests.addHolder(name => {
   const g = grantOf(name);
   return !!g && !!db.prepare('select 1 from book_pages where who = ?').get(whoOf(g));
@@ -97,7 +96,7 @@ export const colourFor = (name: string) => {
   return g ? colourOf(g) : null;
 };
 // Who wrote a note on the board's sheet, as the book shows it: an invited person's name and colour (their notes stay
-// theirs once the board takes the grant back), or null for the board's own.
+// theirs once the grant is closed: withdrawn, or the person at a new address), or null for the board's own.
 export function guestOf(who: string) {
   const g = grantBy(who);
   return g ? { name: g.guest, colour: colourOf(g) } : null;
@@ -229,12 +228,17 @@ export type Routes = {
   acts: Record<string, (b: any, who: string, base: string) => unknown>;
   saveMax: number;
 };
+// Whether the company's invited people open their books on their door's page: brand.yaml guest: { sketchbook }, a
+// setting of its own because a person's book isn't HQ's (it can stay open where HQ's own Sketchbook is off); left out,
+// as HQ's own is (computer: { sketchbook }), so a company that never set it keeps what it had.
+const booksOpen = () => {
+  const b = brand();
+  return (b.guest?.sketchbook ?? b.computer?.sketchbook) !== false;
+};
 export const openRoom = (routes: Routes) =>
   guests.addRoom({
     path: ROOM,
-    // (wherever the company's brand.yaml turns HQ's Sketchbook off too, computer: { sketchbook: false }: a person's own
-    // book is theirs.)
-    opens: hasBook,
+    opens: name => booksOpen() && hasBook(name),
     label: lang => ({ en: 'Your Sketchbook', nl: 'Je schetsboek', de: 'Dein Skizzenbuch' })[lang] ?? 'Your Sketchbook',
     async serve(req, res, name, rest) {
       const g = grantOf(name)!,
@@ -279,11 +283,12 @@ export const openRoom = (routes: Routes) =>
     },
   });
 // Whether the person may still change the book, past a body's await (it can be held back for minutes): still signed in
-// (not signed out, nor shut out by the board) and the book still the one the request began with (not taken back)
+// (not signed out, nor shut out by the board), the company's books still open (booksOpen) and the book still the one the
+// request began with (not taken back)
 function stillOpen(req: IncomingMessage, name: string, who: string): Refused | null {
   if (guests.signedIn(req)?.name.toLowerCase() !== name.toLowerCase()) return [401, 'sign in from your own link first'];
   const g = grantOf(name);
-  return g && whoOf(g) === who ? null : [403, 'this Sketchbook is closed'];
+  return booksOpen() && g && whoOf(g) === who ? null : [403, 'this Sketchbook is closed'];
 }
 // A route's answer as JSON: a status alone, a [status, why] refusal, or the answer
 const answer = (res: ServerResponse, r: unknown) =>

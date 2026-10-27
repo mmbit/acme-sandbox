@@ -19,6 +19,7 @@ const inbox = await import('./reviewinbox.ts');
 const projects = await import('./projects.ts');
 const order = await import('./threadorder.ts');
 const plan = await import('./plan.ts');
+const { cancelJob } = await import('./ledger.ts');
 const findings = [
   {
     id: 12,
@@ -494,14 +495,32 @@ test('a "changes" item a later round has left closes by itself', async () => {
   );
 });
 
-test('a round ruled "changes" with no fix task drawn has no merge in sight', async () => {
+test('a round ruled "changes" waits for its owner\'s sort, then a fix and the next round, at its thread\'s pace', async () => {
+  const windows = await import('./windows.ts');
+  const ordering = await import('./ordering.ts');
+  const older = h.queue({ agent: 'kit', title: 'Tidy the docs', engine: 'claude' });
   const { author } = await deliver();
   await h.finish(author);
+  await h.capacity({ claude: 2, [h.job(author.id).engine]: 1 });
+  const sort = heardBy();
+  assert.equal(h.job(sort).title, 'Sort new proposals into the plan');
+  // a thread with a window needs this one: the window reaches the sort only through the merge it waits for
+  projects.createThread({ project: 'game', name: 'The boss fight', goal: 'The boss can be beaten', slug: 'boss' });
+  h.queue({ agent: 'kit', title: 'Draw the boss', thread: 'game/boss', engine: 'claude' });
+  assert.equal(typeof plan.need('game/boss', 'game/world', 'wren'), 'object');
+  const deadline = Date.now() + 6 * 3_600_000;
+  windows.set(projects.findThread('game/boss')!, { deadline, aim: deadline }, 'juno');
   const owner = await h.start({ agent: 'wren', title: 'Read the plan' });
   const read = await h.hq(owner, 'thread', 'game/world');
   assert.equal(read.code, 0, read.out);
-  assert.match(read.out, /no fix task is drawn \(findings:71, wren's to decide\)/);
-  assert.doesNotMatch(read.out, /merged about/);
+  assert.doesNotMatch(read.out, /no ETA|no fix task is drawn/);
+  assert.match(read.out, new RegExp(`What sets its ETA: .*#${sort}\\b`));
+  assert.match(read.out, /merged about/);
+  const { timings } = ordering.current();
+  const latest = timings.get(sort)!.latestStart;
+  assert.ok(latest !== null && latest < deadline, 'the window reaches the sort');
+  assert.equal(timings.get(older)!.latestStart, null);
+  assert.equal((await h.claim('claude'))?.id, sort, 'the sort plays ahead of older undated work');
   assert.equal(
     (
       await h.hq(
@@ -520,7 +539,19 @@ test('a round ruled "changes" with no fix task drawn has no merge in sight', asy
     0,
   );
   const drawn = await h.hq(owner, 'thread', 'game/world');
-  assert.doesNotMatch(drawn.out, /no fix task is drawn/);
+  assert.doesNotMatch(drawn.out, /no ETA|no fix task is drawn/);
+});
+
+test('a round ruled "changes" whose findings no planning job holds has no merge in sight', async () => {
+  const { author } = await deliver();
+  await h.finish(author);
+  // (the owner's planning job ended without drawing them, and the sweep hasn't told them again yet)
+  assert.ok(cancelJob(heardBy(), 'Planning job cancelled before drawing fixes'));
+  const owner = await h.start({ agent: 'wren', title: 'Read the plan' });
+  const read = await h.hq(owner, 'thread', 'game/world');
+  assert.equal(read.code, 0, read.out);
+  assert.match(read.out, /no fix task is drawn \(findings:71, wren's to decide\)/);
+  assert.doesNotMatch(read.out, /merged about/);
 });
 
 test('a transferred project sends the open findings to its new owner through the same inbox', async () => {

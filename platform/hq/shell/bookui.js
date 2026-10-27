@@ -33,6 +33,9 @@ export function button({ icon = '', text = '', label = text, keys = '', onClick,
   return b;
 }
 export const setPressed = (b, on) => b.setAttribute('aria-pressed', on ? 'true' : 'false');
+// An icon in the controls' own line (d: its shapes, on a 24 px square)
+export const lineIcon = d =>
+  `<svg viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</g></svg>`;
 
 // The island named (faces, tools or book in the stack at the right, pages the row at the foot, overview the overview's
 // head): made once, in its place (islands(), which the rail puts over the paper; the overview's own, bookzoom.js). An
@@ -63,7 +66,32 @@ export function islands() {
   stack.append(...ISLANDS.map(name => one(name, false)));
   controls.append(stack, one(FOOT, true));
   one(OVERVIEW, true).classList.add('bk-far-tools');
+  // A screen too short for one column even with the faces at their least: a second (bk-two, book.css). The stack's
+  // width, one column or two, goes on the book as --bk-stack for what lies beside it: the page's heading, the pairing
+  // card, the pages' row.
+  const fit = new ResizeObserver(() => {
+    const shown = shownIslands();
+    if (!shown.length) return;
+    const gaps = parseFloat(getComputedStyle(stack).rowGap) * (shown.length - 1);
+    stack.classList.toggle('bk-two', shown.reduce((h, el) => h + least(el), gaps) > stack.clientHeight);
+    const width = Math.round(stack.getBoundingClientRect().right - stackLeft());
+    stack.closest('#book').style.setProperty('--bk-stack', `${width}px`);
+  });
+  for (const el of [stack, ...stack.children]) fit.observe(el);
   return controls;
+}
+// The stack's islands that show: one with nothing in it doesn't
+const shownIslands = () => ISLANDS.map(name => made.get(name)).filter(el => el.offsetWidth);
+// An island's height at its least: an island that shrinks (the faces') at its min-height, as it scrolls
+function least(el) {
+  const style = getComputedStyle(el);
+  return (style.flexShrink !== '0' && parseFloat(style.minHeight)) || el.offsetHeight;
+}
+// The left edge on the screen of the islands' stack, one column or two (a short screen's second goes on to the left),
+// or null while none shows.
+export function stackLeft() {
+  const shown = shownIslands();
+  return shown.length ? Math.min(...shown.map(el => el.getBoundingClientRect().left)) : null;
 }
 
 // The book's tooltip on any element (a button, a face): its label, its keys quieter, beside it on the side with room

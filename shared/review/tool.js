@@ -1,29 +1,38 @@
 // Review mode's parts put together (review.js loads this): its element over the page with every part's markup and
 // styles, the state they share (r), and what puts a note away. Each part is a module beside this one, served with the
-// same gate as review.js (feedback.ts).
+// same gate as review.js (feedback.ts). No part imports this: what one asks of the parts above it comes from acts.js,
+// handed in here as it loads, so the imports form no circle.
 import { REDUCED_MOTION_CSS, baseCss } from './base.js';
+import { hand } from './acts.js';
 import { startTrail } from './trail.js';
 import { followPopups, makeHost } from './layer.js';
 import * as dock from './dock.js';
 import * as menu from './menu.js';
-import * as notes from './notes.js';
 import * as surface from './surface.js';
 import * as postit from './postit.js';
 import * as pictures from './pictures.js';
 import * as dictation from './dictation.js';
-import { setupChange, unpick } from './change.js';
 import * as pencil from './pencil.js';
 import { setupCall } from './callnotes.js';
 
-// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, SENT, LOOK, ROUTE, summoned, toHq, covered, away }), the
-// elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
+// what a part asks of the parts above it (acts.js)
+hand({
+  reset,
+  toggle,
+  shut: menu.shut,
+  paint: menu.paint,
+  refresh: menu.refresh,
+  redrawInk: surface.redrawInk,
+});
+
+// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, INK, LOOK, ROUTE, summoned, book, toHq, covered,
+// away }), the elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
 export function start(config) {
   const r = {
     ...config,
     mode: 'idle',
     mark: null,
     shot: null,
-    editing: null,
     strokes: [],
     penSeen: false,
     covered: config.covered,
@@ -34,7 +43,6 @@ export function start(config) {
     baseCss(r.LOOK),
     dock.CSS,
     menu.CSS,
-    notes.CSS,
     surface.CSS,
     postit.CSS,
     pictures.CSS,
@@ -42,17 +50,11 @@ export function start(config) {
     pencil.CSS,
     REDUCED_MOTION_CSS,
   ].join('');
-  makeHost(
-    r,
-    css,
-    `<div class="ui">${surface.HTML}${pencil.HTML}${postit.HTML}${dock.html(menu.HTML)}${notes.HTML}</div>`,
-  );
+  makeHost(r, css, `<div class="ui">${surface.HTML}${pencil.HTML}${postit.HTML}${dock.html(menu.HTML)}</div>`);
   elements(r);
   followPopups(r);
   dock.setupDock(r);
   menu.setupMenu(r);
-  notes.setupNotes(r);
-  setupChange(r);
   keys(r);
   surface.setupSurface(r);
   postit.setupPostit(r);
@@ -85,17 +87,8 @@ function elements(r) {
     msg: $('.msg'),
     mic: $('.mic'),
     pinIt: $('.send'),
-    redrawButton: $('.redraw'),
     more: $('.more'),
     menu: $('.menu'),
-    notesItem: $('[data-list]'),
-    sendButton: $('[data-mine]'),
-    again: $('[data-again]'),
-    side: $('.side'),
-    dim: $('.dim'),
-    sideList: $('.side ol'),
-    sideSend: $('.side [data-send]'),
-    zoom: $('.zoom'),
   });
   r.ask = r.text.placeholder;
 }
@@ -104,18 +97,12 @@ function elements(r) {
 export function toggle(r) {
   dock.uncoach(r);
   menu.shut(r);
-  notes.closeSide(r);
   if (r.mode === 'idle') surface.pick(r);
-  else if (r.mode === 'pick') (r.editing ? unpick : reset)(r);
+  else if (r.mode === 'pick') reset(r);
 }
-// Cancel, or Escape: a change goes back to My notes
-export function cancel(r) {
-  const was = r.editing;
-  reset(r);
-  if (was) notes.openSide(r);
-}
+// Cancel, Escape, or a note gone: review mode at rest again
 export function reset(r) {
-  Object.assign(r, { mode: 'idle', mark: null, shot: null, editing: null });
+  Object.assign(r, { mode: 'idle', mark: null, shot: null });
   dictation.stopMic(r, true);
   r.text.value = '';
   r.msg.textContent = '';
@@ -126,14 +113,13 @@ export function reset(r) {
   r.text.placeholder = r.ask;
   r.fab.classList.remove('on');
   r.more.hidden = false;
-  r.dock.hidden = !r.side.hidden;
+  r.dock.hidden = false;
   dock.settle(r);
   r.root.querySelectorAll('.drop').forEach(d => d.remove());
   r.hl.hidden = true;
-  r.redrawButton.hidden = true;
   r.pinIt.textContent = 'Pin it';
   pencil.unmark(r);
-  pictures.showPictures(r, []);
+  pictures.clearPictures(r);
   r.penOn?.cancel();
   Object.assign(r, { strokes: [], penSeen: false, undoTo: null, exposure: null });
   r.veil.classList.remove('marked');
@@ -142,20 +128,15 @@ export function reset(r) {
 }
 
 function keys(r) {
-  // Escape puts away the big screenshot, else the sidebar, else the menu and the note
+  // Escape puts away the menu and the note
   addEventListener(
     'keydown',
     e => {
       if (e.key !== 'Escape' || r.covered) return;
       // what it puts away is review mode's own: the page's popup under it stays open
-      if (!r.zoom.hidden || !r.side.hidden || !r.menu.hidden || r.mode !== 'idle') e.preventDefault();
-      if (!r.zoom.hidden) r.zoom.hidden = true;
-      else if (!r.side.hidden) notes.closeSide(r);
-      else {
-        menu.shut(r);
-        if (r.mode === 'pick' && r.editing) unpick(r);
-        else if (r.mode !== 'idle' && r.mode !== 'sending') cancel(r);
-      }
+      if (!r.menu.hidden || r.mode !== 'idle') e.preventDefault();
+      menu.shut(r);
+      if (r.mode !== 'idle' && r.mode !== 'sending') reset(r);
     },
     true,
   );

@@ -47,6 +47,9 @@ const inlineScripts = {
   postprocess: messages => messages.flat().filter(m => m.fatal || m.ruleId === 'no-alert'),
 };
 
+// CODE_STYLE.md's size limits, in lines: the gates hold Python and shell to them too (shared/gates/sizes.ts)
+export const SIZE_LIMITS = { file: 400, function: 50 };
+
 export default defineConfig(
   includeIgnoreFile(fileURLToPath(new URL('.prettierignore', import.meta.url))),
   js.configs.recommended,
@@ -81,7 +84,7 @@ export default defineConfig(
     // by what a change crosses (shared/gates/sizes.ts).
     files: ['**/*.{ts,js,mjs,cjs}'],
     ignores: ['**/*.test.*', '**/*-check.mjs', '**/check.mjs', '**/tests/**'],
-    rules: { 'max-lines': ['error', 400], 'max-lines-per-function': ['error', 50] },
+    rules: { 'max-lines': ['error', SIZE_LIMITS.file], 'max-lines-per-function': ['error', SIZE_LIMITS.function] },
   },
   { files: ['**/*.html'], processor: inlineScripts },
 );

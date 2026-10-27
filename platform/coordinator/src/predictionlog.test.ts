@@ -249,6 +249,22 @@ test("hq estimate --calibration splits the sizes by how the job was queued, and 
   assert.match(out, /the same, as the play now counts them: the median miss ×1 either way/);
 });
 
+test("hq estimate --calibration counts a sizer's sizes at everyone's bias when none of its own finished in the two weeks before", async () => {
+  // (after the test above: wren's ten of the week before and three this week, at half). Lark's ten sizes 20 days ago
+  // ran at a quarter, past the two weeks before its three this week, so those count at wren's half, not a quarter.
+  for (let i = 0; i < 10; i++) done('lark', 60, 15, T0 - 20 * DAY, [], 'lark');
+  for (let i = 0; i < 3; i++) done('lark', 60, 30, T0 - 2 * HOUR, [], 'lark');
+  const reader = await h.start({ agent: 'bolt', title: 'Calibrating at everyone' });
+  const r = await h.agent('estimate/calibration', reader.token);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  const { given_sizes, given_sizes_corrected } = r.body.sizes;
+  assert.deepEqual([given_sizes.count, given_sizes.median_factor, given_sizes.sum_ratio], [6, 2, 0.5]);
+  assert.deepEqual(
+    [given_sizes_corrected.count, given_sizes_corrected.median_factor, given_sizes_corrected.sum_ratio],
+    [6, 1, 1],
+  );
+});
+
 test('hq estimate --calibration splits the sizes by agent, area and sizer, and the ETAs by lead from the log', async () => {
   const landed = T0 - 2 * HOUR;
   // the tool sized two of kit's on the coordinator at a third and half of what they took (the lower middle: ×2); haiku one of ada's right

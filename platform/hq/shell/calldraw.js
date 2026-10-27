@@ -6,25 +6,24 @@
 //     it. The line fetches it from the book and gives the agent its snip and its words.
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
 //     tapped. Show starts the watch-along as Show my screen does.
-//   - The agent's ink comes down the call's own socket ({ type: 'ink' }); the Pencil draws it in the agent's colour,
-//     kept on the call's page, and the line hears whether it could ({ type: 'inked' }). With a preview open in HQ's
-//     viewer, review mode there rings it instead (calldrive.js inFrame), over the page and not kept.
+//   - The agent's ink comes down the call's own socket ({ type: 'ink', at }): a ring where it aimed on its picture of the
+//     board's screen (at: a box in fractions of the screen), drawn exactly there in its colour, over the page and never
+//     kept (calldrive.js aimed: in the preview there when that's where it aimed), and the line hears whether it could
+//     ({ type: 'inked' }). Nothing here picks what it rings: the agent did, from the picture.
 //   - The Pencil down and lifted while the board's screen is shown goes to the line ({ type: 'pen', down }): it answers
 //     once the pen rests, so the turn has what was drawn while the board spoke (server.py PEN_REST_SECONDS).
-//   - Hung up, a call that drew leaves its page in the board's day: kept, or thrown away with one tap.
+//   - Hung up, a call the board drew on leaves its page in the board's day: kept, or thrown away with one tap.
 //   - A walk-through (a card's Walk me through it) opens its page as it's picked up; hung up, the page stays only if the
 //     board wrote on it, and goes by itself if not (walkthroughs.ts sweeps one HQ couldn't).
 import { esc } from '../util.js';
 import { minimise, share, shown } from './callscreen.js';
-import { inFrame, viewerFrame } from './calldrive.js';
+import { aimed } from './calldrive.js';
 import { inkOf } from './agentink.js'; // (an agent's ink, shared with the store's typed answers)
 
 const $ = s => document.querySelector(s);
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
-// The Pencil taking the agent's ink, or nobody (no Pencil on this page) after this long; and how long a hang-up waits
-// for the mark still settling to go into the book
-const INK_WAIT_MS = 4000,
-  FILED_WAIT_MS = 10_000;
+// How long a hang-up waits for the mark still settling to go into the book
+const FILED_WAIT_MS = 10_000;
 
 // From pickup: the Pencil hears the call is on, and the call hears the Pencil
 export function startDrawing(c) {
@@ -79,41 +78,15 @@ export const FROM_LINE = {
   note: (c, ev) => c.notes?.delete(ev.id),
   heard: (c, ev) => event('call:heard', { text: ev.text }),
   ask: (c, ev) => askCard(c, ev),
-  ink(c, ev) {
-    if (viewerFrame()) return inPreview(c, ev);
-    let answered = false;
-    const reply = ({ drawn, why }) => {
-      if (answered || c.over) return;
-      answered = true;
-      c.ws?.send(JSON.stringify({ type: 'inked', id: ev.id, drawn: !!drawn, ...(why ? { why } : {}) }));
-      if (drawn) c.drew = true;
-    };
-    const nobody = setTimeout(
-      () => reply({ drawn: false, why: "HQ's page has no Pencil to draw with just now." }),
-      INK_WAIT_MS,
-    );
-    const { ring = null, note = null, words = '' } = ev;
-    event('call:ink', { ring, note, words, color: c.color, reply, taken: () => clearTimeout(nobody) });
+  async ink(c, ev) {
+    const { at, words = '' } = ev;
+    const answer = await aimed(c, { ring: at, words });
+    if (!c.over)
+      c.ws?.send(
+        JSON.stringify({ type: 'inked', id: ev.id, drawn: !!answer.done, ...(answer.why ? { why: answer.why } : {}) }),
+      );
   },
 };
-
-// The agent's ring in the preview open in HQ's viewer: round words there (its notes are on HQ's own pages)
-async function inPreview(c, ev) {
-  const answer =
-    ev.note == null
-      ? await inFrame({ ring: ev.ring, words: ev.words ?? '', color: c.color, name: c.name }).catch(err => ({
-          done: false,
-          why: `HQ couldn't ask the preview (${err?.message || err}).`,
-        }))
-      : {
-          done: false,
-          why: `They have a preview open: their notes are on HQ's own pages. Ring words the preview shows.`,
-        };
-  if (!c.over)
-    c.ws?.send(
-      JSON.stringify({ type: 'inked', id: ev.id, drawn: !!answer.done, ...(answer.why ? { why: answer.why } : {}) }),
-    );
-}
 
 // ---- the agent's ask to see: one card at a time, the newest, until it's tapped
 function askCard(c, ev) {
@@ -165,7 +138,7 @@ export async function stopDrawing(c) {
   });
   c.drawing();
   if (c.walk) return walkEnded(c);
-  if (c.page || c.drew) pageCard(c);
+  if (c.page) pageCard(c);
 }
 // A walk-through's page as the call ends: kept, with the card, if the board wrote on it (a note of its own, the book's
 // ink or a picture), else thrown away. Left as it is if the book can't say: the sweep takes an empty one.
@@ -183,8 +156,7 @@ async function walkEnded(c) {
     console.error('[hq] the walk-through’s page wasn’t looked at:', err);
   }
 }
-// The card for the page the call left: its id from the board's notes, or (the agent's ink alone made it) found in
-// today's book as Throw away is tapped
+// The card for the page the call left, its id from the board's notes
 function pageCard(c) {
   const card = cardOf(c, 'page');
   card.innerHTML = `<p>Your call with ${esc(c.name)} left a page in today’s book.</p>
@@ -192,7 +164,6 @@ function pageCard(c) {
   card.querySelector('[data-keep]').onclick = () => card.remove();
   card.querySelector('[data-away]').onclick = async () => {
     try {
-      c.page ??= (await callPage(c)).id;
       const gone = await post('/api/book/page/delete', { id: c.page });
       if (!gone.ok) throw new Error(`the book answered ${gone.status}`);
       card.remove();

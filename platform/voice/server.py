@@ -1844,6 +1844,7 @@ class Call:
         self.screen['after'] = look['after']
         if look['pictures']:  # (a retry's look with none must not undo the restart's reset of seen)
             self.screen['seen'] = look['version']
+            self.drawing.looked()
         self.screen['heard'] |= look['heard']
         if look['pictures'] and not look.get('counted'):
             look['counted'] = True
@@ -1881,6 +1882,8 @@ class Call:
         self.screen['pictures'] += 1
         self.screen['bytes'] += len(picture['data'])
         self.picture_bytes += len(picture['data'])
+        if not wanted:
+            self.drawing.looked()  # (the whole screen now, not a zoom)
         return {'picture': picture, 'line': ' '.join(str(got.get('line') or '').split())}
 
     async def sketch_tool(self, asked):

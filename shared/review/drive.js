@@ -1,12 +1,13 @@
-// The call's agent driving the page the board sees (HQ's shell/calldrive.js): scroll to what it names, a screen at a
-// time, or point at something with its own pointer, in its ink with its name. Runs on HQ's own page and, through review
-// mode's answer to HQ (review.js), in a preview in HQ's viewer. Nothing here stops the board: a touch or a scroll of its
-// own takes over at once.
+// The call's agent driving the page the board sees (HQ's shell/calldrive.js, calldraw.js): scroll to what it names, a
+// screen at a time, point with its own pointer, or ring something in its ink with its name. Runs on HQ's own page and,
+// through review mode's answer to HQ (review.js), in a preview in HQ's viewer. Nothing here stops the board: a touch or
+// a scroll of its own takes over at once.
 //   drive({ to | by | point | ring, color, name, words }) → { done, why? }   to: words on the page; by: down | up | top |
-//     bottom; ring: words to ring in its ink in a preview (ring.js), words beside it. drive({ wipe }): its rings gone.
-//     (ring and wipe)
+//     bottom; point: a spot { x, y }, ring: a box { x, y, w, h } (screen px, ring.js), words beside it: both where the
+//     agent aimed on its picture of the screen, never chosen here.
+//     drive({ wipe }): its rings and pointer gone.
 import { isPrivate } from './anchor.js';
-import { ringOver, wipeRings } from './ring.js';
+import { ringAt, wipeRings } from './ring.js';
 
 // The pointer stays this long where it points, then fades; it glides there in about a third of a second
 const POINT_MS = 6000,
@@ -15,24 +16,23 @@ const POINT_MS = 6000,
 export async function drive(d) {
   if (d?.wipe) return wiped();
   if (typeof d?.by === 'string') return scrolled(d.by);
-  const target = named(d?.to ?? d?.point ?? d?.ring);
-  if (target.why) return { done: false, why: target.why };
-  if (target.off || d.to) {
-    target.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    await settled(target.el);
+  if (d?.ring) {
+    await ringAt(d.ring, d);
+    return { done: true };
   }
-  if (d.point) pointAt(target.el, d.color, d.name);
-  if (d.ring) await ringOver(target.el, d);
-  const told = [target.off && !d.to && 'It was off their screen: scrolled to it first.', d.ring && RING_KEPT];
-  const why = told.filter(Boolean).join(' ');
-  return { done: true, ...(why ? { why } : {}) };
+  if (d?.point) {
+    pointAt(d.point, d.color, d.name);
+    return { done: true };
+  }
+  const target = named(d?.to);
+  if (target.why) return { done: false, why: target.why };
+  target.el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  await settled(target.el);
+  return { done: true };
 }
-// What the agent hears of a ring in a preview: unlike one on HQ's pages, it isn't kept in the book
-const RING_KEPT =
-  "It's on the preview they have open, not kept in the book: it goes when the call ends or they leave the page.";
 
-// What the agent names on the page: the innermost visible element whose words (or label) hold them, one on screen first,
-// the smallest of those. Never inside private parts or the call's own controls. (callnotes.js rings it the same way.)
+// What the agent names on the page to scroll to: the innermost visible element whose words (or label) hold them, one on
+// screen first, the smallest of those. Never inside private parts or the call's own controls.
 const flat = s =>
   String(s ?? '')
     .toLowerCase()
@@ -41,7 +41,7 @@ const flat = s =>
     .replace(/\s+/g, ' ')
     .trim();
 const SKIP = new Set(['script', 'style', 'template', 'noscript', 'head']);
-export function named(words) {
+function named(words) {
   const want = flat(words);
   if (!want) return { why: 'Name it by the words they can see on it.' };
   const says = el =>
@@ -54,13 +54,12 @@ export function named(words) {
     .map(el => ({ el, box: el.getBoundingClientRect() }))
     .filter(({ el, box }) => box.width && box.height && getComputedStyle(el).visibility !== 'hidden');
   if (!shown.length)
-    return { why: `Nothing on their screen says “${words}”: they're on ${location.pathname}${location.search}.` };
+    return { why: `Nothing on their page says “${words}”: they're on ${location.pathname}${location.search}.` };
   const onScreen = ({ box }) => box.bottom > 0 && box.top < innerHeight && box.right > 0 && box.left < innerWidth;
   const best = (shown.some(onScreen) ? shown.filter(onScreen) : shown).sort(
     (a, b) => a.box.width * a.box.height - b.box.width * b.box.height,
   )[0];
-  const b = best.box;
-  return { el: best.el, box: { x: b.left, y: b.top, w: b.width, h: b.height }, off: !onScreen(best) };
+  return { el: best.el };
 }
 
 // A screen down or up, or to the top or bottom, of what scrolls under the middle of the screen (an open panel's list,
@@ -113,13 +112,12 @@ function wiped() {
   return { done: true };
 }
 
-// ---- the agent's pointer: an arrow in its ink with its name, gliding to the top left of what it points at (from where
-// it last was, or the screen's left edge), a soft ring pulsing there until it fades. One at a time.
+// ---- the agent's pointer: an arrow in its ink with its name, gliding to the spot it aimed at (from where it last was,
+// or the screen's left edge), a soft ring pulsing there until it fades. One at a time.
 let pointer = null;
-function pointAt(el, color = '#7b5ea7', name = '') {
-  const b = el.getBoundingClientRect(),
-    x = Math.min(innerWidth - 24, Math.max(4, b.left + Math.min(b.width / 2, 28))),
-    y = Math.min(innerHeight - 24, Math.max(4, b.top + Math.min(b.height / 2, 18)));
+function pointAt(spot, color = '#7b5ea7', name = '') {
+  const x = Math.min(innerWidth - 24, Math.max(4, spot.x)),
+    y = Math.min(innerHeight - 24, Math.max(4, spot.y));
   if (!pointer?.el.isConnected) pointer = { el: pointerEl(), x: 0, y: y };
   const p = pointer;
   p.el.style.setProperty('--ink', color);
@@ -144,7 +142,7 @@ function pointerEl() {
   el.innerHTML = `<style>
     .hq-pointer { position: fixed; left: 0; top: 0; z-index: 2147483646; pointer-events: none; transition: opacity .5s; }
     .hq-pointer.gone { opacity: 0; }
-    .hq-pointer svg { display: block; filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / .35)); }
+    .hq-pointer svg { display: block; width: 22px; height: 26px; filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / .35)); }
     .hq-pointer i { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px; border-radius: 50%;
       border: 2px solid var(--ink); animation: hq-pointer-pulse 1.4s ease-out infinite; }
     .hq-pointer b { position: absolute; left: 18px; top: 20px; padding: 2px 7px; border-radius: 9px; background: var(--ink);

@@ -377,11 +377,9 @@ export function getMail(id: number, agent = false, job?: number) {
 // One attachment of a mail, by its number: for the board (HQ's Mail) and for the agents (`hq mail <id>` saves them).
 export function attachment(id: number, n: number) {
   if (!Number.isInteger(id) || !Number.isInteger(n) || n < 0) return undefined;
-  const row = db.prepare('select attachments from mail where id = ?').get(id) as { attachments: string } | undefined;
-  let list: unknown[] = [];
-  try { const parsed = JSON.parse(row?.attachments ?? '[]'); if (Array.isArray(parsed)) list = parsed; } catch {}
-  const a = list[n] as { name?: string, type?: string } | undefined, file = `${FILES}/${id}/${n}`;
-  return a && typeof a === 'object' && existsSync(file) ? { name: String(a.name ?? 'attachment'), type: String(a.type ?? ''), file } : undefined;
+  const row = db.prepare('select attachments from mail where id = ?').get(id) as { attachments: string | null } | undefined;
+  const a = row && (JSON.parse(row.attachments ?? '[]') as StoredAttachment[])[n], file = `${FILES}/${id}/${n}`;
+  return typeof a === 'object' && existsSync(file) ? { name: a.name, type: a.type, file } : undefined;
 }
 export function attachmentForWorker(id: number, n: number, job?: number) {
   const m = db.prepare('select board from mail where id = ?').get(id) as { board: number } | undefined;
@@ -403,7 +401,8 @@ export function rawMail(id: number, job?: number) {
 }
 
 // The names of a mail's attachments as stored: objects while the files are kept, plain names once the sweep cleared them.
-const attachmentNames = (json: string | null) => (JSON.parse(json ?? '[]') as (string | { name: string })[]).map(a => typeof a === 'string' ? a : a.name);
+type StoredAttachment = string | { name: string, type: string, size: number };
+const attachmentNames = (json: string | null) => (JSON.parse(json ?? '[]') as StoredAttachment[]).map(a => typeof a === 'string' ? a : a.name);
 
 // The board hands a mail of its own (to a board-only address) to the team from HQ's Mail: a job for brand.yaml's
 // mail.forwardTo, whose brief is the mail as data from outside (charter rule 9), and the one job that reads it with hq mail
@@ -449,8 +448,7 @@ export function sweep(now = Date.now()) {
   const rows = db.prepare(`select id, attachments from mail where keep is null and received < ? and (raw is not null or attachments like '[{%')`)
     .all(before(ATTACHMENT_DAYS)) as { id: number, attachments: string | null }[];
   for (const { id, attachments } of rows) {
-    let names: string[] = [];
-    try { names = (JSON.parse(attachments ?? '[]') as any[]).map(a => typeof a === 'string' ? a : String(a?.name ?? 'attachment')); } catch {}
+    const names = attachmentNames(attachments);
     rmSync(`${FILES}/${id}`, { recursive: true, force: true });
     db.prepare('update mail set raw = null, attachments = ? where id = ?').run(JSON.stringify(names), id);
   }

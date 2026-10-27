@@ -6,7 +6,7 @@ import { dayTime } from '../world/clock.js';
 import { loadSentSheets, loadSentNotes, reviewShot, loadShares } from './data.js';
 import { sfx } from './audio.js';
 import { jobNameLink } from './prose.js';
-import { ago, noteCount, loadRecent, shareTitle, kindOf, untilLine, shareHtml, wireShare, went } from './desk.js';
+import { ago, noteCount, loadRecent, shareTitle, kindOf, untilLine, shareHtml, wireShare } from './desk.js';
 
 const $ = s => document.querySelector(s);
 
@@ -52,7 +52,7 @@ export async function notes(el) {
     loadRecent(),
   ]);
   if (!idle()) return;
-  const live = shares.filter(s => !s.ended || s.reopens);
+  const live = shares.filter(s => !s.ended);
   if (notesShown === 'shared') {
     // (a share the board opened stays open through the refresh)
     const unfolded = new Set(
@@ -151,18 +151,11 @@ function olderBlock(list) {
 }
 // Shared for outside notes: each open
 // share with what it opens and until when, its people (Send link, Remove, Invite) and End now (two taps, like Discard),
-// as the viewer's Share shows it. An ended one says who was on it and where its notes went, for a week.
-// Each open share is folded to its heading and one line (its people, the notes they sent, until when), and
+// as the viewer's Share shows it. An ended one says it ended and who was on it, for a week.
+// Each open share is folded to its heading and one line (its people, until when), and
 // opens to the rest; the ended ones sit below.
 const shareWhere = s => `${esc(s.what)}${s.prefix === '/' ? '' : ` (${esc(s.prefix)})`}`;
-const foldLine = s =>
-  [
-    s.people.map(p => p.name).join(', ') || 'Nobody yet',
-    s.view ? '' : `${noteCount(s.people.reduce((n, p) => n + (p.sent ? +p.notes : 0), 0))} sent`,
-    `until ${dayTime(s.ends)}`,
-  ]
-    .filter(Boolean)
-    .join(' · ');
+const foldLine = s => `${s.people.map(p => p.name).join(', ') || 'Nobody yet'} · until ${dayTime(s.ends)}`;
 const openShareHtml = (
   s,
   open,
@@ -171,10 +164,10 @@ const openShareHtml = (
 // (unfolded: the ids of the shares the board has open)
 function sharesHtml(shares, unfolded) {
   const ended = s =>
-    `<li class="old"><span class="st st-ended">ended</span><b>${shareWhere(s)}</b><span class="dim by">${[went(s), esc(s.people.map(p => p.name).join(', '))].filter(Boolean).join(' · ')}</span></li>`;
-  const old = shares.filter(s => s.ended && !s.reopens);
+    `<li class="old"><span class="st st-ended">ended</span><b>${shareWhere(s)}</b><span class="dim by">${esc(s.people.map(p => p.name).join(', '))}</span></li>`;
+  const old = shares.filter(s => s.ended);
   return `${shares
-    .filter(s => !s.ended || s.reopens)
+    .filter(s => !s.ended)
     .map(s => `<section class="notes share" data-share="${+s.id}">${openShareHtml(s, unfolded.has(+s.id))}</section>`)
     .join('')}
     ${old.length ? `<section class="notes shares"><h3><span>Outside notes, ended</span></h3><ul class="rows">${old.map(ended).join('')}</ul></section>` : ''}`;

@@ -3,6 +3,7 @@
 // what's left out, the room it may take and how long things stay.
 import {
   appendFileSync,
+  chmodSync,
   existsSync,
   lstatSync,
   mkdirSync,
@@ -141,9 +142,16 @@ export async function upload(req: IncomingMessage, res: ServerResponse) {
   if (offset !== have) return reply(res, 416, { error: 'go on from the bytes received', received: have });
   const reservationId = reservationKey(id, i);
   const toReceive = zipBytes - offset;
-  const fits =
-    offset === 0 || !reserved.has(reservationId) ? room(reservationId, toReceive) : diskKeeps(reservationId, toReceive);
-  if (!fits) return reply(res, 507, { error: 'the server has no room for a zip that big' });
+  const short =
+    offset === 0 || !reserved.has(reservationId)
+      ? shortOf(reservationId, toReceive)
+      : diskKeeps(reservationId, toReceive)
+        ? null
+        : 'disk';
+  // short: what ran out, so the desk phone says "try a smaller one" only when it's the zip's size (the disk can be short
+  // for a few minutes while the server builds an update)
+  if (short === 'imports') return reply(res, 507, { error: 'the server has no room for a zip that big', short });
+  if (short) return reply(res, 507, { error: "the server's disk is short of room right now", short });
   if (offset === 0) {
     clearField(id, i, field);
     Object.assign(field, { state: 'uploading', upload: { name, size: zipBytes, file } });
@@ -184,11 +192,12 @@ type Reservation = { bytes: number; until: number };
 const reserved = new Map<string, Reservation>();
 const reservationKey = (id: number, i: number) => `${id}-${i}`;
 
-// Whether `bytes` more fit for a field, besides what the others reserved: under ROOM.maxStored for everything in
-// IMPORTS_DIR, with ROOM.minFree left on the disk.
-function room(reservationId: string, bytes: number) {
+// What `bytes` more for a field would run out of, besides what the others reserved: the imports' room (ROOM.maxStored for
+// everything in IMPORTS_DIR) or the disk's (ROOM.minFree left on it); null when they fit.
+function shortOf(reservationId: string, bytes: number) {
   const stored = storedBytes(IMPORTS_DIR) + reservedBesides(reservationId) + bytes;
-  return stored <= ROOM.maxStored && diskKeeps(reservationId, bytes);
+  if (stored > ROOM.maxStored) return 'imports';
+  return diskKeeps(reservationId, bytes) ? null : 'disk';
 }
 function diskKeeps(reservationId: string, bytes: number) {
   const { bavail, bsize } = statfsSync(IMPORTS_DIR);
@@ -331,18 +340,23 @@ async function importZip(id: number, i: number) {
   const reservationId = reservationKey(id, i);
   let outcome: Pick<Field, 'state' | 'imported' | 'error'>;
   try {
-    const plan = planImport(await unzip.listEntries(source));
-    const bytes = plan.kept.reduce((n, k) => n + k.entry.size, 0);
-    const toWrite = { bytes: plan.kept.reduce((n, k) => n + onDisk(k.entry.size), 0), until: Infinity };
-    if (!room(reservationId, toWrite.bytes))
-      throw new ImportError(`unpacked, it needs ${formatBytes(toWrite.bytes)}, and the server has no room for that`);
-    reserved.set(reservationId, toWrite);
-    await unpack(source, plan.kept, unpacking, toWrite);
     const request = db.prepare('select title, zips from requests where id = ?').get(id) as {
       title: string;
       zips: string;
     };
     const field = fieldsOf(request.zips)[i];
+    const name = field.upload?.name ?? '';
+    const single = !/\.zip$/i.test(name) && !(await unzip.isZip(source));
+    const plan = single ? planFile(name, statSync(source).size) : planImport(await unzip.listEntries(source));
+    const bytes = plan.kept.reduce((n, k) => n + k.entry.size, 0);
+    if (single) keepFile(source, plan.kept[0], unpacking);
+    else {
+      const toWrite = { bytes: plan.kept.reduce((n, k) => n + onDisk(k.entry.size), 0), until: Infinity };
+      if (shortOf(reservationId, toWrite.bytes))
+        throw new ImportError(`unpacked, it needs ${formatBytes(toWrite.bytes)}, and the server has no room for that`);
+      reserved.set(reservationId, toWrite);
+      await unpack(source, plan.kept, unpacking, toWrite);
+    }
     const folder = freeFolder(`${IMPORTS_DIR}/${id}-${slug(field.label)}`);
     const leftOutTally = [...plan.leftOut.values()].reduce(
       (t, x) => ({ files: t.files + x.files, bytes: t.bytes + x.bytes }),
@@ -375,6 +389,38 @@ async function importZip(id: number, i: number) {
   Object.assign(fields[i], outcome);
   if (outcome.state === 'failed') delete fields[i].imported;
   save(id, fields);
+}
+
+// A single file that isn't a zip (the page itself, a script): kept as it is, moved in whole. The same rules as a zip's files: never a key or a system file.
+function planFile(name: string, size: number): Plan {
+  const parts = safeParts(name);
+  const reason = parts?.length === 1 ? leftOutFor(parts) : 'unusable names';
+  if (reason === 'keys')
+    throw new ImportError("it's named like a key file, and keys are never kept: pick the file it belongs to instead");
+  if (reason === 'system files') throw new ImportError("it's a computer's own system file: pick the file it's about");
+  if (reason) throw new ImportError('its name is one this server takes no file by: rename it and pick it again');
+  if (parts![0] === IMPORT_NOTE)
+    throw new ImportError('its name is the one this server keeps for its own note: rename it and pick it again');
+  const entry = {
+    name,
+    folder: false,
+    link: false,
+    encrypted: false,
+    method: 0,
+    crc: 0,
+    compressedSize: size,
+    size,
+    offset: 0,
+  };
+  return { kept: [{ parts: parts!, entry }], leftOut: new Map(), wrapper: null };
+}
+// It's in IMPORTS_DIR already, so it moves without taking more room
+function keepFile(source: string, kept: Kept, unpacking: string) {
+  rmSync(unpacking, { recursive: true, force: true });
+  mkdirSync(unpacking, { mode: 0o755 });
+  const to = `${unpacking}/${kept.parts[0]}`;
+  renameSync(source, to);
+  chmodSync(to, 0o644);
 }
 
 // The kept entries into a fresh folder, counting down what they still have to write.

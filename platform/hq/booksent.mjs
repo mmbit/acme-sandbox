@@ -159,7 +159,8 @@ function fixtures(c) {
     page: null,
     status: 'sent',
     send_at: null,
-    sent: new Date(Date.now() - 3600_000).toISOString(),
+    // (an hour ago, or at midnight in a day's first hour: always today, so its line has no day in it.)
+    sent: new Date(Math.max(Date.now() - 3600_000, new Date().setHours(0, 0, 0, 0))).toISOString(),
     notes: [gone],
   });
   return { sheetPage, gone, first, second };

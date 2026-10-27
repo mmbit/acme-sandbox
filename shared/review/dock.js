@@ -1,8 +1,7 @@
 // Review mode's pin: where it sits (out of the product's way, or where the board dragged it), its hints, and the bubble
 // that explains it on a reviewer's first pages. Its menu's button sits beside it (menu.js).
 import { ACCENT, PIN, keep, kept } from './base.js';
-import { shut } from './menu.js';
-import { toggle } from './tool.js';
+import { shut, toggle } from './acts.js';
 
 // the dock holds the pin and its hints: bottom right above the home bar, lifted clear of the page's own buttons (--up),
 // or where the board dragged it
@@ -13,8 +12,8 @@ export const CSS = `
       .dock.left { right: auto; left: min(var(--side, max(18px, calc(env(safe-area-inset-left) + 8px))), calc(100% - 60px)); }
       .dock.drag { left: var(--dx); top: var(--dy); right: auto; bottom: auto; transform: none; transition: none; }
       .dock[hidden] { display: none; }
-      /* put away (a page that summons it: HQ, its book folded), it shrinks into the corner and fades; summoned, it pops
-         back, nothing else moving */
+      /* put away (a page that summons it: HQ, until the board opens the book or presses its pin key), it shrinks into
+         the corner and fades; summoned, it pops back, nothing else moving */
       .dock.away { opacity: 0; visibility: hidden; transform: translateY(calc(-1 * var(--up, 0px))) translate(10px, 14px) scale(.55);
         transition: transform .2s cubic-bezier(.5,0,.75,0), opacity .16s ease-in, visibility 0s .2s; }
       /* ...back while it says something (a mark the book didn't take: settle.js), so it's never told unseen */
@@ -121,8 +120,7 @@ function tappableUnder(r, x, top) {
   let hit = null;
   // the pin, and the menu's button beside it (offsets in the dock)
   const spots = [8, 30, 52].flatMap(dx => [8, 30, 52].map(dy => [dx, dy]));
-  if (r.more.isConnected)
-    for (const dx of [10, 26]) for (const dy of [10, 26]) spots.push([r.more.offsetLeft + dx, r.more.offsetTop + dy]);
+  for (const dx of [10, 26]) for (const dy of [10, 26]) spots.push([r.more.offsetLeft + dx, r.more.offsetTop + dy]);
   for (const [dx, dy] of spots) {
     const el = document
       .elementsFromPoint(x + dx, top + dy)
@@ -240,15 +238,15 @@ function dragging(r, b) {
   b.addEventListener('pointercancel', drop);
 }
 
-// Summoned or put away by the page ('review:summon': HQ's book open or folded). Away, the pin and its menu go, and a
-// marking the pin began stops; a note being written stays open.
+// Summoned or put away by the page ('review:summon'; HQ: the board's opening the book or its pin control). Away, the pin
+// and its menu go, and a marking the pin began stops; a note being written stays open.
 function summoning(r) {
   const show = () => {
     r.dock.classList.toggle('away', r.away);
     if (!r.away) return;
     // (only a menu that's open: put away as review mode starts, the menu isn't set up yet.)
     if (!r.menu.hidden) shut(r);
-    if (r.mode === 'pick' && !r.editing) toggle(r);
+    if (r.mode === 'pick') toggle(r);
   };
   addEventListener('review:summon', e => {
     r.away = !e.detail;

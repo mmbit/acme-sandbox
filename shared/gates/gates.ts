@@ -1,6 +1,7 @@
 // The gates every change passes before review: Prettier, ESLint and the type check, on what the change adds, and no
 // rendered video or audio in git (a render's recipe and its .render.json go in its place: shared/demo/renders.mjs), nor
-// generated output (a run's raw results: its summary goes in their place), nor a brand colour HQ can't wear (brand.ts.
+// generated output (a run's raw results: its summary goes in their place), nor a brand colour HQ can't wear (brand.ts),
+// nor a module import its target no longer exports (imports.ts).
 // npm run gates [-- --base <ref>] [-- --all]   (CODE_STYLE.md, "The gates").
 //
 // Old code isn't held hostage. A file must be formatted if it's new or was formatted at the base. ESLint's findings
@@ -17,10 +18,11 @@ import { join, relative } from 'node:path';
 import type { Diagnostic } from 'typescript';
 import { SIDE } from '../demo/renders.mjs';
 import { brandProblems } from './brand.ts';
+import { importProblems } from './imports.ts';
 import { HqUnreachable, onLent, UNREACHED_EXIT } from './lent.ts';
 import { dataProblems, outputProblems, renderProblems, type Change, type Problem } from './output.ts';
 import { areaOf, missingPackage, git, gitFiles, linkModules, plural, TOOLS_HOME, workingTree } from './repo.ts';
-import { crossedLimits, SIZE_RULES, sizedChanges } from './sizes.ts';
+import { crossedLimits, SCRIPT, scriptSizes, SIZE_RULES, sizedChanges } from './sizes.ts';
 
 const CODE = /\.(ts|js|mjs|cjs)$/;
 const PAGE = /\.html$/; // linted for its inline scripts, never formatted (eslint.config.js)
@@ -95,6 +97,7 @@ async function checkChange(tools: Tools) {
     ...renderProblems(root, changes),
     ...dataProblems(root, changes),
     ...brandProblems(root, changes),
+    ...importProblems(tools.typescript, root, changes),
     ...outputProblems(root, changes),
   ];
   if (!problems.length) {
@@ -171,10 +174,10 @@ async function unformatted(tools: Tools, base: string, changes: Change[]): Promi
   return problems;
 }
 
-// The size limits count by what the change crosses (sizes.ts), with every file in scope it touches, deleted ones too.
+// The size limits count by what the change crosses (sizes.ts), with every file in scope it touches, deleted ones too,
+// Python and shell included.
 async function lintFindings(tools: Tools, base: string, sized: Change[], linted: Change[]): Promise<Problem[]> {
-  if (!linted.length) return [];
-  const results = await tools.eslint.lintFiles(linted.map(c => join(root, c.path)));
+  const results = linted.length ? await tools.eslint.lintFiles(linted.map(c => join(root, c.path))) : [];
   const findings = results.flatMap(result => {
     const change = linted.find(c => join(root, c.path) === result.filePath)!;
     const added = (line: number) => change.lines === 'all' || change.lines.has(line);
@@ -289,6 +292,12 @@ async function countAll(tools: Tools) {
     if (errors.some(m => m.ruleId === 'max-lines')) counted.long.add(result.filePath);
     counted.functions += errors.filter(m => m.ruleId === 'max-lines-per-function').length;
   }
+  // (Python and shell, measured as ESLint measures code)
+  for (const path of files.filter(p => SCRIPT.test(p))) {
+    const sizes = await scriptSizes(path, readFileSync(join(root, path), 'utf8'));
+    if (sizes.longFile) area(path).long.add(join(root, path));
+    area(path).functions += sizes.longFunctions.length;
+  }
   for (const error of typeErrors(tools, root, files))
     if (files.includes(error.path)) area(error.path).types.add(error.path);
   printAreas(areas);
@@ -341,11 +350,12 @@ async function loadTools() {
   return { prettier, eslint: new ESLint({ cwd: root }), typescript: typescript.default };
 }
 
-// The code files and pages among `paths` (in `dir`) that the gates hold. Prettier's ignore file is the one list of what
-// they leave out (eslint.config.js reads it too).
+// The code files, pages and scripts among `paths` (in `dir`) that the gates hold. Prettier's ignore file is the one list
+// of what they leave out (eslint.config.js reads it too). (scripts)
 async function inScope(tools: Tools, paths: string[], dir = root) {
   const ignorePath = join(root, '.prettierignore');
-  const candidates = paths.filter(p => (FORMATTED.test(p) || PAGE.test(p)) && regularFile(join(dir, p)));
+  const held = (p: string) => FORMATTED.test(p) || PAGE.test(p) || SCRIPT.test(p);
+  const candidates = paths.filter(p => held(p) && regularFile(join(dir, p)));
   const infos = await Promise.all(candidates.map(p => tools.prettier.getFileInfo(join(root, p), { ignorePath })));
   return new Set(candidates.filter((_, i) => !infos[i].ignored));
 }

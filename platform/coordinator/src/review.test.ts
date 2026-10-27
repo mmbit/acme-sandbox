@@ -3924,7 +3924,7 @@ test('one visual card covers the reviewed pull requests waiting on the same thre
   assert.equal(github.pr(8183).merged, true);
 });
 
-test("the board's own word settles a visual hold: the merge goes on, the card job and open card end; no other word does", async () => {
+test("the CEO settles a visual hold citing the board's word: the merge goes on, the card job and open card end; no other word does", async () => {
   const held = (n: number) => db.prepare(`select d.id, d.card_job, d.request from decisions d
     join decision_merges m on m.decision = d.id where m.pr = ?`).get(n) as { id: number; card_job: number; request: number | null };
   const card = (status: string) => Number(db.prepare(`insert into requests (created, agent, kind, title, body, status, answer)
@@ -3953,6 +3953,7 @@ test("the board's own word settles a visual hold: the merge goes on, the card jo
   assert.equal(github.pr(n).merged, false);
   const ok = await settle(ceo, `item:${standing}`);
   assert.equal(ok.code, 0, ok.out);
+  assert.match(ok.out, /settled, citing the board's item #/, "the settling says it's the CEO's citation");
   await settled();
   assert.equal(github.pr(n).merged, true);
   assert.equal(h.job(queuedCard.card_job).status, 'cancelled');

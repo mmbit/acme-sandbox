@@ -7,7 +7,7 @@ import { ACCENT } from './base.js';
 import * as inkjs from './ink.js';
 import { openPopups } from './layer.js';
 import { copy } from './copy.js';
-import { drawn } from './pictures.js';
+import { inlineUrls } from './inline.js';
 
 // The page's open popups over it all, in the order they opened, in a box the screen's size (the one they're sized and
 // placed in); each with its backdrop in a stacking context of its own, the popup over its backdrop (the top layer
@@ -179,52 +179,6 @@ function annotate(r, g, m) {
     g.stroke();
   } // (a circle: its lines, below)
   inkjs.draw(g, r.strokes, { halo: true });
-}
-// a video's frame as it shows now, about the size it's shown at
-export function drawnFrame(v) {
-  const b = v.getBoundingClientRect(),
-    k = Math.min(
-      1,
-      (Math.max(b.width, b.height) * Math.min(devicePixelRatio || 1, 2)) / Math.max(v.videoWidth, v.videoHeight),
-    );
-  return drawn(v, v.videoWidth * k, v.videoHeight * k, false);
-}
-const cache = new Map();
-export function inline(url) {
-  if (url.startsWith('data:')) return Promise.resolve(url);
-  if (!cache.has(url))
-    cache.set(
-      url,
-      fetch(url, { credentials: 'same-origin' })
-        .then(res => (res.ok ? res.blob() : null))
-        .then(
-          b =>
-            b &&
-            new Promise(res => {
-              const f = new FileReader();
-              f.onload = () => res(f.result);
-              f.onerror = () => res(null);
-              f.readAsDataURL(b);
-            }),
-        )
-        .catch(() => null),
-    );
-  return cache.get(url);
-}
-export async function inlineUrls(css, base) {
-  const urls = [...css.matchAll(/url\((['"]?)(.*?)\1\)/g)];
-  for (const [all, , u] of urls) {
-    if (u.startsWith('data:')) continue;
-    let abs;
-    try {
-      abs = new URL(u, base).href;
-    } catch {
-      continue;
-    }
-    const data = await inline(abs);
-    css = css.replace(all, data ? `url("${data}")` : 'none');
-  }
-  return css;
 }
 async function fontFaces() {
   const out = [];

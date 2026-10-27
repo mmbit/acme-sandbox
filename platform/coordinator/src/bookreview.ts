@@ -98,7 +98,7 @@ export async function toBook(
 // owner the sheet goes to, never another's (the board, 2026-10-26).
 export function menuOf(slug: string, page: string, last: string | null = null) {
   const { owner, name } = slug === feedback.HQ && last && findAgent(last) ? named(last) : ownerOf(slug, page);
-  return { book: { owner, name }, notes: onSheet(owner), list: [], sent: false, more: false };
+  return { book: { owner, name }, notes: onSheet(owner) };
 }
 
 // Whose sheet a note on a page goes on: an agent on a desk, or the CEO, who passes it on. HQ's page as a whole is
@@ -109,13 +109,14 @@ function ownerOf(slug: string, page: string) {
   return named(findAgent(agent) ? agent : ceo());
 }
 const named = (owner: string) => ({ owner, name: findAgent(owner)?.name ?? owner });
-// The open notes on the board's unsent sheet for an owner
+// The open notes on the board's unsent sheet for an owner (not a notebook send's)
 const onSheet = (owner: string) =>
   (
     db
       .prepare(
         `select count(*) n from book_notes n join book_sheets s on s.id = n.sheet
-         where s.who = ? and s.owner = ? and s.status in ('open', 'sending') and s.page is null and n.status = 'open'`,
+         where s.who = ? and s.owner = ? and s.status in ('open', 'sending') and s.page is null and s.notebook_page is null
+         and n.status = 'open'`,
       )
       .get(BOARD, owner) as { n: number }
   ).n;

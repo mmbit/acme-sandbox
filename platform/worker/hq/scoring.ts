@@ -28,6 +28,19 @@ type Threads = {
   review_share: number | null;
   waiting_share: number | null;
   handoffs: { count: number; review: Minutes; start: Minutes };
+  waiting_split: Record<WaitPart, { minutes: number; share: number | null }>;
+  side_by_side: Record<'held' | 'apart' | 'shared_files' | 'one_pr' | 'unknown', Minutes & { count: number }>;
+};
+type WaitPart = 'line' | 'line_review' | 'order' | 'after' | 'card_or_time' | 'fix_drawn' | 'other';
+// What each part of the threads' waiting is, in the words the split prints (the coordinator's threadwaits.ts)
+const WAIT_WORDS: Record<WaitPart, string> = {
+  line: 'in line for a start (the machine)',
+  line_review: 'only review steps in that line',
+  order: 'held for the task before (threads in order)',
+  after: "another branch's job, its review and merge",
+  card_or_time: 'a card, a time or an event',
+  fix_drawn: 'a fix still to be drawn',
+  other: 'nothing queued otherwise',
 };
 type Calibration = {
   days: number;
@@ -106,10 +119,27 @@ function threads(t: Threads) {
       `${percent(t.waiting_share ?? 0)} of all thread time.`,
   );
   const h = t.handoffs;
-  if (!h.count) return print("  Hand-offs (a task queued --after another branch's job): none.");
+  if (!h.count) print("  Hand-offs (a task queued --after another branch's job): none.");
+  else
+    print(
+      `  Hand-offs (a task queued --after another branch's job): ${h.count}, waiting for that job's review and merge ` +
+        `${minutesWords(h.review, 'hand-off')}, then for their start ${minutesWords(h.start, 'hand-off')}.`,
+    );
+  waitingSplit(t);
+}
+
+function waitingSplit(t: Threads) {
+  const parts = Object.entries(t.waiting_split) as [WaitPart, { minutes: number; share: number | null }][];
+  print('  The waiting, by what held the thread (a minute two held counts for the first):');
+  for (const [part, { minutes, share }] of parts)
+    print(`    ${WAIT_WORDS[part]}: ${duration(minutes)}${share === null ? '' : ` (${percent(share)})`}`);
+  const s = t.side_by_side;
+  if (!s.held.count) return print('  Tasks held for another job (side by side?): none.');
+  const each = (n: Minutes & { count: number }) => `${plural(n.count, 'task')}, ${minutesWords(n, 'task')}`;
   print(
-    `  Hand-offs (a task queued --after another branch's job): ${h.count}, waiting for that job's review and merge ` +
-      `${minutesWords(h.review, 'hand-off')}, then for their start ${minutesWords(h.start, 'hand-off')}.`,
+    `  Tasks held for another job: ${each(s.held)}. Of them, no file shared with the job they waited for (could have ` +
+      `run side by side): ${each(s.apart)}; files shared: ${each(s.shared_files)}; on the same pull request as that job: ` +
+      `${each(s.one_pr)}; not known: ${each(s.unknown)}.`,
   );
 }
 

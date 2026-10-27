@@ -1,7 +1,7 @@
 // node --test shared/review/hairline.test.js   (a hairline's reach, its card's place and its time)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { REACH, cardPlace, distanceTo, fadeLeft, hairAt, segmentDistance, sentLabel } from './hairline.js';
+import { REACH, cardPlace, distanceTo, hairAt, segmentDistance, sentLabel } from './hairline.js';
 
 const line = (...points) => ({ color: '#ff5a5f', size: 5, points: points.map(([x, y]) => [x, y, 0.5, 0]) });
 
@@ -43,14 +43,4 @@ test('when it went: the day and the time, in the page’s own time', () => {
   assert.equal(sentLabel(new Date(2026, 9, 26, 8, 16)), 'Sent Mon 08:16');
   assert.equal(sentLabel(new Date(2026, 9, 25, 21, 5).toISOString()), 'Sent Sun 21:05');
   assert.equal(sentLabel(null), 'Sent');
-});
-
-test('a sent mark fades into its hairline: whole at first, eased, gone at the end and after', () => {
-  assert.equal(fadeLeft(-0.1), 1);
-  assert.equal(fadeLeft(0), 1);
-  assert.equal(fadeLeft(0.5), 0.5);
-  assert.ok(fadeLeft(0.1) > 0.95 && fadeLeft(0.9) < 0.05, 'slow at both ends');
-  assert.ok(fadeLeft(0.3) > fadeLeft(0.6), 'only ever fainter');
-  assert.equal(fadeLeft(1), 0);
-  assert.equal(fadeLeft(2), 0);
 });

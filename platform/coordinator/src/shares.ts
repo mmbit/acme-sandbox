@@ -10,11 +10,9 @@
 //     gets it. A linked host they open has no session yet: the preview's sign-in sends them to the guest desk (guests.ts
 //     onward), whose own session hands them on to it the same way (onward).
 //   - Every request is checked against these tables, so the board's End, a removal and the end date stop it at once.
-//   - Each note keeps who wrote it. A person sends theirs when they're done (submit); once everyone still on the share
-//     has, or the board ends it, or its date passes, the share ends and all its notes go to the owner of what was shared
-//     as one job (feedback.ts). Until its date, unless the board ended it, whoever sent theirs may add more: their link
-//     and the tool's menu take them up again (reopen), and the later ones go as a follow-up. A view-only share (view)
-//     takes none: its people see the pages as they are, without review mode.
+//   - Each person has a Sketchbook of their own (sketchpeople.ts), and each note they pin goes on the board's open sheet
+//     for the owner of what was shared, signed (feedback.ts saveNote), until the board ends the share or its date passes.
+//     A view-only share (view) takes none: its people see the pages as they are, without review mode.
 //   - A tester invite (tester) is a share of the shop's preview door for notes whose people may each order once, for real:
 //     each gets a voucher of their own, shown on their door, that pays one basket there up to the board's amount (payments.ts testerVoucher).
 //     Their order is made and sent as a customer's is; what they noted on the way goes as any share's notes do.
@@ -30,7 +28,6 @@ import { paidLines, sentNothing, shopName, noSuchCode, testerVoucherSources } fr
 import * as plans from './plans.ts';
 import * as pricing from './pricing.ts';
 import { viewerId } from './viewers.ts';
-import * as tips from './tips.ts';
 
 // Share tables.
 // - review_shares.linked: the other previews it opens, JSON [{host, prefix}].
@@ -42,18 +39,18 @@ import * as tips from './tips.ts';
 // - review_share_sessions.guest: the person whose session it is.
 // - host: where it was handed, or null for the share's own host.
 db.exec(`create table if not exists review_shares (id integer primary key, created text not null, about text not null,
-    host text not null, prefix text not null, start text not null, ends text not null, ended text, gathered text, job integer,
+    host text not null, prefix text not null, start text not null, ends text not null, ended text,
     linked text, view integer not null default 0, tester integer not null default 0, cap integer, ended_by text);
   create table if not exists review_share_people (share integer not null, guest text not null collate nocase,
-    nonce text not null, link text not null unique, added text not null, opened text, submitted text, removed text,
+    nonce text not null, link text not null unique, added text not null, opened text, removed text,
     voucher text, ordered text, primary key (share, guest));
   create table if not exists review_share_sessions (hash text primary key, share integer not null, seal text not null,
     guest text collate nocase, host text, expires integer)`);
 db.exec('create unique index if not exists review_share_vouchers on review_share_people (voucher)');
 
 // about: what the notes are about (owed.about), and so whose they are; prefix: the paths it opens on host; start: the
-// page it opens at; ended: when it ended, and ended_by why: the board ended it, everyone was in, or its date passed (null:
-// ended before we kept why); gathered: when its notes went (to job, if any).
+// page it opens at; ended: when it ended, and ended_by why: the board ended it or its date passed (null: ended before we
+// kept why).
 export type Share = {
   id: number;
   created: string;
@@ -64,14 +61,12 @@ export type Share = {
   ends: string;
   ended: string | null;
   ended_by: EndedBy | null;
-  gathered: string | null;
-  job: number | null;
   linked: string | null;
   view: number;
   tester: number;
   cap: number | null;
 };
-// One of a share's people: their own link, when they first opened it, sent their notes, or were removed
+// One of a share's people: their own link, when they first opened it, or were removed
 export type Person = {
   share: number;
   guest: string;
@@ -79,12 +74,11 @@ export type Person = {
   link: string;
   added: string;
   opened: string | null;
-  submitted: string | null;
   removed: string | null;
   voucher: string | null;
   ordered: string | null;
 };
-export type EndedBy = 'board' | 'everyone' | 'date';
+export type EndedBy = 'board' | 'date';
 export type Scope = Pick<Share, 'about' | 'host' | 'prefix' | 'start'>;
 // A preview host and the paths a share opens on it
 export type Reach = Pick<Share, 'host' | 'prefix'>;
@@ -169,14 +163,14 @@ export function create(scope: Scope, linked: Reach[], days: number, kind: Kind =
 }
 
 // Someone on a share, for a guest the board names (guests.invite): a link of their own, which opens at once. One removed
-// before comes back on a new link (the old one stays shut) and has their notes to send again. On a tester invite they get
-// their voucher (one removed before keeps theirs: spent, it stays spent).
+// before comes back on a new link (the old one stays shut). On a tester invite they get their voucher (one removed before
+// keeps theirs: spent, it stays spent).
 export function invite(id: number, guest: string) {
   const nonce = randomBytes(16).toString('hex'),
     { link } = door(id, nonce);
   db.prepare(
     `insert into review_share_people (share, guest, nonce, link, added) values (?, ?, ?, ?, ?)
-    on conflict (share, guest) do update set nonce = excluded.nonce, link = excluded.link, added = excluded.added, submitted = null, removed = null`,
+    on conflict (share, guest) do update set nonce = excluded.nonce, link = excluded.link, added = excluded.added, removed = null`,
   ).run(id, guest, nonce, link, new Date().toISOString());
   if (byId(id)?.tester && !person(id, guest)?.voucher) giveVoucher(id, guest);
   return person(id, guest)!;
@@ -200,34 +194,23 @@ export function remove(id: number, guest: string) {
   return !!removed;
 }
 
-// The board's End, or everyone done: it stops at once, and its notes are gathered.
-// (a share that ended with everyone in keeps its sessions: each still opens only while its person may take their notes
-// up again, admitted. The board's End ends such a share for good: its sessions go, and its notes, gathered when everyone
-// was in, aren't gathered again.)
-export function end(id: number, by: Exclude<EndedBy, 'date'>) {
+// The board's End: it stops at once, its sessions with it.
+export function end(id: number) {
   const s = byId(id);
-  if (!s || (s.ended && !(by === 'board' && reopens(s)))) return false;
-  db.prepare('update review_shares set ended = ?, ended_by = ? where id = ?').run(new Date().toISOString(), by, id);
-  if (by !== 'everyone') db.prepare('delete from review_share_sessions where share = ?').run(id);
+  if (!s || s.ended) return false;
+  db.prepare("update review_shares set ended = ?, ended_by = 'board' where id = ?").run(new Date().toISOString(), id);
+  db.prepare('delete from review_share_sessions where share = ?').run(id);
   return true;
 }
 
-// Whether everyone still on an open share is done: has sent their notes, and on a tester invite has ordered too, or
-// their voucher would go with the share (nobody on it: not yet, the board may invite someone).
-export function allIn(id: number) {
-  const tester = !!byId(id)?.tester,
-    on = people(id).filter(onIt);
-  return on.length > 0 && on.every(p => p.submitted && (!tester || orderOf(p)));
-}
-
-// HQ's Reviews: the open shares, and those ended in the last KEEP_DAYS (with where their notes went).
+// HQ's Reviews: the open shares, and those ended in the last KEEP_DAYS.
 export const list = () =>
   db
     .prepare('select * from review_shares where ended is null or ended > ? order by id desc')
     .all(new Date(Date.now() - KEEP_DAYS * 864e5).toISOString()) as Share[];
 
-// ---------------------------------------------------------------- ending and gathering (feedback.ts gather)
-// Shares whose date has passed end now: the date is when they ended.
+// ---------------------------------------------------------------- ending (feedback.ts endDue)
+// Shares whose date has passed end now: the date is when they ended, and their sessions go.
 export function endExpired() {
   const now = new Date().toISOString();
   for (const s of db
@@ -235,17 +218,10 @@ export function endExpired() {
     .all(now) as Share[]) {
     db.prepare("update review_shares set ended = ?, ended_by = 'date' where id = ?").run(s.ends, s.id);
   }
-  // a share that ended with everyone in kept its sessions until its date
   db.prepare('delete from review_share_sessions where share in (select id from review_shares where ends <= ?)').run(
     now,
   );
 }
-export const ungathered = () =>
-  db.prepare('select * from review_shares where ended is not null and gathered is null order by id').all() as Share[];
-export const markGathered = (id: number, job: number | null) =>
-  db
-    .prepare('update review_shares set gathered = ?, job = coalesce(?, job) where id = ?')
-    .run(new Date().toISOString(), job, id);
 
 // ---------------------------------------------------------------- the outsider on the preview host (preview.ts)
 // The door's Open: a one-time code, good for two minutes, that the host it's for (the share's own, or one it links to)
@@ -292,14 +268,9 @@ function handOff(
 export const handOn = (session: Session, host: string, to: string, o: { linkMs: number; accessMs: number }) =>
   handOff(session, session.guest, guests.seal(session.guest) ?? '', host, to, o);
 // A person may be on the share: it's open, they're on it, and their address is the one they proved
-// (one who may still take their notes up again keeps their session on a share that ended with everyone in, so the tool's
-// own Add more notes can do it)
-const admitted = (s: Share | undefined, guest: string, seal: string) => reads(s, guest) && guests.seal(guest) === seal;
-// ...and so may read their own notes on it, for one whose address is proved another way (feedback.ts outsiderShot: the
-// guest desk's session)
-export const reads = (s: Share | undefined, guest: string) => {
+const admitted = (s: Share | undefined, guest: string, seal: string) => {
   const p = s ? person(s.id, guest) : undefined;
-  return !!s && !!p && (isOpen(s) || reopenable(s, p)) && onIt(p);
+  return !!s && !!p && isOpen(s) && onIt(p) && guests.seal(guest) === seal;
 };
 
 // On the host the hand-off is for only: a session for the `ps` cookie, and how many seconds it may live (to the share's
@@ -323,8 +294,8 @@ export function accept(code: string, host: string) {
   return { session, seconds: Math.ceil((ends - Date.now()) / 1000), start: h.to };
 }
 
-// The open (or, for one who may take their notes up again, reopenable) share a `ps` cookie's session belongs to, if it
-// was handed on this host, whose session it is, and whether another device handed it (handOn: it ends sooner).
+// The open share a `ps` cookie's session belongs to, if it was handed on this host, whose session it is, and whether
+// another device handed it (handOn: it ends sooner).
 export function fromSession(session: string | undefined, host: string) {
   if (!session) return null;
   const x = db
@@ -339,46 +310,6 @@ export function fromSession(session: string | undefined, host: string) {
     : null;
 }
 export type Session = NonNullable<ReturnType<typeof fromSession>>;
-
-// A person's Send my notes: from then on they add none. True the first time. On a notes share with one person left to
-// send, that's the tip for End now (tips.ts).
-export function submit(id: number, guest: string) {
-  const first =
-    db
-      .prepare(
-        'update review_share_people set submitted = ? where share = ? and guest = ? and submitted is null and removed is null',
-      )
-      .run(new Date().toISOString(), id, guest).changes > 0;
-  const left = people(id).filter(p => onIt(p) && !p.submitted);
-  if (first && left.length === 1 && kindOf(byId(id)!) === 'notes')
-    tips.offer('endnow', { waiting: left[0].guest, share: id });
-  return first;
-}
-export const submitted = (id: number, guest: string) => !!person(id, guest)?.submitted;
-// Whoever sent their notes may add more until the share's date, unless the board ended it: the share reopens, and the
-// board may still Remove them from it or End it. (A view-only share takes no notes.)
-export const reopens = (s: Share) =>
-  !s.view && Date.parse(s.ends) > Date.now() && (!s.ended || s.ended_by === 'everyone');
-const reopenable = (s: Share, p: Person) => reopens(s) && !!p.submitted && onIt(p);
-// Takes their notes up again, and the share too if it had ended with everyone in. The notes already gathered went to the
-// owner; the later ones go when it ends again, as a follow-up (feedback.ts outsideText).
-function reopen(s: Share, guest: string) {
-  db.prepare('update review_share_people set submitted = null where share = ? and guest = ?').run(s.id, guest);
-  if (s.ended)
-    db.prepare('update review_shares set ended = null, ended_by = null, gathered = null where id = ?').run(s.id);
-}
-
-// The same from review mode's menu (review.js's Add more notes), for a session's own person.
-export function canTakeUp(id: number, guest: string) {
-  const s = byId(id),
-    p = person(id, guest);
-  return !!s && !!p && reopenable(s, p);
-}
-export function takeUp(id: number, guest: string) {
-  if (!canTakeUp(id, guest)) return false;
-  reopen(byId(id)!, guest);
-  return true;
-}
 
 // The guest desk's onward (guests.ts): an open share of this guest's that opens url (its own host or one its pages link
 // to) hands them on to it; null if none does.
@@ -522,24 +453,24 @@ const WORDS = {
     button: `Open ${what}`,
     text: `${company}’s crew would like your notes on ${what} before it goes out. Open it, tap the red pin on anything you’d \
 change, and say or type what you think. Something across several pages? The small menu next to the pin has a general \
-note. When you’re done, tap Send my notes in that menu: they go to the crew with a picture of the screen. It’s open \
-until ${until}.`,
+note. There’s nothing to send: each note is kept as you make it, with a picture of the screen. It’s open until \
+${until}.`,
   }),
   nl: (what: string, company: string, until: string) => ({
     title: `${what}, voor jouw notities`,
     button: `Open ${what}`,
     text: `De crew van ${company} hoort graag wat jij van ${what} vindt voordat het live gaat. Open het, tik op de rode speld \
 bij alles wat je anders zou doen, en zeg of typ wat je denkt. Iets dat over meerdere pagina’s gaat? Het menuutje naast de \
-speld heeft een algemene notitie. Klaar? Tik op Stuur mijn notities in dat menu: ze gaan met een foto van het scherm naar \
-de crew. Het staat open tot ${until}.`,
+speld heeft een algemene notitie. Je hoeft niets te versturen: elke notitie wordt bewaard zodra je hem maakt, met een foto \
+van het scherm. Het staat open tot ${until}.`,
   }),
   de: (what: string, company: string, until: string) => ({
     title: `${what}, für deine Notizen`,
     button: `${what} öffnen`,
     text: `Die Crew von ${company} möchte gern wissen, was du von ${what} hältst, bevor es live geht. Öffne es, tippe bei \
 allem, was du anders machen würdest, auf die rote Nadel und sag oder schreib, was du denkst. Etwas, das mehrere Seiten \
-betrifft? Das kleine Menü neben der Nadel hat eine allgemeine Notiz. Fertig? Tippe in diesem Menü auf Meine Notizen \
-senden: Sie gehen mit einem Bild des Bildschirms an die Crew. Offen bis ${until}.`,
+betrifft? Das kleine Menü neben der Nadel hat eine allgemeine Notiz. Senden musst du nichts: Jede Notiz wird gespeichert, \
+sobald du sie machst, mit einem Bild des Bildschirms. Offen bis ${until}.`,
   }),
 };
 const VIEW = {
@@ -559,39 +490,16 @@ const VIEW = {
     text: `Die Crew von ${company} teilt ${what} mit dir. Schau dich gern um: Es ist offen bis ${until}.`,
   }),
 };
-// A notes share's door once its person sent theirs (reopenable): thanks, and its button takes them up again.
-const SENT = {
-  en: (what: string, company: string, until: string) => ({
-    title: 'Sent, thank you',
-    button: 'Add more notes',
-    text: `Your notes on ${what} went to ${company}’s crew. Thought of more? Add more notes opens it again, until ${until}.`,
-  }),
-  nl: (what: string, company: string, until: string) => ({
-    title: 'Verstuurd, dank je wel',
-    button: 'Meer notities toevoegen',
-    text: `Je notities over ${what} zijn naar de crew van ${company} gegaan. Nog iets bedacht? Meer notities toevoegen opent \
-het weer, tot ${until}.`,
-  }),
-  de: (what: string, company: string, until: string) => ({
-    title: 'Gesendet, danke',
-    button: 'Mehr Notizen hinzufügen',
-    text: `Deine Notizen zu ${what} sind an die Crew von ${company} gegangen. Noch etwas eingefallen? Mehr Notizen \
-hinzufügen öffnet es wieder, bis ${until}.`,
-  }),
-};
-// A share's link once it's closed for good (the board ended it, its date passed, or its person was removed): why, in one
-// line.
+// A share's link once it's closed (the board ended it, its date passed, or its person was removed), in one line.
 const SHUT = {
-  en: (sent: boolean) => (sent ? 'These notes were sent and this invite has ended.' : 'This invite has ended.'),
-  nl: (sent: boolean) =>
-    sent ? 'Deze notities zijn verstuurd en deze uitnodiging is afgelopen.' : 'Deze uitnodiging is afgelopen.',
-  de: (sent: boolean) =>
-    sent ? 'Diese Notizen wurden gesendet und diese Einladung ist beendet.' : 'Diese Einladung ist beendet.',
+  en: 'This invite has ended.',
+  nl: 'Deze uitnodiging is afgelopen.',
+  de: 'Diese Einladung ist beendet.',
 };
 // A tester invite's door: a greeting, three steps with the voucher in the first (or that it is spent), the company's
 // testerFeedback as a fourth when set, a quieter aside on what happens to their notes, and a small line with its
-// testerNote, that notes carry the screen and browser, and the closing time. A step's **…** is bold. Once they've sent
-// their notes, its button is Add more notes (more). plan: on a product with plans, its own first step (plans.ts tester;
+// testerNote, that notes carry the screen and browser, and the closing time. A step's **…** is bold. plan: on a product
+// with plans, its own first step (plans.ts tester;
 // '' for the words here), null on the shop's door.
 const TESTER = {
   en: (what: string, company: string, until: string, note: string, feedback: string[], plan: string | null) => ({
@@ -604,7 +512,7 @@ const TESTER = {
         : plan ||
           `Look around and take a plan, as anyone would. 🎁 Type the voucher below where ${what} asks how to pay: **it pays for the plan, nothing is charged and no card is asked for**.`,
       `Tap the red pin on anything you’d change${plan === null ? ', all the way to the confirmation page,' : ''} and say or type what you think. Something across several pages? The small menu next to the pin has a general note.`,
-      'Done? Tap Send my notes in that menu: they go to the crew with a picture of the screen. Thought of more? Add more notes is in the same menu.',
+      'There’s nothing to send: each note is kept as you make it, with a picture of the screen.',
       ...feedback,
     ],
     aside: {
@@ -614,11 +522,10 @@ const TESTER = {
           ? 'You can pin notes anywhere: the shop and every app in it.'
           : `You can pin notes anywhere in ${what}.`,
         'Something broken? Pin a note: the crew looks at it and fixes what’s plainly broken.',
-        'Once everyone has sent their notes, the crew goes through them all and decides what to change.',
+        'The crew goes through them all and decides what to change.',
       ],
     },
     small: `${note}Your notes include your screen size and browser, so we see what you saw. Open until ${until}.`,
-    more: 'Add more notes',
     voucher: (cap: string) =>
       plan === null
         ? `Your voucher, for one order up to ${cap}, delivery included`
@@ -638,7 +545,7 @@ const TESTER = {
         : plan ||
           `Kijk rond en neem een abonnement, zoals iedereen dat zou doen. 🎁 Typ de tegoedbon hieronder waar ${what} vraagt hoe je betaalt: **hij betaalt het abonnement, er wordt niets afgeschreven en je hoeft geen kaart te geven**.`,
       `Tik op de rode speld bij alles wat je anders zou doen${plan === null ? ', tot en met de bevestigingspagina,' : ''} en zeg of typ wat je denkt. Iets dat over meerdere pagina’s gaat? Het menuutje naast de speld heeft een algemene notitie.`,
-      'Klaar? Tik op Stuur mijn notities in dat menu: ze gaan met een foto van het scherm naar de crew. Nog iets bedacht? Meer notities toevoegen zit in hetzelfde menu.',
+      'Je hoeft niets te versturen: elke notitie wordt bewaard zodra je hem maakt, met een foto van het scherm.',
       ...feedback,
     ],
     aside: {
@@ -648,11 +555,10 @@ const TESTER = {
           ? 'Je kunt overal notities prikken: in de winkel en in elke app.'
           : `Je kunt overal in ${what} notities prikken.`,
         'Werkt iets niet? Prik een notitie: de crew kijkt ernaar en repareert wat duidelijk stuk is.',
-        'Als iedereen zijn notities heeft gestuurd, gaat de crew ze allemaal door en beslist wat er verandert.',
+        'De crew gaat ze allemaal door en beslist wat er verandert.',
       ],
     },
     small: `${note}Je notities bevatten je schermgrootte en browser, zodat we zien wat jij zag. Open tot ${until}.`,
-    more: 'Meer notities toevoegen',
     voucher: (cap: string) =>
       plan === null
         ? `Je tegoedbon, voor één bestelling tot ${cap}, verzending inbegrepen`
@@ -672,7 +578,7 @@ const TESTER = {
         : plan ||
           `Schau dich um und nimm ein Abo, wie es jeder tun würde. 🎁 Gib den Gutschein unten dort ein, wo ${what} fragt, wie du bezahlst: **Er bezahlt das Abo, es wird nichts abgebucht und du musst keine Karte angeben**.`,
       `Tippe bei allem, was du anders machen würdest${plan === null ? ', bis zur Bestätigungsseite,' : ''} auf die rote Nadel und sag oder schreib, was du denkst. Etwas, das mehrere Seiten betrifft? Das kleine Menü neben der Nadel hat eine allgemeine Notiz.`,
-      'Fertig? Tippe in diesem Menü auf Meine Notizen senden: Sie gehen mit einem Bild des Bildschirms an die Crew. Noch etwas eingefallen? Mehr Notizen hinzufügen ist im selben Menü.',
+      'Senden musst du nichts: Jede Notiz wird gespeichert, sobald du sie machst, mit einem Bild des Bildschirms.',
       ...feedback,
     ],
     aside: {
@@ -682,11 +588,10 @@ const TESTER = {
           ? 'Du kannst überall Notizen anheften: im Shop und in jeder App darin.'
           : `Du kannst überall in ${what} Notizen anheften.`,
         'Funktioniert etwas nicht? Hefte eine Notiz an: Die Crew schaut es sich an und repariert, was eindeutig kaputt ist.',
-        'Wenn alle ihre Notizen gesendet haben, geht die Crew sie alle durch und entscheidet, was sich ändert.',
+        'Die Crew geht sie alle durch und entscheidet, was sich ändert.',
       ],
     },
     small: `${note}Deine Notizen enthalten deine Bildschirmgröße und deinen Browser, damit wir sehen, was du gesehen hast. Offen bis ${until}.`,
-    more: 'Mehr Notizen hinzufügen',
     voucher: (cap: string) =>
       plan === null
         ? `Dein Gutschein, für eine Bestellung bis ${cap}, Versand inklusive`
@@ -740,42 +645,31 @@ guests.addDoor(link => {
   if (!p || !s) return undefined;
   return {
     guest: p.guest,
-    open: (isOpen(s) || reopenable(s, p)) && onIt(p),
+    open: isOpen(s) && onIt(p),
     words: lang => {
       const said = [
         owed.ownerOf(s.about).name,
         names().name,
         guests.pageFormats().moment(Date.parse(s.ends), lang),
       ] as const;
-      const now = person(s.id, p.guest),
-        sent = !!now && reopenable(byId(s.id) ?? s, now);
-      if (!s.tester) return (s.view ? VIEW : sent ? SENT : WORDS)[lang](...said);
-      const { voucher, spent, more, ...t } = TESTER[lang](
-          ...said,
-          testerNote(lang),
-          testerFeedback(lang),
-          planStep(s, lang),
-        ),
-        // sent, their button takes the notes up again
-        w = sent ? { ...t, button: more } : t;
-      if (!now?.voucher) return w;
+      if (!s.tester) return (s.view ? VIEW : WORDS)[lang](...said);
+      const { voucher, spent, ...t } = TESTER[lang](...said, testerNote(lang), testerFeedback(lang), planStep(s, lang)),
+        now = person(s.id, p.guest);
+      if (!now?.voucher) return t;
       return {
-        ...w,
+        ...t,
         code: orderOf(now)
           ? { label: spent, value: '' }
           : { label: voucher(euros(capOf(byId(s.id) ?? s), lang)), value: shownVoucher(now.voucher) },
       };
     },
     go: () => {
-      const was = byId(s.id),
-        sent = person(s.id, p.guest);
-      if (was && sent?.link === p.link && reopenable(was, sent)) reopen(was, p.guest);
       const now = byId(s.id),
         seal = guests.seal(p.guest),
         still = person(s.id, p.guest);
       return now && isOpen(now) && seal && still?.link === p.link && onIt(still) ? handOff(now, p.guest, seal) : null;
     },
-    shut: (lang, own) => SHUT[lang](own && !!p.submitted && !p.removed),
+    shut: lang => SHUT[lang],
     talk: lang => {
       const call = walkThrough(s.id);
       return call ? { button: TALK[lang](call.agent), go: call.link } : null;
@@ -783,15 +677,14 @@ guests.addDoor(link => {
   };
 });
 guests.addOnward(onward);
-// A guest still on an open share keeps their address, as does one who may still take their notes up again (reopenable);
-// one removed, or whose shares ended for good, is free to invite again at another.
+// A guest still on an open share keeps their address; one removed, or whose shares ended, is free to invite again at
+// another.
 guests.addHolder(
   guest =>
     !!db
       .prepare(
         `select 1 from review_share_people p join review_shares s on s.id = p.share
-        where p.guest = ? and p.removed is null and s.ends > ?
-          and (s.ended is null or (s.ended_by = 'everyone' and s.view = 0 and p.submitted is not null))`,
+        where p.guest = ? and p.removed is null and s.ends > ? and s.ended is null`,
       )
       .get(guest, new Date().toISOString()),
 );

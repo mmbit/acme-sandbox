@@ -655,13 +655,13 @@ export async function makeShare(dev, body) {
     const host = new URL(body.page).host, slug = host.split('.')[0], product = (await mockList('review')).products.find(p => p.slug === slug);
     share = mock.shares.find(s => !s.ended && s.host === host && s.view === !!body.view && s.tester === !!body.tester);
     if (!share) mock.shares.unshift(share = { id: mock.shares.length + 1, what: product?.name ?? slug, host, prefix: '/', ends: new Date(Date.now() + body.days * 864e5).toISOString(),
-      ended: null, notes: 0, people: [], job: null, owner: product?.ownerName ?? '',
+      ended: null, people: [], owner: product?.ownerName ?? '',
         view: !!body.view, tester: !!body.tester, cap: body.tester ? body.cap ?? 50 : null, pays: slug === 'front' ? 'order' : 'plan' });
   }
   if (share.people.some(p => p.name === body.name)) throw mockRefusal(`${body.name} is on it already`);
   const known = mockShared().find(p => p.name === body.name), email = body.email ?? known?.email;
   if (!email) throw mockRefusal('that email address doesn’t look right');
-  share.people.push({ name: body.name, title: known?.title ?? null, address: `${email[0]}••••${email.slice(email.indexOf('@'))}`, email, opened: null, sent: null, notes: 0, link: `${location.origin}/guest/dev-${Date.now()}`, ordered: null });
+  share.people.push({ name: body.name, title: known?.title ?? null, address: `${email[0]}••••${email.slice(email.indexOf('@'))}`, email, opened: null, link: `${location.origin}/guest/dev-${Date.now()}`, ordered: null });
   return share;
 }
 // The people the board shared with in the last three weeks, by name and the title it gave them: the share box's Recent,

@@ -111,3 +111,17 @@ export function followPopups(r) {
   );
   liftHost(r, false);
 }
+// what's under the finger, inside open shadow roots too: a tap in a chat's panel is the bubble or button there, not
+// the chat's empty host element at the page's end
+export function under(r, x, y) {
+  let el =
+    document.elementsFromPoint(x, y).find(e => e !== r.host && e !== document.documentElement && e !== document.body) ||
+    document.body;
+  for (let root; (root = el.shadowRoot);) {
+    // the topmost of its own (ours is on top of everything)
+    const inner = root.elementsFromPoint(x, y).find(e => e.getRootNode() === root);
+    if (!inner) break;
+    el = inner;
+  }
+  return el;
+}

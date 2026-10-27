@@ -1,6 +1,5 @@
 // The thank-you an outside reviewer sees on their next preview page once something they pinned as broken is fixed and
-// live (the coordinator's feedback.ts thanksFor fills in FIXED and serves this after the tool, or alone once they've sent
-// their notes). Thanks, it's fixed, refresh and try again, in the page's language, with a few words of their note. It
+// live (the coordinator's feedback.ts thanksFor fills in FIXED and serves this after the tool). Thanks, it's fixed, refresh and try again, in the page's language, with a few words of their note. It
 // tells the coordinator it showed, so each fix is thanked for once; × closes it. Nothing else on the page changes.
 (() => {
   const FIXED = JSON.parse('{{FIXED}}'); // { ids, notes: a few words of each, crew: the company's name }

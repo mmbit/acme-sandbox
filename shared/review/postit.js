@@ -9,10 +9,8 @@ import { box } from './anchor.js';
 import { expose, photo, snapshot } from './snapshot.js';
 import { addFrame, picturesNow, unpicture } from './pictures.js';
 import { canRecord, startMic, stopMic } from './dictation.js';
-import { redrawInk } from './surface.js';
-import { paint, refresh } from './menu.js';
-import { cancel, reset } from './tool.js';
-import { toBook } from './pencil.js';
+import { paint, redrawInk, refresh, reset } from './acts.js';
+import { toBook } from './settle.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
 
@@ -47,8 +45,6 @@ export const CSS = `
       .chip { display: inline-block; max-width: 100%; background: var(--bk-paper2); box-shadow: inset 0 0 0 1px var(--bk-line), inset 0 -2px 0 var(--bk-gold); border-radius: 3px; padding: 2px 8px; font: 13px/1.4 ui-monospace, Menlo, monospace;
         overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .page { display: block; margin-top: 5px; color: var(--bk-muted); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-      .redraw { margin-top: 6px; padding: 4px 0; font-size: 14px; font-weight: 700; color: #c23c44; text-decoration: underline; text-underline-offset: 3px; }   /* changing a note: its mark drawn again */
-      .redraw[hidden] { display: none; }
       .sheet.bare .polaroid, .sheet.bare .chip { display: none; } /* a general note: no photo */
       textarea { display: block; width: 100%; margin: 14px 0 10px; min-height: 104px; resize: vertical; border: 0; outline: 0; padding: 4px 2px; color: #1d1a2f; font-family: inherit; font-size: 18px; line-height: 28px; background: transparent; }
       textarea::placeholder { color: #8f88a8; }
@@ -62,7 +58,7 @@ export const CSS = `
 
 export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note for the team">
         <div class="top"><div class="polaroid busy"><div class="img"></div></div>
-          <div class="who"><h2>Note to self… er, to the team</h2><span class="chip"></span><span class="page"></span><button class="redraw" hidden>Redraw</button></div></div>
+          <div class="who"><h2>Note to self… er, to the team</h2><span class="chip"></span><span class="page"></span></div></div>
         <textarea placeholder="What should change? Type it, or tap the mic and say it." maxlength="4000"></textarea>
         <div class="row"><button class="mic" aria-label="Dictate the note">${MIC}</button><span class="grow"></span>
           <button class="ghost" data-cancel>Cancel</button><button class="send">Pin it</button></div>
@@ -73,8 +69,7 @@ export const HTML = `<div class="sheet" hidden role="dialog" aria-label="A note 
 const TOLD = '__hq_review_told';
 // Whether the open mark is this screen's own on the page's screen of a pairing (<html data-paired="page">), which goes
 // to the other screen (handover.js) rather than open its post-it here, nor the mic. Never on HQ, where a mark goes into the book from the screen it's drawn on (settle.js)
-export const across = r =>
-  !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.editing && !r.call;
+export const across = r => !r.book && document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.call;
 
 // The note for what was marked: the screenshot taken at the first mark, every line since drawn on it (develop)
 export function compose(r) {
@@ -99,8 +94,6 @@ export function compose(r) {
   mark.element = { ...describe(mark.el), kind: mark.kind, area: mark.area && box(mark.area), ...moment };
   mark.view = viewNow();
   mark.page = location.href;
-  // changing a note: this mark replaces the one shown, and stays on the page with its element as the sheet comes back
-  if (r.editing) r.editing = { ...r.editing, redrawn: true, mark: { ...marked(r), live: mark.el } };
   r.shot = shoot(r, mark);
   // (the mic: the first mark starts it; on a call the call hears the board, and no post-it shows: callnotes.js.
   // A paired phone's own mark goes to the other screen without a post-it, so without the mic too: nothing listens
@@ -141,7 +134,6 @@ function stuck(r, mark, unseen) {
   if (r.mark !== mark) return;
   r.veil.classList.add('marked');
   r.dock.hidden = true;
-  if (r.editing) r.root.querySelectorAll('.drop').forEach(d => d.remove());
   redrawInk(r);
   const t = mark.element,
     words = t.text ? ` “${t.text.slice(0, 40)}${t.text.length > 40 ? '…' : ''}”` : '';
@@ -160,7 +152,7 @@ export function towards(r, mark) {
   if (r.call) return;
   ownerNamed(r, mark.el).then(
     ({ name }) => {
-      if (r.mark !== mark || r.editing) return;
+      if (r.mark !== mark) return;
       r.towards = `For ${name}’s sheet in your Sketchbook`;
       r.pinIt.textContent = `Send to ${name}`;
       if (!r.sheet.hidden) r.$('.page').textContent = r.towards;
@@ -221,7 +213,6 @@ export function showSheet(r) {
   r.sheet.hidden = false;
   r.sheet.classList.remove('away');
   // an outsider hears once what goes with a note (a general note has no picture, so its line doesn't count as that)
-  // (a note being changed has no mark until it's redrawn, and a redraw's new picture is told too)
   if (r.outside && r.mark && !kept(localStorage, TOLD)) {
     if (r.mark.kind === 'general') r.msg.textContent = 'Your notes go to the crew. Please don’t type personal details.';
     else {
@@ -232,14 +223,13 @@ export function showSheet(r) {
   if (matchMedia('(pointer: fine)').matches) r.text.focus();
 }
 
-// The note open as a step began, still open after its wait: a new note by its mark, a change by its editing (it has no
-// mark until it's redrawn), which a Cancel clears
+// The note open as a step began, still open after its wait: its mark, which a Cancel clears
 function opened(r) {
-  const { mark, editing } = r;
-  return () => r.mark === mark && r.editing === editing;
+  const { mark } = r;
+  return () => r.mark === mark;
 }
 // Pin it: the words (once any still being said are in), the screenshot and the pictures, to the coordinator next to
-// the script; a change saves instead
+// the script
 async function pinIt(r) {
   if (r.mode !== 'note') return;
   const open = opened(r); // (asked after each wait, the mic's too.)
@@ -252,7 +242,7 @@ async function pinIt(r) {
     if (r.mode !== 'note') return;
   }
   const note = r.text.value.trim();
-  if (r.book && !r.editing) return booked(r);
+  if (r.book) return booked(r);
   if (!note) {
     r.text.focus();
     r.msg.textContent = 'A word or two first?';
@@ -271,11 +261,11 @@ async function pinIt(r) {
     return;
   }
   r.msg.textContent = 'Sending…';
-  return r.editing ? save(r, note, url, added) : pinned(r, note, url, added);
+  return pinned(r, note, url, added);
 }
-// A new note: once it's in, the post-it flies off and the menu counts it. The board's goes on its book's sheet for the
-// page's owner; said: how its words came. Each step after a wait is this
-// note's only while its mark is still the one open: a post-it cancelled meanwhile, and another begun, is left alone
+// A new note: once it's in, the post-it flies off and the board's menu counts it. The board's goes on its book's sheet
+// for the page's owner, and so does an outsider's; said: how its words came. Each step after a wait is this note's
+// only while its mark is still the one open: a post-it cancelled meanwhile, and another begun, is left alone
 async function pinned(r, note, url, added) {
   const mark = r.mark;
   try {
@@ -353,34 +343,8 @@ async function booked(r) {
     r.msg.textContent = err?.status ? `The book said no: ${err.message}` : 'Could not reach the book. Try again?';
   }
 }
-// A change: the words and pictures, and a mark drawn again with its screenshot; then back to My notes (pictures)
-async function save(r, note, url, added) {
-  const open = opened(r),
-    redrawn = r.editing.redrawn
-      ? { page: r.mark.page, element: marked(r), viewport: r.mark.view, shot: url || null }
-      : {};
-  try {
-    const res = await post(r.ROUTE, 'edit', { id: r.editing.n.id, note, pictures: added, ...redrawn });
-    await refusal(res);
-    if (!open()) return; // (cancelled while it went: the post-it begun since is left alone.)
-    if (!res.ok)
-      throw new RefusedError(
-        res.status === 404
-          ? 'That note has gone already: sent, or deleted.'
-          : `The coordinator said no (${res.status}).`,
-      );
-    r.pinIt.disabled = false;
-    cancel(r);
-  } catch (err) {
-    if (!open()) return;
-    r.mode = 'note';
-    r.pinIt.disabled = false;
-    r.msg.textContent = err instanceof RefusedError ? err.message : 'Couldn’t save it. Try again?';
-  }
-}
-
 export function setupPostit(r) {
-  r.$('[data-cancel]').onclick = () => cancel(r);
+  r.$('[data-cancel]').onclick = () => reset(r);
   // (words typed after any were said: the Pencil keeps its own.)
   if (!r.book) r.text.addEventListener('input', () => (r.typed = true));
   r.pinIt.onclick = () => pinIt(r);
