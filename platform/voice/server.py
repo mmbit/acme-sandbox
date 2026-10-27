@@ -1129,7 +1129,7 @@ class Call:
         # how much audio the line had heard by then (samples)
         self.late = 0.0       # how late the last ping came against that baseline (s)
         self.latest, self.waited = 0.0, 0  # the latest it came all call, and how many answers waited (the hang-up line)
-        self.pen = None       # the board's Pencil: 'down', or when it was last lifted (PEN_REST_SECONDS; company: job #19863)
+        self.pen = None       # the board's Pencil: 'down', or when it was last lifted (PEN_REST_SECONDS)
         self.noticed = None   # why the agent couldn't answer, as the line last said it (until a reply gets through)
         # Hung up: after end(), no turn or agent starts and the transcript isn't written
         self.ended = False
