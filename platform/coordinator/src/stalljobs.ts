@@ -5,7 +5,7 @@
 // While a cause's job is queued, a new stall is added to its brief; once it has started, it holds the alarm until its
 // work is deployed (or never will be: wakes.ts deployed). Its title is a template's, so it waits for its sort into the
 // project it's for (sorting.ts), like HQ's other template work.
-import { db, setting, remember } from './db.ts';
+import { db, inOneStep, setting, remember } from './db.ts';
 import * as sorting from './sorting.ts';
 import { createJob } from './jobs.ts';
 import { roles } from './company.ts';
@@ -14,7 +14,9 @@ import type { Hold } from './latency.ts';
 
 const causeOf = (name: string) => (/^[A-Z]+ \//.test(name) ? 'requests' : name.replace(/\d+/g, 'n'));
 
-export function stalled(hold: Hold, late: number, now = Date.now()) {
+// (one step: the job, its prediction, the cause's job number and its hold for sorting written with one disk sync.)
+export const stalled = (hold: Hold, late: number, now = Date.now()) => inOneStep(() => queueFor(hold, late, now));
+function queueFor(hold: Hold, late: number, now: number) {
   const cause = causeOf(hold.name),
     key = `stalljob:${cause}`,
     open = Number(setting(key)) || 0,

@@ -37,12 +37,22 @@ const note = (body: Record<string, unknown>) =>
 test("a call's page: the board's notes and the agent's ink numbered on it, never on a sheet to send; the line reads the board's", async () => {
   const { call, token } = await h.liveCall('juno');
   const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
-  assert.deepEqual([page.kind, page.call, page.summary], ['call', call, null]);
+  assert.deepEqual([page.kind, page.call, page.summary, page.agent], ['call', call, null, 'juno']);
+  // (when the call started, for the page's name in the book)
+  assert.ok(Math.abs(Date.parse(page.started) - Date.now()) < 60_000, `the call started ${page.started}`);
 
   const one = (await note({ page: page.id, words: 'This feels high?', snip: SNIP })).body;
   assert.equal(one.note.n, 1);
   assert.equal(one.note.by, 'board');
-  assert.equal(one.asked, null, "a question on a call is the call's agent's to answer, there and then");
+  // (a question on a call asks as anywhere: the call's agent answers it on the page too.)
+  assert.equal(typeof one.asked, 'number', 'the question asks now');
+  assert.deepEqual(
+    { ...(db.prepare('select agent, kind from jobs where id = ?').get(one.asked) as object) },
+    {
+      agent: 'juno',
+      kind: 'chat',
+    },
+  );
   const two = (
     await note({ page: page.id, anchor: anchor('#7b5ea7'), words: 'or with shipping in?', said: 'typed', by: 'juno' })
   ).body;
@@ -61,8 +71,25 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
     sheets.open.map((s: any) => s.id),
     [own.sheet.id],
   );
+  // ...and read with its page, however old the call, for the book to show the call's notes there; each note says it's
+  // a call's, and whose, so HQ's page never takes it for a sheet's
+  const { calls } = (await h.board(`/api/book/calls?pages=${page.id},${sheetPage.id}`)).body;
+  assert.deepEqual(
+    calls.map((s: any) => [s.id, s.notes.map((n: any) => n.id)]),
+    [[one.sheet.id, [one.note.id, two.note.id]]],
+  );
+  const onUrl = (await h.board('/api/book/notes?url=%2F%3Fopen%3Dprojects')).body.notes;
+  assert.deepEqual(
+    onUrl.map((n: any) => [n.id, n.owner, n.onCall]),
+    [
+      [one.note.id, 'juno', true],
+      [two.note.id, 'juno', true],
+      [own.note.id, 'juno', false],
+    ],
+  );
+  assert.equal((await h.board('/api/book/calls?pages=')).status, 400);
   assert.match((await h.board('/api/book/send', { id: one.sheet.id })).body.error, /stay on its page/);
-  // ...nor moved to a sheet that is, and a question written over one asks nothing either
+  // ...nor moved to a sheet that is, and the agent's own ink written over as a question asks nothing
   const moved = await h.board('/api/book/note/move', { id: one.note.id, to: 'juno' });
   assert.equal(moved.status, 409);
   assert.match(moved.body.error, /stays on its call's page/);
@@ -70,6 +97,12 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
     await h.board('/api/book/note/edit', { id: two.note.id, words: 'Or with shipping in?', said: 'typed' })
   ).body;
   assert.deepEqual([edited.note.words, edited.asked], ['Or with shipping in?', null]);
+  // ...while the board's handwriting, read after the note went in, asks once it ends in a question mark (job #19916)
+  const written = (await note({ page: page.id })).body.note;
+  const late = (
+    await h.board('/api/book/note/edit', { id: written.id, words: 'What time is it?', said: 'written', was: '' })
+  ).body;
+  assert.equal(typeof late.asked, 'number');
 
   // the voice line reads the board's note, on this live call only, never the agent's own ink
   const read = await h.voice(`note?id=${one.note.id}&call=${call}`);
@@ -100,4 +133,12 @@ test("a call's page: the board's notes and the agent's ink numbered on it, never
     409,
     "a sheet's page still waits",
   );
+});
+
+test("a call's page is given to an agent on its own, as a free page is: its seconds to undo, undone", async () => {
+  const { call } = await h.liveCall('juno');
+  const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
+  const sending = (await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).body;
+  assert.deepEqual([sending.owner, sending.status, sending.page], ['kit', 'sending', page.id]);
+  assert.deepEqual((await h.board('/api/book/undo', { id: sending.id })).body, { id: sending.id, status: 'undone' });
 });

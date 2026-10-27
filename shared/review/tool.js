@@ -15,7 +15,7 @@ import { setupChange, unpick } from './change.js';
 import * as pencil from './pencil.js';
 import { setupCall } from './callnotes.js';
 
-// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, SENT, LOOK, ROUTE, summoned, toHq, covered }), the
+// r: the config review.js hands over ({ HQ, framed, OUTSIDE, outside, SENT, LOOK, ROUTE, summoned, toHq, covered, away }), the
 // elements and the state the parts share. mode: idle | pick (marking) | note (the post-it open) | sending
 export function start(config) {
   const r = {
@@ -27,6 +27,7 @@ export function start(config) {
     strokes: [],
     penSeen: false,
     covered: config.covered,
+    away: config.away,
   };
   startTrail(r);
   const css = [

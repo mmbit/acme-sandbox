@@ -30,7 +30,10 @@ export const onThisPage = a => {
 export async function ownerOf(r, el) {
   r.org ??= fetch('/api/org')
     .then(json)
-    .then(o => ({ ceo: o.company?.ceo, agents: new Set(o.departments.flatMap(d => d.agents.map(a => a.id))) }));
+    .then(o => ({
+      ceo: o.company?.ceo,
+      agents: new Map(o.departments.flatMap(d => d.agents.map(a => [a.id, a.name ?? a.id]))), // (names)
+    }));
   r.org.catch(() => (r.org = null)); // (never a failed ask kept)
   const { ceo, agents } = await r.org;
   for (let e = el; e; e = e.parentElement ?? e.getRootNode?.().host) {
@@ -39,6 +42,12 @@ export async function ownerOf(r, el) {
     if (owner === '') break;
   }
   return ceo;
+}
+
+// ...and the sheet's name for it, as the book heads it ("For Juno").
+export async function ownerNamed(r, el) {
+  const owner = await ownerOf(r, el);
+  return { owner, name: (await r.org)?.agents.get(owner) ?? owner };
 }
 
 // The owner's page in today's book (a sheet's page, one an owner a day, made at their first note), and who it's for.

@@ -3,7 +3,8 @@
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db } from './db.ts';
-import { BOARD, COLUMNS, pictureOf, row, summary, type Page } from './book.ts';
+import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
+import { pictureOf } from './bookpicture.ts';
 import type { Refused } from './pagechecks.ts';
 import { DIR } from './pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';

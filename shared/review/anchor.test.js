@@ -2,7 +2,7 @@
 // shared/review/check.mjs's "anchor" path)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { COVERS, anchorOf, box, lands, mapper, noKeys, steps } from './anchor.js';
+import { COVERS, anchorOf, box, lands, mapper, noKeys, roundOf, steps } from './anchor.js';
 
 test("a page keeps its fragment's names and a plain anchor, never a value", () => {
   assert.equal(noKeys('https://hello.test/order?n=42#t=secret&faq'), 'https://hello.test/order?n=42#t=…&faq');
@@ -94,4 +94,36 @@ test('a ring on part of an element (a word in a paragraph, a spot on a canvas) l
 test('a ring whose middle is off its element (begun on a neighbour) lands nowhere; a pin on its element does', () => {
   assert.equal(lands({ ...round, ink: ringOn(150, 20, 400, 200) }, { ...button, box: button.box }), false);
   assert.equal(lands({ ...round, ink: [] }, { ...button }), true);
+});
+
+// What a ring is round, as the phone sends it: elements nested in a page, each
+// with its box in client px
+function nest(...boxes) {
+  const doc = {};
+  let parentElement = null;
+  const els = ['html', 'body', ...boxes].map(b => {
+    const [x, y, w, h] = typeof b === 'string' ? [0, 0, 400, 2000] : b;
+    const el = {
+      ownerDocument: doc,
+      parentElement,
+      getBoundingClientRect: () => ({ left: x, top: y, right: x + w, bottom: y + h, width: w, height: h }),
+    };
+    parentElement = el;
+    return el;
+  });
+  [doc.documentElement, doc.body] = els;
+  return els.slice(2);
+}
+
+test('a ring is round the outermost element it covers COVERS of, not the row it sits in nor the page', () => {
+  // a panel, a row in it, a button in the row, the button's label
+  const [panel, row, button, label] = nest([0, 0, 400, 600], [0, 100, 400, 60], [10, 110, 100, 40], [20, 115, 60, 30]);
+  assert.equal(roundOf(label, { x: 5, y: 105, w: 110, h: 50 }), button, 'the button, from its label up');
+  assert.equal(roundOf(row, { x: 5, y: 105, w: 110, h: 50 }), null, 'the row it sits in is not covered');
+  assert.equal(roundOf(label, { x: 0, y: 0, w: 400, h: 2000 }), panel, 'short of the page itself');
+  assert.equal(roundOf(label, { x: 25, y: 120, w: 10, h: 10 }), null, 'a spot on a word');
+  // (a box of no size, as display: contents lays one out, ends the climb even inside a covered one)
+  const [, zero, inside] = nest([0, 0, 400, 400], [0, 0, 0, 0], [10, 10, 50, 20]);
+  assert.equal(roundOf(inside, { x: 0, y: 0, w: 400, h: 400 }), inside);
+  assert.equal(roundOf(zero, { x: 0, y: 0, w: 400, h: 400 }), null);
 });

@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 import { render, rendered } from './core.mjs';
 import * as drawn from './drawn.mjs';
 import { pricesFor } from './prices.mjs';
-import { MEDIA, ROOT, SIDE, noteRender } from './renders.mjs';
+import { MEDIA, ROOT, SIDE, fetchRender, noteRender } from './renders.mjs';
 
 const KIND = 'render';
 // the spec, the job's files and the film, in a folder git ignores (the clone's own exclude list)
@@ -72,6 +72,8 @@ async function drawAway(folder, options) {
     if (ran.status === drawn.MISSING_EXIT && existsSync(missing)) {
       const lacked = JSON.parse(readFileSync(missing, 'utf8')).filter(path => !needed.has(path));
       if (!lacked.length) throw new Error(`${options.out}: the run lacked files it had been sent`);
+      // a render this clone has only the note of (a clip kept by another job) is fetched to go with the next
+      for (const path of lacked) if (!existsSync(join(ROOT, path))) await fetchRender(join(ROOT, path + SIDE));
       for (const path of [...lacked, ...alongside(files, lacked)]) needed.add(path);
       learn(page, lacked);
       rmSync(missing);

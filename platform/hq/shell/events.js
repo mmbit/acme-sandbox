@@ -11,8 +11,11 @@ import { refreshOrg } from './main.js';
 import { names } from './brand.js';
 
 export function onEvent(ev) {
-  // (the book changed on the store, an answer clipped onto a note: the book reads its sheets again, bookrail.js.
-  if (ev.type === 'book') return void document.dispatchEvent(new CustomEvent('book:changed'));
+  // (the book changed on the store, an answer clipped onto a note: the book reads its sheets again, bookrail.js; one
+  // typed onto a page names it, which the book reads again if it's open, bookpages.js. company: page job #19916, not
+  // upstream yet)
+  if (ev.type === 'book')
+    return void document.dispatchEvent(new CustomEvent('book:changed', { detail: { page: ev.page ?? null } }));
   if (world.apply(ev).unknown) refreshOrg(); // someone new
 }
 

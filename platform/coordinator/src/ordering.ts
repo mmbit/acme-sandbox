@@ -6,7 +6,8 @@ import * as latency from './latency.ts';
 import * as claimobservation from './claimobservation.ts';
 import * as jobs from './jobs.ts';
 import * as redraws from './redraws.ts';
-import { keepSpotSizes, recordFor, sizesFor } from './predictions.ts';
+import { recordFor, sizesFor } from './predictions.ts';
+import { keep } from './pastpool.ts';
 import { expand } from './rounds.ts';
 import { backward, compare, precedence, ready, spareOnly, type Timing } from './planner.ts';
 import type { QueuedJob } from './eta.ts';
@@ -153,7 +154,7 @@ export function leadOf(id: number, thread: string, now: number) {
 }
 // The backward pass over the queue, at the slow sizes with each job's review rounds as runs.
 function latestStarts(queue: ReturnType<typeof orderingSnapshot>, now: number) {
-  keepSpotSizes();
+  keep();
   const record = recordFor(now, queue.jobs);
   const sizes = sizesFor(queue, 'slow', record);
   // (a placeholder sized on its thread's name and "done when", as the forecast sizes it: predictions.ts prepared)

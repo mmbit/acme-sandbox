@@ -31,6 +31,7 @@ type Reply = { status: number; body: any };
 // an event of HQ's feed (stream: history, a replayed row; statuses, who's at work now.)
 type Fed = { type: string; agent: string; text: string; history?: boolean; statuses?: Record<string, unknown> };
 export type Running = { id: number; token: string; seat: string; agent: string; [k: string]: any };
+type HqRun = { token: string; agent: string; dir?: string; tmp?: string; call?: boolean; stdin?: string };
 
 // env: settings the code reads as it loads (on top of the test company's). before(repo): changes to the test company's
 // files the code reads as it loads. serve: false for a test of a module that never meets a caller over HTTP.
@@ -129,11 +130,10 @@ export async function harness(
     return { status: res.status, body: await res.json().catch(() => null) };
   };
 
-  // The real hq script, as the job's agent runs it.
-  // (dir: the job's folder, where hq request --park leaves its card for the worker; tmp: the job's own TMPDIR; call: run
-  // as the voice line does on a call, HQ_CALL set)
-  const hq = (job: { token: string; agent: string; dir?: string; tmp?: string; call?: boolean }, ...args: string[]) =>
-    new Promise<{ code: number; out: string }>(r =>
+  // The real hq script, as the job's agent runs it (dir: the job's folder, where hq request --park leaves its card for
+  // the worker; tmp: its TMPDIR; call: as the voice line runs it, HQ_CALL set; stdin: piped in, for a command's "-")
+  const hq = (job: HqRun, ...args: string[]) =>
+    new Promise<{ code: number; out: string }>(r => {
       execFile(
         'bash',
         [HQ, ...codedArgs(args)],
@@ -149,8 +149,8 @@ export async function harness(
           },
         },
         (e, out, err) => r({ code: e ? Number(e.code) : 0, out: out + err }),
-      ).stdin!.end(),
-    );
+      ).stdin!.end(job.stdin);
+    });
 
   // A job's life, as the worker lives it. A job made here runs on an engine of its own unless the test names one, so
   // the claim takes this job and no other.
@@ -246,7 +246,7 @@ export async function harness(
   const { mergedPr, ended, storedPr, failedJobs, clearReviewHistory } = recordedReviews(db, queue);
   // Jobs that ended before the test.
   const pastJob = recordedPastJobs(db, { storedPr, mergedPr });
-  const { storedCall, carriedItem, liveCall } = await recordedCalls(db, voice);
+  const { storedCall, carriedItem, openItem, liveCall } = await recordedCalls(db, voice);
   // A job as HQ lists it (its status, result, note...)
   const job = (id: number) => (jobs.listJobs() as any[]).find(j => j.id === id);
   // A persisted stuck review whose replacement can still report.
@@ -316,6 +316,7 @@ export async function harness(
     clearReviewHistory,
     storedCall,
     carriedItem,
+    openItem,
     liveCall,
     pastJob,
     ...storedPlans(db), // (plan states no route makes)

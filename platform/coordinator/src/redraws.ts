@@ -129,7 +129,7 @@ function capturePlan(now = Date.now()) {
 function selfWaitingTasks(thread?: string) {
   const tasks = db
     .prepare(
-      `select j.id from jobs j where (? is null or j.thread = ?)
+      `select j.id from jobs j indexed by jobs_merge_pending where (? is null or j.thread = ?)
       and j.kind = 'work' and j.pr is null and ${mergePending('j')}`,
     )
     .all(thread ?? null, thread ?? null) as { id: number }[];

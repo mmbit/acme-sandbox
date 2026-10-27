@@ -28,9 +28,9 @@ export async function holdReviews(work) {
 // Reviews' two submenus at its top: Sent, opened first, and Shared, what it shared with outside people, each share one
 // line that opens to its whole block.
 let notesShown = 'sent';
-// The computer opening Reviews (openComputer), at Sent
-export function openReviews() {
-  notesShown = 'sent';
+// The computer opening Reviews (openComputer), at Sent, or at Shared (shown, a feature tip's Show me)
+export function openReviews(shown = 'sent') {
+  notesShown = shown;
 }
 const notesMenu = open =>
   `<div class="pills" role="radiogroup" aria-label="Reviews">${[

@@ -6,14 +6,12 @@
 //   icons      { eye, hangUp }: the page's own drawings of them, as markup (else simple ones of this file's)
 //   keep       a localStorage key for the corner it last settled in, or none
 //   onPause, onResume, onHangUp, onOpen, onSound(name): name is 'settle' as it lands in a corner
-// It's marked data-watchalong-hide: the call's own controls are never recorded.
-// slim(on) makes it a slim strip of audio bars moving with the voice, in place of the face (review mode, a small screen),
-// still dragged, tapped open, hung up and paused the same way.
+// A watch-along records it as the board sees it.
+// It has one form for the whole call, the face, so the board always knows what it's looking at.
+// It's no page to write on: marked data-no-ink, a pen drags and taps it as a finger does (review mode's pencil.js), so
+// it always comes back with one tap. Its corner steps clear of the page's own controls marked data-keep-clear (HQ's zoom
+// buttons).
 const MARGIN_PX = 12;
-// The slim strip's bars: how far each reaches with the voice, so they move as a shape and not in step
-const BARS = [0.55, 0.85, 1, 0.75, 0.5];
-// Changing between the two looks: the contents fade, the box grows or shrinks in its corner, the contents come back
-const MORPH_MS = 260;
 // The spring that carries it to a corner: stiff enough to land in about 0.4 s, damped to settle with one small overshoot
 const STIFFNESS = 380,
   DAMPING = 30;
@@ -32,7 +30,7 @@ export class CallBubble {
     this.reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
     const el = (this.el = document.createElement('div'));
     el.className = 'callbubble';
-    el.setAttribute('data-watchalong-hide', '');
+    el.setAttribute('data-no-ink', '');
     el.setAttribute('role', 'region');
     el.setAttribute('aria-label', words.call);
     el.innerHTML = `<button type="button" class="cb-face" aria-label="${attr(words.open)}" title="${attr(words.open)}"></button>
@@ -41,8 +39,7 @@ export class CallBubble {
         <button type="button" class="cb-pause" hidden>${attr(words.pause)}</button>
         <button type="button" class="cb-hangup" aria-label="${attr(words.hangUp)}" title="${attr(words.hangUp)}">${icons.hangUp ?? HANG_UP}</button>
       </div>`;
-    this.bars = bars(); // (hidden but when slim: a page that never slims it has nothing to style)
-    el.querySelector('.cb-face').append(face, this.bars);
+    el.querySelector('.cb-face').append(face);
     this.pauseKey = el.querySelector('.cb-pause');
     this.pauseKey.onclick = () => (this.isPaused ? onResume?.() : onPause?.());
     el.querySelector('.cb-hangup').onclick = () => onHangUp?.();
@@ -61,7 +58,7 @@ export class CallBubble {
     this.leaving = null;
     document.body.append(this.el);
     this.fitting.observe(document.body);
-    this.fitting.observe(this.el); // (its own size too: the slim strip's grows as its parts show.)
+    this.fitting.observe(this.el);
     this.el.hidden = false;
     const home = this.home();
     this.place(home.x, home.y);
@@ -100,7 +97,6 @@ export class CallBubble {
 
   close() {
     cancelAnimationFrame(this.frame);
-    cancelAnimationFrame(this.morphing);
     this.fitting.disconnect();
     removeEventListener('resize', this.fit);
     visualViewport?.removeEventListener('resize', this.fit);
@@ -120,46 +116,15 @@ export class CallBubble {
 
   // How loud the agent is now, 0 to 1, and whether anyone's talking: the face moves with it
   voice(level, talking = level > 0.02) {
-    this.el.style.setProperty('--cb-level', level.toFixed(3));
+    // (only a change: a watch-along records the bubble, and each write is an event.)
+    const shown = level.toFixed(2);
+    if (this.el.style.getPropertyValue('--cb-level') !== shown) this.el.style.setProperty('--cb-level', shown);
     this.el.classList.toggle('talking', talking);
   }
 
   // listening | thinking | speaking | reconnecting | '': for the look to show, and for a screen reader
   state(state) {
     this.el.dataset.state = state;
-  }
-
-  // Slim audio bars in place of the face, or the face again: in its corner, the box changing size from one to the other
-  slim(on) {
-    on = !!on;
-    if (this.el.classList.contains('slim') === on) return;
-    cancelAnimationFrame(this.morphing); // (one on its way the other way: from the size it has now)
-    this.morphing = 0;
-    const el = this.el,
-      from = this.el.isConnected && !this.reduced && this.size();
-    el.classList.remove('morphing');
-    el.style.width = el.style.height = '';
-    el.classList.toggle('slim', on);
-    this.bars.hidden = !on;
-    if (!from) return this.settle(false);
-    cancelAnimationFrame(this.frame);
-    const to = this.size(),
-      t0 = performance.now();
-    el.classList.add('morphing');
-    // (the box's own size, eased, kept in its corner on every frame; the look fades its contents meanwhile)
-    const step = now => {
-      const k = Math.min(1, (now - t0) / MORPH_MS),
-        e = k < 0.5 ? 4 * k * k * k : 1 - (-2 * k + 2) ** 3 / 2;
-      el.style.width = `${from.w + (to.w - from.w) * e}px`;
-      el.style.height = `${from.h + (to.h - from.h) * e}px`;
-      this.settle(false);
-      if (k < 1) return void (this.morphing = requestAnimationFrame(step));
-      this.morphing = 0;
-      el.classList.remove('morphing');
-      el.style.width = el.style.height = '';
-      this.settle(false);
-    };
-    this.morphing = requestAnimationFrame(step);
   }
 
   // ---- dragging: the bubble follows the finger, then springs to the corner nearest where the throw would carry it
@@ -264,11 +229,14 @@ export class CallBubble {
   // narrows beside its book), off the safe areas
   home() {
     const box = this.bounds(),
-      { w, h } = this.size();
-    return {
-      x: this.corner.endsWith('left') ? box.left : box.right - w,
-      y: this.corner.startsWith('top') ? box.top : box.bottom - h,
-    };
+      { w, h } = this.size(),
+      top = this.corner.startsWith('top');
+    const at = { x: this.corner.endsWith('left') ? box.left : box.right - w, y: top ? box.top : box.bottom - h };
+    // (off the page's own controls there: below them in a top corner, above them in a bottom one)
+    for (const r of [...document.querySelectorAll('[data-keep-clear]')].map(c => c.getBoundingClientRect()))
+      if (r.width && r.height && r.left < at.x + w && at.x < r.right && r.top < at.y + h && at.y < r.bottom)
+        at.y = top ? r.bottom + MARGIN_PX : r.top - MARGIN_PX - h;
+    return at;
   }
 
   bounds() {
@@ -292,20 +260,6 @@ export class CallBubble {
     this.at = { x, y };
     this.el.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
   }
-}
-
-// The slim strip's bars, each with its reach (--cb-reach) and its place in the row (--cb-i), for the look to move
-function bars() {
-  const row = document.createElement('span');
-  row.className = 'cb-bars';
-  row.hidden = true;
-  row.setAttribute('aria-hidden', 'true');
-  BARS.forEach((reach, i) => {
-    const bar = row.appendChild(document.createElement('i'));
-    bar.style.setProperty('--cb-reach', String(reach));
-    bar.style.setProperty('--cb-i', String(i));
-  });
-  return row;
 }
 
 const attr = text => String(text).replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);

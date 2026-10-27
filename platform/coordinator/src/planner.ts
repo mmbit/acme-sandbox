@@ -13,6 +13,7 @@ export type Order = {
   orderId?: number;
   created?: number;
   board: number | boolean;
+  followThrough?: number | boolean; // the CEO's hourly check (jobs.ts FOLLOW_THROUGH), first in the lane (compare)
   latestStart: number | null;
   missed?: boolean;
 };
@@ -21,10 +22,12 @@ export type Timing = Order & { latestFinish: number | null; duration: number };
 // The lane, then work with a window still open, then work whose windows have all passed, then work with none; within
 // each, the earliest latest start, then the oldest. A passed window keeps its work ahead of undated work, but no longer
 // ahead of work that can still be on time: the further it's missed, the earlier its latest start, so it would otherwise
-// go before every window still to come.
+// go before every window still to come. The CEO's hourly check leads the lane: a few minutes' read of the board's work,
+// it waited behind that work past its start alarm (followthrough.ts START_MS).
 const tier = (o: Order) => (o.latestStart === null ? 2 : o.missed ? 1 : 0);
 export function compare(a: Order, b: Order) {
   if (!!a.board !== !!b.board) return a.board ? -1 : 1;
+  if (!!a.followThrough !== !!b.followThrough) return a.followThrough ? -1 : 1;
   if (tier(a) !== tier(b)) return tier(a) - tier(b);
   const x = a.latestStart ?? Infinity,
     y = b.latestStart ?? Infinity;
@@ -139,6 +142,7 @@ export function backward(
       orderId: row.orderId,
       created: row.created,
       board: row.board,
+      ...(row.followThrough && { followThrough: true }),
       latestStart: finish === Infinity ? null : finish - duration,
       latestFinish: finish === Infinity ? null : finish,
       duration,

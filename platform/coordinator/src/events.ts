@@ -11,9 +11,12 @@ import * as secrets from './secrets.ts';
 export type Event = {
   // (studio: the photo studio's darkroom, studio.ts office(), not kept in the events table either. book: a slip clipped
   // onto a note in the board's book, ticked or opened again, so HQ reads the book again now (bookslips.ts): agent, who
-  // answered, and text 'slip', never the words; not kept either.)
+  // answered, and text 'slip', never the words; not kept either. Or a sheet
+  // delivered (booksheets.ts): agent, its owner, and text 'sent'. Or an answer
+  // typed onto a page (book.ts typeOnto): agent, who answered, text 'page' and page, its id, so a book showing it reads
+  // it again.)
   ts?: string; type: 'status' | 'chat' | 'post' | 'log' | 'lines' | 'tokens' | 'machines' | 'studio' | 'book';
-  agent?: string; to?: string; text?: string; state?: string;
+  agent?: string; to?: string; text?: string; state?: string; page?: number;
   // job: the run an agent's own status or lines come from; jobs: on a status from its queue, every job it has running
   job?: number; jobs?: RunningJob[];
   // since: on a working status of a job's own, when that job started (jobs.started, kept across its runs), which its

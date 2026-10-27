@@ -24,9 +24,9 @@ const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
 const DIR = `${h.dataDir}/book`;
 
-// Every 'book' event, with when it came (performance.now())
+// Every slip's 'book' event, with when it came (performance.now()) (a sheet delivered is one too: book.test.ts.
 const heard: { e: Record<string, unknown>; at: number }[] = [];
-onPublish(e => void (e.type === 'book' && heard.push({ e: { ...e }, at: performance.now() })));
+onPublish(e => void (e.type === 'book' && e.text === 'slip' && heard.push({ e: { ...e }, at: performance.now() })));
 afterEach(() => {
   heard.length = 0;
   h.cancelQueued();
@@ -241,4 +241,61 @@ test("an answer is the note answered as hq note's is: one line of what shows, cu
   assert.equal(kept, `Yes: ${'é'.repeat(294)}🙂`, 'an emoji at the cut kept whole, never halved');
   await h.finish(job);
   await h.finish(next);
+});
+
+// (the board on call #239: a question typed in a box on the call's page got no answer.)
+test('a "?" typed in a box on a page asks too, a call\'s page as any: the answer is typed under it, in the agent\'s ink', async () => {
+  const { inkOf } = await import('../../hq/shell/agentink.js');
+  const typedEvents: Record<string, unknown>[] = [];
+  const stop = onPublish(e => void (e.type === 'book' && e.text === 'page' && typedEvents.push({ ...e })));
+  const quickRuns = () => (db.prepare('select count(*) n from quick_runs').get() as { n: number }).n;
+  const { call } = await h.liveCall('juno');
+  const page = await newPage({ kind: 'call', call });
+  const question = { x: 40, y: 60, w: 160, text: 'What time is it?', color: '#2a2352' };
+  const save = async (texts: unknown[]) => {
+    const since = (await h.board(`/api/book/page?id=${page.id}`)).body.updated;
+    const r = await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [], texts, since });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+  };
+  const before = quickRuns();
+  await save([{ ...question, text: 'What time is it' }]);
+  assert.equal(quickRuns(), before, 'no question mark, no question');
+  await save([question]);
+  assert.equal(quickRuns(), before + 1, 'the question mark typed: it asks');
+  const asked = db.prepare('select job from book_typed_asks where page = ?').get(page.id) as { job: number };
+  const run = await h.claimJob(asked.job);
+  assert.equal(run.agent, 'juno', "the call's agent answers");
+  assert.match(run.prompt, /What time is it\?/);
+  await h.finish(run, { status: 'done', result: 'About twenty to two at night, your time.' });
+  for (let i = 0; i < 100 && !typedEvents.length; i++) await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(
+    typedEvents.map(e => [e.agent, e.page]),
+    [['juno', page.id]],
+  );
+  const texts = (await h.board(`/api/book/page?id=${page.id}`)).body.texts;
+  assert.equal(texts.length, 2);
+  const [, answered] = texts;
+  assert.deepEqual(
+    { ...answered, y: undefined },
+    { x: 40, y: undefined, w: 160, text: 'About twenty to two at night, your time.', color: inkOf('juno') },
+  );
+  assert.ok(
+    answered.y >= question.y + 25 && answered.y < question.y + 60,
+    `under the question's line: y ${answered.y}`,
+  );
+  // the box moved, or the page saved again with the answer on it, asks nothing again
+  await save([{ ...question, x: 80 }, answered]);
+  assert.equal(quickRuns(), before + 1);
+  // on a sheet's page its owner answers, on a free page the CEO
+  const sheetPage = await newPage({ kind: 'sheet', owner: 'wren', url: '/?open=studio' });
+  const free = await newPage({ kind: 'free' });
+  for (const [p, agent] of [
+    [sheetPage, 'wren'],
+    [free, 'juno'],
+  ] as const) {
+    await h.board('/api/book/page/save', { id: p.id, ink: [], scraps: [], texts: [question] });
+    const asked = db.prepare('select job from book_typed_asks where page = ?').get(p.id) as { job: number };
+    assert.equal((db.prepare('select agent from jobs where id = ?').get(asked.job) as { agent: string }).agent, agent);
+  }
+  stop?.();
 });

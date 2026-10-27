@@ -24,8 +24,6 @@ import { expose } from './snapshot.js';
 import { snapped } from './postit.js';
 import * as marks from './marks.js';
 
-// A mark's picture waits this long for its screenshot as it leaves (taken from its first line on)
-const SNAP_MS = 4000;
 // A post-it thrown this fast (px per ms, over its last moves) and this far goes to the other screen
 const FLICK_SPEED = 0.8,
   FLICK_PX = 60;
@@ -51,10 +49,6 @@ function roundNow(r) {
     el = area ? roundOf(under(r, area.x + area.w / 2, area.y + area.h / 2), area) : r.mark.el;
   return el?.isConnected ? anchorOf(el, { url: location.href, view: viewNow() }).el : null;
 }
-// Whether the open mark is this screen's own on the page's screen, which goes across rather than open its post-it here
-export const across = r =>
-  document.documentElement.dataset.paired === 'page' && !r.mark?.taken && !r.editing && !r.call;
-
 // Tell the pairing what the open mark is now (pencil.js and tool.js call it on each change)
 export function moved(r) {
   if (!paired()) return;
@@ -77,7 +71,8 @@ export function setupHandover(r, { begin }) {
 }
 
 // The mark leaves: its lines go from this page with it (nothing is wiped: it's the other screen's now), and its picture
-// as this screen showed it, once its screenshot is in
+// as this screen showed it, once its screenshot is in: the same wait as the post-it's polaroid here, snapshot.js's own
+// for the page's fonts and pictures
 async function give(r) {
   const mark = open(r);
   if (!mark) return null;
@@ -85,7 +80,7 @@ async function give(r) {
     m = r.mark;
   reset(r);
   marks.paint(r);
-  const taken = await Promise.race([shot, new Promise(res => setTimeout(() => res(null), SNAP_MS))]).catch(() => null);
+  const taken = await Promise.resolve(shot).catch(() => null);
   if (!taken) return mark; // (no picture: the other screen says none came across, postit.js snapped())
   const area = strokes.length ? boxOfLines(strokes) : m.element.rect;
   return { ...mark, snap: marks.snipOf({ c: expose({ strokes }, taken, m), k: taken.k }, area) };
@@ -95,16 +90,24 @@ async function give(r) {
 // open with its words and the caret after them. back: one of this screen's own, come back
 function take(r, { anchor, round = null, words = '', typed = false, snap = null }, begin, back = false) {
   if (r.mode !== 'idle' || r.call || !anchor?.v) return false;
-  // (one back on its own screen goes where it was, by its own anchor; one from the other screen lands only where
-  // lands() says, anywhere else coming as that screen's picture, as it comes back too)
-  const by = back ? anchor : { el: round },
-    el = back
-      ? (anchor.el?.selector && found(anchor.el.selector, document)) || null
-      : round && landing(by, document, { x: scrollX, y: scrollY }, anchor.ink ?? []);
-  if (back ? snap && !anchor.el : !el) {
-    snapped(r, snap, back ? null : anchor.el);
+  if (back) {
+    // (one of this screen's own goes back where it was, by its own anchor; one that came here as the other screen's
+    // picture, about no element of this page, goes back as that picture)
+    if (snap && !anchor.el) snapped(r, snap, null);
+    else put(r, anchor, anchor, (anchor.el?.selector && found(anchor.el.selector, document)) || null, begin);
     return finish(r, words, typed);
   }
+  // (one from the other screen lands on what it's round only where lands() says; anywhere else it comes as that
+  // screen's picture, nothing drawn on this page)
+  const by = { el: round },
+    el = landing(by, document, { x: scrollX, y: scrollY }, anchor.ink ?? []);
+  if (el) put(r, anchor, by, el, begin);
+  else snapped(r, snap, anchor.el);
+  return finish(r, words, typed);
+}
+// The mark drawn on this page: anchor's lines placed by `by`'s element (anchor.js placer), round el when it's here, or
+// its pin where that element is, and begun as this screen's open mark
+function put(r, anchor, by, el, begin) {
   el?.scrollIntoView({ block: 'center', inline: 'nearest' });
   const scroll = { x: scrollX, y: scrollY },
     at = placer(by, document, scroll, el);
@@ -125,7 +128,6 @@ function take(r, { anchor, round = null, words = '', typed = false, snap = null 
   }
   r.mark.taken = true; // (finished here: its post-it opens, and it doesn't go across again by itself)
   begin(r);
-  return finish(r, words, typed);
 }
 // (it came from the other screen: finished here, its words in and the caret after them)
 function finish(r, words, typed) {

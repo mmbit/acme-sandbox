@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // The desk phone's keys and their room, in every look (the board's notes, job #7921). A card's row of answers lights one
-// key at most (the one to press), and so do an email card's, an Approve card's and Reviews' send row. In Slate no key in
+// key at most (the one to press), and so do an email card's and an Approve card's. In Slate no key in
 // a row is wider than its words and its padding (but for a phone's lone key across the row), and a row of three stays
-// one line.
+// one line. In every look no key is narrower than its words (the board's note #493: Approve's clipped on a desktop
+// window, where the phone is as narrow as on a phone).
 // The phone's header keys stand a gap apart and clear of its edge, an app's line keeps its arrow off its end, the pager
 // is one even row (a lone card's has no dead arrows), and Later's days stand a gap apart inside their box's padding, Pick
-// a day written out like the others, with room under the box. On a phone (Pixel 7) and a tablet, in Brownstone,
-// Holodeck and Slate (Oat and Night).
-//   node platform/hq/deskkeys-check.mjs [--look wire|wire-night|brownstone|holo]… [--size phone|tablet]… [--shots <dir>]
+// a day written out like the others, with room under the box. On a phone (Pixel 7), a tablet and a desktop window (the
+// board's, 1278×1304), in Brownstone, Holodeck and Slate (Oat and Night).
+//   node platform/hq/deskkeys-check.mjs [--look wire|wire-night|brownstone|holo]… [--size phone|tablet|desktop]…
+//                                       [--shots <dir>]
 //                                       [--tree <checkout>]
 // --tree serves another checkout's HQ (main's, for before pictures; its failures are reported, not thrown). On the shared
 // machine a look that crashes Chromium ('Target crashed') runs alone with --look.
@@ -22,7 +24,11 @@ const args = process.argv.slice(2),
   arg = k => args.flatMap((a, i) => (a === k ? [args[i + 1]] : []));
 const SHOTS = arg('--shots')[0],
   TREE = arg('--tree')[0];
-const SIZES = { phone: devices['Pixel 7'], tablet: devices['iPad Mini'] };
+const SIZES = {
+  phone: devices['Pixel 7'],
+  tablet: devices['iPad Mini'],
+  desktop: { viewport: { width: 1278, height: 1304 }, deviceScaleFactor: 1 },
+};
 // (a look, the renderer it is and Slate's colourway)
 const LOOKS = {
   brownstone: ['brownstone'],
@@ -34,8 +40,7 @@ const runs = (arg('--look').length ? arg('--look') : Object.keys(LOOKS)).flatMap
   (arg('--size').length ? arg('--size') : Object.keys(SIZES)).map(size => [look, size]),
 );
 // Each look's accents, the colours a key to press wears (brownstone's gold and green, Holodeck's cyan, Slate's knop)
-// (and the computer's screen's own green, which Reviews' Send wears in Brownstone)
-const ACCENTS = { brownstone: ['--gold', '--green', '--scr'], holo: ['--cy'], wire: ['--key-on-bg', '--green'] };
+const ACCENTS = { brownstone: ['--gold', '--green'], holo: ['--cy'], wire: ['--key-on-bg', '--green'] };
 const SLACK = 3; // (px a measure may be off by: rounding, a border)
 
 const NOW = Date.parse('2026-10-22T09:30:00Z');
@@ -81,22 +86,6 @@ const CARDS = {
     card(6, { title: 'Blue or green for the sign?', body: 'About the sign.' }),
   ],
 };
-const NOTES = [
-  {
-    id: 7,
-    created: ago(1),
-    slug: 'site',
-    page: '/',
-    note: 'The headline wraps too early',
-    element: { kind: 'general' },
-    viewport: {},
-    trail: [],
-    shot: false,
-    status: 'pending',
-    job: null,
-  },
-];
-
 const server = await serve(TREE ? p => readFile(join(TREE, p)) : undefined),
   base = `http://localhost:${server.address().port}`;
 const [org, brand] = await Promise.all(['org', 'brand'].map(async f => (await fetch(`${base}/mock/${f}.json`)).json()));
@@ -135,9 +124,6 @@ async function checkIn(browser, look, size) {
     if (path === '/api/org') return r.fulfill({ json: org });
     if (path === '/api/requests') return r.fulfill({ json: list });
     if (path === '/api/care/count') return r.fulfill({ json: { replies: 1 } });
-    if (path === '/api/review/products')
-      return r.fulfill({ json: [{ slug: 'site', name: 'Knop site', owner: 'wren', ownerName: 'Thea', pending: 1 }] });
-    if (path === '/api/review/notes') return r.fulfill({ json: NOTES });
     if (path === '/api/requests/later' && r.request().method() === 'GET') return r.fulfill({ json: [] });
     if (path === '/api/seen') return r.fulfill({ json: {} });
     if (['/api/gazette', '/api/mail', '/api/review/shares', '/api/review/recent'].includes(path))
@@ -268,16 +254,6 @@ async function checkIn(browser, look, size) {
   await page.locator('.req .btns').scrollIntoViewIfNeeded();
   await shot('approve');
 
-  // ---- Reviews' send row: Send 1 lit, Call and Discard their own size
-  await page.evaluate(() => import('/shell/desk.js').then(m => m.openComputer('notes')));
-  await page.waitForSelector('[data-note="7"]');
-  await tap(page, '[data-note="7"]');
-  await page.waitForFunction(() => document.querySelector('[data-send]')?.textContent === 'Send 1');
-  const reviews = await rowOf(page, 'section.notes .acts', lit);
-  expect(() => assert.deepEqual(reviews.lit, ['Send 1']), "Reviews' row lights Send alone");
-  expect(() => keysTheirSize(reviews, size, renderer), "Reviews' row");
-  await shot('reviews', '#tool .computer, #tool .device');
-
   expect(() => assert.deepEqual(errors, [], errors.join(' | ')), 'no errors');
   await context.close();
   if (problems.length) throw new Error(problems.join('; '));
@@ -313,8 +289,14 @@ function rowOf(page, row, lit) {
     [row, lit],
   );
 }
-// (in Slate, the design system's look: Brownstone's and Holodeck's answers share their row out, as they did)
+// (no key narrower than its words in any look; the rest in Slate, the design system's look: Brownstone's and Holodeck's
+// answers share their row out, as they did)
 function keysTheirSize(row, size, renderer) {
+  for (const k of row.keys)
+    assert.ok(
+      k.width >= k.own - SLACK,
+      `${k.words || 'a key'} is ${Math.round(k.width)} px for ${Math.round(k.own)} px of words`,
+    );
   if (renderer !== 'wire') return;
   const keys = row.keys.map(k => `${k.words} ${Math.round(k.width)}`).join(', ');
   // (up to three keys: a fourth, a picture's on an Approve card, may take the next line on a phone, as keys wrap whole)

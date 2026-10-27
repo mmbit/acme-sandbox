@@ -26,17 +26,14 @@ type Agreement = {
   stopped: number | null;
 };
 
-// The jobs carrying item i: the one handed it (call_items.job), every job carrying it on (jobs.item, hq job passes it
-// down) and each job in place of one of those (jobs.ts replacements: a review's retry, a takeover). One is unfinished
+// The jobs carrying item i (jobs.ts itemCarriers: the one handed it, every job carrying it on and their replacements),
+// as the board's word reads them. One is unfinished
 // while it's open, done with its pull request not yet merged or closed, or failed with nothing in its place: a sibling
 // carrying the same item does other work, however late it came. The carriers are two selects, not one with an or, so
 // each uses its index; the cross join keeps SQLite going from the carriers to their rows, not from every done job. Their
 // kind, status and branch are read from covering indexes (db.ts jobs_state, jobs_carried), as they sit after the brief:
 // every handled item's carriers are read for the CEO's summary.
-const CARRIERS = jobs.lineageFrom(
-  `select j.id from jobs j indexed by jobs_state where j.kind = 'work' and j.id = i.job
-  union select j.id from jobs j indexed by jobs_carried where j.kind = 'work' and j.item = i.id`,
-);
+const CARRIERS = jobs.itemCarriers('= i.job', '= i.id');
 const UNFINISHED = `exists (select 1 from (${CARRIERS}) c cross join jobs u indexed by jobs_state on u.id = c.id where (u.status in ('queued', 'running', 'blocked')
   or u.status = 'done' and exists (select 1 from prs p where p.branch = coalesce(u.branch, 'job/' || u.id) and p.status in ('open', 'stuck', 'board'))
   or u.status in ('failed', 'stopped') and not ${jobs.hasReplacement('u.id')}))`;

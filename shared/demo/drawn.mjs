@@ -2,7 +2,7 @@
 // a run draws one, the files the job has and those the page asked for that the run lacks
 import { existsSync, mkdirSync, writeFileSync, writeSync } from 'node:fs';
 import { join, relative } from 'node:path';
-import { ROOT } from './renders.mjs';
+import { ROOT, SIDE } from './renders.mjs';
 
 // the run's exit code when its bundle lacked files the page asked for
 export const MISSING_EXIT = 3;
@@ -23,10 +23,11 @@ export function start(folder, has) {
   mkdirSync(join(folder, 'back'), { recursive: true });
 }
 
-// A file a page asks for: one the job has and this tree lacks stops the run, as the page may wait for it forever
+// A file a page asks for: one the job has and this tree lacks stops the run, as the page may wait for it forever. A
+// render the job has only the note of (kept or made, not fetched) counts: the job fetches it for the next run
 export function requireSent(file) {
   const path = relative(ROOT, file);
-  if (drawn && !existsSync(file) && drawn.has.has(path)) lacking(path);
+  if (drawn && !existsSync(file) && (drawn.has.has(path) || drawn.has.has(path + SIDE))) lacking(path);
   return file;
 }
 

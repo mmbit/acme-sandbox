@@ -1,5 +1,5 @@
-// book-check.mjs's Search story (shell/booksearch.js), on HQ's mock book, held like an iPad mini: the rail's magnifier
-// opens a line to write on that the Pencil can write in (Apple's Scribble: nothing over the field, nothing cancelling a
+// book-check.mjs's Search story (shell/booksearch.js), on HQ's mock book, held like an iPad mini: the overview holds a
+// line to write on that the Pencil can write in (Apple's Scribble: nothing over the field, nothing cancelling a
 // pen's touch on it, a field that takes text); a word said while drawing yesterday is found as it's written, with how
 // it came, whose sheet and the day, and an answer by its words too; tapped, the book turns to yesterday's page, the
 // note in view and its number lit.
@@ -19,8 +19,12 @@ export async function findStory(browser, c) {
 
 // The line to write on, the Pencil's; the finds as the words are written, a note's said words and an answer's
 async function written(page, c) {
-  await page.click('#book [title="Search the book"]');
-  const field = page.getByRole('searchbox', { name: 'Find in the book' });
+  // (Search in the overview)
+  await page
+    .locator('#book')
+    .getByRole('button', { name: /^The overview/ })
+    .click();
+  const field = page.getByRole('searchbox', { name: 'Search the book' });
   await field.waitFor();
   assert.ok(await c.inBook(page, field), 'the line to write on is on the book');
   const pen = await penOn(field);
@@ -40,19 +44,22 @@ async function written(page, c) {
 }
 // Tapped, the book turns to yesterday's page at the note, its number lit
 async function opened(page, c) {
-  await page.getByRole('searchbox', { name: 'Find in the book' }).fill('tear');
+  await page.getByRole('searchbox', { name: 'Search the book' }).fill('tear');
   await found(page, 'tear line');
-  const today = await page.locator('#book .bk-when').textContent();
+  // (the day in the shown page's heading.)
+  const shownDay = () => page.locator('#book .bk-page:not([hidden]) .bk-when').textContent();
+  const today = await shownDay();
   await page
     .getByRole('search')
     .getByRole('button', { name: /tear line/ })
     .click();
-  const note = page.getByRole('region', { name: 'For Moss' }).getByRole('group', { name: 'Note 1' }),
-    lit = note.locator('.bs-n[data-lit]');
+  // (a note alone on its page shows no number: the note itself is lit.)
+  const note = page.getByRole('region', { name: 'For Moss' }).getByRole('group', { name: 'Note' }),
+    lit = note.locator('[data-lit]');
   await lit.waitFor({ timeout: 5000 });
   await page.waitForTimeout(c.settle);
   assert.equal(await page.getByRole('search').isVisible(), false, 'Search steps aside');
-  const day = await page.locator('#book .bk-when').textContent();
+  const day = await shownDay();
   assert.notEqual(day, today, `the book still on ${day}`);
   assert.ok(await c.inBook(page, note), "the note on the book's paper");
   await c.shot('book-search-found', page);
@@ -60,38 +67,31 @@ async function opened(page, c) {
   await lit.waitFor({ state: 'detached', timeout: 5000 });
 }
 
-// On a desktop: the magnifier's caret in the field at once; the book put away takes Search with it, and the magnifier
-// pressed while it's away opens the book with Search and its words back and, once the book's open, the caret in the
-// field (a folded book's paper takes no focus).
-export async function foldStory(browser, c) {
+// On a desktop, in the overview: a word typed finds as it's written; the overview closed and opened again, the words
+// and their finds still there; Esc wipes the words.
+export async function keptStory(browser, c) {
   const { page, errors, done } = await c.hq(browser, c.desktop, { hasTouch: false });
   try {
-    // (found by its place, not its role: put away, it has none)
-    const field = page.locator('#book [role=search] input'),
-      typing = () => field.evaluate(input => document.activeElement === input);
-    await page.click('#book [title="Search the book"]');
-    await page.getByRole('searchbox', { name: 'Find in the book' }).waitFor();
-    assert.ok(await typing(), 'the caret in the field at once');
+    const overview = page.locator('#book').getByRole('button', { name: /^The overview/ }),
+      field = page.getByRole('searchbox', { name: 'Search the book' });
+    await overview.click();
+    await field.click();
     await page.keyboard.type('tea');
     await found(page, 'tear line');
-    await page.click('#book [title^="Put the book away"]');
-    await bookIs(page, 'folded');
-    assert.equal(await page.locator('#book [role=search]').getAttribute('hidden'), '', 'Search put away with the book');
-    assert.equal(await typing(), false, 'the caret left in a folded book');
-    // (the rail is out of reach while the book is away: its magnifier's press, as the rail hands it on)
-    await page.locator('#book [title="Search the book"]').evaluate(lens => lens.click());
-    await bookIs(page, 'open');
-    await until(async () => String(await typing()), 'true');
+    await overview.click();
+    await until(async () => String(await field.isVisible()), 'false');
+    await overview.click();
     assert.equal(await field.inputValue(), 'tea', 'the words written last still there');
     await found(page, 'tear line');
+    await field.press('Escape');
+    assert.equal(await field.inputValue(), '', 'Esc wipes the words');
+    await until(async () => String((await finds(page)) === ''), 'true');
     c.noErrorsIn(errors);
   } finally {
     await done();
   }
 }
 
-// The book laid out in a mode
-const bookIs = (page, mode) => until(() => page.evaluate(() => document.documentElement.dataset.book ?? ''), mode);
 // The finds as the board reads them, one line each
 const finds = page =>
   page

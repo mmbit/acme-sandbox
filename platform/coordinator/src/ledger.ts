@@ -8,7 +8,7 @@
 // here reads or matches what anyone said.
 import { db, once } from './db.ts';
 import { publish } from './events.ts';
-import { createJob, extendJob, discussRequest, findAgent, jobAgent, noSeat, callNotesAsk, SHORT_NOTES, WORK_REPORT, askedInIntercom, customerCard, handedCustomerData, holdsCustomerData, outstandingWaits, strandedWaits, lineageTo, type Named } from './jobs.ts';   // (SHORT_NOTES; Named)
+import { createJob, extendJob, discussRequest, findAgent, jobAgent, noSeat, callNotesAsk, SHORT_NOTES, WORK_REPORT, askedInIntercom, customerCard, handedCustomerData, holdsCustomerData, outstandingWaits, strandedWaits, lineageTo, ENDED_ITEMS, type Named } from './jobs.ts';   // (SHORT_NOTES; Named)
 import { codeOf } from './jobcodes.ts';
 import { ceo, companyFormats, companyTime, names, roles, timeZone, unstaffed } from './company.ts';
 import * as chat from './chat.ts';
@@ -54,7 +54,6 @@ const OPEN = "('queued', 'running', 'blocked')";
 // What the board added after the call that no follow-up has handed out or linked yet: the call isn't followed up until it is.
 const untouched = (call: number) => db.prepare(`select id, what from call_items where call = ? and board = 1 and status = 'open'
   and job is null and request is null and ref is null order by id`).all(call) as { id: number; what: string }[];
-const ENDED = ['dropped', 'replaced'];   // an item that won't be worked on any more (a job carrying it queues nothing)
 
 // A job may read a call and work on its items if it works for that call: it's the call's follow-up, it was handed out
 // for it (jobs.call), or it carries one of its items. Not every agent: a transcript is the board's (charter rule 7).
@@ -137,7 +136,7 @@ export function add(call: number, b: { kind?: unknown; owner: string; what?: unk
   if ([...quote].length > QUOTE) return `quote too long (${[...quote].length} > ${QUOTE}): make it two items`;
   const n = (JSON.parse(c.lines) as string[]).length;
   if (b.lines != null && b.lines !== '' && (!n || !span(b.lines, n))) return n ? `lines must be a-b within 1-${n}` : 'this call has no transcript lines to point at';
-  if (b.replaces != null && (!old || ENDED.includes(old.status))) return `item #${b.replaces} isn't there to replace, or it's ${old?.status ?? 'dropped'} already`;
+  if (b.replaces != null && (!old || ENDED_ITEMS.includes(old.status))) return `item #${b.replaces} isn't there to replace, or it's ${old?.status ?? 'dropped'} already`;
   if (message) {
     // Reserve full identifier widths before the correction has an id. Every predecessor's recipients must fit.
     const end = { ...old!, id: Number.MAX_SAFE_INTEGER, kind: 'message', status: 'handled', what, goal, quote };

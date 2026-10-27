@@ -3,8 +3,9 @@
 // screen, the page is watched along: the call's agent sees what the board sees, recorded with the call
 // (shared/watchalong). Minimising shares nothing.
 // The screen opens on the agent's little screen, its pixel figure alive with its voice as the bubble's is, over the
-// call's transcript, the board's and the agent's lines, scrolling with the newest. Minimised by the Pencil (review mode)
-// or on a small screen, the bubble is slim audio bars.
+// call's transcript, the board's and the agent's lines, scrolling with the newest. Minimised, it's always the bubble with
+// the agent's face, whatever the Pencil, the book or the window does: the bobbing face says who's speaking, and one form
+// for the whole call is what the board can predict. A small screen draws it smaller (style.css), never in another form.
 import { esc, store as saved } from '../util.js';
 import { startWatchalong } from './data.js';
 import { cue } from './audio.js';
@@ -23,15 +24,12 @@ const SHOW = 'Show my screen',
   STOP = 'Stop showing',
   UNSHOWN = 'Your screen couldn’t be shown. Try Show my screen again.',
   UNSEEN = name => `Your screen isn’t reaching ${name} right now.`;
-// A small screen, where the bubble's face would cover too much of the page: a phone either way round, a narrow window
-// (an iPad mini is 744 px at its narrowest and keeps the face).
-const SMALL = '(max-width: 599px), (max-height: 499px)';
 // How near the transcript's end counts as reading the newest line (the board scrolled up past it: it stays put)
 const FOLLOW_PX = 24;
 export function openLayer(c) {
   const layer = (c.layer = document.createElement('div'));
   layer.id = 'call-layer';
-  layer.setAttribute('data-watchalong-hide', ''); // (the call's own controls are never recorded)
+  // (recorded with the rest: what the agent sees is the board's screen, the call's window on it too.)
   const big = saved.get('intercomSize') === 'large' ? ' big' : '';
   layer.innerHTML = `<div class="device intercom in-call${big}" role="dialog" aria-modal="true" aria-label="Call with ${esc(c.name)}">
     <header><span class="grille" aria-hidden="true"></span><b>Call · ${esc(c.name)}</b><span class="onair" aria-hidden="true">ON AIR</span><button class="past-btn" id="call-min" aria-label="Minimise" title="Minimise: keep talking while you look around">${MINIMISE}</button></header>
@@ -44,8 +42,8 @@ export function openLayer(c) {
       <ol class="lines" id="call-lines" aria-label="What you’ve both said" data-empty="What you and ${esc(c.name)} say shows here."></ol>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
-      <div class="row share"><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW}</span></button></div>
-      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-skip">Interrupt</button><button class="hangup" id="call-end">Hang up</button></div>
+      <!-- the board interrupts by speaking: Show my screen has the bottom row's middle -->
+      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW}</span></button><button class="hangup" id="call-end">Hang up</button></div>
     </div></div>
   </div>`;
   document.body.append(layer);
@@ -63,7 +61,6 @@ export function openLayer(c) {
 }
 export function closeLayer(c) {
   c.layer?.remove();
-  c.smallScreen?.removeEventListener('change', c.slimmer);
   if (!c.small) cue('close');
 }
 
@@ -78,7 +75,9 @@ function callFace(c, el) {
   if (portrait?.accent) el.parentElement.style.setProperty('--cb-accent', portrait.accent); // (its lines' too)
   return {
     voice(level, talking = level > 0.02) {
-      el.style.setProperty('--cb-level', level.toFixed(3));
+      // (only a change: the call's window is in the watch-along's recording, and each write is an event in it.
+      const shown = level.toFixed(2);
+      if (el.style.getPropertyValue('--cb-level') !== shown) el.style.setProperty('--cb-level', shown);
       el.classList.toggle('talking', talking);
     },
     state: state => (el.dataset.state = state),
@@ -118,19 +117,13 @@ export function turnTakenBack(c) {
 }
 
 // Minimised: the screen shrinks into the bubble and HQ comes back under it (watched along only if the board showed it).
-// pen: the Pencil came down on the page (calldraw.js): the bubble is slim audio bars, as on a small screen; minimised
-// already, it slims
-export async function minimise(c, { pen = false } = {}) {
-  if (c.small) {
-    if (pen) c.bubble.slim((c.pen = true));
-    return;
-  }
-  c.pen = pen;
+// The Pencil coming down minimises it too (calldraw.js), into the same bubble.
+export async function minimise(c) {
+  if (c.small) return;
   c.small = true;
   const device = c.layer.querySelector('.device'),
     from = device.getBoundingClientRect();
   c.bubble ??= newBubble(c);
-  c.bubble.slim(slim(c));
   c.bubble.state(c.live ? 'listening' : '');
   c.bubble.show(from);
   cue('minimise');
@@ -164,13 +157,7 @@ export function expand(c) {
   });
 }
 
-const slim = c => c.pen || c.smallScreen.matches;
-
 function newBubble(c) {
-  // (the screen turned or the window narrowed while it's small: slim, or the face again)
-  c.smallScreen = matchMedia(SMALL);
-  c.slimmer = () => c.small && c.bubble.slim(slim(c));
-  c.smallScreen.addEventListener('change', c.slimmer);
   const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
   const face =
     portrait?.img ??
@@ -264,6 +251,8 @@ export async function share(c) {
   if (c.paused) pauseWatch(c, false);
   return true;
 }
+// Whether the board's screen is shown to the call now
+export const shown = c => !!c.watch && !c.paused;
 // The call screen's Show my screen: starts the watch-along, or shows the paused one again; Stop showing pauses it
 function showScreen(c) {
   if (!c.watch) return watchAlong(c);
@@ -281,15 +270,18 @@ function showWatching(c) {
 export function shareKey(c) {
   const key = c.layer?.querySelector('#call-screenshare');
   if (!key) return;
-  const shown = !!c.watch && !c.paused;
+  const on = shown(c);
   key.disabled = !c.call || !!c.watchStarting || c.over;
-  key.setAttribute('aria-pressed', String(shown));
-  key.lastElementChild.textContent = shown ? STOP : SHOW;
+  key.setAttribute('aria-pressed', String(on));
+  key.lastElementChild.textContent = on ? STOP : SHOW;
 }
 // The board asked to show its screen and it didn't start: said on the call screen until the next try
 function unshown(c, words) {
   const n = c.layer?.querySelector('#call-unshown');
-  if (!n) return;
+  // (written only when the words change: the call's window is in its own recording, and a write at each batch's answer
+  // made every batch carry one, so a quiet page never sent an empty one.)
+  if (!n || n.dataset.words === words) return;
+  n.dataset.words = words;
   tell(n, words);
   n.hidden = !words;
 }

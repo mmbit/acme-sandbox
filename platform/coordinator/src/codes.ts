@@ -27,6 +27,7 @@
 // unpaid holds nothing: a hold counts only while its session is open. A code that expires while held still goes through
 // if that session is paid.
 //
+// A gift card goes in the same box too (payments.ts basketGift), beside the code: it pays what's left.
 // A stall's voucher goes in the same box too (payments.ts payLineByVoucher): it pays that stall's line, never the basket,
 // so it sits next to a code; a wrong one counts as a wrong code.
 //
@@ -342,6 +343,9 @@ async function enterCode(c: Caller, body: any) {
   const typed = codeSettings() ? normalCode(body.code) : null;
   const found = typed ? findCode(c.mode, typed) : undefined;
   if (!found) {
+    // a gift card goes in the same box, beside the basket's code (payments.ts basketGift)
+    const byGift = await payments.basketGift.enter?.(c, basket.id, body.code, body.country);
+    if (byGift) return byGift;
     // a stall's voucher goes in the same box and pays its line
     const byVoucher = await payments.payLineByVoucher(c, basket.id, body.code, body.country);
     if (byVoucher) return byVoucher;

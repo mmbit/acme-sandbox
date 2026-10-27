@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/bookscrap.test.js   (a taped picture's size, place and tilt)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TILT, placeScrap, tiltOf, viewOn } from './bookscrap.js';
+import { TILT, placeScrap, scrapAt, slid, tiltOf } from './bookscrap.js';
 
 const page = { w: 500, h: 900 },
   view = { x0: 0, y0: 100, x1: 500, y1: 700 };
@@ -45,8 +45,15 @@ test('with no spot it lands in the middle of what the paper shows of the page, a
   assert.deepEqual([b.x - a.x, b.y - a.y], [28, 22]);
 });
 
-test('the band of a page the paper shows, in its px; none: its top', () => {
-  const r = { x: 600, y: 0, w: 500, h: 2000 };
-  assert.deepEqual(viewOn(r, { x: 600, y: 300 }, { w: 500, h: 700 }), { x0: 0, y0: 300, x1: 500, y1: 1000 });
-  assert.deepEqual(viewOn(r, { x: 0, y: 0 }, { w: 500, h: 700 }), { x0: 0, y0: 0, x1: 500, y1: 700 });
+test('a press finds the scrap on top, turned as it lies; a moved one keeps its middle on the page', () => {
+  const flat = { x: 100, y: 100, w: 200, h: 100, tilt: 0 },
+    turned = { x: 150, y: 120, w: 200, h: 100, tilt: 30 };
+  assert.equal(scrapAt([flat], [110, 105]), 0);
+  assert.equal(scrapAt([flat], [99, 150]), -1);
+  assert.equal(scrapAt([flat, turned], [250, 170]), 1, 'the one on top');
+  // (the turned one's corner: inside its box unturned, outside it turned 30 degrees)
+  assert.equal(scrapAt([turned], [155, 125]), -1);
+  assert.equal(scrapAt([turned], [250, 170]), 0);
+  assert.deepEqual(slid(flat, [40, -20], page), { x: 140, y: 80 });
+  assert.deepEqual(slid(flat, [900, -900], page), { x: 400, y: -50 });
 });

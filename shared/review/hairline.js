@@ -5,6 +5,7 @@
 // The answers are slips (slip.js): then and now, a tick box, a reply written under them; an open note answered on its
 // sheet (a question) opens the same card from its number.
 import { CSS as SLIP_CSS, slipHtml, wireSlips } from './slip.js';
+import { draw } from './ink.js';
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 // How far from a hairline a fingertip still touches it (px), and the line's own width and strength
 export const REACH = 12;
@@ -82,6 +83,44 @@ export function drawHairlines(g, lines) {
   g.restore();
 }
 
+// A mark whose sheet just went fades into its hairline, its ink and number together, eased, well under half a second;
+// at once where less motion is asked for. kept: the page's marks open before (id → element); r.numbers: the numbers
+// they showed (marks.js paint).
+const FADE_MS = 320;
+export function fadeWent(r, kept) {
+  const went = r.sent.filter(n => kept.has(n.id)).map(n => [n.id, r.numbers?.get(n.id) ?? null]);
+  if (went.length && !matchMedia('(prefers-reduced-motion: reduce)').matches)
+    r.fade = { going: new Map(went), at: performance.now() };
+}
+// How strong a fading mark's ink still is, t of the way through: 1 to 0, eased in and out
+export const fadeLeft = t => (t >= 1 ? 0 : t <= 0 ? 1 : 1 - t * t * (3 - 2 * t));
+// ...drawn over its hairline on a layer of its own (r.fadeCanvas), so its ink and their white edge fade as one, frame
+// by frame till it's gone. hairs: the page's hairlines ({ note, lines }); on: marks.js's { number(g, lines, n): its disc at the lines, again() }
+export function fading(r, g, hairs, on) {
+  const t = r.fade ? (performance.now() - r.fade.at) / FADE_MS : 1,
+    going = t < 1 ? hairs.filter(h => r.fade.going.has(h.note.id)) : [];
+  if (!going.length) return void (r.fade = null);
+  const c = (r.fadeCanvas ??= document.createElement('canvas')),
+    f = c.getContext('2d');
+  [c.width, c.height] = [g.canvas.width, g.canvas.height];
+  f.setTransform(g.getTransform());
+  draw(
+    f,
+    going.flatMap(h => h.lines),
+    { halo: true },
+  );
+  for (const h of going) if (r.fade.going.get(h.note.id)) on.number(f, h.lines, r.fade.going.get(h.note.id));
+  g.save();
+  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.globalAlpha = fadeLeft(t);
+  g.drawImage(c, 0, 0);
+  g.restore();
+  r.fadeFrame ||= requestAnimationFrame(() => {
+    r.fadeFrame = 0;
+    on.again();
+  });
+}
+
 // ---- the card
 
 export const CSS = `
@@ -95,20 +134,21 @@ export const CSS = `
       .hair h3 { margin: 10px 0 2px; padding-top: 8px; border-top: 1px dashed rgba(42,35,82,.2); font-size: 12px; font-weight: 700;
         letter-spacing: .04em; text-transform: uppercase; color: #5a5478; }
 ${SLIP_CSS}`;
-export const HTML = '<div class="hair" hidden role="dialog" aria-label="A sent note"></div>';
+export const HTML = '<div class="hair" hidden role="dialog" aria-label="A note in the book"></div>';
 
-// The card for a sent note (note: the store's, with its slips), beside a tap at `at` (the screen's px). when: the
-// sheet's sending time, or a promise of it; null for a note still on its sheet. on: the slips' { tick, reply }
-// (slip.js wireSlips)
-export function showCard(r, note, at, when, on) {
+// The card for a note in the book (note: the store's, with its slips), beside a tap at `at` (the screen's px). line:
+// where it is ("For Lark, not sent", "Sent Tue 09:12"), or a promise of it. on: the slips' { tick, reply } (slip.js
+// wireSlips). (line)
+export function showCard(r, note, at, line, on) {
   const card = r.$('.hair');
   card.replaceChildren();
   const add = (tag, text, cls = '') =>
     card.appendChild(Object.assign(document.createElement(tag), { textContent: text, className: cls }));
   if (note.words?.trim()) add('p', note.words.trim());
   else add('p', 'No words: the mark says it', 'bare');
-  const time = add('time', when === null ? 'On its sheet, not sent yet' : 'Sent');
-  if (when !== null) Promise.resolve(when).then(w => w && card.contains(time) && (time.textContent = sentLabel(w)));
+  // (where it is, as marks.js words it)
+  const time = add('time', '');
+  Promise.resolve(line).then(text => card.contains(time) && (time.textContent = text));
   const slips = note.slips ?? [];
   if (slips.length) {
     add('h3', 'Answer');

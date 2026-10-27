@@ -1,7 +1,9 @@
 // Done jobs like a piece of work, the ones an estimate stands on: jobs of the same origin by the same agent, the words
 // of its title deciding which, each word weighed by how rare it is among past titles. A scheduled job stands on its own
 // schedule entry's runs first.
-import { db } from './db.ts';
+import { db, inStep, onUndo, prepared } from './db.ts';
+// (the runs table, which the pool is read from and counted on)
+import './agenttime.ts';
 import { keysCondition } from './chat.ts';
 import { workBranch } from './jobs.ts';
 import { mean, wholeSeconds } from './arithmetic.ts';
@@ -58,10 +60,13 @@ export const RUN_COLUMNS = 's.id entry, s.routine, s.slot',
 // once it grew tenfold), the planner scans every done job and sums the runs again for each, for minutes, and a
 // just-queued job is sized on the spot (predictions.ts recordQueued).
 // Credential-call follow-ups include transcripts, even when no tool marked them as holding keys. With `only`, just
-// those jobs (an estimate's references: sizes.ts), their runs and usage read by job instead of every one.
+// those jobs (an estimate's references: sizes.ts), their runs and usage read by job instead of every one; without, the
+// runs and usage of done work only.
 // Whether a job replaces another is read from the replacement links as one set (`in`), so no job's row is fetched for it..
 const past = (only = false) => {
-  const of = only ? 'where job in (select value from json_each(:only))' : '';
+  const of = only
+    ? 'where job in (select value from json_each(:only))'
+    : `where job in (select id from jobs indexed by jobs_history where kind = 'work' and status = 'done')`;
   return `select j.id, j.agent, j.title, j.engine, ${ORIGIN} origin, j.created, coalesce(j.finished, r.last) finished,
     r.agent_ms, r.runs, r.rebuilt, (julianday(coalesce(j.finished, r.last)) - julianday(r.first)) * 86400000 wall_ms,
     coalesce(u.cost, u.tokens) spend, iif(u.cost is null, 'tokens', '$') unit,
@@ -83,7 +88,8 @@ const past = (only = false) => {
   order by r.job`;
 };
 
-export const pastJobs = (only?: number[]): PastJob[] => {
+export const pastJobs = (only?: number[]): PastJob[] => (only ? readPast(only) : keptPool());
+function readPast(only?: number[]) {
   const sql = past(only !== undefined),
     rows = (only ? db.prepare(sql).all({ only: JSON.stringify(only) }) : db.prepare(sql).all()) as unknown as (PastJob &
       TimingEvidence)[];
@@ -91,7 +97,85 @@ export const pastJobs = (only?: number[]): PastJob[] => {
     ...job,
     timing_flags: timingFlags({ outcomes, invalid_runs, unknown_seats, is_replacement, runs: job.runs }),
   }));
-};
+}
+
+// Every done job is kept as one pool, and only the jobs whose rows changed are read again: each new work job is sized
+// on it (predictions.ts recordQueued), and so are the minute's sweep, the play and hq estimate, and reading it whole for
+// each took 0.2 s warm and seconds cold. Triggers note each change to what it's read from in past_changes, with its job:
+// a done work job's columns here, a run or usage row of one, a pull request of its branch, a new call of it, a
+// scheduled run, a replacement link. A change to a call, or a credential request, that a call's chain of resumes may
+// reach notes no job: the pool is read whole again. The notes keep the latest KEPT_CHANGES; a pool older than those is
+// read whole too. A pool read in a step goes once the step is undone; one read in any other transaction isn't kept, so
+// a change rolled back never leaves it standing. Callers share the pool: they never change it.
+let kept: { seen: number; pool: PastJob[] } | undefined;
+function keptPool() {
+  const changes = kept
+    ? (prepared('select id, job from past_changes where id > ? order by id').all(kept.seen) as Change[])
+    : [];
+  if (kept && !changes.length) return kept.pool;
+  const seen = changes.at(-1)?.id ?? lastChange(),
+    jobs = new Set(changes.map(c => c.job)),
+    pool =
+      kept && !jobs.has(null) && noneLost(kept.seen)
+        ? [...kept.pool.filter(j => !jobs.has(j.id)), ...readPast([...jobs] as number[])].sort((a, b) => a.id - b.id)
+        : readPast();
+  if (!db.isTransaction || inStep()) {
+    kept = { seen, pool };
+    onUndo(() => (kept = undefined));
+  }
+  return pool;
+}
+type Change = { id: number; job: number | null };
+const KEPT_CHANGES = 10_000;
+// (autoincrement: a note's number is never given again, even once the notes before it are gone)
+db.exec('create table if not exists past_changes (id integer primary key autoincrement, job integer)');
+const lastChange = () => (prepared('select max(id) n from past_changes').get() as { n: number | null }).n ?? 0;
+// (whether every change after `seen` is still noted)
+const noneLost = (seen: number) =>
+  ((prepared('select min(id) n from past_changes').get() as { n: number | null }).n ?? 0) <= seen + 1;
+const DONE = (row: string) => `${row}.kind = 'work' and ${row}.status = 'done'`,
+  OF_DONE = (row: string) => `exists (select 1 from jobs d where d.id = ${row}.job and ${DONE('d')})`,
+  ON_BRANCH = (row: string) =>
+    `select id from jobs indexed by jobs_work_branch where kind = 'work' and coalesce(branch, 'job/' || id) = +${row}.branch`,
+  KEYS = (row: string) => `${row}.kind = 'credential' or ${row}.secrets is not null`,
+  PAST_COLUMNS = `id, agent, title, engine, created, finished, stage, round, queued_by, pr, branch, thread, customers,
+    about_keys, kind, status, instead_of`;
+// (the trigger's event, the jobs it notes and when it counts: always unless said)
+const NOTED: [name: string, on: string, jobs: string, when?: string][] = [
+  ['job_added', 'insert on jobs', 'values (new.id)', DONE('new')],
+  ['job_changed', `update of ${PAST_COLUMNS} on jobs`, 'values (old.id), (new.id)', `${DONE('old')} or ${DONE('new')}`],
+  ['job_removed', 'delete on jobs', 'values (old.id)', DONE('old')],
+  ['run_added', 'insert on runs', 'values (new.job)', OF_DONE('new')],
+  ['run_changed', 'update on runs', 'values (old.job), (new.job)', `${OF_DONE('old')} or ${OF_DONE('new')}`],
+  ['run_removed', 'delete on runs', 'values (old.job)', OF_DONE('old')],
+  ['usage_added', 'insert on usage', 'values (new.job)', OF_DONE('new')],
+  ['usage_changed', 'update on usage', 'values (old.job), (new.job)', `${OF_DONE('old')} or ${OF_DONE('new')}`],
+  ['usage_removed', 'delete on usage', 'values (old.job)', OF_DONE('old')],
+  ['pr_added', 'insert on prs', ON_BRANCH('new')],
+  [
+    'pr_changed',
+    'update of number, branch, status, merged_at, files, added, removed on prs',
+    `${ON_BRANCH('old')} union ${ON_BRANCH('new')}`,
+  ],
+  ['pr_removed', 'delete on prs', ON_BRANCH('old')],
+  ['call_added', 'insert on calls', 'values (new.job)', 'new.job is not null'],
+  ['call_changed', 'update of job, resumes, request on calls', 'values (null)'],
+  ['call_removed', 'delete on calls', 'values (null)'],
+  ['request_added', 'insert on requests', 'values (null)', KEYS('new')],
+  ['request_changed', 'update of kind, secrets on requests', 'values (null)'],
+  ['request_removed', 'delete on requests', 'values (null)', KEYS('old')],
+  ['schedule_run_added', 'insert on schedule_runs', 'values (new.job)', 'new.job is not null'],
+  ['schedule_run_changed', 'update on schedule_runs', 'values (old.job), (new.job)'],
+  ['schedule_run_removed', 'delete on schedule_runs', 'values (old.job)'],
+  ['replacement_added', 'insert on job_replacements', 'values (new.job)'],
+  ['replacement_removed', 'delete on job_replacements', 'values (old.job)'],
+];
+for (const [name, on, jobs, when] of NOTED)
+  db.exec(`create trigger if not exists past_${name} after ${on} ${when ? `for each row when ${when}` : ''} begin
+    insert into past_changes (job) ${jobs};
+    delete from past_changes where id <= (select max(id) from past_changes) - ${KEPT_CHANGES};
+  end`);
+
 export const cleanPastJobs = (pool: PastJob[] = pastJobs()) =>
   pool.filter(job => !job.timing_flags?.length && !job.customers && !job.about_keys);
 export function timingAudit(pool: PastJob[] = pastJobs()) {
@@ -217,12 +301,13 @@ function indexed(lists: string[][]): Indexed {
   });
   return { lists: lists.length, having: [...having] };
 }
-// Each list's score, and how many lists have each term
-function scored({ lists, having }: Indexed, terms: string[]) {
-  const sums = Array.from({ length: lists }, () => 0);
+// Each list's score, and how many lists have each term: of the first n lists only, with n (a prefix, scored as if it
+// were all of them: each word's lists are in order).
+function scored({ lists, having }: Indexed, terms: string[], n = lists) {
+  const sums = Array.from({ length: n }, () => 0);
   const hits = terms.map(t => {
-    const near = new Set(having.flatMap(([w, has]) => (alike(w, t) ? has : [])));
-    const weight = rarity(near.size, lists);
+    const near = new Set(having.flatMap(([w, has]) => (alike(w, t) ? has.filter(i => i < n) : [])));
+    const weight = rarity(near.size, n);
     for (const i of near) sums[i] += weight;
     return near.size;
   });
@@ -244,10 +329,11 @@ function groupOf(pool: PastJob[], origin: JobOrigin, agent?: string) {
     );
   return byKey.get(key)!;
 }
-function rankedIn(pool: PastJob[], terms: string[]) {
+function rankedIn(pool: PastJob[], terms: string[], n = pool.length) {
   const index = titlesIndexed.get(pool) ?? titlesIndexed.set(pool, indexed(pool.map(j => titleWords(j)))).get(pool)!;
-  const { sums, hits } = scored(index, terms);
+  const { sums, hits } = scored(index, terms, n);
   const found = pool
+    .slice(0, n)
     .map((j, i) => ({ j, s: sums[i] }))
     .filter(x => x.s > 0)
     .sort((a, b) => b.s - a.s || b.j.id - a.j.id)
@@ -257,3 +343,6 @@ function rankedIn(pool: PastJob[], terms: string[]) {
 
 // The pool's jobs that share a word with the terms, most alike first (then the newest)
 export const ranked = (pool: PastJob[], terms: string[]) => rankedIn(pool, terms).found;
+// The same for the pool's first n jobs, on the pool's one index: hq estimate --accuracy ranks a prefix of the same pool
+// for each job it replays.
+export const rankedFirst = (pool: PastJob[], n: number, terms: string[]) => rankedIn(pool, terms, n).found;

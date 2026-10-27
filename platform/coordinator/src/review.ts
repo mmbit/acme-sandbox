@@ -423,7 +423,7 @@ function checksMerge(before: ReturnType<typeof ruling>, links: string[]) {
   if (before.decision !== 'board') return false;
   const card = db.prepare("select answer from requests where job = ? and kind = 'review' and status = 'answered' order by id desc limit 1")
     .get(before.id) as { answer: string } | undefined;
-  return !!card && /^merge\b/i.test(card.answer.trim());
+  return !!card && boardAnswer(card.answer) === 'merge';
 }
 
 // Starting the company over is the board's alone: the server ignores a reset a pull request brings (infra/reset.py).
@@ -952,7 +952,7 @@ async function decide(job: { id: number; pr: number; round: number; sha: string 
     if (m.superseded) return;
     if (m.moved) return;
     // A passed but unmergeable commit gets a merge check on the author's next push.
-    if (!m.ok) return bringUpToDate(pr, m.why);
+    if (!m.ok) return bringUpToDate(pr, m);
     pullRequestMerged(job.pr);
     publish({ type: 'log', agent, text: `Merged PR #${job.pr}${label ? ` (${label})` : ''}: ${v.summary ?? 'clean review'}` });
   } else if (decision === 'changes') {
@@ -1035,7 +1035,7 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
   const needsChecks = (sha: string): Merged => {
     if (movedOn()) return superseded;
     if (voided()) return ruledOut;
-    return { ok: false, moved: false, why: `the worker merged main as ${sha}, which needs its own checks before it can merge` };
+    return { ok: false, moved: false, needsChecks: true, why: `the worker merged main as ${sha}, which needs its own checks before it can merge` };
   };
   // Merged already: an earlier try went through, but the coordinator restarted before it heard back (a merge deploys, and
   // a deploy restarts it), so the ruling is being acted on again. Or closed there by hand meanwhile.
@@ -1083,7 +1083,7 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
 }
 // `superseded`: a push started a new round while it waited, which the old ruling no longer decides, or the ruling was set
 // aside (`voided`)
-type Merged = { ok: boolean; moved: boolean; why: string; closed?: boolean; superseded?: boolean };
+type Merged = { ok: boolean; moved: boolean; why: string; closed?: boolean; superseded?: boolean; needsChecks?: boolean };
 // Tries again after 5, 15 and 45 seconds
 const MERGE_TRIES = 3, MERGE_WAIT = Number(process.env.MERGE_RETRY_MS) || 5000;
 
@@ -1226,7 +1226,7 @@ const checksPassed = (pr: number, sha: string) =>
 async function mergeExpedited(n: number, review: () => void) {
   const pr = db.prepare('select * from prs where number = ?').get(n) as Pr;
   const m = await mergeAlone(pr, `Merge PR #${pr.number} expedited (its review follows)`, m => {
-    if (!m.moved) bringUpToDate(pr, m.why);
+    if (!m.moved) bringUpToDate(pr, m);
   });
   if (!m?.ok) return m;
   // (merged: the round stays open for the review of what merged)
@@ -1294,14 +1294,16 @@ function reviewedAfter(pr: Pr, job: { id: number; pr: number; round: number }, d
   publish({ type: 'log', agent: pr.author, text: `PR #${pr.number}'s review after its expedited merge found what must change: ${pr.author} fixes it next` });
 }
 
-// A pull request that passed but GitHub won't merge goes back to its author to take main in.
-function bringUpToDate(pr: Pr, why: string) {
-  const head = mainMerge(pr.number, pr.sha!) ?? pr.sha;
-  if (pr.merge_refused === head)
-    return stuck(pr.number, `GitHub still refuses the unchanged merge head ${head}: ${why}. hq review ${pr.number} retries after the cause is addressed`);
-  db.prepare('update prs set merge_refused = ? where number = ?').run(head, pr.number);
+// A pull request needing main or checks goes back to its author. Only GitHub refusals count toward stopping retries.
+function bringUpToDate(pr: Pr, { why, needsChecks }: Merged) {
+  if (!needsChecks) {
+    const head = mainMerge(pr.number, pr.sha!) ?? pr.sha;
+    if (pr.merge_refused === head)
+      return stuck(pr.number, `GitHub still refuses the unchanged merge head ${head}: ${why}. hq review ${pr.number} retries after the cause is addressed`);
+    db.prepare('update prs set merge_refused = ? where number = ?').run(head, pr.number);
+  }
   return fixJob(pr, 'Bringing up to date', `Your pull request #${pr.number} (branch ${pr.branch}) passed review but can't be merged: ${why}. ` +
-    'Merge origin/main into your branch and resolve any conflicts, keeping the intent of both sides. The review resumes when you\'re done.', `GitHub refused the merge: ${why}`);
+    'Merge origin/main into your branch and resolve any conflicts, keeping the intent of both sides. The review resumes when you\'re done.', why);
 }
 
 export const RULING_SWEEP_MS = 5 * 60_000;
@@ -1636,7 +1638,7 @@ async function mergeKept(pr: Pr) {
       return moved.length > 0;
     };
     const m = await mergeAlone(pr, `Merge PR #${pr.number} after review (round ${pr.round}, touch-ups kept by ${authorName})`, refused => {
-      if (!refused.moved) bringUpToDate(pr, refused.why);
+      if (!refused.moved) bringUpToDate(pr, refused);
     }, voided);
     if (m?.ok) publish({ type: 'log', agent: editor.agent, text: `Merged PR #${pr.number} with ${editor.name}'s touch-ups` });
     else if (!m) hold(pr.number, `${authorName} kept ${editor.name}'s touch-ups on round ${pr.round}, but the merge didn't go through; HQ tries again every 5 minutes`);
@@ -2046,8 +2048,8 @@ const archive = (author: string) => `company/people/archive/${author}.md`;
 export async function boardDecided(n: number, answer: string) {
   const pr = db.prepare("select * from prs where number = ? and status = 'board'").get(n) as Pr | undefined;
   if (!pr) return publish({ type: 'log', agent: ceo(), text: `The board answered on PR #${n}, which isn't waiting for a board call: nothing done` });
-  const a = answer.trim().toLowerCase();
-  if (/^merge\b/.test(a)) {
+  const action = boardAnswer(answer);
+  if (action === 'merge') {
     if (waiting.waits(n)) {
       waiting.leavePass(ruling(n, pr.round, pr.sha)!.id);
       db.prepare("update prs set status = 'open' where number = ?").run(n);
@@ -2059,11 +2061,11 @@ export async function boardDecided(n: number, answer: string) {
     if (m.superseded || m.moved) return;
     if (!m.ok) {
       db.prepare("update prs set status = 'open' where number = ?").run(n);
-      return bringUpToDate(pr, m.why);
+      return bringUpToDate(pr, m);
     }
     pullRequestMerged(n);
     publish({ type: 'log', agent: ceo(), text: `The board merged PR #${n}` });
-  } else if (/^close\b/.test(a)) {
+  } else if (action === 'close') {
     waiting.drop(n);
     await close(n, 'the board closed it on its card');
   } else {
@@ -2071,6 +2073,13 @@ export async function boardDecided(n: number, answer: string) {
     returnFeedback(pr, "The board's notes",
       `The board looked at your pull request #${n} (branch ${pr.branch}) and says:\n\n${answer}\n\nUpdate the branch accordingly; the panel reviews again when you're done.`);
   }
+}
+
+function boardAnswer(answer: string) {
+  const action = answer.trim();
+  if (/^merge\b/i.test(action)) return 'merge';
+  if (/^close\b/i.test(action)) return 'close';
+  return 'feedback';
 }
 
 // Return board feedback to the author and retire the ruling before the next push.
@@ -2081,8 +2090,11 @@ export function returnFeedback(pr: Pick<Pr, 'number' | 'branch' | 'author'>, tit
 }
 
 // A separate board ruling may already have authorized the merge while its visual card still held it.
-export async function visualDecided(card: number) {
-  for (const pr of decisions.cardMerges(card)) {
+export const visualDecided = (card: number) => heldDecided(decisions.cardMerges(card));
+// The answered decision's held pull requests go on: by its card, or by the board's word that settled it
+// (visualapproval.ts settle).
+export async function heldDecided(merges: { number: number }[]) {
+  for (const pr of merges) {
     const waiting = db.prepare("select 1 from prs where number = ? and status = 'board'").get(pr.number);
     if (!waiting) continue;
     const request = db.prepare("select status, answer from requests where kind = 'review' and pr = ? order by id desc limit 1")

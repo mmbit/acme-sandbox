@@ -1,0 +1,291 @@
+/* The feature tips (tipcard.js, showme.js), in the look's own colours, corners and press: the tip card's TIP, film and
+   two wide keys, landing with a small bounce, and Show me's dim, breathing ring and step. */
+/* (filed, it slides off as every card does: style.css .req.done) */
+.req.tip:not(.done) {
+  animation: tip-lands 0.42s cubic-bezier(0.3, 1.5, 0.55, 1) both;
+}
+@keyframes tip-lands {
+  from {
+    transform: translateY(14px) scale(0.97);
+    opacity: 0;
+  }
+}
+.req.tip .tag-k {
+  background: var(--gold);
+  color: var(--on-accent);
+}
+.req.tip h3 {
+  font-size: 1.35em;
+  line-height: 1.2;
+  margin: 6px 0 8px;
+}
+.req.tip .body p {
+  margin: 0;
+}
+.req.tip .film {
+  margin: 12px 0 0;
+  border-radius: var(--r-lg, 14px);
+  overflow: hidden;
+  border: var(--bw, 2px) solid var(--line);
+}
+.req.tip .film video {
+  display: block;
+  width: 100%;
+  max-height: 440px; /* (a film of a computer app shows whole on a tablet's phone) */
+  object-fit: cover;
+  object-position: top;
+}
+/* On the desk phone the film gives up its height first, down to FILM_MIN, so the lines and both keys fit the phone's
+   screen whatever the tip and the device. */
+.device .screen:has(> .req.tip),
+.device .req.tip,
+.device .req.tip .film {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.device .req.tip .film {
+  flex: 0 1 auto;
+  min-height: 140px; /* FILM_MIN: still a film, where a short screen scrolls instead */
+}
+.device .req.tip .film video {
+  flex: 0 1 auto;
+  min-height: 0;
+}
+.req.tip .btns {
+  margin-top: 14px;
+}
+.req.tip .btns button {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 52px;
+  font-size: 1.1em;
+  font-weight: 600;
+}
+.req.tip .btns .got {
+  background: var(--cream);
+  color: var(--ink);
+}
+body.keys .req.tip .btns button {
+  flex: 1 1 0;
+  min-height: 56px;
+}
+
+/* Show me: everything but the control dimmed (and closed to the pointer: the veil's hole is the only way through) */
+.showme-veil {
+  position: fixed;
+  inset: 0;
+  z-index: 9990;
+  background: rgba(15, 14, 12, 0.58);
+  opacity: 0;
+  transition: opacity 0.2s ease-out;
+}
+.showme-veil.on {
+  opacity: 1;
+}
+.showme-ring {
+  position: fixed;
+  z-index: 9991;
+  pointer-events: none;
+  border-radius: var(--r-lg, 16px);
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
+}
+.showme-ring::after {
+  content: '';
+  position: absolute;
+  inset: -12px;
+  border-radius: inherit;
+  border: 2px solid var(--gold);
+  animation: showme-breathes 1.6s ease-in-out infinite;
+}
+@keyframes showme-breathes {
+  50% {
+    inset: -5px;
+    opacity: 0.25;
+  }
+}
+.showme-step {
+  position: fixed;
+  z-index: 9992;
+  width: min(320px, calc(100vw - 24px));
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: var(--r-lg, 16px);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow, 0 6px 0 rgba(0, 0, 0, 0.18));
+  font-size: 15px;
+  line-height: 1.4;
+  animation: tip-lands 0.3s cubic-bezier(0.3, 1.5, 0.55, 1) both;
+}
+.showme-step b {
+  display: block;
+}
+.showme-step p {
+  margin: 4px 0 0;
+}
+.showme-step .got {
+  display: block;
+  margin: 10px 0 0 auto;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 2px solid currentColor;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.showme-step::before {
+  content: '';
+  position: absolute;
+  left: calc(var(--arrow, 50%) - 9px);
+  top: -9px;
+  border: 9px solid transparent;
+  border-top: 0;
+  border-bottom-color: var(--paper);
+}
+.showme-step.missing {
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+}
+.showme-step.missing::before {
+  display: none;
+}
+.showme-step.above::before {
+  top: auto;
+  bottom: -9px;
+  border: 9px solid transparent;
+  border-bottom: 0;
+  border-top-color: var(--paper);
+}
+/* a tip's card in the Library (manual.js), as on the desk phone: its title, not a shelf's, and the phone's row of keys. */
+#panel .req.tip h3 {
+  margin: 6px 0 8px;
+  font-size: 1.35em;
+  line-height: 1.2;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink);
+}
+#panel .req.tip .btns {
+  display: flex;
+  gap: var(--keys-gap, 8px);
+}
+#panel .req.tip .btns .send {
+  background: var(--gold);
+  color: var(--on-accent);
+}
+
+/* The Library's manual (manual.js): How HQ works, four tiles with their films' stills and the rest as keys, then what
+   the board can ask for. */
+.manual h3 {
+  margin-top: 4px;
+}
+.manual .tiles {
+  list-style: none;
+  padding: 0;
+  margin: 10px 0 14px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+/* (Show me beside the name while both fit, under it when they don't: a long name never runs into it.) */
+.manual .tiles li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-content: start;
+  gap: 4px;
+  align-items: baseline;
+}
+.manual .frame {
+  flex-basis: 100%;
+  position: relative;
+  display: block;
+  aspect-ratio: 2 / 1;
+  padding: 0;
+  overflow: hidden;
+  background: var(--cream);
+  border: var(--bw, 2px) solid var(--line);
+  border-radius: var(--r-lg, 12px);
+}
+.manual .frame img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+.manual .play {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 40px;
+  height: 40px;
+  margin: -20px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 78%, transparent);
+}
+.manual .play::after {
+  content: '';
+  position: absolute;
+  left: 15px;
+  top: 11px;
+  border: 9px solid transparent;
+  border-left: 14px solid var(--paper);
+  border-right: 0;
+}
+/* (the room a Show me under it gives up to start level comes back below the name, where the baseline doesn't feel it: a
+   keyboard's ring round Show me clears the name.) */
+.manual .tiles b {
+  margin-bottom: 4px;
+  font-size: 17px;
+  line-height: 1.2;
+}
+/* (its padding kept out of the baseline: a name with its Show me beside it starts level with one that has it under it.) */
+.manual .show {
+  padding: 4px 0;
+  margin-block: -4px 0;
+  font: inherit;
+  font-size: 14px;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  white-space: nowrap;
+}
+.manual .keys {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 8px;
+  margin: 0 0 18px;
+}
+.manual .keys button {
+  min-height: 40px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--cream);
+  border: var(--bw, 2px) solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow);
+}
+.manual :is(.keys button, .frame):active {
+  transform: var(--press);
+  box-shadow: var(--shadow-press);
+}
+.manual .lead {
+  margin: 0 0 10px;
+  color: var(--muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .req.tip,
+  .showme-step,
+  .showme-ring::after {
+    animation: none;
+  }
+}

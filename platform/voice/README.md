@@ -408,7 +408,10 @@ speak, and if the board carries on before then, the reply is taken back (`WAIT_S
 the transcription is part of it). Whether it sounds finished is Pipecat's Smart Turn v3.2 (`endpoint.py`, BSD-2-Clause,
 8 MB, about 90 ms a pause on one core, beside the transcription): it hears the turn's last 8 s up to 0.2 s after its
 words (`TRAIL`), the voice trailing off mid-thought or ending, where the recogniser writes a full stop at almost every
-pause. Mid-thought, the line waits 1.5 s more before it asks (`WAIT_SECONDS['open']`). On Pipecat's test set (one of its nine
+pause. Mid-thought, the line waits 1.5 s more before it asks (`WAIT_SECONDS['open']`). With the board's Pencil still
+moving as it stops talking (HQ says when it's down and lifted, while its screen is shown), the line waits for the pen to
+rest 1.5 s, review mode's own "the mark is done", at most 8 s (`PEN_REST_SECONDS`, `PEN_MOST_SECONDS`): the turn's
+picture has what was drawn while it spoke, and its words said meanwhile go with it. On Pipecat's test set (one of its nine
 files: 873 English, 160 Dutch, 142 German clips, cut at Silero's pause as the line does) it calls a mid-thought pause
 finished 10, 13 and 15 times in 100, and a finished turn mid-thought 4, 2 and 1 times in 100; through 8 kHz (the phone
 line's band) it calls 14, 22 and 31 mid-thought pauses in 100 finished. On a

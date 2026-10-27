@@ -62,6 +62,7 @@ const files = {
   'mock/requests.json': JSON.stringify(requests),
   'shared/watchalong/watchalong.js': readFileSync(`${ROOT}/shared/watchalong/watchalong.js`),
   'shared/watchalong/canvas.js': readFileSync(`${ROOT}/shared/watchalong/canvas.js`),
+  'shared/watchalong/encoder.js': readFileSync(`${ROOT}/shared/watchalong/encoder.js`),
   'shared/watchalong/vendor/rrweb-record.js': readFileSync(RECORDER),
 };
 // (the foundation's mock, never a company's own in theme/hq/mock/)

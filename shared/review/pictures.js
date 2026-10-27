@@ -25,7 +25,7 @@ const NO_ROOM_FOR_FRAME =
   'A note takes a dozen pictures at most, so the film’s frame stays off: the note keeps its moment, without a picture of it.';
 
 // r.pictures: each { file } kept on a change or { data } new (once ready), with its thumbnail; r.framePic: the one that
-// is a video's frame (the coordinator names its file: withFrame)
+// is a video's frame, added with this mark
 function addPictures(r, files) {
   const images = files.filter(f => f.type.startsWith('image/'));
   if (images.length < files.length) r.msg.textContent = 'Only pictures go with a note.';

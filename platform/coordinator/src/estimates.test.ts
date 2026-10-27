@@ -230,3 +230,15 @@ async function privateComparisons(token: string, privateJobs: number[], safe: nu
     assert.doesNotMatch(JSON.stringify(response.body), /otter space zebra/);
   }
 }
+
+// (last: it leaves the forecast watching, as the server's start does)
+test("a queued job's outlook is HQ's latest play, never one played for the asking", async () => {
+  const forecast = await import('./forecast.ts');
+  forecast.start();
+  forecast.refresh();
+  const id = h.queue({ agent: 'kit', title: 'Queued after the play' });
+  assert.equal((await ask(`q=%23${id}`)).outlook, null, 'not in the latest play yet');
+  assert.ok(forecast.play().usual.has(id), 'a play now would have it');
+  const kept = forecast.refresh().usual.get(id)!;
+  assert.equal((await ask(`q=%23${id}`)).outlook.left_ms, kept.left_ms);
+});

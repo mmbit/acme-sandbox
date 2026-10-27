@@ -65,10 +65,11 @@ export type Browser = {
 // Chromium, started and answering. An abort before then stops it.
 export async function launch(abort?: AbortSignal): Promise<Browser> {
   const profile = mkdtempSync(join(tmpdir(), 'chromium-'));
-  // only PATH and HOME: the server's keys never reach the browser
+  // only PATH, HOME and TMPDIR: the server's keys never reach the browser. TMPDIR is the profile too, as Chromium's
+  // lock socket otherwise goes in /tmp, read-only on a lent machine
   const chromium = spawn(chromiumPath(), [...SWITCHES, `--user-data-dir=${profile}`, 'about:blank'], {
     stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'],
-    env: { PATH: process.env.PATH ?? '', HOME: profile },
+    env: { PATH: process.env.PATH ?? '', HOME: profile, TMPDIR: profile },
   });
   const devtools = connect(chromium);
   const closed = new Promise<void>(resolve =>

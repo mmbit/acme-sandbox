@@ -1,7 +1,9 @@
 // Incremental allocated use with every directory and watch anchored to a verified descriptor.
+import { AccountingError, type AccountingFailureReason } from './accounting.ts';
 import { constants, watch, type FSWatcher, type Stats } from 'node:fs';
-import { open, lstat, readdir, type FileHandle } from 'node:fs/promises';
+import { open, lstat, opendir, type FileHandle } from 'node:fs/promises';
 import { dirname, join, resolve, sep } from 'node:path';
+import { getHeapStatistics } from 'node:v8';
 
 type Entry = { inode: string; bytes: number; directory: boolean; born: number };
 type Directory = { handle: FileHandle; parent: FileHandle; name: string; stats: Stats };
@@ -12,6 +14,18 @@ const pathFlags = 0o10000000 | constants.O_DIRECTORY | constants.O_NOFOLLOW;
 const descriptor = (handle: FileHandle) => `/proc/self/fd/${handle.fd}`;
 const identity = (stats: Stats) => `${stats.dev}:${stats.ino}:${stats.birthtimeMs}`;
 
+// Short-path files measured about 680 heap bytes each. Allow 1 KiB plus the full UTF-16 path, and
+// another 4 KiB per directory for its watch, open traversal frame and single buffered directory entry.
+// Entries, queued changes and the drained change snapshot each get at most one eighth of the heap.
+// The remaining five eighths cover runtime state, map resizing, temporary allocations and garbage collection.
+const treeHeapBytes = Math.floor(getHeapStatistics().heap_size_limit / 8);
+const entryBytes = 1024;
+export const TREE_ENTRY_LIMIT = Math.floor(treeHeapBytes / entryBytes);
+const pathBytes = (path: string) => 128 + 2 * path.length;
+const retainedBytes = (path: string, entry: Entry) => entryBytes + 2 * path.length + (entry.directory ? 4096 : 0);
+const treeLimit = () =>
+  new AccountingError('job-tree', 'Disk tree exceeds scanner memory budget. Remove disposable files and directories.');
+
 export class DiskTree {
   private entries = new Map<string, Entry>();
   private inodes = new Map<string, { bytes: number; links: number }>();
@@ -19,6 +33,8 @@ export class DiskTree {
   private dirty = new Set<string>();
   private failure?: Error;
   private bytes = 0;
+  private entryHeapBytes = 0;
+  private dirtyHeapBytes = 0;
   private roots: string[];
 
   constructor(roots: string[]) {
@@ -30,6 +46,7 @@ export class DiskTree {
       if (this.failure) throw this.failure;
       const dirty = [...this.dirty].sort((a, b) => a.length - b.length);
       this.dirty.clear();
+      this.dirtyHeapBytes = 0;
       for (const root of this.roots) await this.measureRoot(root, dirty);
       if (this.failure) throw this.failure;
       return this.bytes;
@@ -48,7 +65,8 @@ export class DiskTree {
       for (const path of dirty)
         if (path.startsWith(root + sep) && this.entries.get(dirname(path))?.directory)
           await this.refreshPath(directory.handle, root, path);
-      for (const directory of anchored.directories) await unchanged(directory);
+      for (const ancestor of anchored.directories)
+        await unchanged(ancestor, ancestor === directory ? 'job-tree' : 'worker-ancestor');
     } finally {
       await anchored.close();
     }
@@ -80,6 +98,7 @@ export class DiskTree {
   }
 
   private async refresh(parent: FileHandle, name: string, path: string, anchored?: Directory) {
+    if (this.failure) throw this.failure;
     const stats = anchored?.stats ?? (await present(join(descriptor(parent), name)));
     if (!stats) return this.remove(path);
     const previous = this.entries.get(path);
@@ -99,7 +118,8 @@ export class DiskTree {
       if (identity(stats) !== identity(opened)) throw new Error(`Disk directory replaced during scan: ${path}`);
       if (!previous?.directory || changed) {
         this.watchDirectory(path, handle);
-        for (const child of await readdir(descriptor(handle))) await this.refresh(handle, child, join(path, child));
+        const children = await opendir(descriptor(handle), { bufferSize: 1 });
+        for await (const child of children) await this.refresh(handle, child.name, join(path, child.name));
       }
       await unchanged({ handle, parent, name, stats });
     } finally {
@@ -109,10 +129,11 @@ export class DiskTree {
 
   private watchDirectory(directory: string, handle: FileHandle) {
     const watcher = watch(descriptor(handle), (_event, name) => {
+      if (this.failure) return;
       if (name === null) this.failure = new Error(`Disk changes lost for ${directory}`);
       else {
-        this.dirty.add(join(directory, String(name)));
-        this.dirty.add(directory);
+        this.queue(join(directory, String(name)));
+        this.queue(directory);
       }
     });
     watcher.on('error', failure => {
@@ -121,9 +142,23 @@ export class DiskTree {
     this.watchers.set(directory, watcher);
   }
 
+  private queue(path: string) {
+    if (this.failure || this.dirty.has(path)) return;
+    const bytes = pathBytes(path);
+    if (this.dirtyHeapBytes + bytes > treeHeapBytes) {
+      this.failure = treeLimit();
+      return;
+    }
+    this.dirty.add(path);
+    this.dirtyHeapBytes += bytes;
+  }
+
   private replace(path: string, entry: Entry) {
     this.drop(path);
+    const bytes = retainedBytes(path, entry);
+    if (this.entries.size >= TREE_ENTRY_LIMIT || this.entryHeapBytes + bytes > treeHeapBytes) throw treeLimit();
     this.entries.set(path, entry);
+    this.entryHeapBytes += bytes;
     const inode = this.inodes.get(entry.inode);
     if (inode) {
       this.bytes += entry.bytes - inode.bytes;
@@ -144,6 +179,7 @@ export class DiskTree {
       this.inodes.delete(entry.inode);
     }
     this.entries.delete(path);
+    this.entryHeapBytes -= retainedBytes(path, entry);
   }
 
   private remove(path: string) {
@@ -163,21 +199,27 @@ export class DiskTree {
     this.inodes.clear();
     this.dirty.clear();
     this.bytes = 0;
+    this.entryHeapBytes = 0;
+    this.dirtyHeapBytes = 0;
     this.failure = undefined;
   }
 }
 
 async function anchor(path: string) {
-  const base = await open(sep, pathFlags);
+  const base = await open(sep, pathFlags).catch(failure => {
+    throw new AccountingError('worker-ancestor', String(failure));
+  });
   const directories: Directory[] = [];
   const close = async () => {
     for (const directory of [...directories].reverse()) await directory.handle.close();
     await base.close();
   };
   let parent = base;
+  let reason: AccountingFailureReason = 'worker-ancestor';
   try {
     const names = path.split(sep).filter(Boolean);
     for (const [i, name] of names.entries()) {
+      reason = i < names.length - 1 ? 'worker-ancestor' : 'job-tree';
       const handle = await open(join(descriptor(parent), name), i < names.length - 1 ? pathFlags : directoryFlags);
       directories.push({ handle, parent, name, stats: await handle.stat() });
       parent = handle;
@@ -186,14 +228,18 @@ async function anchor(path: string) {
   } catch (failure) {
     await close();
     if ((failure as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw failure;
+    throw new AccountingError(reason, String(failure));
   }
 }
 
-async function unchanged(directory: Directory) {
-  const current = await present(join(descriptor(directory.parent), directory.name));
-  if (!current || identity(current) !== identity(directory.stats))
-    throw new Error(`Disk directory replaced during scan: ${directory.name}`);
+async function unchanged(directory: Directory, reason: AccountingFailureReason = 'job-tree') {
+  try {
+    const current = await present(join(descriptor(directory.parent), directory.name));
+    if (!current || identity(current) !== identity(directory.stats))
+      throw new Error(`Disk directory replaced during scan: ${directory.name}`);
+  } catch (failure) {
+    throw new AccountingError(reason, String(failure));
+  }
 }
 
 async function present(path: string): Promise<Stats | undefined> {

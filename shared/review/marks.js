@@ -1,17 +1,21 @@
 // The marks on an HQ page (review mode with the book, data-book on its script: pencil.js): each mark a note in the
 // book's store (the coordinator's /api/book routes, booknotes.ts), its ink drawn on the page where its element is now
-// (anchor.js), with its number in a disc beside it (red for the board's, an agent's own ink for its): the number the
-// note has on its sheet, so the page and the sheet point at each other. The note being made shows the number it will
-// have. A mark goes on the sheet of the agent whose work it's on (data-owner on HQ's page; nobody's: the CEO's), on that
+// (anchor.js). The mark being made is drawn in full, numbered when several need telling apart; once its note is in the
+// book it fades into a faint hairline there (inFull), the page clean for the next. A mark goes on the sheet of the agent whose work it's on (data-owner on HQ's page; nobody's: the CEO's), on that
 // agent's page in today's book; a sent one stays as a hairline. On a call, the call's page. Every change is a step the
 // two-finger tap takes back (pencil.js).
-import { ACCENT } from './base.js';
+import { ACCENT, keep, kept } from './base.js';
 import * as inkjs from './ink.js';
 import { placer } from './anchor.js';
 import { boxOfLines } from './mark.js';
-import { REACH, cardOpen, drawHairlines, hairAt, hideCard, showCard } from './hairline.js';
+import { insideRing } from './carry.js';
+import { under } from './surface.js';
+import { shows } from './markshows.js';
+import { shownNumbers } from './notenumbers.js';
+import { drawHairlines } from './hairline.js';
+import { fadeWent, fading } from './hairline.js';
 import { get, here, onThisPage, ownerOf, pageOf, send } from './markpage.js';
-import { answered, answeredNow, slipActs, tab } from './markslips.js';
+import { answered, tab } from './markslips.js';
 
 // A snip: the page around a mark, the ink on it, with this much margin round the ink (the book shows it at its width)
 const MARGIN = 24;
@@ -25,9 +29,11 @@ export async function load(r) {
   const { notes } = await get(`/notes?url=${encodeURIComponent(url)}`);
   if (here() !== url || r.call) return;
   const shown = notes.filter(n => !n.answers && onThisPage(n.anchor));
-  const kept = new Map((r.marks ?? []).map(m => [m.id, m.live]));
+  const kept = new Map((r.marks ?? []).map(m => [m.id, m.live])),
+    full = new Map((r.marks ?? []).filter(m => inFull(r, m)).map(m => [m.id, m.live]));
   r.marks = shown.filter(n => n.status === 'open').map(n => markOf(n, kept));
-  r.sent = shown.filter(n => n.status === 'sent');
+  r.sent = shown.filter(n => n.status === 'sent' && !clearedHairs().includes(n.id));
+  fadeWent(r, full);
   paint(r);
   r.loaded?.(); // (what waits on the page's notes: markslips.js cutsWhenStill.)
 }
@@ -51,6 +57,11 @@ async function loadCall(r, url, call) {
     .map(n => markOf(n, kept));
   paint(r);
 }
+// What of the book's notes HQ's page shows in full: only one lingering a moment before it lifts into the book (the
+// call's agent's ring, callnotes.js). Once a mark's note is in the book, on a call or not, it's a faint hairline on the
+// page (hairline.js, its card a tap away), so the page is clean for the next mark and the note's number lives in the
+// book.
+const inFull = (r, m) => m.id === r.lingering;
 const pathOf = url => {
   const u = new URL(url, location.href);
   return u.pathname + u.search;
@@ -60,6 +71,10 @@ const markOf = (n, kept = new Map()) => ({
   id: n.id,
   n: n.n,
   page: n.page,
+  // (its sheet, whose that is and whether a call's.)
+  sheet: n.sheet,
+  owner: n.owner,
+  onCall: n.onCall,
   anchor: n.anchor,
   live: kept.get(n.id) ?? null,
   by: n.by,
@@ -129,108 +144,75 @@ export const whereNow = (m, ink = placed(m)) => (ink.length ? boxOfLines(ink) : 
 // Every mark on the page as it is now, with its number, and the lines of the one being made (or a changed note's)
 export function paint(r, lines = r.strokes) {
   const c = r.inkCanvas,
-    g = inkjs.fit(c),
-    shown = [];
+    g = inkjs.fit(c);
   // (the sent notes' ink first, as hairlines under the marks.)
   const hairs = hairsNow(r);
   drawHairlines(
     g,
     hairs.flatMap(h => h.lines),
   );
+  fading(r, g, hairs, { number: (f, lines, n) => disc(f, boxOfLines(lines), n), again: () => paint(r) });
   // (one with an answer not yet ticked shows its slip's corner.)
   for (const h of hairs) if (answered(h.note)) tab(g, boxOfLines(h.lines));
-  for (const m of r.marks ?? []) {
-    const ink = placed(m),
-      at = whereNow(m, ink);
-    if (ink.length) inkjs.draw(g, ink, { halo: true });
-    shown.push(...ink);
-    const by = theirs(r, m);
-    if (at) disc(g, at, m.n, by?.color);
-    if (at && answered(m)) tab(g, at);
-    if (at && by && m.words) tag(g, at, `${by.name}: ${m.words}`, by.color);
-    // (the board's handwriting, read: its words as type beside it.)
-    else if (at && m.said === 'written' && m.words) tag(g, at, m.words, TYPE_INK, TYPE);
-  }
-  const open = lines === r.strokes ? openLines(r, lines) : lines;
+  // (the open notes on the screen now, numbered only where several need telling apart, the one being made among them:
+  // notenumbers.js.)
+  // (the mark being made, till its note is in the book: then its hairline.)
+  const filed = !!r.mark?.filed,
+    open = filed ? [] : lines === r.strokes ? openLines(r, lines) : lines,
+    pinned = !filed && r.mark?.kind === 'pin' && r.mark.element?.rect,
+    making = r.markNumber && (open.length || pinned),
+    // (in full, only the agent's ring drawn just now, whatever it's round: it named it on this screen.)
+    showing = (r.marks ?? []).filter(m => inFull(r, m)).map(m => ({ m, ink: placed(m) }));
+  r.numbers = shownNumbers([...showing.map(x => x.m), ...(making ? [{ id: NEW, n: r.markNumber }] : [])]);
+  const shown = drawMarks(r, g, showing);
   if (open.length) {
     inkjs.draw(g, open, { halo: true });
     shown.push(...open);
   }
-  // (on a call, the lines drawn while the last mark goes in: callnotes.js.)
-  if (r.callLines?.length) {
-    inkjs.draw(g, r.callLines, { halo: true });
-    shown.push(...r.callLines);
+  // (the lines drawn while the last mark goes in: settle.js.)
+  if (r.nextLines?.length) {
+    inkjs.draw(g, r.nextLines, { halo: true });
+    shown.push(...r.nextLines);
   }
-  const pinned = r.mark?.kind === 'pin' && r.mark.element?.rect;
-  if (r.markNumber && (open.length || pinned)) disc(g, open.length ? boxOfLines(open) : pinned, r.markNumber);
+  if (r.numbers.get(NEW)) disc(g, open.length ? boxOfLines(open) : pinned, r.numbers.get(NEW));
   // (...and the mark being made's, while its post-it holds them as read.)
   const read = r.mark?.written;
   if (read && open.length && r.text?.value.trim() === read) tag(g, boxOfLines(open), read, TYPE_INK, TYPE);
   inkjs.shown(c, shown, { halo: true });
 }
-
-// ---- hairlines: the page's sent notes, their ink where it is now.
-const hairsNow = r =>
-  (r.sent ?? []).filter(n => n.anchor.ink?.length).map(note => ({ note, lines: placed({ anchor: note.anchor }) }));
-// When a sent note went: its sheet's sending time (the book's latest sent sheets, asked once a tap needs one), else the
-// last time the note changed
-async function sentAt(r, note) {
-  r.sentTimes ??= get('/sheets').then(
-    ({ sent }) => new Map(sent.map(s => [s.id, s.sent])),
-    () => new Map(),
-  );
-  return (await r.sentTimes).get(note.sheet) ?? note.updated ?? note.created;
-}
-// A finger's tap on a hairline opens its card there; a tap anywhere else closes it and stays the page's. A tap that lands
-// on one is the card's alone: the page hears its touch cancelled, as when the browser takes a touch to scroll, and
-// no click.
-const TAP = { px: 10, ms: 500 };
-export function hairTaps(r) {
-  let down = null;
-  const swallowClick = c => c.isTrusted && c.stopPropagation();
-  addEventListener(
-    'pointerdown',
-    e => {
-      const path = e.composedPath();
-      if (cardOpen(r) && !path.includes(r.host)) hideCard(r);
-      down =
-        e.pointerType === 'touch' && e.isPrimary && !path.includes(r.host) && path.includes(document.body)
-          ? { id: e.pointerId, x: e.clientX, y: e.clientY, t: e.timeStamp }
-          : null;
-    },
-    true,
-  );
-  addEventListener(
-    'pointerup',
-    e => {
-      if (!down || e.pointerId !== down.id) return;
-      const tap = Math.hypot(e.clientX - down.x, e.clientY - down.y) < TAP.px && e.timeStamp - down.t < TAP.ms;
-      down = null;
-      if (!tap || r.covered || !r.veil.hidden) return;
-      const hit = hairAt([...hairsNow(r), ...answeredNow(r)], [e.clientX, e.clientY], REACH);
-      if (!hit) return;
-      e.stopPropagation();
-      e.target.dispatchEvent(
-        new PointerEvent('pointercancel', {
-          pointerId: e.pointerId,
-          pointerType: e.pointerType,
-          isPrimary: true,
-          clientX: e.clientX,
-          clientY: e.clientY,
-          bubbles: true,
-          composed: true,
-        }),
-      );
-      addEventListener('click', swallowClick, { capture: true, once: true });
-      setTimeout(() => removeEventListener('click', swallowClick, true), 400);
-      const open = !(r.sent ?? []).includes(hit.note); // (a mark: a note still on its sheet)
-      showCard(r, hit.note, [e.clientX, e.clientY], open ? null : sentAt(r, hit.note), slipActs);
-    },
-    true,
-  );
-  addEventListener('scroll', () => hideCard(r), { capture: true, passive: true });
+// (the mark being made, among the page's numbers.)
+const NEW = 'new';
+// The page's open marks on the screen now ({ m, ink: its lines placed }), each with its number if it shows one; returns
+// their lines
+function drawMarks(r, g, showing) {
+  const shown = [];
+  for (const { m, ink } of showing) {
+    const at = whereNow(m, ink),
+      n = r.numbers.get(m.id);
+    if (ink.length) inkjs.draw(g, ink, { halo: true });
+    shown.push(...ink);
+    const by = theirs(r, m);
+    if (at && n) disc(g, at, n, by?.color);
+    if (at && answered(m)) tab(g, at);
+    if (at && by && m.words) tag(g, at, `${by.name}: ${m.words}`, by.color);
+    // (the board's handwriting, read: its words as type beside it.)
+    else if (at && m.said === 'written' && m.words) tag(g, at, m.words, TYPE_INK, TYPE);
+  }
+  return shown;
 }
 
+// Whether a note's mark shows on the screen now: only while what it was drawn on is there (markshows.js). ink: its
+// lines placed now, if they're at hand.
+export const showsNow = (r, m, ink = placed(m)) =>
+  shows(m.anchor, m.live, ink.length ? boxOfLines(ink) : null, (x, y) => under(r, x, y));
+
+// ---- hairlines: the page's notes not shown in full (inFull: sent ones, and those still on their sheet), their ink where
+// it is now. (the open ones)
+export const hairsNow = r =>
+  [...(r.sent ?? []), ...(r.marks ?? []).filter(m => !inFull(r, m))]
+    .filter(n => n.anchor.ink?.length)
+    .map(note => ({ note, lines: placed(note) }))
+    .filter(h => showsNow(r, h.note, h.lines));
 // The number in a red disc (an agent's in its own ink), at the top left of what's marked
 function disc(g, b, n, color = ACCENT) {
   const x = Math.max(12, b.x - 6),
@@ -297,7 +279,13 @@ export function markAt(r, area) {
     );
   };
   if (r.mode === 'note' && hits(openLines(r))) return 'open';
-  return [...(r.marks ?? [])].reverse().find(m => hits(placed(m))) ?? null;
+  // (only a mark that shows)
+  return (
+    [...(r.marks ?? [])].reverse().find(m => {
+      const ink = placed(m);
+      return hits(ink) && showsNow(r, m, ink);
+    }) ?? null
+  );
 }
 
 // The snip: the screenshot around the mark (its lines on it), at least SNIP_MIN, within the screen (snapshot.js has
@@ -320,8 +308,10 @@ export function snipOf({ c, k }, area) {
 // Returns the note. by: the call's agent, for its own ink on the call's page (callnotes.js), which nobody hears of: the
 // board's notes are heard as they go in ('pencil:note', with the call they're on, if any).
 export async function post(r, { anchor, live, words, said, snip, by }) {
-  const page = await pageOf(r, r.call ? null : await ownerOf(r, live));
+  const owner = r.call ? null : await ownerOf(r, live);
+  const page = await pageOf(r, owner);
   const { note } = await send('/note', { page: page.id, anchor, words, said, snip, ...(by ? { by } : {}) });
+  if (owner) r.lastOwner = owner; // (the sheet review mode's menu names: menu.js.)
   r.marks = [...(r.marks ?? []), { ...markOf(note), page: page.id, live }];
   paint(r);
   if (!by)
@@ -330,15 +320,48 @@ export async function post(r, { anchor, live, words, said, snip, by }) {
     );
   return note;
 }
+// A sent note's hairline scribbled over: cleared from HQ on this screen (the note stays in the book, sent), and back
+// with an undo.
+const CLEARED_KEY = '__hq_cleared_hairlines';
+const clearedHairs = () => JSON.parse(kept(localStorage, CLEARED_KEY) ?? '[]');
+export function sentAt(r, area) {
+  return (
+    [...(r.sent ?? [])].reverse().find(n => {
+      const ink = placed(n);
+      if (!ink.length || !showsNow(r, n, ink)) return false;
+      const b = boxOfLines(ink);
+      return (
+        area.x < b.x + b.w + 10 && area.x + area.w > b.x - 10 && area.y < b.y + b.h + 10 && area.y + area.h > b.y - 10
+      );
+    }) ?? null
+  );
+}
+// The hairline ring a finger presses inside, with a snip to carry into the book: { now: its points, snip }, or null
+export function hairRingAt(r, at) {
+  const hit = hairsNow(r).findLast(
+    h => h.note.snip && h.lines[0]?.points.length > 2 && insideRing(h.lines[0].points, at),
+  );
+  return hit ? { now: hit.lines[0].points, snip: hit.note.snip } : null;
+}
+export function clearHair(r, n, cleared = true) {
+  const ids = clearedHairs().filter(id => id !== n.id);
+  keep(localStorage, CLEARED_KEY, JSON.stringify(cleared ? [...ids, n.id].slice(-500) : ids));
+  r.sent = cleared ? r.sent.filter(x => x.id !== n.id) : [...r.sent.filter(x => x.id !== n.id), n];
+  paint(r);
+}
+// (a note wiped or back, for whatever else shows the book's notes: a second screen, pair.js.)
+const wiped = (id, back) => document.dispatchEvent(new CustomEvent('pencil:wiped', { detail: { id, back } }));
 // A note wiped: gone from its sheet, then from the page (load numbers the rest again, as the store has)
 export async function wipe(r, m) {
   await send('/note/delete', { id: m.id });
   r.marks = r.marks.filter(x => x.id !== m.id);
   paint(r);
+  wiped(m.id, false);
 }
 // ...and brought back as it was, the same note (its id, writer, words, mark and snip: booknotes.ts restoreNote), last
 // on its sheet.
 export async function unwipe(r, m) {
   const { note } = await send('/note/restore', { id: m.id });
   r.marks = [...r.marks, { ...markOf(note), live: m.live }];
+  wiped(m.id, true);
 }

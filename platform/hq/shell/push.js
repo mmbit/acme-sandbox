@@ -1,5 +1,5 @@
 // Push notifications on this device: the service worker (sw.js, which caches nothing) and the subscription.
-import { pushKey, pushSubscribe, pushUnsubscribe, pushTest } from './data.js';
+import { pushKey, pushSubscribe, pushUnsubscribe, pushTest, tipEvent } from './data.js'; // (tipEvent)
 
 const ua = navigator.userAgent;
 const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
@@ -53,6 +53,14 @@ export async function disablePush() {
   await sub.unsubscribe();
 }
 export const testPush = async () => pushTest((await current())?.endpoint);
+// The first urgent card this page sees, on a device without notifications, brings their tip (tips.js), whatever the
+// company's other devices have.
+let urgentSeen = false;
+export async function urgentCards(dev, list) {
+  if (urgentSeen || !list.some(r => r.urgency === 'now')) return;
+  urgentSeen = true;
+  if ((await pushState()) !== 'on') await tipEvent(dev, 'notifications');
+}
 // On start: keep the coordinator's list in step with this device (a new server, a rotated key).
 export async function syncPush() {
   try {

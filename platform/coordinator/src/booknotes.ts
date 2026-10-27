@@ -12,9 +12,9 @@ import { db, inOneStep } from './db.ts';
 import { ORIGIN } from './config.ts';
 import { findAgent } from './jobs.ts';
 import { keepFile } from './uploads.ts';
-import { BOARD, notFound, row as pageRow, serveFile } from './book.ts';
+import { BOARD, row as pageRow } from './book.ts';
 import { anchorOf, asks, dataUrlPicture, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
-import { DIR, SWEEP_MS } from './pagescraps.ts';
+import { DIR, SWEEP_MS, notFound, serveFile } from './pagescraps.ts';
 import { ask, listedOnce, slipsOf, type Listed } from './bookslips.ts'; // (listedOnce)
 import { guestOf } from './sketchpeople.ts';
 import { linksOf, setLink, unlink } from './booklinks.ts';
@@ -57,8 +57,9 @@ export type Note = {
 // POST /api/book/note { page, anchor, words?, said?, snip?, to?, by? }: a note on a page of the book, on its owner's
 // open sheet (to: another agent's, or null for the pages nobody owns' sheet). asking: whether its words may ask now
 // (the board's own, in HQ). { note, sheet, asked }: asked, its question's quick run.
-// A call's page's notes go on the call's own sheet, never sent, and ask nothing: the agent on the call is the one
-// listening; by: its agent, for the agent's ink (bookcalls.ts).
+// A call's page's notes go on the call's own sheet, never sent; by: its agent, for the agent's ink (bookcalls.ts). The
+// board's question there asks now as anywhere, the call's agent answering it on the page as well as on the line (the
+// board on call #239: being on a call changes nothing about how the book works.)
 // (answers: the slip it's a reply under, replyTo's. by: who wrote it, the book's own person unless an invited guest's
 // note joins the board's sheet: 'guest:<grant>' (feedback.ts, a share's note). Only the board's own words ask now: a
 // guest's question waits for the board's plane like the rest.)
@@ -80,7 +81,7 @@ export function addNote(b: any, who = BOARD, asking = true, answers: number | nu
   const sheet = call ? sheetRow(call.sheet, who)! : openSheet(who, owner);
   if (count(sheet.id) >= MAX_NOTES) return [413, `a sheet holds ${MAX_NOTES} notes: send it first`] as Refused;
   const id = insertNote(sheet.id, page.id, call?.by ?? by, anchor, said, snip, answers);
-  const asked = asking && !call && by === BOARD && asks(said.words) ? ask(id) : null;
+  const asked = asking && (call?.by ?? by) === BOARD && asks(said.words) ? ask(id) : null; // (call: job #19916)
   return { note: shown(note(id)!), sheet: sheetOf(sheet.id), asked };
 }
 export function insertNote(
@@ -102,15 +103,18 @@ export function insertNote(
       )
       .run(sheet, page, n, by, JSON.stringify(anchor), said.words, said.said, now, now, answers).lastInsertRowid,
   );
-  if (snip) {
-    const file = `n${id}-${randomBytes(4).toString('hex')}.${snip.type === 'image/png' ? 'png' : 'jpg'}`;
-    keepFile(`${DIR}/${file}`, snip.clean);
-    db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
-  }
+  if (snip) keepSnip(id, snip);
   return id;
 }
-// POST /api/book/note/edit { id, words?, said?, anchor?, was? }: an open note corrected (a word written over, the mark
-// moved). Words that newly end in a question mark ask now, unless it's a call's. was: the words they replace, refused
+// A note's snip kept as a file of its own (replacing the one it had: was)
+function keepSnip(id: number, snip: { type: string; clean: Buffer }, was: string | null = null) {
+  const file = `n${id}-${randomBytes(4).toString('hex')}.${snip.type === 'image/png' ? 'png' : 'jpg'}`;
+  keepFile(`${DIR}/${file}`, snip.clean);
+  db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
+  if (was) rmSync(`${DIR}/${was}`, { force: true });
+}
+// POST /api/book/note/edit { id, words?, said?, anchor?, snip?, was? }: an open note corrected (a word written over, the mark
+// moved). Words that newly end in a question mark ask now, a call's too (job #19916). was: the words they replace, refused
 // when the note has others by now (handwriting read late leaves the board's typed words.)
 export function editNote(b: any, who = BOARD) {
   const n = openNote(Number(b?.id), who);
@@ -121,6 +125,10 @@ export function editNote(b: any, who = BOARD) {
   if (isRefused(said)) return said;
   const anchor = b.anchor === undefined ? JSON.parse(n.anchor) : anchorOf(b.anchor);
   if (isRefused(anchor)) return anchor;
+  // (a snip cut again, as lines join the note on HQ's page)
+  const snip = b.snip == null ? null : dataUrlPicture(b.snip);
+  if (isRefused(snip)) return snip;
+  if (snip) keepSnip(n.id, snip, n.snip);
   db.prepare('update book_notes set words = ?, said = ?, anchor = ?, updated = ? where id = ?').run(
     said.words,
     said.said,
@@ -128,9 +136,9 @@ export function editNote(b: any, who = BOARD) {
     new Date().toISOString(),
     n.id,
   );
-  const call = sheetRow(n.sheet, who)!.status === 'call';
-  // (a guest's note never asks, corrected or not)
-  const asked = !call && n.by === BOARD && asks(said.words) && !asks(n.words) ? ask(n.id) : null;
+  // (a guest's note never asks, corrected or not, nor a call's agent's ink. company: a call's asks, job #19916, not
+  // upstream yet)
+  const asked = n.by === BOARD && asks(said.words) && !asks(n.words) ? ask(n.id) : null;
   return { note: shown(note(n.id)!), asked };
 }
 // POST /api/book/note/move { id, to }: an open note onto another owner's sheet (to: an agent, or null for nobody),
@@ -345,5 +353,11 @@ export function shown(n: Note, listed: Listed = listedOnce()) {
     links: linksOf(n.id),
     // an invited person's note on the board's sheet: their name tag and colour
     guest: guestOf(n.by),
+    // whose sheet it's on (null: nobody's), and whether that's a call's
+    ...onSheet(n.sheet),
   };
 }
+const onSheet = (id: number) => {
+  const s = sheetRow(id, null)!;
+  return { owner: s.owner, onCall: s.status === 'call' };
+};

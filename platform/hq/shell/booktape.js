@@ -9,10 +9,10 @@ import { act, refused } from './data.js';
 import { stylesheet } from '../util.js';
 import { sfx } from './audio.js';
 import { createPage, loadPage } from './bookdata.js';
-import { changed, keepTears, said } from './booksave.js';
-import { SIDE, pageAt, scrapBoxOf, shownAt } from './bookrow.js';
+import { changed, newSides, readAt, said } from './booksave.js';
+import { pageBox, scrapBoxOf, spanOf } from './bookrow.js';
 import { shrink } from './sketchscraps.js';
-import { placeScrap, viewOn } from './bookscrap.js';
+import { placeScrap } from './bookscrap.js';
 
 const IMAGE = /^image\//;
 // a finger held this long, this still, on a page brings the Paste bubble; it goes again after BUBBLE_MS
@@ -24,7 +24,7 @@ const TAPES_ON = new Set(['free', 'sheet']);
 
 // book: bookpages.js's; paper: the book's paper. pages: bookpages.js's own, each given the book: { openDay(book)
 // (today's row, a promise), lay(book) (the row laid out again), inView(book, i, box) (the table slides to show a box on
-// page i) }
+// page i), blank(book) (today's blank page at the end, added when none waits) }
 export function mountTape(book, paper, pages) {
   stylesheet('shell/booktape.css');
   const tape = { book, paper, pages, bubble: null };
@@ -127,20 +127,20 @@ function carried(tape, e) {
   if (!open() || x < box.left || x >= box.right || y < box.top || y >= box.bottom) return;
   e.preventDefault();
   if (phase === 'drop' && picture)
-    Promise.resolve(picture).then(blob => blob && tapeIn(tape, blob, { at: [x, y], today: true }));
+    Promise.resolve(picture).then(
+      blob => blob && tapeIn(tape, blob, { at: [x, y], today: true }),
+      err => tell(tape, onPage(tape.book, { clientX: x, clientY: y }), `That picture didn’t come: ${err.message}`),
+    );
 }
 
 // ---- taping
 
-// The page under a point on screen, or -1
-function onPage(book, e) {
-  const r = book.desk.getBoundingClientRect();
-  return pageAt(book.row, e.clientX - r.left + book.pan.x, e.clientY - r.top + book.pan.y);
-}
+// The page under a point on screen, or -1 (book.at: the page shown, off the paper null.)
+const onPage = (book, e) => book.at(e.clientX, e.clientY)?.i ?? -1;
 // Words said on the page in view (or the one asked for)
 function tell(tape, i, words) {
   const { book } = tape,
-    v = book.views[i >= 0 ? i : shownAt(book.row, book.pan, book.size)];
+    v = book.views[i >= 0 ? i : book.cur];
   if (v) said(book, v.page, words);
 }
 
@@ -148,13 +148,13 @@ function tell(tape, i, words) {
 // the page under the point, else the one in view. Today's row is opened for it when the book shows another day.
 async function pageFor(tape, { at, today }) {
   const { book } = tape;
-  const i = at ? onPage(book, { clientX: at[0], clientY: at[1] }) : shownAt(book.row, book.pan, book.size),
+  const i = at ? onPage(book, { clientX: at[0], clientY: at[1] }) : book.cur,
     v = book.views[i];
   const fits = v && TAPES_ON.has(v.page.kind) && (!today || (v.page.kind === 'free' && v.page.day === book.today));
   if (fits) return { v, at: !!at };
   if (book.day !== book.today) await tape.pages.openDay(tape.book);
   const free = book.views.findLast(x => x.page.kind === 'free' && (x.page.blank || x.page.day === book.today));
-  return { v: free, at: false };
+  return { v: free ?? tape.pages.blank(book), at: false };
 }
 
 // A picture file onto the book: drawn smaller (sketchscraps.js shrink, at most 2,000 px a side), kept by the store on
@@ -173,17 +173,19 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
     const kept = await upload(book, page.id, small.blob);
     const k = book.views.indexOf(v);
     if (k < 0) return; // (the book went to another day meanwhile)
-    const r = book.row[k],
-      desk = book.desk.getBoundingClientRect();
-    const spot = found.at ? [at[0] - desk.left + book.pan.x - r.x, at[1] - desk.top + book.pan.y - r.y] : null;
+    // (the spot on the page, and the part of it the paper shows: its top when it isn't the page shown.)
+    const point = found.at && book.at(at[0], at[1]),
+      spot = point?.i === k ? [point.x, point.y] : null,
+      view = k === book.cur ? book.shown() : pageBox(page);
     const scrap = {
       file: kept.file,
       url: kept.url,
-      ...placeScrap({ nw: small.w, nh: small.h }, page, { at: spot, view: viewOn(r, book.pan, book.size), i }),
+      ...placeScrap({ nw: small.w, nh: small.h }, page, { at: spot, view, i }),
     };
     page.scraps.push(scrap);
     page.blank = false;
     shown(tape, v, scrap);
+    book.tools?.taped(v, scrap);
     sfx.land();
     changed(book, page);
     book.steps.push({
@@ -203,16 +205,30 @@ async function tapeIn(tape, file, { at = null, i = 0, today = false }) {
 async function ready(book, v) {
   const page = v.page;
   if (!page.id) {
-    const made = await createPage(book.dev, { kind: 'free', w: page.w, h: Math.min(page.h, SIDE.max) });
+    const made = await createPage(book.dev, newSides(page));
     Object.assign(page, { id: made.id, day: made.day, blank: false });
-    keepTears(page);
   }
   if (page.ink) return;
-  const full = await (v.reading ?? loadPage(book.dev, page.id));
+  const full = await (v.reading ?? loadPage(book.dev, page.id, book.who));
   // (bookpages.js read() fills the page itself; read here first, this fills it and stands in for that read)
-  if (!page.ink && full) Object.assign(page, { ink: full.ink, scraps: full.scraps, h: Math.max(page.h, full.h) });
+  if (!page.ink && full)
+    Object.assign(readAt(page, full), {
+      ink: full.ink,
+      scraps: full.scraps,
+      texts: full.texts,
+      ...spanOf(page, full),
+    });
   v.reading ??= Promise.resolve(full);
   if (!page.ink) throw refused(0, 'this page couldn’t be read. Try again.');
+}
+// A picture already in the book kept again as one of a page's own (a picture is on a page once, pagescraps.ts): its
+// file read and uploaded for the view's page, { file, url }. The select tool pastes and duplicates with it.
+export async function keepAgain(book, v, url) {
+  const got = await fetch(url);
+  if (!got.ok) throw refused(got.status, 'it couldn’t be read again');
+  const blob = await got.blob();
+  await ready(book, v);
+  return upload(book, v.page.id, blob);
 }
 // The store keeps the picture as one of the page's: { file, url }. In dev mode it stays in this browser.
 let devFiles = 0;

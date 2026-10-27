@@ -12,6 +12,7 @@ const { ORIGIN } = await import('./config.ts');
 const { BOARD_CALL } = await import('./jobs.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
+const { onPublish } = await import('./events.ts');
 const sketchbook = await import('./sketchbook.ts');
 const DIR = `${h.dataDir}/book`;
 
@@ -102,6 +103,146 @@ test('a page is made today, saved with its ink and scraps, and drawn here as a p
   assert.equal((await h.board(`/api/book/page?id=${page.id}`)).body.scraps[0].url, scrap.url);
   assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200);
   assert.ok(!readdirSync(DIR).some(f => f.startsWith(`${page.id}-`)), 'its files go with it');
+});
+
+test("a filled shape is kept filled and drawn with its inside; a fill that isn't true is refused", async () => {
+  const page = await newPage({ kind: 'free' });
+  const square = {
+    color: '#1D9A5B',
+    size: 4,
+    fill: true,
+    points: [
+      [100, 100, 0.5, 0],
+      [300, 100, 0.5, 0],
+      [300, 300, 0.5, 0],
+      [100, 300, 0.5, 0],
+      [100, 100, 0.5, 0],
+    ],
+  };
+  const ring = { ...square, fill: undefined, points: square.points.map(([x, y, p, t]) => [x + 400, y, p, t]) };
+  const saved = await h.board('/api/book/page/save', { id: page.id, ink: [square, ring], scraps: [] });
+  assert.equal(saved.status, 200);
+  const read = (await h.board(`/api/book/page?id=${page.id}`)).body;
+  assert.equal(read.ink[0].fill, true);
+  assert.ok(!('fill' in read.ink[1]), 'an outline has no fill');
+  const drawn = await picture(saved.body.picture);
+  assert.deepEqual(pixel(drawn, 400, 400), [29, 154, 91], "the filled square's inside is ink");
+  assert.deepEqual(pixel(drawn, 1200, 400), [255, 253, 248], "the outlined one's is paper");
+  const wrong = await h.board('/api/book/page/save', { id: page.id, ink: [{ ...square, fill: 'yes' }], scraps: [] });
+  assert.equal(wrong.status, 400);
+});
+
+test('words typed on a page are saved with its ink, read back with it and set in its picture; its width grows too', async () => {
+  const page = await newPage({ kind: 'free' });
+  const note = { x: 40, y: 60, w: 300, text: 'Mugs in teal & <gold>\nthen the box', color: '#2F6BDC' };
+  const highlight = {
+    color: '#ffd23f',
+    size: 18,
+    alpha: 0.45,
+    points: [
+      [30, 300, 0.5, 0],
+      [380, 300, 0.5, 40],
+    ],
+  };
+  const saved = await h.board('/api/book/page/save', {
+    id: page.id,
+    ink: [STROKE, highlight],
+    scraps: [],
+    texts: [note],
+    w: 1000,
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.w, saved.body.h], [1000, 600], 'the page grew sideways');
+  const read = (await h.board(`/api/book/page?id=${page.id}`)).body;
+  assert.deepEqual(read.texts, [{ ...note, color: '#2f6bdc' }]);
+
+  // set in the picture, in its colour, inside its box (twice the page's px), and nowhere else on the paper
+  const drawn = await picture(saved.body.picture);
+  const blue = (x0: number, y0: number, x1: number, y1: number) => {
+    let n = 0;
+    for (let y = y0; y < y1; y += 2)
+      for (let x = x0; x < x1; x += 2) {
+        const [r, g, b] = pixel(drawn, x, y);
+        if (b > 150 && r < 120 && g < 160) n++;
+      }
+    return n;
+  };
+  assert.ok(blue(80, 120, 680, 260) > 200, 'the words, in blue');
+  assert.equal(blue(800, 120, 1990, 260), 0, 'wrapped at its width');
+  const [r, g, b] = pixel(drawn, 400, 600);
+  assert.ok(r > 245 && g > 220 && g < 245 && b < 190, `the highlighter, yellow on the paper: ${[r, g, b]}`);
+
+  // a save that sends none (a sketch's) keeps them; an empty list takes them off
+  await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [] });
+  assert.equal((await h.board(`/api/book/page?id=${page.id}`)).body.texts.length, 1);
+  for (const texts of [
+    [{ ...note, text: '  ' }],
+    [{ ...note, color: 'blue' }],
+    [{ ...note, x: -20_001 }],
+    [{ ...note, text: 'x'.repeat(2001) }],
+    [{ ...note, text: 'a\0b' }],
+    { note },
+  ])
+    assert.equal(
+      (await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [], texts })).status,
+      400,
+      JSON.stringify(texts).slice(0, 80),
+    );
+  assert.equal((await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [], w: 20_001 })).status, 400);
+  await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [], texts: [] });
+  assert.deepEqual((await h.board(`/api/book/page?id=${page.id}`)).body.texts, []);
+  assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200);
+});
+
+test('a page grows up and left: what lies above and left of its heading is kept where it is and drawn in its picture', async () => {
+  const page = await newPage({ kind: 'free' });
+  assert.deepEqual([page.x, page.y], [0, 0], 'a new page starts at its heading');
+  const above = {
+    color: '#000000',
+    size: 6,
+    points: [
+      [-380, -280, 0.5, 0],
+      [-200, -280, 0.5, 40],
+    ],
+  };
+  const scrap = await upload(page.id, await red());
+  const placed = { file: scrap.file, x: -350, y: -150, w: 80, h: 60, tilt: 0 };
+  const words = { x: -300, y: -60, w: 200, text: 'left of the heading', color: '#2f6bdc' };
+  const box = { x: -400, y: -300, w: 1200, h: 900 };
+  const saved = await h.board('/api/book/page/save', {
+    id: page.id,
+    ink: [STROKE, above],
+    scraps: [placed],
+    texts: [words],
+    ...box,
+  });
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.x, saved.body.y, saved.body.w, saved.body.h], [-400, -300, 1200, 900]);
+  const read = (await h.board(`/api/book/page?id=${page.id}`)).body;
+  assert.deepEqual(read.ink[1].points, above.points, 'the ink where it was drawn');
+  assert.deepEqual([read.scraps[0].x, read.scraps[0].y], [-350, -150]);
+  assert.deepEqual(read.texts, [words]);
+  assert.ok((await h.board('/api/book')).body.pages.some((p: any) => p.id === page.id && p.x === -400));
+
+  // the picture is the whole box, twice its px: the ink above the heading near its top-left, the scrap below it
+  const drawn = await picture(saved.body.picture);
+  assert.deepEqual([drawn.info.width, drawn.info.height], [2400, 1800]);
+  assert.ok(
+    pixel(drawn, 2 * (-300 + 400), 2 * (-280 + 300)).every(c => c < 80),
+    'the ink above and left',
+  );
+  assert.deepEqual(pixel(drawn, 2 * (-310 + 400), 2 * (-120 + 300)), [255, 0, 0], "the scrap's picture");
+
+  // a save that names no top-left keeps it; one past the most a page grows to, or right of its heading, is refused
+  await h.board('/api/book/page/save', { id: page.id, ink: [STROKE], scraps: [] });
+  assert.equal((await h.board(`/api/book/page?id=${page.id}`)).body.x, -400);
+  for (const corner of [{ x: 10 }, { y: -20_001 }, { x: -0.5 }])
+    assert.equal(
+      (await h.board('/api/book/page/save', { id: page.id, ink: [], scraps: [], ...corner })).status,
+      400,
+      JSON.stringify(corner),
+    );
+  assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 200);
 });
 
 test("label, archive and a picture's upload at the book's own routes, refused for a page that isn't there", async () => {
@@ -195,12 +336,21 @@ test("send, then undo within ten seconds: nothing goes; send and let it go: one 
     'undone: nothing went',
   );
   assert.ok(!h.db.prepare("select 1 from jobs where agent = 'moss'").get());
+  // (whether a page went: its tick in the book's overview.)
+  const went = async () => (await h.board(`/api/book/page?id=${page.id}`)).body.went;
+  assert.equal(await went(), false);
 
   await h.board('/api/book/send', { id: sheet.id });
+  // (delivered, it's a 'book' event, so every HQ open reads its book again)
+  const heard: unknown[] = [],
+    deaf = onPublish(e => void (e.type === 'book' && heard.push({ ...e, ts: null })));
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS);
+  deaf();
+  assert.deepEqual(heard, [{ type: 'book', agent: 'moss', text: 'sent', ts: null }]);
   assert.equal((await h.board('/api/book/undo', { id: sheet.id })).body.error, 'too late to undo: the sheet has gone');
   const sent = (await h.board('/api/book/sheets')).body.sent.find((s: any) => s.id === sheet.id);
   assert.equal(sent.status, 'sent');
+  assert.equal(await went(), true, 'the page went');
   const job = h.db.prepare('select * from jobs where id = ?').get(sent.job) as any;
   assert.deepEqual([job.agent, job.kind, job.status], ['moss', 'work', 'queued']);
   assert.match(
@@ -579,7 +729,7 @@ test('a free page is sent to an agent on its own: a one-off sheet in its ten sec
   await h.board('/api/book/page/save', { id: page.id, ink: [STROKE], scraps: [] });
   assert.equal(
     (await h.board('/api/book/page/send', { id: kitsPage.id, to: 'kit' })).body.error,
-    'a free page is sent on its own; a sheet goes with its plane',
+    "a free page or a call's is sent on its own; a sheet goes from its face",
   );
   assert.equal((await h.board('/api/book/page/send', { id: page.id, to: 'nobody' })).body.error, 'to is an agent');
   const sending = (await h.board('/api/book/page/send', { id: page.id, to: 'kit' })).body;

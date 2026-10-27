@@ -1,5 +1,5 @@
-// Ring and carry: something the Pencil has just ringed on HQ's page, lifted by a finger pressed inside the ring and
-// dragged. A cut-out of what's inside (the screenshot's pixels in the ring's box) follows the finger; let go over the
+// Ring and carry: something the Pencil has just ringed on HQ's page, or a note's ring kept as a hairline (its snip from
+// the book), lifted by a finger pressed inside the ring and dragged. A cut-out of what's inside (the screenshot's pixels in the ring's box) follows the finger; let go over the
 // book's paper it's taped on today's page there, anywhere else it goes back. A finger anywhere else still works the page,
 // and a finger's tap inside the ring is still the page's.
 //
@@ -44,8 +44,8 @@ export function cutOf(box, k, W, H) {
 
 // ---- the finger
 
-// ring(): the ring that can be carried now, or null: { then: its points on the screenshot, now: on the screen now, shot:
-// the screenshot { c, k } }. carried(): the cut-out was taped in the book. onPage(e): whether a touch is HQ's page's
+// ring(at): the ring that can be carried from a point now, or null: { then: its points on the screenshot, now: on the
+// screen now, shot: the screenshot { c, k } }, or a note's { now, snip: its picture's URL }. carried(): the cut-out was taped in the book. onPage(e): whether a touch is HQ's page's
 export function setupCarry(r, { ring, carried, onPage }) {
   const st = { r, ring, carried, onPage, c: null }; // c: the press, { id, from, target, ring, lifted, el, at, picture }
   addEventListener('pointerdown', e => pressed(st, e), true);
@@ -58,7 +58,7 @@ export function setupCarry(r, { ring, carried, onPage }) {
 function pressed(st, e) {
   st.c = null;
   if (e.pointerType !== 'touch' || !e.isPrimary || st.r.covered || !st.onPage(e)) return;
-  const now = st.ring();
+  const now = st.ring([e.clientX, e.clientY]);
   if (now && insideRing(now.now, [e.clientX, e.clientY]))
     st.c = { id: e.pointerId, from: [e.clientX, e.clientY], target: e.target, ring: now, lifted: false };
 }
@@ -108,14 +108,10 @@ const ask = (phase, e, picture = null) =>
 // edge, in an element of its own over everything (outside the page, so it can cross onto the book). The page hears its
 // touch cancelled, as when the browser takes one to scroll. False when the ring is off the screenshot.
 function lift(c) {
-  const { shot, then, now } = c.ring,
-    cut = cutOf(boxOfPoints(then), shot.k, shot.c.width / shot.k, shot.c.height / shot.k);
-  if (!cut) return false;
-  const canvas = Object.assign(document.createElement('canvas'), { width: cut.sw, height: cut.sh });
-  canvas.getContext('2d').drawImage(shot.c, cut.sx, cut.sy, cut.sw, cut.sh, 0, 0, cut.sw, cut.sh);
-  c.picture = new Promise(res => canvas.toBlob(res, 'image/png'));
-  Object.assign(canvas.style, { display: 'block', width: `${cut.sw / shot.k}px`, height: `${cut.sh / shot.k}px` });
-  const at = boxOfPoints(now),
+  const picture = c.ring.snip ? snipped(c.ring) : cutOut(c.ring);
+  if (!picture) return false;
+  c.picture = picture.blob;
+  const at = picture.at,
     el = document.createElement('div');
   el.setAttribute('aria-hidden', 'true');
   Object.assign(el.style, {
@@ -130,7 +126,7 @@ function lift(c) {
     boxShadow: '0 10px 28px rgba(40, 30, 50, .32), 0 1px 3px rgba(40, 30, 50, .25)',
     willChange: 'transform',
   });
-  el.append(canvas);
+  el.append(picture.el);
   document.documentElement.append(el);
   Object.assign(c, { el, lifted: true, cancelling: true });
   c.target.dispatchEvent(
@@ -146,6 +142,27 @@ function lift(c) {
   );
   c.cancelling = false;
   return true;
+}
+// The screenshot's pixels in a just-drawn ring's box: { el, blob, at }, or null off the screenshot
+function cutOut({ shot, then, now }) {
+  const cut = cutOf(boxOfPoints(then), shot.k, shot.c.width / shot.k, shot.c.height / shot.k);
+  if (!cut) return null;
+  const canvas = Object.assign(document.createElement('canvas'), { width: cut.sw, height: cut.sh });
+  canvas.getContext('2d').drawImage(shot.c, cut.sx, cut.sy, cut.sw, cut.sh, 0, 0, cut.sw, cut.sh);
+  Object.assign(canvas.style, { display: 'block', width: `${cut.sw / shot.k}px`, height: `${cut.sh / shot.k}px` });
+  return { el: canvas, blob: new Promise(res => canvas.toBlob(res, 'image/png')), at: boxOfPoints(now) };
+}
+// A note's snip from the book, over its ring (the snip is the ring with a margin round it): { el, blob, at }
+function snipped({ snip, now }) {
+  const ring = boxOfPoints(now),
+    img = Object.assign(new Image(), { src: snip, alt: '' }),
+    w = Math.max(ring.w + 48, 160);
+  Object.assign(img.style, { display: 'block', width: `${w}px` });
+  const blob = fetch(snip, { credentials: 'same-origin' }).then(r => {
+    if (!r.ok) throw new Error(`the note's snip: ${r.status}`);
+    return r.blob();
+  });
+  return { el: img, blob, at: { x: ring.x + ring.w / 2 - w / 2, y: ring.y - 24 } };
 }
 // ...following the finger, lifted a little, and over the book's paper tilted as it will be taped
 function follow(c, dx, dy, over) {

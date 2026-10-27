@@ -22,10 +22,14 @@ const h = await harness('downtime', { before: repo => writeFileSync(`${repo}/com
 const { db, jobs } = h;
 const schedule = await import('./schedule.ts');
 const { retryAt, checkDue, sleepUntil } = await import('../../worker/src/downtime.ts');
+const ledger = await import('./ledger.ts');
 
 const H = 3600e3;
-const reset = () => db.exec("delete from review_triage; delete from jobs; delete from prs; delete from seats where id in ('ready-claude', 'codex-1')");
-const queue = (title: string, o: { downtime?: boolean; after?: number; engine?: string; thread?: string } = {}) =>
+const reset = () => db.exec("delete from review_triage; delete from calls; delete from call_items; delete from jobs; delete from prs; delete from seats where id in ('ready-claude', 'codex-1')");
+const queue = (
+  title: string,
+  o: { downtime?: boolean; after?: number; engine?: string; thread?: string; item?: number; queuedBy?: string } = {},
+) =>
   h.queue({ agent: 'bolt', title, engine: 'claude', ...o });
 // A seat ready on each engine (Codex's the one codex() claims on, which its jobs are for), so work waiting there waits
 // for room, not for a seat (jobs.ts makesRoom).
@@ -44,6 +48,13 @@ const codex = (util?: number, extra: Record<string, unknown> = {}) => on('codex-
 const beat = async (job: Running, o: Record<string, unknown>) => (await h.heartbeat(job, o)).body;
 // a job's hold (until when it waits), as the projects view shows it: none when it may start now
 const until = (id: number) => h.job(id).until ?? 0;
+// An item of a board call, as its follow-up records it (a decision is handled when its work ends; a task waits for the
+// board's yes)
+const item = (call: number, kind = 'task') => {
+  const i = ledger.add(call, { kind, owner: 'bolt', what: 'Paint the gate', goal: 'A gate that looks cared for', quote: 'Board: paint the gate.' }, null);
+  assert.ok(typeof i === 'object');
+  return i.id;
+};
 // downtime work of bolt's that ended with its pull request: the review round it gets, as HQ lists it
 async function reviewed(pr: number, o: { downtime?: boolean } = { downtime: true }) {
   const job = await h.start({ agent: 'bolt', title: 'Refactoring pass', ...o }, { util: 0.1 });
@@ -82,48 +93,56 @@ test("a seat ahead of its week's pace takes, until its weekly reset, the board's
   const due = queue('For the board by tonight', { thread: h.dueThread({ deadline: Date.now() + H }) });
   const board = queue('What the board asked on a call');
   h.storedCall(1, 'bolt', board);
-  // (work handed an open item from the call is the board's word too; one whose item was dropped isn't)
-  const item = (status: string) => db.prepare(`insert into call_items (call, kind, owner, what, quote, status, ts)
-    values (1, 'task', 'bolt', 'Paint the gate', 'Board: paint the gate.', ?, 'x') returning id`).get(status) as { id: number };
-  const carries = queue('The gate, as the board asked'), dropped = queue('The fence, dropped since');
-  for (const [job, status] of [[carries, 'open'], [dropped, 'dropped']] as const)
-    db.prepare('update jobs set item = ? where id = ?').run(item(status).id, job);
+  // (work handed an open item from the call is the board's word too; dropping the item cancels its work)
+  const gate = item(1), fence = item(1);
+  const carries = queue('The gate, as the board asked', { item: gate, queuedBy: 'bolt' });
+  const dropped = queue('The fence, dropped since', { item: fence, queuedBy: 'bolt' });
+  assert.deepEqual((ledger.drop(fence, 'The board took it back', board) as { cancelled: number[] }).cancelled, [dropped]);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
   assert.deepEqual([await paced(), await paced(), await paced(), await paced()], [board, carries, due, undefined], 'the rest waits for the reset');
-  assert.equal(h.job(dropped).status, 'queued');
   assert.equal(h.job(later).status, 'queued');
   const unpaced = async () => (await claim(0.2))?.id;
-  assert.deepEqual([await unpaced(), await unpaced(), await unpaced(), await unpaced()], [later, undated, dropped, spare], 'not paced: all');
+  assert.deepEqual([await unpaced(), await unpaced(), await unpaced()], [later, undated, spare], 'not paced: all');
 });
 
 test("a board item's pull request keeps the board's word on a paced seat until it merges: its fixes and its reviews", async () => {
   reset();
   const reset2 = Date.now() + 2 * 24 * H;
-  const item = (status: string, job: number | null = null) => (db.prepare(`insert into call_items (call, kind, owner, what,
-    quote, status, job, ts) values (1, 'task', 'bolt', 'Paint the gate', 'Board: paint the gate.', ?, ?, 'x') returning id`)
-    .get(status, job) as { id: number }).id;
-  // work done with its pull request open: the item it carried is handled (ledger.ts finished()), or the one it was handed
-  const pr = (number: number, status: string, carried: (work: number) => void) => {
-    const work = queue('The gate');
-    db.prepare("update jobs set status = 'done' where id = ?").run(work);
-    carried(work);
-    db.prepare("insert into prs (number, branch, author, status) values (?, ?, 'bolt', ?)").run(number, `job/${work}`, status);
-    const fix = queue('Fixing the tests');
-    db.prepare("update jobs set branch = ?, pr = ? where id = ?").run(`job/${work}`, number, fix);
-    return fix;
+  const followUp = h.ended({ agent: 'bolt', title: 'The call followed up' });
+  const call = Number(h.storedCall(null, 'bolt', followUp).lastInsertRowid);
+  // work handed an item, ended done with its pull request in a state (ledger.ts finished(): the item is ready, or handled),
+  // and a fix queued on its branch
+  const pr = (number: number, status: string, work: number) => {
+    h.storedPr(number, work, status);
+    ledger.finished({ id: work, kind: 'work' }, 'done');
+    return h.queue({ agent: 'bolt', title: 'Fixing the tests', engine: 'claude', branch: `job/${work}`, pr: number });
   };
-  const carries = pr(9001, 'open', work => db.prepare('update jobs set item = ? where id = ?').run(item('handled'), work));
-  const handed = pr(9002, 'stuck', work => item('handled', work));
-  const merged = pr(9003, 'merged', work => db.prepare('update jobs set item = ? where id = ?').run(item('handled'), work));
-  const dropped = pr(9004, 'open', work => db.prepare('update jobs set item = ? where id = ?').run(item('dropped'), work));
-  const plain = pr(9005, 'open', () => {});
-  const review = queue('Reviewing');
-  db.prepare("update jobs set kind = 'review', branch = (select branch from prs where number = 9001), pr = 9001 where id = ?").run(review);
+  const handed = (id: number) => {
+    const work = h.ended({ agent: 'bolt', title: 'The gate' });
+    ledger.handedOut(id, work, null);
+    return work;
+  };
+  // (the work the item was handed to queued the job that made the pull request, carrying it on: hq job passes it on)
+  const passedOn = item(call);
+  ledger.finished({ id: handed(passedOn), kind: 'work' }, 'done');
+  const carries = pr(9001, 'open', h.ended({ agent: 'bolt', title: 'The gate, painted', item: passedOn }));
+  const decided = pr(9002, 'stuck', handed(item(call, 'decision')));
+  const withBoard = pr(9006, 'board', handed(item(call)));
+  // (handed to a job that failed: the work in its place made the pull request)
+  const failed = h.ended({ agent: 'bolt', title: 'The gate' }, 'failed');
+  ledger.handedOut(item(call), failed, null);
+  const replaced = pr(9007, 'open', h.ended({ agent: 'bolt', title: 'The gate, again', insteadOf: failed }));
+  const merged = pr(9003, 'merged', handed(item(call)));
+  const gone = item(call), dropped = pr(9004, 'open', handed(gone));
+  assert.equal(typeof ledger.drop(gone, 'The board took it back', followUp), 'object');
+  const plain = pr(9005, 'open', h.ended({ agent: 'bolt', title: 'The fence' }));
+  const review = h.queue({ agent: 'bolt', title: 'Reviewing', engine: 'claude', kind: 'review', branch: h.job(carries).branch, pr: 9001 });
+  assert.deepEqual([passedOn, gone].map(i => ledger.item(i)!.status), ['ready', 'dropped']);
   const board = (id: number) => (db.prepare(`select ${jobs.BOARD_CALL('j')} board from jobs j where id = ?`).get(id) as { board: number }).board;
-  assert.deepEqual([carries, handed, review, merged, dropped, plain].map(board), [1, 1, 1, 0, 0, 0]);
+  assert.deepEqual([carries, decided, withBoard, replaced, review, merged, dropped, plain].map(board), [1, 1, 1, 1, 1, 0, 0, 0]);
   const paced = async () => (await claim(0.2, { pacedUntil: reset2 }))?.id;
-  assert.deepEqual([await paced(), await paced(), await paced(), await paced()], [carries, handed, review, undefined],
-    'the rest waits for the reset');
+  const taken = [await paced(), await paced(), await paced(), await paced(), await paced(), await paced()];
+  assert.deepEqual(taken, [carries, decided, withBoard, replaced, review, undefined], 'the rest waits for the reset');
 });
 
 test("a deadline's pull request whose round is ruled: the check queued since carries the deadline onto a paced seat", async () => {

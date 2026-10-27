@@ -5,6 +5,12 @@
 // away, hq run waits for it; with none, the work goes in pieces under the share, or the agent says in its report that
 // it can't. Never the same run again here: a job blocked STOP_AT times is stopped, so no agent loops against the share.
 // What the share can't free (the worker short of memory for long all the same) goes outside HQ: jam.ts.
+import {
+  ACCOUNTING_FAILURE_REASONS,
+  workerAccountingFailure,
+  type AccountingFailure,
+  type AccountingFailureReason,
+} from '../../worker/src/accounting.ts';
 import { db, redacted, once, columnsOf, inOneStep } from './db.ts';
 import { publish, redact } from './events.ts';
 import * as jobs from './jobs.ts';
@@ -17,7 +23,8 @@ const MEASURES = ['memory', 'processes', 'cores', 'disk'] as const;
 type Measure = (typeof MEASURES)[number];
 
 db.exec(`create table if not exists blocks (id integer primary key, at text not null, job integer not null,
-  measure text not null, used real, share real not null, event text, report text, count integer)`);
+  measure text not null, used real, share real not null, event text, report text, count integer,
+  accounting_error integer not null default 0, accounting_failure_reason text)`);
 once('blocks-command-free-receipts', () => {
   const columns = columnsOf('blocks');
   if (columns.includes('command')) db.exec('alter table blocks drop column command');
@@ -32,22 +39,43 @@ once('blocks-unknown-disk-use', () => {
     alter table blocks_nullable rename to blocks;`);
 });
 db.exec('create unique index if not exists blocks_event on blocks (event)');
+once('blocks-accounting-failures', () => {
+  db.exec('alter table blocks add column accounting_error integer not null default 0');
+  db.exec('update blocks set accounting_error = 1 where used is null');
+});
+once('blocks-accounting-failure-reasons', () => {
+  db.exec('alter table blocks add column accounting_failure_reason text');
+});
 redacted('blocks', 'report');
 
-type Receipt = { job: number; measure: Measure; used: number | null; share: number; report: string; count: number };
+type Receipt = {
+  job: number;
+  measure: Measure;
+  used: number | null;
+  share: number;
+  report: string;
+  count: number;
+  accounting_error: number;
+  accounting_failure_reason: AccountingFailureReason | null;
+};
 
 // A receipt keeps the command-free report and stop in one step. Retries reuse it even if the job or machines changed.
 export function blocked(b: Record<string, unknown>) {
   const job = Number(b.job),
     agent = jobs.jobAgent(job);
   const measure = MEASURES.find(m => m === b.measure);
-  const unknownDisk = b.used === null && measure === 'disk' && b.accountingError === true && b.warning !== true;
+  const accountingError = b.accountingError !== undefined;
+  const accountingFailureReason =
+    ACCOUNTING_FAILURE_REASONS.find(reason => reason === (b.accountingError as AccountingFailure | null)?.reason) ??
+    null;
+  const unknownDisk = b.used === null && measure === 'disk' && accountingError && b.warning !== true;
   const used = unknownDisk ? null : Number(b.used),
     share = Number(b.share);
   const event = b.event;
   if (
     !agent ||
     !measure ||
+    (accountingError && (measure !== 'disk' || accountingFailureReason === null || b.warning === true)) ||
     (b.used === null && !unknownDisk) ||
     (used !== null && (!Number.isFinite(used) || !(used >= 0))) ||
     !Number.isFinite(share) ||
@@ -63,11 +91,20 @@ export function blocked(b: Record<string, unknown>) {
   }
   const receipt = inOneStep(() => {
     const kept = db
-      .prepare('select job, measure, used, share, report, count from blocks where event = ?')
+      .prepare(
+        'select job, measure, used, share, report, count, accounting_error, accounting_failure_reason from blocks where event = ?',
+      )
       .get(event) as Receipt | undefined;
     if (kept)
-      return kept.job === job && kept.measure === measure && kept.used === used && kept.share === share ? kept : 409;
-    return recordBlock(event, job, agent, measure, used, share, b.accountingError === true);
+      return kept.job === job &&
+        kept.measure === measure &&
+        kept.used === used &&
+        kept.share === share &&
+        !!kept.accounting_error === accountingError &&
+        kept.accounting_failure_reason === accountingFailureReason
+        ? kept
+        : 409;
+    return recordBlock(event, job, agent, measure, used, share, accountingFailureReason);
   });
   if (typeof receipt === 'number') return receipt;
   const command = (redact(String(b.command ?? '')) ?? '').slice(0, COMMAND_MAX);
@@ -81,17 +118,20 @@ function recordBlock(
   measure: Measure,
   used: number | null,
   share: number,
-  accountingError: boolean,
+  accountingFailureReason: AccountingFailureReason | null,
 ) {
-  db.prepare('insert into blocks (at, job, measure, used, share, event) values (?, ?, ?, ?, ?, ?)').run(
-    new Date().toISOString(),
-    job,
-    measure,
-    used,
-    share,
-    event,
-  );
-  const count = (db.prepare('select count(*) n from blocks where job = ?').get(job) as { n: number }).n;
+  const accountingError = accountingFailureReason !== null;
+  const workerFailure = workerAccountingFailure(accountingFailureReason);
+  db.prepare(
+    'insert into blocks (at, job, measure, used, share, event, accounting_error, accounting_failure_reason) values (?, ?, ?, ?, ?, ?, ?, ?)',
+  ).run(new Date().toISOString(), job, measure, used, share, event, Number(accountingError), accountingFailureReason);
+  const count = (
+    db
+      .prepare(
+        "select count(*) n from blocks where job = ? and coalesce(accounting_failure_reason, '') not in ('worker-ancestor', 'worker-scanner')",
+      )
+      .get(job) as { n: number }
+  ).n;
   publish({
     type: 'log',
     agent,
@@ -100,34 +140,35 @@ function recordBlock(
       : `The worker blocked a run of job #${job}: ${amount(measure, used)}, past a job's share of ${amount(measure, share)}${count > 1 ? `, block ${count} of the job` : ''}.`,
   });
   const off =
+    !workerFailure &&
     count >= STOP_AT &&
     jobs.offWorker(job, `blocked ${count} times for running past its share of the worker: it runs here no more`);
-  const report = words(measure, used, share, count, off, job, accountingError);
+  const what = accountingError ? SLOT_ACCOUNTING_FAILURE : overuseWords(measure, used, share);
+  const report = workerFailure ? WORKER_ACCOUNTING_FAILURE : words(measure, what, count, off, job);
   db.prepare('update blocks set report = ?, count = ? where event = ?').run(report, count, event);
   return { report, count };
 }
 
-// What the run's output says: what happened, where to run it instead, and what comes of running it here again. At
-// STOP_AT, what HQ did with the job (jobs.ts offWorker): stopped it, put it back in the queue (a review), or nothing.
+const WORKER_ACCOUNTING_FAILURE =
+  'Disk accounting is unavailable because the worker could not read its own infrastructure.\n' +
+  'The command is held while disk accounting is unavailable. This adds no overuse strike.';
+const SLOT_ACCOUNTING_FAILURE =
+  'Disk accounting is unavailable for this live command. Restore readable process counters and job directories before running it again.';
 type Off = ReturnType<typeof jobs.offWorker> | false;
-function words(
-  measure: Measure,
-  used: number | null,
-  share: number,
-  count: number,
-  off: Off,
-  job: number,
-  accountingError: boolean,
-) {
+function overuseWords(measure: Measure, used: number | null, share: number) {
   const took = measure === 'cores' ? `kept ${amount(measure, used)} busy for long` : `used ${amount(measure, used)}`;
-  const what =
-    used === null
-      ? 'Further writing is held while disk accounting is unavailable.'
-      : `this job ${took} on the HQ server's worker, past a job's share ` +
+  return used === null
+    ? 'Further writing is held while disk accounting is unavailable.'
+    : `this job ${took} on the HQ server's worker, past a job's share ` +
         `of ${amount(measure, share)}. ` +
         (measure === 'disk'
           ? 'Further writing is held while the job stays over its disk share.'
           : 'It runs here no more, whole or in bigger pieces.');
+}
+
+// What the run's output says: what happened, where to run it instead, and what comes of running it here again. At
+// STOP_AT, what HQ did with the job (jobs.ts offWorker): stopped it, put it back in the queue (a review), or nothing.
+function words(measure: Measure, what: string, count: number, off: Off, job: number) {
   const strikes = !off
     ? `This is this job's block ${count} of ${STOP_AT}: at ${STOP_AT}, HQ stops the job.`
     : typeof off === 'string'
@@ -136,12 +177,7 @@ function words(
         ? `That was this job's block ${count}: HQ puts it back in the queue at its next step, to go on in its session ` +
           'once the worker has room. Run nothing heavy here meanwhile.'
         : `That was this job's block ${count}: HQ is stopping the job, and its work so far stays on its branch.`;
-  const accounting = accountingError
-    ? 'Disk accounting is unavailable for this live command. Restore readable process counters and job directories before running it again.'
-    : '';
-  return [accounting, what, measure === 'disk' ? clearDisk(job) : off ? '' : instead(), strikes]
-    .filter(Boolean)
-    .join('\n');
+  return [what, measure === 'disk' ? clearDisk(job) : off ? '' : instead(), strikes].filter(Boolean).join('\n');
 }
 
 // Where it can go now: a lent machine taking work, with the kinds there; one that's away (hq run waits for it); or none,

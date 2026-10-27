@@ -30,6 +30,7 @@ import { paidLines, sentNothing, shopName, noSuchCode, testerVoucherSources } fr
 import * as plans from './plans.ts';
 import * as pricing from './pricing.ts';
 import { viewerId } from './viewers.ts';
+import * as tips from './tips.ts';
 
 // Share tables.
 // - review_shares.linked: the other previews it opens, JSON [{host, prefix}].
@@ -339,13 +340,20 @@ export function fromSession(session: string | undefined, host: string) {
 }
 export type Session = NonNullable<ReturnType<typeof fromSession>>;
 
-// A person's Send my notes: from then on they add none. True the first time.
-export const submit = (id: number, guest: string) =>
-  db
-    .prepare(
-      'update review_share_people set submitted = ? where share = ? and guest = ? and submitted is null and removed is null',
-    )
-    .run(new Date().toISOString(), id, guest).changes > 0;
+// A person's Send my notes: from then on they add none. True the first time. On a notes share with one person left to
+// send, that's the tip for End now (tips.ts).
+export function submit(id: number, guest: string) {
+  const first =
+    db
+      .prepare(
+        'update review_share_people set submitted = ? where share = ? and guest = ? and submitted is null and removed is null',
+      )
+      .run(new Date().toISOString(), id, guest).changes > 0;
+  const left = people(id).filter(p => onIt(p) && !p.submitted);
+  if (first && left.length === 1 && kindOf(byId(id)!) === 'notes')
+    tips.offer('endnow', { waiting: left[0].guest, share: id });
+  return first;
+}
 export const submitted = (id: number, guest: string) => !!person(id, guest)?.submitted;
 // Whoever sent their notes may add more until the share's date, unless the board ended it: the share reopens, and the
 // board may still Remove them from it or End it. (A view-only share takes no notes.)

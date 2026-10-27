@@ -84,7 +84,8 @@ nothing to type: the film lands where its tool puts it, with its `.render.json`.
 
 - **What goes:** the demo kit, the page and its folder, the film's music, and what the page needed before in this clone.
   A run that lacks a file the page asks for (a font, a script, a clip) stops and names it, and the next takes it, with the
-  files beside it but renders, so a new scene takes a few short runs first. A page can ask for any file in the repo.
+  files beside it but renders, so a new scene takes a few short runs first. A page can ask for any file in the repo. A
+  render the clone has only the `.render.json` of (a clip another job kept) is fetched for the next run.
 - **With no machine to take it** (no `render` kind, the machine off or asleep, or one lost the run), it's drawn in the
   job (`hq run --fallback here`). `HQ_RUN_HERE=1` draws it here on purpose.
 - **The kind:** an image with Chromium through Playwright (its browsers in `/ms-playwright`), ffmpeg and the fonts films

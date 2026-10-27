@@ -1,57 +1,48 @@
-// The book's rail: a face for each agent with an open sheet (its count of notes) or an answer not yet ticked (a dot),
-// and at its foot Search, Undo and the book's arrow. What a face or Search does beyond opening the book is theirs who
-// listen: book:face (detail: { owner }) and book:search on the document. The folded book's lip carries the faces' dot:
-// an answer waits to be read. Under the faces, everyone invited with a book of
+// The book's rail: a face for each agent with an open sheet or an answer not yet ticked (a dot), never a count, and
+// by the face of the sheet shown a small plane that sends it; and in the book's
+// island Undo and Redo (islands floating over the paper: bookui.js.). What a face does beyond opening the book is theirs who listen: book:face
+// (detail: { owner }) on the document. The folded book's handle draws what the faces
+// hold from the sheets read here (book:sheets: bookhandle.js.). Under the faces,
+// everyone invited with a book of
 // their own, their initial in their colour: a tap opens theirs in the board's (book:person, detail: { who, name, colour },
 // or null for the board's own again; book:whose says which is open).
 import { esc } from '../util.js';
 import * as world from '../world/world.js';
-import { loadSheets as readSheets } from './booksheetdata.js';
+import { SEND_MS, loadSheets as readSheets } from './booksheetdata.js';
 import { loadPeople } from './bookdata.js';
 import { facesOf } from './bookfaces.js';
+import { PLANE, sendAt } from './bookplane.js';
+import { sendOrder } from './booksheetplace.js';
 import { scene, look } from './stage.js';
+import { button, hide, island, islands, tip, MOD } from './bookui.js';
 
 // The faces follow the store: read again this often, when HQ comes back to the front, when the Pencil leaves a note
 // (pencil:note) and when asked (refreshRail)
 const SHEETS_POLL_MS = 20000;
 
 const ICONS = {
-  search:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
   undo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7H4V2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M4.5 7A8 8 0 1 1 6 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
-  arrow:
-    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  // (Undo's arrow turned the other way.)
+  redo: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 7h5V2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M19.5 7A8 8 0 1 0 18 17" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>',
 };
 
-let faces, lip, dev;
+let faces, dev;
 let people = [],
   open = null; // (invited people with a book, and whose is open)
 
-// node: the rail's element; lipNode: the folded book's lip. on: { toggle, open, undo }, the book's (book.js)
-export function mountRail(node, lipNode, on) {
+// node: the rail's element. on: { open, undo, redo }, the book's (book.js.: the lip is bookhandle.js's)
+export function mountRail(node, on) {
   dev = on.dev;
-  lip = lipNode;
-  node.innerHTML = `<div class="bk-faces"></div><div class="bk-foot">
-    <button class="bk-search" title="Search the book">${ICONS.search}<span class="sr">Search</span></button>
-    <button class="bk-undo" title="Undo">${ICONS.undo}<span class="sr">Undo</span></button>
-    <button class="bk-arrow" title="Put the book away or bring it back">${ICONS.arrow}<span class="sr">The book</span></button></div>`;
-  faces = node.querySelector('.bk-faces');
-  node.querySelector('.bk-arrow').addEventListener('click', on.toggle);
-  node.querySelector('.bk-undo').addEventListener('click', on.undo);
-  node.querySelector('.bk-search').addEventListener('click', () => {
-    on.open();
-    document.dispatchEvent(new CustomEvent('book:search'));
-  });
-  faces.addEventListener('click', e => {
-    const face = e.target.closest('.bk-face');
-    if (!face) return;
-    on.open();
-    if (face.dataset.who) {
-      const person = face.dataset.who === open ? null : people.find(p => p.who === face.dataset.who);
-      return document.dispatchEvent(new CustomEvent('book:person', { detail: person ?? null }));
-    }
-    document.dispatchEvent(new CustomEvent('book:face', { detail: { owner: face.dataset.owner || null } }));
-  });
+  // (the controls float as small islands over the paper's right edge, one style for all: bookui.js.)
+  node.append(islands());
+  faces = island('faces');
+  const book = island('book'),
+    undo = button({ icon: ICONS.undo, label: 'Undo', keys: `${MOD}+Z`, onClick: on.undo }),
+    redo = button({ icon: ICONS.redo, label: 'Redo', keys: `${MOD}+Shift+Z`, onClick: on.redo });
+  undo.classList.add('bk-undo');
+  redo.classList.add('bk-redo');
+  book.append(undo, redo);
+  faces.addEventListener('click', e => tapped(e.target, on));
   refreshRail();
   setInterval(() => document.hidden || refreshRail(), SHEETS_POLL_MS);
   document.addEventListener('visibilitychange', () => document.hidden || refreshRail());
@@ -69,6 +60,26 @@ export function mountRail(node, lipNode, on) {
   return { refresh: refreshRail };
 }
 
+// A face tapped: the book opened at its sheet (book:face), or an invited person's book opened in it, or the board's own
+// again when theirs is open (book:person). The small plane by a face sends the sheet shown, or takes back a send in its
+// seconds (book:give, detail: { id, owner, sending: the sheet in its seconds or null). (book:give)
+function tapped(target, on) {
+  const plane = target.closest('.bk-plane');
+  if (plane) {
+    const face = shownFaces.find(f => f.id === plane.dataset.for);
+    const detail = { id: face.id, owner: face.owner, sending: face.sending };
+    return document.dispatchEvent(new CustomEvent('book:give', { detail }));
+  }
+  const face = target.closest('.bk-face');
+  if (!face) return;
+  on.open();
+  if (face.dataset.who) {
+    const person = face.dataset.who === open ? null : people.find(p => p.who === face.dataset.who);
+    return document.dispatchEvent(new CustomEvent('book:person', { detail: person ?? null }));
+  }
+  document.dispatchEvent(new CustomEvent('book:face', { detail: { owner: face.dataset.owner || null } }));
+}
+
 // Read the sheets again and draw the faces (an unreadable store leaves the faces as they were, till the next read). The
 // sheets read go to the book's pages too (book:sheets on the document, booksheet.js), so faces and sheets agree.
 // (the sheets told, dev mode's played in memory, booksheetdata.js)
@@ -78,15 +89,114 @@ export async function refreshRail() {
     loadPeople(dev).catch(e => (console.error('[hq] The invited people’s books can’t be read:', e), null)),
   ]);
   if (!sheets || !invited) return;
-  const all = facesOf(sheets, world.company.ceo);
+  shownFaces = facesOf(sheets, world.company.ceo);
   people = invited;
-  faces.innerHTML =
-    all.map(faceHtml).join('') + (people.length ? '<hr class="bk-sep">' : '') + people.map(personHtml).join('');
-  const unread = all.some(f => f.dot);
-  lip.innerHTML = `${unread ? '<i class="bk-dot"></i>' : ''}<span class="sr">The book</span>`;
-  lip.title = `The book: tap or pull it in${unread ? ' (an answer to read)' : ''}`;
+  drawFaces();
   document.dispatchEvent(new CustomEvent('book:sheets', { detail: sheets }));
 }
+
+// ---- the faces (kept and drawn again in place, no count on them; the plane
+// by a face)
+
+let shownFaces = [],
+  here = null, // the agent whose sheet the book shows, or null
+  carried = false; // something carried over the faces: everyone's face shows, to give it to anyone
+
+// The faces in the island, in their order: each agent's (kept, its parts drawn again), while something is carried
+// everyone else's after a hairline, then the invited people's books; and the plane by a face that has one
+function drawFaces() {
+  const kept = new Map([...faces.querySelectorAll('.bk-face[data-id]')].map(f => [f.dataset.id, f]));
+  const others = carried ? everyoneElse() : [];
+  const buttons = [...shownFaces, ...others].map(face => {
+    const button = kept.get(face.id) ?? faceButtonOf(face);
+    kept.delete(face.id);
+    drawFace(button, face, others.includes(face));
+    return button;
+  });
+  for (const gone of kept.values()) gone.remove();
+  faces.querySelectorAll('.bk-sep, .bk-person, .bk-plane').forEach(n => n.remove());
+  faces.append(...buttons);
+  if (people.length) faces.insertAdjacentHTML('beforeend', `<hr class="bk-sep">${people.map(personHtml).join('')}`);
+  // (the book's own tooltips, never title=)
+  for (const f of faces.querySelectorAll('.bk-person')) tip(f, f.getAttribute('aria-label'));
+  many();
+  for (const face of shownFaces) if (face.sending || (face.id === here && face.count)) planeBy(face);
+}
+// Every agent who has no face yet, as faces with nothing waiting (the rail's first, then by name: sendOrder)
+const everyoneElse = () =>
+  sendOrder(
+    [...(world.agents?.keys() ?? [])].map(id => ({ id, name: nameOf(id) })),
+    [],
+  )
+    .filter(a => !shownFaces.some(f => f.id === a.id))
+    .map(a => ({ id: a.id, owner: a.id, count: 0, dot: false, sending: null }));
+function faceButtonOf({ id }) {
+  const button = document.createElement('button');
+  button.className = 'bk-face';
+  button.dataset.id = id;
+  tip(button, () => button.getAttribute('aria-label'));
+  return button;
+}
+// A face: the agent's portrait, ringed while the book shows their sheet, a dot for an answer to read
+function drawFace(button, { id, owner, dot }, other) {
+  const name = nameOf(id),
+    picture = portrait(id);
+  button.dataset.owner = owner ?? '';
+  button.toggleAttribute('data-here', id === here);
+  button.toggleAttribute('data-other', other);
+  button.setAttribute('aria-label', `For ${name}${dot ? ': an answer to read' : ''}`);
+  button.innerHTML = `<i class="bk-av"${picture ? ` style="background-image:url(${picture})"` : ''}>${
+    picture ? '' : esc(name[0] ?? '')
+  }</i>${dot ? '<i class="bk-dot"></i>' : ''}`;
+}
+// The small plane right by a face: on their sheet, its tap sends it; in a send's seconds, a ring runs out round it and
+// its tap takes the send back. Past them, while the store still reads the board's writing beside its notes, the plane
+// alone, on its way
+function planeBy({ id, sending }) {
+  const face = faceButton(id),
+    name = nameOf(id),
+    plane = document.createElement('button'),
+    gone = sending && sendAt(sending) <= Date.now(),
+    say = gone ? `On its way to ${name}` : sending ? `Sending to ${name}` : `Send to ${name}`;
+  plane.className = 'bk-plane';
+  plane.dataset.for = id;
+  plane.toggleAttribute('data-sending', !!sending);
+  plane.disabled = !!gone;
+  plane.setAttribute('aria-label', gone || !sending ? say : `${say}: tap to take it back`);
+  tip(plane, gone || !sending ? say : `${say}: tap to undo`);
+  plane.innerHTML = `${sending && !gone ? ringHtml(sending) : ''}${PLANE}`;
+  plane.style.top = `${face.offsetTop + face.offsetHeight / 2}px`;
+  faces.append(plane);
+}
+// The seconds to undo a send, a ring running out round the plane (its circle's length, RING)
+const RING = 100.53;
+function ringHtml(sheet) {
+  const left = Math.max(0, sendAt(sheet) - Date.now());
+  return `<svg class="bk-ring" viewBox="0 0 36 36" aria-hidden="true"><circle class="bk-ring-track" cx="18" cy="18"
+    r="16"/><circle cx="18" cy="18" r="16" style="stroke-dasharray: ${RING}; stroke-dashoffset: ${
+      RING * (1 - left / SEND_MS)
+    }; animation-duration: ${left}ms"/></svg>`;
+}
+// The face of the sheet the book shows (an agent's id, or null): ringed, the plane by it
+export function markHere(id) {
+  if (id === here) return;
+  here = id;
+  if (faces) drawFaces();
+}
+// Something carried to the faces (a page by its corner: bookdogear.js), or put down: everyone's face shows meanwhile
+export function carrying(on) {
+  carried = on;
+  hide(); // (no face's tooltip over what's carried, nor left behind it)
+  faces.closest('.bk-islands')?.toggleAttribute('data-carrying', on);
+  drawFaces();
+}
+// Too many faces for the island: it scrolls; else what's by a face stands out past its edge
+function many() {
+  faces.removeAttribute('data-many');
+  faces.toggleAttribute('data-many', faces.scrollHeight > faces.clientHeight + 1);
+}
+const nameOf = id => world.agents.get(id)?.data.name ?? id ?? '';
+
 // The face under a point on the screen: { id (the agent), owner (null: nobody's) }, or null.
 export function faceAt(x, y) {
   for (const f of faces?.querySelectorAll('.bk-face:not(.bk-person)') ?? []) {
@@ -96,26 +206,17 @@ export function faceAt(x, y) {
   }
   return null;
 }
-// An agent's face's box on the screen, or null when it has none in the rail
-export const faceBox = id =>
-  [...(faces?.querySelectorAll('.bk-face:not(.bk-person)') ?? [])]
-    .find(f => f.dataset.id === id)
-    ?.getBoundingClientRect() ?? null;
+// An agent's face in the rail, and its box on the screen (null when it has none)
+export const faceButton = id =>
+  [...(faces?.querySelectorAll('.bk-face:not(.bk-person)') ?? [])].find(f => f.dataset.id === id) ?? null;
+export const faceBox = id => faceButton(id)?.getBoundingClientRect() ?? null;
 
-function faceHtml({ id, owner, count, dot }) {
-  const name = world.agents.get(id)?.data.name ?? id ?? '',
-    picture = portrait(id),
-    said = [count ? `${count} note${count === 1 ? '' : 's'}` : '', dot ? 'an answer to read' : ''].filter(Boolean);
-  return `<button class="bk-face" data-id="${esc(id ?? '')}" data-owner="${esc(owner ?? '')}" title="For ${esc(name)}${said.length ? `: ${esc(said.join(', '))}` : ''}">
-    <i class="bk-av"${picture ? ` style="background-image:url(${picture})"` : ''}>${picture ? '' : esc(name[0] ?? '')}</i>
-    ${count ? `<b>${count}</b>` : ''}${dot ? '<i class="bk-dot"></i>' : ''}<span class="sr">For ${esc(name)}</span></button>`;
-}
 // An invited person's book: their initial in their colour, pressed while it's open.
 const personHtml = ({ who, name, colour }) =>
-  `<button class="bk-face bk-person" data-who="${esc(who)}" aria-pressed="${who === open}" style="--ink:${esc(colour)}" title="${esc(name)}’s book">
-    <i class="bk-av">${esc([...name][0] ?? '')}</i><span class="sr">${esc(name)}’s book</span></button>`;
+  `<button class="bk-face bk-person" data-who="${esc(who)}" aria-pressed="${who === open}" style="--ink:${esc(colour)}" aria-label="${esc(name)}’s book">
+    <i class="bk-av">${esc([...name][0] ?? '')}</i></button>`;
 // An agent's face as HQ's look draws them (a data URL), kept per look; none before the scene has placed them
-// (exported: a free page's faces to send it to, booksendpage.js.)
+// (exported: the folded book's handle draws them too, bookhandle.js.)
 const portraits = new Map();
 export function portrait(id) {
   const key = `${look}:${id}`;

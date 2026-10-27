@@ -45,7 +45,7 @@ If there are handwritten words, write them out exactly as written: their languag
 lines joined with a space, and leave the drawn marks out. A word you can't make out for sure: your best reading of it. \
 If it's only marks, or nothing anyone wrote as words, writing is false and words is ''.`;
 
-type Read = { writing: boolean; words: string };
+export type Read = { writing: boolean; words: string };
 type Reading = {
   id: string;
   ink: { type: string; data: string };
@@ -63,6 +63,11 @@ const readings: Reading[] = [];
 export async function read(b: any): Promise<Read | Refused> {
   const pic = dataUrlPicture(b?.ink);
   if (isRefused(pic)) return pic;
+  return readPicture(pic);
+}
+// A picture of ink read, as the board's request reads it: the writing on a sheet page going with its notes reads this
+// way too (bookwriting.ts).
+export async function readPicture(pic: { type: string; clean: Buffer }): Promise<Read | Refused> {
   const day = companyDay(Date.now());
   const { reads } = (db.prepare('select reads from handwriting_reads where day = ?').get(day) as { reads: number }) ?? {
     reads: 0,

@@ -3,7 +3,8 @@
 // A call with the CEO: the Pencil down on the page makes the call small; a ring drawn while the board talks goes into
 // the call's page (not a sheet) with the words the call heard, and down the call's own socket to the line as the Pencil
 // stays up; the agent asks to see a page by name, the card waits with Show and Not now while the call goes on, nothing
-// of the screen gone until Show, and Show starts the watch-along; the agent's ring lands on the page in its own ink, kept on the call's page with its
+// of the screen gone until Show, and Show starts the watch-along; the pen drags the small call and taps it open, never
+// inking it, its corner clear of the zoom buttons, and tells the line it's down and lifted once shown; the agent's ring lands on the page in its own ink, kept on the call's page with its
 // words, and a ring round words nowhere on screen comes back not drawn, with why; hung up, the call's page is offered
 // to throw away, and one tap does. Along the way: a private part under the ring is painted over in what the agent
 // gets; a line drawn while a mark goes in is drawn and makes the next note, with only the words said since its
@@ -12,6 +13,7 @@
 // that mark's lines was undone, and the board is told the book may still have that one). The cards in the look asked
 // for (look: Wire's keys).
 import assert from 'node:assert/strict';
+import { penOnTheBubble } from './bookbubble.mjs';
 
 const SETTLE_MS = 1500; // (callnotes.js)
 const MASK = [0x8c, 0x8c, 0x8c]; // (snapshot.js)
@@ -32,6 +34,7 @@ export async function callStory(c) {
   await downWhileFiled(s);
   await notTaken(s);
   await askToSee(s);
+  await penOnTheBubble(s);
   await theirInk(s);
   await lostAtTheEnd(s);
   await thrownAway(s);
@@ -158,7 +161,8 @@ async function drawnWhileFiling(s) {
   await once(page, r => new Promise(go => setTimeout(go, 2500)).then(() => r.fallback()));
   await s.pen(s.ring(200, 300, 70, 30));
   await page.waitForTimeout(SETTLE_MS + 400); // (the ring going in now)
-  const arrow = Array.from({ length: 12 }, (_, i) => [280 + i * 8, 320 + i * 4]);
+  // (clear of the ring by more than a join's reach: one beside it would join its note, join.js.)
+  const arrow = Array.from({ length: 12 }, (_, i) => [320 + i * 8, 330 + i * 4]);
   await s.pen(arrow);
   await page.waitForTimeout(150);
   assert.equal(notes(s).length, before, 'the ring still going in');
@@ -182,6 +186,7 @@ async function drawnWhileFiling(s) {
 async function downWhileFiled(s) {
   const { page } = s,
     before = notes(s).length;
+  await page.waitForTimeout(800); // (the last note's ink lifting into the book)
   await once(page, r => new Promise(go => setTimeout(go, 1500)).then(() => r.fallback()));
   await s.pen(s.ring(480, 220, 70, 30), { lift: false }); // (clear of the marks above)
   s.line.send({ type: 'heard', text: 'This border' });
@@ -189,7 +194,7 @@ async function downWhileFiled(s) {
   await page.evaluate(() => window.__lift());
   await page.waitForTimeout(SETTLE_MS + 400); // (the ring going in now)
   await s.pen(
-    Array.from({ length: 12 }, (_, i) => [560 + i * 8, 240 + i * 4]),
+    Array.from({ length: 12 }, (_, i) => [600 + i * 8, 250 + i * 4]), // (clear of the ring: company: job #19861)
     { lift: false },
   );
   s.line.send({ type: 'heard', text: 'goes thinner' });
@@ -202,6 +207,7 @@ async function downWhileFiled(s) {
 async function notTaken(s) {
   const { page } = s,
     before = notes(s).length;
+  await page.waitForTimeout(800); // (the last note's ink lifting into the book)
   await once(page, r => r.abort());
   await s.pen(s.ring(220, 460, 70, 30));
   await page.waitForTimeout(SETTLE_MS + 800);
@@ -276,14 +282,15 @@ async function inkedAt(s, [x, y], color) {
 }
 
 // The connection dropped as the call's last mark goes in, and the call hung up: the book may have it, so it isn't sent
-// again, and the board is told where to look
+// again, and the board is told where to look (callnotes.js's message)
 async function lostAtTheEnd(s) {
   const { page } = s,
     sent = [];
   const count = q => q.method() === 'POST' && new URL(q.url()).pathname === '/api/book/note' && sent.push(q);
   page.on('request', count);
   await once(page, r => r.abort());
-  await s.pen(s.ring(220, 460, 70, 30));
+  // (clear of the notes' hairlines: a ring beside one joins it, join.js.)
+  await s.pen(s.ring(560, 520, 70, 30));
   await page.waitForTimeout(SETTLE_MS + 800);
   await page.click('.callbubble .cb-hangup');
   await page
@@ -307,11 +314,13 @@ async function drawnAfterTheLoss(s, undo) {
     q.method() === 'POST' && new URL(q.url()).pathname === '/api/book/note' && sent.push(q.postDataJSON());
   page.on('request', count);
   await once(page, r => r.abort());
-  await s.pen(s.ring(220, 460, 70, 30));
-  if (undo) await s.pen(Array.from({ length: 12 }, (_, i) => [300 + i * 8, 470 + i * 4]));
+  // (the second time clear of the first's hairlines, the same call's page: a line beside one joins it, join.js.
+  const across = undo ? 300 : 0;
+  await s.pen(s.ring(220 + across, 460, 70, 30));
+  if (undo) await s.pen(Array.from({ length: 12 }, (_, i) => [300 + across + i * 8, 470 + i * 4]));
   await page.waitForTimeout(SETTLE_MS + 800);
   if (undo) await twoFingerTap(page);
-  const after = Array.from({ length: 10 }, (_, i) => [230 + i * 6, 520 + i * 3]);
+  const after = Array.from({ length: 10 }, (_, i) => [230 + across + i * 6, 520 + i * 3]);
   await s.pen(after);
   // (at once: a click waits out the bubble's move, past SETTLE_MS)
   await page.locator('.callbubble .cb-hangup').dispatchEvent('click');

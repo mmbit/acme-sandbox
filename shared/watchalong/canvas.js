@@ -13,9 +13,9 @@ const INCREMENTAL = 3,
 // recordCanvas stays off: it encodes every canvas twice on the main thread as it starts, a freeze at each start and
 // resume, and samples every device pixel. Returns what stops it.
 export function sampleCanvases(fps, emit) {
-  const source = URL.createObjectURL(new Blob([`(${encodePictures})()`], { type: 'text/javascript' }));
-  const encoder = new Worker(source);
-  URL.revokeObjectURL(source);
+  // (a file of its own beside this one, not a blob: HQ's policy runs workers from its own origin only, and refused the
+  // blob's, so no canvas reached a call's recording.)
+  const encoder = new Worker(new URL('./encoder.js', import.meta.url));
   const encoding = new Set();
   encoder.onmessage = ({ data: { id, type, base64, width, height } }) => {
     encoding.delete(id);
@@ -61,22 +61,3 @@ const drawn = (id, type, base64, width, height) => {
   ];
   return { source: CANVAS_MUTATION, id, type: CONTEXT_2D, commands };
 };
-// The encoder, in a worker of its own: a picture as WebP (JPEG where the browser makes no WebP: Safari), nothing when
-// it's the same as the last one of its canvas
-function encodePictures() {
-  const last = new Map();
-  const encoded = async (canvas, type, quality) => {
-    const blob = await canvas.convertToBlob({ type, quality });
-    return blob.type === type || type === 'image/jpeg' ? blob : encoded(canvas, 'image/jpeg', 0.6);
-  };
-  onmessage = async ({ data: { id, bitmap, width, height } }) => {
-    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-    canvas.getContext('2d').drawImage(bitmap, 0, 0);
-    bitmap.close();
-    const blob = await encoded(canvas, 'image/webp', 0.5);
-    const base64 = new self.FileReaderSync().readAsDataURL(blob).split(',')[1]; // (a worker's own reader)
-    const same = last.get(id) === base64;
-    last.set(id, base64);
-    postMessage(same ? { id } : { id, type: blob.type, base64, width, height });
-  };
-}

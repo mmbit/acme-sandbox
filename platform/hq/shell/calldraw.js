@@ -9,18 +9,18 @@
 //   - The agent's ink comes down the call's own socket ({ type: 'ink' }); the Pencil draws it in the agent's colour,
 //     kept on the call's page, and the line hears whether it could ({ type: 'inked' }). With a preview open in HQ's
 //     viewer, review mode there rings it instead (calldrive.js inFrame), over the page and not kept.
+//   - The Pencil down and lifted while the board's screen is shown goes to the line ({ type: 'pen', down }): it answers
+//     once the pen rests, so the turn has what was drawn while the board spoke (server.py PEN_REST_SECONDS).
 //   - Hung up, a call that drew leaves its page in the board's day: kept, or thrown away with one tap.
 //   - A walk-through (a card's Walk me through it) opens its page as it's picked up; hung up, the page stays only if the
 //     board wrote on it, and goes by itself if not (walkthroughs.ts sweeps one HQ couldn't).
 import { esc } from '../util.js';
-import { minimise, share } from './callscreen.js';
+import { minimise, share, shown } from './callscreen.js';
 import { inFrame, viewerFrame } from './calldrive.js';
+import { inkOf } from './agentink.js'; // (an agent's ink, shared with the store's typed answers)
 
 const $ = s => document.querySelector(s);
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
-// An agent's ink: its own colour, the same on every look, readable on paper and HQ alike, and never the board's red
-const INKS = ['#7b5ea7', '#12808a', '#4458c9', '#2e8b57', '#b06a12', '#b0417a'];
-const inkOf = agent => INKS[[...agent].reduce((h, ch) => (h * 31 + ch.charCodeAt(0)) >>> 0, 7) % INKS.length];
 // The Pencil taking the agent's ink, or nobody (no Pencil on this page) after this long; and how long a hang-up waits
 // for the mark still settling to go into the book
 const INK_WAIT_MS = 4000,
@@ -41,13 +41,24 @@ export function startDrawing(c) {
   const onPen = e => {
     if (e.pointerType !== 'pen' || c.over || e.target.closest?.('button, input, textarea, select, a, .callbubble'))
       return;
-    minimise(c, { pen: true }); // (slim audio bars, minimised already too)
+    minimise(c); // (the same bubble as its own key's.)
   };
+  // (a lift goes whenever its touch went, shown or not since)
+  const penMoved = e => {
+    const down = e.type === 'pointerdown';
+    if (e.pointerType !== 'pen' || !e.isPrimary || c.ws?.readyState !== 1 || down === !!c.penDown) return;
+    if (down && (c.over || !shown(c) || e.target.closest?.('.callbubble'))) return;
+    c.penDown = down;
+    c.ws.send(JSON.stringify({ type: 'pen', down }));
+  };
+  const pen = ['pointerdown', 'pointerup', 'pointercancel'];
   document.addEventListener('pencil:note', onNote);
   addEventListener('pointerdown', onPen, true);
+  for (const type of pen) addEventListener(type, penMoved, true);
   c.drawing = () => {
     document.removeEventListener('pencil:note', onNote);
     removeEventListener('pointerdown', onPen, true);
+    for (const type of pen) removeEventListener(type, penMoved, true);
   };
   event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color, walk: c.walk });
 }
@@ -128,12 +139,12 @@ function askCard(c, ev) {
   };
   not.onclick = () => answer('not now');
 }
-// A call's card over HQ and the call alike, never recorded (the call's own controls); calldrive.js's too
+// A call's card over HQ and the call alike, recorded as the board sees it;
+// calldrive.js's too
 export function cardOf(c, kind) {
   let box = $('#call-cards');
   if (!box) {
     box = Object.assign(document.createElement('div'), { id: 'call-cards' });
-    box.setAttribute('data-watchalong-hide', '');
     document.body.append(box);
   }
   box.querySelector(`[data-card="${kind}"]`)?.remove();

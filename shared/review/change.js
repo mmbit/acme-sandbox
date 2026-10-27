@@ -55,7 +55,6 @@ export function changeNote(r, n, arrived = false) {
   r.pinIt.textContent = 'Save';
   r.text.value = n.note;
   showPictures(r, n.pictures ?? []);
-  r.framePic = r.pictures.find(p => p.file && p.file === n.video?.frame) ?? null;
   // (after the page's own layout settles, the mark in view above the sheet)
   showSheet(r);
   setTimeout(() => showMark(r, true), arrived ? 600 : 0);

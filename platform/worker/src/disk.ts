@@ -1,8 +1,15 @@
 // Per-job allocated disk shares across the clone, home and tests.
+import { AccountingError, type AccountingFailure } from './accounting.ts';
 import { join } from 'node:path';
 import { DiskScan } from './diskscan.ts';
 
-export type DiskUse = { used: number | null; share: number; warned: boolean; grew: boolean; accountingError?: string };
+export type DiskUse = {
+  used: number | null;
+  share: number;
+  warned: boolean;
+  grew: boolean;
+  accountingError?: AccountingFailure;
+};
 type Owner = { job: number; uid: number; gid?: number };
 
 export class DiskShares {
@@ -41,7 +48,10 @@ export class DiskShares {
           share: 0,
           warned: state.warned,
           grew: false,
-          accountingError: `Disk accounting unavailable for job ${job}: ${failure}`,
+          accountingError: {
+            reason: failure instanceof AccountingError ? failure.reason : 'worker-scanner',
+            message: `Disk accounting unavailable for job ${job}: ${failure}`,
+          },
         });
       }
     }

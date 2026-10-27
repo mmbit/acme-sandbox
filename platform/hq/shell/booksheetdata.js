@@ -1,7 +1,7 @@
 // The book's sheets from the coordinator's store (booknotes.ts, booksheets.ts, booksend.ts), or in dev mode from mock/book-sheets.json,
 // played in memory as the store would: numbered notes, ten seconds to undo a send, moves, wipes, order and links.
 //   sheets: { open: [sheet], sent: [sheet] }; a sheet { id, owner, name, status, send_at, sent, page, notes: [note] };
-//   a note { id, sheet, page, n, by, anchor, words, said, snip, status, slips, links, guest }
+//   a note { id, sheet, page, n, by, anchor, words, said, snip, status, slips, links, guest, owner, onCall }
 import { act as call, copy, get, refused } from './data.js';
 
 // Each write told on the document (book:wrote), for a second screen's book to read again.
@@ -15,8 +15,12 @@ const act = (url, body) =>
 export const SEND_MS = 10_000;
 
 export const loadSheets = dev => (dev ? mockSheets() : act('/api/book/sheets'));
+// The sheets of these call pages' notes (dev mode's book has no calls).
+export const loadCalls = (dev, pages) =>
+  dev ? Promise.resolve([]) : act(`/api/book/calls?pages=${pages.join()}`).then(answer => answer.calls);
 // Each answers as the store does: a sheet, or { note, sheet }
-export const sendSheet = (dev, id) => (dev ? mockSend(id) : act('/api/book/send', { id }));
+// (spots: where its notes lie on their pages, for the board's writing beside them.)
+export const sendSheet = (dev, id, spots) => (dev ? mockSend(id) : act('/api/book/send', { id, spots }));
 export const undoSend = (dev, id) => (dev ? mockUndo(id) : act('/api/book/undo', { id }));
 export const editNote = (dev, id, words) =>
   dev ? mockEdit(id, words) : act('/api/book/note/edit', { id, words, said: 'typed' });

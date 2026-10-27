@@ -123,11 +123,16 @@ export const decision = {
                                                      its queued work, reviews and fixes wait. Only the board's answer on
                                                      its card (hq ask ... --decides <id>) lets it go
    hq decision show <id>                             the assigned card author reads its waiting pull requests
-   hq decision link <id> <card>                      the open card that asks it, filed already or in place of another`,
+   hq decision link <id> <card>                      the open card that asks it, filed already or in place of another
+   hq decision settle <id> item:<n> | card:<n>       the CEO settles a visual decision the board already answered in its
+                                                     own words (a call's item, a card it answered): the held merges go
+                                                     on, and its queued card job and open card, if any,
+                                                     end`,
 
   async run(given: string[]) {
     if (given[0] === 'show') return show(given.slice(1));
     if (given[0] === 'link') return link(given.slice(1));
+    if (given[0] === 'settle') return settle(given.slice(1));
     const blocks: string[] = [],
       args: string[] = [];
     for (let i = 0; i < given.length; i++) {
@@ -154,6 +159,28 @@ async function link([id, card, ...rest]: string[]) {
   const answer = await api.change('decisions/link', { body: { id: Number(id), card: Number(card) } });
   if (!api.isSuccess(answer.status)) stop(`Not tied: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Card #${card} asks decision #${id}: the board's answer on it lets the work go.`);
+}
+
+async function settle([id, word, ...rest]: string[]) {
+  if (!/^[0-9]+$/.test(id ?? '') || !/^(item|card):[0-9]+$/.test(word ?? '') || rest.length)
+    stop('usage: hq decision settle <id> item:<n> | card:<n>');
+  const answer = await api.change('decisions/settle', { body: { id: Number(id), word } });
+  const settled = api.parseOrNull(answer.body) as {
+    merges?: number[];
+    cardJob?: number | null;
+    card?: number | null;
+  } | null;
+  if (!api.isSuccess(answer.status) || !settled?.merges) stop(`Not settled: ${api.errorIn(answer.body, 'no answer')}`);
+  const ended = [settled.cardJob && `card job #${settled.cardJob}`, settled.card && `card #${settled.card}`].filter(
+    Boolean,
+  );
+  print(
+    `Decision #${id} is settled on the board's ${word.replace(':', ' #')}: ${
+      settled.merges.length
+        ? settled.merges.map(n => `PR #${n}`).join(', ') + ' go on to merge'
+        : 'no pull request waits on it now'
+    }${ended.length ? `, and ${ended.join(' and ')} end${ended.length > 1 ? '' : 's'}` : ''}.`,
+  );
 }
 
 async function show([id, ...rest]: string[]) {

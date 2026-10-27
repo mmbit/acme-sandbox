@@ -1,99 +1,103 @@
-// The book's table as plain numbers: where a day's pages lie in a row, how far the table pans, which page is shown,
-// how a page grows and which of its tiles to draw. No DOM, so node tests it.
+// The book's page as plain numbers: how far it pans and zooms, how it grows to hold what's on it, and which of its
+// tiles to draw. No DOM, so node tests it. (one endless page; was a row of pages
+// on a table)
 //
-// The table has its own px, the pages' CSS px at 1:1: the row's first page has its top-left at 0,0 and the others follow
-// it to the right, GAP apart. The pan is the table's point at the paper's top-left.
+// One page fills the book's paper. The page has its own px, its CSS px at a zoom of 1, its heading written at 0,0.
+// What's on it may lie any way from there, above and left too: the page is the box { x, y, w, h } that holds it, its
+// top-left (x, y) at or above and left of 0,0 (a page with no x and y starts at 0,0). The view is { pan, scale }: pan
+// is the page's point at the paper's top-left, scale how many CSS px a page px is on screen. A point on the paper (CSS
+// px from its top-left) is the page's pan + point / scale. (the page grows every
+// way)
 
-export const GAP = 28;
-// how much of the row stays on the paper however far it's panned, so it's never lost off the table
-export const KEEP_PX = 72;
-// a page's left edge this close to the paper's comes to rest on it, so a page panned to sits square in the book
-export const SNAP_PX = 40;
-// A page's sides as the store makes one, and the most it grows to (pagechecks.ts PAGE and GROWN_MAX)
+// A page's sides as the store makes one, and the most a page grows to either way (pagechecks.ts PAGE and GROWN_MAX)
 export const SIDE = { min: 100, max: 4000 };
 export const GROWN_MAX = 20_000;
-// a page's dry ink is drawn in strips this tall, so a long page never needs one canvas taller than a browser allows
+// the closest the zoom goes in. The furthest out shows the whole page, and at least half size, so a page no bigger than
+// the paper still shows paper round it to draw big on. (was the page's width,
+// past which the overview took over)
+export const ZOOM_MAX = 4,
+  ZOOM_OUT = 0.5;
+// a page grows to hold what's on it with this much paper to spare beyond it
+export const ROOM_PX = 40;
+// a page's dry ink is drawn in square tiles TILE_PX CSS px a side on screen (at the zoom they were drawn for), so no
+// canvas is ever bigger than a browser allows, and only those near the paper are kept
 export const TILE_PX = 512;
 
-// The pages' places on the table: [{ x, y, w, h }] in the row's order. Facing, they lie edge to edge, two pages
-// meeting at the paper's middle.
-export function rowOf(pages, facing = false) {
-  const gap = facing ? 0 : GAP;
-  let x = 0;
-  return pages.map(p => {
-    const place = { x, y: 0, w: p.w, h: p.h };
-    x += p.w + gap;
-    return place;
-  });
-}
-// The pan's x that shows page i: filling the paper; facing, its right edge at the paper's middle with the next page
-// facing it, or (right: true) its left edge there with the page before facing it. A page wider than half the paper (a
-// sheet as wide as the screen it was written on) starts at the paper's left edge instead, where its head and a sheet's
-// notes are.
-export function panTo(row, i, view, facing, { right = false } = {}) {
-  const r = row[i];
-  if (!facing || r.w > view.w / 2) return r.x;
-  return right ? r.x - view.w / 2 : r.x + r.w - view.w / 2;
-}
-// The row's size on the table
-export const extentOf = row => ({
-  w: row.length ? row[row.length - 1].x + row[row.length - 1].w : 0,
-  h: Math.max(0, ...row.map(r => r.h)),
-});
+// A page's box in its own px.
+export const pageBox = page => {
+  const x0 = page.x ?? 0,
+    y0 = page.y ?? 0;
+  return { x0, y0, x1: x0 + page.w, y1: y0 + page.h };
+};
 
-// A pan kept within reach of the row: KEEP_PX of it stays on a paper of view { w, h }
-export function clampPan(pan, row, view) {
-  const { w, h } = extentOf(row);
+// The furthest out a page zooms: the whole of it on the paper, and half size at least
+export const leastScale = (page, view) =>
+  Math.min(ZOOM_OUT, view.w / Math.max(1, page.w), view.h / Math.max(1, page.h));
+// A zoom kept within the page's
+export const clampScale = (s, page, view) => Math.min(ZOOM_MAX, Math.max(leastScale(page, view), s));
+
+// A pan kept on the page: the paper's middle never off the page's box, so every way the paper shows half a paper of
+// fresh page past what's on it (the page grows as it's written on there, so the paper never shows an end)
+export function clampPan(pan, page, view, scale) {
+  const w = view.w / scale,
+    h = view.h / scale,
+    box = pageBox(page),
+    keep = (v, from, to) => Math.min(Math.max(from, v), to);
   return {
-    x: Math.min(Math.max(pan.x, KEEP_PX - view.w), w - KEEP_PX),
-    y: Math.min(Math.max(pan.y, KEEP_PX - view.h), h - KEEP_PX),
+    x: keep(pan.x, box.x0 - w / 2, box.x1 - w / 2),
+    y: keep(pan.y, box.y0 - h / 2, box.y1 - h / 2),
   };
 }
 
-// The pan's x at rest: a page's left edge within SNAP_PX of the paper's lands on it, or facing a page's edge within
-// SNAP_PX of the paper's middle
-export function settleX(x, row, view, facing = false) {
-  const rests = facing ? row.flatMap(r => [r.x - view.w / 2, r.x + r.w - view.w / 2]) : row.map(r => r.x);
-  const near = rests.find(rest => Math.abs(rest - x) <= SNAP_PX);
-  return near ?? x;
-}
+// The pan that keeps a point on the paper (CSS px from its top-left) over the same spot of the page as the zoom goes
+// from s0 to s1: a pinch's middle, the pointer under a wheel
+export const zoomAt = (pan, s0, s1, at) => ({ x: pan.x + at.x / s0 - at.x / s1, y: pan.y + at.y / s0 - at.y / s1 });
 
-// Where a remembered place ({ page: an id or 'new', x, y }) opens in a row of those ids: { i, at }, its page and the
-// offset into it, or the row's last page with no offset when it's gone or nothing was remembered
+// A point on the paper (CSS px from its top-left) as the page's px
+export const pageAt = (pan, scale, at) => ({ x: pan.x + at.x / scale, y: pan.y + at.y / scale });
+
+// What of the page the paper shows: a box in its px
+export const shownBox = (pan, scale, view) => ({
+  x0: pan.x,
+  y0: pan.y,
+  x1: pan.x + view.w / scale,
+  y1: pan.y + view.h / scale,
+});
+// Whether the paper shows any of a box on the page
+export const showsBox = (box, pan, scale, view) => overlap(box, shownBox(pan, scale, view));
+const overlap = (a, b) => a.x1 > b.x0 && a.x0 < b.x1 && a.y1 > b.y0 && a.y0 < b.y1;
+
+// Where a remembered place ({ page: an id or 'new', x, y }) opens in the day's pages by their ids: { i, at }, its page
+// and the place on it, or the day's last page with no place when it's gone or nothing was remembered
 export function placeIn(ids, place) {
   const i = place ? ids.indexOf(place.page) : -1;
   return i >= 0 ? { i, at: place } : { i: ids.length - 1, at: null };
 }
 
-// The page under a point on the table, or -1 on the bare table
-export const pageAt = (row, x, y) => row.findIndex(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h);
-
-// Whether the paper shows any of a box on page r (the box in the page's px)
-export const showsBox = (r, box, pan, view) =>
-  r.x + box.x1 > pan.x && r.x + box.x0 < pan.x + view.w && r.y + box.y1 > pan.y && r.y + box.y0 < pan.y + view.h;
-
-// The page that fills most of the paper, or -1 when only the table shows
-export function shownAt(row, pan, view) {
-  let best = -1,
-    most = 0;
-  row.forEach((r, i) => {
-    const w = Math.min(r.x + r.w, pan.x + view.w) - Math.max(r.x, pan.x),
-      h = Math.min(r.y + r.h, pan.y + view.h) - Math.max(r.y, pan.y),
-      area = Math.max(0, w) * Math.max(0, h);
-    if (area > most) [best, most] = [i, area];
-  });
-  return best;
-}
-
-// A new page: as wide as the paper (one side of it facing) and as tall as it shows, whole px within the store's sides
-export const newPageSize = (view, facing = false) => ({ w: side(facing ? view.w / 2 : view.w), h: side(view.h) });
+// A new page: the paper's size, whole px within the store's sides
+export const newPageSize = view => ({ w: side(view.w), h: side(view.h) });
 const side = v => Math.min(SIDE.max, Math.max(SIDE.min, Math.round(v)));
 
-// A page's height after a stroke whose lowest ink is at `lowest`: within half the paper's height of its foot, it
-// grows by half the paper's height (up to the store's most)
-export function grownHeight(h, lowest, viewH) {
-  const half = Math.round(viewH / 2);
-  return lowest > h - half ? Math.min(GROWN_MAX, h + half) : h;
+// A page's box ({ x, y, w, h }) grown any way to hold a box on it (a stroke, a picture), with ROOM_PX to spare past it,
+// to GROWN_MAX a side at most; it never shrinks
+export function grownTo(page, box) {
+  const now = pageBox(page),
+    side = (from, to, low, high) => {
+      const end = Math.min(Math.max(to, Math.ceil(high + ROOM_PX)), from + GROWN_MAX),
+        start = Math.max(Math.min(from, Math.floor(low - ROOM_PX)), end - GROWN_MAX);
+      return [start, end - start];
+    };
+  const [x, w] = side(now.x0, now.x1, box.x0, box.x1),
+    [y, h] = side(now.y0, now.y1, box.y0, box.y1);
+  return { x, y, w, h };
+}
+// Two boxes of the same page as one that holds both (a page read again, merged with this side's)
+export function spanOf(a, b) {
+  const p = pageBox(a),
+    q = pageBox(b),
+    x = Math.min(p.x0, q.x0),
+    y = Math.min(p.y0, q.y0);
+  return { x, y, w: Math.max(p.x1, q.x1) - x, h: Math.max(p.y1, q.y1) - y };
 }
 
 // Where a stroke's ink is, in its page's px: { x0, y0, x1, y1 }, its widest line's half on every side (ink.js draws a
@@ -112,11 +116,26 @@ export function scrapBoxOf(s) {
   return { x0: cx - r, y0: cy - r, x1: cx + r, y1: cy + r };
 }
 
-// The tiles of a page of height h that the band from top to bottom (page px) touches: their numbers, in order
-export function tilesIn(h, top, bottom) {
-  const first = Math.max(0, Math.floor(top / TILE_PX)),
-    last = Math.min(Math.ceil(h / TILE_PX) - 1, Math.floor(bottom / TILE_PX));
+// The zoom a page's tiles are drawn for at a zoom of s: the power of two at or above it, so the ink is never drawn
+// coarser than it shows, and a zoom only a little different keeps the tiles it has
+export const drawScale = s => 2 ** Math.ceil(Math.log2(Math.max(1 / 64, s)) - 1e-9);
+// A tile's side in the page's px when drawn for zoom r
+export const tileSide = r => TILE_PX / r;
+
+// The tiles of a page a box touches, for tiles of side t (page px) laid from 0,0: their [column, row], row by row
+export function tilesIn(page, box, t) {
+  const on = pageBox(page),
+    c0 = Math.max(Math.floor(on.x0 / t), Math.floor(box.x0 / t)),
+    r0 = Math.max(Math.floor(on.y0 / t), Math.floor(box.y0 / t)),
+    c1 = Math.min(Math.ceil(on.x1 / t) - 1, Math.floor(box.x1 / t)),
+    r1 = Math.min(Math.ceil(on.y1 / t) - 1, Math.floor(box.y1 / t));
   const tiles = [];
-  for (let t = first; t <= last; t++) tiles.push(t);
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) tiles.push([c, r]);
   return tiles;
 }
+// A box grown by k of its own size on every side (the tiles kept beyond what shows, to pan into)
+export const around = (box, k) => {
+  const dx = (box.x1 - box.x0) * k,
+    dy = (box.y1 - box.y0) * k;
+  return { x0: box.x0 - dx, y0: box.y0 - dy, x1: box.x1 + dx, y1: box.y1 + dy };
+};

@@ -32,6 +32,15 @@ type Job = { id: number; kind: string; pr: number | null; thread: string | null;
 export const answersRound = (j: { stage: string | null; round: number | null }) =>
   j.stage === 'feedback' || (j.stage === 'fix' && j.round !== null);
 export const isTask = (j: Job): j is Job & { thread: string } => j.kind === 'work' && j.pr === null && !!j.thread;
+// An --after (`job`'s, on `prior`, SQL row aliases) on a task before it in its own thread: the thread's order holds it
+// already (follows: until that task is done), and the thread's one pull request merges only with the waiting task's own
+// work, so as a merge wait it would wait for itself. hq job refuses one (jobRefusal); one queued before its thread was
+// drawn is read as the order, by the claim (jobs.ts READY) and the play (placing's inOrder). A wait (hq waits) on such a
+// task stays a merge: the waiting task starts a branch of its own (threadboundary.ts).
+export function afterInOrder(job: string, prior: string) {
+  return `(${prior}.thread = ${job}.thread and ${prior}.kind = 'work' and ${prior}.pr is null and ${job}.kind = 'work'
+    and ${job}.pr is null and (coalesce(${prior}.seq, ${prior}.id), ${prior}.id) < (coalesce(${job}.seq, ${job}.id), ${job}.id))`;
+}
 export type Task = jobs.Named & {
   id: number;
   agent: string;
@@ -197,7 +206,13 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
       branch,
     };
   };
-  return { place, waits };
+  // (an --after on a task before it in its thread, which the order covers: afterInOrder, whatever that task's status)
+  const inOrder = (row: Job, prior: number) =>
+    !!prepared(`select 1 from jobs j join jobs a on a.id = ? where j.id = ? and ${afterInOrder('j', 'a')}`).get(
+      prior,
+      row.id,
+    );
+  return { place, waits, inOrder };
 }
 
 // The open threads with no task yet, each played as one piece of its owner's work under its name and "done when"

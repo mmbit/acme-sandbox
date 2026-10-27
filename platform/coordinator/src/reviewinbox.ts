@@ -47,7 +47,7 @@ export function deliver(details: Delivery) {
   if (sameDelivery(previous, details)) return previous!;
   const thread = threadOfBranch(details.branch);
   const project = thread ? findThread(thread)!.project : null;
-  const title = `Review ${details.decision} on PR #${details.pr}`;
+  const title = titleOf(details);
   const brief = `${describe(details)}${details.brief ? `\n\n${details.brief}` : ''}`;
   let proposal = previous?.proposal;
   if (proposal) {
@@ -84,6 +84,8 @@ export function deliver(details: Delivery) {
   );
   return { ...details, proposal, thread, project };
 }
+
+export const titleOf = ({ decision, pr }: Pick<Delivery, 'decision' | 'pr'>) => `Review ${decision} on PR #${pr}`;
 
 export const sameDelivery = (previous: Item | undefined, details: Delivery) =>
   !!previous &&

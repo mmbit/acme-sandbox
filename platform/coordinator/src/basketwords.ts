@@ -2,7 +2,8 @@
 // (basketmail.ts sends them).
 //
 // The confirmation's words: products/<front>/care/basket-email.yaml, the language as the key (the session's locale, if
-// the file has it, else en), each with a subject, a body, the `voucher` and `saved` phrases ({amount}), `delivery`
+// the file has it, else en), each with a subject, a body, the `voucher` and `saved` phrases ({amount}) and an optional
+// `gift` (what a gift card paid of an item: payments.ts basketGift), `delivery`
 // words per country, and `attachments` the way order-emails.yaml names them (ordermail.ts files()). The body's slots:
 //   {number}    the basket's order number (payments.ts, shared/ordernumber), as it's read out: 482 9173
 //   {items}     one receipt row per item (mailpage.ts rows): its picture, description, detail and price paid; in the
@@ -102,7 +103,7 @@ export function confirmation(pay: any, s: any, lines: payments.Line[], own: Own)
   // the email's language (English as written in Europe: Friday 9 October), with plain spaces
   const formats = companyFormats(String(s.currency ?? 'eur').toUpperCase(), { [lang]: lang === 'en' ? 'en-GB' : lang });
   const money = (cents: number) => formats.money(cents, lang).replace(/[\u00a0\u202f]/g, ' ');
-  const items = receiptRows(lines, t.voucher, money, payments.isTesterOrder(pay.id));
+  const items = receiptRows(lines, t, money, payments.isTesterOrder(pay.id));
   const saved = lines.reduce((n, line) => n + (line.saved ?? 0), 0);
   const shipBy = lines
     .map(line => payments.shipBy(line))
@@ -214,12 +215,14 @@ function orderOf(pay: any, lang: string, words: string): { number: string; order
 
 // One receipt row per line: a line of copies is all of them, as one row, with the voucher that paid towards it (a
 // tester's order: their voucher paid every line in full)
-function receiptRows(lines: payments.Line[], voucherPhrase: string, money: (cents: number) => string, tester: boolean) {
+function receiptRows(lines: payments.Line[], t: Words, money: (cents: number) => string, tester: boolean) {
   return lines.map((line): mailpage.Row => {
     const whole = line.amount * line.quantity,
       paid = whole - (line.saved ?? 0),
       voucher = tester ? whole : (line.voucher_value ?? 0);
-    const note = voucher ? voucherPhrase.replace('{amount}', money(voucher)) : '';
+    // and the words' optional `gift` phrase for what a gift card paid of it
+    const gift = line.gift && typeof t.gift === 'string' ? t.gift.replace('{amount}', money(line.gift)) : '';
+    const note = [voucher ? t.voucher.replace('{amount}', money(voucher)) : '', gift].filter(Boolean).join(', ');
     return {
       text: `- ${shop(line)}: ${described(line)}, ${money(paid)}${note ? ` (${note})` : ''}`,
       picture: pictureOf(line),

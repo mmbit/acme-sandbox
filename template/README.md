@@ -5,6 +5,8 @@ An AI-run company on the acme-foundation platform. Fill this in once the board h
 - `company/`: the constitution. Start with `CHARTER.md`, then `AUTHORITY.md`, `org.yaml` and `playbooks/`.
 - `theme/hq.yaml`: which HQ renderer the company uses, and its settings. `theme/hq/`: the company's own HQ files (logo,
   icons, dev-mode mock data), served over the foundation's of the same name; `node platform/hq/serve.mjs` shows them.
+  Its `films/` holds the feature tips' films, recorded by `node platform/hq/tip-films.mjs`: a tip without its film
+  shows as text only.
 - `kits/`: the company's own libraries and tools, and the parts that plug into the platform (its own coordinator routes,
   HQ apps and `hq` commands): `kits/README.md` says how. `products/`: what it sells. `products/care/`: the support chat's
   plug-in; switching the chat on, the company's steps and the board's: `platform/care/docs/switch-on.md`.

@@ -1,18 +1,20 @@
 // book-check.mjs's phone story (shell/pair.js, pairink.js, shared/review/handover.js): a phone paired with the desktop
 // by the book's code, as the iPad is in bookpair.mjs. A ring round part of HQ's scene, which the desktop lays out its
-// own way, shows nowhere on the desktop's page, live or lifted, and opens there as the phone's own picture of it, which
-// Send puts in the book; the phone's screen shows no post-it while it's drawn, nor while it scrolls. Its picture goes
-// even when it develops only after the mark has left, and a ring the desktop doesn't get stays on the phone round what
-// it was drawn round.
+// own way, shows nowhere on the desktop's page, live or lifted; rested, it goes into the book from the phone with the
+// phone's own picture of it, and the desktop's book turns to it. No post-it on either screen, drawing or scrolling.
+// A ring round something both screens show (a card of the desk phone's) lives on the desktop's page as the desktop's
+// own ink: drawn there in place, a faint hairline once it's in the book, gone when a scribble there wipes it, still a
+// hairline once its sheet is sent; a ring still being drawn as the phone ends the pairing leaves nothing behind (rested,
+// it goes in from the phone), and none of the phone's rings, its one round HQ's scene among them, shows over HQ's own
+// view there.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
 import {
   DESKTOP,
   PHONE,
-  POSTIT_MS,
-  SETTLE_MS,
   bookIs,
-  moved,
+  bookShows,
+  noteIn,
   opened,
   pairRelay,
   ringRound,
@@ -36,26 +38,42 @@ const inked = (page, sel) =>
     return n;
   }, sel);
 
-// A phone paired with the desktop by the book's code, HQ's page on it and its post-it watched
+// A phone paired with the desktop by the book's code, HQ's page on it and its post-it watched; the desktop's feed
+// played (feed: the events the coordinator would publish.)
 async function phonePaired(c, route) {
   const desk = await c.hqIn(c.desk, DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }),
-    phone = await c.hqIn(c.pad, PHONE, { deviceScaleFactor: 3 });
+    phone = await c.hqIn(c.pad, PHONE, { deviceScaleFactor: 3 }),
+    feed = [];
   for (const context of [desk, phone]) await context.route(/\/api\/pair(\/[a-z]+)?(\?.*)?$/, route);
+  await desk.route(`${c.base}/api/events`, r =>
+    r.fulfill({
+      contentType: 'text/event-stream',
+      body: `retry: 150\n\n${feed
+        .splice(0)
+        .map(e => `data: ${JSON.stringify(e)}\n\n`)
+        .join('')}`,
+    }),
+  );
   const d = await opened(c, desk, '/?intro=0');
+  // (the phone in the book's overview, closed again once the code shows)
+  const overview = d.page.locator('#book').getByRole('button', { name: /^The overview/ });
+  await overview.click();
   await d.page.getByRole('button', { name: 'Draw from your phone' }).click();
   const code = (await (await d.page.waitForSelector('#book .pair-digits')).textContent()).replace(/\D/g, '');
+  await overview.click();
   const p = await opened(c, phone, `/?intro=0&pair=${code}`);
   await until(d.page, '#book .pair-line', /draws here/, 10_000);
   await bookIs(p.page, 'folded');
-  await watchSheet(p.page);
-  return { desk, phone, d, p };
+  for (const page of [d.page, p.page]) await watchSheet(page);
+  return { desk, phone, d, p, feed };
 }
-// c: book-check's, as for bookpair.mjs's pairStory. A phone paired with the desktop: a ring round part of HQ's scene (a
-// canvas laid out its own way on each) shows on the desktop only as the phone's own picture, never on the desktop's
-// page; the phone shows no post-it as it's drawn
+// c: book-check's, as for bookpair.mjs's pairStory, with its store's notes. A
+// phone paired with the desktop: a ring round part of HQ's scene (a canvas laid out its own way on each) shows on the
+// desktop's book only as the phone's own picture, never on the desktop's page; no post-it on either screen
 export async function phoneStory(c) {
   const route = pairRelay(),
-    { desk, phone, d, p } = await phonePaired(c, route);
+    { desk, phone, d, p, feed } = await phonePaired(c, route),
+    from = c.notes.length;
   const scene = { x: PHONE.width / 2, y: 520, w: 200, h: 90 };
   // (the ring goes round part of HQ's scene, once it's drawn there)
   await p.page.waitForFunction(
@@ -63,34 +81,17 @@ export async function phoneStory(c) {
     scene,
     { timeout: 15_000, polling: 200 },
   );
-  const before = await inked(d.page, REVIEW_INK);
-  await holdShot(p.page);
-  await ringRound(c, p.page, scene, { lift: false });
-  await d.page.waitForTimeout(800);
-  assert.equal(await inked(d.page, '.pair-ink'), 0, "the ring being drawn shows nowhere on the desktop's page");
-  await p.page.evaluate(() => window.__lift());
-  await c.shot('pair-phone-ring', p.page);
-  await d.page.waitForSelector(c.ui('.sheet:not([hidden]) .polaroid img[src^="data:image/jpeg"]'), {
-    timeout: SETTLE_MS + POSTIT_MS,
-  });
-  assert.equal(
-    await d.page.textContent(c.ui('.sheet h2')),
-    'From your other screen',
-    "the desktop's post-it holds the phone's own picture of the ring",
-  );
-  assert.ok(await p.page.evaluate(() => window.__shotHeld), 'a picture developed only once the mark had left');
-  assert.equal(await inked(d.page, '.pair-ink'), 0, "the ring isn't drawn on the desktop's page");
-  await d.page.waitForTimeout(1500); // (the polaroid develops)
-  await c.shot('pair-phone-snap', d.page);
-  assert.equal(await inked(d.page, REVIEW_INK), before, "nor in review mode's ink there");
-  await snapSent(c, d.page);
-  // (the phone scrolls HQ's page and draws again: still no post-it there, the mark on the desktop's)
+  await sceneSnapped(c, d, p, scene);
+  // (the phone scrolls HQ's page and draws again: into the book from there too)
   await p.page.mouse.wheel(0, 300);
+  const scrolled = c.notes.length;
   await ringRound(c, p.page, { ...scene, y: 300 });
-  await moved(c, p.page, d.page);
-  assert.equal(await sheetShowed(p.page), false, "the phone's post-it never popped up, drawing or scrolling");
-  await d.page.locator(c.ui('[data-cancel]')).dispatchEvent('click');
-  await bouncedBack(c, route, d.page, p.page, { ...scene, y: 300 });
+  await noteIn(c, p.page, scrolled);
+  for (const page of [d.page, p.page])
+    assert.equal(await sheetShowed(page), false, 'no post-it on either screen, drawing or scrolling');
+  const card = await landsLikeInk(c, d.page, p.page, feed);
+  await endedMidRing(c, d.page, p.page, card);
+  c.notes.splice(from); // (the sent hairlines on the desk phone stay out of the book's stories after this one)
   // (a scripted pen has no pointer to capture, which WebKit says in its words: book-check's noErrors)
   for (const { errors } of [d, p])
     assert.deepEqual(
@@ -101,41 +102,168 @@ export async function phoneStory(c) {
   await desk.close();
   await phone.close();
 }
-// (in the page: its screenshot held until its mark has gone to the other screen, as a slow one is)
-const holdShot = page =>
-  page.evaluate(() => {
-    const decode = HTMLImageElement.prototype.decode;
-    let gone;
-    const left = new Promise(res => (gone = res));
-    document.addEventListener('pencil:hand', e => e.detail?.give && setTimeout(gone, 300));
-    HTMLImageElement.prototype.decode = function () {
-      if (!this.src.startsWith('data:image/svg+xml')) return decode.call(this);
-      window.__shotHeld = true;
-      return left.then(() => decode.call(this));
-    };
-  });
-// A ring the desktop doesn't get stays on the phone, back where it was drawn: its post-it there, about what it's round
-async function bouncedBack(c, route, desk, phone, at) {
-  route.refuseSend();
-  await ringRound(c, phone, at);
-  await phone.waitForSelector('#toasts .toast:has-text("wasn’t reached")', { timeout: SETTLE_MS + POSTIT_MS });
-  await phone.waitForSelector(c.ui('.sheet:not([hidden])'), { timeout: POSTIT_MS });
-  assert.equal(await phone.textContent(c.ui('.sheet h2')), 'About this bit…', 'the ring is back round what it was');
-  assert.equal(await desk.isVisible(c.ui('.sheet')), false, 'and not on the desktop');
-  const noted = c.posts.filter(x => x.path === '/api/book/note').length;
-  await phone.locator(c.ui('.send')).dispatchEvent('click');
-  await phone.waitForSelector(c.ui('.sheet'), { state: 'hidden', timeout: 15_000 });
-  const note = c.posts.filter(x => x.path === '/api/book/note')[noted]?.body;
-  assert.ok(note?.anchor.el?.selector, `Send files it about what it was round (${note?.anchor.el?.tag})`);
-  assert.ok(note.anchor.ink.length >= 1, 'with its ring');
+// A ring round part of HQ's scene: nowhere on the desktop's page, live or lifted; rested, into the book from the phone
+// with its picture, the desktop's book turned to it
+async function sceneSnapped(c, d, p, scene) {
+  const before = await inked(d.page, REVIEW_INK),
+    from = c.notes.length;
+  await ringRound(c, p.page, scene, { lift: false });
+  await d.page.waitForTimeout(800);
+  assert.equal(await inked(d.page, '.pair-ink'), 0, "the ring being drawn shows nowhere on the desktop's page");
+  await p.page.evaluate(() => window.__lift());
+  await c.shot('pair-phone-ring', p.page);
+  const note = await noteIn(c, p.page, from);
+  assert.ok(note.snip, "the phone's picture goes in the book");
+  await bookShows(d.page, note, "the desktop's book turns to the phone's note");
+  await c.shot('pair-phone-snap', d.page);
+  assert.equal(await inked(d.page, '.pair-ink'), 0, "the ring isn't drawn on the desktop's page");
+  assert.equal(await inked(d.page, REVIEW_INK), before, "nor in review mode's ink there");
 }
-// Send on the desktop's post-it: the phone's picture goes in the book, with nothing of the desktop's page to draw on
-async function snapSent(c, page) {
-  const noted = c.posts.filter(x => x.path === '/api/book/note').length;
-  await page.locator(c.ui('.send')).dispatchEvent('click');
-  await page.waitForSelector(c.ui('.sheet'), { state: 'hidden', timeout: 15_000 });
-  const note = c.posts.filter(x => x.path === '/api/book/note')[noted]?.body;
-  assert.ok(note?.snip?.startsWith('data:image/jpeg'), "Send puts the phone's picture in the book");
-  assert.equal(note.anchor.el, null, "with no element of the desktop's to draw it on");
-  assert.deepEqual(note.anchor.ink, [], 'nor any ink');
+
+// ----
+// The strongest of review mode's ink in a box and a margin round it (client px), 0-255
+const inkIn = (page, b, pad = 40) =>
+  page.evaluate(
+    ([b, pad]) => {
+      const k = devicePixelRatio;
+      let most = 0;
+      for (const c of document.querySelector('review-mode').shadowRoot.querySelectorAll('.ui > canvas')) {
+        const x = Math.max(0, Math.round((b.x - pad) * k)),
+          y = Math.max(0, Math.round((b.y - pad) * k)),
+          w = Math.min(c.width - x, Math.round((b.w + 2 * pad) * k)),
+          h = Math.min(c.height - y, Math.round((b.h + 2 * pad) * k));
+        if (w <= 0 || h <= 0) continue;
+        const { data } = c.getContext('2d').getImageData(x, y, w, h);
+        for (let i = 3; i < data.length; i += 4) most = Math.max(most, data[i]);
+      }
+      return most;
+    },
+    [b, pad],
+  );
+const FAINT = 0.45 * 255; // (a hairline's ink at most, of 255: bookink.mjs's)
+// The ink in a box once test(ink) holds, within a few seconds (or the last seen)
+async function inkUntil(page, b, test) {
+  let ink = await inkIn(page, b);
+  for (let i = 0; i < 30 && !test(ink); i++, await page.waitForTimeout(150)) ink = await inkIn(page, b);
+  return ink;
+}
+
+// The desk phone open on the phone, and so on the desktop: a card of it both show, with the same words, uncovered, a
+// size a ring goes round ({ sel, phone, desk }: its boxes on each)
+async function bothShow(phone, desk) {
+  await phone.evaluate(() => import('/shell/desk.js').then(d => d.openPhone()));
+  for (const page of [phone, desk])
+    await page.waitForSelector('#tool .device.phone', { state: 'visible', timeout: 10_000 });
+  await desk.waitForTimeout(600); // (its pop)
+  const boxOf = (page, sels) =>
+    page.evaluate(async sels => {
+      const { found, selector, textOf } = await import('/__review/anchor.js');
+      const all = sels ?? [...document.querySelectorAll('#tool .device.phone *')].map(selector);
+      return all.map(sel => {
+        const el = found(sel, document),
+          b = el?.getBoundingClientRect();
+        if (!b?.width) return null;
+        const top = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+        return {
+          sel,
+          text: textOf(el),
+          x: b.left + b.width / 2,
+          y: b.top + b.height / 2,
+          w: b.width,
+          h: b.height,
+          ...{ box: { x: b.left, y: b.top, w: b.width, h: b.height }, uncovered: !!top && el.contains(top) },
+        };
+      });
+    }, sels);
+  const there = await boxOf(phone, null),
+    fits = b => b?.uncovered && b.text && b.w > 100 && b.w < 240 && b.h > 30 && b.h < 140;
+  const mine = there.filter(b => fits(b) && b.box.y > 80 && b.box.y + b.h < 844 - 80);
+  const theirs = await boxOf(
+    desk,
+    mine.map(b => b.sel),
+  );
+  const i = theirs.findIndex((b, i) => b?.uncovered && b.text === mine[i].text && b.box.x + b.w < 1280);
+  assert.ok(i >= 0, 'a card of the desk phone shows on both screens');
+  return { sel: mine[i].sel, phone: mine[i], desk: theirs[i] };
+}
+// A ring round the card on the phone, rested: into the book from the phone, and a faint hairline round the same card
+// on the desktop's page. The note.
+async function filed(c, desk, phone, card) {
+  const from = c.notes.length;
+  await ringRound(c, phone, card.phone);
+  const note = await noteIn(c, phone, from);
+  assert.ok(note.anchor.el?.selector.startsWith(card.sel), `filed on the card (${note.anchor.el?.selector})`);
+  const ink = await inkUntil(desk, card.desk.box, ink => ink > 0 && ink < FAINT);
+  assert.ok(ink > 0 && ink < FAINT, `a faint hairline round the same card on the desktop once it's in (${ink} of 255)`);
+  // (the live line goes as the ink lifts off the phone)
+  for (let i = 0; i < 30 && (await inked(desk, '.pair-ink')); i++) await desk.waitForTimeout(150);
+  assert.equal(await inked(desk, '.pair-ink'), 0, "and not as the phone's live line");
+  return note;
+}
+
+// A ring round a card both screens show lands on the desktop and lives there as its own ink: a hairline once filed,
+// gone once a scribble wipes it, still a hairline once its sheet is sent (on the desktop's feed, as the coordinator
+// tells it)
+async function landsLikeInk(c, desk, phone, feed) {
+  const card = await bothShow(phone, desk);
+  assert.equal(await inkIn(desk, card.desk.box), 0, 'nothing drawn round the card on the desktop yet');
+  // (wiped: a scribble over it on the desktop, as over the desktop's own ink)
+  const wiped = await filed(c, desk, phone, card);
+  const { x, y } = card.desk;
+  await c.penOn(desk)(Array.from({ length: 24 }, (_, i) => [x - 50 + (i % 2) * 100, y - 15 + i * 1.3]));
+  for (let i = 0; i < 20 && !c.posts.some(q => q.path === '/api/book/note/delete' && q.body.id === wiped.id); i++)
+    await desk.waitForTimeout(150);
+  assert.equal(wiped.status, 'wiped', 'a scribble on the desktop wipes the phone’s ring');
+  assert.equal(await inkUntil(desk, card.desk.box, ink => !ink), 0, 'and it goes from the desktop’s page');
+  assert.equal(await inkUntil(phone, card.phone.box, ink => !ink), 0, 'and from the phone’s');
+  // (sent: its sheet's ten seconds over, the feed telling the desktop)
+  const kept = await filed(c, desk, phone, card);
+  await c.shot('pair-phone-kept', desk);
+  // (the sheet it went on)
+  const sheet = await desk.evaluate(async id => {
+    const api = (path, body) =>
+      fetch(`/api/book${path}`, body && { method: 'POST', body: JSON.stringify(body) }).then(r => r.json());
+    const sheet = (await api('/sheets')).open.find(s => s.notes.some(n => n.id === id));
+    await api('/send', { id: sheet.id });
+    return sheet.owner;
+  }, kept.id);
+  await desk.waitForTimeout(10_200);
+  feed.push({ type: 'book', agent: sheet, text: 'sent' });
+  // (the desktop reads the sheets again on the feed's word, which delivers the send)
+  for (let i = 0; i < 30 && kept.status !== 'sent'; i++) await desk.waitForTimeout(150);
+  assert.equal(kept.status, 'sent', 'its sheet went');
+  const ink = await inkUntil(desk, card.desk.box, ink => ink > 0 && ink < FAINT);
+  await c.shot('pair-phone-hairline', desk);
+  assert.ok(ink > 0 && ink < FAINT, `sent, the phone's ring is a faint hairline on the desktop (${ink} of 255)`);
+  return card;
+}
+
+// A ring being drawn on the phone as the phone ends the pairing: gone from the desktop's page at once, nothing of the
+// phone's left over HQ there (the board's picture: a phone's ring stuck over HQ's counters); lifted and rested, it goes
+// in from the phone, the desktop's page as it was. Then on HQ's own view, none of the phone's rings shows on the
+// desktop
+async function endedMidRing(c, desk, phone, card) {
+  const before = await inkIn(desk, card.desk.box);
+  await ringRound(c, phone, { ...card.phone, y: card.phone.y + 4 }, { lift: false });
+  for (let i = 0; i < 30 && !(await inked(desk, '.pair-ink')); i++) await desk.waitForTimeout(150);
+  assert.ok(await inked(desk, '.pair-ink'), "the phone's ring shows on the desktop as it's drawn");
+  await phone.locator('#book .pair-line [data-do=end]').dispatchEvent('click');
+  await desk.waitForFunction(() => !('paired' in document.documentElement.dataset), null, { timeout: 10_000 });
+  await desk.waitForTimeout(300); // (a frame's redraw)
+  assert.equal(
+    await inked(desk, '.pair-ink'),
+    0,
+    "the pairing ended, nothing of the phone's ring stays on the desktop",
+  );
+  await c.shot('pair-phone-ended', desk);
+  const from = c.notes.length;
+  await phone.evaluate(() => window.__lift());
+  await noteIn(c, phone, from);
+  assert.equal(await desk.isVisible(c.ui('.sheet')), false, 'lifted, the mark goes in from the phone, alone now');
+  assert.equal(await inkIn(desk, card.desk.box), before, "and the desktop's page is as it was");
+  // (HQ's own view on the desktop: none of the phone's rings drawn over it, the scene's sent one among them)
+  await desk.evaluate(() => import('/shell/desk.js').then(d => d.closeTool()));
+  await desk.waitForSelector('#tool', { state: 'hidden' });
+  await desk.waitForTimeout(400); // (the marks drawn after it)
+  assert.equal(await inked(desk, REVIEW_INK), 0, "HQ's own view on the desktop: none of the phone's rings over it");
 }

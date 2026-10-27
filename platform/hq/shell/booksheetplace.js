@@ -10,8 +10,9 @@ const batch = s => !s.page;
 // The notes each sheet page of a day's row shows, page id → [{ sheet, notes: [{ note, away }] }], sent sheets first
 // (oldest first), then the open ones, each in its sheet's order. A note shows on its own page when that page is its
 // sheet owner's; one moved to another owner's open sheet shows on that owner's page in the row; one with no such page
-// stays on its own, away: whose it is now.
-export function notesOnPages({ open = [], sent = [] }, pages, ceo) {
+// stays on its own, away: whose it is now. A call's notes show on its call's page (calls: the sheets of the row's call
+// pages, booksheet.js withCalls.)
+export function notesOnPages({ open = [], sent = [], calls = [] }, pages, ceo) {
   const sheetPages = pages.filter(p => p.kind === 'sheet' && p.id),
     home = owner => sheetPages.find(p => p.owner === owner),
     on = new Map(sheetPages.map(p => [p.id, []]));
@@ -30,6 +31,13 @@ export function notesOnPages({ open = [], sent = [] }, pages, ceo) {
       else if (own) put(own, sheet, note, owner);
     }
   }
+  for (const sheet of calls)
+    for (const note of [...sheet.notes].sort((a, b) => a.n - b.n)) {
+      const own = pages.find(p => p.kind === 'call' && p.id === note.page);
+      if (!own) continue;
+      if (!on.has(own.id)) on.set(own.id, []);
+      put(own, sheet, note, null);
+    }
   return on;
 }
 
@@ -60,6 +68,12 @@ export function sentLine(iso, now = new Date(), prefix = 'Sent') {
     ? `${prefix} ${time}`
     : `${prefix} ${d.getDate()} ${MONTHS[d.getMonth()]} ${time}`;
 }
+
+// What a send carries, in words: "2 notes", "1 note"; the plane's "Send 2 notes to Juno"; and the line a sent sheet
+// keeps, "3 notes sent to Bolt · 15:36" (the day too when it isn't today).
+export const notesWord = k => `${k} note${k === 1 ? '' : 's'}`;
+export const sendWords = (k, to) => `Send ${notesWord(k)} to ${to}`;
+export const sentTo = (k, to, iso, now = new Date()) => sentLine(iso, now, `${notesWord(k)} sent to ${to} ·`);
 
 // Where a lifted note lands among the others: before the first whose middle is below y (their middles top to bottom),
 // or after them all

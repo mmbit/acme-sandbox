@@ -24,6 +24,7 @@ import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { sampleWrites } from './diskwrites.ts';
 import { DiskShares } from './disk.ts';
+import { TREE_ENTRY_LIMIT } from './disktree.ts';
 import { warnDisk } from './diskwarnings.ts';
 import { processesFor, tally, overShare } from './shares.ts';
 import { Reload } from './reload.ts';
@@ -455,7 +456,7 @@ test('a failed job scan stops only its own command and leaves a warned writer me
   } while (!disk.get(owners[0].uid)!.accountingError);
   assert.equal(disk.size, 2);
   assert.equal(disk.get(owners[0].uid)!.used, null);
-  assert.match(disk.get(owners[0].uid)!.accountingError!, rootWorker ? /EACCES/ : /scanner exited/);
+  assert.match(disk.get(owners[0].uid)!.accountingError!.message, rootWorker ? /EACCES/ : /scanner exited/);
   const healthy = disk.get(owners[1].uid)!;
   assert.ok(healthy.used! >= 131072);
   assert.equal(healthy.warned, true);
@@ -475,8 +476,10 @@ test('a failed job scan stops only its own command and leaves a warned writer me
   });
   assert.equal((await closed)[1], 'SIGKILL');
   assert.equal(commands[1].signalCode, null);
-  const receipt = h.db.prepare('select used, report from blocks where job = ?').get(jobs[0].id) as any;
+  const receipt = h.db.prepare('select used, report, count from blocks where job = ?').get(jobs[0].id) as any;
   assert.equal(receipt.used, null, 'unknown usage survives storage');
+  assert.equal(receipt.count, rootWorker ? 1 : 0, 'only a denial inside the slot tree adds a strike');
+  assert.equal(failed.accountingError!.reason, rootWorker ? 'job-tree' : 'worker-scanner');
   assert.match(receipt.report, /Disk accounting is unavailable/);
   assert.doesNotMatch(receipt.report, /this job used/);
   const wroteAgain = once(commands[1].stdout!, 'data');
@@ -492,4 +495,51 @@ test('a failed job scan stops only its own command and leaves a warned writer me
   const writerClosed = once(commands[1], 'close');
   await reloader.block(owners[1], continued, now, { ask, checking: new Map(), stopped: () => {} });
   assert.equal((await writerClosed)[1], 'SIGKILL');
+  const writerReceipt = h.db.prepare('select count from blocks where job = ?').get(jobs[1].id) as any;
+  assert.equal(writerReceipt.count, 1, 'the other job still receives its measured overuse strike');
+});
+
+test('a tree beyond the scanner bound reaches the three-strike stop through production accounting', async context => {
+  const work = temporary(context);
+  const job = await h.start({ agent: 'bolt' });
+  const other = await h.start({ agent: 'rook' });
+  const owners = [
+    { job: job.id, ...ids },
+    { job: other.id, uid: ids.uid + 1, gid: ids.gid },
+  ];
+  // Paths over 3,584 characters cost more than eight 1 KiB entries each, so fewer files exhaust the same budget.
+  const root = join(work, 'jobs', String(job.id), ...Array(15).fill('d'.repeat(240)));
+  mkdirSync(root, { recursive: true });
+  for (let i = 0; i <= Math.ceil(TREE_ENTRY_LIMIT / 8); i++) closeSync(openSync(join(root, String(i)), 'w'));
+  const shares = new DiskShares(work);
+  context.after(() => shares.close());
+  const ask = async (body: Record<string, unknown>) => {
+    const reply = await h.worker('blocked', body);
+    assert.equal(reply.status, 200);
+    assert.deepEqual((await h.worker('blocked', body)).body, reply.body, 'a lost reply adds no strike');
+    return reply.body;
+  };
+  for (const count of [1, 2, 3]) {
+    const disk = await shares.measure([owners[0]], { freeBytes: 2 ** 30, reserveBytes: 0 });
+    const use = disk.get(ids.uid)!;
+    assert.equal(use.used, null);
+    assert.equal(use.accountingError?.reason, 'job-tree');
+    const command = spawn('sleep', ['300']);
+    context.after(() => command.kill('SIGKILL'));
+    await once(command, 'spawn');
+    const procs = (await processesFor([ids])).filter(p => p.pid === command.pid);
+    const block = overShare(tally(procs, procs, 1000), new Set(), { ...limits, disk }).block!;
+    assert.equal(block.root.pid, command.pid);
+    assert.equal(block.used, null);
+    assert.equal(block.accountingError?.reason, 'job-tree');
+    const closed = once(command, 'close');
+    await new Reload().block(owners[0], block, procs, { ask, checking: new Map(), stopped: () => {} });
+    assert.equal((await closed)[1], 'SIGKILL');
+    const receipt = h.db.prepare('select used, count from blocks where job = ? order by id desc').get(job.id) as any;
+    assert.equal(receipt.used, null);
+    assert.equal(receipt.count, count);
+    if (count < 3) assert.equal((await h.heartbeat(job)).body.stop, undefined);
+  }
+  assert.match((await h.heartbeat(job)).body.stop!, /blocked 3 times/);
+  assert.equal((await h.heartbeat(other)).body.stop, undefined);
 });

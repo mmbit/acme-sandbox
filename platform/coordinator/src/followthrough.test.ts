@@ -218,7 +218,8 @@ test('persistent failures reach the desk phone once even while the repair job st
     followThroughSweep(t0);
     followThroughSweep(t0 + START_MS);
     db.prepare('update jobs set status = ? where id = ?').run(status, told()[0].id);
-    const cards = () => db.prepare('select id, agent, body from requests').all();
+    // (not the desk phone's tip the first card brings: tips.ts)
+    const cards = () => db.prepare("select id, agent, body from requests where kind != 'tip'").all();
     followThroughSweep(t0 + START_MS + RETELL_MS - MIN);
     assert.equal(cards().length, 0);
     followThroughSweep(t0 + START_MS + RETELL_MS);
@@ -389,6 +390,22 @@ test("the hour's check starts before work whose window passed hours ago", async 
   followThroughSweep(Date.now());
   assert.equal((await h.claim('claude'))?.id, checks()[0].job);
   assert.equal((await h.claim('claude'))?.id, late);
+});
+
+test("the hour's check starts before the board's own work, which it's there to see", async () => {
+  reset();
+  agreed();
+  const due = (title: string, deadline: number) =>
+    h.queue({ agent: 'bolt', engine: 'claude', title, thread: h.dueThread({ deadline }) });
+  // (each the follow-up of a call with the board: its word, the order's first lane; the first with a latest start before
+  // the check's, whose window ends with its hour)
+  const soon = due('Due in a minute', Date.now() + MIN);
+  const later = due('Due tomorrow', Date.now() + 24 * HOUR);
+  for (const job of [soon, later]) agreed({}, t0, 'bolt', { job });
+  followThroughSweep(Date.now());
+  assert.equal((await h.claim('claude'))?.id, checks()[0].job);
+  assert.equal((await h.claim('claude'))?.id, soon);
+  assert.equal((await h.claim('claude'))?.id, later);
 });
 
 test("a hold on the checks' own project holds its work, never the hour's check that judges the hold", async () => {

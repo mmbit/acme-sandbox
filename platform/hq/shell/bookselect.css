@@ -1,0 +1,193 @@
+/* The select tool (bookselect.js): the loop as it's drawn, the frame round what's picked with a handle at each corner,
+   the bar beside it, the things lifted while they move, and the cursors. The frame lives in the page's px, so the book's
+   pan and zoom carry it; its line, handles and bar keep their size on screen (--bk-scale: the zoom, bookview.js). */
+#book .bk-page {
+  --bk-sel: rgb(74 63 160 / 62%);
+}
+
+/* ---- the loop: a soft dashed line, its dashes marching slowly, a hint of ink inside */
+.bk-lasso {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 6;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+.bk-lasso path {
+  fill: rgb(74 63 160 / 6%);
+  stroke: var(--bk-sel);
+  stroke-width: 1.5px;
+  stroke-linejoin: round;
+  stroke-dasharray: 5 4;
+  vector-effect: non-scaling-stroke;
+  animation: bk-lasso-march 0.9s linear infinite;
+}
+@keyframes bk-lasso-march {
+  to {
+    stroke-dashoffset: -18;
+  }
+}
+
+/* ---- the frame: a little outside what it holds, quick to show */
+.bk-sel {
+  position: absolute;
+  z-index: 6;
+  pointer-events: none;
+  animation: bk-sel-in 0.14s ease-out;
+}
+.bk-sel::before {
+  content: '';
+  position: absolute;
+  inset: calc(-8px / var(--bk-scale, 1));
+  border: calc(1.5px / var(--bk-scale, 1)) solid var(--bk-sel);
+  border-radius: calc(6px / var(--bk-scale, 1));
+  background: rgb(74 63 160 / 4%);
+  animation: bk-sel-grow 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes bk-sel-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes bk-sel-grow {
+  from {
+    scale: 1.03;
+  }
+}
+/* its handles: small white discs ringed in ink, at the frame's corners, with room round them for a Pencil's tip */
+.bk-sel-handle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 1.5px var(--bk-ink, #2a2352),
+    0 2px 5px rgb(42 35 82 / 30%);
+  pointer-events: auto;
+  translate: -50% -50%;
+  scale: calc(1 / var(--bk-scale, 1));
+  transition: transform 0.1s ease-out;
+}
+.bk-sel-handle::after {
+  content: '';
+  position: absolute;
+  inset: -9px;
+  border-radius: 50%;
+}
+.bk-sel-handle[data-corner='0'],
+.bk-sel-handle[data-corner='3'] {
+  left: calc(-8px / var(--bk-scale, 1));
+}
+.bk-sel-handle[data-corner='1'],
+.bk-sel-handle[data-corner='2'] {
+  left: calc(100% + 8px / var(--bk-scale, 1));
+}
+.bk-sel-handle[data-corner='0'],
+.bk-sel-handle[data-corner='1'] {
+  top: calc(-8px / var(--bk-scale, 1));
+}
+.bk-sel-handle[data-corner='2'],
+.bk-sel-handle[data-corner='3'] {
+  top: calc(100% + 8px / var(--bk-scale, 1));
+}
+.bk-sel-handle[data-corner='0'],
+.bk-sel-handle[data-corner='2'] {
+  cursor: nwse-resize;
+}
+.bk-sel-handle[data-corner='1'],
+.bk-sel-handle[data-corner='3'] {
+  cursor: nesw-resize;
+}
+@media (hover: hover) {
+  .bk-sel-handle:hover {
+    transform: scale(1.25);
+  }
+}
+
+/* ---- the bar: Cut, Copy, Duplicate, Delete under the frame (over it when the paper has no room under it) */
+.bk-sel-bar {
+  position: absolute;
+  z-index: 7;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--bk-paper, #fffaf0);
+  box-shadow: var(--bk-lift, 0 6px 20px rgb(42 35 82 / 22%));
+  white-space: nowrap;
+  transform-origin: 0 0;
+  transform: scale(calc(1 / var(--bk-scale, 1))) translate(-50%, 16px);
+  transition: opacity 0.12s ease-out;
+  animation: bk-sel-in 0.16s ease-out;
+}
+.bk-sel-bar[data-side='over'] {
+  transform: scale(calc(1 / var(--bk-scale, 1))) translate(-50%, calc(-100% - 16px));
+}
+.bk-sel-bar[data-held] {
+  opacity: 0;
+  pointer-events: none;
+}
+.bk-sel-bar .bk-btn.bk-text {
+  height: 34px;
+  padding: 0 12px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--bk-ink, #2a2352);
+  font-weight: 600;
+}
+@media (hover: hover) {
+  .bk-sel-bar .bk-btn.bk-text:hover {
+    background: var(--bk-ink-soft, rgb(42 35 82 / 8%));
+    color: var(--bk-ink, #2a2352);
+  }
+}
+
+/* ---- what's picked, lifted while it moves or scales: a light shadow, eased off as it lands */
+.bk-sel-lifted {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  transition: filter 0.12s ease-out;
+}
+.bk-sel-lifted[data-up] {
+  filter: drop-shadow(0 8px 10px rgb(42 35 82 / 20%)) drop-shadow(0 1px 2px rgb(42 35 82 / 14%));
+}
+
+/* ---- the cursors: an arrow on the paper, a move cursor over what a press would pick, held while it's dragged */
+#book .bk-desk[data-tool='select'] {
+  cursor: default;
+}
+#book .bk-desk[data-tool='select'][data-pick],
+#book .bk-desk[data-tool='select'][data-over],
+#book .bk-desk[data-tool='select'] .bk-typed:not([data-editing]),
+#book .bk-desk[data-tool='select'] .bk-typed-grip {
+  cursor: move;
+}
+#book .bk-desk[data-drag='move'],
+#book .bk-desk[data-drag='move'] * {
+  cursor: move !important;
+}
+#book .bk-desk[data-drag='nwse'],
+#book .bk-desk[data-drag='nwse'] * {
+  cursor: nwse-resize !important;
+}
+#book .bk-desk[data-drag='nesw'],
+#book .bk-desk[data-drag='nesw'] * {
+  cursor: nesw-resize !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bk-lasso path,
+  .bk-sel,
+  .bk-sel::before,
+  .bk-sel-bar,
+  .bk-sel-handle,
+  .bk-sel-lifted {
+    animation: none;
+    transition: none;
+  }
+}

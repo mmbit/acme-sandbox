@@ -188,6 +188,7 @@ test('the latest unpaid live checkouts as Stripe has them: types and codes only,
   });
   answers.set(left, {
     locale: 'auto',
+    metadata: { product: 'front', methods: 'd434b61caee7' }, // an older session: what HQ left out, as a hash
     payment_intent: {
       id: 'pi_3PlantedIntent02',
       status: 'requires_action',
@@ -203,6 +204,7 @@ test('the latest unpaid live checkouts as Stripe has them: types and codes only,
     payment_status: 'sanne@example.com',
     locale: 'Lindelaan 12',
     payment_method_types: ['Sanne', 'pi_3plantedintent03', 'sanne@example.com'],
+    metadata: { named: 'Sanne pi_3plantedintent03 sanne@example.com', methods: 'Lindelaan 12' },
     payment_intent: {
       id: 'pi_3PlantedIntent03',
       status: 'Utrecht',
@@ -223,15 +225,20 @@ test('the latest unpaid live checkouts as Stripe has them: types and codes only,
     .filter(r => /^\| \d{4}-/.test(r))
     .map(r => r.split(' | ').slice(1).join(' | '));
   assert.match(out, /How far the latest 8 unpaid live checkouts got \(Stripe API version 2026-09-30\.clover;/);
-  const methods = kept(untried).payment_method_types.join(' '),
+  const methods = `${kept(untried).payment_method_types.join(' ')} | ${kept(untried).metadata.named}`,
     open = (s: string) => `open/unpaid | NL | nl | ${methods} | - | - | - | - | - | ${life(s)} |`;
+  assert.equal(
+    kept(untried).metadata.named,
+    'card',
+    'what HQ named (no setting here: cards), beside what Stripe offered',
+  );
   assert.deepEqual(
     rows,
     [
       `alpha | 39.95 | open/unpaid | DE | nl | ${methods} | - | - | - | - | - | ${life(untried)} |`,
       'alpha | 39.95 | Stripe 404: resource_missing |',
-      `alpha | 39.95 | ?/? | NL | ? | ? ? ? | ? | ? | ? | ?/? | 1 | ${life(planted)} |`,
-      `alpha | 39.95 | open/unpaid | NL | auto | ${methods} | ideal | requires_action | - | - | 10 | ${life(left)} |`,
+      `alpha | 39.95 | ?/? | NL | ? | ? ? ? | ? ? ? | ? | ? | ? | ?/? | 1 | ${life(planted)} |`,
+      `alpha | 39.95 | open/unpaid | NL | auto | ${kept(left).payment_method_types.join(' ')} | #d434b61caee7 | ideal | requires_action | - | - | 10 | ${life(left)} |`,
       `alpha | 39.95 | expired/unpaid | NL | nl | ${methods} | card | requires_payment_method | - | card_declined/insufficient_funds | 4 | ${life(declined)} |`,
       `alpha beta | 99.85 | ${open(reopened)}`,
       `alpha beta | 69.90 | ${open(expired).replace('open/', 'expired/')}`,

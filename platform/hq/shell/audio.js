@@ -81,10 +81,11 @@ export function setHolidays(on) { holidays = on; }
 // ---- the engine: what every pack plays its sounds with
 // A note: an oscillator at f Hz, gliding to f × slide, rising in attack s and dying away by dur s; hold: s it stays at
 // full before it starts dying (a steady tone, dur its fade); cut: a low-pass on it (softens a square or a saw); pan:
-// where it sits, -1 (left) to 1 (right)
+// where it sits, -1 (left) to 1 (right) (each sound made in its bus's context: a call's own, cueInto())
 export function tone(f, dur, { type = 'square', vol = 0.12, at = 0, slide = 0, attack = 0.008, hold = 0, cut = 0, pan = 0, bus = packBus } = {}) {
-  if (!context) return;
-  const t = context.currentTime + at, o = context.createOscillator(), g = context.createGain(), end = t + hold + dur;
+  const busContext = bus?.context;
+  if (!busContext) return;
+  const t = busContext.currentTime + at, o = busContext.createOscillator(), g = busContext.createGain(), end = t + hold + dur;
   o.type = type; o.frequency.setValueAtTime(f, t);
   if (slide) o.frequency.exponentialRampToValueAtTime(f * slide, end);
   g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + attack);
@@ -92,13 +93,14 @@ export function tone(f, dur, { type = 'square', vol = 0.12, at = 0, slide = 0, a
   g.gain.exponentialRampToValueAtTime(0.0001, end);
   o.connect(g).connect(cut ? lowpass(cut, panned(pan, bus)) : panned(pan, bus)); o.start(t); o.stop(end + 0.05);
 }
-const lowpass = (freq, bus) => { const f = context.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq; f.connect(bus); return f; };
-const panned = (pan, bus) => { if (!pan || !context.createStereoPanner) return bus; const p = context.createStereoPanner(); p.pan.value = pan; p.connect(bus); return p; };
+const lowpass = (freq, bus) => { const f = bus.context.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = freq; f.connect(bus); return f; };
+const panned = (pan, bus) => { if (!pan || !bus.context.createStereoPanner) return bus; const p = bus.context.createStereoPanner(); p.pan.value = pan; p.connect(bus); return p; };
 // A burst of filtered noise; sweep: its filter glides to freq × sweep (a whoosh, a rustle), q: how narrow, attack: a
 // fade in (else it starts at full)
 export function noise(dur, { vol = 0.1, at = 0, freq = 4000, bus = packBus, type = 'bandpass', sweep = 0, q = 0, attack = 0 } = {}) {
-  if (!context) return;
-  const t = context.currentTime + at, s = context.createBufferSource(), f = context.createBiquadFilter(), g = context.createGain();
+  const busContext = bus?.context;
+  if (!busContext) return;
+  const t = busContext.currentTime + at, s = busContext.createBufferSource(), f = busContext.createBiquadFilter(), g = busContext.createGain();
   s.buffer = noiseBuf; f.type = type; f.frequency.value = freq;
   if (dur > 0.5) s.loop = true; // (from a random point in its first 1.5 s, the 2 s of noise would run out)
   if (sweep) { f.frequency.setValueAtTime(freq, t); f.frequency.exponentialRampToValueAtTime(freq * sweep, t + dur); }
@@ -114,11 +116,12 @@ export const note = midi => 440 * 2 ** ((midi - 69) / 12); // a MIDI note's freq
 // A rendered sound (stereo channels L and R at rate sr, as the platform's sound kit renders them: /foley.js) through
 // the look's own sounds, so mute and a swap reach it as they reach the rest
 export function sample({ L, R, sr }, { vol = 1, at = 0, bus = packBus } = {}) {
-  if (!context) return;
-  const b = context.createBuffer(2, L.length, sr), s = context.createBufferSource(), g = context.createGain();
+  const busContext = bus?.context;
+  if (!busContext) return;
+  const b = busContext.createBuffer(2, L.length, sr), s = busContext.createBufferSource(), g = busContext.createGain();
   b.copyToChannel(L, 0); b.copyToChannel(R, 1);
   s.buffer = b; g.gain.value = vol;
-  s.connect(g).connect(bus); s.start(context.currentTime + at);
+  s.connect(g).connect(bus); s.start(busContext.currentTime + at);
 }
 
 // ---- packs
@@ -151,15 +154,27 @@ export function foley(name, params = {}, { vol = 1, at = 0 } = {}) {
 }
 // A call's own controls are heard over the hush the call puts on HQ (the minimised call's bubble), never louder than
 // HQ's own sounds.
-let cueBus = null;
+let cueBus = null, callBus = null;
 export function cue(name, ...a) {
   if (!context || !prefs.sound) return;
   playOn(cues(), name, a);
 }
 const cues = () => {
+  if (callBus) return callBus;
   if (!cueBus) { cueBus = context.createGain(); cueBus.gain.value = sfxBus.gain.value; cueBus.connect(context.destination); }
   return cueBus;
 };
+// While a call's sound is up, its cues play into it, as its voice does (into: the node the voice plays through,
+// callaudio.js), at the cues' own level; null: back on HQ's own. On an iPhone, HQ's own Web Audio is silent or faint
+// while the call's microphone is on (and silent with the ring switch off): a ring or a clack there is never heard.
+export function cueInto(into) {
+  callBus?.disconnect();
+  callBus = null;
+  if (!into) return;
+  callBus = into.context.createGain();
+  callBus.gain.value = sfxBus.gain.value;
+  callBus.connect(into);
+}
 function playOn(bus, name, a) {
   const look = packBus;
   packBus = bus;
@@ -169,10 +184,10 @@ function playOn(bus, name, a) {
 // bus of its own, which the function it returns cuts at once, mid-sound.
 export function cueRepeating(name, every) {
   if (!context) return () => {};
-  const bus = context.createGain(), again = () => prefs.sound && playOn(bus, name, []), timer = setInterval(again, every * 1000);
-  bus.connect(cues());
+  const into = cues(), bus = into.context.createGain(), again = () => prefs.sound && playOn(bus, name, []), timer = setInterval(again, every * 1000);
+  bus.connect(into);
   again();
-  return () => { clearInterval(timer); bus.gain.setTargetAtTime(0, context.currentTime, 0.005); setTimeout(() => bus.disconnect(), 100); };
+  return () => { clearInterval(timer); bus.gain.setTargetAtTime(0, bus.context.currentTime, 0.005); setTimeout(() => bus.disconnect(), 100); };
 }
 // The stage puts on a look's pack as its scene goes on. The sounds play through a bus of the pack's own, which a swap
 // fades and drops, so the last look's (its van's whirr) never ring on under the new one's.

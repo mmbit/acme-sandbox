@@ -34,6 +34,9 @@
   // A page that loads the tool itself (its script tag carries data-summoned: HQ, for the board's notes on HQ) hears its
   // menu's Open the book as a 'review:book' event (detail: whose sheet). A
   // 'review:cover' event (detail true, then false) hides the tool while the page frames another page with its own pin.
+  // A 'review:pin' event gets the pin itself in its detail.
+  // Such a page may also summon the pin and put it away ('review:summon', detail true or false: HQ's book open or folded;
+  // the Pencil writes either way).
   const summoned = !!document.currentScript?.hasAttribute('data-summoned');
   // ...and data-book: HQ's own pages, where the Pencil writes on the page and its notes go to the board's book
   // (pencil.js).
@@ -60,9 +63,11 @@
     book,
     toHq,
     covered: false,
+    away: false,
   };
   // (heard from the start: a cover asked for while the tool still loads holds once it's up)
   addEventListener('review:cover', e => (config.covered = !!e.detail));
+  addEventListener('review:summon', e => (config.away = !e.detail));
   let tool = null;
   const start = () => (tool ??= import(new URL('tool.js', ROUTE).href).then(m => m.start(config)));
   if (!framed) start();

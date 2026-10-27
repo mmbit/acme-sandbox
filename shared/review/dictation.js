@@ -17,11 +17,10 @@ export const CSS = `
 const TYPES = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4', 'audio/webm'];
 export const canRecord = !!(window.isSecureContext && navigator.mediaDevices?.getUserMedia && window.MediaRecorder);
 
-// r.rec: the recording under way (heard in the board's language, which the coordinator reads)
-export async function startMic(r) {
-  // (the audio context made at the tap, so Safari lets it run)
-  const AC = window.AudioContext || window.webkitAudioContext;
-  const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx: AC ? new AC() : null });
+// r.rec: the recording under way (heard in the board's language, which the coordinator reads). ctx: an audio context
+// made at an earlier gesture (pentouch.js: the pen's touch, the mic asked for only once it draws or holds.)
+export async function startMic(r, ctx = audioContext()) {
+  const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx });
   // What the reviewer types meanwhile stays: the words in the note then are theirs, and only words heard after go in
   rec.typed = () => {
     rec.said = r.text.value;
@@ -63,6 +62,11 @@ export async function startMic(r) {
         : 'Could not start the microphone.';
   }
 }
+// The audio context, made at the tap, so Safari lets it run
+export const audioContext = () => {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  return AC ? new AC() : null;
+};
 // the mic button breathes with the voice
 function breathing(r, rec, source) {
   const an = rec.ctx.createAnalyser(),
@@ -230,7 +234,11 @@ async function lastPhrase(rec) {
   let liveOk = !!rec.liveDone && !rec.cancelled;
   if (!liveOk && rec.live && rec.live !== 'failed' && !rec.cancelled) {
     rec.ending = true; // (its last words still come in)
-    if (rec.live.readyState === WebSocket.OPEN) rec.live.send(JSON.stringify({ type: 'end' }));
+    // (a line still connecting is asked once it opens: a mark settles within seconds of its first line.)
+    const ws = rec.live,
+      end = () => ws.send(JSON.stringify({ type: 'end' }));
+    if (ws.readyState === WebSocket.OPEN) end();
+    else if (ws.readyState === WebSocket.CONNECTING) ws.addEventListener('open', end, { once: true });
     liveOk = await Promise.race([rec.done, new Promise(res => setTimeout(() => res(false), 6000))]);
   }
   // (closed before the clip goes: the coordinator takes one at a time)

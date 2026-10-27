@@ -47,6 +47,7 @@ import {
 } from './review.ts'; // (fixFailed; Check; archiving; withdrawn; threadTaskEnded)
 import type { ChangedLines } from './findings.ts';
 import { announceRequest } from './push.ts';
+import * as tips from './tips.ts';
 import { saveSecrets, stored, secret, addressKeys } from './secrets.ts';
 import * as addresses from './addresses.ts';
 import * as approvals from './approvals.ts';
@@ -417,15 +418,30 @@ const OPEN_JOB_STATUSES = ['queued', 'running', 'blocked'];
 export const OPEN_JOBS = `('${OPEN_JOB_STATUSES.join("', '")}')`;
 export const isOpenJob = (job: { status: string }) => OPEN_JOB_STATUSES.includes(job.status);
 export const OPEN_PRS = "('open', 'stuck', 'board')";
+// A board call's item that won't be worked on any more (ledger.ts): a job carrying it queues nothing, and it carries no
+// board's word (BOARD_CALL). Every other status is a live item. Here, not in ledger.ts, which imports this module.
+export const ENDED_ITEMS = ['dropped', 'replaced'];
 
 // A job's branches in SQL, for the jobs row `j` names. Its work branch is where its own work goes (its own branch, else
 // job/<id>). Its loop branch is the branch whose review loop it's in (its own, else its pull request's).
 export const workBranch = (j: string) => `coalesce(${j}.branch, 'job/' || ${j}.id)`;
 export const workBranchOf = (job: { id: number; branch: string | null }) => job.branch ?? `job/${job.id}`;
 export const loopBranch = (j: string) => `coalesce(${j}.branch, (select p.branch from prs p where p.number = ${j}.pr))`;
+// The ids of the jobs whose loopBranch is `branch` (SQL), found through the branch and pr indexes rather than every job's
+// row.
+export const loopJobs = (branch: string) =>
+  `(select id from jobs where branch = ${branch}
+    union all select j.id from prs p join jobs j on j.pr = p.number where p.branch = ${branch} and j.branch is null)`;
 // The job whose work a `job/<n>` branch holds, in SQL: null for any other branch
 export const jobOfBranch = (branch: string) =>
   `case when ${branch} glob 'job/[0-9]*' then cast(substr(${branch}, 5) as integer) end`;
+// The ids of the jobs mergePending (db.ts) holds, by index and not by every job's row (seconds off a cold disk): the open
+// ones by their state, the done ones through their branch's open pull request.
+const MERGE_PENDING_IDS = `select id from jobs indexed by jobs_status where status in ${OPEN_JOBS}
+  union select j.id from prs p join jobs j on j.branch = p.branch
+    where p.status in ${OPEN_PRS} and j.status = 'done' and ${mergePending('j')}
+  union select j.id from prs p join jobs j on j.id = ${jobOfBranch('p.branch')} and j.branch is null
+    where p.status in ${OPEN_PRS} and p.branch = ${workBranch('j')} and j.status = 'done' and ${mergePending('j')}`;
 
 // The author of a review loop, by the job's loop branch, otherwise the job itself.
 export const WORK_LEAD = `coalesce(${jobOfBranch(loopBranch('j'))}, j.id)`;
@@ -666,7 +682,7 @@ export function inFlight(job: { id: number; agent: string; queued_by?: string | 
         .flatMap((d: any) => (d.agents ?? []).map((a: any) => a.id)),
       ...(
         db
-          .prepare('select distinct agent from jobs where queued_by = ? and created > ?')
+          .prepare('select distinct agent from jobs indexed by jobs_queued_for where queued_by = ? and created > ?')
           .all(job.agent, new Date(now() - 14 * 86400e3).toISOString()) as { agent: string }[]
       ).map(r => r.agent),
     ]);
@@ -715,33 +731,45 @@ export const DOWNTIME_UNDER = 0.6,
 
 // The claim and the play share [board word, latest start, id], with reviewroom.ts sharing multi-run seats.
 type Claimable = { id: number; kind: string; downtime: number; board: number | boolean; expedite?: number };
-// The job a board's call left to follow it up (ledger.ts: calls.job), or a check routing the notes it sent (routing.ts)
-// The board's word: also work carrying an open item from a board call (ledger.ts: the job the item is linked to, or
-// the job's own item), and a meeting's seat when work carrying one waits for any of that meeting's seats (--after or hq
-// waits: seats take no items). The carriers are one list, read once a statement from the open items and the jobs' item
-// index (never the jobs' wide rows).
-// An item is handled (or ready, a task or promise) once its job ends done with a pull request open (ledger.ts finished()), so the jobs on that pull
-// request's branch carry it on until it merges or closes: its reviews, rulings, fixes and up-to-date merges. That's a
-// branch with an open pull request (open, stuck, with the board) whose work (the job it's named for, or a fix on it)
-// carries an item not dropped or replaced, or was handed one (ledger.ts tied). Read from the open pull requests, a few
-// jobs each, through db.ts prs_open, jobs_work_branch and jobs_branch.
-// (ready)
-const LIVE_ITEMS = "('open', 'handled', 'ready')";
-const CARRIERS = `select i.job from call_items i where i.status = 'open' and i.job is not null
-  union select w.id from jobs w indexed by jobs_item where w.item is not null
-    and w.item in (select i.id from call_items i where i.status = 'open')
+// The jobs carrying a call's item: the one handed it (`job`, a test on call_items.job), every job carrying it on (`item`,
+// a test on jobs.item: hq job passes it down) and each job in place of one of those (replacements: a review's retry, a
+// takeover). One definition for the follow-through check, an item at a time (agreements.ts), and the board's word, every
+// open item at once (ITEM_WORK).
+// (a declaration: agreements.ts reads it as it loads, in the middle of this module's import cycle, as it does lineageFrom)
+export function itemCarriers(job: string, item: string) {
+  return lineageFrom(`select j.id from jobs j indexed by jobs_state where j.kind = 'work' and j.id ${job}
+  union select j.id from jobs j indexed by jobs_carried where j.kind = 'work' and j.item ${item}`);
+}
+// An item is handled (or ready, a task or promise) once its job ends done with a pull request open (ledger.ts
+// finished()), so the jobs on that pull request's branch carry it on until it merges or closes: its reviews, rulings,
+// fixes and up-to-date merges. That's a branch with an open pull request (OPEN_PRS) whose work (the job it's named for,
+// or a fix on it) carries a live item, or was handed one (ledger.ts tied). Read from the open pull requests, a few jobs
+// each, through db.ts prs_open, jobs_work_branch and jobs_branch.
+const LIVE_ITEMS = `select i.id, i.job from call_items i where i.status not in ('${ENDED_ITEMS.join("', '")}')`;
+// Work carrying an open item from a board call, and the work on its open pull request: one list, read once a statement
+// from the open items, the jobs' item index and the open pull requests (never the jobs' wide rows).
+const ITEM_WORK = `${itemCarriers("in (select i.job from call_items i where i.status = 'open')", "in (select i.id from call_items i where i.status = 'open')")}
   union select b.id from prs p indexed by prs_open join jobs b indexed by jobs_branch on b.branch = p.branch where p.status in ${OPEN_PRS}
     and exists (select 1 from jobs w indexed by jobs_work_branch where coalesce(w.branch, 'job/' || w.id) = +p.branch
-      and w.kind = 'work' and (w.item in (select i.id from call_items i where i.status in ${LIVE_ITEMS})
-        or exists (select 1 from call_items i where i.status in ${LIVE_ITEMS} and i.job in (${lineageTo('w.id')}))))`;
-// And a sheet the board sent from its book to its page's owner (booknotes.ts), as a note route's check is.
+      and w.kind = 'work' and (w.item in (select id from (${LIVE_ITEMS}))
+        or exists (select 1 from (${lineageTo('w.id')}) l where l.id in (select job from (${LIVE_ITEMS})))))`;
+// The board's word: the job a board's call left to follow it up (ledger.ts: calls.job), a check routing the notes it
+// sent (routing.ts), a sheet the board sent from its book to its page's owner (booknotes.ts), work carrying a call's
+// item (ITEM_WORK), and a meeting's seat when queued work carrying one waits for any of that meeting's seats (--after or
+// hq waits: seats take no items). A carrier waits only while queued, so a cancelled or ended one leaves the seats (read
+// from jobs_queue, which covers its after).
 export const BOARD_CALL = (job: string) =>
   `(exists (select 1 from calls c where c.job = ${job}.id) or exists (select 1 from note_routes r where r.job = ${job}.id)
-    or exists (select 1 from book_sheets b where b.job = ${job}.id) or ${job}.id in (${CARRIERS}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
-      join meeting_seats o on o.meeting = s.meeting join jobs w on w.id in (${CARRIERS}) where s.job = ${job}.id
+    or exists (select 1 from book_sheets b where b.job = ${job}.id) or ${job}.id in (${ITEM_WORK}) or ${job}.kind = 'meeting' and exists (select 1 from meeting_seats s
+      join meeting_seats o on o.meeting = s.meeting
+      join jobs w indexed by jobs_queue on w.status = 'queued' and w.id in (${ITEM_WORK}) where s.job = ${job}.id
       and (w.after = o.job or exists (select 1 from waits x where x.job = w.id and x.on_job = o.job))))`;
 // The CEO's hourly follow-through check (followthrough.ts), which runs to its end once started (planner.ts pausable;
 export const FOLLOW_THROUGH = (job: string) => `exists (select 1 from followthrough_checks f where f.job = ${job}.id)`;
+// The order's first lane (planner.ts compare: the queue's `board`): the board's word, and the CEO's hourly check that
+// follows it through. Behind it, the check waited out the board's own work it's there to see, past its start alarm
+// (followthrough.ts START_MS; #19927, 27 October).
+export const LANE = (job: string) => `(${BOARD_CALL(job)} or ${FOLLOW_THROUGH(job)})`;
 // The ids a job still waits for, in id order. Ids only: a jobs row around each would read its brief and report, and on
 // stale planner statistics every job's row.
 export const outstandingWaits = (job: number) =>
@@ -794,7 +822,7 @@ export function prerequisites(from: number[], { includeFrom = true, ordered = fa
   const unfinished = mergePending('j');
   return db
     .prepare(
-      `${dependencyEdges(unfinished)}, needs(id) as (
+      `${dependencyEdges()}, needs(id) as (
       select 'job/' || value from json_each($from) where $includeFrom
       union select e.needs from edges e join json_each($from) f on e.job = 'job/' || f.value where not $includeFrom
       union select e.needs from needs n join edges e on e.job = n.id)
@@ -810,12 +838,13 @@ export function prerequisites(from: number[], { includeFrom = true, ordered = fa
 // The edges prerequisites walks, all at once: each node's needs ('job/<id>' or 'thread/<id>'), ordered as above.
 export function needsGraph() {
   const graph = new Map<string, string[]>();
-  const edges = db.prepare(`${dependencyEdges(mergePending('j'))} select job, needs from edges`);
+  const edges = db.prepare(`${dependencyEdges()} select job, needs from edges`);
   const rows = edges.all({ ordered: 1 }) as { job: string; needs: string }[];
   for (const { job, needs } of rows) graph.set(job, [...(graph.get(job) ?? []), needs]);
   return graph;
 }
-function dependencyEdges(unfinished: string) {
+function dependencyEdges() {
+  const unfinished = mergePending('j');
   return `with recursive ${redraws.relations()},
     tasks as (select j.* from jobs j where j.kind = 'work' and j.pr is null and j.thread is not null
       and j.status != 'cancelled' and not ${failedAside('j')}),
@@ -824,7 +853,7 @@ function dependencyEdges(unfinished: string) {
       union select 'job/' || j.id, 'job/' || w.on_job from jobs j join waits w on w.job = j.id where ${unfinished}
       union select 'job/' || j.id, 'job/' || u.job from jobs j join pauses p on ${pauseHolds('p')}
         and p.project = coalesce(substr(j.thread, 1, instr(j.thread, '/') - 1), '${DESK}') and (p.thread is null or p.thread = j.thread)
-        join pause_until u on u.pause = p.id where ${unfinished} and (j.thread is not null or not ${deskLets('j')})
+        join pause_until u on u.pause = p.id where j.id in (${MERGE_PENDING_IDS}) and (j.thread is not null or not ${deskLets('j')})
       union select 'job/' || j.id, 'job/' || prior.id from tasks j join tasks prior on prior.thread = j.thread
         and (coalesce(prior.seq, prior.id), prior.id) < (coalesce(j.seq, j.id), j.id)
         where $ordered and j.status in ('queued', 'running', 'blocked') and prior.status in ('queued', 'running', 'blocked', 'failed')
@@ -1005,12 +1034,14 @@ export function strandedWaits(prior: Named & { id: number; agent: string }, how:
 // (#1046). A closed one releases it, and so does a job that was cancelled (ledger.ts cancelJob()): the job starts and
 // checks main for itself. Its further waits must all be met (outstanding), and the cards it waits for have left the desk
 // phone (openCards), and the events it waits for have happened (wakes.ts). A push held for its thread's next task
-// (review.ts heldForThread) is in review too: its pull request opens with the thread's last push.
+// (review.ts heldForThread) is in review too: its pull request opens with the thread's last push. An `after` on a task
+// before it in its own thread is that thread's order instead (threadorder.ts afterInOrder).
 // Wrap statements using this predicate in redraws.query().
 // (AFTER_MET: its after's part, which stillHolds reads too)
-const AFTER_MET = `(j.after is null or exists (select 1 from jobs a where a.id = j.after and a.status in ('done', 'failed', 'stopped', 'cancelled')
+const AFTER_MET = `(j.after is null or exists (select 1 from jobs a where a.id = j.after and (${threadorder.afterInOrder('j', 'a')}
+    or a.status in ('done', 'failed', 'stopped', 'cancelled')
     and not exists (select 1 from prs where branch = a.branch and status in ('open', 'stuck', 'board'))
-    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id))))`;
+    and not exists (select 1 from review_waiting_pushes w where w.push ->> 'branch' = coalesce(a.branch, 'job/' || a.id)))))`;
 const READY = `j.status = 'queued' and j.not_before <= $now
   and ${AFTER_MET}
   and not exists (${outstanding('j.id')}) and not exists (${openCards('j.id')})
@@ -1131,7 +1162,7 @@ export type ReadySeat = { id: string; cli: string; pacedUntil: number | null };
 export const readyOn = (engine: string, seats: ReadySeat[]) => {
   const takes = db
     .prepare(
-      redraws.query(`select j.id, ${BOARD_CALL('j')} board, s.value ->> 'pacedUntil' until from jobs j join json_each($seats) s
+      redraws.query(`select j.id, ${LANE('j')} board, s.value ->> 'pacedUntil' until from jobs j join json_each($seats) s
       where ${READY} and ${PAUSE_LETS} and ${HOLD_LETS} and j.kind != 'chat' and j.downtime = 0
       and ${seatTakes("s.value ->> 'id'", "s.value ->> 'cli'")}`),
     )
@@ -1270,7 +1301,7 @@ function queuePlaces(rows: { id: number; status: string }[], t: number) {
   const plan = lastPlayed()?.usual;
   const queued = db
     .prepare(
-      `select j.id, j.kind, j.downtime, ${BOARD_CALL('j')} board from jobs j where j.status = 'queued' and j.kind != 'chat'`,
+      `select j.id, j.kind, j.downtime, ${LANE('j')} board from jobs j where j.status = 'queued' and j.kind != 'chat'`,
     )
     .all() as Claimable[];
   const rank = new Map(queued.sort(ordering.claimOrder(ordering.current(t).timings)).map((j, i) => [j.id, i]));
@@ -1460,7 +1491,7 @@ function claimable(
   // The jobs it could take, then the first of them in the shared order (ordering.claimOrder).
   const candidates = db
     .prepare(
-      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${READY} ready, ${BOARD_CALL('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
+      redraws.query(`select j.id, j.kind, j.downtime, j.expedite, ${READY} ready, ${LANE('j')} board, $room is null and $util < $under and ($probe = 0 or kind = 'work') spare,
       j.status = 'running' yielding
     from jobs j where (j.status = 'queued' or j.status = 'running' and j.id in (select value from json_each($yielding)))
     and j.not_before <= $now
@@ -1528,7 +1559,7 @@ function freedRoom(plan: ReturnType<typeof ordering.current>) {
   return (
     db
       .prepare(
-        redraws.query(`select j.id, j.kind, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER}
+        redraws.query(`select j.id, j.kind, j.downtime, ${LANE('j')} board from jobs j where ${ROOM_WAITER}
         and j.id in (select room_for from jobs where status = 'queued' and room_for is not null)`),
       )
       .all({ now: now(), ...letsParams() }) as Claimable[]
@@ -1684,7 +1715,7 @@ export const SEAT_READY = "(state = 'ready' or state in ('draining', 'sleeping')
 export function seatReadyFor(job: number, t = now(), on: string | null = null, plan = () => ordering.current(t)) {
   const seats = db
     .prepare(
-      `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${BOARD_CALL('j')} board, j.expedite from jobs j
+      `select iif(s.pace is null or s.week_resets <= $now, null, s.week_resets) until, ${LANE('j')} board, j.expedite from jobs j
     join (select * from seats where ${SEAT_READY}) s on s.engine = j.engine and ($on is null or s.id = $on)
     and (j.for_seat is null or j.for_seat = s.id) and (j.cli is null or j.cli = coalesce(s.cli, s.engine))
     where j.id = $job`,
@@ -1817,7 +1848,7 @@ function readModels(): Record<string, { model?: string; effort?: string; autocom
 // when it's one of them, for the work it answers (undefined: it runs on). Every run's heartbeat carries the same report,
 // so each picks the same runs.
 type InTheWay = { short: boolean; capped: string[] };
-type RoomRun = Claimable & Order & { engine: string; seat: string; followThrough: number };
+type RoomRun = Claimable & Order & { engine: string; seat: string; followThrough: number | boolean };
 type RoomWaiter = Claimable & Order & { engine: string; seats: string[]; created: number };
 // Worked out once for every run's heartbeat while the worker's report, the queue and the seats stay as they are (on the
 // live server, as ordering.ts keeps its plan): each run sends one a minute, and each played every seat's claim again,
@@ -1849,7 +1880,7 @@ function roomFor(room: InTheWay, t: number): Map<number, number> {
   const queued = db
     .prepare(
       redraws.query(
-        `select j.id, j.kind, j.engine, j.created, j.downtime, ${BOARD_CALL('j')} board from jobs j where ${ROOM_WAITER} and j.kind != 'meeting'`,
+        `select j.id, j.kind, j.engine, j.created, j.downtime, ${LANE('j')} board from jobs j where ${ROOM_WAITER} and j.kind != 'meeting'`,
       ),
     )
     .all({ now: t, ...letsParams() }) as (Claimable & { engine: string; created: string })[];
@@ -1885,7 +1916,7 @@ function roomRuns(plan: ReturnType<typeof ordering.current>) {
   return (
     db
       .prepare(
-        `select j.id, j.kind, j.downtime, j.engine, j.seat, j.expedite, ${BOARD_CALL('j')} board, ${FOLLOW_THROUGH('j')} followThrough
+        `select j.id, j.kind, j.downtime, j.engine, j.seat, j.expedite, ${LANE('j')} board, ${FOLLOW_THROUGH('j')} followThrough
         from jobs j where j.status = 'running'`,
       )
       .all() as {
@@ -2071,7 +2102,7 @@ export function heartbeat(
   db.prepare("update jobs set heartbeat = ? where id = ? and status = 'running'").run(now(), id);
   const job = db
     .prepare(
-      `select downtime, kind, thread, stopping, suspending, off_worker, ${BOARD_CALL('j')} board from jobs j where id = ?`,
+      `select downtime, kind, thread, stopping, suspending, off_worker, ${LANE('j')} board from jobs j where id = ?`,
     )
     .get(id) as
     | {
@@ -2589,6 +2620,7 @@ export function setSeat(id: string, engine: string, state: string, until?: numbe
   );
   recordSeatReading(id, w);
   checkSeatWarning(id);
+  tips.seatRead(id, share(w.week));
   // A ready seat with a reading is one the worker gives jobs to, so the jobs a limit holds, on any seat of its engine,
   // may go on now: a job paused while every seat was full starts on the first to get room (a 5-hour window resetting, a
   // drain lifted), not at its own seat's reset, days off for a full week. A seat back from a restart has no reading yet
@@ -2750,7 +2782,8 @@ export function createRequest(r: NewCard) {
   owed.tag(id, about, back, r.job);
   if (decides !== null) decisions.link(decides, id, r.agent!);
   publish({ type: 'log', agent: r.agent ?? roles().process, text: `Asked the board: ${r.title}` });
-  if (!hidden.at && !r.holds?.length)
+  const shows = !hidden.at && !r.holds?.length;
+  if (shows) {
     announceRequest({
       id,
       kind: r.kind,
@@ -2758,6 +2791,8 @@ export function createRequest(r: NewCard) {
       urgency,
       grant: r.approves ? approvals.describe(r.approves) : undefined,
     }); // rings the board's devices, or waits for the digest (a card for later or held: when it shows, later.ts sweep)
+    tips.cardShows({ kind: r.kind, agent: r.agent ?? null });
+  }
   return { id };
 }
 
@@ -2854,12 +2889,13 @@ export function fileCard(r: Parameters<typeof createRequest>[0] & { when?: unkno
 // does in the coordinator's own words. Newest first, a changed card as of its change.
 // A card for later (later.ts) is left out until its time, unless `hidden` asks for those too (agents see them, with when);
 // once it shows, it counts as changed then: first in the list and unread again, as a new card.
+// Tips (tips.ts) come after every other card, so one never takes another's place in the 100.
 const requestRows = (status: string, hidden = false) =>
   (
     db
       .prepare(
         `select * from requests where status = ? and (? or ${later.SHOWN})
-    order by max(coalesce(changed, created), coalesce(hidden_until, '')) desc, id desc limit 100`,
+    order by kind = '${tips.KIND}', max(coalesce(changed, created), coalesce(hidden_until, '')) desc, id desc limit 100`,
       )
       .all(status, hidden ? 1 : 0, new Date().toISOString()) as any[]
   ).map(r => ({

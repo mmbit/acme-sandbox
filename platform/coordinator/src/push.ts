@@ -6,6 +6,7 @@ import { db } from './db.ts';
 import { ORIGIN, PUBLIC_HOST } from './config.ts';
 import { names, cap } from './company.ts';
 import { SHOWN } from './shown.ts';
+import * as tips from './tips.ts';
 
 // The CEO's emergency pings (hq ping) went on 18 October 2026 (the board: a card marked now rings, so that's one way to
 // ring, not two). Their log goes.
@@ -107,6 +108,10 @@ export async function sendToBoard(m: Message, { endpoint, ttl = 6 * 3600 }: { en
 export const sendTest = (b: any) => sendToBoard({ title: `${cap(names().phone)} ☎`, body: 'Test call: notifications work on this device.',
   tag: 'hq-test', url: '/?open=phone' }, { endpoint: b?.endpoint || undefined, ttl: 300 });
 
+// The cards on the desk phone now, waiting for an answer: not those for later (later.ts), nor tips (tips.ts)
+export const waitingCards = () =>
+  (db.prepare(`select count(*) n from requests where status = 'open' and kind != '${tips.KIND}' and ${SHOWN}`).get(new Date().toISOString()) as { n: number }).n;
+
 // A new board request. Urgent ones ("now") and seat sign-ins ring the board's devices; one tag, so a newer
 // call replaces the older notification instead of stacking.
 // The daily digest hooks in here too: requests that don't ring now simply stay open, and the digest (still to
@@ -114,8 +119,6 @@ export const sendTest = (b: any) => sendToBoard({ title: `${cap(names().phone)} 
 // summary with sendToBoard({ title: 'Desk phone: today', body: '3 requests are waiting', tag: 'desk-digest' }).
 export function announceRequest(r: { id: number; kind: string; title: string; urgency?: string; grant?: string }) {
   if (r.urgency !== 'now' && r.kind !== 'login') return;
-  // the cards on the desk phone now: not those for later (later.ts)
-  const count = (db.prepare(`select count(*) n from requests where status = 'open' and ${SHOWN}`).get(new Date().toISOString()) as { n: number }).n;
-  sendToBoard({ title: `${cap(names().phone)} ☎`, body: [r.title.slice(0, 200), r.grant].filter(Boolean).join(' '), tag: 'desk-phone', url: '/?open=phone', count })
+  sendToBoard({ title: `${cap(names().phone)} ☎`, body: [r.title.slice(0, 200), r.grant].filter(Boolean).join(' '), tag: 'desk-phone', url: '/?open=phone', count: waitingCards() })
     .catch(err => console.error('Could not announce the request:', err));
 }

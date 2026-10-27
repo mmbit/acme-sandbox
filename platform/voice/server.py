@@ -97,6 +97,11 @@ AGAIN = 1.0    # a sound over the reply that was let go counts again if the boar
 # full stop, which comes at almost every pause), as the model takes over a second to speak and words the board adds
 # before that take the reply back (cut_in); mid-thought, long enough that a thinking pause rarely outlasts it
 WAIT_SECONDS = {'done': 0, 'open': 1.5}
+# The board's Pencil still moving as it stops talking (HQ says when it's down and lifted, while its screen is shown): the
+# answer waits for the pen to rest, as long as review mode takes a mark to be done (settle.js's 1.5 s), so the turn's
+# picture has what it drew while it spoke and its last words, and what it scribbles while talking goes with them. At
+# most PEN_MOST_SECONDS: a board that draws on without a word isn't kept waiting for an answer to its last.
+PEN_REST_SECONDS, PEN_MOST_SECONDS = 1.5, 8.0
 TAKE_BACK = 1.2  # the board carries on before hearing this much of the reply: it was one message
 # HQ pings the line twice a second beside the microphone's frames, and the line answers each as it reads it. On a weak
 # connection the frames back up and come late, in a burst (nothing is lost on the way): the line is behind while a ping
@@ -122,9 +127,12 @@ PICTURE_TYPES = {'image/jpeg': b'\xff\xd8', 'image/png': b'\x89PNG'}  # (what th
 # routes for the line, screen-turn and screen). Each of their turns asks screen-turn for the moments since the agent's
 # last turn and a picture of the screen if it changed, within SCREEN_TURN_SECONDS: it sits between the caller's last
 # word and the model: a picture of an open mirror takes about 0.2 s (measured), and the rest is room for a busy
-# coordinator before the caller waits on it. Screen pictures share SESSION_BYTES with shared ones, and a call has at most
-# SCREEN_PICTURES of them, the screen tool's included (the walk-through brief's 40): each is about 1,000 tokens, sent
-# again with every turn, so a full call's turns carry about 40,000 tokens of them. The agent's screen tool
+# coordinator before the caller waits on it. Screen pictures share SESSION_BYTES with shared ones, and a session holds
+# at most SCREEN_PICTURES of them, the screen tool's included (the walk-through brief's 40): each is about 1,000 tokens,
+# sent again with every turn, so a turn carries at most about 40,000 tokens of them. A turn whose picture won't fit
+# (that count, or SESSION_BYTES) compacts the session instead of stopping the view: a fresh one, whose first message has
+# the call so far in words (each older picture as its moments' line), the pictures the board shared again, and the
+# screen as it is now (compact); the screen tool still shows any past moment. A call sees the screen to its end. The agent's screen tool
 # (hq_tools.py) asks through the line's own socket (Paths.screen_socket, 0600), by its session's key (SCREENS), so the line
 # keeps the budget and its token.
 SCREEN_TURN_SECONDS, SCREEN_PICTURES = 1.5, 40
@@ -134,8 +142,9 @@ SCREEN_WORDS = {
     'picture': 'The last picture is their screen as they finished speaking, their last tap ringed.',
     'paused': ("They've paused showing their screen: you see nothing of it, and the screen tool shows nothing, until "
                'they show it again.'),
-    'full': ('No more pictures of their screen on this call: it has had all the pictures it can hold. The moments go '
-             'on, and the screen tool still lists them (since).'),
+    'full': ('No room for another picture of their screen in this session just now: its older pictures are compacted '
+             'with their next turn, and the pictures come again then. The moments go on, and the screen tool still lists '
+             'them (since).'),
     'none': "There's no screen on this call: nobody is showing our pages.",
     'unread': "Their screen couldn't be read for this turn: what they did comes with your next turn.",
     'gone': 'This session has no screen any more: the call ended, or its session was restarted.',
@@ -143,10 +152,11 @@ SCREEN_WORDS = {
 }
 # The agent's sketch tool (hq_tools.py, through the same socket): one of the board's sketches, by its number or the
 # words of its label (the coordinator's sketch route), on the board's own calls only. Its picture counts against
-# SESSION_BYTES, as a screen's and a shared one's do.
+# SESSION_BYTES, as a screen's and a shared one's do, and goes when the session is compacted, as the screen's do.
 SKETCH_WORDS = {
     'none': "Sketches can't be shown on this call: only on the board's own calls.",
-    'full': 'No more pictures on this call: it has had all the pictures it can hold.',
+    'full': ("No room for another picture in this session just now: its older pictures are compacted with the board's "
+             'next turn, and the sketch can be shown then.'),
     'gone': 'This session has no sketches any more: the call ended, or its session was restarted.',
     'failed': "The sketch couldn't be fetched just now",
 }
@@ -555,7 +565,6 @@ class Agent:
             return
         # (a restart mid-call sends the call's token: the coordinator goes on with the same call, and what was promised
         # on it, and keeps whether it's a walk-through on the call's row: walk)
-        # (a call about review pins went with HQ's waiting notes)
         asked = {'agent': self.agent, 'lang': self.lang, 'request': self.request, 'token': self.token, 'phone': self.phone,
                  **({'callout': self.callout} if self.callout else {}),
                  **({'walk': True} if self.walk and not self.token else {})}
@@ -1065,6 +1074,8 @@ class Limits(NamedTuple):
     screen_pictures: int = SCREEN_PICTURES
     ink_seconds: float = INK_SECONDS
     wait_seconds: dict = WAIT_SECONDS
+    pen_rest_seconds: float = PEN_REST_SECONDS
+    pen_most_seconds: float = PEN_MOST_SECONDS
     hang_up_wait_seconds: float = HANG_UP_WAIT_SECONDS
     care_call_seconds: float = CARE_CALL_SECONDS
 
@@ -1118,6 +1129,7 @@ class Call:
         # how much audio the line had heard by then (samples)
         self.late = 0.0       # how late the last ping came against that baseline (s)
         self.latest, self.waited = 0.0, 0  # the latest it came all call, and how many answers waited (the hang-up line)
+        self.pen = None       # the board's Pencil: 'down', or when it was last lifted (PEN_REST_SECONDS; company: job #19863)
         self.noticed = None   # why the agent couldn't answer, as the line last said it (until a reply gets through)
         # Hung up: after end(), no turn or agent starts and the transcript isn't written
         self.ended = False
@@ -1125,7 +1137,9 @@ class Call:
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
         self.picture_bytes = 0  # what the session has seen and what waits for it, as base64 (SESSION_BYTES)
-        self.held = []        # the numbers of the pictures the session has seen: a restarted one has none of them
+        # the pictures the session has seen (shared ones and notes), by their numbers: a compacted session is sent them
+        # again (compact), a restarted one has none of them
+        self.held = {}
         # Pictures whose turn stopped before its request started: their message stays in the session and goes with its
         # next request, which is when the model has them
         self.unsent = []
@@ -1135,9 +1149,11 @@ class Call:
         self.showing = None   # the wait for a quiet moment to show them with nothing said
         self.leaving = None   # the agent hung up: the wait for its goodbye to play before the line ends the call (leave)
         # A walk-through's screen (SCREEN_TURN_SECONDS): the last moment the agent has had, the version of the last
-        # screen picture its session has (0: none), how many screen pictures the call has had, what of SCREEN_WORDS its
+        # screen picture its session has (0: none), how many screen pictures the session holds and the bytes of those
+        # and the sketch tool's (what a compaction takes out), the bytes of the picture the screen or sketch tool was
+        # refused for the session's (0: none; the next turn compacts, making room for it), what of SCREEN_WORDS its
         # session has heard ('brief' is the coordinator's briefing), and whether the caller has paused showing it
-        self.screen = {'after': 0, 'seen': 0, 'pictures': 0, 'heard': set(), 'paused': False}
+        self.screen = {'after': 0, 'seen': 0, 'pictures': 0, 'bytes': 0, 'refused': 0, 'heard': set(), 'paused': False}
         self.screen_key = ''  # the session's key on the line's screen socket (SCREENS)
         # The board drawing on its HQ call (drawing.py): its notes go with the
         # pictures above (note), with entries of their own ('note'), and the agent's asks and rings wait here. On the
@@ -1364,21 +1380,57 @@ class Call:
         await self.send_event({'type': 'notice', 'text': words})
         await self.say(words, stop, turn)
 
-    async def restart(self, lines, shown=(), resent=()):
-        """A fresh session for the call (on the seat the line has now), whose first message carries the call so far. It
-        has none of the pictures the stopped one saw or was being shown (lose_pictures), except those its first message
-        sends again (resent: the turn asked again on the line's new seat)."""
+    async def restart(self, lines, shown=(), resent=(), why='Your session on this call stopped and was restarted.'):
+        """A fresh session for the call (on the seat the line has now), whose first message carries the call so far (why
+        first). It has none of the pictures the stopped one saw or was being shown (lose_pictures), except those its
+        first message sends again (resent: the turn asked again on the line's new seat, or a compaction's)."""
         again = {picture['id'] for picture in resent}
-        self.held = [picture_id for picture_id in self.held if picture_id not in again]
+        self.held = {picture_id: picture for picture_id, picture in self.held.items() if picture_id not in again}
+        self.unsent = [picture for picture in self.unsent if picture['id'] not in again]
         self.brain.kill()
         lost = await self.lose_pictures([picture for picture in shown if picture['id'] not in again])
         self.picture_bytes += sum(len(picture['data'] or '') for picture in resent)
+        screens = [picture for picture in resent if picture['id'] == 'screen']  # (the session holds them again)
+        self.screen['pictures'] += len(screens)
+        self.screen['bytes'] += sum(len(picture['data']) for picture in screens)
         so_far = ('The call so far, from speech recognition:\n' + '\n'.join(lines) if not self.objected else
                   "They asked us to keep no transcript, so there is none. Your notes so far: " + ('; '.join(self.notes) or 'none'))
-        self.brain.recap = f'(Your session on this call stopped and was restarted. {so_far})' + lost
+        self.brain.recap = f'({why} {so_far})' + lost
         self.screen['heard'].clear()  # (the new session has heard none of it, nor the coordinator's briefing)
         self.new_screen_key()
         await self.brain.start()
+
+    def crowded(self, look):
+        """Whether the session is full before this turn: it holds SCREEN_PICTURES of the screen (whether or not the screen
+        changed: the screen tool's count), the screen or sketch tool was refused a picture for its bytes, or this turn's
+        pictures pass SESSION_BYTES (a shared one may take room the screen's held: compact makes it)."""
+        new = sum(len(picture['data']) for picture in look['pictures'])
+        return (self.screen['pictures'] >= self.limits.screen_pictures or self.screen['refused']
+                or self.picture_bytes + new > self.limits.session_bytes)
+
+    async def compact(self, lines, shown):
+        """The session is full (crowded): instead of the screen stopping, a fresh session (restart), whose first message
+        has the call so far in words, each older picture of the screen as its moments' line there. The screen as that
+        message sends it (screen_turn, asked as a fresh session's) is settled first, and the pictures the board shared
+        that the session had go again with it, as many as fit beside it, the turn's own (shown) and the picture a tool
+        was refused (screen['refused']): the oldest go first, as lost, and the board can share them again. The screen
+        and sketch tools' pictures go: the tools show them again. Returns the pictures sent again and the screen's look."""
+        waiting = sum(len(picture['data'] or '') for picture in [*self.pictures, *shown])
+        look = await self.screen_turn(beside=waiting)
+        kept = [picture for picture in [*self.held.values(), *self.unsent] if picture['data']]
+        kept = list({picture['id']: picture for picture in kept}.values())
+        waiting += sum(len(picture['data']) for picture in look['pictures']) + self.screen['refused']  # (room for the tool's)
+        while kept and waiting + sum(len(picture['data']) for picture in kept) > self.limits.session_bytes:
+            kept.pop(0)
+        print(f'call: {self.agent}: its session holds {self.screen["pictures"]} pictures of the screen, '
+              f'{self.picture_bytes} bytes: compacted, {len(kept)} of the board\'s pictures sent again', flush=True)
+        names = ', '.join(picture['id'] if 'note' in picture else f"#{picture['id']}" for picture in kept)
+        again = f' The pictures they shared that you had come again with this message: {names}.' if kept else ''
+        await self.restart(lines, shown, resent=[*kept, *shown], why=(
+            'Your session on this call was renewed to make room for more pictures of their screen: its older pictures '
+            "are in the call so far below as their moments' lines, and the screen tool shows any past moment again "
+            f'(the screen and sketch tools\' pictures went with the old session).{again}'))
+        return kept, look
 
     async def hear(self, samples, voice=None):
         """Audio from the board, 16 kHz float32, and the agent's voice as it played over the same samples on HQ's side
@@ -1480,6 +1532,10 @@ class Call:
             upto = self.n + int(self.owed() * RATE)
             while self.behind() and self.n < upto and not self.ended:
                 await asyncio.sleep(0.1)
+        # (the pen still moving: the turn is what was said and drawn once it rests.)
+        until = self.wiring.monotonic() + self.limits.pen_most_seconds
+        while self.inking() and self.wiring.monotonic() < until and not self.ended:
+            await asyncio.sleep(0.1)
         self.waiting = None
         text, again, at = self.so_far(), self.again, self.draft_at
         self.draft, self.again, self.speaker, self.draft_at = [], False, None, None
@@ -1500,6 +1556,15 @@ class Call:
         base = min(self.ping[1] + 10 * (now - self.ping[0]), delay) if self.ping else delay
         self.ping, self.late = (now, base, self.n), (delay - base) / 1000
         self.latest = max(self.latest, self.late)
+
+    def penned(self, down):
+        """HQ's word on the board's Pencil: down on the screen, or lifted."""
+        self.pen = 'down' if down else self.wiring.monotonic()
+
+    def inking(self):
+        """The board's pen is down, or was lifted less than PEN_REST_SECONDS ago: it may not be done."""
+        return self.pen == 'down' or (self.pen is not None and
+                                      self.wiring.monotonic() - self.pen < self.limits.pen_rest_seconds)
 
     def owed(self):
         """How many seconds of the board's audio are still on their way at most: as late as the last ping came, and
@@ -1568,7 +1633,8 @@ class Call:
             self.copies.setdefault(first, []).append(picture_id)
             self.told[picture_id] = {**self.told[first], 'id': picture_id}
             await self.send_event(self.told[picture_id])
-        elif fetched is None or self.picture_bytes + len(fetched['data']) > self.limits.session_bytes:
+        # (beside what a compaction would leave)
+        elif fetched is None or self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
             self.pictures.remove(picture)  # (the pictures after it go without it)
             await self.tell(picture_id, 'failed', 'too many' if fetched else 'unreadable')
         else:
@@ -1610,7 +1676,8 @@ class Call:
             self.pictures.remove(entry)
             await self.tell_note(note_id, 'failed', 'unreadable')
         else:
-            if fetched['data'] and self.picture_bytes + len(fetched['data']) > self.limits.session_bytes:
+            # (beside what a compaction would leave)
+            if fetched['data'] and self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
                 fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
             entry.update(fetched)
             self.picture_bytes += len(entry['data'] or '')
@@ -1661,7 +1728,7 @@ class Call:
         shown, self.unsent = [*self.unsent, *shown], []
         for picture in shown:
             if picture['id'] not in self.held and picture['data']:  # (a note's picture too, which HQ hears nothing of)
-                self.held.append(picture['id'])
+                self.held[picture['id']] = picture
                 if 'note' not in picture:
                     await self.tell(picture['id'], 'seen')
 
@@ -1669,10 +1736,11 @@ class Call:
         """The session stopped: the next one has none of the pictures it saw or was being shown. HQ hears that each is
         lost (the board can share it again), and the restarted session's recap says which ones. Pictures still waiting
         for a turn go to the new session."""
-        lost = self.held + [picture['id'] for picture in [*self.unsent, *shown] if picture['id'] not in self.held
-                            and picture['data']]
-        self.held, self.unsent = [], []
-        self.screen['seen'] = 0  # (the next turn brings the screen's picture again)
+        lost = [*self.held] + [picture['id'] for picture in [*self.unsent, *shown] if picture['id'] not in self.held
+                               and picture['data']]
+        self.held, self.unsent = {}, []
+        # (the next turn brings the screen's picture again, and the session holds none)
+        self.screen.update(seen=0, pictures=0, bytes=0, refused=0)
         self.picture_bytes = sum(len(picture['data'] or '') for picture in self.pictures)
         # (a note's id is 'note <n>': it's named in the recap, and HQ hears nothing)
         notes = [picture_id.split()[1] for picture_id in lost if str(picture_id).startswith('note ')]
@@ -1719,22 +1787,22 @@ class Call:
             SCREENS[self.screen_key] = self
         self.brain.screen = (str(self.wiring.paths.screen_socket), self.screen_key) if self.screen_key else None
 
-    async def screen_turn(self):
+    async def screen_turn(self, beside=None):
         """What the caller's screen adds to their turn (the coordinator's screen-turn): the coordinator's briefing while
-        the session hasn't had it, the moments since the agent's last turn, and a picture of the screen if it changed
-        and the call's budget has room, as words in front of theirs, a picture and the transcript's line. Paused, the
+        the session hasn't had it, the moments since the agent's last turn, and a picture of the screen if it changed,
+        as words in front of theirs, a picture and the transcript's line. A picture the session can't hold makes room
+        (answer: compact). For a fresh session (compact: beside, the bytes it takes besides the screen's picture), as
+        its first turn, the picture let go only if it doesn't fit beside them. Paused, the
         agent hears it once and gets nothing more until it's on again. Nothing counts as had until screen_sent. A
         coordinator that fails or can't say in time leaves the turn as it was, and an agent that has seen the screen
         on this session hears it couldn't be read: its moments come with the next turn."""
-        look = {'text': '', 'pictures': [], 'line': '', 'heard': set(), 'after': self.screen['after'],
-                'version': self.screen['seen']}
+        # (a fresh session has seen and heard none of it)
+        seen, heard = (self.screen['seen'], self.screen['heard']) if beside is None else (0, set())
+        look = {'text': '', 'pictures': [], 'line': '', 'heard': set(), 'after': self.screen['after'], 'version': seen}
         if not (watched := self.watched()):
             return look
-        heard = self.screen['heard']
-        # (past the call's count, no picture is made for it)
-        full = self.screen['pictures'] >= self.limits.screen_pictures
-        asked = {'purpose': watched[0], 'ref': watched[1], 'after': self.screen['after'], 'seen': self.screen['seen'],
-                 'briefed': 'brief' in heard, 'picture': not full}
+        asked = {'purpose': watched[0], 'ref': watched[1], 'after': self.screen['after'], 'seen': seen,
+                 'briefed': 'brief' in heard, 'picture': True}
         try:
             got = await asyncio.wait_for(asyncio.to_thread(self.wiring.hq, 'POST', 'screen-turn', asked), self.limits.screen_turn_seconds)
         except Exception as err:  # (TimeoutError: no answer in time)
@@ -1753,8 +1821,7 @@ class Call:
             lines = screen_lines(got)
             picture = None if paused else picture_as(got.get('picture'), 'image/jpeg')
             told = {'paused'} if paused else set()
-        changed = not paused and got.get('version') != self.screen['seen']
-        if (picture and self.picture_bytes + len(picture['data']) > self.limits.session_bytes) or (full and changed):
+        if picture and beside is not None and beside + len(picture['data']) > self.limits.session_bytes:
             picture = None
             told.add('full')
         told -= heard
@@ -1767,13 +1834,13 @@ class Call:
                     line=f"{self.them}: (on screen: {'; '.join(noted)})" if noted else '',
                     heard=told | ({'brief'} if brief else set()),
                     after=got['last'] if type(got.get('last')) is int else self.screen['after'],
-                    version=got['version'] if picture and type(got.get('version')) is int else self.screen['seen'])
+                    version=got['version'] if picture and type(got.get('version')) is int else seen)
         return look
 
     def screen_sent(self, look):
         """The turn's message went to the session with what the screen added (screen_turn): the agent has those
-        moments, words and picture, and the picture counts against the call's budget (once, if a restart sends it
-        again)."""
+        moments, words and picture, and the picture counts against the session's budget (once: a restart that sends it
+        again counts it itself)."""
         self.screen['after'] = look['after']
         if look['pictures']:  # (a retry's look with none must not undo the restart's reset of seen)
             self.screen['seen'] = look['version']
@@ -1781,12 +1848,14 @@ class Call:
         if look['pictures'] and not look.get('counted'):
             look['counted'] = True
             self.screen['pictures'] += 1
+            self.screen['bytes'] += len(look['pictures'][0]['data'])
             self.picture_bytes += len(look['pictures'][0]['data'])
 
     async def screen_tool(self, asked):
         """The agent's screen tool (hq_tools.py, through the line's socket): the coordinator's screen route for this
         call, the moment list since a time, or a picture (now, at a past moment, a region zoomed), counted against
-        the call's budget. Refused on a call with no screen, while paused and past the budget."""
+        the session's budget. Refused on a call with no screen, while paused and past the budget (until the board's
+        next turn compacts the session)."""
         if not (watched := self.watched()):
             return {'error': SCREEN_WORDS['none']}
         if self.screen['paused']:
@@ -1807,8 +1876,10 @@ class Call:
         if not (picture := picture_as(got.get('picture'), 'image/jpeg')):
             raise ValueError('the coordinator sent no JPEG of the screen')
         if self.picture_bytes + len(picture['data']) > self.limits.session_bytes:
+            self.screen['refused'] = len(picture['data'])
             return {'error': SCREEN_WORDS['full']}
         self.screen['pictures'] += 1
+        self.screen['bytes'] += len(picture['data'])
         self.picture_bytes += len(picture['data'])
         return {'picture': picture, 'line': ' '.join(str(got.get('line') or '').split())}
 
@@ -1818,8 +1889,6 @@ class Call:
         Refused on a call out (its partner's words could steer a look-up: house rule 9) and past the budget."""
         if self.callout or not self.brain.call or not isinstance(asked.get('sketch'), str):
             return {'error': SKETCH_WORDS['none']}
-        if self.picture_bytes >= self.limits.session_bytes:
-            return {'error': SKETCH_WORDS['full']}
         try:
             got = await asyncio.to_thread(self.wiring.hq, 'POST', 'sketch', {'call': self.brain.call, 'sketch': asked['sketch']})
         except HTTPError as err:
@@ -1829,7 +1898,9 @@ class Call:
         if not (picture := picture_as(got.get('picture'), 'image/png')):
             raise ValueError('the coordinator sent no PNG of the sketch')
         if self.picture_bytes + len(picture['data']) > self.limits.session_bytes:
+            self.screen['refused'] = len(picture['data'])
             return {'error': SKETCH_WORDS['full']}
+        self.screen['bytes'] += len(picture['data'])
         self.picture_bytes += len(picture['data'])
         return {'picture': picture, 'line': ' '.join(str(got.get('line') or '').split())}
 
@@ -1914,6 +1985,9 @@ class Call:
                 await self.restart(earlier)
             # (the screen's words go in front, its picture after the shared ones, its line before the caller's words)
             look = await self.screen_turn()
+            if self.crowded(look):  # (the shared pictures the session had go again)
+                kept, look = await self.compact(earlier, shown)
+                shown = [*kept, *shown]
             ask = '\n\n'.join(filter(None, (answered, look['text'], ask)))
             pictures = [*(picture for picture in shown if picture['data']), *look['pictures']]
             if look['line'] and not self.objected:
@@ -2450,6 +2524,8 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             elif kind == 'ping' and type(e.get('t')) in (int, float):  # (answered as read: after the frames before it)
                 call.pinged(e['t'])
                 await line.send(json.dumps({'type': 'pong', 'late': round(call.late, 1), 'heard': call.got}))
+            elif kind == 'pen':  # (beside the audio)
+                call.penned(e.get('down') is True)
             elif kind == 'picture' and isinstance(e.get('id'), int):  # (beside the audio)
                 asyncio.create_task(call.show(e['id']))  # (tasks start in the order they're made: so do their places)
             # (note, asked, inked)

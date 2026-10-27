@@ -11,12 +11,13 @@ import { createJob, NoSeat } from './jobs.ts';
 import * as feedback from './feedback.ts';
 import * as routing from './routing.ts';
 import { BOARD, row as pageRow } from './book.ts';
-import type { Anchor, Refused } from './pagechecks.ts';
-import { SEND_MS, count, notesOf, renumber, sheetOf, sheetRow, type Note, type Sheet } from './booknotes.ts';
+import { isRefused, type Anchor, type Refused } from './pagechecks.ts';
+import { SEND_MS, count, note, notesOf, renumber, sheetOf, sheetRow, type Note, type Sheet } from './booknotes.ts';
 import * as booksend from './booksend.ts';
 import { linksOf, setLink, withLinks } from './booklinks.ts';
 import { outsideBrief, outsidersOn } from './bookguests.ts'; // (invited people's notes on the board's sheet)
 import { listedOnce } from './bookslips.ts';
+import * as writing from './bookwriting.ts';
 
 // GET /api/book/sheets: the open sheets (and those in their seconds to undo), then the latest SENT_LISTED sent, each
 // with its notes and their slips (the artifacts their slips name listed once for them all)
@@ -34,14 +35,41 @@ export function sheets(who = BOARD) {
   const listed = listedOnce();
   return { open: open.map(s => sheetOf(s.id, listed)), sent: sent.map(s => sheetOf(s.id, listed)) };
 }
-// POST /api/book/send { id }: the sheet goes in SEND_MS, unless it's undone first
-export function send(id: number, who = BOARD) {
+// GET /api/book/calls?pages=<id,id>: the sheets of these call pages' notes, never sent (bookcalls.ts), for the book to
+// show them on the pages it has open, however old the call.
+export function callSheets(pages: unknown, who = BOARD) {
+  const ids = typeof pages === 'string' ? pages.split(',').map(Number) : [];
+  if (!ids.length || !ids.every(id => Number.isInteger(id) && id > 0))
+    return [400, 'pages is the call pages, by id, with commas'] as Refused;
+  const calls = db
+    .prepare(
+      `select distinct s.id from book_sheets s join book_notes n on n.sheet = s.id
+      where s.who = ? and s.status = 'call' and n.page in (select value from json_each(?)) order by s.id`,
+    )
+    .all(who, JSON.stringify(ids)) as { id: number }[];
+  const listed = listedOnce();
+  return { calls: calls.map(s => sheetOf(s.id, listed)) };
+}
+// POST /api/book/send { id, spots? }: the sheet goes in SEND_MS, unless it's undone first. spots: where the notes lie
+// on the pages showing its notes, so the board's writing there goes beside the nearest (bookwriting.ts.)
+export function send(id: number, who = BOARD, at?: unknown) {
   const s = sheetRow(id, who);
   if (!s || s.status === 'sent') return 404;
   if (s.status === 'call') return [409, "a call's notes stay on its page: the agent on the call heard them"] as Refused;
   if (!count(s.id)) return [409, 'nothing on this sheet to send'] as Refused;
-  if (s.status === 'open')
+  const spots = writing.spotsOf(
+    at,
+    id => {
+      const n = note(id);
+      return !!n && !!sheetRow(n.sheet, who);
+    },
+    page => pageRow(page, who),
+  );
+  if (isRefused(spots)) return spots;
+  if (s.status === 'open') {
     db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(Date.now() + SEND_MS, s.id);
+    writing.keepSpots(s.id, spots);
+  }
   deliverLater();
   return sheetOf(s.id);
 }
@@ -57,38 +85,48 @@ export function undo(id: number, who = BOARD) {
   const s = sheetRow(id, who);
   if (!s) return 404;
   if (s.page) return booksend.undoPage(s);
-  if (s.status === 'sending' && s.send_at! > Date.now())
+  if (s.status === 'sending' && s.send_at! > Date.now()) {
     db.prepare("update book_sheets set status = 'open', send_at = null where id = ? and status = 'sending'").run(s.id);
+    writing.dropSpots(s.id);
+    // (past its seconds, its writing still being read)
+  } else if (s.status === 'sending') return [409, 'too late to undo: the sheet is on its way'] as Refused;
   else if (s.status !== 'open') return [409, 'too late to undo: the sheet has gone'] as Refused;
   return sheetOf(s.id);
 }
 // A send's own timer, just past its seconds
 const deliverLater = () => setTimeout(deliverDue, SEND_MS + 50).unref();
 // Every send whose seconds are over goes now: at a send's own timer, at the server's start (one cut off by a restart),
-// and before the sheets are read
+// and before the sheets are read. The board's writing beside its notes is read first: it goes as soon as it's read
+// (bookwriting.ts.)
 export function deliverDue(now = Date.now()) {
   const due = db.prepare("select id from book_sheets where status = 'sending' and send_at <= ?").all(now) as {
     id: number;
   }[];
   for (const s of due)
-    try {
-      inOneStep(() => deliver(s.id));
-    } catch (err) {
-      // (it stays sending, tried again at the next read or start: never thrown from a send's timer)
-      console.error(`Sheet #${s.id}: not delivered:`, err);
-    }
+    writing.readThenGo(s.id, wrote => {
+      try {
+        inOneStep(() => deliver(s.id, wrote));
+      } catch (err) {
+        // (it stays sending, tried again at the next read or start: never thrown from a send's timer)
+        console.error(`Sheet #${s.id}: not delivered:`, err);
+      }
+    });
 }
-function deliver(id: number) {
+function deliver(id: number, wrote: writing.Writing[]) {
   const s = db.prepare("select * from book_sheets where id = ? and status = 'sending'").get(id) as Sheet | undefined;
   if (!s) return;
   const tapped = new Date(s.send_at! - SEND_MS).toISOString(),
     late = notesOf(s.id).filter(n => n.created > tapped),
     notes = notesOf(s.id).filter(n => n.created <= tapped);
+  if (!notes.length) writing.dropSpots(s.id);
   if (!notes.length && late.length) return void reopen(s);
   if (!notes.length) return void db.prepare('delete from book_sheets where id = ?').run(s.id);
-  const kept = notes.map(n => keep(n, null));
-  const job = jobFor(s, notes, kept);
+  const kept = notes.map(n => keep(n, null)),
+    // (writing beside a note wiped while it was read has no note to go under: it stays on the page, unsent)
+    beside = wrote.filter(w => notes.some(n => n.id === w.note));
+  const job = jobFor(s, notes, kept, beside);
   for (const k of kept) feedback.fromBook(k.from, job);
+  writing.went(s.id, beside);
   db.prepare("update book_sheets set status = 'sent', sent = ?, job = ?, send_at = null where id = ?").run(
     new Date().toISOString(),
     job,
@@ -101,13 +139,16 @@ function deliver(id: number) {
     agent: s.owner ?? ceo(),
     text: `The board sent a sheet of ${notes.length} note${notes.length === 1 ? '' : 's'} from its book: job #${job}`,
   });
+  // (every HQ open reads its book again now: its marks turn to hairlines.)
+  publish({ type: 'book', agent: s.owner ?? ceo(), text: 'sent' });
 }
 // The sheet's one task for its owner, or the CEO's routing check for a sheet nobody owns (and one that can't run on
 // any seat, which the check passes on: jobs.ts NoSeat). A sheet or a page sent to the CEO goes to the check too, its
 // notes the CEO's own there: the CEO hands them to whoever makes it (hq job --notes), and that job answers them. Returns
 // its job. (the CEO's)
-function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[]) {
-  const texts = withLinks(notes, kept);
+// (wrote: the board's writing beside the notes on the sheet, quoted under each.)
+function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote: writing.Writing[]) {
+  const texts = writing.withWriting(notes, withLinks(notes, kept), wrote);
   const outsiders = outsidersOn(notes); // (invited people's notes on it, outside text: bookguests.ts)
   if (s.owner && s.owner !== ceo())
     try {
@@ -170,7 +211,17 @@ const onPreviews = (notes: Note[]) =>
 export function keep(n: Note, job: number | null) {
   const a = JSON.parse(n.anchor) as Anchor;
   // (by: an invited person's note is kept as theirs, an outside reviewer's.)
-  const from = { url: a.url, words: n.words, el: a.el, view: a.view, snip: n.snip, review: n.review, by: n.by };
+  // (video: a film's moment.)
+  const from = {
+    url: a.url,
+    words: n.words,
+    el: a.el,
+    view: a.view,
+    video: a.video,
+    snip: n.snip,
+    review: n.review,
+    by: n.by,
+  };
   const kept = feedback.fromBook(from, job);
   db.prepare('update book_notes set review = ? where id = ?').run(kept.id, n.id);
   return { ...kept, from: { ...from, review: kept.id } };

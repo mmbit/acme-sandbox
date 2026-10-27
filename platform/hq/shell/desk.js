@@ -5,7 +5,8 @@
 //   Computer  a retro screen: everyone in the building (the directory), the inbox, the review notes waiting for
 //             the board, the AI seats, the latest jobs and this device's notifications
 import { esc, cap, grow, store as saved, roleHtml, stylesheet } from '../util.js';   // (stylesheet).
-import { loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
+// (endTip: a tip filed.)
+import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePhoto, answerRequest, removeAddress, previewLink,
   loadChat, sendChat, loadCalls, addCallItem, loadMail, loadMailOne, forwardMail, transcribe, pushKey,
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
@@ -45,7 +46,11 @@ import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in 
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
-import { openBook } from './book.js';   // (review mode's Open the book: bookAt.)
+import { openAt } from './book.js';   // (review mode's Open the book: bookAt.)
+import { layout } from './booklayout.js';   // (the pin's summon.)
+import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
+import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
+import { ASKS } from './tips.js';
 
 const $ = s => document.querySelector(s);
 // The company's own HQ apps: theme/hq.yaml's apps, each kits/<name>/hq/app.js at /kits/<name>/app.js
@@ -131,6 +136,7 @@ export const PREVIEW = /^https:\/\/[a-z0-9-]+\.preview\.[a-z0-9.-]+(\/|$)/;   //
 // The origin of the page in the viewer while review mode runs there (it said hello), or none: what calldrive.js sends to
 // and hears from, and no other page the frame may have gone on to.
 export const viewerOrigin = () => viewing?.review ?? null;
+export const viewerUrl = () => viewing?.url ?? null;   // (the page the viewer opened: calldrive.js.)
 export const openLink = url => PREVIEW.test(url) ? openViewer(url) : window.open(url, '_blank', 'noopener');
 const PIN = icon('pin');
 // A preview in a frame of its own origin: it can't reach HQ's page, and it can't navigate HQ away. Both the
@@ -216,8 +222,16 @@ function loadPin() {
   const script = Object.assign(document.createElement('script'), { src: '/__review/review.js' });
   script.dataset.summoned = '';
   script.dataset.book = '';   // the Pencil writes on HQ's pages, its notes in the board's book.
-  script.onload = () => coverPin(!!viewing);
+  script.onload = () => { coverPin(!!viewing); summonPin(); };
   document.head.append(script);
+  document.addEventListener('book:layout', summonPin);
+}
+// On HQ the open book summons the pin, and folding the book puts it away (the board, 2026-10-26): the Pencil writes
+// either way, the pin is the mouse's (and a finger's) way in beside the book. A screen with no room for a page beside
+// the book (a phone: open, it covers HQ) keeps its pin, its only way to mark HQ.
+function summonPin() {
+  const besideNever = layout(innerWidth, innerHeight, { mode: 'open', book: null }).mode === 'spread';
+  dispatchEvent(new CustomEvent('review:summon', { detail: besideNever || document.documentElement.dataset.book !== 'folded' }));
 }
 // HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
 // closes and only one pin ever shows
@@ -228,11 +242,7 @@ const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: o
 export function bookAt(owner) {
   if (typeof owner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(owner)) return;
   sfx.blip();
-  // (faced once the book has opened and its pages are laid out for the paper's new width: a slide to the sheet before
-  // that would be undone by the row laid out again)
-  document.addEventListener('book:layout', () => requestAnimationFrame(() => requestAnimationFrame(() =>
-    document.dispatchEvent(new CustomEvent('book:face', { detail: { owner } })))), { once: true });
-  openBook();
+  openAt(owner);
 }
 // Share for outside notes: the people
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
@@ -463,6 +473,7 @@ export function tell(line, words, kind = 'problem') {
 // and a request that hangs can't stall polling.
 const store = { list: [], seq: 0, subs: [] };
 export const onRequests = fn => store.subs.push(fn);
+export const waitingCards = () => store.list; // (the Library's manual, manual.js)
 // A card's time on the desk phone: when it was filed, or last changed. A changed card leads the list and counts as
 // unread again, as a new one does
 export const cardTime = r => r.changed || r.created;
@@ -484,6 +495,13 @@ function setRequests(list, held = null) {
   for (const id of cardTrays.keys()) if (!list.some(r => r.id === id)) cardTrays.delete(id);
   for (const f of store.subs) f(list);
   if (open === 'phone' && changed && !past) { if (typing()) { stale = true; mailState(); zipsState(); } else renderPhone(); }
+}
+// A card answered or put off slides away (the .req.done animation in style.css, FILED_MS long), then leaves the list.
+// card: null when the phone shows another card by now.
+const FILED_MS = 450;
+function fileAway(card, r, wait = FILED_MS) {
+  card?.classList.add('done');
+  setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), wait);
 }
 export async function refreshRequests() {
   paintLines(true); // (the company's apps' lines)
@@ -547,6 +565,7 @@ function renderPhone() {
   if (listing) return renderList(el, reqs);
   const r = reqs[idx], login = r.kind === 'login';
   if (!document.hidden) shown(r);   // unless HQ is in the background
+  if (r.kind === 'tip') return renderTip(el, r, reqs);
   const keys = r.secrets ? r.secrets.split(',') : null; // a credential request: a password field per key instead of an answer
   const saved = new Set(r.saved || []), grant = r.approves ? r.grants || '' : null; // keys already on the server; what Approve (or saving the keys) does
   const address = keys && r.address ? addressOf(r) : null; // an address card: the board's saved addresses
@@ -566,7 +585,7 @@ function renderPhone() {
   const asked = !keys && r.questions?.length ? r.questions : null; // questions as fields
   const pics = !login && !asking && !keys && !back && r.kind !== 'credential' && r.kind !== 'mail' && !call ? cardTray(r) : null; // pictures with the answer, as on the intercom: the cards jobs.ts takesPictures lets take them
   el.innerHTML = `
-    <nav class="pager">${arrowsAround(idx, idx < reqs.length - 1, 'Previous', 'Next', `<button class="to-list" data-list aria-label="All cards, by topic (${idx + 1} of ${reqs.length})">${LIST}${idx + 1} of ${reqs.length}</button>`)}${LATER_BTN}</nav>
+    ${pagerHtml(reqs)}
     ${asideNote()}<article class="req u-${esc((r.urgency || '').replace(/\s+/g, '-'))}">
       <p class="meta"><span class="tag-k">${esc(r.kind || 'request')}</span> ${r.agent ? `from <b>${esc(who(r.agent))}</b> · ` : ''}${esc(ago(r.created))}${r.urgency ? ` · <em>${esc(r.urgency)}</em>` : ''}</p>
       <h3>${withJobLinks(r.title)}</h3>
@@ -578,16 +597,9 @@ function renderPhone() {
         + (address ? addressKeepHtml(address) : keys.length > 1 ? '<p class="hint">Save the ones you have now; the others can follow later.</p>' : '') : back ? answerFields(r, '') : `
       ${answerFields(r, `${pics ? '<div class="tray" id="answer-pics" hidden></div>' : ''}<label class="sr" for="answer">Your answer</label>
       <textarea id="answer" rows="3" placeholder="${guest ? `Anything for ${esc(who(r.agent))} (optional)` : grant !== null || notice || card.choices.length || asked ? 'Anything to add (optional)' : 'Your answer'}"></textarea>`)}`}
-      ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="w">Call </span><span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
+      ${r.walk && r.agent && !login && window.AudioWorkletNode ? walkButton(r) : ''}<div class="row btns">${login ? '<button class="send" id="open-seats">Open Seats</button>' : mail ? `<button class="send" id="mail-send"${mail.ready && mail.status === 'open' ? '' : ' disabled'}>${SEND}Send email</button><button class="send later" id="mail-discard"${mail.status === 'open' ? '' : ' disabled'}>Discard</button>` : call ? callButtons(call) : asking ? `<button class="send" id="guest-save">${TICK}Save</button>` : guest ? `<button class="send" id="send-answer">${TICK}Done</button>` : notice ? `<button class="send" id="send-answer">${TICK}Got it</button>` : back ? '<button class="send" id="send-answer">Good now</button><button class="send later" id="in-review" title="Leave your notes on the preview in review mode">Add notes</button>' : grant !== null ? `<button class="send approve" id="approve">${TICK}Approve</button><button class="send later" id="send-answer">Not now</button>` : `<button class="send" id="send-answer">${address ? `${TICK}Save address` : keys ? `${KEY}Save keys` : `${SEND}Send`}</button>`}${canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call ? `<button class="mic" id="answer-mic" title="Tap to talk, tap again to stop" aria-label="Dictate the answer">${MIC}</button>` : ''}${pics ? `<button class="mic attach" id="answer-attach" title="Add a picture" aria-label="Add a picture">${PICTURE}</button><input type="file" id="answer-file" accept="image/*" multiple hidden>` : ''}${r.agent && !login && window.AudioWorkletNode && !r.walk ? (`<button class="talk${back ? ' icon' : ''}" id="call-about" title="Call ${esc(who(r.agent))} about this"${back ? ` aria-label="Call ${esc(who(r.agent))}">${PHONE}` : ` aria-label="Call ${esc(who(r.agent))}">${PHONE}<span class="name">${esc(who(r.agent))}</span>`}</button>`) : ''}${r.share ? `<button class="share" id="share" title="Send this on to whoever has to act on it" aria-label="Share">${SHARE}<span class="w">Share</span></button>` : ''}<span class="msg" id="answer-msg"></span></div>
     </article>`;
-  el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { idx += +b.dataset.step; forgetAge(); sfx.blip(); renderPhone(); });
-  el.querySelector('[data-list]').onclick = () => {
-    listing = true;
-    forgetAge();
-    sfx.blip();
-    renderPhone();
-    el.scrollTop = 0;
-  };
+  wirePager(el);
   wireCard(el, r, card, keys); wireAge(el, r); wirePics(el, { pairs: card.pairs }); wireSnooze(el, r); wireAside(el); paintLines();
   const fields = [...el.querySelectorAll('#answer, [data-key]')];
   if (address) wireAddress(el, address);
@@ -646,13 +658,12 @@ function renderPhone() {
         if (showing()) { renderPhone(); $('#answer-msg').textContent = `Saved. Still to come: ${res.missing.length} of ${keys.length}.`; }
         return;
       }
-      article.classList.add('done');
       addressState.delete(r.id);
       article.querySelectorAll('[data-address-label]').forEach(f => { f.defaultValue = f.value; f.blur(); });   // the name is sent, so typing() no longer holds the card back
       if (shots) forgetThumbs(r.id);
       if (pics) { pics.takeOut(batch); cardTrays.delete(r.id); }
       if (asked) { forgetAnswers(r); article.querySelectorAll('.questions input').forEach(i => { i.defaultValue = i.value; i.blur(); }); }
-      setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
+      fileAway(article, r);
     } catch (err) {
       const status = +String(err.message).match(/\d{3}$/)?.[0], why = err.refusal?.refused;
       buttons.forEach(b => b.disabled = false);
@@ -682,6 +693,33 @@ function renderPhone() {
   $('#in-review')?.addEventListener('click', () => send(false, true));
   $('#open-seats')?.addEventListener('click', () => { sfx.blip(); openComputer('settings', { section: 'sys:seats', page: r.seat }); });
   $('#approve')?.addEventListener('click', () => send(true));
+}
+
+// The pager over a card: back and on, the card list, and Later (a tip's too.)
+const pagerHtml = reqs => `<nav class="pager">${arrowsAround(idx, idx < reqs.length - 1, 'Previous', 'Next', `<button class="to-list" data-list aria-label="All cards, by topic (${idx + 1} of ${reqs.length})">${LIST}${idx + 1} of ${reqs.length}</button>`)}${LATER_BTN}</nav>`;
+function wirePager(el) {
+  el.querySelectorAll('[data-step]').forEach(b => b.onclick = () => { idx += +b.dataset.step; forgetAge(); sfx.blip(); renderPhone(); });
+  el.querySelector('[data-list]').onclick = () => {
+    listing = true;
+    forgetAge();
+    sfx.blip();
+    renderPhone();
+    el.scrollTop = 0;
+  };
+}
+// A tip (tipcard.js) under the pager. Show me on a tip about the phone goes to the card it's about (cardAbout); Got it, or Show
+// me's last press, files it with the answered cards.
+function renderTip(el, r, reqs) {
+  const about = cardAbout(r, reqs);
+  el.innerHTML = `${pagerHtml(reqs)}${asideNote()}${tipHtml(r, ago(r.created), about)}`;
+  wirePager(el); wireSnooze(el, r); wireAside(el); paintLines();
+  const article = el.querySelector('.req.tip');
+  wireTip(el, r, {
+    close: closeTool,
+    open: where => openComputer(where.app, where),
+    toCard: () => { idx = about; renderPhone(); },
+    end: shown => endTip(world.dev, r.id, shown).then(() => fileAway(article, r, shown ? 0 : FILED_MS), () => { if (article.isConnected) tell(article.querySelector('#answer-msg'), 'Could not reach the coordinator. Try again.'); }),
+  });
 }
 
 // The open cards as one list, grouped by their topic (hq ask/request --topic). A tap on a title opens that card.
@@ -789,13 +827,10 @@ async function snooze(el, r, day) {
     sfx.jingle();
     pick.remove();
     // the phone may show another card by now (the board stepped on, a refresh): only this card's own answer goes with it
-    if (card.isConnected) {
-      card.querySelectorAll(FIELDS).forEach(f => { f.value = ''; f.blur(); });
-      card.classList.add('done');
-    }
+    if (card.isConnected) card.querySelectorAll(FIELDS).forEach(f => { f.value = ''; f.blur(); });
     aside = { id: r.id, day: res.day, at: Date.now() };
     later = [...later.filter(x => x.id !== r.id), { ...r, hidden_until: res.until, day: res.day }].sort((a, b) => a.hidden_until.localeCompare(b.hidden_until));
-    setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
+    fileAway(card.isConnected ? card : null, r);
   } catch {
     pick.querySelectorAll('button, input').forEach(b => b.disabled = false);
     tell(msg, 'That didn’t go through. Try again in a minute.');
@@ -1053,8 +1088,7 @@ function wireMail(el, r) {
       saved.set(mailKey(r.mail), null);
       sfx.jingle(); msg.textContent = done;
       el.querySelectorAll('#mail-subject, #mail-text').forEach(f => { f.defaultValue = f.value; f.blur(); }); // done typing: the card may go
-      el.querySelector('.req').classList.add('done');
-      setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
+      fileAway(el.querySelector('.req'), r);
     } catch (err) {
       buttons().forEach(b => b.disabled = false);
       tell(msg, err.refusal?.error ?? 'Could not reach the coordinator. Try again.');
@@ -1134,8 +1168,7 @@ function wireCall(el, r) {
       sfx.jingle();
       if (answer?.link) return showLink(answer);
       msg.textContent = done;
-      el.querySelector('.req').classList.add('done');
-      setTimeout(() => setRequests(store.list.filter(x => x.id !== r.id)), 450);
+      fileAway(el.querySelector('.req'), r);
     } catch (err) {
       buttons().forEach(b => b.disabled = false);
       tell(msg, err.refusal?.error ?? 'Could not reach the coordinator. Try again.');
@@ -1952,7 +1985,8 @@ export function openIntercom() {
   $('#dir-send').onclick = async () => {
     // The pictures in the tray now go with this line, not the ones being removed. Ones added while it's sending wait for
     // the next.
-    const text = t.value.trim(), batch = intercomTray.batch();
+    // (an open switches card goes as it stands, the words typed after it: intake.js.)
+    const text = [switchesLine(chatLines), t.value.trim()].filter(Boolean).join('\n\n'), batch = intercomTray.batch();
     if (!text && !batch.length) { t.focus(); return; }
     $('#dir-send').disabled = true; say('');
     intercomTray.sending(batch, true);
@@ -2012,6 +2046,18 @@ export function openIntercom() {
   mic.oncontextmenu = e => e.preventDefault();
   mic.onclick = e => { if (e.detail) return; if (voice) finishVoice(); else { startVoice(); voice.locked = true; paintVoice(); } }; // keyboard
 }
+// The intercom with the board's sentence started (the Library's manual, manual.js): words already typed there stay.
+export function openIntercomWith(words) {
+  openIntercom();
+  startWith(words);
+}
+// (an ask key's start replaces another's: the intake's keys, intake.js.)
+function startWith(words) {
+  const t = $('#dir-title');
+  if (!t.value.trim() || ASKS.some(a => a.starts === t.value)) { t.value = words; grow(t); }
+  t.focus();
+  t.setSelectionRange(t.value.length, t.value.length);
+}
 const intercomTray = new Tray(0, () => $('#dir-pics'), say);   // the board's pictures for its next line (tray.js)
 // a line's pictures, small, in its bubble: a tap shows one big (wirePics)
 // A line from a person the board invited (a sketch from their own Sketchbook): theirs, not the board's, with its picture.
@@ -2045,12 +2091,14 @@ function paintChat(c) {
   if (list.dataset.last === String(last) && list.dataset.thinking === state) return;
   list.dataset.last = last; list.dataset.thinking = state;
   const hint = c.messages.length ? '' : list.querySelector('.hint')?.outerHTML ?? '', ceo = esc(ceoName());
-  // (the board's own lines break where it typed them, an agent's wrapped ones join); a guest's.
-  list.innerHTML = hint + c.messages.map((m, i) => m.who === 'call' ? `<li class="call" data-m="${i}">${PHONE}${withJobLinks(m.text)}</li>` : m.who === 'guest' ? guestLine(m, i) : `<li class="${m.who === 'board' ? 'me' : 'ceo'} prose" data-m="${i}">${prose(m.text, undefined, { breaks: m.who === 'board' })}${linePictures(m)}</li>`).join('')
+  // (the board's own lines break where it typed them, an agent's wrapped ones join); a guest's. The CEO's line with its
+  // intake card (intake.js).
+  list.innerHTML = hint + c.messages.map((m, i) => m.who === 'call' ? `<li class="call" data-m="${i}">${PHONE}${withJobLinks(m.text)}</li>` : m.who === 'guest' ? guestLine(m, i) : `<li class="${m.who === 'board' ? 'me' : 'ceo'} prose" data-m="${i}">${prose(m.text, undefined, { breaks: m.who === 'board' })}${linePictures(m)}</li>${intakeCardHtml(c.messages, i)}`).join('')
     + (c.thinking === 'notes' ? `<li class="ceo typing">The call notes are on their way to ${ceo}…</li>` : c.paused ? `<li class="ceo typing">${pausedLine(c.paused, ceo)}</li>`
       : c.thinking ? `<li class="ceo typing">${cap(ceo)} is thinking…</li>` : '');
   // a tap copies a message whole: selecting one in a scrolling chat on a phone is fiddly (a selection made by hand stays)
   wirePics(list, { each: 'li' });
+  wireCards(list, c.messages, startWith);
   list.querySelectorAll('[data-m]').forEach(li => li.onclick = async e => {
     if (getSelection()?.toString() || e.target.closest('[data-pic], a') || !c.messages[li.dataset.m].text) return;
     try { await navigator.clipboard.writeText(c.messages[li.dataset.m].text.replace(/\*\*(.+?)\*\*/g, '$1')); } catch { return; }
@@ -2217,7 +2265,7 @@ export function openComputer(which = 'home', opts = {}) {
   mailWanted = tab === 'mail' ? opts.mail ?? null : null;
   if (mailWanted != null) mailGroup = 'all';   // (the message is in All, whichever group it's in)
   callWanted = tab === 'calls' ? opts.call ?? null : null;
-  if (tab === 'notes') openReviews();
+  if (tab === 'notes') openReviews(opts.shown);   // (shown)
   section = tab === 'settings' ? opts.section ?? null : null;
   pageWanted = opts.page ?? null;
   show('computer', `<header>${app ? '<button class="home" data-home aria-label="Home" title="Home">◂</button>' : ''}<b>${esc(names.os)}${app ? `<span> › ${app[1]}</span>` : ''}</b><button class="x" data-close aria-label="Close">×</button></header>
@@ -2323,6 +2371,7 @@ function settings(el) {
   if (section === 'sys:seats') { el.innerHTML = '<div></div>'; return seatSettings(el.firstChild, { dev: world.dev, crumb }, page); }
   if (section === 'sys:machines') { el.innerHTML = '<div></div>'; return machineSettings(el.firstChild, { dev: world.dev, crumb }, page); }
   if (section === 'sys:alerts') { el.innerHTML = '<div></div>'; return alerts(el.firstChild); }
+  if (section === 'sys:tips') { el.innerHTML = '<div></div>'; return tipSettings(el.firstChild, { dev: world.dev }); }
   if (section === 'sys:overseer') { el.innerHTML = '<div></div>'; return oversight(el.firstChild, { dev: world.dev, ago }); }
   if (section === 'sys:language') { el.innerHTML = '<p class="acts looks"></p><p class="msg"></p>'; return languages(el.firstChild, el.lastChild); }
   if (section === 'sys:look') { el.innerHTML = '<p class="acts looks"></p><section class="look-settings"></section>'; return lookSettings(el.firstChild, el.lastChild); }
@@ -2340,6 +2389,7 @@ function settings(el) {
   loadLanguage(world.dev).then(l => now('sys:language', l.languages.find(x => x.code === l.lang)?.own ?? ''), () => {});
   seatsSummary(world.dev).then(t => now('sys:seats', t), () => {});
   machinesSummary(world.dev).then(t => now('sys:machines', t), () => {});
+  tipsSummary(world.dev).then(t => now('sys:tips', t), () => {});
 }
 // Settings' sections in its order, each under its caption: the compute, Seats (seats.js, with pages of its own: a seat,
 // Add a seat) and Machines (machines.js, the same way); the company, a company app's box (its settings()) and the
@@ -2354,6 +2404,7 @@ export function settingsSections() {
     { caption: 'COMPUTE', id: 'sys:machines', name: 'Machines', pages: () => machinePages(world.dev) },
     ...own.filter(k => k.mod.settings).map(k => ({ caption: 'COMPANY', id: k.id, name: k.mod.app.name })),
     { caption: 'COMPANY', id: 'sys:overseer', name: 'Overseer' },
+    { caption: 'COMPANY', id: 'sys:tips', name: 'Tips' },
     { caption: 'COMPANY', id: 'sys:language', name: 'Language', choices: async () => {
       const l = await loadLanguage(world.dev);
       return chosen(l.languages, l.languages.find(x => x.code === l.lang)).map(x => x.own);

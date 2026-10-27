@@ -119,6 +119,14 @@ const LOCALE = /^(auto|[a-z]{2}(-[A-Z0-9]{2,4})?)$/,
 const minutes = (from, to) =>
   Number.isFinite(from) && Number.isFinite(to) ? String(Math.round((to - from) / 60)) : '-';
 const object = value => (value && typeof value === 'object' ? value : null);
+// What HQ named for a session, from its metadata: its words, or on an older
+// session the hash of what it left out
+const namedBy = meta =>
+  typeof meta?.named === 'string'
+    ? meta.named.split(' ').map(code).join(' ')
+    : /^[0-9a-f]{12}$/.test(meta?.methods ?? '')
+      ? '#' + meta.methods
+      : '-';
 async function readCheckout(row) {
   const expansions = new URLSearchParams([
     ['expand[]', 'payment_intent.payment_method'],
@@ -157,6 +165,7 @@ async function readCheckout(row) {
       COUNTRY.test(row.country ?? '') ? row.country : '-',
       LOCALE.test(session.locale ?? '') ? session.locale : session.locale === null ? '-' : '?',
       (Array.isArray(session.payment_method_types) ? session.payment_method_types : []).map(code).join(' ') || '-',
+      namedBy(object(session.metadata)),
       code(tried),
       intent ? oneOf(INTENT, intent.status) : session.payment_intent === null ? '-' : '?',
       intent ? oneOf(CANCELLED, intent.cancellation_reason) : '-',
@@ -176,11 +185,11 @@ else {
     `How far the latest ${rows.length} unpaid live checkouts got (Stripe API version ${version ?? 'not given'}; minutes from the page opening):`,
   );
   console.log(
-    '| created (UTC) | stalls | € | Stripe | country | locale | offered | tried | intent | cancelled | error | tried after | open for |',
+    '| created (UTC) | stalls | € | Stripe | country | locale | offered | named | tried | intent | cancelled | error | tried after | open for |',
   );
-  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|');
+  console.log('|---|---|---|---|---|---|---|---|---|---|---|---|---|---|');
   for (const { cells } of read) console.log('| ' + cells.join(' | ') + ' |');
   console.log(
-    'tried: the method a payment was tried with (-: none); intent -: Stripe made none, nobody submitted the page.',
+    'named: the methods HQ named, the rest left out (an older session: # and a hash of what it left out); tried: the method a payment was tried with (-: none); intent -: Stripe made none, nobody submitted the page.',
   );
 }

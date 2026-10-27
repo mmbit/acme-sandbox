@@ -1,7 +1,7 @@
-// The book's Search (the rail's magnifier, bookrail.js's book:search): a card over the book's paper with one line to
-// write on, with the Pencil (Apple's Scribble turns handwriting in a field into type, nothing of ours) or a keyboard.
-// What the book holds is found as it's written: handwriting read into type, words said while drawing, typed notes and
-// the agents' answers on them. A find tapped opens its page in the book at its note, the number lit (bookpages.js
+// The book's Search, in the overview's head (bookui.js's overview island, bookzoom.js): one line to write on, with the
+// Pencil (Apple's Scribble turns handwriting in a field into type, nothing of ours) or a keyboard. What the book holds
+// is found as it's written: handwriting read into type, words said while drawing, typed notes and the agents' answers
+// on them, listed under the line. A find tapped opens its page in the book at its note, the number lit (bookpages.js
 // find). The store's route is booksearch.ts, the matching booksearchwords.js.
 import { esc, titleCase } from '../util.js';
 import * as world from '../world/world.js';
@@ -16,72 +16,48 @@ const ASK_MS = 150;
 
 const LENS =
   '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10" cy="10" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15 15l5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
-const HTML = `<div class="bk-find" role="search" hidden>
-  <div class="bk-find-line">${LENS}<input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off"
-    spellcheck="false" placeholder="Write a word to find" aria-label="Find in the book">
-    <button class="bk-find-shut" title="Close Search"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="sr">Close Search</span></button></div>
-  <p class="bk-find-say" role="status"></p>
-  <ol class="bk-found"></ol></div>`;
+const HTML = `<div class="bk-find" role="search">
+  <label class="bk-find-line">${LENS}<input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off"
+    spellcheck="false" placeholder="Search the book" aria-label="Search the book"></label>
+  <div class="bk-find-list" hidden><p class="bk-find-say" role="status"></p><ol class="bk-found"></ol></div></div>`;
 
-// leaf: the book's paper's section (book.js). dev: on mock data. find({ day, page, note }): the book opens the page
-// at the note (bookpages.js), opened first if it was folded (open()).
-export function mountSearch(leaf, { dev, open, find }) {
-  leaf.insertAdjacentHTML('beforeend', HTML);
-  const card = leaf.querySelector('.bk-find'),
+// host: where its line goes (the overview's head). dev: on mock data. find({ day, page, note }): the book opens the
+// page at the note (bookpages.js).
+export function mountSearch(host, { dev, find }) {
+  host.insertAdjacentHTML('afterbegin', HTML);
+  const card = host.querySelector('.bk-find'),
     s = {
       dev,
-      leaf,
       card,
       field: card.querySelector('input'),
+      box: card.querySelector('.bk-find-list'),
       say: card.querySelector('.bk-find-say'),
       list: card.querySelector('.bk-found'),
       asked: 0,
       timer: 0,
       found: [],
-      caretDue: false,
     };
-  document.addEventListener('book:search', () => (card.hidden ? show(s) : hide(s)));
-  // put away, the book takes Search with it (the next magnifier tap brings it back); opened, the caret it waited for
-  document.addEventListener('book:layout', e => {
-    if (e.detail.mode === 'folded') hide(s);
-    else if (s.caretDue) caret(s);
-  });
-  card.querySelector('.bk-find-shut').addEventListener('click', () => hide(s));
   s.field.addEventListener('input', () => {
     clearTimeout(s.timer);
     s.timer = setTimeout(() => ask(s), ASK_MS);
   });
   card.addEventListener('keydown', e => {
-    if (e.key === 'Escape') hide(s);
+    if (e.key === 'Escape' && s.field.value) {
+      e.stopPropagation();
+      clearTimeout(s.timer);
+      s.asked++;
+      s.field.value = '';
+      told(s);
+    }
     if (e.key === 'Enter' && e.target === s.field) s.list.querySelector('button')?.click();
   });
   s.list.addEventListener('click', e => {
     const f = s.found[Number(e.target.closest('[data-i]')?.dataset.i)];
     if (!f) return;
-    hide(s);
-    open();
+    s.field.blur();
     find({ day: f.day, page: f.page, note: f.note });
   });
   told(s);
-}
-
-// Open, the words written last still there: a keyboard's caret ready where there's a mouse, once the book is open (a
-// folded book's paper is inert and takes no focus: the caret waits for its book:layout); on a touch screen the field
-// waits for the Pencil or a tap, so no keyboard comes up over the finds
-function show(s) {
-  s.card.hidden = false;
-  s.caretDue = matchMedia('(pointer: fine)').matches;
-  if (s.caretDue && !s.leaf.inert) caret(s);
-  if (s.field.value.trim()) ask(s);
-}
-function caret(s) {
-  s.caretDue = false;
-  s.field.focus();
-}
-function hide(s) {
-  s.card.hidden = true;
-  s.caretDue = false;
-  s.field.blur();
 }
 
 // The store asked for the words in the field now; only the latest question's finds are shown
@@ -103,15 +79,15 @@ function told(s, found = [], trouble = '', total = found.length) {
   const q = s.field.value.trim(),
     terms = termsOf(q);
   s.found = found;
+  // (the finds' list under the line only once there's a word on it)
+  s.box.hidden = !terms.length && !trouble;
   s.say.textContent =
     trouble ||
-    (!terms.length
-      ? 'Handwriting, words said while drawing, typed notes and answers'
-      : !found.length
-        ? `Nothing in the book says “${q}”`
-        : total > found.length
-          ? `The newest ${found.length} of ${total}: another word narrows them`
-          : '');
+    (!found.length
+      ? `Nothing in the book says “${q}”`
+      : total > found.length
+        ? `The newest ${found.length} of ${total}: another word narrows them`
+        : '');
   s.list.innerHTML = found.map((f, i) => findHtml(f, i, terms)).join('');
 }
 function findHtml(f, i, terms) {

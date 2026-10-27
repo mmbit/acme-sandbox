@@ -80,7 +80,6 @@ TOOLS = [
          'item': {'type': 'integer', 'minimum': 1, 'description': 'if this job carries out a promise or a correction '
                   'noted on this call: the number promise or replace answered with (it is then done when the job '
                   'is). The recorded goal of that item wins over goal here'},
-         # (thread)
          'thread': {'type': 'string', 'pattern': THREAD.pattern, 'description': 'the open thread the work serves '
                     '(<project>/<slug>), needed with an item that has a time: the time goes on the thread. Without '
                     'one, the job '
@@ -138,7 +137,7 @@ TOOLS += [
      'queued or running job starts ahead of everything, once what it waits for is met (the answer says what), and merges '
      'on its checks; one that has pushed, its pull request '
      'still in review, merges now if its last push passed them. Its review follows on what merged. A thread\'s task '
-     'that hasn\'t started leaves its thread as its own job; a refusal says why and what to do instead.',  #.
+     'that hasn\'t started leaves its thread as its own job; a refusal says why and what to do instead.',
      'inputSchema': {'type': 'object', 'required': ['job'], 'additionalProperties': False, 'properties': {
          'job': {'type': 'integer', 'minimum': 1, 'description': 'the fix\'s job number'}}}},
     {'name': 'add', 'description': 'When the board adds to or changes a job you queued on this call, add it to that '
@@ -176,12 +175,11 @@ TOOLS += [
                   'characters: the board reads it'},
          'goal': GOALS}}},
 ]
-# (A call about review pins and its pin_words and pin_sent went with HQ's waiting notes)
 # Looking things up (hq search, hq history, hq call, hq intercom; the coordinator's memory.ts and intercom.ts): the
 # Handbook, knowledge, the board's calls with everyone (with their summaries), the intercom, and the agent's own jobs
 # and requests, so a call about past work, or something the board asked on the intercom, finds it.
 # Read-only; the call token sees only its own agent's work, and a call the coordinator won't show (one still going on)
-# comes back as hq's refusal. (The platform's languages)
+# comes back as hq's refusal.
 TOOLS += [
     {'name': 'search', 'description': "Search the company's handbook, playbooks, briefs and knowledge base, the "
      "board's earlier calls with everyone and their summaries, the intercom, and your own job reports and desk phone "
@@ -292,7 +290,8 @@ TOOLS += [
 # speaks as the job a call doesn't have (status, ask, wait, reply, meeting say...). Their short lines go as hq's
 # arguments, as off the call; a brief and the board's words still go on stdin (job, add, reach). The coordinator opens
 # only these commands' routes to a call's token (server.ts MANAGE_ROUTES).
-# overseer, route, items and the estimate checks are the reads a job has, the call's too: the notes to the Overseer, the notes routed to jobs, every call's open items (one line each), the timing checks
+# overseer, route, items and the estimate checks are the reads a job has, the call's too: the notes to the Overseer,
+# the notes routed to jobs, every call's open items (one line each), the timing checks
 MANAGE = {'cancel': None, 'stop': None, 'waits': None, 'window': None, 'review': None, 'job': {'move'}, 'plan': None,
           'thread': None, 'project': None, 'decision': None, 'inbox': {'', '#', 'accept', 'drop', '--all'},
           'meeting': {'', '#', 'ask', 'asks', 'set', 'join', 'drop'}, 'jobs': None, 'requests': None, 'close': None,
@@ -353,8 +352,8 @@ SCREEN_TOOL = {
     'name': 'screen', 'description': "The screen of the person on the call, while they show you our pages (a "
     'walk-through): what is on it now, at a past moment, a part of it zoomed in, or the list of what they did since a '
     "time. Each of their turns already brings you what they did since your last one and a picture when the screen "
-    'changed: use this for a closer look or to look back. Its pictures share the call\'s picture budget with those, so '
-    'ask for one only when you need it. Never read its lines or numbers out: say what you see, as someone looking over '
+    'changed: use this for a closer look or to look back. Its pictures take room in your session as those do, so ask '
+    'for one only when you need it. Never read its lines or numbers out: say what you see, as someone looking over '
     'their shoulder would.',
     'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {
         'at': {'type': 'string', 'pattern': MOMENT.pattern, 'description': "a past moment, for its picture: '-20s' "
@@ -387,7 +386,6 @@ TOOLS += [
      'answer comes with a later turn, and once they tap Show their screen comes with each turn.',
      'inputSchema': {'type': 'object', 'required': ['what'], 'additionalProperties': False, 'properties': {
          'what': {**WORDS, 'description': 'the one thing you want to see, in a few words'}}}},
-    # (a ring in a preview)
     {'name': 'draw', 'description': "Draw on the board's page in your own ink: a ring round something it can see, named "
      "by its visible words (a button's label, a heading, a price), or round its note N on this call's page; words go "
      "beside the ring in your hand (a few words, or none). On HQ's own pages it's kept on the call's page in the book; in "
@@ -401,13 +399,15 @@ TOOLS += [
 ]
 # The agent driving a piece of work on the board's screen: it suggests opening
 # something and moves the board's screen while it talks, through the line too (driving.py: HQ shows the suggestion and
-# moves the screen, and the line keeps what waits for HQ's answer).
+# moves the screen, and the line keeps what waits for HQ's answer). Open shows too
 TOOLS += [
     {'name': 'open_work', 'description': "Suggest opening a piece of work on the board's screen, to show it rather than "
      "describe it: something you or a colleague made (its preview page), or one of HQ's own screens (a job and its "
      "report, a card on the phone, review notes). Use it when the conversation is about something they'd understand "
      'faster by seeing, above all when they want to be walked through finished work. HQ shows a card, “<your name> '
-     'suggests opening <what>”, with Open and Not now. It blocks nothing, so carry on talking: their answer comes with a '
+     'suggests opening <what>”, with Open (Open and show while their screen isn\'t shown to you: the one tap opens it '
+     'and lets you see their screen, so don\'t ask to see it as well) and Not now; something already open just comes '
+     'forward. It blocks nothing, so carry on talking: their answer comes with a '
      "later turn. Once it's open, talk them through it as you would beside them: drive scrolls to what you're talking "
      'about and points at it, draw rings what matters. The screen stays theirs: they can scroll, draw or take over at '
      'any moment, and when they do, follow where they go.',
@@ -416,7 +416,7 @@ TOOLS += [
                   'product page”)'},
          'address': {'type': 'string', 'minLength': 1, 'description': 'a preview page, https://<name>.preview.<zone>/... '
                      "as its link gives it, or one of HQ's screens: /?open=jobs&job=<id>, /?open=phone&card=<id>, "
-                     '/?open=book&owner=<agent>, /?open=projects, /?open=computer, /?open=gazette, /?open=intercom'}}}},
+                     '/?open=book (the book as it is), /?open=book&owner=<agent>, /?open=projects, /?open=computer, /?open=gazette, /?open=intercom'}}}},
     {'name': 'drive', 'description': "Move the board's screen while you talk them through what's on it: scroll the "
      "words you're about to talk about into view (to), scroll a screen down or up or to the top or bottom of the page "
      '(by), or put your pointer on something (point), named by the words it shows (a heading, a label, a price). One '
@@ -452,7 +452,7 @@ PARTNER_TOOLS = [
      'goodbye first, then use this in the same reply. Never on a pause or a silence, or while something is still '
      'open. The line hangs up once your goodbye has played, and if they speak before then, the call stays open.',
      'inputSchema': {'type': 'object', 'additionalProperties': False, 'properties': {}}},
-    SCREEN_TOOL,  #.
+    SCREEN_TOOL,
 ]
 
 
@@ -534,7 +534,7 @@ class Waits:
         return all(ok for _, (ok, _) in came), '\n\n'.join(lines)
 
 
-LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')  # (eta)
+LOOK_UPS = ('search', 'history', 'call', 'intercom', 'eta', 'estimate')
 
 
 def look(waits, name, a):
@@ -969,7 +969,7 @@ def answer(msg, waits, offered=TOOLS):
     elif method == 'tools/call':
         p = msg.get('params', {})
         name, arguments = p.get('name'), p.get('arguments') or {}
-        # (its own content: a picture and its line, or the line's words; ask_to_see and draw; open_work and drive:
+        # Its own content: a picture and its line, or the line's words
         if name == 'screen' or (name in LINE_TOOLS and offered is TOOLS):
             ok, content = {'screen': screen, **LINE_TOOLS}[name](arguments)
             return {'jsonrpc': '2.0', 'id': mid, 'result': {'content': content, 'isError': not ok}}

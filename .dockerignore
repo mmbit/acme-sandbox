@@ -17,6 +17,8 @@
 !platform/hq/util.js
 # the looks HQ ships, which the coordinator answers renderers/looks.json with
 !platform/hq/looks.mjs
+# and the company's tip films, which it answers films/films.json with
+!platform/hq/films/listing.mjs
 # the one HTML escaper, which the emails' look writes with (platform/coordinator/src/mailpage.ts)
 !shared/html/escape.ts
 # the route tables' engine (platform/coordinator/src/runs.ts).
@@ -40,6 +42,8 @@
 !platform/worker/src/countedlines.ts
 # The fallback estimate scale shared by work, intercom and call prompts.
 !platform/worker/src/estimating.ts
+# Disk-accounting failure reasons shared by the worker and coordinator receipts.
+!platform/worker/src/accounting.ts
 # the order numbers' check digit, which payments.ts gives and a company's kits check (shared/ordernumber)
 !shared/ordernumber/ordernumber.js
 # the holidays' one table, which a company's kits read (kits/holidays: the order emails' sign-off)
@@ -59,10 +63,14 @@
 !shared/wordcheck/wordcheck.js
 # the rule that places the board's sorted projects, which the projects view's dev mode shares (projectorder.ts).
 !platform/hq/shell/order.js
+# the feature tips' table, which the coordinator files the tip cards from (tips.ts).
+!platform/hq/shell/tips.js
 # a review mark's anchor, which feedback.ts migrates the stored marks with
 !shared/review/anchor.js
 # the book's Search matching, which HQ's dev mode shares (platform/coordinator/src/booksearch.ts).
 !platform/hq/shell/booksearchwords.js
+# an agent's ink, which an answer typed onto the book's page is written in (platform/coordinator/src/bookslips.ts).
+!platform/hq/shell/agentink.js
 !kits
 **/node_modules
 **/*.test.ts

@@ -16,6 +16,7 @@ import {
 import { median } from './arithmetic.ts';
 import { seatHeadroom } from './headroom.ts';
 import * as predictions from './predictions.ts';
+import * as forecast from './forecast.ts';
 import type { Outlook } from './eta.ts';
 
 export type Ask = {
@@ -112,9 +113,10 @@ function jobOf(id: number) {
   return row && { ...row, open: isOpenJob(row) };
 }
 
-// A job queued already: its outlook from its stored size, and the size too where it has one.
+// A job queued already: its outlook from its stored size, and the size too where it has one. Read from HQ's latest play
+// (forecast.ts current), never played for the asking: a play holds HQ for seconds.
 function openOutlook(id: number) {
-  const { usual, slow } = predictions.outlooks();
+  const { usual, slow } = forecast.current();
   const seen = usual.get(id);
   return seen ? shownOutlook(seen, slow.get(id)) : null;
 }

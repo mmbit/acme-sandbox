@@ -76,7 +76,8 @@ function read(r, mark) {
         // (the post-it open on it says so, or its words would look like a reading that found no writing; going or gone
         // to the book, the page does, as settle's are told. A mark dropped meanwhile stays quiet.)
         const why = `Your handwriting wasn’t read: ${err?.status ? err.message : 'HQ couldn’t be reached'}.`;
-        if (mark === r.mark && r.mode === 'note') r.msg.textContent = mark.unread = why;
+        if (mark === r.mark && r.mode === 'note' && !r.sheet.hidden)
+          r.msg.textContent = mark.unread = why; // (the post-it open)
         else if (mark === r.mark || mark.lines) say(r, `${why} What it says isn’t in its note.`, TOLD_MS);
       },
     )

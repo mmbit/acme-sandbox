@@ -2,7 +2,8 @@
 import { db } from './db.ts';
 import * as decisions from './decisions.ts';
 import { createJob, endRequest, threadOf } from './jobs.ts';
-import { returnFeedback } from './review.ts';
+import { cancelJob } from './ledger.ts';
+import { heldDecided, returnFeedback } from './review.ts';
 import { reviewSettings } from './reviewsettings.ts';
 
 export function reviewStep(round: number, stage?: string | null) {
@@ -47,8 +48,24 @@ export function closed(pr: number) {
   if (decision.needsCard) prepareCard(decision.id, decision.author);
 }
 
+// hq decision settle (decisions.ts settle): the board's own word already said Go live, so the held merges go on, and the
+// card job the hold queued, if it hasn't run, ends as void, as does the card if one is open: the board isn't asked again.
+// A card job already running finds the decision answered when it files (jobs.ts createRequest).
+export async function settle(id: number, word: string, by: string) {
+  const settled = decisions.settle(id, word, by);
+  if (typeof settled === 'string') return settled;
+  const why = `the board already said Go live on its ${settled.said}`;
+  const cardJob =
+    settled.cardJob && cancelJob(settled.cardJob, `decision #${id} is settled: ${why}`) ? settled.cardJob : null;
+  const open = settled.card && db.prepare("select 1 from requests where id = ? and status = 'open'").get(settled.card);
+  const card = open ? settled.card : null;
+  if (card) endRequest(card, `Settled without this card: ${why}`);
+  await heldDecided(settled.merges);
+  return { ok: true as const, merges: settled.merges.map(pr => pr.number), cardJob, card };
+}
+
 function prepareCard(id: number, author: string) {
-  createJob({
+  const { id: job } = createJob({
     agent: author,
     kind: 'work',
     thread: null,
@@ -64,6 +81,7 @@ those two choices. Keep the card short and complete in itself, without repositor
 This job prepares the card, not the visual change. Do not push to the held branches. End once the card is filed.
 If a previous card was closed because the waiting set changed, replace its pictures with the current waiting set.`,
   });
+  db.prepare('update decisions set card_job = ? where id = ?').run(job, id);
 }
 
 export function waitReason(pr: number) {

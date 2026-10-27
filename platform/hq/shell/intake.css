@@ -1,0 +1,97 @@
+/* The intake's cards in the intercom (intake.js): what runs by itself as a card of switches, on the CEO's line, and the
+   ask keys under it, as the manual's. */
+.intercom .chat .intake.switches {
+  width: 92%;
+  max-width: 92%;
+  padding: 10px 14px;
+}
+.intercom .chat .intake .title {
+  display: block;
+  margin: 2px 0 6px;
+  font-size: 16px;
+}
+.intercom .chat .intake .sw {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 0;
+  border-top: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+.intercom .chat .intake .sw span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.intercom .chat .intake .sw small,
+.intercom .chat .intake .note {
+  font-size: 13px;
+  opacity: 0.75;
+}
+.intercom .chat .intake .note {
+  margin: 8px 0 2px;
+}
+.intercom .chat .intake .switch {
+  all: unset;
+  box-sizing: border-box;
+  position: relative;
+  flex: none;
+  width: 48px;
+  height: 28px;
+  cursor: pointer;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+.intercom .chat .intake .switch i {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2);
+  transition: left 0.12s;
+}
+.intercom .chat .intake .switch[aria-checked='true'] {
+  background: var(--cy, var(--gold)); /* (the smooth looks' accent, Brownstone's gold) */
+}
+.intercom .chat .intake .switch[aria-checked='true'] i {
+  left: 23px;
+}
+.intercom .chat .intake .switch:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.intercom .chat .intake.asks {
+  align-self: flex-start;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 8px;
+  max-width: 100%;
+  padding: 0;
+  background: none;
+}
+.intercom .chat .intake.asks button {
+  min-height: 40px;
+  padding: 6px 14px;
+  font: inherit;
+  font-size: 15px;
+  color: var(--ink);
+  background: var(--paper);
+  border: var(--bw, 2px) solid var(--line);
+  border-radius: 999px;
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+/* Slate's keys */
+body.keys .intercom .chat .intake.asks button {
+  color: var(--key-ink);
+  background: var(--key-bg);
+  border: 1.5px solid var(--key-edge);
+  border-radius: var(--key-r);
+  box-shadow: var(--key-lip);
+}
+body.keys .intercom .chat .intake .switch[aria-checked='true'] {
+  background: var(--key-on-bg);
+}

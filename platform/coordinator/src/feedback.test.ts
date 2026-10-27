@@ -115,7 +115,7 @@ test("the framing rule review mode and HQ's note thumbnails share, the pen, the 
 // review.js, and never from a cache to someone else
 test("review mode's parts are served only to whoever gets the tool", async () => {
   const dir = new URL('../../../shared/review/', import.meta.url);
-  const open = ['review.js', 'thanks.js', 'ink.js', 'frame.js', 'anchor.js', 'paper.js']; // (paper.js)
+  const open = ['review.js', 'thanks.js', 'ink.js', 'frame.js', 'anchor.js', 'paper.js', 'tap.js']; // (paper.js; tap.js)
   const parts = readdirSync(dir).filter(f => f.endsWith('.js') && !f.endsWith('.test.js') && !open.includes(f));
   assert.ok(parts.includes('tool.js') && parts.length > 10, parts.join());
   for (const file of parts) {
@@ -526,7 +526,8 @@ test("pictures added to the board's note go into its snip, under the cut screens
   assert.match(prompt, new RegExp(`More \\(screenshot, element HTML, the clicks before the note\\): hq note ${ids[0]}`));
 });
 
-test("on HQ itself the board's sign-in opens review mode: its notes go on the Process role's sheet, and to it as one job", async () => {
+// (HQ's page as a whole is nobody's: the CEO's, as the Pencil's notes on it are.)
+test("on HQ itself the board's sign-in opens review mode: its notes go on the CEO's sheet, and to them as one job", async () => {
   const HQ_HOST = 'hq.company.test', HQ_ORIGIN = `https://${HQ_HOST}`;
   clearBook();
   db.prepare('insert into sessions (token, expires) values (?, ?)').run('board-session', Date.now() + 864e5);
@@ -545,13 +546,18 @@ test("on HQ itself the board's sign-in opens review mode: its notes go on the Pr
   for (const words of ['The phone card is cramped', 'Settings should come last']) {
     const r = await call('/__review/notes', { ...board, method: 'POST', body: onHq({ note: words }) });
     assert.equal(r.status, 200);
-    assert.equal(r.json().owner, 'bolt');   // the fixture's roles.process
+    assert.equal(r.json().owner, 'juno');   // the fixture's CEO
     assert.equal(JSON.parse(booknotes.note(r.json().id)!.anchor).url, `${HQ_ORIGIN}/?open=computer`);
   }
-  const jobsBefore = (db.prepare('select count(*) n from jobs').get() as any).n;
-  const { job, prompt } = ship('bolt');
-  assert.equal((db.prepare('select count(*) n from jobs').get() as any).n, jobsBefore + 1, 'one job');
-  assert.equal((db.prepare('select agent from jobs where id = ?').get(job) as any).agent, 'bolt');
+  // the menu names the sheet they're on, and once a note went to someone's sheet on HQ, that one (?owner=: the Pencil's
+  // last); an id that's nobody on a desk names the page's own
+  const menu = async (q = '') => (await call(`/__review/mine?page=${encodeURIComponent(`${HQ_ORIGIN}/`)}${q}`, board)).json();
+  assert.deepEqual(await menu(), { book: { owner: 'juno', name: 'Juno' }, notes: 2, list: [], sent: false, more: false });
+  assert.deepEqual((await menu('&owner=bolt')).book, { owner: 'bolt', name: 'Bolt' });
+  assert.deepEqual((await menu('&owner=nobody')).book, { owner: 'juno', name: 'Juno' });
+  // (a sheet of the CEO's goes to their routing check, one job for what's waiting to be routed: booksheets.ts jobFor)
+  const { job, prompt } = ship('juno');
+  assert.equal((db.prepare('select agent from jobs where id = ?').get(job) as any).agent, 'juno');
   assert.match(prompt, /## Note #\d+ on https:\/\/hq\.company\.test\/\?open=computer\nNote \(typed on the page\): The phone card is cramped/);
   assert.match(prompt, /Settings should come last/);
   assert.equal((db.prepare("select count(*) n from owed where slug = 'hq'").get() as any).n, 0, 'no product return for HQ');
@@ -601,6 +607,30 @@ test('characters HQ would not show never reach the owner', async () => {
   // everyday text is kept: accents, emoji, other scripts
   const r2 = (await call('/__review/notes', { method: 'POST', body: note({ shot: null, note: 'Crème brûlée 🎃 → 日本語' }) })).json() as { id: number };
   assert.equal(booknotes.note(r2.id)!.words, 'Crème brûlée 🎃 → 日本語');
+});
+
+// A note on a film keeps the moment review mode stopped it at (shared/review/mark.js marked), into the owner's brief:
+// the frame meant, for a film from another site that gave no picture of it.
+test("a note on a film keeps its moment, and the owner's brief says it", async () => {
+  clearBook();
+  const film = { selector: 'main > video', tag: 'video', text: '', box: { x: 0, y: 140, w: 390, h: 220 } };
+  const r = await call('/__review/notes', { method: 'POST', body: note({ shot: null, note: 'The logo comes in too late',
+    element: pinned(film, { video: { time: 67.4, src: '/films/ad.mp4' } }) }) });
+  assert.equal(r.status, 200);
+  assert.deepEqual(JSON.parse(booknotes.note(r.json().id)!.anchor).video, { time: 67.4, src: '/films/ad.mp4' });
+  // a note on anything else has none
+  await call('/__review/notes', { method: 'POST', body: note({ shot: null }) });
+  const { prompt, ids } = ship('bolt');
+  assert.match(prompt, /At: 1:07 into the film "\/films\/ad\.mp4", stopped there for the note/);
+  assert.equal(prompt.match(/At: /g)?.length, 1);
+  const kept = (id: number) => JSON.parse((db.prepare('select element from review_notes where id = ?').get(id) as any).element);
+  assert.deepEqual([kept(ids[0]).video, kept(ids[1]).video], [{ time: 67.4, src: '/films/ad.mp4' }, undefined]);
+  // the Pencil's own post (booknotes.ts) keeps it the same way, and refuses one that isn't a moment
+  const { anchorOf } = await import('./pagechecks.ts');
+  const anchor = { v: 1, url: `${ORIGIN}/`, el: null, view: { w: 1, h: 1, x: 0, y: 0, dpr: 1 }, ink: [] };
+  assert.deepEqual((anchorOf({ ...anchor, video: { time: 3, src: '/a.mp4' } }) as any).video, { time: 3, src: '/a.mp4' });
+  assert.equal('video' in (anchorOf(anchor) as any), false);
+  assert.equal((anchorOf({ ...anchor, video: { time: -1, src: '/a.mp4' } }) as any)[0], 400);
 });
 
 test('dictation from a product page: one clip at a time, and a few an hour', async () => {
@@ -762,7 +792,8 @@ test("the board's notes that waited from before the book move onto their owners'
   const moved = bookNotes();
   assert.deepEqual(moved.map(n => [n.words, n.status, n.by, n.asked, JSON.parse(n.anchor).url]),
     [['Waited for a send', 'open', 'board', null, `${ORIGIN}/shop`], ['Is HQ slow?', 'open', 'board', null, 'https://hq.company.test/']], 'a question asks nobody');
-  assert.ok(moved.every(n => n.sheet === openSheet('bolt').id), "hello's owner and HQ's Process role: bolt");
+  // (HQ's: the CEO's.)
+  assert.deepEqual(moved.map(n => n.sheet), [openSheet('bolt').id, openSheet('juno').id], "hello's owner, bolt, and HQ's: the CEO");
   assert.ok(moved[0].snip && existsSync(`${BOOK_DIR}/${moved[0].snip}`), 'its screenshot, as its snip');
   const status = (id: number) => (db.prepare('select status from review_notes where id = ?').get(id) as any).status;
   assert.deepEqual([status(waited), status(onHq), status(outside)], ['moved', 'moved', 'outside']);

@@ -254,7 +254,8 @@ test("a call about a request reaches the job that asked, parked: it's the call's
   const { id: asker } = jobs.createJob({ agent: 'kit', title: 'Coming-soon page', prompt: 'Build it; ask the board.' });
   await claim(asker);
   await finish(asker, { status: 'parked', request: { kind: 'decision', title: 'Which headline?', body: 'First or second?' } });
-  const r = (db.prepare('select id from requests order by id desc limit 1').get() as { id: number }).id;
+  // (the asker's card, not the desk phone's tip it brings: tips.ts)
+  const r = (db.prepare("select id from requests where kind != 'tip' order by id desc limit 1").get() as { id: number }).id;
   const c = await aCall('kit', TALK, r);
   await c.end();
   assert.equal(callRow(c.id).job, asker);

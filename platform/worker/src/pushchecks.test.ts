@@ -258,10 +258,11 @@ test('a push check keeps its worker stop reason even when HQ cannot confirm the 
   for (const [confirmed, accountingError] of [
     [true],
     [false],
-    [true, 'Disk accounting unavailable for job 8: EACCES'],
+    [true, { reason: 'worker-ancestor', message: 'Disk accounting unavailable for job 8: EACCES' }],
+    [true, { reason: 'job-tree', message: 'Disk accounting unavailable for job 8: EACCES' }],
   ] as const)
     await context.test(
-      accountingError ? "the platform's stop" : confirmed ? 'HQ confirms' : 'HQ reply lost',
+      accountingError ? accountingError.reason : confirmed ? 'HQ confirms' : 'HQ reply lost',
       async () => {
         const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
         const said: string[] = [],
@@ -308,6 +309,7 @@ test('a push check keeps its worker stop reason even when HQ cannot confirm the 
                     stopped: text => stoppedLog.push(text),
                     ask: async body => {
                       assert.equal(typeof body.event, 'string', 'the blocked delivery has an identity');
+                      assert.deepEqual(body.accountingError, accountingError);
                       assert.ok(
                         String(body.command).includes(commandValue),
                         'HQ receives the full value before redaction and shortening',
@@ -339,7 +341,7 @@ test('a push check keeps its worker stop reason even when HQ cannot confirm the 
         assert.equal(outcome.passed, null, 'the parent exits zero but this check could not complete');
         assert.equal(
           outcome.platform,
-          accountingError ? true : undefined,
+          accountingError?.reason === 'worker-ancestor' ? true : undefined,
           "only the platform's stop is the platform's",
         );
         if (accountingError) assert.match(outcome.report, /Could not complete: Disk accounting unavailable/);

@@ -26,9 +26,12 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
   // the pen's ink (strokes.js), drawn over the screen with ink.js as SVG, so a picture at any scale is sharp
   const { Inks, inkAt, placer } = await import('/strokes.js');
   const ink = await import('/ink.js');
-  let inks = new Inks(), past = null;
+  let inks = new Inks(), past = null, sized = null;
+  // (useVirtualDom off: live, every event is older than the baseline, so rrweb plays each as a fast-forward, into its
+  // virtual DOM, which only a fast-forward's end copies onto the screen: the live mirror showed the page as the share
+  // found it, whatever changed after.)
   const OPTIONS = { root: document.body, mouseTail: false, triggerFocus: false, showWarning: false, showDebug: false,
-    UNSAFE_replayCanvas: true, skipInactive: false, speed: 1 };
+    UNSAFE_replayCanvas: true, skipInactive: false, speed: 1, useVirtualDom: false };
   let replayer = null;
   const frames = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
   window.mirror = {
@@ -50,14 +53,23 @@ const MIRROR = `window.process = { env: {} }; // (replay.js reads process.env in
       past = inkAt(events, time);
       replayer = new Replayer(events, OPTIONS);
       replayer.pause(Math.max(0, time - events[0].timestamp) + 1); // (what happened at that time too)
+      // (the screen's size as it was then: a past moment kept the size the share began at, a narrowed window's page laid
+      // out wide.)
+      sized = events.findLast(e => e.timestamp <= time && (e.type === 4 || (e.type === 3 && e.data.source === 4)));
       await frames();
     },
     // The screen's size once drawn (none before a full snapshot), the page made as big, and a tap ringed
     async drawn(ring) {
       await frames();
       const iframe = replayer && replayer.iframe;
+      // (once rrweb's own sizing is done with)
+      if (past && sized) for (const side of ['width', 'height']) iframe.setAttribute(side, String(sized.data[side]));
       const width = iframe && Number(iframe.width), height = iframe && Number(iframe.height);
       if (!width || !height || !iframe.contentDocument || !iframe.contentDocument.documentElement) return null;
+      // (what was coming in or going shown as it ends: rrweb holds the page's CSS animations where they start, so an
+      // overlay that fades in, HQ's intercom say, stayed invisible. One that never ends stays.)
+      for (const motion of iframe.contentDocument.getAnimations())
+        if (motion.effect && motion.effect.getComputedTiming().endTime !== Infinity) motion.finish();
       this.ink();
       if (ring) {
         const mark = document.createElement('div');

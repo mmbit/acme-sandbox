@@ -7,6 +7,7 @@ import { estimate } from './estimate.ts';
 import * as feedback from './feedback.ts';
 import { followthrough, summary } from './followthrough.ts';
 import { guest } from './guests.ts';
+import { intake } from './intake.ts';
 import * as jobs from './jobs.ts';
 import * as kits from './kits.ts';
 import * as ledger from './ledger.ts';
@@ -73,6 +74,7 @@ const COMMANDS: Record<string, Command> = {
   owed,
   photos: cards.photos,
   picture,
+  intake,
   sketches,
   sketch,
   answer,
