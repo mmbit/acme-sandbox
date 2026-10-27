@@ -9,6 +9,7 @@ import type { Change, Problem } from './output.ts';
 import { gitFiles } from './repo.ts';
 
 const MODULE = /\.(js|mjs)$/;
+const CODE = /\.(js|mjs|cjs|ts)$/; // (what a module exports by name: a JSON file has only its default)
 
 export function importProblems(ts: typeof TS, root: string, changes: Change[]): Problem[] {
   const touched = new Set(changes.flatMap(c => [c.path, c.basePath]).filter(p => p && MODULE.test(p)) as string[]);
@@ -35,11 +36,12 @@ export function importProblems(ts: typeof TS, root: string, changes: Change[]): 
   return importers.flatMap(path =>
     importsOf(ts, parse(path)!).flatMap(({ spec, wanted, line }): Problem[] => {
       const target = resolve(root, path, spec);
-      if (!target || !(touched.has(path) || touched.has(target))) return [];
+      if (!target || !CODE.test(target) || !(touched.has(path) || touched.has(target))) return [];
       const at = parse(target);
       // (a file the change removes; one that was never there is served from somewhere this doesn't know)
       if (!at) return touched.has(target) ? [{ path, line, text: `imports ${spec}, and ${target} isn't there` }] : [];
       const has = exportsOf(ts, root, target, parse, new Set());
+      if (!has) return [];
       return wanted
         .filter(name => !has.has(name))
         .map(name => ({ path, line, text: `imports ${name} from ${spec}, which ${target} doesn't export` }));
@@ -68,17 +70,18 @@ function importsOf(ts: typeof TS, sf: TS.SourceFile) {
   return found;
 }
 
-// The names a module exports, through its `export * from`s
+// The names a module exports, through its `export * from`s; null when one of those isn't a file here to read
 function exportsOf(
   ts: typeof TS,
   root: string,
   path: string,
   parse: (path: string) => TS.SourceFile | null,
   seen: Set<string>,
-): Set<string> {
+): Set<string> | null {
   const names = new Set<string>();
   const sf = parse(path);
-  if (!sf || seen.has(path)) return names;
+  if (!sf) return null;
+  if (seen.has(path)) return names;
   seen.add(path);
   for (const s of sf.statements) {
     if (ts.isExportAssignment(s)) names.add('default');
@@ -88,7 +91,9 @@ function exportsOf(
       else if (s.exportClause) names.add(s.exportClause.name.text);
       else if (s.moduleSpecifier && ts.isStringLiteral(s.moduleSpecifier)) {
         const from = resolve(root, path, s.moduleSpecifier.text);
-        if (from) exportsOf(ts, root, from, parse, seen).forEach(n => n !== 'default' && names.add(n));
+        const more = from && exportsOf(ts, root, from, parse, seen);
+        if (!more) return null;
+        more.forEach(n => n !== 'default' && names.add(n));
       }
     } else if (ts.canHaveModifiers(s) && ts.getModifiers(s)?.some(m => m.kind === ts.SyntaxKind.ExportKeyword)) {
       if (ts.getModifiers(s)!.some(m => m.kind === ts.SyntaxKind.DefaultKeyword)) names.add('default');

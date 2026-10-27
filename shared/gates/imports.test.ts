@@ -14,8 +14,10 @@ test("a change that drops an export another module imports by HQ's URL fails, an
   const root = repo({
     'shared/review/ring.js': 'export function ringAt() {}\nfunction ringAround() {}\n',
     'shared/review/all.js': "export * from './ring.js';\nexport const [a, { b }] = [];\n",
+    'shared/review/far.js': "export * from '../gone/far.js';\n", // (unread: not checked)
+    'shared/review/words.json': '{}',
     'platform/hq/shell/slips.js':
-      "import { ringAround } from '/__review/ring.js';\nimport { ringAt, a, b } from '/__review/all.js';\n",
+      "import { ringAround } from '/__review/ring.js';\nimport { ringAt, a, b } from '/__review/all.js';\nimport { far } from '/__review/far.js';\nimport words from '/__review/words.json';\n",
   });
   assert.deepEqual(importProblems(ts, root, touching('shared/review/ring.js')), [
     {
@@ -27,6 +29,8 @@ test("a change that drops an export another module imports by HQ's URL fails, an
   writeFileSync(join(root, 'shared/review/ring.js'), 'export function ringAt() {}\nexport function ringAround() {}\n');
   assert.deepEqual(importProblems(ts, root, touching('shared/review/ring.js')), []);
   assert.deepEqual(importProblems(ts, root, touching('kits/x.ts')), []);
+  // (a JSON file's default, and a re-export from a file that isn't here, aren't counted against the importer)
+  assert.deepEqual(importProblems(ts, root, touching('platform/hq/shell/slips.js')), []);
 });
 
 function repo(files: Record<string, string>) {
