@@ -25,7 +25,7 @@ import {
 } from './callscreen.js';
 import { startPictures, picturesLive, pictureState, stopPictures } from './callpictures.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './calldraw.js';
-import { FROM_LINE as DRIVING, stopDriving } from './calldrive.js';
+import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
 import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
 
 const $ = s => document.querySelector(s);
@@ -162,14 +162,17 @@ const FROM_LINE = {
     c.bubble?.state(ev.state ?? '');
     c.face?.state(ev.state ?? ''); // (the call screen's own little screen)
     if (ev.state === 'thinking') {
-      // (a turn answered: the agent's reply starts its own line, as the board's next words do)
+      // (a turn answered: the agent's reply starts its own line, as the board's next words do, and what it drew in its
+      // last one goes)
       c.said = '';
       turnEnded(c);
+      wiped();
     }
   },
   // the board's turn so far, and the agent's sentences as they come: the call's transcript
   heard(c, ev) {
     c.said = '';
+    wiped(); // (the board's turn: the agent's last one's rings go.)
     if (ev.back) turnTakenBack(c); // (the board went on before the reply was heard: the turn's line is open again)
     transcribe(c, 'board', ev.text);
     DRAWING.heard(c, ev);

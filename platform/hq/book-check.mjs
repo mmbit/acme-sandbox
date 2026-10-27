@@ -5,9 +5,8 @@
 // The Pencil on HQ: a ring drawn on HQ's own page with a pen, no button first; nothing moves as the pen lifts (the line
 // on screen just before is the line after, pixel for pixel but antialiasing); no number on a lone mark; the pen rested,
 // the note goes on its sheet in the book with no post-it (the anchor in document px, the words said while drawing, a
-// snip), and the mark is a faint hairline on the page once it's in. A finger's
-// drag draws
-// nothing. Held still, the pen takes a voice note there. A scribble wipes a mark, a two-finger tap brings it back. The
+// snip), and nothing of the mark is left on the page once it's in (rule zero). A finger's drag draws nothing. Held
+// still, the pen takes a voice note there, and a two-finger tap takes it back off its sheet. The
 // ring, its number and Send again in Wire (?renderer=wire). And on a page of their own, every kind of line (pressure, a
 // lift at no pressure, one crossing another, a highlighter) is the same wet as dry (shared/review/inkcheck.mjs).
 // The book beside HQ's page, on an iPad mini, a desktop and a phone, in WebKit and Chromium (HQ in dev mode, on its
@@ -21,8 +20,7 @@
 // A guest's note on the board's sheet: their name tag in their colour, beside the board's own, one plane for both.
 // A second screen: an iPad (WebKit) paired with a desktop (Chromium) by the book's code, a ring live across, finished
 // on the other screen, swapped, flicked back, closed (bookpair.mjs).
-// A sent note's ink kept on HQ's page as a hairline, a finger's tap on it showing its words and answer (a tap beside it
-// the page's), and a picture pasted into the book landing taped on the page in view.
+// A picture pasted into the book landing taped on the page in view.
 // A walk-through of finished work from its desk-phone card (bookwalk.mjs), and of a preview in HQ's viewer, the agent
 // pointing and ringing inside it. (the preview: job #18848)
 // An agent's answer clipping onto its note within seconds, with then and now, ticked and replied to (bookslip.mjs),
@@ -36,8 +34,8 @@
 // exactly where it's dropped, the same button while it's held.
 // Handwriting (bookwritten.mjs): words written on HQ's page, read once the pen rests, stand beside the ink as type and
 // go into the book as written; read late, they still reach the note.
-// Ink on HQ's screens (bookink.mjs): a ring shows on the screen it was drawn on only, in this tab and another, notes left
-// on what HQ no longer draws show nowhere, and once its sheet goes it's a faint hairline there, its card a tap away.
+// Rule zero (bookink.mjs): nothing stays drawn on HQ. A ring shows while it's made only; saved, let go, its sheet sent,
+// the page reloaded or in another tab, notes kept from before with their lines: nothing drawn, read from the layers.
 // The film's other stories (bookfilm.mjs): a morning, yesterday's sheet in the book with its answer clipped on; HQ's
 // page beside the book, none of its buttons cut, at every width that keeps a page (in Wire too, in Chromium); and a
 // picture dragged in from beside, taped where it's let go. (Wire: job #19263)
@@ -64,7 +62,7 @@ import { spaceStories } from './bookspace.mjs';
 import { deskStories, notPaper, inkPixels } from './bookdesk.mjs';
 import { frameStories } from './bookframe.mjs';
 import { bodyStories } from './bookbody.mjs';
-import { inkStory } from './bookink.mjs';
+import { inkStory, nothingDrawn } from './bookink.mjs';
 import { sentStory, phoneSendStory } from './booksent.mjs'; // (phoneSendStory: job #19631)
 import { sendFaceStories } from './booksendface.mjs';
 import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
@@ -237,15 +235,6 @@ function store(path, body, q) {
   }
   // (each with whose sheet it's on and whether that's a call's.)
   const listed = n => ({ ...n, owner: n.owner ?? null, onCall: ownerOf(n).startsWith('call ') });
-  if (path === '/api/book/notes' && q.has('url'))
-    return {
-      notes: notes
-        .filter(n => {
-          const u = new URL(n.anchor.url, base);
-          return u.origin === base && u.pathname + u.search === q.get('url');
-        })
-        .map(listed),
-    };
   if (path === '/api/book/notes') return { notes: notes.filter(n => n.page === +q.get('page')).map(listed) };
   // (a page read whole and saved, its pictures with it.)
   if (path === '/api/book/page') {
@@ -718,60 +707,6 @@ function STORIES() {
         await done();
       }
     },
-    "a sent note's ink stays as a hairline; a tap shows its words": async browser => {
-      const y = 520,
-        line = Array.from({ length: 21 }, (_, i) => [220 + i * 10, y, 0.5, i * 16]);
-      const sheet = { id: ++ids, kind: 'sheet', owner: org.company.ceo, url: '/?intro=0', w: 700, h: 700 },
-        sent = {
-          id: ++ids,
-          sheet: 99,
-          page: sheet.id,
-          n: 1,
-          anchor: { v: 1, url: '/?intro=0', el: null, view: { w: 1133, h: 744, x: 0, y: 0, dpr: 2 }, ink: [] },
-          words: 'Fewer words on this banner',
-          said: 'typed',
-          status: 'sent',
-          created: '2026-10-26T08:10:00Z',
-          updated: '2026-10-26T08:16:00Z',
-          slips: [{ id: 1, note: 0, by: 'kit', name: 'Kit', text: 'Trimmed it to five.' }],
-        };
-      sent.anchor.ink = [{ color: '#ff5a5f', size: 5, points: line }];
-      pages.push(sheet);
-      notes.push(sent);
-      const { page, errors, done } = await hqOnStore(browser);
-      try {
-        // faint and thin along its line, and no number at it
-        for (let i = 0; i < 20 && !(await inkAt(page, 320, y)); i++) await page.waitForTimeout(150);
-        const ink = await inkAt(page, 320, y);
-        assert.ok(ink > 0 && ink < 0.45 * 255, `the sent ink along its line is ${ink} of 255 strong`);
-        assert.equal(await inkAt(page, 320, y + 6), 0, 'the hairline is thin');
-        assert.equal(await inkAt(page, 214, y - 6), 0, 'a sent note has no number on the page');
-        await shot('book-hairline', page);
-        // a finger's tap on it: its words, when it went and the answer, and the page hears its touch cancelled
-        let heard = await fingerTap(page, 300, y + 7);
-        assert.deepEqual(heard, { up: 0, cancel: 1 }, 'a tap on a hairline is the card’s, not the page’s');
-        const card = page.getByRole('dialog', { name: 'A note in the book' });
-        await card.waitFor({ timeout: 3000 });
-        // (when it went comes once the sheets are read)
-        let said = await card.innerText();
-        for (let i = 0; i < 30 && !/Sent \w/.test(said); i++)
-          said = await page.waitForTimeout(100).then(() => card.innerText());
-        assert.match(said, /Fewer words on this banner/);
-        assert.match(said, /Sent (Sun|Mon|Tue|Wed|Thu|Fri|Sat) \d\d:\d\d/);
-        assert.match(said, /answer[\s\S]*Trimmed it to five\./i);
-        await shot('book-hairline-card', page);
-        // a tap anywhere else closes it, and is the page's (below the card, which grew with the answer's reply line:
-        const below = await card.boundingBox();
-        heard = await fingerTap(page, 300, Math.round(below.y + below.height + 30));
-        assert.deepEqual(heard, { up: 1, cancel: 0 }, 'a tap beside a hairline stays the page’s');
-        await card.waitFor({ state: 'hidden', timeout: 3000 });
-        noErrorsIn(errors);
-      } finally {
-        pages.splice(pages.indexOf(sheet), 1);
-        notes.splice(notes.indexOf(sent), 1);
-        await done();
-      }
-    },
     'an answer clips onto its note within seconds: then and now, ticks, a reply, a running preview': browser =>
       slipStory({
         ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
@@ -1108,7 +1043,8 @@ function STORIES() {
         shot,
       }),
     // (in Wire too: job #19359)
-    'a ring shows on its own screen only, in any tab; sent, a faint hairline there; nothing stuck': browser =>
+    // (rule zero)
+    'rule zero: nothing stays drawn on HQ once a note is saved or let go, sent, reloaded, or in another tab': browser =>
       inLooks(browser, (look, shot) =>
         inkStory({
           ...{ browser, hqIn, base, MINI, settled, ui, penOn, ring, inkAt, fingerTap, notes, org, posts },
@@ -1729,9 +1665,8 @@ async function ringed(look) {
   assert.match(sent.words, /shorter/, 'the words said while drawing are its words');
   assert.equal(sent.said, 'spoken');
   assert.match(sent.snip ?? '', /^data:image\/jpeg;base64,/, 'a snip of the page around it goes with it');
-  await page.waitForTimeout(800); // (its lift into the book)
-  assert.ok(!(await redAt(372 - 150 - 6, 330 - 60 - 6)), `in the book, its hairline shows no number${look}`);
-  assert.ok((await inkAt(page, 372 + 150, 330)) < 0.45 * 255, `in the book, a hairline on the page${look}`);
+  // (in the book, the page clean at once: rule zero)
+  await nothingDrawn(page, `the ring in the book${look}`);
   await shot(`book-pencil-sent${look}`, page);
   return { sent, jump };
 }
@@ -1843,7 +1778,7 @@ if (only) {
   process.exit(failed ? 1 : 0);
 }
 await open('/?intro=0');
-const { sent, jump } = await ringed('');
+const { jump } = await ringed('');
 
 // ---- a finger works the page: its drag draws nothing
 const before = posts.length;
@@ -1870,15 +1805,9 @@ assert.equal(voice.anchor.ink.length, 0, 'a voice note is a pin, no ink');
 assert.ok(voice.anchor.el, 'on what the pen held still over');
 
 await page.waitForSelector(ui('.sheet'), { state: 'hidden' });
-// ---- a scribble over the ring wipes it; a two-finger tap brings it back
-const zigzag = Array.from({ length: 24 }, (_, i) => [300 + (i % 2) * 140, 300 + i * 2.5]);
-// (the wipe is a step to undo once the book has taken it: the page reads its marks again then.)
-const reread = page.waitForResponse(res => res.url().includes('/api/book/notes?url='));
-await pen(zigzag);
-for (let i = 0; i < 20 && !posts.some(p => p.path === '/api/book/note/delete'); i++) await page.waitForTimeout(150);
-await reread;
-const wiped = notes[0];
-assert.equal(posts.find(p => p.path === '/api/book/note/delete')?.body.id, wiped.id, 'a scribble wipes the mark');
+// ---- a two-finger tap takes back the last thing: the voice note, off its sheet (nothing of it was on the page to go)
+const last = notes.at(-1);
+assert.equal(last.words, voice.words, 'the voice note is the last in the book');
 await page.evaluate(() => {
   // (Linux's headless WebKit has no Touch to make: a touch event's lists, as Safari fills them)
   const t = (id, x) => ({ identifier: id, target: document.body, clientX: x, clientY: 600 });
@@ -1893,16 +1822,10 @@ await page.evaluate(() => {
   fire('touchstart', two, two);
   fire('touchend', [], two);
 });
-// (the same note back, whole: its id, words and snip.)
-for (let i = 0; i < 20 && !posts.some(p => p.path === '/api/book/note/restore'); i++) await page.waitForTimeout(150);
-const back = posts.find(p => p.path === '/api/book/note/restore')?.body;
-assert.equal(back?.id, wiped.id, 'a two-finger tap brings the wiped mark back');
-assert.deepEqual(
-  [wiped.status, wiped.anchor.ink, wiped.words, wiped.snip],
-  ['open', sent.anchor.ink, sent.words, `/api/book/snip?id=${wiped.id}`],
-  '...the same note, open on its sheet again with its ink, words and snip',
-);
-assert.equal(posts.filter(p => p.path === '/api/book/note').length, 2, '...not a new one in its place');
+for (let i = 0; i < 20 && !posts.some(p => p.path === '/api/book/note/delete'); i++) await page.waitForTimeout(150);
+assert.equal(posts.find(p => p.path === '/api/book/note/delete')?.body.id, last.id, 'a two-finger tap takes it back');
+await nothingDrawn(page, 'a note taken back');
+assert.equal(posts.filter(p => p.path === '/api/book/note').length, 2, 'nothing new in its place');
 noErrors();
 
 // ---- a call drawing in (bookcall.mjs; the agent's ink, aimed: bookaim.mjs.)
@@ -1971,6 +1894,6 @@ await chromium.close();
 server.close();
 // (Search; handwriting; a morning, a picture dragged in, every width)
 console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), the mark a hairline once it's in, in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a scribble wiping a mark and a two-finger tap bringing it back with its words and snip; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone at hang-up, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a two-finger tap taking it back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, nothing of it left on either screen, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
 );
 if (failed) process.exitCode = 1;

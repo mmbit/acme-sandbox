@@ -74,6 +74,8 @@ export type QueuedJob = {
   // The board's call follow-up or sent-note routing check, work carrying a call's item, or the CEO's hourly check (jobs.ts
   // LANE), which goes first.
   board: number;
+  // Derived from jobs.ts ITEM_WORK, retained by projected PR stages.
+  itemWork?: boolean;
   // the CEO's hourly follow-through check (jobs.ts FOLLOW_THROUGH), which no pause stops (planner.ts pausable)
   followThrough?: boolean;
   spentMs: number;

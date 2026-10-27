@@ -6,10 +6,12 @@
 // in the desktop's own layout; lifted and rested, the mark goes into the book from the iPad, no post-it on either
 // screen, and the desktop's book turns to its note. Swapped, the desktop holds the page and the iPad the book: a ring
 // on the desktop goes in from there, and the iPad's book turns to it. A page closed on one closes on the other, and
-// Close ends it on both.
+// Close ends it on both. Once each mark is in the book, nothing of it is drawn on either screen (rule zero:
+// bookink.mjs).
 // A phone paired the same way is bookphone.mjs's.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
+import { nothingDrawn } from './bookink.mjs';
 
 export const DESKTOP = { width: 1280, height: 800 },
   PHONE = { width: 390, height: 844 };
@@ -206,6 +208,11 @@ async function settledOnTheIPad({ d, p, ...c }, target) {
   assert.ok(note.anchor.ink.length >= 1, "with the iPad's ring as its ink");
   assert.ok(note.snip, 'and its snip');
   await bookShows(d.page, note, "the desktop's book turns to the iPad's note");
+  for (const [page, which] of [
+    [d.page, 'the desktop'],
+    [p.page, 'the iPad'],
+  ])
+    await nothingDrawn(page, `${which}, the iPad's mark in the book`);
   await c.shot('pair-noted', d.page);
 }
 // The next note in the book's store after the first `from`, waited for
@@ -227,12 +234,16 @@ async function swapped({ d, p, ...c }) {
   await d.page.click('#book .bk-swap');
   await bookIs(p.page, 'open');
   await bookIs(d.page, 'folded');
-  // (away from the iPad's note, whose hairline shows here now: a line beside it would join it)
   const there = { x: 1000, y: 620, w: 160, h: 80 },
     from = c.notes.length;
   await ringRound(c, d.page, there);
   const note = await noteIn(c, d.page, from);
   await bookShows(p.page, note, "the iPad's book turns to the desktop's note");
+  for (const [page, which] of [
+    [d.page, 'the desktop'],
+    [p.page, 'the iPad'],
+  ])
+    await nothingDrawn(page, `${which}, the desktop's mark in the book`);
   await c.shot('pair-swapped', p.page);
 }
 
@@ -244,6 +255,11 @@ async function closed({ d, p }) {
   await p.page.click('#book .pair-line [data-do=end]');
   await d.page.waitForFunction(() => !('paired' in document.documentElement.dataset), null, { timeout: 5000 });
   assert.equal(await d.page.isVisible('#book .bk-swap'), false, 'the swap goes with the pairing');
+  for (const [page, which] of [
+    [d.page, 'the desktop'],
+    [p.page, 'the iPad'],
+  ])
+    await nothingDrawn(page, `${which}, unpaired`);
   for (const { errors } of [d, p]) assert.deepEqual(errors, [], 'no errors on either screen');
 }
 

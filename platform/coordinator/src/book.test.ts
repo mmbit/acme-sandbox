@@ -396,49 +396,19 @@ test("send, then undo within ten seconds: nothing goes; send and let it go: one 
   assert.ok(nobodys.body.asked, 'its question asked at once, apart from the sheet');
 });
 
-test("a page of HQ's notes by its address, any day and any owner: its own only, open and sent", async () => {
-  const page = await newPage({ kind: 'sheet', owner: 'nib', url: '/' });
-  const here = { url: `${ORIGIN}/?open=gazette#t=x` };
-  const mine = (await addNote({ page: page.id, words: 'On the Gazette', anchor: anchor(here) })).body.note;
-  await addNote({ page: page.id, words: 'Elsewhere', anchor: anchor({ url: `${ORIGIN}/?open=gazettes` }) });
-  await addNote({
-    page: page.id,
-    words: 'A preview',
-    anchor: anchor({ url: 'https://hello.preview.test/?open=gazette' }),
-  });
-  h.db.prepare("update book_pages set day = '2026-10-01' where id = ?").run(page.id);
-  const read = (await h.board(`/api/book/notes?url=${encodeURIComponent('/?open=gazette')}`)).body;
-  assert.deepEqual(
-    read.notes.map((n: any) => n.id),
-    [mine.id],
-  );
-  assert.equal((await h.board('/api/book/notes?url=gazette')).status, 400);
-  // however many notes the book has on other pages (an address that holds this one's too), the page's own come back
-  // (on another owner's sheet: a sheet the later tests write on holds 200)
-  const other = (
-    await addNote({
-      page: page.id,
-      to: 'sable',
-      words: 'Elsewhere again',
-      anchor: anchor({ url: `${ORIGIN}/?open=gazettes` }),
-    })
-  ).body.note;
-  const elsewhere = {
-    v: 1 as const,
-    url: `${ORIGIN}/?open=gazettes`,
-    el: null,
-    view: { w: 390, h: 844, x: 0, y: 0, dpr: 2 },
-    ink: [],
-  };
-  h.db.exec('begin');
-  for (let i = 0; i < 1500; i++)
-    booknotes.insertNote(other.sheet, page.id, 'board', elsewhere, { words: '', said: null }, null, null);
-  h.db.exec('commit');
-  const still = (await h.board(`/api/book/notes?url=${encodeURIComponent('/?open=gazette')}`)).body;
-  assert.deepEqual(
-    still.notes.map((n: any) => n.id),
-    [mine.id],
-  );
+// Rule zero (the board's, 2026-10-27): a mark's lines live only in its note's snip.
+test("rule zero: a note keeps no lines to draw again, those kept before go, and no page's notes are read by address", async () => {
+  const page = await newPage({ kind: 'sheet', owner: 'nib', url: '/?open=gazette' });
+  const made = (await addNote({ page: page.id, words: 'On the Gazette', snip: SNIP })).body.note;
+  assert.deepEqual([made.anchor.ink, made.anchor.el.tag, !!made.snip], [[], 'li', true], 'the snip has the lines');
+  // (one kept before rule zero, its lines in the store: the one-off empties them, and only them)
+  db.prepare('update book_notes set anchor = ? where id = ?').run(JSON.stringify(anchor()), made.id);
+  assert.equal(booknotes.forgetLines(), 1);
+  const kept = JSON.parse(booknotes.note(made.id)!.anchor);
+  assert.deepEqual([kept.ink, kept.url, kept.el.selector], [[], anchor().url, anchor().el.selector]);
+  assert.equal(booknotes.forgetLines(), 0, 'nothing left to empty');
+  // (what drew them again on HQ's pages, their notes by the page's address, is gone)
+  assert.equal((await h.board(`/api/book/notes?url=${encodeURIComponent('/?open=gazette')}`)).status, 404);
 });
 
 test('a note that joins a sheet in its ten seconds stays behind, on a new open sheet for the same owner', async () => {

@@ -2,11 +2,11 @@
 // landscape, on book-check's played store.
 // A mark on HQ's page, once the pen has rested, lifts off as one layer and drifts into the book: open, onto its note's
 // page (turned to first) where the note shows; folded, into the handle, which hears book:landed. Nothing of it stays
-// over HQ but its hairline.
+// over HQ (rule zero: bookink.mjs).
 import assert from 'node:assert/strict';
+import { nothingDrawn } from './bookink.mjs';
 
 const SETTLE_MS = 1500; // (callnotes.js: the pen resting before a mark goes in)
-const FAINT = 0.45 * 255; // (a hairline's ink at most, of 255: bookink.mjs)
 const RINGS = [
   { x: 250, y: 300, rx: 80, ry: 45 },
   { x: 250, y: 480, rx: 70, ry: 40 },
@@ -15,7 +15,7 @@ const RINGS = [
 // c: book-check's { hqIn, base, MINI, settled, penOn, ring, inkAt, shot, noErrorsIn }
 export function liftStories(c) {
   return {
-    "a mark lifts off HQ into the open book, onto its note's page turned to, and leaves only its hairline": browser =>
+    "a mark lifts off HQ into the open book, onto its note's page turned to, and leaves nothing behind": browser =>
       openStory({ ...c, browser }),
     "a mark lifts off HQ into the folded book's handle, which hears it land": browser => foldedStory({ ...c, browser }),
   };
@@ -32,7 +32,7 @@ async function openStory(c) {
       assert.ok(inside(flight.land, desk), `ring ${i + 1}: it lands on the book's paper (${json(flight.land)})`);
       towards(flight, `ring ${i + 1}`);
       await shows(page, flight, `ring ${i + 1}`);
-      await clean(c, page, ring, `ring ${i + 1}`);
+      await clean(page, `ring ${i + 1}`);
     }
     await c.shot('lift-open', page);
     c.noErrorsIn(errors);
@@ -57,7 +57,7 @@ async function foldedStory(c) {
     towards(flight, 'into the handle');
     assert.equal(flight.landed?.id, flight.id, 'the handle heard it land (book:landed), with its note');
     assert.equal(flight.landed?.page, flight.page, '...and its page');
-    await clean(c, page, ring, 'folded');
+    await clean(page, 'folded');
     await c.shot('lift-folded', page);
     c.noErrorsIn(errors);
   } finally {
@@ -121,11 +121,10 @@ function towards({ from, land, path }, what) {
   assert.ok(mid < start, `${what}: halfway it's nearer the book (${Math.round(mid)} px from ${Math.round(start)})`);
   assert.ok(last < Math.max(24, start * 0.15), `${what}: it ends where it lands (${Math.round(last)} px off)`);
 }
-// Nothing of the lift left over HQ: its layer gone, review mode's ink at the ring a hairline at most
-async function clean(c, page, ring, what) {
+// Nothing of the lift left over HQ: its layer gone, and nothing drawn
+async function clean(page, what) {
   assert.equal(await page.locator('review-lift').count(), 0, `${what}: no layer left over HQ`);
-  const ink = await c.inkAt(page, ring.x + ring.rx, ring.y);
-  assert.ok(ink <= FAINT, `${what}: only a hairline on HQ's page once it's in the book (its ink ${ink} of 255)`);
+  await nothingDrawn(page, what, 0);
 }
 // The book turned to a page of the day other than the one shown: New page
 async function otherPage(page) {

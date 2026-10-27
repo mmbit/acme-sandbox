@@ -1,5 +1,6 @@
 // The book's sheets and notes (book.ts has the pages, bookslips.ts the answers). A mark on a page is a note: its snip (a picture of the page
-// around it), its anchor (pagechecks.ts: where it is, its ink) and its words, spoken, typed or written. A note joins
+// around it, the mark's lines on it: the only place they're kept), its anchor (pagechecks.ts: where it is, its lines
+// left out: rule zero, insertNote) and its words, spoken, typed or written. A note joins
 // its page owner's sheet, one open sheet an owner (a free page's notes: the sheet of pages nobody owns), numbered there
 // as the page shows it. Nothing on a sheet reaches anyone until the board sends it:
 //   - Send takes effect SEND_MS later; Undo before then takes it back. Then the sheet goes to its owner as one task
@@ -8,8 +9,7 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { db, inOneStep } from './db.ts';
-import { ORIGIN } from './config.ts';
+import { db, inOneStep, once } from './db.ts';
 import { findAgent } from './jobs.ts';
 import { keepFile } from './uploads.ts';
 import { BOARD, row as pageRow } from './book.ts';
@@ -54,6 +54,16 @@ export type Note = {
   asked: number | null;
   answers: number | null;
 };
+
+// The lines notes kept before rule zero, which HQ's pages drew again as marks and hairlines: gone, once (their snips have
+// them).
+export const forgetLines = () =>
+  db
+    .prepare(
+      "update book_notes set anchor = json_set(anchor, '$.ink', json('[]')) where json_array_length(anchor, '$.ink') > 0",
+    )
+    .run().changes;
+once('2026-10-27-book-notes-inkless', forgetLines);
 
 // ---------------------------------------------------------------- notes (the board's, HQ session)
 // POST /api/book/note { page, anchor, words?, said?, snip?, to?, by? }: a note on a page of the book, on its owner's
@@ -104,21 +114,23 @@ export function insertNote(
         `insert into book_notes (sheet, page, n, by, anchor, words, said, created, updated, answers)
     values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
-      .run(sheet, page, n, by, JSON.stringify(anchor), said.words, said.said, now, now, answers).lastInsertRowid,
+      .run(sheet, page, n, by, inkless(anchor), said.words, said.said, now, now, answers).lastInsertRowid,
   );
   if (snip) keepSnip(id, snip);
   return id;
 }
-// A note's snip kept as a file of its own (replacing the one it had: was)
-function keepSnip(id: number, snip: { type: string; clean: Buffer }, was: string | null = null) {
+// A note's anchor as it's kept: without the mark's lines, which live only in its snip, so nothing can draw them on a page
+// again (rule zero, the board's, 2026-10-27)
+const inkless = (anchor: Anchor) => JSON.stringify({ ...anchor, ink: [] });
+// A note's snip kept as a file of its own
+function keepSnip(id: number, snip: { type: string; clean: Buffer }) {
   const file = `n${id}-${randomBytes(4).toString('hex')}.${snip.type === 'image/png' ? 'png' : 'jpg'}`;
   keepFile(`${DIR}/${file}`, snip.clean);
   db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
-  if (was) rmSync(`${DIR}/${was}`, { force: true });
 }
-// POST /api/book/note/edit { id, words?, said?, anchor?, snip?, was? }: an open note corrected (a word written over, the mark
-// moved). Words that newly end in a question mark ask now, a call's too (job #19916). was: the words they replace, refused
-// when the note has others by now (handwriting read late leaves the board's typed words.)
+// POST /api/book/note/edit { id, words?, said?, was? }: an open note's words corrected (a word written over). Words that
+// newly end in a question mark ask now, a call's too (job #19916). was: the words they replace, refused when the note has
+// others by now (handwriting read late leaves the board's typed words.)
 export function editNote(b: any, who = BOARD) {
   const n = openNote(Number(b?.id), who);
   if (!n) return 404;
@@ -126,16 +138,9 @@ export function editNote(b: any, who = BOARD) {
     return [409, 'the note has other words by now: read it again'] as Refused;
   const said = b.words === undefined ? { words: n.words, said: n.said } : wordsOf(b.words, b.said);
   if (isRefused(said)) return said;
-  const anchor = b.anchor === undefined ? JSON.parse(n.anchor) : anchorOf(b.anchor);
-  if (isRefused(anchor)) return anchor;
-  // (a snip cut again, as lines join the note on HQ's page)
-  const snip = b.snip == null ? null : dataUrlPicture(b.snip);
-  if (isRefused(snip)) return snip;
-  if (snip) keepSnip(n.id, snip, n.snip);
-  db.prepare('update book_notes set words = ?, said = ?, anchor = ?, updated = ? where id = ?').run(
+  db.prepare('update book_notes set words = ?, said = ?, updated = ? where id = ?').run(
     said.words,
     said.said,
-    JSON.stringify(anchor),
     new Date().toISOString(),
     n.id,
   );
@@ -255,24 +260,6 @@ export function pageNotes(page: number, who = BOARD) {
       shown(n, listed),
     ),
   };
-}
-// GET /api/book/notes?url=<path and query>: the notes made on that page of HQ, any day, the newest URL_NOTES (open ones
-// the Pencil draws as marks, sent ones as hairlines). A note's anchor holds the page's address as the Pencil had it
-// (location.href: HQ's origin, the path and query, a fragment), or as a path.
-const URL_NOTES = 300;
-export function urlNotes(url: unknown, who = BOARD) {
-  if (typeof url !== 'string' || !/^\/[^\s]{0,1999}$/.test(url)) return [400, 'url is a path on HQ'] as Refused;
-  const rows = db
-    .prepare(
-      `select n.* from book_notes n join book_sheets s on s.id = n.sheet, (select ?2 whole, ?3 path) a
-      where s.who = ?1 and (json_extract(n.anchor, '$.url') in (a.whole, a.path)
-        or substr(json_extract(n.anchor, '$.url'), 1, length(a.whole) + 1) = a.whole || '#'
-        or substr(json_extract(n.anchor, '$.url'), 1, length(a.path) + 1) = a.path || '#')
-      order by n.id desc limit ?4`,
-    )
-    .all(who, new URL(ORIGIN).origin + url, url, URL_NOTES) as Note[];
-  const listed = listedOnce();
-  return { notes: rows.reverse().map(n => shown(n, listed)) };
 }
 // GET /api/book/snip?id=<note>: a note's snip
 export function serveSnip(req: IncomingMessage, res: ServerResponse, who = BOARD) {

@@ -147,15 +147,24 @@ export async function aimed(c, { ring, point, words = '' }) {
     name: c.name,
   };
   try {
-    return inside ? await inFrame(d) : await (await import('/__review/drive.js')).drive(d);
+    if (inside) return await inFrame(d);
+    const page = await import('/__review/drive.js');
+    // (hung up while it loaded: its wipe has gone by, so a ring drawn now would stay.)
+    return c.over ? { done: false, why: 'The call ended.' } : await page.drive(d);
   } catch (err) {
     console.error('[hq] the agent’s aim:', err);
     return { done: false, why: `HQ couldn't draw it (${err?.message || err}).` };
   }
 }
-// Hung up: its cards go with it, and its rings and pointer, on HQ's page and in the preview
+// Hung up: its cards go with it, and its rings and pointer (wiped)
 export function stopDriving() {
   $('#call-cards [data-card="open"]')?.remove();
+  wiped();
+}
+// The agent's rings and pointer gone, on HQ's page and in the preview: once the call ends, and once its turn is over
+// (the board speaks again, or the agent starts on its next answer: call.js). Nothing it drew stays on the board's
+// screen (rule zero, the board's, 2026-10-27)
+export function wiped() {
   import('/__review/drive.js')
     .then(m => m.drive({ wipe: true }))
     .catch(err => console.error('[hq] the agent’s rings weren’t wiped:', err));

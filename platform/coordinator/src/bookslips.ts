@@ -7,11 +7,12 @@
 //   - A slip: an agent's answer on a note (hq answer), with a picture or a preview's link if it has one. A tick closes
 //     it; anything written under it is a reply, a new note on the owner's sheet, anchored where the note was.
 //   - A slip can name an artifact (hq answer --artifact): what it made that runs, shown on the slip as artifacts.ts lists
-//     it, its running preview and its cover, once it's there (merged and running). And "now": the note's place cut
-//     again from the live page by HQ, beside the snip the board marked ("then").
+//     it, its running preview and its cover, once it's there (merged and running). And "now": a cut of the note's place
+//     from the live page, kept from before rule zero (HQ cut it while the note's hairline showed there; nothing of a
+//     note is on a page now), beside the snip the board marked ("then").
 //   - A slip clipped on, ticked or opened again is a 'book' event, so HQ reads the book again at once.
 import { randomBytes } from 'node:crypto';
-import { existsSync, rmSync } from 'node:fs'; // (rmSync)
+import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 // (inOneStep)
 import { db, inOneStep, lacks, once, redacted } from './db.ts'; // (lacks, once)
@@ -169,18 +170,6 @@ export function replyTo(b: any, who = BOARD) {
     true,
     slip.id,
   );
-}
-// POST /api/book/slip/now { id, picture }: the note's place cut again from the live page (HQ's, once an answer is on
-// it), kept beside the snip as "now"; a new cut replaces the last.
-export function cutNow(b: any, who = BOARD) {
-  const slip = slipRow(Number(b?.id), who);
-  if (!slip) return 404;
-  const picture = dataUrlPicture(b.picture);
-  if (isRefused(picture)) return picture;
-  const file = keepPicture(`slip${slip.id}-now`, picture);
-  db.prepare('update book_slips set now = ?, now_at = ? where id = ?').run(file, new Date().toISOString(), slip.id);
-  if (slip.now) rmSync(`${DIR}/${slip.now}`, { force: true });
-  return { slip: slipOf(slipRow(slip.id, who)!) };
 }
 // GET /api/book/slip/picture?id=<slip>, and GET /api/book/slip/now?id=<slip> (its "now": which)
 export function serveSlipPicture(

@@ -9,7 +9,8 @@ import type { Change, Problem } from './output.ts';
 import { gitFiles } from './repo.ts';
 
 const MODULE = /\.(js|mjs)$/;
-const CODE = /\.(js|mjs|cjs|ts)$/; // (what a module exports by name: a JSON file has only its default)
+// (what a module exports by name: a JSON file has only its default, and a package's CommonJS what Node finds in it)
+const CODE = /^(?!.*\/node_modules\/).*\.(js|mjs|ts)$/;
 
 export function importProblems(ts: typeof TS, root: string, changes: Change[]): Problem[] {
   const touched = new Set(changes.flatMap(c => [c.path, c.basePath]).filter(p => p && MODULE.test(p)) as string[]);

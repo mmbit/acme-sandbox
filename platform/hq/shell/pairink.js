@@ -1,6 +1,7 @@
 // A second screen's ink on this one (pair.js): what the Pencil draws on HQ's page there shows here as it's drawn, on
-// the same element wherever this screen's layout puts it, and the mark it makes stays drawn here while it's open. The
-// lines go across as review mode's ink events (shared/watchalong/strokes.js's phases), each stroke with the anchor of
+// the same element wherever this screen's layout puts it, and the mark it makes stays drawn here while it's open, no
+// longer: once it's in the book, let go, or the other screen is away, nothing of it is drawn here (rule zero). The lines
+// go across as review mode's ink events (shared/watchalong/strokes.js's phases), each stroke with the anchor of
 // what it began on (shared/review/anchor.js: the element's selector and box, the points in document px), so a phone's
 // ring lands round the same button on a desktop's wider page.
 // A line shows here only where it lands (anchor.js lands(): the same element, the line about all of it), never
@@ -101,19 +102,18 @@ function roundNow(points, d) {
 
 // ---- the other screen's lines, in
 export function heard({ tag, payload: p }) {
-  if (tag === 'mark') {
-    theirs.mark = p.mark ?? null;
-    // (a line lifted there is in its open mark from now: only those still being drawn stay live)
-    for (const [n, s] of theirs.strokes) if (s.ended) theirs.strokes.delete(n);
-  } else if (tag === 'ink') {
+  if (tag === 'mark') theirs.mark = p.mark ?? null;
+  else if (tag === 'ink') {
     const s = theirs.strokes.get(p.n);
     if (p.phase === 'start' && p.stroke && p.anchor)
       theirs.strokes.set(p.n, { anchor: p.anchor, halo: !!p.halo, stroke: p.stroke });
     else if (p.phase === 'move' && s && Array.isArray(p.points)) {
       s.stroke = { ...s.stroke, points: [...(p.all ? [] : s.stroke.points), ...p.points] };
       if (p.anchor) s.anchor = p.anchor;
-    } else if (p.phase === 'end' && s) s.ended = true;
-    else if (p.phase === 'cancel') theirs.strokes.delete(p.n);
+    }
+    // (a line lifted there shows here only in its open mark, the 'mark' that comes with it: one that made no mark, or
+    // whose mark never comes, is gone at once. Rule zero)
+    else if (p.phase === 'end' || p.phase === 'cancel') theirs.strokes.delete(p.n);
   } else return false;
   redraw();
   return true;

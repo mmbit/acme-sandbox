@@ -1,13 +1,12 @@
-// book-check.mjs's answers story (shared/review/slip.js, markslips.js; shell/bookslips.js), held like an iPad mini, on
-// book-check's played store.
+// book-check.mjs's answers story (shared/review/slip.js; shell/bookslips.js), held like an iPad mini, on book-check's
+// played store.
 // A question written on HQ's page sits on the CEO's open sheet; its answer comes through HQ's feed (a 'book' event, not
-// the rail's 20 s read) and clips onto the note in the book within seconds, typed under a clip, with then and now: the
-// note's snip, and the same place cut again from the live page once the page is still (posted to the store, then shown
-// in the book). On HQ's page the answered mark opens its card from the ink: what was said, that it isn't sent yet, the
-// answer, and a tick box; the box ticks it. In the book a tick written over the slip ticks it and Undo takes it back,
+// the rail's 20 s read) and clips onto the note in the book within seconds, typed under a clip, with the note's snip as
+// it was marked ("then"). On HQ's page nothing of the answered note is drawn (rule zero: bookink.mjs). In the book a tick written over the slip ticks it and Undo takes it back,
 // and words written under it go as the reply, a new note on the same sheet. A sent note answered with something new
 // shows its running preview: its picture, and a link to it.
 import assert from 'node:assert/strict';
+import { nothingDrawn } from './bookink.mjs';
 
 // a snip: an 8 × 6 red PNG
 const RED =
@@ -16,14 +15,13 @@ const RED =
 const TURN_MS = 600;
 const WAIT_MS = 4000; // an answer clipped on, as the feed brings it (the rail's own read is every 20 s)
 
-// c: book-check's { browser, hqIn, base, MINI, store, pages, notes, snips, posts, org, shot, settled, fingerTap,
-// noErrorsIn }, and look: 'wire' for Wire (Chromium's: WebKit on Linux can't start it), its stills' names ending -wire
+// c: book-check's { browser, hqIn, base, MINI, store, pages, notes, snips, posts, org, shot, settled, noErrorsIn }, and look: 'wire' for Wire (Chromium's: WebKit on Linux can't start it), its stills' names ending -wire
 export async function slipStory(c) {
   const at = `/?intro=0${c.look ? `&renderer=${c.look}` : ''}`,
     f = fixtures(c, at),
     context = await c.hqIn(c.browser, c.MINI),
     shot = (name, page) => c.shot(c.look ? `${name}-${c.look}` : name, page),
-    s = { ...c, ...f, shot, feed: [], cuts: new Map(), from: c.posts.length };
+    s = { ...c, ...f, shot, feed: [], from: c.posts.length };
   await played(s, context);
   const page = await context.newPage(),
     errors = [];
@@ -45,7 +43,7 @@ export async function slipStory(c) {
       document.addEventListener('book:turn', e => window.turns.push(e.detail.page));
     });
     const typed = await clipsOn(s, page, inBook);
-    await onThePage(s, page);
+    await nothingDrawn(page, 'an answered note');
     // (the answer and the ticks, page-less book:changed, leave the book on the sheet: only a call's book:paged turns it.
     const turns = await page.evaluate(() => window.turns);
     assert.ok(
@@ -116,7 +114,7 @@ function fixtures(c, at) {
 
 // The slips' routes on the store, and HQ's feed, played; s: the story's state
 async function played(s, context) {
-  const { feed, cuts, asked, built, sheet, sentSheet, ceo } = s,
+  const { feed, asked, built, sheet, sentSheet, ceo } = s,
     c = s;
   await fed(feed, context, c.base);
   // the slips' routes on the store (bookslips.ts), the rest book-check's
@@ -128,15 +126,6 @@ async function played(s, context) {
     if (url.pathname === '/api/book/sheets') {
       const listed = c.store(url.pathname, null, url.searchParams);
       return r.fulfill({ json: { ...listed, sent: [sentSheet, ...listed.sent] } });
-    }
-    if (url.pathname === '/api/book/slip/now' && body) {
-      cuts.set(hit.id, body.picture);
-      Object.assign(hit, { now: `/api/book/slip/now?id=${hit.id}&v=1`, now_at: new Date().toISOString() });
-      return r.fulfill({ json: { slip: hit } });
-    }
-    if (url.pathname === '/api/book/slip/now') {
-      const cut = cuts.get(hit.id);
-      return r.fulfill({ contentType: 'image/jpeg', body: Buffer.from(cut.split(',')[1], 'base64') });
     }
     if (url.pathname === '/api/book/slip/tick') {
       hit.ticked = body.ticked ? new Date().toISOString() : null;
@@ -165,7 +154,7 @@ async function played(s, context) {
 
 // the answer, as the quick run clips it on: the feed's 'book' event, and the book has it within seconds
 async function clipsOn(s, page, inBook) {
-  const { asked, feed, from } = s,
+  const { asked, feed } = s,
     c = s;
   asked.slips.push(slip(9201, asked.id, 'No: five words, it fits on one line.'));
   feed.push({ type: 'book', agent: 'kit', text: 'slip' });
@@ -174,42 +163,12 @@ async function clipsOn(s, page, inBook) {
   await typed.waitFor({ timeout: WAIT_MS });
   const took = Date.now() - t0;
   assert.ok(took < WAIT_MS, `the answer took ${took} ms to clip on`);
-  assert.match(await typed.innerText(), /Kit[\s\S]*Then[\s\S]*Now/i);
+  assert.match(await typed.innerText(), /Kit[\s\S]*Then/i);
   assert.equal(await typed.locator('img[alt="As it was marked"]').getAttribute('src'), asked.snip);
-  // ...then the page, still, cuts the same place again: the store gets it, the book shows it as now
-  const now = typed.locator('img[alt="The same place now"]');
-  await now.waitFor({ timeout: 15_000 }); // (a screenshot waits up to 7 s for fonts and pictures: snapshot.js)
-  const cut = c.posts.slice(from).find(p => p.path === '/api/book/slip/now');
-  assert.equal(cut?.body.id, 9201);
-  assert.match(cut.body.picture, /^data:image\/jpeg;base64,/);
-  assert.ok(await now.evaluate(img => img.complete && img.naturalWidth > 0), 'the cut shows');
+  // (nothing cuts its place again from the page: no "now" beside it, nothing new having come)
+  assert.equal(await typed.locator('.slip-then figure').count(), 1, 'then alone');
   await c.shot('slip-book', page);
   return typed;
-}
-
-// on HQ's page: the answered mark's card from its ink, and its tick box
-async function onThePage(s, page) {
-  const { asked, y } = s,
-    c = s;
-  await c.fingerTap(page, 300, y + 4);
-  const card = page.getByRole('dialog', { name: 'A note in the book' });
-  await card.waitFor({ timeout: 3000 });
-  const said = await card.innerText();
-  assert.match(said, /Is this banner too long\?/);
-  assert.match(said, /For Juno, not sent/); // (where it waits, as the card says)
-  assert.match(said, /five words, it fits on one line/);
-  // (its pop-in, and the tap's own click, which the card swallows for 400 ms: marktaps.js.)
-  await page.waitForTimeout(500);
-  await c.shot('slip-card', page);
-  await card.getByRole('button', { name: 'Tick it: done' }).click();
-  await until(() => asked.slips[0].ticked);
-  await page.locator('#book .answer-slip[data-ticked]').waitFor({ timeout: 3000 });
-  await card.getByRole('button', { name: 'Ticked: done' }).click(); // (and back: the next tick is the Pencil's)
-  await until(() => !asked.slips[0].ticked);
-  await page
-    .locator('#book .bs-note .answer-slip:not([data-ticked])', { hasText: 'five words' })
-    .waitFor({ timeout: 3000 });
-  await c.fingerTap(page, 300, y + 120);
 }
 
 // in the book: a tick written over the slip ticks it, and Undo takes it back

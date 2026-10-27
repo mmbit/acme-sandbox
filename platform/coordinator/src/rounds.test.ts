@@ -262,3 +262,57 @@ test('occupants outside the modeled queue keep their worker slots and memory', (
     null,
   );
 });
+
+test('projected reviews, fixes and rulings carry a board item through paced seats', () => {
+  const minute = 60_000;
+  const owner = work(1, {
+    board: 1,
+    itemWork: true,
+    due: null,
+    reviewPlan: {
+      panel: 'check',
+      count: 2,
+      terminal: 'ruling',
+      stages: [
+        {
+          key: 'review',
+          kind: 'review',
+          agent: 'reader',
+          engine: 'claude',
+          usualMs: minute,
+          slowMs: minute,
+          after: [],
+        },
+        {
+          key: 'fix',
+          kind: 'work',
+          agent: 'author',
+          engine: 'codex',
+          usualMs: minute,
+          slowMs: minute,
+          after: ['review'],
+        },
+        {
+          key: 'ruling',
+          kind: 'consolidate',
+          agent: 'ruler',
+          engine: 'claude',
+          usualMs: minute,
+          slowMs: minute,
+          after: ['fix'],
+        },
+      ],
+    },
+  });
+  const input = snapshot([owner]);
+  input.now = 24 * 60 * minute;
+  input.pacing = true;
+  for (const seat of input.seats) Object.assign(seat, { week: 0.8, weekResets: input.now + 5 * 24 * 60 * minute });
+  const sizes = new Map([[1, { agent_ms: minute }]]);
+  for (const pace of ['usual', 'slow'] as const) {
+    assert.equal(play(input, sizes, { pace }).get(1)!.merged, input.now + 4 * minute);
+    const ordinary = structuredClone(input);
+    ordinary.jobs[0].itemWork = false;
+    assert.ok(play(ordinary, sizes, { pace }).get(1)!.merged! > input.now + 60 * minute);
+  }
+});

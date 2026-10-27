@@ -471,7 +471,7 @@ test("review mode's menu for the board: whose sheet a note there joins and how m
   assert.equal((await call('/__review/mine')).json().notes, 0, 'a sent sheet counts no more');
 });
 
-test("a note's lines (the pen's strokes) go on its anchor as plain capped numbers, and past the caps it's refused", async () => {
+test("a note's lines (the pen's strokes) are checked against the caps and kept only in its snip, never on its anchor", async () => {
   clearBook();
   const dot = (i: number) => [10 + i, 20.123456, 0.4567, i * 8];
   const ink = [
@@ -483,14 +483,10 @@ test("a note's lines (the pen's strokes) go on its anchor as plain capped number
   ];
   const element = pinned({ selector: 'h1', tag: 'h1', text: 'Hello', box: { x: 10, y: 140, w: 100, h: 40 } }, { kind: 'circle', area: { x: 5, y: 132, w: 115, h: 58 }, ink });
   const id = (await call('/__review/notes', { method: 'POST', body: note({ element }) })).json().id;
-  const lines = JSON.parse(booknotes.note(id)!.anchor).ink;
-  assert.equal(lines.length, 3);
-  assert.deepEqual(lines[0], { color: '#ff5a5f', size: 5, points: [[10, 20.12, 0.457, 0], [11, 20.12, 0.457, 8], [12, 20.12, 0.457, 16]] });
-  assert.deepEqual([lines[1].size, lines[1].alpha, lines[1].points.length], [40, 0.45, 1000], 'a thousand points kept, a size up to 40');
-  assert.deepEqual(lines[2], { color: '#2b2230', size: 1, points: [[5, 5, 0, 0], [6, 6, 1, 3]] }, 'a size from 1, pressure 0–1, an alpha only below 1');
+  assert.deepEqual(JSON.parse(booknotes.note(id)!.anchor).ink, [], 'its lines only in its snip (rule zero: job #20745)');
   const general = (await call('/__review/notes', { method: 'POST', body: note({ note: 'Everywhere', element: { ...GENERAL_MARK, ink } }) })).json().id;
   assert.deepEqual(JSON.parse(booknotes.note(general)!.anchor).ink, [], 'a general note has none');
-  // past the caps it's refused, never cut: the snip would show lines the anchor lacks
+  // past the caps it's refused, never cut
   const line = (n: number) => ({ color: '#2b2230', size: 5, points: Array.from({ length: n }, (_, i) => dot(i)) });
   for (const [over, many] of [['a line of 1,001 points', [line(1001)]], ['65 lines', Array.from({ length: 65 }, () => line(2))],
     ['12,001 points in all', [...Array.from({ length: 12 }, () => line(1000)), line(1)]]] as const) {

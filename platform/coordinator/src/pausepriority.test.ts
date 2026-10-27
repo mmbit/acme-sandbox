@@ -1,7 +1,7 @@
 // node --test src/pausepriority.test.ts (throwaway DATA_DIR): pause release chains and open reviews cross seat pacing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
 
 const h = await harness('pausepriority', {
@@ -47,14 +47,14 @@ async function review(pr: number, kind: 'review' | 'work' = 'review') {
   });
   return { build, author, round };
 }
-async function paced() {
+async function paced(engine = 'codex') {
   await h.capacity({ codex: 1, claude: 1 });
   const reset = Date.now() + 5 * 24 * HOUR;
   assert.equal(
     (
       await h.worker('seat', {
-        seat: 'capacity-codex',
-        engine: 'codex',
+        seat: `capacity-${engine}`,
+        engine,
         state: 'ready',
         util: 0.1,
         week: 0.8,
@@ -64,7 +64,7 @@ async function paced() {
     200,
   );
   assert.equal((await h.board('/api/seats/pacing', { on: true })).status, 200);
-  return { seat: 'capacity-codex', pacedUntil: reset };
+  return { seat: `capacity-${engine}`, pacedUntil: reset };
 }
 
 for (const scope of ['thread', 'project'] as const) {
@@ -139,3 +139,111 @@ for (const kind of ['review', 'work'] as const) {
     await h.finish(claimed!);
   });
 }
+
+for (const live of [true, false])
+  test(`a PR's findings ${live ? 'carrying a live board item bypass its paced sort' : 'whose board item was dropped keep the ordinary sort'}`, async t => {
+    const org = `${h.repo}/company/org.yaml`,
+      before = readFileSync(org, 'utf8');
+    writeFileSync(org, before + '\nreview:\n  drawWindowedChanges: true\n');
+    t.after(() => writeFileSync(org, before));
+    const proposals = await import('./proposals.ts');
+    const inbox = await import('./reviewinbox.ts');
+    const planning = await import('./planning.ts');
+    const ledger = await import('./ledger.ts');
+    const build = thread();
+    const item = h.openItem('moss');
+    const author = await h.start({ agent: 'moss', thread: build, item });
+    ledger.handedOut(item, author.id, null);
+    const branch = `job/${author.id}`;
+    const pr = live ? 906 : 907;
+    pendingPrs.push(pr);
+    h.storedPr(pr, author.id, 'open', ['game.ts'], { round: 1, sha: 'a'.repeat(40), since: author.id });
+    await h.finish(author);
+    assert.equal(ledger.item(item)!.status, 'ready');
+    if (!live) assert.equal(typeof ledger.drop(item, 'The board withdrew it', 0), 'object');
+    const sort = planning.planningJob('moss', 'shop');
+    const engine = h.jobs.findAgent('moss')!.engine;
+    const seat = await paced(engine);
+    assert.equal(await h.claim(engine, seat), null, 'the ordinary owner sort is paced');
+    const ruling = h.ended({ agent: 'quill', kind: 'consolidate', branch, pr, round: 1 }, 'done', 'changes');
+    proposals.deliverFindings({
+      ruling,
+      pr,
+      round: 1,
+      branch,
+      agent: 'quill',
+      decision: 'changes',
+      summary: 'The level cannot finish',
+      findings: [
+        {
+          id: 12545,
+          domain: 'engine',
+          files: ['game.ts'],
+          issue: 'The level cannot finish',
+          task: 'Let the level finish',
+        },
+      ],
+    });
+    const fixes = inbox.tasks(pr, 1);
+    if (!live) {
+      assert.equal(fixes.length, 0);
+      assert.equal(await h.claim(engine, seat), null);
+      return;
+    }
+    assert.equal(fixes.length, 1, 'the author gets a fix without an owner sort');
+    assert.equal(h.job(sort).status, 'queued');
+    const now = Date.now();
+    const pacedPlay = forecast.play(now);
+    assert.equal((await h.board('/api/seats/pacing', { on: false })).status, 200);
+    const unpacedPlay = forecast.play(now);
+    assert.equal((await h.board('/api/seats/pacing', { on: true })).status, 200);
+    for (const pace of ['usual', 'slow'] as const) {
+      assert.notEqual(pacedPlay[pace].get(fixes[0].id)!.start, null);
+      assert.equal(pacedPlay[pace].get(fixes[0].id)!.start, unpacedPlay[pace].get(fixes[0].id)!.start);
+      assert.notEqual(pacedPlay[pace].get(author.id)!.merged, null);
+      assert.equal(
+        pacedPlay[pace].get(author.id)!.merged,
+        unpacedPlay[pace].get(author.id)!.merged,
+        'pacing adds no wait to the remaining review stages',
+      );
+    }
+    const claimed = await h.claim(engine, seat);
+    assert.equal(claimed?.id, fixes[0].id);
+    await h.finish(claimed!);
+  });
+
+for (const started of [false, true])
+  for (const later of [false, true])
+    test(`item work joining ${started ? 'a started' : 'an unstarted'} thread keeps ${later ? 'a later ordinary task' : 'its own task'} review unpaced`, async () => {
+      h.cancelQueued();
+      assert.equal((await h.board('/api/seats/pacing', { on: false })).status, 200);
+      const build = thread();
+      const first = h.queue({ agent: 'moss', engine: 'codex', thread: build });
+      const item = h.openItem('moss');
+      const carrier = h.queue({ agent: 'moss', engine: 'codex', thread: build, item });
+      const owner = later ? h.queue({ agent: 'moss', engine: 'codex', thread: build }) : carrier;
+      if (started) {
+        await h.capacity({ codex: 1, claude: 1 });
+        const claimed = await h.claim('codex', { seat: 'capacity-codex' });
+        assert.equal(claimed?.id, first);
+        await h.finish(claimed!, { branch: `job/${first}`, sha: 'a'.repeat(40) });
+      }
+      assert.equal(h.job(carrier).branch, null, 'the queued carrier has not acquired the thread branch');
+      await paced('claude');
+      assert.equal(
+        (await h.worker('seat', { seat: 'capacity-codex', engine: 'codex', state: 'ready', util: 0, week: 0 })).status,
+        200,
+      );
+      const now = Date.now();
+      const { snapshot: queue, sizes } = forecast.play(now);
+      const snapshot = { ...queue, jobs: queue.jobs.filter(row => row.thread === build) };
+      const { play } = await import('./eta.ts');
+      for (const pace of ['usual', 'slow'] as const) {
+        const pacedPlay = play(snapshot, sizes[pace], { pace });
+        const unpacedPlay = play({ ...snapshot, pacing: false }, sizes[pace], { pace });
+        const expected = unpacedPlay.get(owner)!;
+        assert.notEqual(expected.merged, null);
+        assert.ok(expected.merged! > expected.done!, 'the task has projected review stages');
+        assert.equal(pacedPlay.get(owner)!.merged, expected.merged, 'projected stages add no pacing wait');
+      }
+    });

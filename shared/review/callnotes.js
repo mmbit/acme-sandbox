@@ -10,7 +10,6 @@
 //   call:heard { text }                       words the call heard the board say
 import { reset } from './acts.js';
 import { say } from './dock.js';
-import * as marks from './marks.js';
 import { callPage } from './markpage.js';
 import { file } from './settle.js';
 
@@ -24,7 +23,6 @@ export function setupCall(r) {
   document.addEventListener('call:on', e => {
     r.call = e.detail;
     r.callHeard = [];
-    marks.load(r).catch(err => console.error("The Pencil: the call's page", err));
     // (a walk-through opens its page as it starts.)
     if (r.call.walk) callPage(r).catch(err => console.error("The Pencil: the walk-through's page", err));
   });
@@ -35,11 +33,11 @@ export function setupCall(r) {
   });
 }
 
-// The call ended: a mark going in, then one still settling (one the book said no to, tried once more), then the page
-// shows its sheet's marks again. One the book still won't take is gone with the call, and the board is told. One whose
-// last try never heard back isn't sent again: the book may have it, and a second try would make it twice. Lines drawn
-// after that try go in on their own, with the words heard since it, and the board is told the book may still have the
-// lines it undid since. (One whose last try never heard back)
+// The call ended: a mark going in, then one still settling (one the book said no to, tried once more). One the book
+// still won't take is gone with the call, and the board is told. One whose last try never heard back isn't sent again:
+// the book may have it, and a second try would make it twice. Lines drawn after that try go in on their own, with the
+// words heard since it, and the board is told the book may still have the lines it undid since. (One whose last try
+// never heard back)
 async function ended(r) {
   clearTimeout(r.settleTimer);
   await r.filing;
@@ -62,5 +60,4 @@ async function ended(r) {
   r.call = null;
   r.unheard = null;
   r.callHeard = [];
-  marks.load(r).catch(err => console.error("The Pencil: the book's marks", err));
 }

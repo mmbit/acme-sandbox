@@ -1,11 +1,11 @@
 // A slip: an agent's answer clipped onto a note in the book (the coordinator's bookslips.ts), typed on a strip of paper
-// under a paper clip, with "then and now": the note's snip as it was marked beside the same place cut again from the
-// live page (markslips.js cutNow keeps it on the store), or the running preview of something new. A tick in its box closes
-// the note; writing under it is the board's reply, a new note for the same agent. The book (HQ's booksheet.js) and the
-// page's card (hairline.js) both draw it with slipHtml and wire it with wireSlips; isTick, the Pencil's tick written on
-// a slip in the book, is plain maths (slip.test.js).
+// under a paper clip, with "then and now": the note's snip as it was marked beside the running preview of something
+// new, or a cut of the same place kept from before rule zero (a page no longer cuts one: nothing of a note follows it
+// on the page). A tick in its box closes the note; writing under it is the
+// board's reply, a new note for the same agent. The book (HQ's bookslips.js) draws it with slipHtml and wires it with
+// wireSlips; isTick, the Pencil's tick written on a slip in the book, is plain maths (slip.test.js).
 
-// The look, the same in the book and on the page's card: the book's paper and indigo, the answer typed
+// The look: the book's paper and indigo, the answer typed
 export const CSS = `
       .answer-slip { position: relative; margin: 12px 0 2px; padding: 14px 12px 10px; background: #fffdf6; color: #2a2352;
         border-radius: 2px; transform: rotate(.5deg); box-shadow: 0 1px 0 rgba(42,35,82,.08), 0 3px 10px rgba(42,35,82,.14);
@@ -50,25 +50,29 @@ const esc = s =>
   );
 
 // What "now" shows beside the note's snip: something new's running preview (its cover, a link to it, or that it's being
-// built), else the same place cut again from the live page, else nothing yet. { src?, href?, label, empty? }
+// built), else a cut of the same place kept from before rule zero, else nothing: the snip alone. { src?, href?, label,
+// empty? } or null
 export function nowOf(slip) {
   const p = slip.preview;
   if (p?.pending) return { label: 'Now', empty: 'Its preview shows here once it runs' };
   if (p) return { src: p.picture, href: p.open, label: `Now · ${p.name ?? 'the preview'}`, empty: 'Running' };
-  if (slip.now) return { src: slip.now, label: 'Now' };
-  return { label: 'Now', empty: 'Cut again the next time its page is open' };
+  return slip.now ? { src: slip.now, label: 'Now' } : null;
 }
 
 // One slip under its note (note: the store's, with its snip), as HTML
 export function slipHtml(slip, note) {
   const now = nowOf(slip),
     ticked = Boolean(slip.ticked);
-  const nowPic = now.src
-    ? `<img src="${esc(now.src)}" alt="The same place now" loading="lazy">`
-    : `<span class="slip-none">${esc(now.empty)}</span>`;
-  const nowFig = now.href ? `<a href="${esc(now.href)}" target="_blank" rel="noopener">${nowPic}</a>` : nowPic;
+  const nowPic =
+    now &&
+    (now.src
+      ? `<img src="${esc(now.src)}" alt="The same place now" loading="lazy">`
+      : `<span class="slip-none">${esc(now.empty)}</span>`);
+  const nowFig = now?.href ? `<a href="${esc(now.href)}" target="_blank" rel="noopener">${nowPic}</a>` : nowPic;
   const then = note.snip
-    ? `<div class="slip-then"><figure><img src="${esc(note.snip)}" alt="As it was marked" loading="lazy"><figcaption>Then</figcaption></figure><figure>${nowFig}<figcaption>${esc(now.label)}</figcaption></figure></div>`
+    ? `<div class="slip-then"><figure><img src="${esc(note.snip)}" alt="As it was marked" loading="lazy"><figcaption>Then</figcaption></figure>${
+        now ? `<figure>${nowFig}<figcaption>${esc(now.label)}</figcaption></figure>` : ''
+      }</div>`
     : '';
   const link = slip.link
     ? `<p class="slip-said"><a href="${esc(slip.link)}" target="_blank" rel="noopener">Open what ${esc(slip.name ?? slip.by)} made</a></p>`

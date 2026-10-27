@@ -2,13 +2,13 @@
 // by the book's code, as the iPad is in bookpair.mjs. A ring round part of HQ's scene, which the desktop lays out its
 // own way, shows nowhere on the desktop's page, live or lifted; rested, it goes into the book from the phone with the
 // phone's own picture of it, and the desktop's book turns to it. No post-it on either screen, drawing or scrolling.
-// A ring round something both screens show (a card of the desk phone's) lives on the desktop's page as the desktop's
-// own ink: drawn there in place, a faint hairline once it's in the book, gone when a scribble there wipes it, still a
-// hairline once its sheet is sent; a ring still being drawn as the phone ends the pairing leaves nothing behind (rested,
-// it goes in from the phone), and none of the phone's rings, its one round HQ's scene among them, shows over HQ's own
-// view there.
+// A ring round something both screens show (a card of the desk phone's) shows on the desktop's page in place while
+// it's drawn; once it's in the book nothing of it is drawn on either screen, nor once its sheet is sent (rule zero:
+// bookink.mjs); a ring still being drawn as the phone ends the pairing leaves
+// nothing behind (rested, it goes in from the phone), and none of the phone's rings shows over HQ's own view there.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
+import { nothingDrawn } from './bookink.mjs';
 import {
   DESKTOP,
   PHONE,
@@ -89,9 +89,9 @@ export async function phoneStory(c) {
   await noteIn(c, p.page, scrolled);
   for (const page of [d.page, p.page])
     assert.equal(await sheetShowed(page), false, 'no post-it on either screen, drawing or scrolling');
-  const card = await landsLikeInk(c, d.page, p.page, feed);
+  const card = await whileMade(c, d.page, p.page, feed);
   await endedMidRing(c, d.page, p.page, card);
-  c.notes.splice(from); // (the sent hairlines on the desk phone stay out of the book's stories after this one)
+  c.notes.splice(from); // (the phone's notes stay out of the book's stories after this one)
   // (a scripted pen has no pointer to capture, which WebKit says in its words: book-check's noErrors)
   for (const { errors } of [d, p])
     assert.deepEqual(
@@ -140,13 +140,6 @@ const inkIn = (page, b, pad = 40) =>
     },
     [b, pad],
   );
-const FAINT = 0.45 * 255; // (a hairline's ink at most, of 255: bookink.mjs's)
-// The ink in a box once test(ink) holds, within a few seconds (or the last seen)
-async function inkUntil(page, b, test) {
-  let ink = await inkIn(page, b);
-  for (let i = 0; i < 30 && !test(ink); i++, await page.waitForTimeout(150)) ink = await inkIn(page, b);
-  return ink;
-}
 
 // The desk phone open on the phone, and so on the desktop: a card of it both show, with the same words, uncovered, a
 // size a ring goes round ({ sel, phone, desk }: its boxes on each)
@@ -186,37 +179,26 @@ async function bothShow(phone, desk) {
   assert.ok(i >= 0, 'a card of the desk phone shows on both screens');
   return { sel: mine[i].sel, phone: mine[i], desk: theirs[i] };
 }
-// A ring round the card on the phone, rested: into the book from the phone, and a faint hairline round the same card
-// on the desktop's page. The note.
+// A ring round the card on the phone: on the desktop's page round the same card while it's drawn; rested, into the book
+// from the phone, and nothing of it drawn on either screen. The note.
 async function filed(c, desk, phone, card) {
   const from = c.notes.length;
-  await ringRound(c, phone, card.phone);
+  await ringRound(c, phone, card.phone, { lift: false });
+  for (let i = 0; i < 30 && !(await inked(desk, '.pair-ink')); i++) await desk.waitForTimeout(150);
+  assert.ok(await inked(desk, '.pair-ink'), "the phone's ring shows on the desktop as it's drawn");
+  await phone.evaluate(() => window.__lift());
   const note = await noteIn(c, phone, from);
   assert.ok(note.anchor.el?.selector.startsWith(card.sel), `filed on the card (${note.anchor.el?.selector})`);
-  const ink = await inkUntil(desk, card.desk.box, ink => ink > 0 && ink < FAINT);
-  assert.ok(ink > 0 && ink < FAINT, `a faint hairline round the same card on the desktop once it's in (${ink} of 255)`);
-  // (the live line goes as the ink lifts off the phone)
-  for (let i = 0; i < 30 && (await inked(desk, '.pair-ink')); i++) await desk.waitForTimeout(150);
-  assert.equal(await inked(desk, '.pair-ink'), 0, "and not as the phone's live line");
+  await nothingDrawn(desk, 'the desktop, the phone’s ring in the book');
+  await nothingDrawn(phone, 'the phone, its ring in the book');
   return note;
 }
 
-// A ring round a card both screens show lands on the desktop and lives there as its own ink: a hairline once filed,
-// gone once a scribble wipes it, still a hairline once its sheet is sent (on the desktop's feed, as the coordinator
-// tells it)
-async function landsLikeInk(c, desk, phone, feed) {
+// A ring round a card both screens show: drawn on the desktop only while it's made, nothing of it once it's in the book,
+// nor once its sheet is sent (on the desktop's feed, as the coordinator tells it)
+async function whileMade(c, desk, phone, feed) {
   const card = await bothShow(phone, desk);
   assert.equal(await inkIn(desk, card.desk.box), 0, 'nothing drawn round the card on the desktop yet');
-  // (wiped: a scribble over it on the desktop, as over the desktop's own ink)
-  const wiped = await filed(c, desk, phone, card);
-  const { x, y } = card.desk;
-  await c.penOn(desk)(Array.from({ length: 24 }, (_, i) => [x - 50 + (i % 2) * 100, y - 15 + i * 1.3]));
-  for (let i = 0; i < 20 && !c.posts.some(q => q.path === '/api/book/note/delete' && q.body.id === wiped.id); i++)
-    await desk.waitForTimeout(150);
-  assert.equal(wiped.status, 'wiped', 'a scribble on the desktop wipes the phone’s ring');
-  assert.equal(await inkUntil(desk, card.desk.box, ink => !ink), 0, 'and it goes from the desktop’s page');
-  assert.equal(await inkUntil(phone, card.phone.box, ink => !ink), 0, 'and from the phone’s');
-  // (sent: its sheet's ten seconds over, the feed telling the desktop)
   const kept = await filed(c, desk, phone, card);
   await c.shot('pair-phone-kept', desk);
   // (the sheet it went on)
@@ -232,9 +214,8 @@ async function landsLikeInk(c, desk, phone, feed) {
   // (the desktop reads the sheets again on the feed's word, which delivers the send)
   for (let i = 0; i < 30 && kept.status !== 'sent'; i++) await desk.waitForTimeout(150);
   assert.equal(kept.status, 'sent', 'its sheet went');
-  const ink = await inkUntil(desk, card.desk.box, ink => ink > 0 && ink < FAINT);
-  await c.shot('pair-phone-hairline', desk);
-  assert.ok(ink > 0 && ink < FAINT, `sent, the phone's ring is a faint hairline on the desktop (${ink} of 255)`);
+  await nothingDrawn(desk, 'the desktop, the phone’s ring sent');
+  await c.shot('pair-phone-sent', desk);
   return card;
 }
 

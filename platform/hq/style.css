@@ -658,8 +658,8 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .call-face[data-state=thinking] .cf-figure > canvas { animation: cb-think 1.6s steps(4) infinite; }
 .intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--scr); text-shadow: var(--scr-glow); }
-/* (the height of the share key's old row, 64 px, goes to the transcript.) */
-.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(160px, calc(24dvh + 64px), 284px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
+/* (its height less the share key's own line, where the key has one: --share-row.) */
+.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: calc(clamp(160px, calc(24dvh + 64px), 284px) - var(--share-row, 0px)); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
   text-align: left; background: #1d1f2e; border: var(--bw) solid var(--line); border-radius: var(--r); }
 .intercom .call .lines:empty::before { content: attr(data-empty); margin: auto; padding: 0 12px; font-size: 13px; color: #9a9eb4; text-align: center; }
 .intercom .call .lines li { max-width: 88%; padding: 5px 9px 6px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; border-radius: var(--r); animation: cs-line-in .2s steps(3) both; }
@@ -668,7 +668,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 @keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
 /* a phone on its side: the little screen smaller, so the keys stay in view */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: calc(136px - var(--share-row, 0px)); } }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
@@ -680,9 +680,23 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call #call-screenshare svg.icon { width: 20px; height: 20px; }
 .intercom .call #call-screenshare[aria-pressed="true"] svg.icon { color: var(--red); }
 .intercom .call #call-screenshare:disabled { opacity: .55; }
-/* (in the bottom row between the picture key and Hang up: its words take two lines where the row can't hold them on one.) */
+/* (in the bottom row between the picture key and Hang up, its words always on one line. The three keys at their full
+   size need 399 px of row in Brownstone, the widest look there: a narrower call sets them as a phone does. Set so, they
+   need 333 px in Wire, the widest then: under it the share key takes a line of its own above the other two, and the
+   transcript gives that line back.) */
+#call-screen { container: call-keys / inline-size; }
 .intercom .call .row { flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
-.intercom .call #call-screenshare { flex: 0 1 auto; min-width: 0; padding: 0 14px; gap: 8px; line-height: 1.15; text-align: left; }
+.intercom .call #call-screenshare { padding: 0 14px; gap: 8px; white-space: nowrap; }
+@container call-keys (width < 399px) {
+  .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; }
+  .intercom .call #call-screenshare { padding: 0 10px; gap: 6px; }
+}
+@container call-keys (width < 333px) {
+  .intercom .call .row { display: grid; grid-template-columns: repeat(2, auto); justify-content: center; }
+  .intercom .call #call-screenshare { grid-column: 1 / -1; justify-self: center; order: -1; }
+  .intercom .call .row .attach { justify-self: end; } .intercom .call .row .hangup { justify-self: start; } /* (together in the middle, under it) */
+  .intercom .call .lines { --share-row: 60px; } /* (the key's 52 px and the row's 8 px gap) */
+}
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
 .intercom .call .pics li { flex: none; width: 84px; }
@@ -1107,10 +1121,13 @@ body.keys .push-now { padding: 3px 10px 4px; border-radius: 999px; font-size: 12
 @container page (min-width: 561px) {
   .intercom.big #call-screen .state { font-size: 28px; }
   .intercom.big #call-screen :is(.note, .said) { font-size: 20px; line-height: 1.45; }
+  .intercom.big #call-screen .pics li { width: 112px; } .intercom.big #call-screen .pics .thumb { height: 84px; }
+}
+/* (its keys scaled up where their row holds them, Show my screen on one line: 506 px in Brownstone and Wire.) */
+@container call-keys (width >= 506px) {
   .intercom.big #call-screen .row { gap: 16px; }
   .intercom.big #call-screen .row button { min-height: 64px; padding: 0 30px; font-size: 22px; }
   .intercom.big #call-screen .row .attach { width: 64px; padding: 0; } .intercom.big #call-screen .attach svg.icon { width: 24px; height: 24px; }
-  .intercom.big #call-screen .pics li { width: 112px; } .intercom.big #call-screen .pics .thumb { height: 84px; }
 }
 @container page (max-width: 560px) {
   .crt { margin: 0 6px 6px; padding: 6px; } .crt .screen { padding: 10px; }
