@@ -14,6 +14,7 @@ import { unloop } from './plancycles.ts';
 import { plannerCapacity } from './room.ts';
 import { wholeSeconds } from './arithmetic.ts';
 import { answerTimes } from './answertime.ts';
+import { holdMerges } from './mergeholds.ts';
 import { deployLag } from './deploytime.ts';
 import { heldWindows } from './inbox.ts';
 import { observedSeats } from './seatobservations.ts';
@@ -139,6 +140,7 @@ export function orderingSnapshot(
     return job;
   });
   inThreads(rows, queued, placement.place, rounds, keepLoops, now);
+  holdMerges(queued, answers);
   return { now, planner: 3, windows: threadWindows, pauseUntil: pauses.untilJobs(), jobs: queued, deployLagMs: lag };
 }
 

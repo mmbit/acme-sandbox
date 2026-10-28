@@ -1,5 +1,6 @@
-// A thread's end (../docs/projects.md, "Threads in order"): a merge clears the thread's branch and wakes the owner of
+// A thread's end (../docs/projects.md, "Deliverables in order"): a merge clears the thread's branch and wakes the owner of
 // each thread with nothing left open to judge it (threadjudge.ts).
+// (its messages say deliverable, the board's word for a thread)
 import { db, once, planChange } from './db.ts';
 import * as reviewclosure from './reviewclosure.ts';
 import * as jobs from './jobs.ts';
@@ -56,7 +57,7 @@ const close = (thread: Thread) => {
     new Date().toISOString(),
     thread.id,
   );
-  planChange({ project: thread.project, thread: thread.id, what: 'thread done: its work settled', by: 'hq' });
+  planChange({ project: thread.project, thread: thread.id, what: 'deliverable done: its work settled', by: 'hq' });
 };
 
 // A job that ended done with nothing to merge (no pull request, and none to come from its thread's branch: jobs.ts

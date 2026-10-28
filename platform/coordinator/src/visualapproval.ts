@@ -1,13 +1,17 @@
 // Review's visual judgment and the before/after card that releases its merge decision, or the board's word the CEO
 // cites in its place.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import * as decisions from './decisions.ts';
-import { createJob, endRequest, threadOf, ENDED_ITEMS } from './jobs.ts';
+import { createJob, endRequest, threadOf, workBranch, ENDED_ITEMS } from './jobs.ts';
 import { ceo } from './company.ts';
 import { publish } from './events.ts';
 import { cancelJob } from './ledger.ts';
 import { heldDecided, returnFeedback } from './review.ts';
 import { reviewSettings } from './reviewsettings.ts';
+import { oneTaskThread } from './made.ts';
+import { findThread, type Thread } from './projects.ts';
+import * as windows from './windows.ts';
 
 export function reviewStep(round: number, stage?: string | null) {
   if (stage === 'merge') return '';
@@ -21,21 +25,36 @@ style. A bug fix, copy edit or single button does not count. This is your judgme
 Add "major_visual": true or false to your JSON report. The ruling settles this judgment from the reports, diff and
 previews. If true, HQ holds the merge with a decision and asks the author for one before/after card. Keep the ordinary
 review decision for correctness: visual approval does not replace review, and is not a blocking code finding or a
-"board" review verdict. One card covers the thread's visual changes waiting together. It shows the changed pages
+"board" review verdict. One card covers the deliverable's visual changes waiting together. It shows the changed pages
 before and after on phone and desktop, with Go live (recommended) and Changes first.`;
 }
 
-export function record(pr: { number: number; branch: string; author: string; sha: string | null }, major: boolean) {
-  if (!major || !pr.sha) return;
+// A decision's card job's own pull request that carries only the pictures its card shows (under products/_cycles/) is
+// never held: the board judges them on that card, and a hold of its own would wait on itself, since the card shows
+// pictures from main only. Any other file on that branch is a visual change like any other.
+export function record(
+  pr: { number: number; branch: string; author: string; sha: string | null; files: string },
+  major: boolean,
+) {
+  if (
+    !major ||
+    !pr.sha ||
+    (cardJobBranch(pr.branch) && (JSON.parse(pr.files) as string[]).every(f => f.startsWith('products/_cycles/')))
+  )
+    return;
   const work = db
     .prepare("select id from jobs where branch = ? and kind = 'work' order by id desc limit 1")
     .get(pr.branch) as { id: number } | undefined;
   const decision = decisions.holdMerge({ ...pr, sha: pr.sha }, work ? threadOf(work.id) : null);
   if (decision.replacedCard)
     endRequest(decision.replacedCard, 'More visual changes joined, so a new card will show the whole set');
-  if (!decision.needsCard) return;
-  prepareCard(decision.id, decision.author!);
+  if (decision.needsCard) prepareCard(decision.id, decision.author!);
+  else cardWindow(decision.id);
 }
+
+// The branch holds the work of a job a visual hold queued for its card (card_jobs), its card replaced since or not
+const cardJobBranch = (branch: string) =>
+  !!db.prepare(`select 1 from card_jobs c join jobs j on j.id = c.job where ${workBranch('j')} = ?`).get(branch);
 
 // A pull request ended, closed or merged without this decision's Go live: it leaves the hold.
 export function closed(pr: number) {
@@ -49,6 +68,7 @@ export function closed(pr: number) {
         : 'The visual changes were closed or went live another way, so there is nothing left to approve',
     );
   if (decision.needsCard) prepareCard(decision.id, decision.author);
+  else cardWindow(decision.id);
 }
 
 // hq decision settle <id> item:<n> | card:<n>: the CEO settles a visual hold without the card it waits for, citing the
@@ -115,6 +135,35 @@ This job prepares the card, not the visual change. Do not push to the held branc
 If a previous card was closed because the waiting set changed, replace its pictures with the current waiting set.`,
   });
   db.prepare('update decisions set card_job = ? where id = ?').run(job, id);
+  db.prepare('insert into card_jobs (job, decision) values (?, ?)').run(job, id);
+  cardWindow(id);
+}
+
+function cardWindow(id: number) {
+  const decision = decisions.openDecision(id);
+  if (typeof decision === 'string' || !decision.card_job) return;
+  const source = db
+    .prepare(
+      `select t.* from decision_merges m join prs p on p.number = m.pr
+    join jobs j on ${workBranch('j')} = p.branch and j.kind = 'work'
+    join threads t on t.id = j.thread where m.decision = ?
+    order by t.deadline is null, t.deadline, t.aim, t.id limit 1`,
+    )
+    .get(id) as Thread | undefined;
+  let thread = threadOf(decision.card_job);
+  // Its pictures must merge before the held branch, so they need a separate branch and thread.
+  if (!thread)
+    thread = oneTaskThread(source?.project, {
+      id: decision.card_job,
+      title: 'Show the visual changes before they go live',
+    });
+  // (a thread someone moved the card job onto keeps its owner's window)
+  if (thread?.endsWith(`/job-${decision.card_job}`))
+    windows.set(
+      findThread(thread)!,
+      source?.deadline == null ? null : { deadline: source.deadline, aim: source.aim ?? source.deadline },
+      'hq',
+    );
 }
 
 export function waitReason(pr: number) {

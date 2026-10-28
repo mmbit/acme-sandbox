@@ -1,0 +1,211 @@
+/* The book's tools (booktools.js): the colour card beside the tools island, the cursors over the paper, a picture
+   lifted to be moved, and the boxes of words typed on a page (booktexts.js). */
+
+/* ---- the colours: a card to the strip's right, on the paper, the colour in use ringed in ink */
+.bk-island[data-island='tools'] {
+  position: relative;
+}
+.bk-palette {
+  position: absolute;
+  left: calc(100% + 8px);
+  top: 0;
+  display: flex;
+  gap: 2px;
+  padding: 4px;
+  animation: bk-palette-in 0.12s ease-out;
+}
+@keyframes bk-palette-in {
+  from {
+    opacity: 0;
+    transform: translateX(-4px);
+  }
+}
+.bk-palette .bk-btn[aria-pressed='true'],
+.bk-palette .bk-btn[aria-pressed='false'] {
+  background: transparent;
+}
+.bk-palette .bk-btn[aria-pressed='true'] {
+  color: var(--bk-ink, #2a2352);
+  box-shadow: inset 0 0 0 2px var(--bk-ink, #2a2352);
+}
+@media (hover: hover) {
+  .bk-palette .bk-btn:hover {
+    background: var(--bk-ink-soft);
+  }
+}
+.bk-swatch svg,
+.bk-palette svg {
+  width: 22px;
+  height: 22px;
+}
+
+/* ---- cursors: the tool's own on the paper (its colour: --bk-tool-cursor), a hand where a press moves something */
+#book .bk-desk[data-tool='pen'],
+#book .bk-desk[data-tool='highlighter'] {
+  cursor: var(--bk-tool-cursor, crosshair), crosshair;
+}
+#book .bk-desk[data-tool='text'] {
+  cursor: text;
+}
+#book .bk-desk[data-tool='hand'] {
+  cursor: grab;
+}
+#book .bk-desk[data-tool='hand']:active {
+  cursor: grabbing;
+}
+#book .bk-desk[data-over='grab'] {
+  cursor: grab;
+}
+#book .bk-desk[data-over='grabbing'],
+#book .bk-desk[data-over='grabbing'] * {
+  cursor: grabbing !important;
+}
+
+/* ---- a picture lifted off its page while it's moved: a light shadow, a touch bigger */
+.bk-lifted {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  transition:
+    scale 0.12s ease-out,
+    filter 0.12s ease-out;
+}
+.bk-lifted[data-up] {
+  scale: 1.035;
+  filter: drop-shadow(0 12px 14px rgba(42, 35, 82, 0.26)) drop-shadow(0 2px 3px rgba(42, 35, 82, 0.18));
+}
+
+/* ---- words typed on a page: the page's own ink, set in the book's face (booktexts.js TEXT: 18 px, a line 1.4) */
+/* (a click on its words edits them and a drag over them draws, a strike or a slice: bookamend.js; it moves by its grip.) */
+.bk-typed {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border-radius: 6px;
+  cursor: text;
+  transition: box-shadow 0.12s;
+}
+.bk-typed-words {
+  min-height: 1.4em;
+  font: 18px/1.4 var(--bk-font, system-ui, sans-serif);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  outline: none;
+  caret-color: currentColor;
+}
+#book .bk-desk[data-tool='highlighter'] .bk-typed:not([data-editing]) {
+  cursor: inherit;
+}
+@media (hover: hover) {
+  .bk-typed:hover {
+    box-shadow: inset 0 0 0 1px rgba(42, 35, 82, 0.16);
+  }
+}
+.bk-typed[data-editing] {
+  cursor: text;
+  background: rgba(255, 250, 240, 0.55);
+  box-shadow: inset 0 0 0 1.5px rgba(42, 35, 82, 0.32);
+}
+/* its words, being typed, reach a line round them: handwriting that starts beside them is theirs (Apple's Scribble
+   reads it into them), never ink or a new box. */
+.bk-typed[data-editing] .bk-typed-words {
+  margin: -1em;
+  padding: 1em;
+}
+.bk-typed[data-lifted] {
+  cursor: grabbing;
+  box-shadow:
+    inset 0 0 0 1px rgba(42, 35, 82, 0.16),
+    0 10px 18px -6px rgba(42, 35, 82, 0.3);
+  background: rgba(255, 250, 240, 0.7);
+}
+/* the keys a Pencil has no keyboard for (delete a letter, a space), under its right end while it's typed in, their
+   size on screen at any zoom. */
+.bk-typed-keys {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  display: none;
+  gap: 2px;
+  padding: 2px;
+  margin-top: 6px;
+  border-radius: 11px;
+  background: var(--bk-paper, #fffaf0);
+  box-shadow: var(--bk-lift, 0 6px 20px rgb(42 35 82 / 22%));
+  transform-origin: 100% 0;
+  scale: calc(1 / var(--bk-scale, 1));
+}
+.bk-typed[data-editing] .bk-typed-keys {
+  display: flex;
+}
+/* its grip: a few dots at its left edge, showing on hover and while it's typed in */
+.bk-typed-grip {
+  position: absolute;
+  left: -16px;
+  top: 4px;
+  width: 12px;
+  height: 22px;
+  border-radius: 4px;
+  background: radial-gradient(circle, rgba(42, 35, 82, 0.45) 1.2px, transparent 1.6px) 0 0 / 6px 6px;
+  background-position: 0 2px;
+  cursor: grab;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.bk-typed:hover .bk-typed-grip,
+.bk-typed[data-editing] .bk-typed-grip,
+.bk-typed[data-lifted] .bk-typed-grip {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-lifted,
+  .bk-typed,
+  .bk-typed-grip,
+  .bk-palette {
+    transition: none;
+    animation: none;
+  }
+}
+
+/* ---- the eraser's ring under a Pencil's tip while it rubs (bookerase.js; a mouse has it as its cursor). */
+#book .bk-desk[data-tool='eraser'] {
+  cursor: var(--bk-tool-cursor, crosshair), crosshair;
+}
+#book .bk-desk[data-tool='shapes'] {
+  cursor: crosshair;
+}
+.bk-eraser-ring {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 3;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 1.5px solid rgba(42, 35, 82, 0.55);
+  background: rgba(255, 250, 240, 0.35);
+  box-shadow: 0 0 0 1.5px rgba(255, 250, 240, 0.9);
+  pointer-events: none;
+}
+
+/* ---- the tool's card: rows of choices (a shape, its fill, the colours, the widths, the eraser's sizes) */
+.bk-palette {
+  flex-direction: column;
+  align-items: stretch;
+}
+.bk-palette-row {
+  display: flex;
+  gap: 2px;
+}
+.bk-palette hr {
+  align-self: stretch;
+  margin: 3px 4px;
+  border: 0;
+  border-top: 1px solid var(--bk-edge);
+}
+/* the mouse's own tools (the hand, the zoom's buttons) are left off a touch screen, where a finger moves and pinches the
+   page: room for the drawing tools on an iPad mini's short side */
+@media (pointer: coarse) {
+  #book [data-fine] {
+    display: none;
+  }
+}

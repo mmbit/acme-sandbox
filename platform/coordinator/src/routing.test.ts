@@ -105,10 +105,10 @@ test('hq route reads the notes and the open work; the notes go into a waiting br
     pin('hq', 'Settings come last'),
   ];
   const check = await checkFor(await send('hq', notes));
-  assert.match(check.prompt, /One task per improvement[\s\S]*hq job <agent> "title" --code WORD --thread/);
+  assert.match(check.prompt, /One task per improvement[\s\S]*hq job <agent> "title" --code WORD --deliverable/);
   const read = (await agent('route', check.token)).body.text as string;
   assert.match(read, new RegExp(`#${notes[0]} on HQ \\(platform/hq\\), its owner bolt: The arcade floor is too busy`));
-  assert.match(read, new RegExp(`in no thread\\n[\\s\\S]*#${later} ${h.job(later).code} moss`));
+  assert.match(read, new RegExp(`in no deliverable\\n[\\s\\S]*#${later} ${h.job(later).code} moss`));
   assert.match(read, new RegExp(`${thread}\\n  #${running.id} ${h.job(running.id).code} wren`));
   assert.equal((await agent('route', running.token)).status, 403, "only the CEO's check");
 
@@ -192,7 +192,7 @@ test("routing refuses what it can't do and changes nothing", async () => {
     [check, [note + 1000], { code: 'REFUSE', newThread }, /not notes this job routes/],
     [check, [], {}, /name the notes/],
     [check, [note + 1000], {}, /not notes this job routes/],
-    [check, [note], { thread: 'nope/none' }, /isn't an open thread/],
+    [check, [note], { thread: 'nope/none' }, /isn't an open deliverable/],
   ] as const) {
     const r = await task(by, 'kit', [...notes], more);
     assert.equal(r.status >= 400 && r.status < 500, true, JSON.stringify(r.body));
@@ -495,6 +495,83 @@ test('work held after its notes went in gives them back: a check routes them aga
   forecast.refresh();
   assert.equal(logOf(note).to_job, elsewhere, 'sent back once');
   assert.equal((await h.board('/api/review/notes?slug=hq')).body.find((n: any) => n.id === note).waiting, null);
+});
+
+test('a note sent to work that failed goes back from the work in its place once that is held', async () => {
+  const thread = h.dueThread();
+  const carrier = h.queue({ agent: 'moss', engine: 'moss-falls', queuedBy: 'juno', thread });
+  const note = pin('hq', 'The compass rose points west');
+  const check = await checkFor(await send('hq', [note]));
+  assert.equal((await route(check, `#${carrier}`, [note])).body.how, 'brief');
+  await h.finish(check);
+  const first = (await h.claim('moss-falls'))!;
+  await h.finish(first, { status: 'failed', result: 'Broke' });
+  const next = h.queue({ agent: 'moss', engine: 'moss-in-place', queuedBy: 'juno', insteadOf: carrier, thread });
+  forecast.refresh();
+  assert.equal(logOf(note).to_job, carrier, 'its place can start: the note stays');
+
+  assert.equal(typeof pauses.pause({ thread, why: 'The board looks at it first', byHand: true }, 'juno'), 'object');
+  forecast.refresh();
+  const back = logOf(note);
+  assert.deepEqual([back.routed, back.to_job], [null, null]);
+  assert.match(
+    promptOf(next),
+    new RegExp(`note #${note} went back to the CEO's routing while this job was held \\(${thread} is paused\\)`),
+  );
+});
+
+test("the notes in queued work follow each note down its job's replacements, each its own, never past a cancelled one", async () => {
+  // (two threads, as a failed job holds the work after it in its own)
+  const [failing, cutting] = [h.dueThread(), h.dueThread()];
+  const work = (thread: string, engine: string, insteadOf?: number) =>
+    h.queue({ agent: 'moss', engine, queuedBy: 'juno', insteadOf, thread });
+  const fails = async (engine: string) => h.finish((await h.claim(engine))!, { status: 'failed', result: 'Broke' });
+  // two failed jobs down to the queued one; a cancelled replacement on the way; queued work sent to directly
+  const [twice, cut, own] = [work(failing, 'moss-twice'), work(cutting, 'moss-cut'), work(cutting, 'moss-own')];
+  const notes = [pin('hq'), pin('hq'), pin('hq'), pin('hq')];
+  const check = await checkFor(await send('hq', notes));
+  for (const [job, to] of [
+    [twice, [notes[0]]],
+    [cut, [notes[1]]],
+    [own, [notes[2], notes[3]]],
+  ] as const)
+    assert.equal((await route(check, `#${job}`, [...to])).body.how, 'brief');
+  await h.finish(check);
+  await fails('moss-twice');
+  const once = work(failing, 'moss-once', twice);
+  await fails('moss-once');
+  const last = work(failing, 'moss-last', once);
+  await fails('moss-cut');
+  const cancelled = work(cutting, 'moss-cancelled', cut);
+  assert.ok(cancelJob(cancelled, 'Not needed'));
+  const beyond = work(cutting, 'moss-beyond', cancelled);
+  forecast.refresh();
+  const toJobs = () => notes.map(note => logOf(note).to_job);
+  assert.deepEqual(toJobs(), [twice, cut, own, own], 'work that can start keeps its notes');
+
+  for (const thread of [failing, cutting])
+    assert.equal(typeof pauses.pause({ thread, why: 'The board looks at it first', byHand: true }, 'juno'), 'object');
+  forecast.refresh();
+  assert.match(promptOf(last), new RegExp(`The board's note #${notes[0]} went back to the CEO's routing`));
+  assert.match(
+    promptOf(own),
+    new RegExp(`The board's notes #${notes[2]}, #${notes[3]} went back to the CEO's routing`),
+  );
+  assert.doesNotMatch(promptOf(beyond), /went back to the CEO's routing/, 'nothing reaches past a cancelled one');
+  assert.deepEqual(toJobs(), [null, cut, null, null], 'each back from the work it reached, none from past the cut');
+
+  // Under statistics taken while jobs held three rows and job_replacements two, as live's stay until a table grows
+  // tenfold, each step seeks the job it reaches by id rather than reading every job per lineage.
+  db.exec(`analyze; delete from sqlite_stat1; insert into sqlite_stat1 values ('jobs', 'jobs_state', '3 1 1 1 1'),
+    ('jobs', 'jobs_instead_of', '3 1'), ('job_replacements', 'job_replacements_prior', '2 1 1'); analyze sqlite_schema`);
+  try {
+    for (const lineage of [jobs.lineageFrom(`select ${twice}`), jobs.lineageFrom(`select 1 note, ${twice}`, 'note')]) {
+      const steps = db.prepare(`explain query plan ${lineage}`).all() as { detail: string }[];
+      assert.ok(!steps.some(p => /^SCAN next/.test(p.detail)), JSON.stringify(steps.map(p => p.detail)));
+    }
+  } finally {
+    db.exec('delete from sqlite_stat1; analyze sqlite_schema');
+  }
 });
 
 test('a job that ends done with a note neither fixed nor answered is told once, then the note goes back to routing with its report', async () => {

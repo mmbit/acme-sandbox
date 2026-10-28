@@ -338,3 +338,57 @@ test('records whose push rewrote the decision log are planned as a review, not a
   h.db.prepare('insert into office_reviewed (pr) values (?)').run(1203);
   assert.ok(plan().count > 0, 'the panel that reviews it is planned');
 });
+
+test('one ruling with several fix titles occupies one job in the play before its next review', async () => {
+  const projects = await import('./projects.ts');
+  const inbox = await import('./reviewinbox.ts');
+  const { reviewPlans } = await import('./reviewplan.ts');
+  const clear = leftoverJobs(h.db);
+  const thread = h.dueThread();
+  const author = h.ended({ agent: 'bolt', engine: 'claude', thread });
+  const branch = `job/${author}`;
+  const pr = 1301;
+  h.storedPr(pr, author, 'open', ['game.ts'], { round: 1, sha: 'a'.repeat(40) });
+  const blocking = Array.from({ length: 7 }, (_, i) => ({
+    id: 100 + i,
+    domain: 'engine',
+    files: ['game.ts'],
+    issue: `Move ${i} cannot finish`,
+    task: `Let the player finish move ${i} and keep the next move playable`,
+  }));
+  const item = inbox.deliver({
+    pr,
+    branch,
+    round: 1,
+    agent: 'bolt',
+    decision: 'changes',
+    summary: 'Repair the moves',
+    findings: [...blocking, { ...blocking[0], id: 200, kind: 'nonblocking' }],
+    touchups: 'Check the move names',
+  });
+  const drawn = inbox.drawnAtOnce(item, projects.findProject('due')!.owner);
+  assert.equal(drawn.jobs.length, 1);
+  const [fix] = inbox.tasks(pr, 1);
+  assert.deepEqual(
+    fix.findings,
+    blocking.map(finding => finding.id),
+  );
+  assert.deepEqual(inbox.unassigned(pr, 1), []);
+  const review = reviewPlans(Date.now())({ ...jobs.findJob(author)!, origin: 'work' })!;
+  assert.deepEqual(
+    review.stages.filter(stage => stage.kind === 'work').map(stage => stage.job),
+    [fix.id],
+  );
+  await h.capacity({ claude: 1, codex: 1 });
+  const { input, sizes } = forecast(pr, [fix.id]);
+  sizes.set(fix.id, { agent_ms: 30 * MINUTE });
+  const seen = play(input, sizes);
+  assert.equal(seen.get(fix.id)!.done! - seen.get(fix.id)!.start!, 30 * MINUTE);
+  assert.ok(seen.get(author)!.merged! > seen.get(fix.id)!.done!);
+  const running = await h.claimJob(fix.id);
+  assert.equal(running.title, [...blocking.map(finding => finding.task), item.touchups].join('; '));
+  for (const finding of blocking) assert.ok(running.prompt.includes(`finding #${finding.id}`));
+  assert.ok(running.prompt.includes(item.touchups!));
+  await h.finish(running);
+  clear();
+});

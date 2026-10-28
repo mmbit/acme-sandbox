@@ -152,8 +152,8 @@ test("--until wakes the pause's owner once its jobs have all merged or ended, an
   assert.match(woke.prompt, /nothing lifts it but a resume/);
   assert.match(woke.prompt, /Delivered means what the board asked for is in its hands: the thing itself/);
   assert.doesNotMatch(woke.prompt, /Cancel what isn't worth its cost/, "never the hourly check's orders");
-  assert.match(woke.prompt, /hq thread resume game\/levels/);
-  assert.match(woke.prompt, /hq thread pause game\/levels "why" --until <that job>/);
+  assert.match(woke.prompt, /hq deliverable resume game\/levels/);
+  assert.match(woke.prompt, /hq deliverable pause game\/levels "why" --until <that job>/);
   assert.match(
     woke.prompt,
     new RegExp(
@@ -276,7 +276,7 @@ test('a pause is refused where it could never resume, or by anyone but the CEO a
     String(pauses.pause({ thread: levels, why, until: [ended.id] }, 'wren')),
     /nothing is left for it to wake you/,
   );
-  assert.match(String(pauses.pause({ thread: 'game/none', why }, 'wren')), /no thread game\/none/);
+  assert.match(String(pauses.pause({ thread: 'game/none', why }, 'wren')), /no deliverable game\/none/);
   assert.match(String(pauses.pause({ thread: levels, why: ' ' }, 'wren')), /say why/);
   assert.match(
     String(pauses.pause({ thread: levels, why }, 'wren')),
@@ -378,7 +378,7 @@ test('hq job onto a paused thread is queued and told it is held; the play holds 
   assert.deepEqual(played.waitsFor, [gate.id], 'the play starts it after the job the pause waits for');
 });
 
-test('a pause of the work in no thread holds it, a fix round and review there too, and lets it go as it lifts', async () => {
+test('a pause of the work in no deliverable holds it, a fix round and review there too, and lets it go as it lifts', async () => {
   reset();
   const [view, gates] = [thread('view', 'shop'), thread('gates', 'shop')];
   const work = h.queue({ agent: 'kit' });
@@ -392,17 +392,17 @@ test('a pause of the work in no thread holds it, a fix round and review there to
   const gate = await h.start({ agent: 'moss', thread: gates });
   assert.equal(
     pauses.pause({ project: 'unsorted', why: 'No new start' }, 'wren'),
-    `only ${ceo()} (work in no thread's owner) or the CEO pauses unsorted`,
+    `only ${ceo()} (work in no deliverable's owner) or the CEO pauses unsorted`,
   );
   assert.match(
     pauses.pause({ project: 'unsorted', why: 'No new start', until: [work] }, ceo()) as string,
-    new RegExp(`#${work} is on work in no thread, which the pause would hold`),
+    new RegExp(`#${work} is on work in no deliverable, which the pause would hold`),
   );
   const p = pause({ project: 'unsorted', why: 'No new start without a deadline', until: [gate.id] });
   assert.equal(p.held, 3, 'the work, the fix round and the review');
   for (const id of [work, fix, review]) assert.equal(await h.claim(engineOf(id)), null, `#${id} is held`);
-  assert.deepEqual(h.job(work).wakes, ['paused with work in no thread'], 'the projects view says what holds it');
-  assert.match(h.jobs.openJobs({}).find(j => j.id === fix)!.line, /queued paused with work in no thread:/);
+  assert.deepEqual(h.job(work).wakes, ['paused with work in no deliverable'], 'the projects view says what holds it');
+  assert.match(h.jobs.openJobs({}).find(j => j.id === fix)!.line, /queued paused with work in no deliverable:/);
   assert.deepEqual(snapshot(Date.now()).jobs.find(j => j.id === work)!.waitsFor, [gate.id], 'the play holds it too');
   const proposed = snapshot(Date.now(), [{ id: -1, agent: 'kit', title: 'Proposed work', engine: engineOf(work) }]);
   assert.deepEqual(proposed.jobs.find(j => j.id === -1)!.waitsFor, [gate.id], 'proposed work waits for the gate too');
@@ -450,7 +450,7 @@ test("a paused target the CEO blocks on the board's decision waits for its answe
   assert.equal(await h.claim(engineOf(held)), null, 'and still holds its work');
 });
 
-test('a pause of the work in no thread waits only for work that can run and merge under it', async () => {
+test('a pause of the work in no deliverable waits only for work that can run and merge under it', async () => {
   reset();
   const gates = thread('gates', 'shop');
   const followUp = h.queue({ agent: 'bolt', title: 'Follow up on your call with the board' });
@@ -462,12 +462,12 @@ test('a pause of the work in no thread waits only for work that can run and merg
   const why = 'No new start without a deadline';
   assert.match(
     String(pauses.pause({ project: 'unsorted', why, until: [followUp] }, ceo())),
-    new RegExp(`#${followUp} is on work in no thread, which the pause would hold`),
+    new RegExp(`#${followUp} is on work in no deliverable, which the pause would hold`),
     "the call's follow-up runs, but its review would wait",
   );
   assert.match(
     String(pauses.pause({ project: 'unsorted', why, until: [afterFollowUp] }, ceo())),
-    new RegExp(`#${afterFollowUp} needs #${followUp} first, on work in no thread, which the pause would hold`),
+    new RegExp(`#${afterFollowUp} needs #${followUp} first, on work in no deliverable, which the pause would hold`),
   );
   const p = pause({ project: 'unsorted', why, until: [afterExpedited] });
   assert.deepEqual(
@@ -477,7 +477,7 @@ test('a pause of the work in no thread waits only for work that can run and merg
   );
 });
 
-test('work the pause of the work in no thread holds moves to a thread only once it lifts', async () => {
+test('work the pause of the work in no deliverable holds moves to a thread only once it lifts', async () => {
   reset();
   const view = thread('view', 'shop');
   const work = h.queue({ agent: 'kit' });
@@ -496,7 +496,7 @@ test('work the pause of the work in no thread holds moves to a thread only once 
   assert.deepEqual(moveJob(work, view, 'kit'), { thread: view, jobs: [work] });
 });
 
-test('work the pause of the work in no thread holds goes onto a thread by an item link only once it lifts', async () => {
+test('work the pause of the work in no deliverable holds goes onto a thread by an item link only once it lifts', async () => {
   reset();
   const view = thread('view', 'shop');
   const work = h.queue({ agent: 'kit' });
@@ -671,7 +671,7 @@ test('hq thread pause and hq project resume, as the CEO runs them', async () => 
   assert.match(
     paused.out,
     new RegExp(
-      `^Paused ${levels}: Wait for the view\\n1 queued job on it held\\. Once #${gate.id} \\(moss, running\\) has merged or ended, HQ queues you a job to judge it; only hq thread resume ${levels} lifts it\\.`,
+      `^Paused ${levels}: Wait for the view\\n1 queued job on it held\\. Once #${gate.id} \\(moss, running\\) has merged or ended, HQ queues you a job to judge it; only hq deliverable resume ${levels} lifts it\\.`,
     ),
   );
   assert.match(paused.out, new RegExp(`Started before the pause: #${running.id}\\. Stop each`));

@@ -1,8 +1,10 @@
-// book-check.mjs's stories of the book's body (shell/book.js, booklayout.js, bookhandle.js, bookcover.js, bookflip.js):
-// the folded book's handle, nudging no one, pulled in with the book on it, and a mark landing in it showing its snip; the book let go anywhere staying there,
-// with HQ at a phone's width beside it, and folding when let go too narrow to draw on; the table's quiet checkerboard
-// where the book moves off it; the open showing the cover first, then the page; a page turned forward and back by one
-// turn played either way. Each asserts what the board sees: boxes, frames, words.
+// book-check.mjs's stories of the book's body (shell/ink/book.js, booklayout.js, bookhandle.js, bookflip.js; Ink's
+// folder): the shut book's pull tab, nudging no one, pulled in with the book on
+// it at its own width, tapped open and shut, and a mark landing in it showing its snip; the cover's edge let go
+// anywhere staying there, with HQ at a phone's width beside it, and never closing the book; the table's quiet
+// checkerboard where the book moves off it; the book opening straight onto its page, HQ's page fading into its room; on
+// a phone the book over HQ, its tab in reach; a page turned forward and back by one turn played either way. Each
+// asserts what the board sees: boxes, frames, words. (the hardcover's tab and edge)
 import assert from 'node:assert/strict';
 
 const MINI = { width: 1133, height: 744 };
@@ -12,16 +14,19 @@ const HOLD_MS = 200;
 // c: book-check.mjs's helpers: { hq(browser, viewport, options), shot(name, page), settled(page, mode), settle }
 export function bodyStories(c) {
   return {
-    "the book's body: pulled by its handle, the book comes with it and stays where it's let go": browser =>
+    "the book's body: pulled by its tab, the book comes with it at its own width and opens at that width": browser =>
       pulledIn(browser, c),
-    "the book's body: a mark landing in the folded book shows its snip on the handle, and the tap opens the book":
-      browser => landing(browser, c),
-    "the book's body: the spine let go stays there, HQ a phone's width beside it; let go too narrow, it folds":
+    "the book's body: the pull tab's tap shuts the open book and opens it again": browser => tapped(browser, c),
+    "the book's body: a mark landing in the shut book shows its snip on the tab, and the tap opens the book": browser =>
+      landing(browser, c),
+    "the book's body: the cover's edge let go stays there, HQ a phone's width beside it; it never closes the book":
       browser => letGo(browser, c),
     "the book's body: the table where the book moves off it is a quiet checkerboard, not a flat fill": browser =>
       table(browser, c),
-    "the book's body: opening shows the cover as the book comes in, then it swings open onto the page": browser =>
-      opening(browser, c),
+    "the book's body: the book opens straight onto its page, no cover, and HQ fades into its room as it lands":
+      browser => opening(browser, c),
+    "the book's body: on a phone the open book lies over HQ, its black board round the page and its tab in reach":
+      browser => phone(browser, c),
     "the book's body: a page turned forward and back is the one 3D turn, played either way": browser =>
       turning(browser, c),
   };
@@ -32,35 +37,55 @@ export function bodyStories(c) {
 async function pulledIn(browser, c) {
   const { page, errors, done } = await atMini(browser, c);
   try {
+    const open = await bookWidth(page);
     await putAway(page, c);
-    const handle = page.locator('#book .bk-lip');
+    const tab = page.locator('#book .bk-lip');
     await c.shot('book-body-handle', page);
-    // pulled to 40% of the screen: the handle goes with the pointer, the book's spine just behind it, the cover on show
-    const from = await handle.boundingBox(),
+    // drawn left a little more than half the book's width: the tab goes with the pointer, the cover's edge just behind
+    // it, and the book comes in at its own width, never stretched
+    const from = await tab.boundingBox(),
       x = from.x + from.width / 2,
       y = from.y + from.height / 2,
-      to = MINI.width * 0.4 - from.width / 2,
-      dx = to - x;
+      dx = -open * 0.55;
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(to, y, { steps: 12 });
+    await page.mouse.move(x + dx, y, { steps: 12 });
     await page.waitForTimeout(HOLD_MS);
-    const held = await handle.boundingBox(),
-      spine = await page.locator('#book [role=separator]').boundingBox();
+    const held = await tab.boundingBox(),
+      edge = await page.locator('#book .bk-edge').boundingBox();
+    assert.ok(Math.abs(held.x - (from.x + dx)) <= 2, `the tab at ${held.x}, the pointer moved it ${dx} from ${from.x}`);
     assert.ok(
-      Math.abs(held.x - (from.x + dx)) <= 2,
-      `the handle at ${held.x}, the pointer moved it ${dx} from ${from.x}`,
+      Math.abs(edge.x - (held.x + held.width)) <= 2,
+      `the edge at ${edge.x}, the tab ends at ${held.x + held.width}`,
     );
-    assert.ok(
-      Math.abs(spine.x - (held.x + held.width)) <= 2,
-      `the spine at ${spine.x}, the handle ends at ${held.x + held.width}`,
-    );
-    assert.ok(await coverShows(page), 'the cover shows as the book comes in');
+    assert.equal(await bookWidth(page), open, 'the book comes in at its own width');
     await c.shot('book-body-pulled', page);
     await page.mouse.up();
     await c.settled(page, 'open');
-    const hqWidth = await page.evaluate(() => document.body.getBoundingClientRect().width);
-    assert.ok(Math.abs(hqWidth - MINI.width * 0.4) <= 3, `let go at 40% of ${MINI.width}, HQ is ${hqWidth} px`);
+    assert.equal(await bookWidth(page), open, 'let go, it opens at the width it had');
+    noErrors(errors);
+  } finally {
+    await done();
+  }
+}
+
+async function tapped(browser, c) {
+  const { page, errors, done } = await atMini(browser, c);
+  try {
+    const tab = page.locator('#book .bk-lip'),
+      box = await tab.boundingBox(),
+      edge = await page.locator('#book .bk-edge').boundingBox();
+    // open, the tab hangs off the cover's outer edge over HQ's page, in sight
+    assert.ok(box.x >= 0 && Math.abs(box.x + box.width - edge.x) <= 2, `the open book's tab at ${JSON.stringify(box)}`);
+    assert.match(await tab.getAttribute('aria-label'), /close/);
+    await tab.click();
+    await c.settled(page, 'folded');
+    assert.equal(await hqWidth(page), MINI.width);
+    const shut = await tab.boundingBox();
+    assert.ok(Math.abs(shut.x + shut.width - MINI.width) <= 2, `the shut book's tab at the screen's edge: ${shut.x}`);
+    assert.match(await tab.getAttribute('aria-label'), /open/);
+    await tab.click();
+    await c.settled(page, 'open');
     noErrors(errors);
   } finally {
     await done();
@@ -99,16 +124,16 @@ async function letGo(browser, c) {
   const { page, errors, done } = await atMini(browser, c);
   try {
     // to 360 px of HQ, past the middle of the screen: it stays
-    await dragSpine(page, 360);
+    await dragEdge(page, 360);
     await c.settled(page, 'open');
     assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open');
     assert.ok(Math.abs((await hqWidth(page)) - 360) <= 2, `HQ is ${await hqWidth(page)} px, let go at 360`);
     await c.shot('book-body-phone-hq', page);
-    // to 250 px of paper: too narrow to draw on, it folds
-    await dragSpine(page, MINI.width - 12 - 250);
-    await c.settled(page, 'folded');
-    assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'folded');
-    assert.equal(await hqWidth(page), MINI.width);
+    // right to the screen's edge: the book stops at its narrowest and stays open
+    await dragEdge(page, MINI.width - 20);
+    await c.settled(page, 'open');
+    assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open');
+    assert.equal(await bookWidth(page), 320);
     noErrors(errors);
   } finally {
     await done();
@@ -119,14 +144,14 @@ async function table(browser, c) {
   const { page, errors, done } = await atMini(browser, c);
   try {
     const hq = await hqWidth(page),
-      x = await spineX(page),
+      x = await edgeX(page),
       y = 500;
     await page.mouse.move(x, y);
     await page.mouse.down();
-    await page.mouse.move(x + 260, y, { steps: 12 });
+    await page.mouse.move(x + 160, y, { steps: 12 });
     await page.waitForTimeout(HOLD_MS);
-    // mid-drag, between HQ's page and the spine: two tones that alternate, not one flat fill
-    const tones = await lightsIn(page, { x: hq + 30, y: 200, width: 150, height: 200 });
+    // mid-drag, between HQ's page and the book: two tones that alternate, not one flat fill
+    const tones = await lightsIn(page, { x: hq + 20, y: 200, width: 100, height: 200 });
     await c.shot('book-body-table', page);
     await page.mouse.up();
     assert.ok(tones.size >= 2 && tones.spread <= 40, `the table's tones: ${JSON.stringify(tones)}`);
@@ -140,22 +165,22 @@ async function opening(browser, c) {
   const { page, errors, done } = await atMini(browser, c);
   try {
     await putAway(page, c);
-    // every frame from the tap: where the spine is, whether the cover shows, and whether the book's laid out open
+    // every frame from the tap: where the book's edge is, whether it's laid out open, and HQ's page's room and opacity
     const seen = page.evaluate(
       () =>
         new Promise(resolve => {
           const start = performance.now(),
             frames = [],
-            spine = document.querySelector('#book [role=separator]'),
-            cover = document.querySelector('#book .bk-cover'),
+            edge = document.querySelector('#book .bk-edge'),
             frame = () => {
               frames.push({
                 t: Math.round(performance.now() - start),
-                spine: Math.round(spine.getBoundingClientRect().left),
-                cover: !cover.hidden,
+                edge: Math.round(edge.getBoundingClientRect().left),
                 open: document.documentElement.dataset.book === 'open',
+                hq: Math.round(document.body.getBoundingClientRect().width),
+                shown: Number(getComputedStyle(document.body).opacity),
               });
-              if (performance.now() - start < 1400) requestAnimationFrame(frame);
+              if (performance.now() - start < 2000) requestAnimationFrame(frame);
               else resolve(frames);
             };
           requestAnimationFrame(frame);
@@ -163,18 +188,48 @@ async function opening(browser, c) {
     );
     await page.locator('#book .bk-lip').click();
     const frames = await seen,
-      coming = frames.filter(f => f.spine < MINI.width && !f.open),
-      shown = frames.filter(f => f.cover),
-      landed = frames.find(f => f.open);
+      coming = frames.filter(f => f.edge < MINI.width && !f.open),
+      landed = frames.findIndex(f => f.open),
+      narrowed = frames.findIndex(f => f.hq < MINI.width);
     assert.ok(coming.length >= 2, `the book coming in: ${JSON.stringify(frames.slice(0, 12))}`);
+    assert.equal(await page.locator('#book .bk-cover').count(), 0, 'no cover: the book opens straight onto its page');
+    // HQ keeps its whole width till the book has landed, then fades out, takes its new room and fades back in, quickly
+    assert.ok(landed >= 0 && narrowed >= landed, `HQ narrowed at frame ${narrowed}, the book landed at ${landed}`);
     assert.ok(
-      coming.every(f => f.cover),
-      `the page showed before the cover as the book came in: ${JSON.stringify(coming)}`,
+      frames.slice(landed).some(f => f.shown < 0.7),
+      `HQ's page didn't fade: ${JSON.stringify(frames.slice(landed, landed + 12))}`,
     );
-    assert.ok(landed && shown.at(-1).t > landed.t, 'the cover swings open once the book has landed');
-    // (about half a second; headless frames under a busy machine come late)
-    assert.ok(shown.at(-1).t < 1500, `the cover and leaves still turning at ${shown.at(-1).t} ms`);
-    assert.ok(!frames.at(-1).cover && frames.at(-1).open, 'open on the page after');
+    // (well under a second; headless frames under a busy machine come late)
+    const back = frames.slice(narrowed).find(f => f.shown > 0.9);
+    assert.ok(
+      back && back.t - frames[landed].t < 1200,
+      `HQ's page back in at ${back?.t}, the book landed at ${frames[landed].t}: ${JSON.stringify(frames.slice(landed))}`,
+    );
+    noErrors(errors);
+  } finally {
+    await done();
+  }
+}
+
+async function phone(browser, c) {
+  const PHONE = { width: 390, height: 844 };
+  const { page, errors, done } = await c.hq(browser, PHONE, { hasTouch: true, isMobile: true });
+  try {
+    await c.settled(page, 'folded');
+    const tab = page.locator('#book .bk-lip');
+    await tab.tap();
+    await c.settled(page, 'spread');
+    const paper = await page.locator('#book .bk-paper').boundingBox(),
+      box = await tab.boundingBox();
+    // the board shows round the page: at its head, its foot and its outer edge, the spine at the right
+    assert.ok(
+      paper.y >= 6 && paper.x >= 10 && paper.x + paper.width <= PHONE.width - 4,
+      `the paper at ${JSON.stringify(paper)}`,
+    );
+    assert.ok(box.x >= 0 && box.x + box.width <= PHONE.width, `the tab in reach: ${JSON.stringify(box)}`);
+    await c.shot('book-body-phone', page);
+    await tab.tap();
+    await c.settled(page, 'folded');
     noErrors(errors);
   } finally {
     await done();
@@ -240,34 +295,27 @@ async function atMini(browser, c) {
   await c.settled(opened.page, 'open');
   return opened;
 }
-const spineX = async page => {
-  const r = await page.locator('#book [role=separator]').boundingBox();
+const edgeX = async page => {
+  const r = await page.locator('#book .bk-edge').boundingBox();
   return r.x + r.width / 2;
 };
 const hqWidth = page => page.evaluate(() => document.body.getBoundingClientRect().width);
-// The spine dragged to x (its left edge), held there a moment and let go
-async function dragSpine(page, x) {
-  const from = await spineX(page);
+const bookWidth = page =>
+  page.evaluate(() => Math.round(document.querySelector('#book .bk-leaf').getBoundingClientRect().width));
+// The cover's edge dragged to x (its left edge), held there a moment and let go
+async function dragEdge(page, x) {
+  const from = await edgeX(page);
   await page.mouse.move(from, 400);
   await page.mouse.down();
   await page.mouse.move(x + 6, 400, { steps: 12 });
   await page.waitForTimeout(HOLD_MS);
   await page.mouse.up();
 }
-// The book put away: its spine flicked right, to the screen's edge
+// The book put away: its pull tab tapped
 async function putAway(page, c) {
-  const x = await spineX(page);
-  await page.mouse.move(x, 400);
-  await page.mouse.down();
-  await page.mouse.move(MINI.width - 10, 400, { steps: 3 });
-  await page.mouse.up();
+  await page.locator('#book .bk-lip').click();
   await c.settled(page, 'folded');
 }
-const coverShows = page =>
-  page.evaluate(() => {
-    const cover = document.querySelector('#book .bk-cover');
-    return !cover.hidden && cover.getBoundingClientRect().width > 100;
-  });
 // The lightnesses (0-255, rounded to 2) in a box on the screen: how many there are, and how far apart
 async function lightsIn(page, clip) {
   const png = await page.screenshot({ clip });

@@ -12,8 +12,11 @@ import { names } from './brand.js';
 
 export function onEvent(ev) {
   // (the book changed on the store, an answer clipped onto a note: the book reads its sheets again, bookrail.js; one
-  // typed onto a page names it, which the book reads again if it's open, bookpages.js. company: page job #19916, not
-  // upstream yet)
+  // typed onto a page names it, which the book reads again if it's open, bookpages.js)
+  // (a notebook's page changed, by this screen or another of the board's: every screen showing it reads it again,
+  // bookpages.js.)
+  if (ev.type === 'book' && ev.text === 'notebook')
+    return void document.dispatchEvent(new CustomEvent('book:notebook', { detail: { page: ev.page ?? null } }));
   if (ev.type === 'book')
     return void document.dispatchEvent(new CustomEvent('book:changed', { detail: { page: ev.page ?? null } }));
   if (world.apply(ev).unknown) refreshOrg(); // someone new

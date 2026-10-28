@@ -1,6 +1,7 @@
 // What holds the work the board's notes are in or would go to (routing.ts), so that they'd wait with it: read from the
 // play's outlook, and the notes in such work, for the play's after-hook that gives them back (feedback.ts sendBack) and
 // HQ's Notes (feedback.ts listNotes).
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
 import * as forecast from './forecast.ts';
@@ -41,7 +42,7 @@ export function placeRefusal({ thread, after, card }: Place) {
     return `it would wait for the board's answer on card #${card}, and its notes with it: queue the notes' task without --after request, and the step that needs the answer apart`;
   const [paused] = pauses.holding(thread);
   if (paused)
-    return `${paused.target} is paused, so a task of notes there would wait with it: put it in a thread that isn't held`;
+    return `${paused.target} is paused, so a task of notes there would wait with it: put it in a deliverable that isn't held`;
   const f = forecast.current();
   const queued = thread
     ? (db.prepare("select id from jobs where thread = ? and status = 'queued' order by id").all(thread) as {
@@ -77,14 +78,17 @@ export function waiting(ids: number[], f: Forecast = forecast.current()) {
 
 // The notes in queued work, still open (none marked fixed or answered), each job's, for the play's after-hook
 // (feedback.ts sendBack): a note sent to a job that failed is the job's that took its place (holder).
+// The open notes are read first, each followed down its job's replacements (jobs.ts lineageFrom), and the jobs they
+// reach are checked on db.ts jobs_state, so only a queued one's row is read (for its session).
+const OPEN_NOTES = `select n.id note, n.job from review_notes n where n.status = 'sent' and n.fixed is null
+  and n.answered is null and not exists (select 1 from note_routes r where r.note = n.id and r.routed is null)`;
 export const carried = () =>
   (
     db
       .prepare(
-        `select j.id job, json_group_array(n.id) notes from review_notes n
-    join jobs j on j.id in (${jobs.lineageFrom('select n.job')})
-    where n.status = 'sent' and n.fixed is null and n.answered is null and j.kind = 'work' and j.status = 'queued'
-      and j.session is null and not exists (select 1 from note_routes r where r.note = n.id and r.routed is null)
+        `select j.id job, json_group_array(l.note) notes from (${jobs.lineageFrom(OPEN_NOTES, 'note')} order by note) l
+    cross join jobs j indexed by jobs_state on j.id = l.id
+    where j.kind = 'work' and j.status = 'queued' and j.session is null
     group by j.id order by j.id`,
       )
       .all() as { job: number; notes: string }[]

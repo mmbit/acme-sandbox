@@ -12,6 +12,7 @@ export type PullRequest = {
   aheadBy: number;
   title?: string;
   mergedSha?: string;
+  mergeCommit?: string; // the merge commit GitHub answers its merge with
 };
 export function playGithub() {
   const pulls = new Map<number, PullRequest>();
@@ -55,6 +56,7 @@ export function playGithub() {
         mergeable: p.mergeable,
         base: { ref: p.base },
         head: { sha: p.head },
+        merge_commit_sha: p.mergeCommit,
       });
     if (method === 'PATCH') {
       p.state = 'closed';
@@ -67,7 +69,7 @@ export function playGithub() {
     if (refusal) return json({ message: refusal.message }, refusal.status);
     if (p.mergeable === false) return json({ message: 'Pull Request is not mergeable' }, 405);
     Object.assign(p, { state: 'closed', merged: true, title: commit_title, mergedSha: sha });
-    return json({ merged: true });
+    return json({ merged: true, sha: p.mergeCommit });
   }) as typeof fetch;
   return gh;
 }

@@ -1,6 +1,7 @@
 // The board's projects board: the projects (HQ's projects table, company.ts projects), their threads (lines of work
 // with a goal, in HQ's db, which any agent starts) and each project's sentence on where it stands, by its owner. A job
 // serves one thread (jobs.thread), and the work it leads to inherits it (jobs.ts threadFrom).
+// (its messages say deliverable, the board's word for a thread)
 import { db, prepared } from './db.ts';
 import { ceo, projects, type Project } from './company.ts';
 import { deskLets, loopJobs, OPEN_JOBS, threadOf, WORK_LEAD } from './jobs.ts';
@@ -67,7 +68,7 @@ export function createThread(t: NewThread): Thread | string {
     new Date().toISOString(),
     t.by ?? null,
   );
-  publish({ type: 'log', agent: project.owner, text: `New thread in ${project.name}: ${name}` });
+  publish({ type: 'log', agent: project.owner, text: `New deliverable in ${project.name}: ${name}` });
   return findThread(id)!;
 }
 
@@ -92,7 +93,7 @@ function checkThread(t: NewThread): { id: string; project: Project; name: string
   const badSlug = slugRefusal(t.slug);
   if (badSlug) return badSlug;
   const id = `${project.id}/${t.slug ?? freeSlug(project.id, name)}`;
-  if (findThread(id)) return `${id} is already a thread: pick another slug`;
+  if (findThread(id)) return `${id} is already a deliverable: pick another slug`;
   return { id, project, name, goal };
 }
 
@@ -189,14 +190,15 @@ export function threadForJob(
   queuer: Queuer,
 ): { thread: string } | { from?: number } | { status: 400 | 409; refusal: string } {
   if (ask.thread != null && ask.newThread != null)
-    return { status: 400, refusal: 'name one thread, or start one: not both' };
+    return { status: 400, refusal: 'name one deliverable, or start one: not both' };
   const titled = (thread: { id?: string; name: string; project: string }) =>
     ask.title == null ? undefined : taskClash(String(ask.title), thread);
   if (ask.thread != null) {
     const id = String(ask.thread);
     // (a moved thread found by its old id: its new one)
     const thread = findThread(id);
-    if (thread?.status !== 'open') return { status: 409, refusal: `${id} isn't an open thread (hq thread list)` };
+    if (thread?.status !== 'open')
+      return { status: 409, refusal: `${id} isn't an open deliverable (hq deliverable list)` };
     const clashes = titled(thread);
     return clashes ? { status: 400, refusal: clashes } : { thread: thread.id };
   }
@@ -219,11 +221,11 @@ export function threadForJob(
 function noThreadRefusal(inherited: string | null, own: string | null) {
   if (!projects().requireThread) return undefined;
   const why = inherited
-    ? `its thread ${inherited} is done`
+    ? `its deliverable ${inherited} is done`
     : own
-      ? `its thread ${own} is HQ's one-task thread, which holds only that task`
-      : 'it has no open thread to inherit';
-  return `name the thread this job serves, since ${why}. ${whereWorkGoes()}\n${threadChoices()}`;
+      ? `it's in ${own}, HQ's one-task wrapper, which holds only that task`
+      : 'it has no open deliverable to inherit';
+  return `name the deliverable this job serves, since ${why}. ${whereWorkGoes()}\n${threadChoices()}`;
 }
 
 // hq item link <item> job:<id> --thread <project>/<slug>: one job's work in no open thread (in none, or in one that's
@@ -234,7 +236,7 @@ function noThreadRefusal(inherited: string | null, own: string | null) {
 export function placeOn(job: number, id: string): Thread | string {
   // (a moved thread found by its old id: its new one)
   const thread = findThread(id);
-  if (thread?.status !== 'open') return `${id} isn't an open thread (hq thread list)`;
+  if (thread?.status !== 'open') return `${id} isn't an open deliverable (hq deliverable list)`;
   const had = threadOf(job);
   if (had && isOpen(had)) return `job #${job} is on ${had} already: its time goes there`;
   const { lead } = db.prepare(`select ${WORK_LEAD} lead from jobs j where j.id = ?`).get(job) as { lead: number };
@@ -253,14 +255,15 @@ export function placeOn(job: number, id: string): Thread | string {
 // Why a job with its item's time that would be in no thread is refused, wherever the company asks for threads or not:
 // the time is a thread's window (windows.ts).
 export const untimedRefusal = () =>
-  `a window goes on the thread of its work, and this job would be in none: name the thread it serves, ${threadChoices()}`;
+  `a window goes on the deliverable of its work, and this job would be in none: name the deliverable it serves, ${threadChoices()}`;
 
+// (deliverables, the board's word for threads)
 const threadChoices = () => {
   const open = listThreads();
   const choices = open.length
-    ? `Open threads:\n${open.map(t => `  ${t.id}  ${t.name} (${t.owner}), done when ${t.goal}`).join('\n')}`
-    : 'There are no open threads yet.';
-  return `--thread <project>/<slug>. The project's owner or the CEO may start one with --thread new:<project> "name" "done when". ${choices}`;
+    ? `Open deliverables:\n${open.map(t => `  ${t.id}  ${t.name} (${t.owner}), done when ${t.goal}`).join('\n')}`
+    : 'There are no open deliverables yet.';
+  return `--deliverable <project>/<slug>, the open one whose feature it serves. The project's owner or the CEO may start one with --deliverable new:<project> "name" "done when", for a feature no open one makes. ${choices}`;
 };
 
 // ---- the board's view (projectboard.ts.)

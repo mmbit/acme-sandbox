@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { harness } from './harness.ts';
 
 const h = await harness('walkthroughs');
-const bookcalls = await import('./bookcalls.ts'); // (its 5-minute sweep)
+const bookcalls = await import('./ink/bookcalls.ts'); // (its 5-minute sweep)
 
 const page = (call: number) =>
   h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 }).then(r => r.body as { id: number });

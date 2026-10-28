@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor, wait
 import reads
 from drawing import ASK_WORDS, BESIDE_MOST, INK_WORDS, WHAT_MOST, ink_asked, what_asked
 from driving import BY, DRIVE_WORDS, OPEN_WORDS, move_asked, work_asked
+from callnotes import CHANGE_MOST, SCRAP_WORDS, TITLE_WORDS, TITLE_WORDS_SAID, scrap_asked, title_asked
 
 # The CLI starts this with the seat's sign-in in its environment: hq gets only the call's own HQ_* (HQ_TIME_ZONE: the
 # board's clock for hq's times, guard.py agent_env). The call's Waits runs hq in it.
@@ -366,9 +367,9 @@ SCREEN_TOOL = {
         'since': {'type': 'string', 'pattern': MOMENT.pattern, 'description': 'instead of a picture, the list of what '
                   "they did since then: '-2m', '17:03' or '#12'"}}}}
 TOOLS += [SCREEN_TOOL]
-# The board's Sketchbook: a sketch it means on the call, through the line too (it counts the picture in the call's).
+# The board's Notebook (once the Sketchbook): a sketch it means on the call, through the line too (it counts the picture in the call's).
 TOOLS += [
-    {'name': 'sketch', 'description': "One of the board's sketches (its Sketchbook in HQ), when it means one on the "
+    {'name': 'sketch', 'description': "One of the board's sketches (its Notebook in HQ), when it means one on the "
      "call: by its number ('12') or a few words of its label ('tote bag'). Shows you its picture, with its label and "
      'when it was drawn and last changed; a label that matches several shows the latest and names the rest, and none '
      'lists the latest sketches. Its picture stays in the call, so open one only when the board means it.',
@@ -434,6 +435,36 @@ TOOLS += [
                    'properties': {'x': FRACTION, 'y': FRACTION},
                    'description': "the spot to point at on your latest picture of their whole screen, in fractions of "
                    "its width and height (0 to 1) from its top left"}}}},
+]
+# The call's notes page in the board's Notebook (callnotes.py): the agent's scraps, one per change, and the page's title,
+# through the line too (the coordinator's Ink store cuts each scrap and puts it on the page).
+TOOLS += [
+    {'name': 'scrap', 'description': "Put one change the board asked for on the call's notes page in its Notebook, as a "
+     'scrap: a focused crop of what the board drew or showed for it, with the change in your words. When the board '
+     'says and draws several changes ("this should be smaller", an arrow: "and this should move here", a cross: '
+     '"then we don\'t need this"), make one scrap per change, each cropped to just its own part, never one scrap for '
+     "all of them. Cut from one of its notes on this call (from: 'note 3', its number as the line gave it; the region "
+     "is a part of that note's picture), or from its shown screen at the moment it drew (from: '-20s', '17:03:12' or "
+     "'#12' as the screen tool gives moments; the region a part of the whole screen then). Each lands on the page as "
+     "you make it, where the board sees it pop in. The page is sent when the call ends: each scrap reaches its owner "
+     "as a review note, so don't also queue a job for a change you've put on a scrap.",
+     'inputSchema': {'type': 'object', 'required': ['from', 'region', 'words'], 'additionalProperties': False,
+                     'properties': {
+         'from': {'type': 'string', 'description': "'note 3', or a moment of the shown screen: 'now', '-20s', "
+                  "'17:03:12', '#12'"},
+         'region': {'type': 'object', 'required': ['x', 'y', 'width', 'height'], 'additionalProperties': False,
+                    'properties': {k: FRACTION for k in ('x', 'y', 'width', 'height')},
+                    'description': "the part of that picture the change is about, with a little room round it, in "
+                    'fractions of its width and height (0 to 1) from its top left'},
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': CHANGE_MOST,
+                   'description': 'the one change, in a short plain line ("Make the price smaller")'},
+         'owner': {'type': 'string', 'description': "the id of the agent whose work it is, if you know; left out, "
+                   'the routing check decides'}}}},
+    {'name': 'title_page', 'description': "Title the call's notes page in a few words, once it's clear what the call is "
+     'about ("Shop page: price and basket"), and again if that changes: a title, not a summary.',
+     'inputSchema': {'type': 'object', 'required': ['title'], 'additionalProperties': False, 'properties': {
+         'title': {'type': 'string', 'minLength': 1, 'maxLength': 120,
+                   'description': f'at most {TITLE_WORDS} words'}}}},
 ]
 # A call out to a partner. note and no_transcript run nothing: the voice line
 # reads them from the reply's stream (server.py, Call.noted and Call.object), keeps each note in order, and on
@@ -912,6 +943,25 @@ def drive(a):
     return said(line_asked({'drive': move}))
 
 
+def scrap(a):
+    """(ok, content) of the scrap tool: the voice line's answer on its socket once the scrap is on the page (or why
+    not)."""
+    if not (asked := scrap_asked(a)):
+        return False, [{'type': 'text', 'text': SCRAP_WORDS['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': SCRAP_WORDS['none']}]
+    return said(line_asked({'scrap': asked}))
+
+
+def title_page(a):
+    """(ok, content) of the title_page tool: the voice line's answer on its socket."""
+    if not (title := title_asked(a.get('title'))) or set(a) - {'title'}:
+        return False, [{'type': 'text', 'text': TITLE_WORDS_SAID['shape']}]
+    if not SCREEN_SOCKET or not SCREEN_KEY:
+        return False, [{'type': 'text', 'text': TITLE_WORDS_SAID['none']}]
+    return said(line_asked({'title_page': title}))
+
+
 def said(got):
     """(ok, content) of the line's answer in words: what it did ({ok}), or its refusal ({error})."""
     return 'error' not in got, [{'type': 'text', 'text': str(got.get('error', got.get('ok')))}]
@@ -960,7 +1010,8 @@ def outcome(future):
 
 
 # The board's tools that the voice line answers, in words or a picture, by name
-LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive}
+LINE_TOOLS = {'sketch': sketch, 'ask_to_see': ask_to_see, 'draw': draw, 'open_work': open_work, 'drive': drive,
+              'scrap': scrap, 'title_page': title_page}
 
 
 def answer(msg, waits, offered=TOOLS):

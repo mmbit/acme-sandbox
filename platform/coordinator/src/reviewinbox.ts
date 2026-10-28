@@ -1,4 +1,5 @@
 // Review rulings in the project owner's inbox, and the findings each ordered fix task answers.
+// (its messages say deliverable, the board's word for a thread)
 import { unassignedFindings, windowed } from './inbox.ts';
 import { oneLine } from './agreements.ts';
 import { db, inOneStep } from './db.ts';
@@ -134,7 +135,7 @@ export function accept(id: string, by: string, ask: JobThreadAsk & { for?: unkno
         item.thread &&
         (ask.newThread != null || (ask.thread != null && findThread(String(ask.thread))?.id !== item.thread))
       )
-        return 'review fix tasks belong to the reviewed thread';
+        return 'review fix tasks belong to the reviewed deliverable';
       const title = ask.title == null ? reviewed(fix) : taskTitle(ask.title);
       if (!title) return ask.title == null ? UNNAMED : BAD_TITLE;
       const target = reviewwork.target(item, ask, by);
@@ -170,22 +171,18 @@ class RefusedError extends Error {}
 export const drawReason = (item: Item) =>
   jobs.itemWorkBranches().has(item.branch)
     ? 'its work carries a live board call item'
-    : windowed(item.proposal) && 'its thread has a window';
+    : windowed(item.proposal) && 'its deliverable has a window';
 
-// The author's fix tasks for a ruling's blocking findings, or its touch-ups' check, accepted as its owner would (hq inbox
-// accept findings:<pr> --for <author> --findings <ids>): one per task the consolidator named, in its order, under its
-// title. For a company with review.drawWindowedChanges (proposals.ts deliverFindings). A refusal stops delivery.
+// One author job answers the whole ruling. Separate pushes would each hold the branch for their tests.
 export function drawnAtOnce(item: Item, owner: string) {
   const { author } = db.prepare('select author from prs where number = ?').get(item.pr) as { author: string };
-  const tasks = new Map<string | undefined, number[]>();
-  for (const f of item.findings.filter(f => f.kind !== 'nonblocking'))
-    tasks.set(f.task, [...(tasks.get(f.task) ?? []), f.id]);
-  const drawn = (tasks.size ? [...tasks.values()] : [undefined]).map(findings => {
-    const made = accept(`${FINDINGS}${item.pr}`, owner, { for: author, findings });
-    if (typeof made === 'string') throw new Error(made);
-    return made.job;
+  const blocking = item.findings.filter(f => f.kind !== 'nonblocking');
+  const made = accept(`${FINDINGS}${item.pr}`, owner, {
+    for: author,
+    findings: blocking.length ? blocking.map(f => f.id) : undefined,
   });
-  return { jobs: drawn, author };
+  if (typeof made === 'string') throw new Error(made);
+  return { jobs: [made.job], author };
 }
 
 export function fixFor(
@@ -196,13 +193,13 @@ export function fixFor(
 ): Fix | string | undefined {
   const { pr, touchups = false } = options;
   const row = reviewwork.current(thread, pr);
-  if (!row) return named == null && pr === undefined ? undefined : 'this thread has no current review findings';
+  if (!row) return named == null && pr === undefined ? undefined : 'this deliverable has no current review findings';
   const item = get(row.pr)!;
   if (named == null && !touchups) return unassigned(item.pr, item.round).length ? NAME_FINDINGS : undefined;
   const refused = reviewwork.authorized(item, by);
   if (refused) return refused;
   const canonical = thread ? findThread(thread)?.id : null;
-  if (item.thread && canonical !== item.thread) return 'review fix tasks belong to the reviewed thread';
+  if (item.thread && canonical !== item.thread) return 'review fix tasks belong to the reviewed deliverable';
   const required = item.findings.filter(f => f.kind !== 'nonblocking');
   const ids = named == null && !required.length ? [] : readIds(named);
   if (typeof ids === 'string') return ids;
@@ -262,7 +259,7 @@ ${describe({ ...fix.item, findings: fix.findings })}
 
 ${fix.item.brief ?? ''}
 
-This task answers ${fix.findings.length ? fix.findings.map(f => `finding #${f.id}`).join(', ') : 'the review touch-ups'}. Other findings in the ruling are context for the other fix tasks.
+This task answers ${fix.findings.length ? fix.findings.map(f => `finding #${f.id}`).join(', ') : 'the review touch-ups'}. Finish every named finding in this job before the final verification and push. Other findings in the ruling are context.
 Report each named finding by number as fixed, disputed (why), or kept (why).`;
 export function copyTask(before: number, after: number) {
   db.prepare(
@@ -345,8 +342,7 @@ export function reports(pr: number) {
 }
 
 const NAME_FINDINGS = 'name the findings this task fixes with --findings <id,id,...>';
-const UNNAMED =
-  'name the task for what it fixes with --title "...": the reviewer put these findings under more than one task, or none';
+const UNNAMED = 'name the task for what it fixes with --title "...": the reviewer did not name every fix';
 const TITLE_MAX = 140;
 export const BAD_TITLE = `a task's title is one line of up to ${TITLE_MAX} characters`;
 
@@ -355,11 +351,11 @@ export const taskTitle = (given: unknown) => {
   const line = typeof given === 'string' ? oneLine(given) : '';
   return line && line.length <= TITLE_MAX ? line : undefined;
 };
-// The fix task's title the consolidator gave: its findings' one task, or for touch-ups alone their check's
+// Keep every named fix in the round's title, as for a round without thread order.
 function reviewed(fix: Fix) {
-  if (!fix.findings.length) return fix.item.touchups;
-  const tasks = new Set(fix.findings.map(f => f.task));
-  return tasks.size === 1 ? [...tasks][0] : undefined;
+  const ruling = { blocking: fix.findings, touchups_task: fix.item.touchups };
+  const touchedUp = !!fix.item.touchups;
+  return untitledRound(ruling, touchedUp) ? undefined : roundTitle(ruling, touchedUp);
 }
 // The tasks a fix round without thread order goes under (review.ts), as the consolidator named them (model output):
 // each blocking finding's, and its touch-ups' check when it made touch-ups

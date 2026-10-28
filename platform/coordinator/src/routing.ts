@@ -16,6 +16,7 @@
 //     that is held (the play's outlook: holdOf) takes none, nor a new task behind one. Work that is held later gives its
 //     notes back after the play that finds it (sendBack), and so does a job that ends with notes it neither fixed nor
 //     answered (feedback.ts ended): each goes to a routing check again, with why.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, mergePending } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
@@ -24,6 +25,7 @@ import { ceo, names } from './company.ts';
 import { manifest } from './manifests.ts';
 import * as forecast from './forecast.ts';
 import { holdOf, holdWords } from './noteholds.ts';
+import { customerCall } from './memory.ts';
 
 // A sent note as feedback.ts hands it over: slug is the product, cycle folder or HQ it was pinned on, owner whose it
 // is, place how a brief names it, returns whether the board's notes on it come back as its return (owed.ts), and text
@@ -78,9 +80,9 @@ export function queue(notes: SentNote[], back: { why: string; board: string } | 
       ...[n.id, job, n.slug, n.owner, n.name, n.place, n.returns ? 1 : 0, n.text, new Date().toISOString()],
       ...[back?.why ?? null, back?.board ?? null],
     );
-  // (an invited guest's note, signed with their address, is outside text kept like a customer's details: the check that
-  // quotes it holds them, as the job it's routed to does, whether the note is new or one an ended check left: mark.
-  markGuests(job);
+  // (an invited guest's note, signed with their address, is outside text kept like a customer's details, and a customer
+  // call's note holds theirs: the check that quotes it holds them, as the job it's routed to does, whether the note is new or one an ended check left: mark.
+  markCustomers(job);
   db.prepare('update jobs set prompt = ? where id = ?').run(checkPrompt(job), job);
   return job;
 }
@@ -89,9 +91,9 @@ export function queue(notes: SentNote[], back: { why: string; board: string } | 
 export function read(me: jobs.Reader) {
   const routes = routable(me.id);
   if (!routes.length) return 'No notes to route: none waits for this job, and no check left any unrouted.';
-  markGuests(me.id);
+  markCustomers(me.id);
   const open = jobs.openJobs({ except: me.id, awaitingMerge: true });
-  const byThread = Map.groupBy(open, j => jobs.threadOf(j.id) ?? 'in no thread');
+  const byThread = Map.groupBy(open, j => jobs.threadOf(j.id) ?? 'in no deliverable');
   const f = forecast.current();
   const held = (id: number) => {
     const hold = holdOf(id, f);
@@ -103,13 +105,13 @@ export function read(me: jobs.Reader) {
   return [
     provenance(),
     '',
-    `Notes to route (hq job <agent> "title" --code WORD --thread <project>/<slug> --notes <ids> | hq route '#<job>' [note ids]):`,
+    `Notes to route (hq job <agent> "title" --code WORD --deliverable <project>/<slug> --notes <ids> | hq route '#<job>' [note ids]):`,
     ...routes.map(
       r =>
         `#${r.note} on ${r.place}, its owner ${r.owner}${projectOf(r.slug)}: ${r.words.replace(/\s+/g, ' ')}${backWords(r)}`,
     ),
     '',
-    "Open work by thread: one an agent queued that hasn't started takes notes into its brief (hq route '#<job>'); a new task goes in the thread it fits. Held work takes none, nor does a new task behind it: its notes would wait with it.",
+    "Open work by deliverable: one an agent queued that hasn't started takes notes into its brief (hq route '#<job>'); a new task goes in the deliverable it fits. Held work takes none, nor does a new task behind it: its notes would wait with it.",
     ...threads,
   ].join('\n');
 }
@@ -121,7 +123,7 @@ export function route(me: jobs.Reader, to: string, ids: number[]) {
   if (typeof routes === 'string') return routes;
   const target = /^#?(\d+)$/.exec(to);
   if (!target)
-    return `a new task of the notes is hq job ${to} "title" --code WORD --thread <project>/<slug> --notes <ids>, its own title, code and thread; hq route '#<job>' puts them in a waiting job's brief`;
+    return `a new task of the notes is hq job ${to} "title" --code WORD --deliverable <project>/<slug> --notes <ids>, its own title, code and deliverable; hq route '#<job>' puts them in a waiting job's brief`;
   let went: Went;
   try {
     went = inOneStep(() => intoJob(me, Number(target[1]), routes));
@@ -165,6 +167,7 @@ export function log(since: string) {
     .all(since);
 }
 
+// (deliverables, the board's word for threads, drawn whole)
 function checkPrompt(job: number) {
   const routes = routable(job);
   const owners = routes
@@ -173,20 +176,21 @@ function checkPrompt(job: number) {
   return `The board sent ${count(routes.length)} from HQ. Turn them into the work they ask for, each task with the colleague \
 whose work it is. The notes' work waits on this check, so keep it to a few minutes.
 
-1. \`hq route\` lists the notes still to route and the open work by thread, as it is now, with the work that's held. \
+1. \`hq route\` lists the notes still to route and the open work by deliverable, as it is now, with the work that's held. \
 \`hq note <id>\` shows a note's screenshot when its words don't say enough.
 2. One task per improvement: related notes go in one task, and every note in exactly one. Decide whose by what a note is \
 about, not only where it was pinned: a look, a platform tool, a product's own rule. org.yaml's roles and the department \
 pages say whose that is.
-3. Each task: \`hq job <agent> "title" --code WORD --thread <project>/<slug> --notes <note ids>\`, a plain title and a code \
-that say what it does, in the open thread of the notes' project it fits, or a new one (\`--thread new:<project> "name" \
-"done when"\`). The notes go at the end of its brief, with their pictures; a brief file only for what they don't say. Or, \
+3. Each task: \`hq job <agent> "title" --code WORD --deliverable <project>/<slug> --notes <note ids>\`, a plain title and a \
+code that say what it does, in the open deliverable of the notes' project whose feature it serves: notes on one feature, \
+whoever's they are, are tasks in turn in one deliverable, never a deliverable per note. A new one (\`--deliverable \
+new:<project> "name" "done when"\`) only for a feature no open deliverable makes, cut by what the board will see go live. The notes go at the end of its brief, with their pictures; a brief file only for what they don't say. Or, \
 into a job in that area an agent queued that hasn't started: \`hq route '#<job>' <note ids>\` (into its brief). Never into \
-held work, nor a new task behind it or in a paused thread: the notes would wait with it. A note that came back says from \
+held work, nor a new task behind it or in a paused deliverable: the notes would wait with it. A note that came back says from \
 where and why: route it where work can start. The notes \
 are the board's ask: a new task takes its window as it's queued, \`--by <when>\` (a time the board gave), \
-\`--by <project>/<slug>\` (the deliverable they serve), or \`--by none\`; on a thread with a window, or one a windowed \
-thread needs, it has it already.
+\`--by <project>/<slug>\` (the deliverable they serve), or \`--by none\`; in a deliverable with a window, or one a windowed \
+deliverable needs, it has it already.
 4. Then stop: no report, no profile line, no code, no card.
 
 Only your choice routes a note: one you leave stays unrouted, and HQ's summary shows it to your next follow-through check.
@@ -207,7 +211,7 @@ function intoJob(me: jobs.Reader, job: number, routes: Route[]): Went {
   const hold = agent && job !== me.id ? holdOf(job) : null;
   if (hold)
     refuse(
-      `job #${job} is held (${holdWords(hold)}), so notes in it would wait with it: route them into work that can start, or make a task of them in a thread that isn't held`,
+      `job #${job} is held (${holdWords(hold)}), so notes in it would wait with it: route them into work that can start, or make a task of them in a deliverable that isn't held`,
     );
   if (!agent || job === me.id || jobs.extendJob(job, ceo(), brief(routes, held)) === 404)
     refuse(
@@ -255,15 +259,24 @@ const mark = (r: Route, went: Went) => {
     r.note,
   );
   db.prepare("update review_notes set job = ? where id = ? and status = 'sent'").run(went.job, r.note);
-  if (byGuest(r.note)) jobs.handedCustomerData(went.job);
+  if (holdsCustomers(r.note)) jobs.handedCustomerData(went.job);
 };
-// Whether a note is an invited guest's from the board's book (feedback.ts fromBook: an author, no share)
-const byGuest = (note: number) =>
-  !!db.prepare('select 1 from review_notes where id = ? and author is not null and share is null').get(note);
+// Whether a note holds a customer's details: an invited guest's from the board's book (feedback.ts fromBook: an author,
+// no share), or one from the page of a call about a customer (ink/callnotes.ts sends it at hang-up), as the call is now
+const holdsCustomers = (note: number) => {
+  if (db.prepare('select 1 from review_notes where id = ? and author is not null and share is null').get(note))
+    return true;
+  const page = db
+    .prepare(
+      'select p.call from book_notes n join book_pages p on p.id = n.page where n.review = ? and p.call is not null',
+    )
+    .get(note) as { call: number } | undefined;
+  return !!page && customerCall(page.call);
+};
 
-// A job that reads the notes it routes (its check's, an ended check's left) holds them if one is an invited guest's
-const markGuests = (job: number) => {
-  if (routable(job).some(r => byGuest(r.note))) jobs.handedCustomerData(job);
+// A job that reads the notes it routes (its check's, an ended check's left) holds them if one holds a customer's details
+const markCustomers = (job: number) => {
+  if (routable(job).some(r => holdsCustomers(r.note))) jobs.handedCustomerData(job);
 };
 
 // The caller's notes to route among ids (all, without): refused in words when it has none, or one isn't its

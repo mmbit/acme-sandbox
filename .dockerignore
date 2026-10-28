@@ -53,8 +53,12 @@
 # a picture's size and the AI-edit mark, which the photo studio reads and writes (platform/coordinator/src/studio.ts).
 !shared/pictures/size.ts
 !shared/provenance/provenance.ts
-# the ink's one outline, which the book's page picture draws with (platform/coordinator/src/bookrender.ts).
+# the ink's one outline, which the book's page picture draws with (platform/coordinator/src/ink/bookrender.ts).
+# (Ink's folder)
 !shared/review/ink.js
+# and its live line and the stroke's shapes, which it imports
+!shared/review/inklive.js
+!shared/review/inkshape.js
 # the plan levels' text, which hq's help and the coordinator's refusals and planning prompt share (names.ts, proposals.ts).
 !platform/worker/hq/levels.ts
 # what holds work in words, which hq's estimates and the CEO's summary share (threats.ts).
@@ -69,10 +73,11 @@
 !platform/hq/shell/tips.js
 # a review mark's anchor, which feedback.ts migrates the stored marks with
 !shared/review/anchor.js
-# the book's Search matching, which HQ's dev mode shares (platform/coordinator/src/booksearch.ts).
-!platform/hq/shell/booksearchwords.js
-# an agent's ink, which an answer typed onto the book's page is written in (platform/coordinator/src/bookslips.ts).
-!platform/hq/shell/agentink.js
+# the book's Search matching, which HQ's dev mode shares (platform/coordinator/src/ink/booksearch.ts).
+# (Ink's folder)
+!platform/hq/shell/ink/booksearchwords.js
+# an agent's ink, which an answer typed onto the book's page is written in (platform/coordinator/src/ink/booktyped.ts).
+!platform/hq/shell/ink/agentink.js
 !kits
 **/node_modules
 **/*.test.ts

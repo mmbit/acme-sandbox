@@ -73,7 +73,7 @@ export function show(replay: Replay) {
   showProjects(replay);
   const changes = replay.changes;
   print(
-    `Thread finishes: ${changes.earlier} earlier, ${changes.later} later, ${changes.unchanged} unchanged, ${changes.unresolved} unresolved.`,
+    `Deliverable finishes: ${changes.earlier} earlier, ${changes.later} later, ${changes.unchanged} unchanged, ${changes.unresolved} unresolved.`,
   );
   print(`Played both usual and slow sizes in ${(replay.played_ms / 1000).toFixed(1)} s.`);
 }

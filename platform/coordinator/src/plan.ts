@@ -2,6 +2,7 @@
 // Only the project's owner and the CEO change it (hq plan, hq project new | owner | rename | business, the CEO's); anyone else
 // proposes (hq propose, proposals.ts). Names show their level and no two levels share one (names.ts threadClash;
 // hq plan rename | title, hq project rename | done). Every change is logged in plan_changes (db.ts planChange).
+// (its messages say deliverable, the board's word for a thread)
 import { db, planChange } from './db.ts';
 import * as redraws from './redraws.ts';
 import { publish } from './events.ts';
@@ -36,7 +37,7 @@ export function rename(id: string, to: { name: unknown; goal?: unknown; slug?: u
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   const { thread, project } = own;
-  if (thread.status !== 'open') return `${thread.id} is done: only an open thread is renamed`;
+  if (thread.status !== 'open') return `${thread.id} is done: only an open deliverable is renamed`;
   const [name, goal] = [to.name, to.goal ?? thread.goal].map(line);
   const wrong = checkThreadName(name, goal);
   if (wrong) return wrong;
@@ -48,7 +49,7 @@ export function rename(id: string, to: { name: unknown; goal?: unknown; slug?: u
   const moved = slug === undefined ? thread.id : `${project.id}/${slug}`;
   // (its own old id may come back: regroup.ts newId drops that alias)
   if (findThread(moved) && findThread(moved)!.id !== thread.id)
-    return `${moved} is already a thread (or was one): pick another slug`;
+    return `${moved} is already a deliverable (or was one): pick another slug`;
   if (name === thread.name && goal === thread.goal && moved === thread.id) return `${thread.id} is named that already`;
   if (moved !== thread.id) newId(thread.id, moved, project.id);
   db.prepare('update threads set name = ?, goal = ? where id = ?').run(name, goal, moved);
@@ -60,7 +61,7 @@ export function rename(id: string, to: { name: unknown; goal?: unknown; slug?: u
   planChange({
     project: project.id,
     thread: moved,
-    what: `thread renamed: ${said.filter(Boolean).join('; ')}`,
+    what: `deliverable renamed: ${said.filter(Boolean).join('; ')}`,
     by: agent,
   });
   const renamed = findThread(moved)!;
@@ -82,7 +83,7 @@ export function title(job: number, to: unknown, agent: string) {
 
 // hq project rename: the CEO's, the name only (a project under a new id is a new one, its threads moved there)
 export function renameProject(id: string, to: unknown, agent: string) {
-  if (agent !== ceo()) return 'only the CEO renames a project: a new id is hq project new, then hq thread move';
+  if (agent !== ceo()) return 'only the CEO renames a project: a new id is hq project new, then hq deliverable move';
   const project = findProject(id);
   if (!project) return noProject(id);
   const name = line(to);
@@ -103,9 +104,9 @@ export function need(id: string, needs: string, agent: string) {
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   const needed = findThread(needs);
-  if (!needed) return `there's no thread ${needs} (hq thread list)`;
+  if (!needed) return `there's no deliverable ${needs} (hq deliverable list)`;
   const [from, to] = [own.thread.id, needed.id];
-  if (from === to) return "a thread can't need itself";
+  if (from === to) return "a deliverable can't need itself";
   if (needsOf(from).includes(to)) return `${from} needs ${to} already`;
   if (reaches(to, from)) return `${to} needs ${from} already (or through others): that would be a loop`;
   const added = redraws.withoutLoop(from, () => addNeed(own.thread, to, agent));
@@ -116,7 +117,7 @@ export function unneed(id: string, needs: string, agent: string) {
   const own = ownThread(id, agent);
   if (typeof own === 'string') return own;
   const needed = findThread(needs);
-  if (!needed) return `there's no thread ${needs} (hq thread list)`;
+  if (!needed) return `there's no deliverable ${needs} (hq deliverable list)`;
   const [from, to] = [own.thread.id, needed.id];
   if (!db.prepare('delete from thread_needs where thread = ? and needs = ?').run(from, to).changes)
     return `${from} doesn't need ${to}`;
@@ -169,7 +170,7 @@ export function done(id: string, agent: string) {
   if (own.thread.branch) return `${id} has its branch ${own.thread.branch}: it's done when that merges`;
   // (a moved thread found by its old id: its new one)
   db.prepare("update threads set status = 'done', done = ? where id = ?").run(new Date().toISOString(), own.thread.id);
-  planChange({ project: own.project.id, thread: own.thread.id, what: 'thread done', by: agent });
+  planChange({ project: own.project.id, thread: own.thread.id, what: 'deliverable done', by: agent });
   return { ok: true as const };
 }
 
@@ -183,7 +184,7 @@ export function newProject(
   const [id, name, owner] = [p.id, p.name, p.owner].map(v => String(v ?? '').trim());
   const business = p.business == null ? null : String(p.business);
   if (!SLUG.test(id)) return 'a project id is up to 24 lower-case letters, digits and dashes';
-  if (id === DESK) return `${id} names the work in no thread (hq project pause): pick another`;
+  if (id === DESK) return `${id} names the work in no deliverable (hq project pause): pick another`;
   if (!name || name.length > NAME_MAX || /\n/.test(name))
     return `a project needs a name of one line, up to ${NAME_MAX} characters`;
   if (db.prepare('select 1 from projects where id = ?').get(id)) return `${id} is a project already (or was one)`;
@@ -354,7 +355,7 @@ function ownTask(job: number, agent: string) {
   const row = db.prepare('select thread, status, kind, pr, started from jobs where id = ?').get(job) as
     { thread: string | null; status: string; kind: string; pr: number | null; started: string | null } | undefined;
   if (!row) return `there's no job #${job}`;
-  if (!row.thread || row.kind !== 'work' || row.pr !== null) return `job #${job} isn't a task in a thread`;
+  if (!row.thread || row.kind !== 'work' || row.pr !== null) return `job #${job} isn't a task in a deliverable`;
   if (row.status !== 'queued' || row.started !== null)
     return `job #${job} is ${row.status}: only a task still to start moves or drops`;
   return ownThread(row.thread, agent);
@@ -363,7 +364,7 @@ function ownTask(job: number, agent: string) {
 // The thread and its project, if `agent` may change it, or why not
 function ownThread(id: string, agent: string): { thread: Thread; project: Project } | string {
   const thread = findThread(id);
-  if (!thread) return `there's no thread ${id} (hq thread list)`;
+  if (!thread) return `there's no deliverable ${id} (hq deliverable list)`;
   const project = findProject(thread.project);
   if (!project) return `${thread.id} is in ${thread.project}, which is done`;
   return refusal(project, agent) ?? { thread, project };

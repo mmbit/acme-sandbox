@@ -1,0 +1,204 @@
+/* A page shared by its corner (bookdogear.js, bookshare.js): the corner turned down at the paper's top-right, the page
+   held by it, torn out at the spine, and the three targets it's let go on, a menu too. The book's own look. */
+
+/* the page's corner: turned down at the paper's top-right, the page under it showing; the controls' islands start
+   below it (book.css) */
+#book {
+  --bk-ear: 30px;
+}
+#book .bk-dogear {
+  all: unset;
+  position: absolute;
+  top: var(--sat, 0px);
+  right: 0;
+  z-index: 6;
+  width: var(--bk-ear);
+  height: var(--bk-ear);
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+#book .bk-dogear[hidden] {
+  display: none;
+}
+/* (in hand: the page's copy has it) */
+#book .bk-dogear[data-lifted] i {
+  opacity: 0;
+}
+/* (a finger finds it: the touch target reaches further along the top than it shows) */
+#book .bk-dogear::after {
+  content: '';
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 46px;
+  height: 40px;
+}
+#book .bk-dogear i {
+  position: absolute;
+  inset: 0;
+  transform-origin: 100% 0;
+  /* the page under it, then the turned-down flap: the paper's back, shaded towards its fold */
+  background:
+    linear-gradient(225deg, rgba(42, 35, 82, 0.13) 0 50%, transparent 50%),
+    linear-gradient(45deg, #efe3c8 0, #fbf3e2 46%, transparent 50%);
+  filter: drop-shadow(-2px 3px 2px rgba(29, 26, 47, 0.28));
+}
+#book .bk-dogear:focus-visible i {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+@media (hover: hover) {
+  #book .bk-dogear:hover i {
+    scale: 1.25;
+    transition: scale 0.15s ease-out;
+  }
+}
+
+/* the page in hand: a small copy held tilted by its corner, that corner turned, its spine's edge torn (bookpaper.js's
+   tear() draws the edge) */
+#book > .bk-held {
+  position: fixed;
+  z-index: 70;
+  pointer-events: none;
+}
+#book .bk-held {
+  rotate: -4deg;
+  filter: drop-shadow(0 14px 14px rgba(10, 6, 20, 0.34)) drop-shadow(0 1px 2px rgba(10, 6, 20, 0.3));
+  transform-origin: 100% 0;
+  transition:
+    scale 0.14s ease-out,
+    opacity 0.14s;
+}
+#book .bk-held-sheet,
+#book .bk-held-fibres {
+  position: absolute;
+  inset: 0;
+}
+/* (the torn fibres reaching past the paper's surface, lighter than it) */
+#book .bk-held-fibres {
+  background: color-mix(in srgb, var(--bk-paper) 25%, #fff);
+  opacity: 0.85;
+}
+#book .bk-held-sheet {
+  overflow: hidden;
+  border-radius: 3px;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%);
+}
+/* (its turned corner: the paper's back, as on the page) */
+#book .bk-held::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  background: linear-gradient(45deg, #efe3c8 0, #fbf3e2 50%, transparent 50%);
+}
+/* over a target: drawn in towards it by its corner, the target's word in sight */
+#book .bk-held[data-over] {
+  scale: 0.45;
+  opacity: 0.75;
+}
+
+/* the targets: a row over the paper's upper middle, clear of the controls' column at its right edge, each a place to
+   let the page go, a finger wide; lit under it. (The pages' box is their container: on narrow paper they close up.) */
+#book .bk-pages {
+  container: bk-pages / inline-size;
+}
+#book .bk-share {
+  position: absolute;
+  left: calc(50% - 32px);
+  top: max(96px, 26%);
+  z-index: 7;
+  display: flex;
+  gap: 14px;
+  padding: 10px;
+  border-radius: 22px;
+  background: color-mix(in srgb, var(--bk-paper) 80%, transparent);
+  box-shadow: 0 10px 30px rgba(20, 14, 40, 0.18);
+  translate: -50% 0;
+  animation: bk-share-in 0.16s ease-out;
+}
+#book .bk-share[hidden] {
+  display: none;
+}
+@keyframes bk-share-in {
+  from {
+    opacity: 0;
+    scale: 0.92;
+  }
+}
+#book .bk-share button {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 84px;
+  height: 84px;
+  padding: 0 12px;
+  border: 2px dashed color-mix(in srgb, var(--bk-ink) 45%, transparent);
+  border-radius: 16px;
+  background: var(--bk-paper);
+  color: var(--bk-ink);
+  font: 700 14px/1.1 var(--bk-font);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    scale 0.12s ease-out,
+    background-color 0.12s,
+    border-color 0.12s;
+}
+#book .bk-share svg {
+  width: 30px;
+  height: 30px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#book .bk-share button[data-over],
+#book .bk-share button:focus-visible {
+  border-style: solid;
+  border-color: var(--bk-accent);
+  background: color-mix(in srgb, var(--bk-accent) 12%, var(--bk-paper));
+  scale: 1.08;
+}
+@media (hover: hover) {
+  #book .bk-share[data-mode='menu'] button:hover {
+    border-style: solid;
+    background: color-mix(in srgb, var(--bk-accent) 8%, var(--bk-paper));
+  }
+}
+
+@container bk-pages (max-width: 520px) {
+  #book .bk-share {
+    gap: 6px;
+    padding: 6px;
+    border-radius: 18px;
+  }
+  #book .bk-share button {
+    min-width: 66px;
+    height: 70px;
+    padding: 0 6px;
+    font-size: 13px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-dogear i,
+  #book .bk-share button {
+    transition: none;
+  }
+  #book .bk-share {
+    animation: none;
+  }
+}

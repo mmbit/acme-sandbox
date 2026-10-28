@@ -159,6 +159,12 @@ fractions of the picture: HQ draws it there and chooses nothing; it follows what
 it and with the call, and is never kept) and waits up to 5 s for HQ's `inked`. After the agent's own scroll (`drive`)
 it is refused until the agent has a picture of the screen as it is now. Both go through the screen socket and are refused on a call out (rule 9), on the phone and while
 HQ's connection is down; an ask also while the screen is shown or another ask waits.
+The call's notes page in the board's Notebook (`callnotes.py`): the agent's
+`scrap` puts one change on it, cut from one of the board's notes on the call (`from: 'note 3'`) or from its shown
+screen at a moment (`'-20s'`, `'#12'`), a region of that picture with the change in its words, and `title_page` names
+the page in a few words. Both go through the screen socket to the coordinator's Ink store (`POST scrap`, `POST title`:
+`ink/callnotes.ts`), never to HQ's socket: the store tells the board's screens. Refused on a call out, on the phone and
+once the call is over. The line's drawing and driving halves import nothing of it (test_server's split test).
 The transcript is written to the line's volume as the call goes, the board's words as each piece is heard, even ones
 not answered yet: while the board talks on, a pause that sounds finished sends the message so far and its next words take it back, so a
 long message may exist nowhere else until the board stops. If the line restarts mid-call, it hands that transcript over

@@ -278,8 +278,9 @@ function metBy(w: WakeRow, now: number): string | null {
   if (!met) return null;
   if ('never' in met) return `${workOf(w.arg)}'s work will never deploy: ${met.never}`;
   const { deploy, pr } = met;
-  if (pr)
-    return `${workOf(w.arg)}'s work (pull request #${pr.number}, merged ${clock(pr.merged_at!)}) is deployed: ${describeDeploy(deploy)}`;
+  // (by kind, as the branches around it)
+  if (w.kind === 'deployed')
+    return `${workOf(w.arg)}'s work (pull request #${pr!.number}, merged ${clock(pr!.merged_at!)}) is deployed: ${describeDeploy(deploy)}`;
   if (w.kind === 'recreated') return `a deploy recreated ${w.arg}: ${describeDeploy(deploy)}`;
   const n = Number(w.arg);
   return `${n === 1 ? 'a deploy' : `${n} deploys`} since it was queued, the last: ${describeDeploy(deploy)}`;

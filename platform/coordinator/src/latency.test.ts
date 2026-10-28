@@ -52,6 +52,24 @@ test("a hold never waits for an outside reader of hq.db and survives a failed mi
   assert.deepEqual(holds(), [600], 'the recovered hold is written once');
 });
 
+test("a long report's turn that holds the thread half a second is named by its part; a wait it ends in is not counted", async () => {
+  const turn = latency.turns('a report');
+  const busy = (ms: number) => {
+    const until = performance.now() + ms;
+    while (performance.now() < until);
+  };
+  busy(520);
+  assert.equal(await turn('the slow part', new Promise<number>(r => setTimeout(() => r(7), 600))), 7);
+  busy(50);
+  await turn('the quick part');
+  latency.flush();
+  const named = h.db.prepare("select name from slow_holds where name like 'a report:%'").all() as { name: string }[];
+  assert.deepEqual(
+    named.map(r => r.name),
+    ['a report: the slow part'],
+  );
+});
+
 test('a request target the URL parser rejects is answered with a 500 and HQ stays up; a path nobody signed in for is not kept', async () => {
   const raw = (target: string) =>
     new Promise<string>(resolve => {
@@ -107,54 +125,62 @@ test('a stall names the hold that explains it: not a long poll that only waited,
   assert.equal(latency.stalledBy(5_000, [{ name: 'GET /api/me', ms: 40 }]), undefined, 'the machine was short of CPU');
 });
 
-test('a stall is one job per cause: every request one cause, a step without its numbers another; a started job holds the alarm until its work is out', async () => {
+test('stalls make one queued job, of any cause, on spare room; a started job holds its causes until its work is out', async () => {
   const { stalled } = await import('./stalljobs.ts');
   const jobs = () =>
     h.db
-      .prepare("select id, title, prompt from jobs where prompt like 'HQ''s coordinator stood still%' order by id")
+      .prepare(
+        "select id, title, prompt, downtime from jobs where prompt like 'HQ''s coordinator stood still%' order by id",
+      )
       .all() as {
       id: number;
       title: string;
       prompt: string;
+      downtime: number;
     }[];
   const now = Date.now();
   stalled({ name: 'GET /api/work', ms: 2_300 }, 2_300, now);
   stalled({ name: 'GET /api/agent/search', ms: 2_600 }, 2_500, now + 60_000);
   stalled({ name: "the play's parts: played 634 ms (205 jobs)", ms: 2_300 }, 2_300, now + 60_000);
   stalled({ name: "the play's parts: played 612 ms (203 jobs)", ms: 2_400 }, 2_400, now + 120_000);
-  const [requests, play] = jobs();
+  const [requests] = jobs();
   assert.deepEqual(
-    jobs().map(j => j.title),
-    [
-      'HQ stood still 2.3 s behind GET /api/work: make it quick',
-      "HQ stood still 2.3 s behind the play's parts: played 634 ms (205 jobs): make it quick",
-    ],
+    jobs().map(j => [j.title, j.downtime]),
+    [['HQ stood still 2.3 s behind GET /api/work: make it quick', 1]],
+    'every cause goes in the one queued job, which waits for spare room',
   );
-  assert.match(requests.prompt, /2\.3 s behind GET \/api\/work\.\n- At .*: 2\.5 s behind GET \/api\/agent\/search\.$/);
-  assert.match(play.prompt, /played 612 ms \(203 jobs\)\.$/);
+  assert.match(
+    requests.prompt,
+    /2\.3 s behind GET \/api\/work\.\n- At .*: 2\.5 s behind GET \/api\/agent\/search\.\n- At .*: 2\.3 s behind the play's parts: played 634 ms \(205 jobs\)\.\n- At .*: 2\.4 s behind the play's parts: played 612 ms \(203 jobs\)\.$/,
+  );
 
-  // each waits for its sort into the project it's for, as HQ's other template work: the CEO names it, and it may start.
+  // it waits for its sort into the project it's for, as HQ's other template work: the CEO names it, and it may start.
   assert.notEqual((await h.claim(h.job(requests.id).engine))?.id, requests.id, 'unsorted, it waits');
   const proposals = await import('./proposals.ts'),
     { ceo } = await import('./company.ts');
-  for (const [job, title, code] of [
-    [requests.id, 'Make the work list quick', 'WORKFAST'],
-    [play.id, "Make the play's parts quick", 'PLAYFAST'],
-  ] as const) {
-    const { proposal } = h.db.prepare('select proposal from sorts where job = ?').get(job) as { proposal: number };
-    assert.equal((proposals.accept(proposal, ceo(), { title, code }) as { job: number }).job, job);
-  }
-  const running = await h.claim(h.job(requests.id).engine);
-  assert.equal(running?.id, requests.id, 'the first cause is claimed first');
+  const { proposal } = h.db.prepare('select proposal from sorts where job = ?').get(requests.id) as {
+    proposal: number;
+  };
+  assert.equal(
+    (proposals.accept(proposal, ceo(), { title: 'Make HQ quick', code: 'HQFAST' }) as { job: number }).job,
+    requests.id,
+  );
+  const running = await h.claim(h.job(requests.id).engine, { util: 0.1 });
+  assert.equal(running?.id, requests.id, 'sorted, it is claimed on a seat with spare room');
   stalled({ name: 'POST /api/agent/window', ms: 3_300 }, 3_300, now + 180_000);
-  assert.equal(jobs().length, 2, 'a started job holds the alarm');
-  assert.doesNotMatch(jobs()[0].prompt, /window/, 'and its brief, read already, stays as it was');
+  stalled({ name: "the play's parts: played 640 ms (206 jobs)", ms: 2_500 }, 2_500, now + 180_000);
+  assert.equal(jobs().length, 1, "a started job holds its causes' alarm");
+  assert.doesNotMatch(jobs()[0].prompt, /window|640/, 'and its brief, read already, stays as it was');
 
   assert.equal((await h.finish(running!)).status, 200);
-  stalled({ name: 'GET /api/projects', ms: 3_100 }, 3_100, now + 240_000);
-  assert.equal(
-    jobs().at(-1)!.title,
-    'HQ stood still 3.1 s behind GET /api/projects: make it quick',
-    'ended with nothing to deploy, the next stall is a job again',
+  stalled({ name: "the play's parts: played 650 ms (206 jobs)", ms: 3_100 }, 3_100, now + 240_000);
+  stalled({ name: 'tick', ms: 2_200 }, 2_200, now + 240_000);
+  assert.deepEqual(
+    jobs()
+      .slice(1)
+      .map(j => j.title),
+    ["HQ stood still 3.1 s behind the play's parts: played 650 ms (206 jobs): make it quick"],
+    'ended with nothing to deploy, the next stall is a job again, and the next cause joins it',
   );
+  assert.match(jobs()[1].prompt, /2\.2 s behind tick\.$/);
 });

@@ -42,7 +42,7 @@ export function read(f: Forecast) {
   const parts: Part[] = [
     { head: 'The board asked for (and how long it has waited)', lines: asked(f.now) },
     {
-      head: 'Our goals (projects the CEO marked: each bet a thread, its number in its done when)',
+      head: 'Our goals (projects the CEO marked: each bet a deliverable, its number in its done when)',
       lines: goals.lines(f),
     },
     ...numbers,

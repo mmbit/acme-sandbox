@@ -194,7 +194,8 @@ export function tally(now: ProcessSnapshot[], before: ProcessSnapshot[], ms: num
 // A block measures memory (MiB), process count, sustained cores, or allocated disk bytes.
 export type Measure = 'memory' | 'processes' | 'cores' | 'disk';
 // A run to block: its job (uid), what the job is past (its use and its share, in the measure's unit), and the run: its
-// first process (root, the command the CLI started) and every process under it.
+// first process (root, the command the CLI started) and every process under it. starved: a memory block only past the
+// share a starved worker leaves, within the job's most: the worker's lack of room.
 export type Block = {
   uid: number;
   measure: Measure;
@@ -203,6 +204,7 @@ export type Block = {
   root: ProcessSnapshot;
   run: ProcessSnapshot[];
   accountingError?: AccountingFailure;
+  starved?: true;
 };
 
 // Select the run to block, the processes to slow down, and one writable process per session group to slow down.
@@ -259,15 +261,13 @@ function selectBlock(jobs: JobUse[], cli: Set<number>, limits: ShareLimits): Blo
     );
   });
   const hot = jobs.find(u => limits.hot?.has(u.uid) && others(u).length);
+  const starved = memory && memory.memoryMb <= limits.mostMb;
+  const memoryShare = starved ? limits.shareMb : limits.mostMb;
   return memory
-    ? weightedBlock(
-        memory,
-        cli,
-        'memory',
-        memory.memoryMb,
-        memory.memoryMb > limits.mostMb ? limits.mostMb : limits.shareMb,
-        p => p.memoryMb,
-      )
+    ? {
+        ...weightedBlock(memory, cli, 'memory', memory.memoryMb, memoryShare, p => p.memoryMb),
+        ...(starved && { starved }),
+      }
     : crowded
       ? weightedBlock(crowded, cli, 'processes', others(crowded).length, limits.processes, () => 1)
       : disk

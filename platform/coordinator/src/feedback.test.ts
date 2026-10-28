@@ -20,8 +20,8 @@ const storage = await import('./storage.ts');
 storage.FLOOR.bytes = 0;   // (screenshots are kept whatever this machine's disk has free: a test that wants the floor sets it)
 const { db } = await import('./db.ts');
 const guests = await import('./guests.ts');
-const booknotes = await import('./booknotes.ts');
-const booksheets = await import('./booksheets.ts');
+const booknotes = await import('./ink/booknotes.ts');
+const booksheets = await import('./ink/booksheets.ts');
 const { DIR: BOOK_DIR } = await import('./pagescraps.ts');
 // The board's notes on previews go in its book (bookreview.ts): every note there, and an owner's open sheet
 const bookNotes = () => db.prepare('select * from book_notes order by id').all() as any[];
@@ -100,7 +100,7 @@ test('the script is the real tool only for the board, on an existing product pre
 });
 
 test("the framing rule review mode and HQ's note thumbnails share, the pen, the anchor and the book's paper are served on every host, to anyone", async () => {
-  for (const file of ['frame.js', 'ink.js', 'anchor.js', 'paper.js']) {   // (ink.js, anchor.js; paper.js)
+  for (const file of ['frame.js', 'ink.js', 'inklive.js', 'inkshape.js', 'anchor.js', 'paper.js']) {   // (ink.js, anchor.js; paper.js; inklive.js, inkshape.js)
     const rule = readFileSync(new URL(`../../../shared/review/${file}`, import.meta.url), 'utf8');
     for (const opts of [{}, { key: null }, { host: 'hq.company.test', key: null }]) {
       const r = await call(`/__review/${file}`, opts);
@@ -115,7 +115,7 @@ test("the framing rule review mode and HQ's note thumbnails share, the pen, the 
 // review.js, and never from a cache to someone else
 test("review mode's parts are served only to whoever gets the tool", async () => {
   const dir = new URL('../../../shared/review/', import.meta.url);
-  const open = ['review.js', 'thanks.js', 'ink.js', 'frame.js', 'anchor.js', 'paper.js', 'tap.js']; // (paper.js; tap.js)
+  const open = ['review.js', 'thanks.js', 'ink.js', 'inklive.js', 'inkshape.js', 'frame.js', 'anchor.js', 'paper.js', 'tap.js']; // (paper.js; tap.js; inklive.js, inkshape.js)
   const parts = readdirSync(dir).filter(f => f.endsWith('.js') && !f.endsWith('.test.js') && !open.includes(f));
   assert.ok(parts.includes('tool.js') && parts.length > 10, parts.join());
   for (const file of parts) {
@@ -784,7 +784,7 @@ test("the board's notes that waited from before the book move onto their owners'
   const outside = (add.get('hello', '/', mark(`${ORIGIN}/`, null), "an outsider's", 'outside', null, 1) as any).id;
   db.prepare("delete from migrations where id = '2026-10-26-pending-review-notes-to-book'").run();
   // @ts-expect-error the query makes a fresh copy of the module (a restart), a path TypeScript can't resolve
-  await import('./bookreview.ts?restart');
+  await import('./ink/bookreview.ts?restart');
   const moved = bookNotes();
   assert.deepEqual(moved.map(n => [n.words, n.status, n.by, n.asked, JSON.parse(n.anchor).url]),
     [['Waited for a send', 'open', 'board', null, `${ORIGIN}/shop`], ['Is HQ slow?', 'open', 'board', null, 'https://hq.company.test/']], 'a question asks nobody');

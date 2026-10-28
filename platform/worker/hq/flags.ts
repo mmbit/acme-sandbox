@@ -30,7 +30,7 @@ export function takeItemFlags(given: string[], command: 'job' | 'item') {
       i++;
     } else if (flag === '--deadline') {
       if (command === 'job')
-        stop("No job was queued: hq job takes no --deadline. Its time is its thread's window: --by <when>");
+        stop("No job was queued: hq job takes no --deadline. Its time is its deliverable's window: --by <when>");
       // (hq_tools.py reads "Nothing recorded" as a refusal; the time's forms)
       if (!value)
         stop("Nothing recorded: --deadline needs a time (2h, 90m, 2026-10-26 09:00 on the company's clock, 14:30 UTC)");
@@ -102,27 +102,31 @@ export type NewThread = { project: string; name: string; goal: string };
 
 type ThreadFlag = { thread?: string; newThread?: NewThread; args: string[] };
 
-// --thread <project>/<slug>, the open thread hq job's work goes in, or --thread new:<project> "name" "done when", one
-// it starts. Without either, the job stays in the thread of the job that queued it.
-export function takeThread(given: string[]): ThreadFlag {
-  const at = given.indexOf('--thread');
+// --thread, the old name of --deliverable, read as it
+export const deliverableFlag = (given: string[]) => given.map(arg => (arg === '--thread' ? '--deliverable' : arg));
+
+// --deliverable <project>/<slug>, the open deliverable hq job's work goes in, or --deliverable new:<project> "name"
+// "done when", one it starts. Without either, the job stays in the deliverable of the job that queued it.
+export function takeThread(flags: string[]): ThreadFlag {
+  const given = deliverableFlag(flags);
+  const at = given.indexOf('--deliverable');
   if (at === -1) return { args: given };
   const [value = '', name = '', goal = ''] = given.slice(at + 1);
   const project = /^new:([^/\s]+)$/.exec(value)?.[1];
   const width = project ? 4 : 2;
   const args = [...given.slice(0, at), ...given.slice(at + width)];
-  if (args.includes('--thread')) stop('No job was queued: --thread comes once');
+  if (args.includes('--deliverable')) stop('No job was queued: --deliverable comes once');
   if (project) {
     if (!name.trim() || !goal.trim()) {
       stop(
-        `No job was queued: --thread new:${project} needs a "name" and a "done when". ${companyLevels().lines.thread}`,
+        `No job was queued: --deliverable new:${project} needs a "name" and a "done when". ${companyLevels().lines.thread}`,
       );
     }
     return { newThread: { project, name, goal }, args };
   }
   if (!/^[^/\s]+\/[^/\s]+$/.test(value)) {
     stop(
-      `No job was queued: --thread takes <project>/<thread> or new:<project> "name" "done when" (hq thread list). ${companyLevels().lines.thread}`,
+      `No job was queued: --deliverable takes <project>/<slug> or new:<project> "name" "done when" (hq deliverable list). ${companyLevels().lines.thread}`,
     );
   }
   return { thread: value, args };

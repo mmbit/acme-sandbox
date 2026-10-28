@@ -27,13 +27,14 @@ const box = () => ({ left: 0, top: 0, width: 400, height: 300 });
 function canvas() {
   const c = { style: {}, width: 0, height: 0, fills: [], getBoundingClientRect: box };
   let m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+  const saved = []; // (save and restore keep the transform)
   const g = {
     canvas: c,
     fillStyle: '#000',
     globalAlpha: 1,
     globalCompositeOperation: 'source-over',
-    save() {},
-    restore() {},
+    save: () => saved.push(m),
+    restore: () => (m = saved.pop() ?? m),
     beginPath() {},
     rect() {},
     clip() {},
@@ -42,9 +43,10 @@ function canvas() {
     setTransform(a, b, cc, d, e, f) {
       m = typeof a === 'object' ? { ...a } : { a, b, c: cc, d, e, f };
     },
-    // (a scratch canvas's fills land where it's copied)
-    drawImage(from) {
-      c.fills.push(...from.fills.splice(0));
+    // (a scratch canvas's fills land where it's copied, each copy a repaint of its box, in device px)
+    drawImage(from, sx, sy, w, h, x, y) {
+      const paint = { box: [x, y, x + w, y + h] };
+      c.fills.push(...from.fills.splice(0).map(f => ({ ...f, paint })));
     },
     fill(p) {
       c.fills.push({ d: p.d, color: g.fillStyle, alpha: g.globalAlpha, op: g.globalCompositeOperation });
@@ -148,6 +150,52 @@ test('a move whose coalesced list is empty still draws its own point', () => {
     move = { ...HANDS.mouse[20], getCoalescedEvents: () => [] };
   const { stroke } = live([down, move, up]);
   assert.ok(stroke.points.some(([x]) => Math.abs(x - move.clientX) < 30 && x > down.clientX + 30));
+});
+
+// A shape's extent in CSS px: a disc's from its left and radius, a band's from its corners
+function extent(d) {
+  const n = d.match(/-?[\d.]+/g).map(Number);
+  if (d.includes('a')) return [n[0], n[1] - n[2], n[0] + 2 * n[2], n[1] + n[2]];
+  const xs = n.filter((_, i) => i % 2 === 0),
+    ys = n.filter((_, i) => i % 2);
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
+// Each move of the pen bringing the browser's predicted points: two more samples along the way it's going
+const PREDICTED = HANDS.pen.map((e, n, all) =>
+  e.getCoalescedEvents
+    ? {
+        ...e,
+        getPredictedEvents: () =>
+          [1, 2].map(j => ({
+            clientX: e.clientX + 4.3 * j,
+            clientY: e.clientY + (e.clientY - all[n - 1].clientY) * j,
+          })),
+      }
+    : e,
+);
+
+test('predicted points draw a tail ahead of the line that the next repaint wipes, never kept in the stroke', () => {
+  const plain = live(HANDS.pen, RED, { halo: true }),
+    { stroke, wet, under } = live(PREDICTED, RED, { halo: true });
+  assert.deepEqual(stroke, plain.stroke);
+  for (const [fills, grow] of [
+    [wet, 0],
+    [under, 2],
+  ]) {
+    const kept = new Set(shapes(inkjs.outline(stroke, grow))),
+      paints = [...new Set(fills.map(f => f.paint))],
+      ahead = [...union(fills)].filter(d => !kept.has(d));
+    assert.ok(ahead.length > 0, 'a tail is drawn');
+    for (const d of ahead) {
+      const last = paints.findLastIndex(p => fills.some(f => f.paint === p && shapes(f.d).includes(d))),
+        [x0, y0, x1, y1] = extent(d).map(v => v * K);
+      const wiped = paints
+        .slice(last + 1)
+        .some(({ box }) => box[0] <= x0 && box[1] <= y0 && box[2] >= x1 && box[3] >= y1);
+      assert.ok(wiped, `the tail's ${d} is wiped`);
+    }
+    assert.deepEqual(new Set([...union(fills)].filter(d => kept.has(d))), kept);
+  }
 });
 
 test("a highlighter's live line has no white edge", () => {

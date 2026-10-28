@@ -1,6 +1,7 @@
 // Each thread's outlook from the forecast (forecast.ts) as the projects view, hq projects and hq thread read it: its ETA
 // and planned finish against its window (windows.ts) with the slack it has, the agent time its open work has left, what
 // it waits on and the chain of jobs that sets its finish.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { findThread, ownerOf, type Thread } from './projects.ts';
 import { findAgent, findJob, isOpenJob, nameOf } from './jobs.ts';
@@ -148,7 +149,7 @@ type MatchedThread = { id: string; project: string; name: string; project_name: 
 const wordsIn = (text: string) => wordsOf(text).filter(w => w.length > 1 || /\p{N}/u.test(w));
 export function findOutlooks(words: string, f: Forecast) {
   const asked = wordsIn(words);
-  if (!asked.length) return [400, 'say which project or thread: its name or a few words'] as const;
+  if (!asked.length) return [400, 'say which project or deliverable: its name or a few words'] as const;
   const threads = db
     .prepare(
       `select t.id, t.project, t.name, p.name as project_name from threads t left join projects p on p.id = t.project

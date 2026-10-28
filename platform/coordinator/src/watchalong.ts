@@ -395,6 +395,5 @@ export const callPlayback = (call: number) => playback(CALL, String(call));
 // Whether a call has something recorded to watch back (the call log's "Watch it back")
 export const recorded = (call: number) => store.sessionsOf(kept, CALL, String(call)).some(session => session.bytes > 0);
 
-// The mirrors' Chromium, for measuring its memory; every mirror closed (a test's end)
-export const mirrorPid = () => mirrors.pid();
+// Every mirror closed (a test's end).
 export const closeMirrors = () => mirrors.closeAll();

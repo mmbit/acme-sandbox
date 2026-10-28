@@ -6,9 +6,10 @@ import { reset } from './acts.js';
 import { TAP_MS as PEN_TAP_MS, TAP_PX, distance, isTap } from './tap.js';
 import { file, settleSoon } from './settle.js';
 import { across } from './postit.js';
+import { holdMs } from './prefs.js';
 
 // (offPage, theirs and free)
-// A touch beside HQ's page, on the book (outside <body>, platform/hq/shell/book.js): the book's, never the page's ink.
+// A touch beside HQ's page, on the book (outside <body>, platform/hq/shell/ink/book.js; Ink's folder): the book's, never the page's ink.
 export const offPage = e => !e.composedPath().includes(document.body);
 // Where a pen's touch belongs to the page or the browser, not the ink: review mode's own UI, the book, text fields
 // (Scribble writes in them) and what the page marks data-no-ink (a floating control the pen works as a finger does)
@@ -28,7 +29,6 @@ export const free = r =>
 
 // px a pen moves before it draws: less is a tap, the page's own (and so is a quick one lifted short of tap.js's TAP_PX)
 const MOVE = 4;
-const HOLD_MS = 550; // a pen held this still this long starts a voice note
 const TAP_MS = 350; // a two-finger tap: both fingers down and up within this, barely moving
 const TAP_SLOP = 12;
 
@@ -66,7 +66,8 @@ const penDown = (r, p, begin) => e => {
   if (e.pointerType !== 'pen' || !e.isPrimary || !free(r) || theirs(r, e)) return;
   r.penSeen = true;
   Object.assign(p, { down: e, drawing: false, reach: 0 });
-  p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), HOLD_MS);
+  // (a pen held this still this long starts a voice note: the device's own hold, prefs.js.)
+  p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), holdMs());
   // off a call the mic listens from a new mark's first line, once it can't be a tap, or a held note (on one, the call
   // hears: callnotes.js): a tap never opens it (house rule 7). Its audio context is made here, at the pen's touch, a
   // gesture, so Safari lets it run; a paired page's mark goes to the other screen with no mic

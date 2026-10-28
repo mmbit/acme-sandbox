@@ -14,23 +14,26 @@ export const LEVELS = {
     'the guide"). Projects sit side by side at one level: never a product with a version number ("App 1.0"), where ' +
     'everything gravitates and a new version has nowhere to go. It may end (hq project done) or live on.',
   thread:
-    'A thread takes its project to its "done when", its tasks one after another: a deliverable made in several steps, ' +
-    'adding one part to its project or improving one. Its name and "done when" are plain, short and concrete, saying ' +
-    'what gets made ("Pick the shop\'s payment provider", "Sign-up emails in three languages", not "Payments, settled" ' +
-    'or "Emails that land"). A card for the board is one step inside the thread that makes the thing, never a thread ' +
-    'of its own, and a thread of one task belongs in the deliverable it serves. It ends within hours, never days. ' +
-    'Unrelated deliverables are two threads.',
+    'A deliverable takes its project to its "done when": a piece of work the board will see go live, adding one part ' +
+    'to its project or improving one. Its tasks run in turn on one branch, any agent taking a turn, and it gets one ' +
+    'review at its end. Deliverables are cut by what goes live, never one per note or call item: new work that ' +
+    'belongs to an open deliverable is added to it before a new one is drawn, and one that grows past what a single ' +
+    'review reads well is cut where a piece can go live on its own. Its name and "done when" are plain, short and ' +
+    'concrete, saying what gets made ("Pick the shop\'s payment provider", "Sign-up emails in three languages", not ' +
+    '"Payments, settled" or "Emails that land"). A card for the board is one step inside the deliverable that makes ' +
+    'the thing, never a deliverable of its own, and a deliverable of one task belongs in the one it serves. It ends ' +
+    'within hours, never days. Unrelated deliverables are two.',
   task:
-    "A task is one agent's step along its thread, titled as that step alone, never with its thread's name in front: " +
-    'about an hour of agent work, never two days.',
+    "A task is one agent's step along its deliverable, titled as that step alone, never with its deliverable's name " +
+    'in front: about an hour of agent work, never two days.',
 };
 export type Level = keyof typeof LEVELS;
 export const NO_SHARED_NAME = 'No two levels share a name.';
-export const RECURRING = 'Work that repeats is a schedule entry (Recurring), never a thread or a project.';
+export const RECURRING = 'Work that repeats is a schedule entry (Recurring), never a deliverable or a project.';
 // Every name the board reads, in plain words
 export const PLAIN =
-  "Every name the board reads (a project's, a thread's and its \"done when\", a task's, a project's sentence) is " +
-  "plain human speech for someone who wasn't there: the deliverable or the value it adds, in a few words, with no " +
+  "Every name the board reads (a project's, a deliverable's and its \"done when\", a task's, a project's sentence) " +
+  "is plain human speech for someone who wasn't there: what gets made or the value it adds, in a few words, with no " +
   'internal terms, code names, file names or job, card or finding numbers, and no mannered prose or slogans.';
 // The names the guide is shown by: an agent's words, and the same name as the board reads it
 export type Example = { level: Level; from: string; to: string };

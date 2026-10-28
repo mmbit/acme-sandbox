@@ -5,7 +5,8 @@
 //   - A group's elements are in its page's CSS px: ink (ink.js strokes), texts (typed words) and pictures (files of the
 //     book's, notebookpictures.ts).
 //   - Once its page is sent a group is read-only. Its answers are its children: the agents' slips on the note it went
-//     as (bookslips.ts) and the board's replies to them, groups of kind 'reply' under it (notebooksend.ts).
+//     as (bookslips.ts) and the board's replies to them, groups of kind 'reply' under it (notebooksend.ts). Its asks
+//     are the agents' desk-phone cards about that note or its replies' (hq ask --note: bookasks.ts). (asks)
 //   - Delete keeps it aside SWEEP_MS for Undo (restore).
 import { existsSync, rmSync } from 'node:fs';
 import { keepPicture, ours, pictureUrl } from './notebookpictures.ts';
@@ -13,7 +14,7 @@ import { boxOf, emptyGroup, hasAny, joined, picks, shifted, type Parts } from '.
 import { db, inOneStep } from './db.ts';
 import { findAgent } from './jobs.ts';
 import { pictureSize } from '../../../shared/pictures/size.ts';
-import { BOARD } from './book.ts';
+import { BOARD } from './ink/book.ts';
 import {
   anchorOf,
   dataUrlPicture,
@@ -25,7 +26,8 @@ import {
   type Refused,
 } from './pagechecks.ts';
 import { DIR, SWEEP_MS, tooBig, scrapsOf, type Scrap } from './pagescraps.ts';
-import { slipsOf, listedOnce } from './bookslips.ts';
+import { slipsOf, listedOnce } from './ink/bookslips.ts';
+import { asksOn } from './ink/bookasks.ts';
 import { changed, currentPage, mine, notebookRow, pageRow, shut, type NotebookPage } from './notebook.ts';
 
 // parent: a reply's group. answers: the slip a reply is under. owner: the agent a scrap was cut from the work of (the
@@ -297,8 +299,8 @@ export const partsOf = (g: Group): Parts => ({
   texts: JSON.parse(g.texts),
   pictures: JSON.parse(g.pictures),
 });
-// The foot of what's on a page, where the next scrap goes
-function stackFoot(page: number) {
+// The foot of what's on a page, where the next scrap goes (a call's notes page's too)
+export function stackFoot(page: number) {
   const groups = db.prepare('select * from notebook_groups where page = ? and deleted is null').all(page) as Group[];
   const feet = groups
     .map(g => boxOf(partsOf(g)))
@@ -346,13 +348,15 @@ export const groupsBox = (page: number) => boxOf(drawnGroups(page));
 export const row = (id: number) =>
   (Number.isInteger(id) && id > 0 ? db.prepare('select * from notebook_groups where id = ?').get(id) : undefined) as
     Group | undefined;
-// What HQ reads of a group: its elements, its box, and its children (answers and replies, in the order they came)
+// What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came) and its
+// asks
 const shown = (g: Group) =>
   groupOf(g, db.prepare('select * from notebook_groups where parent = ? and deleted is null').all(g.id) as Group[]);
 function groupOf(g: Group, replies: Group[], listed = listedOnce()) {
   const parts = partsOf(g),
     mineReplies = replies.filter(r => r.parent === g.id);
-  const answers = [g, ...mineReplies].flatMap(x => (x.note ? slipsOf(x.note, listed) : []));
+  const notes = [g, ...mineReplies].flatMap(x => (x.note ? [x.note] : []));
+  const answers = notes.flatMap(n => slipsOf(n, listed));
   return {
     ...element(g, parts),
     anchor: g.anchor ? (JSON.parse(g.anchor) as Anchor) : null,
@@ -362,6 +366,7 @@ function groupOf(g: Group, replies: Group[], listed = listedOnce()) {
       ...answers.map(a => ({ kind: 'answer' as const, ...a })),
       ...mineReplies.map(r => ({ ...element(r, partsOf(r)), kind: 'reply' as const, answers: r.answers })),
     ].sort((a, b) => a.created.localeCompare(b.created)),
+    asks: notes.flatMap(asksOn),
   };
 }
 const element = (g: Group, parts: Parts) => ({

@@ -46,8 +46,9 @@ import { copyBlocks } from './copy.js';   // (text to paste on a card, lists in 
 import { icon } from './icons.js';
 import { Tray, shrink } from './tray.js';
 import { notes, openReviews, holdReviews } from './reviews.js';   // (the computer's Reviews app)
-import { openAt } from './book.js';   // (review mode's Open the book: bookAt.)
+import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
 import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
+import { mountTips } from './booktips.js';   // (the tips book)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
 import { ASKS } from './tips.js';
@@ -63,7 +64,7 @@ let own = [], ownDone = false;
 const kitApps = (Array.isArray(theme.apps) ? theme.apps : []).filter(n => typeof n === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(n)).map(id => [id, `/kits/${id}/app.js`]);
 // The Sketchbook (sketchbook.js) is on every computer, unless the company's brand.yaml says computer: { sketchbook: false }
 const sketchbookOn = brand.computer?.sketchbook !== false;
-const platformApps = [...(sketchbookOn ? [['sketchbook', '/shell/sketchbook.js']] : []), ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])];
+const platformApps = [...(sketchbookOn ? [['sketchbook', '/shell/ink/sketchbook.js']] : []), ...(runs.care ? [['care', '/shell/care.js']] : []), ...(runs.studio ? [['studio', '/shell/studio.js']] : [])]; // (Ink's folder)
 const ownLoaded = Promise.resolve().then(() => Promise.all([...platformApps, ...kitApps]
   .map(([id, url]) => import(url).then(mod => mod.app && mod.draw ? { id, mod } : null, e => { console.warn(`[hq] ${url}: its HQ app didn't load`, e); return null; }))))
   .then(list => { own = list.filter(Boolean); ownDone = true; if (own.length && open === 'computer' && tab === 'home') openComputer('home'); });
@@ -228,18 +229,19 @@ function loadPin() {
   script.onload = () => { coverPin(!!viewing); tellPin(); };
   document.head.append(script);
   mountPinSummon();   // (away till the board summons it)
+  mountTips();   // (under it, the tips book)
 }
 // HQ's pin is for HQ's own screens: while the viewer is up, the preview in it has its own, so HQ's steps aside until it
 // closes and only one pin ever shows
 const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: on }));
-// The book open beside the page (and the viewer over it), at the sheet for an owner: review mode's Open the book, in the
-// viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows what's
-// on the sheet before anything goes.
-// at: a place in the book to land on instead, { day, page, note } (a card's On the page: book.js's openAt).
+// The book open beside the page (and the viewer over it), asked for an owner's notes: review mode's Open the book, in
+// the viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows
+// what's there before anything goes. (it opens where the board was: the owners' sheets went with pages sent whole.
+// at: a place in the book to land on, { page, notebook, note } (a card's On the page: book.js's openAt).
 export function bookAt(owner, at = null) {
   if (typeof owner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(owner)) return;
   sfx.blip();
-  openAt(owner, at);
+  openAt(at);
 }
 // Share for outside notes: the people
 // invited to pin notes on this preview (a product's whole preview, the shop's, or a deck's or demo's own cycle folder),
@@ -539,13 +541,13 @@ function shown(r) {
 // those words.
 const walkButton = r => `<div class="row btns walk"><button class="talk" id="call-about" title="${esc(who(r.agent))} walks you through it, on a call">${PHONE}<span>Walk me through it</span></button></div>`;
 // A card about a note or a page (hq ask --note, --page): On the page, the note's snip, whose and where it is, its words,
-// and Open in the book, which lands on it there (bookAt). It shows in the book too, under the note, answered in either
-// place.
+// and Open in the book, which turns to its group's page there (bookAt). It shows in the book too, under the note's
+// group, answered in either place. One about a page shows here only.
 function placeHtml(r) {
   const p = r.place, where = placeName(p.url);
   const said = p.note
     ? `Your note ${esc(String(p.n))} for ${esc(who(p.owner))}, on ${esc(where)}${p.words ? `: “${esc(p.words)}”` : ''}`
-    : `${esc(who(r.agent))}’s question about ${esc(where)}, in the book under ${esc(who(r.agent))}’s ring`;
+    : `${esc(who(r.agent))}’s question about ${esc(where)}`; // (on the desk phone only)
   return `<div class="on-page">${p.snip ? `<img src="${esc(p.snip)}" alt="Your note as you marked it" loading="lazy">` : ''}<div><b class="op-k">On the page</b><p>${said}</p>${
     p.page ? '<button class="op-open" data-in-book>Open in the book</button>' : ''}</div></div>`;
 }
@@ -610,8 +612,8 @@ function renderPhone() {
     </article>`;
   wirePager(el);
   el.querySelector('[data-in-book]')?.addEventListener('click', () => {
-    const { day, page, note, owner } = r.place;
-    bookAt(owner ?? r.agent, { day, page, note });
+    const { page, notebook, note, owner } = r.place;
+    bookAt(owner ?? r.agent, { page, notebook, note }); // (the note's group's page)
   });
   wireCard(el, r, card, keys); wireAge(el, r); wirePics(el, { pairs: card.pairs }); wireSnooze(el, r); wireAside(el); paintLines();
   const fields = [...el.querySelectorAll('#answer, [data-key]')];
@@ -626,7 +628,7 @@ function renderPhone() {
   if (pics) wireTray(el, pics);
   fields.forEach(f => f.onblur = () => { if (stale && !typing()) renderPhone(); });
   if (canRecord && !login && !keys && !back && grant === null && !asking && !mail && !call) $('#answer-mic').onclick = () => dictate($('#answer'), $('#answer-mic'), $('#answer-msg'));
-  $('#call-about')?.addEventListener('click', () => callAgent(r.agent, who(r.agent), r.id, false, !!r.walk));
+  $('#call-about')?.addEventListener('click', () => callAgent(r.agent, who(r.agent), { request: r.id, walk: !!r.walk }));
   // The Share button (r.share, at the end of the button row above) and its tap.
   // The tap sends the Share part as the server has it now (the latest poll), not as it was when the card was drawn: the
   // phone may have held off a re-render while the board types. One withdrawn since sends nothing, and the button goes.
@@ -2043,7 +2045,7 @@ export function openIntercom() {
   });
   device.addEventListener('dragover', e => { if (!inCall() && e.dataTransfer?.types.includes('Files')) e.preventDefault(); });
   device.addEventListener('drop', e => { if (inCall() || !e.dataTransfer?.files.length) return; e.preventDefault(); intercomTray.add(e.dataTransfer.files); });
-  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), 0, true));
+  $('#call')?.addEventListener('click', () => callAgent(world.company.ceo, ceoName(), { onIntercom: true }));
   const poll = () => loadChat(world.dev).then(paintChat, () => {});
   poll(); timer = setInterval(poll, 3000);
   if (!canRecord) return;

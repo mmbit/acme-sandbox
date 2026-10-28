@@ -87,6 +87,7 @@ export type QueuedJob = {
   // done work whose pull request is in review: its state, the author's job on it (fixes, notes, an update), and the
   // review runs and checks of its round queued or running
   review: { pr: number; state: string; author: number | null; runs: number[] } | null;
+  mergeHold?: { job: number | null; card: { request: number; at: number } | null };
   reasons: Wait[];
   // the thread it serves (projects.ts), which the play doesn't read: forecast.ts adds up threads by it
   thread?: string | null;

@@ -27,7 +27,7 @@ import { playwright } from '../../shared/browser/browser.mjs';
 import { HOLIDAYS, holidaysOn } from '../../shared/holidays/holidays.js';
 import * as world from './world/world.js';
 import { buildLayout } from './renderers/brownstone/layout.js';
-import { shapeOf } from './shell/booklayout.js';
+import { shapeOf } from './shell/ink/booklayout.js';
 
 const arg = k => {
   const i = process.argv.indexOf(k);

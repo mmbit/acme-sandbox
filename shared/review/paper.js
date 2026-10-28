@@ -1,5 +1,4 @@
-// The book's paper, as custom properties: HQ's book (platform/hq/shell/book.js) and the post-it, a scrap of it
-// (postit.js), both read it from here.
+// The book's paper, as custom properties: HQ's book (platform/hq/shell/ink/book.js; Ink's folder) and the post-it, a scrap of it (postit.js), both read it from here.
 export const PAPER = `
   --bk-paper: #fffaf0;
   --bk-paper2: #f7efdf;

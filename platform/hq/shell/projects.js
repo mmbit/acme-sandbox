@@ -197,7 +197,7 @@ async function land(read = false) {
   const thread = read && !onBoard(id) && lookedUp?.id === id && lookedUp.thread;
   const loaded = thread && !closed.has(thread) ? await loadThread(world.dev, thread).catch(() => 'failed') : null;
   if (landing !== id) return;
-  if (loaded === 'failed') view.notice = 'This job’s thread didn’t open. Open its link again to try.';
+  if (loaded === 'failed') view.notice = 'This job’s deliverable didn’t open. Open its link again to try.';
   else if (loaded) closed.set(thread, loaded);
   const place = levels.placeOf(onBoard(landing));
   if (place) view = { ...view, ...place };

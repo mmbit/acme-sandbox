@@ -74,7 +74,7 @@ await mkdir(`${data}/secrets`);
 await writeFile(`${data}/secrets/CARE_EMAIL_API_KEY`, 'lm-key-0123456789abcdefghij');
 const { app } = await import('../coordinator/src/server.ts');
 const { db } = await import('../coordinator/src/db.ts');
-const booksheets = await import('../coordinator/src/booksheets.ts');
+const booksheets = await import('../coordinator/src/ink/booksheets.ts');
 db.prepare('insert or replace into sessions (token, expires) values (?, ?)').run('board-session', Date.now() + 3600e3);
 const coordinatorPort = await listen(createServer(app));
 

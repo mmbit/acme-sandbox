@@ -1,13 +1,12 @@
-// book-check.mjs's second-screen story (shell/pair.js, pairink.js, shared/review/handover.js): an iPad mini in WebKit
-// and a desktop in Chromium, the coordinator's pairing (pair.ts) played in between.
-// The desktop's book shows a code (its QR and six digits); the iPad opens HQ with it and the two are paired: the book
-// stays open on the desktop and folds away on the iPad, each saying who it's paired with, the swap in both rails. A
-// ring the Pencil draws on the iPad shows on the desktop's page while it's still being drawn, round the same element
-// in the desktop's own layout; lifted and rested, the mark goes into the book from the iPad, no post-it on either
-// screen, and the desktop's book turns to its note. Swapped, the desktop holds the page and the iPad the book: a ring
-// on the desktop goes in from there, and the iPad's book turns to it. A page closed on one closes on the other, and
-// Close ends it on both. Once each mark is in the book, nothing of it is drawn on either screen (rule zero:
-// bookink.mjs).
+// book-check.mjs's second-screen story (shell/ink/pair.js, pairink.js, shared/review/handover.js; Ink's folder.): an iPad mini in WebKit and a desktop in Chromium, the coordinator's pairing
+// (pair.ts) played in between. The desktop's book shows a code (its QR and six digits); the iPad opens HQ with it and
+// the two are paired: the book stays open on the desktop and folds away on the iPad, each saying who it's paired with,
+// the swap in both rails. A ring the Pencil draws on the iPad shows on the desktop's page while it's still being drawn,
+// round the same element in the desktop's own layout; lifted and rested, the mark goes into the book from the iPad, no
+// post-it on either screen, and the desktop's book turns to its note. Swapped, the desktop holds the page and the iPad
+// the book: a ring on the desktop goes in from there, and the iPad's book turns to it. A page closed on one closes on
+// the other, and Close ends it on both. Once each mark is in the book, nothing of it is drawn on either screen (rule
+// zero: bookink.mjs).
 // A phone paired the same way is bookphone.mjs's.
 import assert from 'node:assert/strict';
 import { errorsOf, until } from '../../shared/browser/browser.mjs';
@@ -219,14 +218,24 @@ async function settledOnTheIPad({ d, p, ...c }, target) {
 export async function noteIn(c, page, from) {
   // (its snip's screenshot: a few seconds on a loaded worker's headless WebKit)
   for (let i = 0; i < 150 && c.notes.length === from; i++) await page.waitForTimeout(150);
-  assert.ok(c.notes.length > from, 'the mark goes into the book as it rests');
+  assert.ok(
+    c.notes.length > from,
+    `the mark goes into the book as it rests (last posted: ${c.posts?.slice(-4).map(p => p.path)})`,
+  );
   return c.notes[from];
 }
-// A screen's book showing a note on the page turned to
-export const bookShows = (page, note, what) =>
-  page
-    .waitForSelector(`#book .bk-world .bk-page:not([hidden]) .bs-note[data-id="${note.id}"]`, { timeout: 10_000 })
+// A screen's book showing a note on the page turned to: the scrap it was carried into on the Notebook's current page
+// (book-check.mjs carryNotes, as the coordinator's notebookcarry.ts does).
+export async function bookShows(page, note, what) {
+  for (let i = 0; i < 100 && !note.group; i++) await page.waitForTimeout(100);
+  if (!note.group) assert.fail(`${what}: the note never went onto the Notebook`);
+  await page
+    .waitForSelector(`#book .bk-world .bk-page:not([hidden]) .bk-clip[data-g="${note.group}"]`, {
+      state: 'attached',
+      timeout: 10_000,
+    })
     .catch(() => assert.fail(what));
+}
 
 // Swapped: the book on the iPad, the page on the desktop, where a ring now goes into the book from there, the iPad's
 // book turning to it

@@ -24,6 +24,9 @@ const RECORDER = {
   '/encoder.js': `${REPO}/shared/watchalong/encoder.js`,
   '/strokes.js': `${REPO}/shared/watchalong/strokes.js`,
   '/ink.js': `${REPO}/shared/review/ink.js`,
+  // (ink.js's live line and the stroke's shapes)
+  '/inklive.js': `${REPO}/shared/review/inklive.js`,
+  '/inkshape.js': `${REPO}/shared/review/inkshape.js`,
 };
 RECORDER['/vendor/rrweb-record.js'] = `${MODULES}/@rrweb/record/dist/record.js`;
 

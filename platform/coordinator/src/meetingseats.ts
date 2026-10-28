@@ -1,5 +1,6 @@
 // A meeting's seats (meetings.ts): started together by the claim (pick), briefed as they start, the lines said in the
 // meeting, the chair's view of its progress, and its end.
+// (its messages say deliverable, the board's word for a thread)
 import { db, takeBack } from './db.ts';
 export { sittingIn } from './db.ts';
 import { publish } from './events.ts';
@@ -141,8 +142,8 @@ export function briefing(job: number) {
   const owned = projects().list.filter(p => all.some(x => x.agent === p.owner));
   const plans = owned.map(p => {
     const threads = listThreads({ project: p.id });
-    return `${p.name} (${p.id}), ${p.owner}'s:${threads.length ? '' : ' no open threads'}\n${threads
-      .map(t => `  - ${t.id}: ${t.name}, done when ${t.goal} (${t.open} open jobs: hq thread ${t.id})`)
+    return `${p.name} (${p.id}), ${p.owner}'s:${threads.length ? '' : ' no open deliverables'}\n${threads
+      .map(t => `  - ${t.id}: ${t.name}, done when ${t.goal} (${t.open} open jobs: hq deliverable ${t.id})`)
       .join('\n')}`;
   });
   return `Meeting #${m.id}: ${m.topic}

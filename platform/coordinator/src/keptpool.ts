@@ -10,8 +10,8 @@
 // A pool older than the notes still kept is read whole. A pool read in a step goes once the step is undone. One read in
 // any other transaction isn't kept, so a change rolled back never leaves it standing. Callers share the pool: they
 // never change it.
-// A server's start can read the pool ahead a slice of jobs at a time between its other work (seed), so no call after
-// it reads every row at once.
+// A server's start can read the pool ahead a slice of jobs at a time between its other work (seed). No call after it
+// then reads every row at once.
 import { constants } from 'node:sqlite';
 import { db, inOneStep, inStep, onUndo, prepared } from './db.ts';
 
@@ -60,9 +60,9 @@ export function keptPool<T extends { id: number }>(
     keep(seen, pool);
     return pool;
   };
-  // The pool read whole a slice of the jobs `ids` gives at a time, the server's other work going on between slices, and
-  // kept unless a newer one was meanwhile. The notes' last mark is taken before the jobs are listed, so a change during
-  // the slicing is read again at the next call.
+  // The pool read whole, a slice of the jobs `ids` gives at a time. The server's other work runs between slices. The
+  // pool is kept unless a newer one was kept meanwhile. The notes' last mark is taken before `ids` lists the jobs, so
+  // the next call reads again a change made during the slicing.
   async function seed(ids: () => number[], slice: number) {
     syncTriggers(name, sql(), notes);
     const seen = last(),
@@ -70,8 +70,13 @@ export function keptPool<T extends { id: number }>(
     if (!kept || kept.seen < seen) keep(seen, pool);
     return kept?.pool ?? pool;
   }
-  return { pool, seed };
+  // Whether pool() would read the pool whole: none kept, a note on any job's rows, or notes lost since
+  const whole = () => !kept || anyJobs(changes, kept.seen) || (last() > kept.seen && !noneLost(kept.seen));
+  return { pool, seed, whole };
 }
+// Whether a note after `seen` is on any job's rows
+const anyJobs = (changes: string, seen: number) =>
+  prepared(`select 1 from ${changes} where id > ? and job is null`).get(seen) !== undefined;
 
 // The rows of the jobs a slice at a time, yielding to the server's other work after each, in the order of their ids
 async function inSlices<T extends { id: number }>(ids: number[], slice: number, read: (only: number[]) => T[]) {
@@ -94,16 +99,23 @@ function syncTriggers(name: string, sql: string, notes: Notes) {
   const triggers = new Map<string, string>();
   for (const [table, { of, added }] of Object.entries(notes)) {
     const columns = [...taken.get(table)!];
-    const events = {
-      added: [`insert on ${table}`, added ?? of('new')],
-      changed: [`update ${columns.length ? `of ${columns}` : ''} on ${table}`, `${of('old')} union ${of('new')}`],
-      removed: [`delete on ${table}`, of('old')],
+    // (an update that sets a column to the value it had notes nothing: SQLite runs `update of` triggers whatever the
+    // value, and a push sent back sets its pull request's same files, which read every task on its branch again.)
+    const valueChanged = columns.length ? columns.map(c => `old.${c} is not new.${c}`).join(' or ') : undefined;
+    const events: Record<string, { on: string; jobs: string; when?: string }> = {
+      added: { on: `insert on ${table}`, jobs: added ?? of('new') },
+      changed: {
+        on: `update ${columns.length ? `of ${columns}` : ''} on ${table}`,
+        jobs: `${of('old')} union ${of('new')}`,
+        when: valueChanged,
+      },
+      removed: { on: `delete on ${table}`, jobs: of('old') },
     };
-    for (const [event, [on, ofJobs]] of Object.entries(events))
+    for (const [event, { on, jobs, when }] of Object.entries(events))
       triggers.set(
         `${name}_${table}_${event}`,
-        `CREATE TRIGGER ${name}_${table}_${event} after ${on} for each row when exists (${ofJobs}) begin
-    insert into ${changes} (job) ${ofJobs};
+        `CREATE TRIGGER ${name}_${table}_${event} after ${on} for each row when ${when ? `(${when}) and ` : ''}exists (${jobs}) begin
+    insert into ${changes} (job) ${jobs};
     delete from ${changes} where id <= (select max(id) from ${changes}) - ${KEPT_CHANGES};
   end`,
       );

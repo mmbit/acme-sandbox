@@ -1,7 +1,9 @@
 // The job queue. Every piece of agent work is a job; seats (Claude/Codex logins) run them.
 // Jobs that hit a usage limit wait for the reset and resume in the same session; jobs that need
 // the board park on a request and resume with the answer.
+// (its messages say deliverable, the board's word for a thread)
 import * as ordering from './ordering.ts';
+import * as carries from './carries.ts';
 import { windowUsed } from '../../worker/src/pace.ts';
 import * as sizes from './sizes.ts';
 import * as predictions from './predictions.ts';
@@ -247,6 +249,7 @@ type NewJob = {
   only?: string; // the work only one engine does it's declared to do (engineonly.ts).
   judges?: string[]; // the files a review judges (review.ts toPanel).
   expedite?: boolean; // the CEO's structural HQ fix: first in line, merged on its checks
+  carry?: string; // a commit main took outside a pull request HQ merged, which the job only checks (carries.ts)
 };
 
 //
@@ -319,7 +322,7 @@ function insertJob(
   // customers: a tool put a customer's own details in its prompt (handedCustomerData, below)
   const { lastInsertRowid } = db
     .prepare(
-      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       new Date().toISOString(),
@@ -352,6 +355,7 @@ function insertJob(
       only,
       j.judges ? JSON.stringify(j.judges) : null,
       j.expedite ? 1 : 0,
+      j.carry ?? null,
     );
   return Number(lastInsertRowid);
 }
@@ -387,9 +391,10 @@ export const replacementOf = (job: number) =>
   ).id;
 // The SQL below is built as other modules load (ledger.ts imports this one in turn), so its builders are hoisted functions.
 // Whether the job (an SQL expression) has a replacement queued, under way or ended other than cancelled. (A replacement's
-// status here, in lineageFrom and in replacementOf from db.ts jobs_state.)
+// status here, in lineageFrom and in replacementOf from db.ts jobs_state, and the jobs it reaches in noteholds.ts carried.) The links come first (`cross join`): led by jobs, the view's job_replacements
+// half read every job's entry per job asked about, 2 s a plan change's check.
 export function hasReplacement(job: string) {
-  return `exists (select 1 from job_replacement_links r join jobs next indexed by jobs_state on next.id = r.job
+  return `exists (select 1 from job_replacement_links r cross join jobs next indexed by jobs_state on next.id = r.job
     where r.replaces = ${job} and next.status != 'cancelled')`;
 }
 // Whether the job (an SQL expression for a jobs row) failed and is set aside: another took its place (a replacement), or
@@ -400,11 +405,15 @@ export function failedAside(j: string) {
     or exists (select 1 from prs p where p.branch = ${workBranch(j)} and p.status in ${OPEN_PRS})))`;
 }
 // The jobs standing for the jobs `roots` selects (an SQL select of ids, which may name the outer query's columns): those,
-// and each replacement of one of them that isn't cancelled.
-export function lineageFrom(roots: string) {
-  return `with recursive line(id) as (${roots}
-    union select next.id from line join job_replacement_links r on r.replaces = line.id
-      join jobs next indexed by jobs_state on next.id = r.job where next.status != 'cancelled') select id from line`;
+// and each replacement of one of them that isn't cancelled. With `carried`, `roots` selects a column of that name before
+// each id, and each replacement keeps its root's (noteholds.ts carried: a note's id). Each step reads the job a link
+// reaches after the link (`cross join`), as hasReplacement does.
+export function lineageFrom(roots: string, carried?: string) {
+  const kept = carried ? `${carried}, ` : '',
+    keptDown = carried ? `line.${carried}, ` : '';
+  return `with recursive line(${kept}id) as (${roots}
+    union select ${keptDown}next.id from line join job_replacement_links r on r.replaces = line.id
+      cross join jobs next indexed by jobs_state on next.id = r.job where next.status != 'cancelled') select ${kept}id from line`;
 }
 // The job (an SQL expression) and each job it replaced, back to the first.
 export function lineageTo(job: string) {
@@ -821,7 +830,7 @@ function whyCantMeet(job: number, on: number, role: string) {
     .get(on);
   if (!target) return `job #${on} isn't work that ${role}: it ended without work that merged or still can`;
   if (prerequisites([on], { ordered: true }).some(n => n.id === job))
-    return `job #${on} already needs #${job} first (through waits, a pause, task order, thread needs or a redraw), so neither would ever start: change the dependency with hq waits, hq plan move or hq plan unneed, or resume the pause`;
+    return `job #${on} already needs #${job} first (through waits, a pause, task order, deliverable needs or a redraw), so neither would ever start: change the dependency with hq waits, hq plan move or hq plan unneed, or resume the pause`;
 }
 // The unfinished work `from` needs first, at any depth, with `from` itself while unfinished: its after, waits and --until
 // jobs of an open pause on its thread (pauses.ts). ordered adds task order, thread needs and redraw barriers.
@@ -1143,7 +1152,7 @@ export const pausedOn = (job: number) =>
   ).target;
 // What a pause holds, by name: the desk's (projects.yaml groups.unsorted's name) or a thread's or project's id
 export const pauseName = (target: string) =>
-  target === DESK ? (projects().groups.unsorted?.name ?? 'work in no thread') : target;
+  target === DESK ? (projects().groups.unsorted?.name ?? 'work in no deliverable') : target;
 const pausedWakes = (row: { kind: string; paused_with: string | null }) =>
   row.kind !== 'chat' && row.paused_with ? [`paused with ${pauseName(row.paused_with)}`] : [];
 
@@ -2200,7 +2209,7 @@ function suspendReview(
 ) {
   const target = pausedOn(job.id);
   if (!target)
-    return `#${job.id} is the coordinator's own (${job.kind}), not work: it pauses only with its thread (hq thread pause)`;
+    return `#${job.id} is the coordinator's own (${job.kind}), not work: it pauses only with its deliverable (hq deliverable pause)`;
   if (job.status !== 'running')
     return `#${job.id} isn't running (${job.status}): the pause on ${target} holds it until it lifts`;
   db.prepare('update jobs set suspending = ? where id = ?').run(`${by}: ${why}`, job.id);
@@ -2246,6 +2255,7 @@ type RunEnd = {
   lines?: ChangedLines;
   gates?: Check;
   tests?: Check;
+  carry?: carries.Checked['carry'];
   // a task's own profile lines, sent to main on a branch of their own (the worker's profile split).
   profile?: { pr: number; branch: string; sha: string; files: string[] };
   touchup?: unknown;
@@ -2339,6 +2349,7 @@ function finishJob(id: number, r: RunEnd) {
     handOn(job, r);
   }
   jobEnded(id); // colleagues' messages it never read become jobs (unless it's only paused: messages.ts)
+  carries.ended(id, r); // Queue the carry's fix in this finish transaction, once
   return { ok: true };
 }
 
@@ -2793,8 +2804,8 @@ export function createRequest(r: NewCard) {
   owed.tag(id, about, back, r.job);
   if (decides !== null) decisions.link(decides, id, r.agent!);
   publish({ type: 'log', agent: r.agent ?? roles().process, text: `Asked the board: ${r.title}` });
-  // (one about a note or a page shows in the book too: it reads its sheets again.)
-  if (r.note != null || r.page != null) publish({ type: 'book', agent: r.agent ?? roles().process, text: 'ask' });
+  // (one about a note shows in the book too, under the note's group: its page is read again.)
+  bookReadsAgain(r);
   const shows = !hidden.at && !r.holds?.length;
   if (shows) {
     announceRequest({
@@ -3075,10 +3086,18 @@ export function answerRequest(
   answerHeard(req, withFiles, gotIt);
   return { ok: true };
 }
-// A card about a note or a page, answered on the desk phone or in the book, or taken off the desk phone unanswered, is
-// gone from both: the book reads it again.
-const bookReadsAgain = (req: { agent: string | null; note: number | null; page: string | null }) =>
-  (req.note != null || req.page != null) && publish({ type: 'book', agent: req.agent ?? roles().process, text: 'ask' });
+// A card about a note, filed, answered on the desk phone or in the book, or taken off the desk phone unanswered: the
+// book reads the note's page again (a card about a page shows on the desk phone only: bookasks.ts)
+const bookReadsAgain = (req: { agent?: string | null; note?: number | null }) =>
+  req.note != null &&
+  publish({ type: 'book', agent: req.agent ?? roles().process, text: 'ask', ...notePage(req.note) });
+// The Notebook page a book note's group is on, as a 'book' event names it (HQ reads that page again: its answers and
+// cards are under the group); none for a note of the old book's sheets with no group.
+export const notePage = (note: number) => {
+  const g = db.prepare('select page from notebook_groups where note = ? and deleted is null').get(note) as
+    { page: number } | undefined;
+  return g ? { page: g.page } : {};
+};
 
 // A card's questions, each answered (questions.js: Yes, a number, an option or a short text), lead the agent's answer, one
 // line each; what the board typed follows them. null: one has no answer (an optional one may be left blank).

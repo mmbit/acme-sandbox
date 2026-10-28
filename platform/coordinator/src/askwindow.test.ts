@@ -96,11 +96,11 @@ test("on a live call its agent judges the time, never asking the board; another 
   assert.equal(queued.status, 200, JSON.stringify(queued.body));
   assert.match(
     queued.body.untimed,
-    new RegExp(`Don't ask the board by when.*\\(${queued.body.id}\\): its thread.*untimed`),
+    new RegExp(`Don't ask the board by when.*\\(${queued.body.id}\\): its deliverable.*untimed`),
   );
   const loose = await h.agent('job', call, { agent: 'bolt', title: 'The phone bill', prompt: 'x' });
   assert.equal(loose.status, 200, JSON.stringify(loose.body));
-  assert.match(loose.body.untimed, /in no thread.*\(\d+\), with the open thread it serves/);
+  assert.match(loose.body.untimed, /in no deliverable.*\(\d+\), with the open deliverable it serves/);
 
   // a promise with its time, handed out: its thread's window, and nobody asked
   const promise = await h.agent('item', call, {
@@ -220,7 +220,7 @@ test("a promise on a live call about its owner's work under way is linked to it,
   for (const [body, status, error] of [
     [{ deadline: '40m', job: bolts.id }, 409, /is bolt's \(The phone logs\), not wren's: check the number/],
     [{ job: work.id }, 400, /goes with --deadline/],
-    [{ deadline: '40m', job: loose.id }, 409, /in no thread: note the promise without it/],
+    [{ deadline: '40m', job: loose.id }, 409, /in no deliverable: note the promise without it/],
     [{ deadline: '40m', job: loose.id, thread: opened() }, 409, /wasn't queued on this call/],
     [{ deadline: '40m', job: carrying.body.id }, 409, /carries item #\d+ already/],
   ] as const) {

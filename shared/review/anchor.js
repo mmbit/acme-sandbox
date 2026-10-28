@@ -137,12 +137,13 @@ export function placer(anchor, doc, scroll, live = null) {
   return mapper(anchor.el?.box, el ? boxOf(el, scroll) : null);
 }
 
-// ---- on another screen (a paired phone's ring on the desktop: handover.js, platform/hq/shell/pairink.js).
-// A mark lands on another screen's layout only where its element there is the same one and the mark is about all of
-// it: found by its selector, the same tag and words, an element laid out by its box (not one that draws its own picture
-// inside it, nor the whole page), and its lines round it (their middle on it, their box covering at least COVERS of
-// it). A ring round a word in a paragraph, a spot on a canvas or a few buttons in a row that wraps elsewhere lands
-// anywhere but there: the mark goes as the first screen's own picture instead.
+// ---- on another screen (a paired phone's ring on the desktop: handover.js, platform/hq/shell/ink/pairink.js; Ink's
+// folder). A mark lands on another screen's layout only where its element there
+// is the same one and the mark is about all of it: found by its selector, the same tag and words, an element laid out
+// by its box (not one that draws its own picture inside it, nor the whole page), and its lines round it (their middle
+// on it, their box covering at least COVERS of it). A ring round a word in a paragraph, a spot on a canvas or a few
+// buttons in a row that wraps elsewhere lands anywhere but there: the mark goes as the first screen's own picture
+// instead.
 export const COVERS = 0.5;
 const OWN_PICTURE = new Set(['canvas', 'video', 'iframe', 'embed', 'object', 'body', 'html']);
 

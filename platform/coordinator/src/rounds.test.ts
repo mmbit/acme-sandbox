@@ -50,6 +50,31 @@ const snapshot = (jobs: QueuedJob[]): Snapshot => ({
   deployLagMs: 0,
 });
 
+test('a visual merge waits for both the pictures review and the board, while those reviews can run', () => {
+  const owner = work(1, { status: 'done', finished: 0 });
+  const pictures = work(2, {
+    reviewPlan: {
+      panel: 'one',
+      count: 1,
+      terminal: 'ruling',
+      stages: [
+        { key: 'ruling', kind: 'consolidate', agent: 'ruler', engine: 'codex', usualMs: 20, slowMs: 20, after: [] },
+      ],
+    },
+  });
+  const sizes = new Map([
+    [1, { agent_ms: 0 }],
+    [2, { agent_ms: 10 }],
+  ]);
+  for (const at of [5, 100, null]) {
+    const card = at === null ? null : { request: 7, at };
+    const played = play(snapshot([{ ...owner, mergeHold: { job: pictures.id, card } }, pictures]), sizes);
+    assert.equal(played.get(2)!.merged, 30, 'the pictures work and review proceed');
+    assert.equal(played.get(1)!.merged, at === null ? null : Math.max(30, at));
+    assert.ok(played.get(1)!.waits.some(w => w.on === 'board'));
+  }
+});
+
 test('existing review runs count once and remaining fixes and rulings use their measured times', () => {
   const owner = work(1, {
     board: 1,

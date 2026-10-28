@@ -46,9 +46,8 @@ import { names, brand, theme } from './brand.js';
 import { initProjects, openProjects, readAhead } from './projects.js'; // (readAhead)
 import { initTalk } from './talk.js';
 import { initFinder } from './finder.js';
-import { initBook, openBook } from './book.js';
-import { refreshRail } from './bookrail.js';
-import { initPair } from './pair.js';
+import { initBook, openBook } from './ink/book.js'; // (Ink's folder)
+import { initPair } from './ink/pair.js';
 import { loadFilms } from './tipcard.js';
 
 const $ = s => document.querySelector(s);
@@ -75,14 +74,13 @@ async function boot() {
   world.setOrg(org, dev);
   $('#dev').hidden = !dev;
   // the book beside the page, before the stage, so the building is framed in the room it leaves (a book that can't start
-  // stops HQ's start, as the stage does), and its rail's faces drawn again once the look can draw them.
+  // stops HQ's start, as the stage does).
   await initBook();
   // the tips' films, before anything can show a tip (a paired screen opens the phone).
   await loadFilms();
   // (a second screen, paired by the book's code, opening what this one opens.)
   initPair({ phone: () => openPhone(), intercom: openIntercom, computer: app => openComputer(app), close: closeTool });
   await stage(q.get('intro') !== '0');
-  refreshRail();
   initFinder();
   initPanel();
   initDesk();

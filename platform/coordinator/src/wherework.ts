@@ -5,6 +5,6 @@ import { projects } from './company.ts';
 export const whereWorkGoes = () => {
   const desk = projects().groups.unsorted?.name;
   return `A task belongs to the project its work is for: the one whose product, screens, tools, machinery or plan it changes. ${
-    desk ? `The ${desk} (work in no thread)` : 'Work in no thread'
+    desk ? `The ${desk} (work in no deliverable)` : 'Work in no deliverable'
   } holds only the CEO's own work: its call follow-ups and meeting work.`;
 };

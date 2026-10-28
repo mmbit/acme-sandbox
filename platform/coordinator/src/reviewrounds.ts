@@ -5,6 +5,7 @@
 // customer could meet block, and the rest goes to the project's follow-ups (followups.ts); from the upstream round on, the
 // pull request shows its project owner that something before review went wrong. No round closes anything. Work triage
 // judged throwaway blocks only on what blocks every round, and reports nothing else.
+// (its messages say deliverable, the board's word for a thread)
 import { reviewSettings } from './reviewsettings.ts';
 
 export type Stage = 'first' | 'later' | 'upstream';
@@ -25,7 +26,7 @@ the gates or the sandbox); a real bug (the code does the wrong thing on inputs i
 outcome); anything a customer could see or meet (what a product, a page or a mail shows or does, the house rules);
 and a change that doesn't do what the board asked (its own section below, where there is one).`;
 const FOLLOW_UPS = `Refactoring, conventions, readability, documentation and hardening that isn't security, in the fixes' own code
-too, are nonblocking: they don't go back to the author, but into the project's follow-ups, a thread of their own that the
+too, are nonblocking: they don't go back to the author, but into the project's follow-ups, a deliverable of their own that the
 project's owner prioritises and assigns.`;
 // What else blocks in the first look, for the reviewers and for the ruling
 const FIRST_LOOK = {
@@ -68,7 +69,7 @@ goes to the project's follow-ups when the pull request merges.`,
   const later = (why: string): Briefing => ({
     reviewer: `
 ## Round ${round}: ${why}
-${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Report one only when it's worth that thread.`}`,
+${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Report one only when it's worth that deliverable.`}`,
     ruling: `${ALWAYS} Only those block now. ${throwaway ? THROWAWAY_REST : `${FOLLOW_UPS} Put those in "nonblocking".`}`,
     touchups: `- Only when it saves the author a round: at least one blocking finding can be fixed this way. Make only the
   blocking fixes: the nonblocking findings go to the project's follow-ups.`,
@@ -78,7 +79,7 @@ go to the project's follow-ups.`,
     field: '',
   });
   if (stage === 'first') return first;
-  if (stage === 'later') return later(round > 1 ? 'a later round' : "the thread's deadline is near");
+  if (stage === 'later') return later(round > 1 ? 'a later round' : "the deliverable's deadline is near");
   const past = later(`past ${upstream - 1} rounds`);
   const upstreamLine = `This pull request is on round ${round}: past ${upstream - 1} rounds, something before review is wrong (the
 brief, the design, how the work was split, its tests), not only this code. Its project owner sees it.`;

@@ -6,6 +6,7 @@
 // agreed, by hq window or by a call's item with its time when it's handed out (ledger.ts link, hq job --item), and goes
 // on the thread, never on one job. HQ tells nobody by itself: whether the board hears, and the new time it's given, is
 // the CEO's call.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
 import { companyFormats, companyMoment, timeZone } from './company.ts';
@@ -58,10 +59,10 @@ export function parse(text: string, now = Date.now(), allowPast = false, field =
 export function threadOf(target: { thread?: string; job?: number; pr?: number }): Thread | string {
   if (target.thread !== undefined) {
     const thread = findThread(target.thread);
-    if (!thread) return `there's no thread ${target.thread} (hq thread list)`;
+    if (!thread) return `there's no deliverable ${target.thread} (hq deliverable list)`;
     return thread.status === 'open' || inReview(thread.id)
       ? thread
-      : `${thread.id} is done: a window goes on an open thread`;
+      : `${thread.id} is done: a window goes on an open deliverable`;
   }
   const pr =
     target.pr == null
@@ -78,8 +79,8 @@ export function threadOf(target: { thread?: string; job?: number; pr?: number })
         .get(pr.branch) as { id: number; thread: string } | undefined)
     : (db.prepare('select id, thread from jobs where id = ?').get(target.job ?? 0) as
         { id: number; thread: string | null } | undefined);
-  if (!job) return pr ? `no job on a thread made pull request #${pr.number}` : `there's no job #${target.job}`;
-  if (!job.thread) return `job #${job.id} is in no thread`;
+  if (!job) return pr ? `no job on a deliverable made pull request #${pr.number}` : `there's no job #${target.job}`;
+  if (!job.thread) return `job #${job.id} is in no deliverable`;
   return threadOf({ thread: job.thread });
 }
 

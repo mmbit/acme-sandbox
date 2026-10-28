@@ -78,8 +78,8 @@ const inkAt = (x, y) =>
     [x, y],
   );
 const lines = () =>
-  page.evaluate(() => import('/shell/sketchdata.js').then(m => m.loadSketches(true)).then(r => r.sketches));
-const sketchOf = id => page.evaluate(id => import('/shell/sketchdata.js').then(m => m.loadSketch(true, id)), id);
+  page.evaluate(() => import('/shell/ink/sketchdata.js').then(m => m.loadSketches(true)).then(r => r.sketches));
+const sketchOf = id => page.evaluate(id => import('/shell/ink/sketchdata.js').then(m => m.loadSketch(true, id)), id);
 const names = () => page.$$eval('.sk-grid .sk-name b', bs => bs.map(b => b.textContent));
 
 // ---- the sketches and the archive
@@ -122,10 +122,10 @@ const whole = Object.keys({ pen: 1, marker: 1, highlighter: 1, eraser: 1 }).map(
 assert.deepEqual(await toolsShown(), whole, 'every tool whole in the tray at 744 px');
 const trayWidth = () => page.locator('.sk-tray').evaluate(t => t.getBoundingClientRect().width);
 const inksWidth = await trayWidth();
-await page.locator('[data-tool=eraser]').tap();
+await page.locator('.sk-tool[data-tool=eraser]').tap();
 assert.deepEqual(await toolsShown(), whole, 'and with the eraser in hand');
 assert.equal(await trayWidth(), inksWidth, 'the tray keeps its size as the inks hide');
-await page.locator('[data-tool=pen]').tap();
+await page.locator('.sk-tool[data-tool=pen]').tap();
 const y1 = box.y + 200;
 await pen(across(box.x + 80, y1, box.x + 500));
 assert.ok((await inkAt(box.x + 290, y1))[3] > 0, 'the pen draws');
@@ -133,7 +133,7 @@ assert.ok((await inkAt(box.x + 290, y1))[3] > 0, 'the pen draws');
 await finger(across(box.x + 80, box.y + 500, box.x + 500, 10));
 assert.equal((await inkAt(box.x + 290, box.y + 500))[3], 0, 'a palm draws nothing');
 // another tool and ink from the tray
-await page.locator('[data-tool=marker]').tap();
+await page.locator('.sk-tool[data-tool=marker]').tap();
 await page.locator('[data-colour="#ff5a5f"]').tap();
 await pen(across(box.x + 80, box.y + 320, box.x + 500));
 const red = await inkAt(box.x + 290, box.y + 320);
@@ -152,7 +152,7 @@ await page.locator('[data-undo]').tap();
 assert.equal((await inkAt(box.x + 290, box.y + 320))[3], 0, 'undo takes the last line back');
 await page.keyboard.press('Control+Shift+z');
 assert.ok((await inkAt(box.x + 290, box.y + 320))[3] > 0, 'redo puts it back');
-await page.locator('[data-tool=eraser]').tap();
+await page.locator('.sk-tool[data-tool=eraser]').tap();
 assert.ok(await page.locator('.sk-colours').isHidden(), 'the eraser has no inks');
 await pen([
   [box.x + 300, y1 - 40],
@@ -162,7 +162,7 @@ assert.equal((await inkAt(box.x + 120, y1))[3], 0, 'the eraser takes the whole l
 assert.ok((await inkAt(box.x + 290, box.y + 320))[3] > 0, 'and only that one');
 await page.locator('[data-undo]').tap();
 assert.ok((await inkAt(box.x + 120, y1))[3] > 0, 'one undo puts the rubbed line back');
-await page.locator('[data-tool=pen]').tap();
+await page.locator('.sk-tool[data-tool=pen]').tap();
 
 // ---- pictures on the page: pasted, moved by a finger, pinched, resized by the corner, taken off and put back, held on
 // the paper for Paste, dropped, and drawn over.
@@ -223,7 +223,7 @@ await finger([
 let [sized] = await scrapBoxes();
 assert.ok(sized.w < pinched.w * 0.7, `its corner resizes it (${pinched.w} → ${sized.w})`);
 // the pen draws over it, under nothing
-await page.locator('[data-tool=pen]').tap();
+await page.locator('.sk-tool[data-tool=pen]').tap();
 await pen(across(sized.x - 60, sized.y, sized.x + 60));
 assert.ok((await inkAt(sized.x, sized.y))[3] > 0, 'the pen draws over the picture');
 await page.locator('[data-undo]').tap();

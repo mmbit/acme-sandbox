@@ -39,6 +39,7 @@ export async function report(ask: { days?: unknown }, now = Date.now()) {
   if (days === undefined) return 400;
   const listed = await snapshots.listSince(now - days * DAY_MS);
   const landed = landedIn(listed);
+  await new Promise(setImmediate);
   const leads = await score(listed, landed, play);
   const rounds = await scoreRounds(listed, play);
   const coverage = {
@@ -84,12 +85,25 @@ export type Sample = { lead: string; merged: number | null; held: number | null;
 export async function score(listed: snapshots.Listed[], landed: Map<number, number>, playIt: Play) {
   const ordered = listed.filter(l => l.planner === 3).sort((a, b) => a.at - b.at);
   const work = ordered.map(l => new Set(l.work.map(j => j.id)));
+  // (each one's the latest kept by `at - ms` that lists the job, from a binary search back through the span)
+  const lastBy = (to: number) => {
+    let low = 0,
+      high = ordered.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if (ordered[middle].at <= to) low = middle + 1;
+      else high = middle;
+    }
+    return low - 1;
+  };
   const picks = LEADS.flatMap(({ lead, ms }) =>
     [...landed].flatMap(([job, at]) => {
-      const i = ordered.findLastIndex((k, n) => k.at <= at - ms && k.at > at - ms - SPAN_MS && work[n].has(job));
-      return i < 0 ? [] : [{ lead, job, at, i }];
+      let i = lastBy(at - ms);
+      while (i >= 0 && ordered[i].at > at - ms - SPAN_MS && !work[i].has(job)) i--;
+      return i < 0 || ordered[i].at <= at - ms - SPAN_MS ? [] : [{ lead, job, at, i }];
     }),
   );
+  await new Promise(setImmediate);
   const plays = new Map<number, { usual: Map<number, Outlook>; slow: Map<number, Outlook> }>();
   for (const i of new Set(picks.map(p => p.i))) {
     const { snapshot, sizes } = ordered[i].read();

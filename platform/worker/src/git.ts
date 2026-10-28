@@ -958,12 +958,36 @@ export function gitFlow(o: {
   }
 
   // The code a push's tests test (worker.ts testsOnceOf): the pushed commit, its base on main and the trees of both, read
-  // in the mirror, so nothing in the job's clone decides them.
-  function testedCode(sha: string) {
-    const baseSha = root('merge-base', sha, `refs/heads/${base}`);
+  // in the mirror, so nothing in the job's clone decides them. A commit already on main (worker.ts carryChecks) is
+  // against its first parent, main before it.
+  function testedCode(sha: string, against: 'main' | 'parent' = 'main') {
+    const baseSha =
+      against === 'parent' ? root('rev-parse', '--verify', `${sha}^1`) : root('merge-base', sha, `refs/heads/${base}`);
     const [tree, baseTree] = root('rev-parse', `${sha}^{tree}`, `${baseSha}^{tree}`).split('\n');
     return { sha, base: baseSha, tree, baseTree };
   }
 
-  return { ensureMirror, gcMirror, fetchMirror, refreshMirror, mergeBase, forAgent, testedCode }; // (testedCode)
+  // Main's last `count` commits along its first parents, newest first, each with its parents (worker.ts tellMain,
+  function mainLine(count: number) {
+    return commitsOf(root('rev-list', '--first-parent', '--parents', `--max-count=${count}`, `refs/heads/${base}`));
+  }
+
+  // The commits main took after `seen` along its first parents, oldest first, each with its parents: all on its line that
+  // `seen` doesn't reach (main's history replaced since: its new commits back to where the two part). Undefined when the
+  // mirror has no such commit (worker.ts tellMain)
+  function mainSince(seen: string) {
+    if (spawnSync('git', inMirror(['cat-file', '-e', `${seen}^{commit}`])).status !== 0) return undefined;
+    return commitsOf(root('rev-list', '--first-parent', '--parents', '--reverse', `refs/heads/${base}`, `^${seen}`));
+  }
+
+  // rev-list --parents's lines: each commit and its parents
+  const commitsOf = (lines: string) =>
+    lines
+      ? lines.split('\n').map(line => {
+          const [sha, ...parents] = line.split(' ');
+          return { sha, parents };
+        })
+      : [];
+
+  return { ensureMirror, gcMirror, fetchMirror, refreshMirror, mergeBase, forAgent, testedCode, mainLine, mainSince }; // (testedCode)
 }

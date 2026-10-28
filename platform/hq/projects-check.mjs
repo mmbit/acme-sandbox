@@ -1835,8 +1835,8 @@ for (const look of RENDERERS)
       );
       assert.deepEqual(
         await texts(page, '#projects .pj-where small'),
-        ['Threads'],
-        `${at}: counted in threads, it says`,
+        ['Deliverables'],
+        `${at}: counted in deliverables, it says`,
       );
       assert.deepEqual(await offScreen(), [], at);
       if (pile === 'active') await shot('running-list');
@@ -1870,7 +1870,11 @@ for (const look of RENDERERS)
       ),
       `${at}: each with its project, what it delivered and when (${JSON.stringify(delivered)})`,
     );
-    assert.deepEqual(await texts(page, '#projects .pj-where small'), ['Threads'], `${at}: counted in threads, it says`);
+    assert.deepEqual(
+      await texts(page, '#projects .pj-where small'),
+      ['Deliverables'],
+      `${at}: counted in deliverables, it says`,
+    );
     await shot('done-list');
     await backToList('news/launch', 'The first issue', 'Done in 24 h');
     await backToList(stall.id, stall.name, 'Done in 24 h');

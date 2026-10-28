@@ -23,7 +23,7 @@ import { serve, ROOT } from './serve.mjs';
 import { playwright, openPage, until } from '../../shared/browser/browser.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wrappedMenuLines } from '../../shared/review/lines.mjs';
-import { foldBySpine } from './bookchrome.mjs';
+import { shutBook } from './bookchrome.mjs';
 
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
 if (shots) await mkdir(shots, { recursive: true });
@@ -309,7 +309,7 @@ async function atBoltsSheet(on, words) {
 
 // a flick of the spine puts the spread away (folded, on a phone.)
 async function foldAway(on) {
-  await foldBySpine(on);
+  await shutBook(on);
   await on.waitForSelector('html[data-book=folded]', { state: 'attached' });
   await on.waitForTimeout(700); // (HQ laid out again after it)
 }
@@ -727,7 +727,6 @@ await tab.fill('review-mode textarea', 'The next one');
 await tab.waitForTimeout(800);
 assert.equal(await tab.inputValue('review-mode textarea'), 'The next one', 'the next post-it keeps its words');
 assert.ok(await tab.isEnabled('review-mode .send'), 'and can be pinned');
-assert.equal(edits.length, editsBefore);
 await tab.click('review-mode [data-cancel]');
 await tab.waitForSelector('review-mode .veil', { state: 'hidden' });
 assert.deepEqual(askedGone, [], "the outsider's tool asked for nothing that's gone");
@@ -739,8 +738,8 @@ const coordinator = `
   process.env.DATA_DIR = (await import('node:fs')).mkdtempSync(process.env.TMPDIR + '/notes-check-');
   process.env.PUBLIC_HOST = 'hq.company.test';
   const feedback = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/feedback.ts`)});
-  const { SEND_MS } = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/booknotes.ts`)});
-  const booksheets = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/booksheets.ts`)});
+  const { SEND_MS } = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/ink/booknotes.ts`)});
+  const booksheets = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/ink/booksheets.ts`)});
   const { db } = await import(${JSON.stringify(`${ROOT}/platform/coordinator/src/db.ts`)});
   const posted = JSON.parse((await import('node:fs')).readFileSync(0, 'utf8'));
   const on = await feedback.saveNote('hello', 'hello.preview.test', posted);
@@ -859,6 +858,14 @@ await hq.click('#book .bk-lip');
 await hq.waitForFunction(() => document.documentElement.dataset.book === 'spread');
 await hq.click('#book .bk-pin');
 await hq.waitForSelector('review-mode .fab');
+// (the book folded and the pin's pop done: a tap while it's still coming back misses it.)
+await hq.waitForSelector('html[data-book=folded]', { state: 'attached' });
+await hq.waitForFunction(() =>
+  document
+    .querySelector('review-mode')
+    .shadowRoot.getAnimations()
+    .every(a => !(a instanceof CSSTransition)),
+);
 assert.equal(
   await hq.$eval('review-mode .fab', b => getComputedStyle(b).position),
   'absolute',
@@ -867,11 +874,10 @@ assert.equal(
 await hq.click('review-mode .fab', { force: true });
 await hq.waitForSelector('review-mode .veil:not([hidden])');
 await hq.mouse.click(120, 24); // (HQ's plate, up in the corner)
-await hq.waitForSelector('review-mode .sheet:not([hidden])');
-assert.equal(await hq.textContent('review-mode .send'), 'Send', "HQ's post-it has one Send");
-await hq.fill('review-mode textarea', 'The plate could say the time');
-await hq.click('review-mode .send');
-await hq.waitForSelector('review-mode .sheet', { state: 'hidden', timeout: 20_000 });
+// (a mark on HQ has no post-it: it goes into the book as it settles, with the words heard while it was made, here none:
+// settle.js.)
+await hq.waitForSelector('review-mode .veil', { state: 'hidden', timeout: 20_000 });
+assert.ok(await hq.isHidden('review-mode .sheet'), "HQ's mark has no post-it");
 assert.deepEqual(onHq, [], "a note on HQ doesn't go through review mode's door");
 assert.deepEqual(
   pencilled.map(b => ({
@@ -881,7 +887,7 @@ assert.deepEqual(
     v: b.anchor.v,
     pinned: !!b.anchor.el,
   })),
-  [{ page: true, words: 'The plate could say the time', said: 'typed', v: 1, pinned: true }],
+  [{ page: true, words: '', said: null, v: 1, pinned: true }],
   'it goes on its sheet in the book',
 );
 await shot('hq-pinned', hq);

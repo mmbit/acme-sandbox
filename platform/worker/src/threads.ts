@@ -33,19 +33,19 @@ export function bringUpToDate(clone: InClone, dir: string, branch: string, base:
   }
 }
 
-// The briefing's lines for a task in a thread, after its title: the merge it must finish first, where it stands in the
+// The briefing's lines for a task in a thread (a deliverable, in the board's word), after its title: the merge it must finish first, where it stands in the
 // thread, and what isn't part of it
 export function threadBriefing(thread: InThread, conflicts: string[]) {
   const merge = conflicts.length
-    ? `First: bringing the thread's branch up to date with main left a merge in progress, with conflicts in ` +
+    ? `First: bringing the deliverable's branch up to date with main left a merge in progress, with conflicts in ` +
       `${conflicts.join(', ')}. Resolve each (keep both sides' intent), \`git add\` them and leave the rest to the ` +
       `worker, which commits the merge with your work.\n\n`
     : '';
   const after = thread.before
     ? `It comes after #${thread.before.id}, ${thread.before.agent}'s "${thread.before.title}": that work is on this branch.`
-    : "It starts the thread's branch.";
+    : "It starts the deliverable's branch.";
   return (
-    `${merge}This is task ${thread.place} of ${thread.of} in the thread "${thread.name}" (${thread.id}), done when: ` +
+    `${merge}This is task ${thread.place} of ${thread.of} in the deliverable "${thread.name}" (${thread.id}), done when: ` +
     `${thread.goal.replace(/\.$/, '')}. ${after} Anything beyond the "done when" is a proposal (\`hq propose\`), not part of this task.`
   );
 }

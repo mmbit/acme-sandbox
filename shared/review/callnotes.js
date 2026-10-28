@@ -1,8 +1,8 @@
-// The Pencil on a call (HQ's call tells it what it needs through the document's events: platform/hq/shell/calldraw.js).
-// While a call is on, a mark goes on the call's page in the book, not on a sheet: the agent on the call is the one
-// listening. No mic of its own: the call hears the board, and what it hears while a mark is drawn is the note's words.
-// The mark goes into the book as every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note',
-// marks.js).
+// The Pencil on a call (HQ's call tells it what it needs through the document's events:
+// platform/hq/shell/ink/calldraw.js; Ink's folder). While a call is on, a mark
+// goes on the call's page in the book, not on a sheet: the agent on the call is the one listening. No mic of its own:
+// the call hears the board, and what it hears while a mark is drawn is the note's words. The mark goes into the book as
+// every mark does (settle.js), and HQ's call sends it to the agent ('pencil:note', marks.js).
 // The agent's ink isn't the Pencil's: drive.js rings where it aims, over the page, and nothing of it goes in the book
 //   call:on    { call, agent, name, color, walk }  a call is on: its calls row, its agent, its name and its ink; walk:
 //                                                  a walk-through, whose page opens at once

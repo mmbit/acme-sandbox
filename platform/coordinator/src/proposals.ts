@@ -4,6 +4,7 @@
 // line on why. The CEO sees every one (hq inbox --all). The owner hears of it at once in a running session; otherwise HQ
 // makes the owner's planning job, one open at a time, which takes everything waiting when it starts. The proposer's job
 // hears a drop while it runs, and hq inbox shows the proposer what became of each.
+// (its messages say deliverable, the board's word for a thread)
 import { windowed } from './inbox.ts';
 import * as threadends from './threadends.ts';
 import { db, inOneStep } from './db.ts';
@@ -65,7 +66,8 @@ export function propose(
   if (forAgent !== null && !mayTake(forAgent)) return `${forAgent} isn't a colleague in org.yaml who can take work`;
   // (a moved thread found by its old id: its new one)
   const named = ask.thread == null ? null : findThread(String(ask.thread));
-  if (named !== null && named?.status !== 'open') return `${ask.thread} isn't an open thread (hq thread list)`;
+  if (named !== null && named?.status !== 'open')
+    return `${ask.thread} isn't an open deliverable (hq deliverable list)`;
   const thread = named?.id ?? null;
   const asked = ask.project == null ? null : String(ask.project);
   if (asked !== null && !findProject(asked)) return `there's no project "${asked}"`;
@@ -351,7 +353,6 @@ export const waiting = () =>
     p =>
       `#${reviewinbox.externalId(p.id)} "${p.title}", from ${p.agent}${p.for_agent ? ` for ${p.for_agent}` : ''}, ${ownerOf(p) === ceo() ? 'yours' : `${ownerOf(p)}'s`} to decide, since ${p.created.slice(0, 16).replace('T', ' ')} UTC`,
   );
-
 function openProposal(id: number): Proposal | string {
   const p = db.prepare('select * from proposals where id = ?').get(id) as Proposal | undefined;
   if (!p) return `there's no proposal #${id} (hq inbox)`;

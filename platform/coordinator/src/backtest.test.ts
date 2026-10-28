@@ -74,7 +74,11 @@ function forecastAt(now: number, job: number, threads = ['hq/estimates']): Forec
     threads: new Map(threads.map(t => [t, { thread: t } as never])),
   };
 }
-const kept = () => (h.db.prepare('select at from play_snapshots order by at').all() as { at: number }[]).map(r => r.at);
+const kept = () => {
+  snapshots.write();
+  const rows = h.db.prepare('select at from play_snapshots order by at').all() as { at: number }[];
+  return rows.map(r => r.at);
+};
 
 test('the backtest replays the play on two kept snapshots and scores each lead against the landing', async () => {
   const landed = T0 - HOUR;
@@ -125,6 +129,31 @@ test('a snapshot is kept hourly and at a thread none had, and kept 30 days', () 
   assert.deepEqual(kept(), [from, from + 40 * MIN, from + 100 * MIN]);
   snapshots.keep(forecastAt(from + 30 * DAY + 50 * MIN, job));
   assert.deepEqual(kept(), [from + 100 * MIN, from + 30 * DAY + 50 * MIN], 'older than 30 days, gone');
+});
+
+test('after a restart the kept threads are known, and a thread is new again once the last input it was in is gone', async () => {
+  h.db.exec('delete from play_snapshots');
+  const job = h.queue({ agent: 'kit', title: 'Kept again', engine: 'claude' });
+  const from = T0 + 60 * DAY;
+  snapshots.keep(forecastAt(from, job, ['hq/old', 'hq/both']));
+  snapshots.keep(forecastAt(from + 20 * DAY, job, ['hq/both']));
+  assert.deepEqual(kept(), [from, from + 20 * DAY]);
+  // HQ started again: the same database, the module fresh in memory
+  // @ts-expect-error the query makes a fresh copy of the module, a path TypeScript can't resolve
+  const restarted: typeof snapshots = await import('./snapshots.ts?restart');
+  restarted.keep(forecastAt(from + 20 * DAY + 30 * MIN, job, ['hq/old']));
+  restarted.write();
+  assert.deepEqual(kept(), [from, from + 20 * DAY], 'within the hour, and no thread new to the kept ones');
+  restarted.keep(forecastAt(from + 31 * DAY, job, ['hq/both']));
+  restarted.write();
+  assert.deepEqual(kept(), [from + 20 * DAY, from + 31 * DAY], 'the first, past 30 days, gone');
+  // started again: hq/old was only in the one that went, so it's new again; hq/both isn't
+  // @ts-expect-error the query makes a fresh copy of the module, a path TypeScript can't resolve
+  const again: typeof snapshots = await import('./snapshots.ts?restart-again');
+  again.keep(forecastAt(from + 31 * DAY + 10 * MIN, job, ['hq/old']));
+  again.keep(forecastAt(from + 31 * DAY + 20 * MIN, job, ['hq/both']));
+  again.write();
+  assert.deepEqual(kept(), [from + 20 * DAY, from + 31 * DAY, from + 31 * DAY + 10 * MIN]);
 });
 
 test('kept snapshots omit titles without changing the play or the live forecast', async () => {

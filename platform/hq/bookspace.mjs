@@ -1,10 +1,11 @@
-// book-check.mjs's stories of the paper's space on an iPad (shell/bookpan.js, bookrow.js, ink.js's pen): a finger pans
-// up and left of a page's heading and the Pencil writes there, kept where it was written through a reload; a pinch out
-// stops on the page, never in the overview; and the freeze (a finger and the Pencil whose lifts never came, a text box
-// open as the page turned) leaves the paper answering: a finger pans, two pinch, the Pencil writes. Fingers and the
-// Pencil are Chromium's own (CDP), the lifts that never came are events made without their ends.
+// book-check.mjs's stories of the paper's space on an iPad (shell/ink/bookpan.js, bookrow.js, ink.js's pen; Ink's
+// folder): two fingers pan up and left of a page's heading and the Pencil
+// writes there, kept where it was written through a reload; a pinch out stops on the page, never in the overview; and
+// the freeze (a finger and the Pencil whose lifts never came, a text box open as the page turned) leaves the paper
+// answering: two fingers pan, two pinch, the Pencil writes. Fingers and the Pencil are Chromium's own (CDP), the lifts
+// that never came are events made without their ends.
 import assert from 'node:assert/strict';
-import { BLUE, freePage, paperBox, savedWhere, tool } from './bookmouse.mjs';
+import { BLUE, freePage, paperBox, pick, savedWhere, tool } from './bookmouse.mjs';
 
 // an iPad mini in landscape, the book open beside HQ
 const PAD = { width: 1133, height: 744 };
@@ -16,7 +17,7 @@ const NEAR_PX = 3;
 // c: book-check.mjs's played store and helpers: { hqIn, base, store, pages, settled, shot, noErrorsIn, settle }
 export function spaceStories(c) {
   return {
-    'on an iPad: a finger pans up and left of the heading, the Pencil writes there, and it stays after a reload':
+    'on an iPad: two fingers pan up and left of the heading, the Pencil writes there, and it stays after a reload':
       browser => upAndLeft(browser, c),
     'on an iPad: a pinch out stops at the least zoom on the page, never the overview': browser => pinchOut(browser, c),
     'on an iPad: lifts that never came and a text box open as the page turned leave pan, pinch and the Pencil working':
@@ -33,11 +34,13 @@ async function upAndLeft(browser, c) {
     const { page, fingers, pen } = pad,
       from = await headingAt(page),
       mid = middleOf(await paperBox(page));
-    // a finger drags the page right and down: the paper shows what's up and left of its heading
-    await fingers([mid], [[mid[0] + 180, mid[1] + 140]]);
-    near(await headingAt(page), from, [180, 140], 'a finger pans up and left of the heading');
+    // two fingers drag the page right and down: the paper shows what's up and left of its heading (one finger draws)
+    await pan(fingers, mid, [180, 140]);
+    near(await headingAt(page), from, [180, 140], 'two fingers pan up and left of the heading');
     await tool(page, 'Colour and width').tap();
     await page.getByRole('menuitemradio', { name: 'Blue' }).tap();
+    // (the card stays open over the paper beside the strip for a width too: Escape closes it.)
+    await page.keyboard.press('Escape');
     const heading = await headingAt(page),
       start = [heading.x - 150, heading.y - 90];
     await pen(Array.from({ length: 16 }, (_, i) => [start[0] + i * 8, start[1] + 3 * Math.sin(i / 2)]));
@@ -68,15 +71,16 @@ async function pinchOut(browser, c) {
   const free = freePage(c);
   const { page, fingers, errors, done } = await onPad(browser, c);
   try {
+    // (the fingers one above the other: side by side, one would land on the tool strip by the paper's edge)
     const [x, y] = middleOf(await paperBox(page)),
       closing = [
         [
-          [x - 160, y],
-          [x + 160, y],
+          [x, y - 160],
+          [x, y + 160],
         ],
         [
-          [x - 15, y],
-          [x + 15, y],
+          [x, y - 15],
+          [x, y + 15],
         ],
       ];
     await fingers(...closing);
@@ -88,10 +92,10 @@ async function pinchOut(browser, c) {
     assert.equal(await scaleOf(page), least, 'the least zoom holds');
     assert.equal(await overview(page), false, 'and still no overview');
     await c.shot('book-space-pinched-out', page);
-    // a finger still pans
+    // two fingers still pan
     const from = await headingAt(page);
-    await fingers([[x, y]], [[x + 60, y + 40]]);
-    near(await headingAt(page), from, [60, 40], 'a finger pans at the least zoom');
+    await pan(fingers, [x, y], [60, 40]);
+    near(await headingAt(page), from, [60, 40], 'two fingers pan at the least zoom');
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -108,17 +112,17 @@ async function noFreeze(browser, c) {
     // two fingers down whose lifts never come (a pinch the browser lost), and the Pencil's line Scribble took
     await liftsNeverCame(page, [x, y]);
     // a text box opened with the Pencil, then the page turned with it still open, and back
-    await tool(page, 'Type').tap();
+    await pick(page, 'Type', 'tap');
     await pen([[x - 100, y + 120]]);
     await page.keyboard.type('half a thought');
     await page.locator('#book').getByRole('button', { name: 'New page', exact: true }).tap();
     await page.waitForTimeout(c.settle);
     await page.locator('#book').getByRole('button', { name: 'The page before', exact: true }).tap();
     await page.waitForTimeout(c.settle);
-    // the paper answers: a finger pans,
+    // the paper answers: two fingers pan,
     const from = await headingAt(page);
-    await fingers([[x, y]], [[x - 70, y - 50]]);
-    near(await headingAt(page), from, [-70, -50], 'a finger pans');
+    await pan(fingers, [x, y], [-70, -50]);
+    near(await headingAt(page), from, [-70, -50], 'two fingers pan');
     // two fingers pinch,
     const scale = await scaleOf(page);
     await fingers(
@@ -135,7 +139,7 @@ async function noFreeze(browser, c) {
     assert.ok(Math.abs(pinched / scale - 2) < 0.05, `two fingers pinch: ${scale} to ${pinched}`);
     // and the Pencil writes
     const strokes = c.pages.find(p => p.id === free.id).ink.length;
-    await tool(page, 'Pen').tap();
+    await pick(page, 'Pen', 'tap');
     await pen(Array.from({ length: 16 }, (_, i) => [x - 120 + i * 10, y - 60 + 2 * Math.sin(i / 2)]));
     await savedWhere(c, free.id, p => p.ink.length === strokes + 1);
     await c.shot('book-space-no-freeze', page);
@@ -220,6 +224,20 @@ function handsOn(page, cdp, settle) {
   };
   return { fingers, pen };
 }
+
+// Two fingers side by side moved together by [dx, dy] from round a point: a pan, the page's zoom kept (one finger
+// draws with the tool in use: bookwrite.js.)
+const pan = (fingers, [x, y], [dx, dy]) =>
+  fingers(
+    [
+      [x - 40, y],
+      [x + 40, y],
+    ],
+    [
+      [x - 40 + dx, y + dy],
+      [x + 40 + dx, y + dy],
+    ],
+  );
 
 // ---- what the board sees
 

@@ -262,7 +262,7 @@ test("tests too slow for the helper's limit fail as such, naming the files still
 
 // The check waiting on its helper (up to half an hour) holds the worker's memory all that time, so it must never keep
 // the bundle it sent: lentsend.ts sends it from a process that ends with the send.
-// Here a ~32 MB bundle, which the check sending it itself would hold all of.
+// Here a ~24 MB bundle (32 MB of base64, which git compresses), which the check sending it itself would hold all of
 test("a check waiting on its helper doesn't hold the bundle it sent: the upload's own process ends with the send", async () => {
   const peak = [
     "import { readFileSync } from 'node:fs';",

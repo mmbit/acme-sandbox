@@ -1,4 +1,5 @@
 // The coordinator: serves HQ, its API and the live event feed.
+// (its messages say deliverable, the board's word for a thread)
 import * as startProfile from './start-profile.ts';
 import * as tooling from './tooling.ts';
 import * as seatwarning from './seatwarning.ts';
@@ -59,6 +60,7 @@ import * as phone from './phone.ts';
 import { checkLine } from './phonecheck.ts';
 import * as phonecode from './phonecode.ts';
 import * as feedback from './feedback.ts';
+import * as carries from './carries.ts';
 import * as owed from './owed.ts';
 import * as routing from './routing.ts';
 import * as holds from './noteholds.ts';
@@ -96,24 +98,26 @@ import * as studio from './studio.ts';
 import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts';   // the board's pictures on the intercom and calls
-import * as book from './book.ts';   // the board's book: its pages.
-import { servePicture } from './bookpicture.ts';   // (and their pictures.)
+import * as book from './ink/book.ts';   // the board's book: its pages. (Ink's folder)
+import { servePicture } from './ink/bookpicture.ts';   // (and their pictures.)
+import * as bookfetch from './ink/bookfetch.ts';   // (and one dragged in from the web.)
 import { notFound } from './pagescraps.ts';   // (its files)
-import { bookFor, people as bookPeople } from './sketchpeople.ts';   // (and invited people's)
-import * as booknotes from './booknotes.ts';   // and its sheets and notes
-import * as bookasks from './bookasks.ts';   // and the desk-phone cards about its notes and pages
-import * as booksheets from './booksheets.ts';   // and its sheets going out.
-import * as bookreads from './bookreads.ts';   // and the agents' and calls' reads of its pages
-import * as bookslips from './bookslips.ts';   // and the answers clipped onto its notes
-import * as bookcalls from './bookcalls.ts';   // and calls' pages
-import * as booksearch from './booksearch.ts';   // and its Search.
-import './bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
-import * as booktyped from './booktyped.ts';   // and a question typed on its page, answered under it
-import * as sketchbook from './sketchbook.ts';   // and the Sketchbook, its free pages
+import { bookFor, people as bookPeople } from './ink/sketchpeople.ts';   // (and invited people's)
+import * as booknotes from './ink/booknotes.ts';   // and its sheets and notes
+import * as bookasks from './ink/bookasks.ts';   // and the desk-phone cards about its notes and pages
+import * as booksheets from './ink/booksheets.ts';   // and its sheets going out.
+import * as bookreads from './ink/bookreads.ts';   // and the agents' and calls' reads of its pages
+import * as bookslips from './ink/bookslips.ts';   // and the answers clipped onto its notes
+import * as bookcalls from './ink/bookcalls.ts';   // and calls' pages
+import * as booksearch from './ink/booksearch.ts';   // and its Search.
+import './ink/bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
+import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
+import * as sketchbook from './ink/sketchbook.ts';   // and the Sketchbook, its free pages
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
+import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
 import { NOTE_MAX, SAVE_MAX } from './pagechecks.ts';
 import * as seen from './seen.ts';   // what the board has read, for every device
@@ -129,7 +133,7 @@ import * as ordering from './ordering.ts';
 import * as outlooks from './outlooks.ts';
 import * as goingon from './goingon.ts';
 import * as predictionlog from './predictionlog.ts';   // each play's predictions logged where they moved, written a minute's at a time
-import './snapshots.ts';   // the play's input kept hourly, for the backtest
+import * as snapshots from './snapshots.ts';   // the play's input kept hourly, for the backtest, written with the log
 import * as backtest from './backtest.ts';
 import * as calibration from './calibration.ts';
 import * as accuracy from './accuracy.ts';
@@ -423,7 +427,8 @@ const api: Record<string, BoardRoute> = {
   // (who: an invited person's book, the board's too to open and draw in, sketchpeople.ts bookFor; the people with one.
   'GET /api/book': (q, s, b) => inBook(b.who, who => book.listPages(b, who)),
   'GET /api/book/page': (q, s, b) => inBook(b.who, who => book.getPage(Number(b.id), who)),
-  'POST /api/book/page/new': (q, s, b) => inBook(b.who, who => refusal(book.createPage(b, who))),
+  // (a call's page: its notes page, open already, if it has one.)
+  'POST /api/book/page/new': (q, s, b) => inBook(b.who, who => refusal(callnotes.openPageOf(b, who) ?? book.createPage(b, who))),
   'GET /api/book/people': () => bookPeople(),
   'POST /api/book/page/label': (q, s, b) => refusal(book.labelPage(b)),
   'POST /api/book/page/archive': (q, s, b) => refusal(book.archivePage(b)),
@@ -478,6 +483,8 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
   'POST /api/notebooks/groups/join': (q, s, b) => refusal(notebookgroups.joinGroups(b)),
   'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
+  // (the live call's notes page, opened as the call starts. callnotes.ts)
+  'POST /api/notebooks/call': async (q, s, b) => refusal(await callnotes.openFor(b)),
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
   'POST /api/jobs': (q, s, b) => jobs.createJob({ agent: b.agent ?? ceo(), title: b.title, prompt: b.prompt ?? b.title }),
   'GET /api/seats': () => seats.listSeats(),
@@ -612,6 +619,8 @@ const worker: Record<string, (b: any) => unknown> = {
   // Main merged into a passed pull request that GitHub calls conflicting, by git's own merge (review.ts mergeMain).
   'POST /api/worker/main-merges': () => review.mainMerges(),
   'POST /api/worker/main-merged': b => review.mainMerged(b),
+  // Main's line along its first parents whenever it moves: a commit outside HQ's merges gets a check job (carries.ts,
+  'POST /api/worker/main-moved': b => carries.mainMoved(b ?? {}),
   // the worker's room and each job's share of it, every minute (room.ts)
   'POST /api/worker/disk': () => jobReserve(),
   'POST /api/worker/room': b => room.reportRoom(b ?? {}),
@@ -752,7 +761,7 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
   if (outOfOrder) return new Refused(409, outOfOrder);
   const timed = window === undefined ? undefined : target === null ? projects.untimedRefusal() : windows.threadOf({ thread: target });
   if (typeof timed === 'string')
-    return new Refused(409, target === null ? timed : `${timed}. Retry with --thread <project>/<slug> (hq thread list)`);
+    return new Refused(409, target === null ? timed : `${timed}. Retry with --deliverable <project>/<slug> (hq deliverable list)`);
   // One handed out for an item carries the words on the call (ledger.handOut); one its job queues, the item's goal.
   // The answer says which threads it moves (moves.ts)
   const fix = reviewinbox.fixFor(target, b.findings, me.agent);
@@ -807,7 +816,7 @@ function askedForTime(me: Me, job: { id: number; agent: string; title: string },
 function promisedWork(b: any, due: number | undefined, me: Me) {
   const id = Number(b.job), onto = str(b.thread);
   if (!me.call) return new Refused(400, '--job is for a live call: its follow-up links the item to the work (hq item link)');
-  if (due === undefined) return new Refused(400, '--job goes with --deadline: the time the work\'s thread takes');
+  if (due === undefined) return new Refused(400, '--job goes with --deadline: the time the work\'s deliverable takes');
   const whose = Number.isSafeInteger(id) && id > 0 ? call.notTheirs(String(b.owner), id) : [404, `there's no job #${b.job}`] as const;
   if (whose) return new Refused(whose[0], whose[1]);
   if (windows.finished(id) || windows.dropped(id))
@@ -816,13 +825,13 @@ function promisedWork(b: any, due: number | undefined, me: Me) {
   if (onto === undefined) {
     const thread = windows.threadOf({ job: id });
     if (typeof thread !== 'string') return { job: id };
-    return new Refused(409, queuedHere ? `${thread}: note the promise with the open thread it serves too (thread)`
-      : `${thread}: note the promise without it, and the follow-up puts the work on a thread`);
+    return new Refused(409, queuedHere ? `${thread}: note the promise with the open deliverable it serves too (thread)`
+      : `${thread}: note the promise without it, and the follow-up puts the work on a deliverable`);
   }
   const had = jobs.threadOf(id);
-  if (had && projects.isOpen(had)) return new Refused(409, `job #${id} is on ${had} already: note the promise without the thread`);
-  if (!queuedHere) return new Refused(409, `job #${id} wasn't queued on this call: only one you queued goes on a thread now`);
-  if (!projects.isOpen(onto)) return new Refused(409, `${onto} isn't an open thread (eta lists them)`);
+  if (had && projects.isOpen(had)) return new Refused(409, `job #${id} is on ${had} already: note the promise without the deliverable`);
+  if (!queuedHere) return new Refused(409, `job #${id} wasn't queued on this call: only one you queued goes on a deliverable now`);
+  if (!projects.isOpen(onto)) return new Refused(409, `${onto} isn't an open deliverable (eta lists them)`);
   return { job: id, thread: onto };
 }
 // The window of the deliverable an ask's thread serves, when it's another thread's (the job's own shows as its thread's).
@@ -833,11 +842,11 @@ function servesOther(job: number) {
 // The thread hq window names (by id, job or PR: windows.ts), with who names it.
 function namedThread(b: any, me: Me) {
   const agent = speaker(b.as, me);
-  if (!agent) return new Refused(403, 'only an agent sets a thread\'s window');
+  if (!agent) return new Refused(403, 'only an agent sets a deliverable\'s window');
   const [job, pr] = [b.job, b.pr].map(v => v == null ? undefined : Number(v));
   const named = [b.thread, job, pr].filter(v => v !== undefined && v !== null);
   if (named.length !== 1 || [job, pr].some(v => v !== undefined && (!Number.isSafeInteger(v) || v <= 0)))
-    return new Refused(400, 'name one thread (<project>/<slug>), or one job or pull request (pr:<n>) on it');
+    return new Refused(400, 'name one deliverable (<project>/<slug>), or one job or pull request (pr:<n>) on it');
   const thread = windows.threadOf({ thread: str(b.thread), job, pr });
   return typeof thread === 'string' ? new Refused(409, thread) : { ...thread, agent };
 }
@@ -1010,7 +1019,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const agent = speaker(b.as, me);
     if (!agent) return 403;
     if (b.needs !== undefined && (!Array.isArray(b.needs) || b.needs.some((n: unknown) => typeof n !== 'string' || !n.trim())))
-      return new Refused(400, 'needs must be a list of thread identifiers');
+      return new Refused(400, 'needs must be a list of deliverable identifiers');
     return refusal(plan.newThread({ project: String(b.project ?? ''), name: b.name, goal: b.goal,
       needs: b.needs, slug: str(b.slug) }, { agent, job: me.id || undefined }));
   },
@@ -1235,7 +1244,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     // or neither (askwindow.ts).
     const work = b.job == null ? undefined : promisedWork(b, due, me);
     if (work instanceof Refused) return work;
-    if (b.thread != null && !work) return new Refused(400, '--thread goes with --job: it puts that work on the thread');
+    if (b.thread != null && !work) return new Refused(400, '--deliverable goes with --job: it puts that work on the deliverable');
     const add = () => ledger.add(on, { ...b, owner: String(b.owner), quote: me.call && !b.quote ? b.what : b.quote, due }, me.call ? null : me.id);
     if (!work) return refusal(add());
     try {
@@ -1300,8 +1309,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const card = jobs.fileCard({ files, kind: String(b.kind), title: String(b.title), body: String(b.body ?? ''), urgency: str(b.urgency),
       agent, job: me.id, secrets: str(b.secrets), approves: str(b.approves), photos: b.photos, documents: b.documents, zips: b.zips, products: b.products, back: b.back, topic: b.topic, visibleFrom: b.visibleFrom,
       address: b.address, questions: b.questions, decides: b.decides, when: b.when, walk: b.walk, ...place });   // (topic, zips, visibleFrom, address, questions, decides, when; walk)
-    if (typeof card === 'object' && !Array.isArray(card)) bookasks.filed(agent, place.page);
-    return refusal(card);
+    return refusal(card);   // (a card about a page stays on the desk phone)
   },
   'POST /api/agent/request-answer': (b, me) => refusal(jobs.requestAnswer(Number(b.id), me.id)),
   // (only cards agents file, and a team member's only from its own job: its name isn't unique. An email card: its drafter
@@ -1440,10 +1448,10 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/studio/record': async () => refusal(await studio.answer(() => studio.record())),
   // (pictures.ts)
   'GET /api/agent/picture': (b, me) => refusal(pictures.forWorker(Number(b.id), me)),
-  // hq sketches [--archived], hq sketch <id>: the book's pages, for any job (bookreads.ts); hq answer: an answer clipped onto
+  // hq sketches [--archived], hq sketch <id>: the book's pages, for any job, a call's as its call (bookreads.ts); hq answer: an answer clipped onto
   // a note the board sent (bookslips.ts).
-  'GET /api/agent/sketches': b => bookreads.listForAgent(b.archived === '1'),
-  'GET /api/agent/sketch': async b => bookreads.getForAgent(Number(b.id)),
+  'GET /api/agent/sketches': (b, me) => bookreads.listForAgent(b.archived === '1', me),
+  'GET /api/agent/sketch': async (b, me) => refusal(await bookreads.getForAgent(Number(b.id), me)),
   'POST /api/agent/answer': (b, me) => refusal(bookslips.answer(b, me)),
   // hq say: a message to a colleague (org.yaml or alumni), stored, and queued for its running Claude job or made a job
   // (messages.ts); hq inbox --hook (the worker's hook) takes this job's own, then acknowledges the ones it printed (only
@@ -1636,6 +1644,9 @@ const voice: Record<string, (b: any) => unknown> = {
   'POST /api/voice/sketch': async b => refusal(await bookreads.forVoice(b)),
   // (a note the board drew on the live call, as the Pencil lifted: bookcalls.ts.)
   'GET /api/voice/note': b => bookcalls.forVoice(Number(b.id), Number(b.call)),
+  // (a call's notes page: the agent's scraps, one per change, and its title. callnotes.ts)
+  'POST /api/voice/scrap': async b => refusal(await callnotes.scrap(b)),
+  'POST /api/voice/title': b => refusal(callnotes.title(b)),
 };
 const voiceAuthed = (h?: string) => !!VOICE_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${VOICE_TOKEN}`));
 const workerAuthed = (h?: string) => !!WORKER_TOKEN && timingSafeEqual(digest(h ?? ''), digest(`Bearer ${WORKER_TOKEN}`));
@@ -1819,6 +1830,8 @@ const board: RouteTable = {
   'POST /api/book/scrap': ({ req, res, url }) =>
     inBook(url.searchParams.get('who'), who => book.uploadScrap(req, res, who), () => notFound(res)),
   'GET /api/book/scrap': ({ req, res }) => book.serveScrap(req, res, null),
+  // a picture on the web dragged or pasted into the Notebook, fetched for it
+  'GET /api/book/fetch': ({ res, url }) => bookfetch.fetchPicture(res, url.searchParams.get('url') ?? ''),
   'GET /api/book/snip': ({ req, res }) => booknotes.serveSnip(req, res),
   'GET /api/book/slip/picture': ({ req, res }) => bookslips.serveSlipPicture(req, res),
   // a notebook group's elements, a scrap with its snip, a reply with its ink, and a group's pictures
@@ -2005,7 +2018,7 @@ export const app = (req: IncomingMessage, res: ServerResponse) => {
 // request, or a timer's callback (its synchronous part, all that blocks).
 const heldLong = (name: string, t: number) => {
   const ms = performance.now() - t;
-  if (ms >= 500) latency.held(name, ms);
+  if (ms >= latency.HOLD_MS) latency.held(name, ms);
 };
 const timed = <A extends unknown[]>(fn: (...a: A) => unknown) => {
   const name = fn.name || String(fn).replace(/\s+/g, ' ').slice(0, 100);
@@ -2042,7 +2055,8 @@ const forecastSweep = () => {
   try { wakes.readDeploys(); } catch (err) { console.error('Could not read the deploys:', err); }
   try { forecast.sweep(); } catch (err) { console.error('Could not play the queue:', err); }
 };
-const predictionWrite = () => { try { predictionlog.write(); } catch (err) { console.error('Could not write the prediction log:', err); } };
+// (the play's kept input with the log, in one step)
+const predictionWrite = () => { try { inOneStep(() => { predictionlog.write(); snapshots.write(); }); } catch (err) { console.error('Could not write the prediction log and the kept play inputs:', err); } };
 const hireSweep = () => { try { hiring.sweep(); } catch (err) { console.error('Could not check the hires:', err); } };
 const stallCheck = () => { try { stallSweep(); } catch (err) { console.error('Could not check the engines for a stall:', err); } };
 const crashSweep = () => { try { crashCheck(); } catch (err) { console.error('Could not check the services for crashes:', err); } };

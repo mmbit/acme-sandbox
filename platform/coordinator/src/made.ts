@@ -1,7 +1,8 @@
 // The jobs HQ makes itself, each on a one-task thread of its own: the project projects.yaml's `made:` names for its kind
 // and app (company.ts), and a repair's in the project its product declares (product.yaml `project:`). An owner's planning
 // job is in the project it sorts for, and one for no project's proposals (the CEO's) in none (planning.ts planningJob;
-import { db, planChange } from './db.ts';
+// (its messages say deliverable, the board's word for a thread)
+import { db, planChange, prepared } from './db.ts';
 import { projects, type MadeKind } from './company.ts';
 import { manifest } from './manifests.ts';
 import { leadOf } from './ordering.ts';
@@ -34,9 +35,9 @@ export function oneTaskThread(project: string | null | undefined, job: { id: num
     slug: `job-${job.id}`,
     oneTask: true,
   });
-  if (typeof made === 'string') throw new Error(`A one-task thread for job #${job.id}: ${made}`);
+  if (typeof made === 'string') throw new Error(`A one-task wrapper for job #${job.id}: ${made}`);
   db.prepare('update jobs set thread = ? where id = ?').run(made.id, job.id);
-  planChange({ project: projectId, thread: made.id, what: `one-task thread for job #${job.id}`, by: 'hq' });
+  planChange({ project: projectId, thread: made.id, what: `one-task wrapper for job #${job.id}`, by: 'hq' });
   if (due && 'asap' in due) {
     const deadline = due.asap + leadOf(job.id, made.id, due.asap);
     setWindow(made, { deadline, aim: deadline }, 'hq');
@@ -47,10 +48,11 @@ export function oneTaskThread(project: string | null | undefined, job: { id: num
 // The name of HQ's one-task thread for a job: its title, cut to a thread name's length with an ellipsis that shows it
 export const oneTaskName = (title: string) => (title.length > NAME_MAX ? `${title.slice(0, NAME_MAX - 1)}…` : title);
 
-// Whether a thread is HQ's one-task thread for a job of its own (as oneTaskThread names it).
+// Whether a thread is HQ's one-task thread for a job of its own (as oneTaskThread names it), read for every thread the
+// board's view sends (projectboard.ts).
 export function oneTask(thread: string) {
   const job = Number(thread.match(/\/job-(\d+)$/)?.[1]);
-  return !!job && !!db.prepare('select 1 from jobs where id = ? and thread = ?').get(job, thread);
+  return !!job && !!prepared('select 1 from jobs where id = ? and thread = ?').get(job, thread);
 }
 
 // A job HQ made from a template, in the project projects.yaml's made sets for its kind and app (a one-task thread there),

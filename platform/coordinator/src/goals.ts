@@ -1,6 +1,7 @@
 // The company's goals: projects the CEO marks (hq project goal). A goal has no measure or date of its own: its bets are
 // its threads, their windows its dates and their "done when" its numbers, so nothing is said twice. While a goal is
 // open, the CEO's hourly check runs every hour (summary.ts), and its summary reads each goal live from the forecast.
+// (its messages say deliverable, the board's word for a thread)
 import { db, planChange } from './db.ts';
 import { ceo, companyTime } from './company.ts';
 import { findProject, findThread, sentenceOf } from './projects.ts';
@@ -37,7 +38,7 @@ export function lines(f: Forecast) {
   return goals.map(goal => {
     const sentence = sentenceOf(goal.id)?.text ?? 'no sentence yet (hq project say)';
     const bets = threads.filter(t => t.project === goal.id).map(betLine);
-    const listed = bets.length ? bets : ['no open thread: a goal with no bet in motion'];
+    const listed = bets.length ? bets : ['no open deliverable: a goal with no bet in motion'];
     return `${goal.name} (${goal.id}): ${sentence}${listed.map(b => `\n  - ${b}`).join('')}`;
   });
 }

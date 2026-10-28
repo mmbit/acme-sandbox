@@ -56,6 +56,6 @@ test('the matching is tried within a thread too, on the work with three or more 
   // HQ's way takes the mean of all six (35 minutes); within the thread, the hour its own took
   assert.deepEqual([m.jobs, m.usual.median_factor, m.thread_first.median_factor], [1, 1.71, 1]);
   const { out } = await h.hq(reader, 'estimate', '--accuracy');
-  assert.match(out, /on the 1 job with 3 or more of its thread done before it:/);
-  assert.match(out, /the same within its thread: the median miss ×1 either way/);
+  assert.match(out, /on the 1 job with 3 or more of its deliverable done before it:/);
+  assert.match(out, /the same within its deliverable: the median miss ×1 either way/);
 });

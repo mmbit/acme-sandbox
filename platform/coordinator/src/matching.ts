@@ -117,6 +117,9 @@ export const pastJobs = (only?: number[]): PastJob[] => (only ? readPast(only) :
 const SLICE = 500;
 export const readPastAhead = () =>
   keptPast.seed(() => (db.prepare(`${DONE_WORK} order by id`).all() as { id: number }[]).map(r => r.id), SLICE);
+// The done work for a caller that can wait (hq estimate's reports): read ahead a slice at a time where it would be read
+// whole (0.5 s off a cold disk on a copy at HQ's size).
+export const pastJobsSoon = async () => (keptPast.whole() ? await readPastAhead() : keptPast.pool());
 function readPast(only?: number[]) {
   const sql = past(only !== undefined),
     rows = (only ? db.prepare(sql).all({ only: JSON.stringify(only) }) : db.prepare(sql).all()) as unknown as (PastJob &

@@ -1,0 +1,231 @@
+/* The book's pages (bookpages.js): one page filling the paper, its paper and dots drawn wherever it's panned or zoomed
+   (bookview.js sets the dots' size and place), its heading written at its top-left; and the
+   controls for moving about (bookcontrols.js). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
+
+/* (the paper starts under Safari's blurred strip at the top, style.css's --sat: plain paper above it, so nothing on a
+   page, its heading first, is ever under the blur.) */
+#book .bk-pages {
+  position: absolute;
+  inset: 0;
+  background-color: var(--bk-paper);
+}
+/* the paper: endless, its dots moving with the page. The Pencil and a mouse write; a finger, the middle button, Space
+   held or the hand tool move it (bookpan.js). */
+#book .bk-desk {
+  position: absolute;
+  inset: var(--sat, 0px) 0 0;
+  overflow: hidden;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  cursor: crosshair;
+}
+#book .bk-desk[data-pan='ready'] {
+  cursor: grab;
+}
+#book .bk-desk[data-pan='moving'] {
+  cursor: grabbing;
+}
+#book .bk-world {
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+#book .bk-wet {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+#book .bk-lost {
+  position: absolute;
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+  margin: 0;
+  max-width: 80%;
+  color: var(--bk-muted);
+  text-align: center;
+  cursor: pointer;
+}
+#book .bk-lost[hidden] {
+  display: none;
+}
+
+/* ---- a page: what's on it, in its own px (the paper under it is the desk's) */
+#book .bk-page {
+  position: absolute;
+  left: 0;
+  top: 0;
+}
+#book .bk-page[hidden] {
+  display: none;
+}
+#book .bk-ink {
+  position: absolute;
+  pointer-events: none;
+}
+/* its heading, as written at the top of a notebook's page, on one line clear of what's written under it: whose page it
+   is in the book's ink with a stroke of gold under it, then the day written
+   out, "Today" quieter beside it; a page with no title has its day as its heading */
+#book .bk-title {
+  position: absolute;
+  left: 24px;
+  top: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+  color: var(--bk-night);
+  /* (clear of the controls floating at the paper's right edge, one column or two (--bk-stack, bookui.js), however
+     narrow the book: what doesn't fit trails off.) */
+  max-width: calc(var(--paper-w, 100%) - var(--bk-stack, 52px) - 36px);
+}
+/* (a sent page's stamp keeps its words whole: short of room, it and the day go under the name rather than cut it.) */
+#book .bk-title:has(.bk-stamped) {
+  flex-wrap: wrap;
+  row-gap: 2px;
+}
+#book .bk-title .bk-date {
+  /* (short of room, the day gives way first: the page's name says what it is.) */
+  flex: 0 1000 auto;
+  display: flex;
+  flex-wrap: wrap; /* (a narrow book: "Today" under the day, never the day cut short) */
+  align-items: baseline;
+  column-gap: 8px;
+  min-width: 0;
+}
+#book .bk-title .bk-name,
+#book .bk-title .bk-when {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#book .bk-title .bk-today {
+  flex: none;
+}
+#book .bk-title .bk-when {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--bk-muted);
+}
+#book .bk-title .bk-today {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #b5822a;
+}
+#book .bk-title[data-bare] .bk-when {
+  /* (a narrow book writes the day a little smaller, whole.) */
+  font-size: min(22px, max(16px, calc((var(--paper-w, 600px) - 160px) / 11)));
+  line-height: 32px;
+  color: var(--bk-night);
+}
+#book .bk-title .bk-name {
+  padding-bottom: 3px;
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 32px;
+  letter-spacing: -0.01em;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 6' preserveAspectRatio='none'%3E%3Cpath d='M1 4.2C20 2.6 42 2.4 63 3.1s38 .9 56-.6' fill='none' stroke='%23e2ad45' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E")
+    left bottom / 100% 5px no-repeat;
+}
+
+/* a refusal from the store, said on the page where it shows */
+#book .bk-refusal {
+  position: absolute;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 80%;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: var(--bk-paper2);
+  box-shadow: inset 0 0 0 1px var(--bk-line);
+  font-size: 13px;
+  color: var(--bk-muted);
+  pointer-events: none;
+}
+#book .bk-refusal[hidden] {
+  display: none;
+}
+
+/* ---- the controls (bookcontrols.js): the overview, the page's name and where it is, the day's pages, the zoom's % */
+/* (the zoom's %: a quiet chip at the row's right end, only while it's off 100%.) */
+#book .bk-btn.bk-pct {
+  min-width: 0;
+  padding: 0 10px;
+  font-size: 12px;
+  box-shadow: none;
+  font-variant-numeric: tabular-nums;
+}
+#book .bk-btn.bk-where {
+  display: inline-flex;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 240px;
+  padding: 0 10px;
+  box-shadow: none;
+  gap: 8px;
+}
+#book .bk-btn.bk-where[hidden] {
+  display: none;
+}
+#book .bk-where span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* (a narrow book, an iPad mini's on its side and narrower: the page's name has the room, its place in the notebook is
+   in the notebook's pages, and Send is its plane alone, its label still saying it.) */
+@container bk-rail (max-width: 600px) {
+  #book .bk-where small {
+    display: none;
+  }
+  #book .bk-btn.bk-send {
+    padding: 0 11px;
+  }
+  #book .bk-btn.bk-send span {
+    display: none;
+  }
+}
+#book .bk-where small,
+#book .bk-pages-menu small {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+#book .bk-pages-menu {
+  position: fixed;
+  z-index: 55;
+  min-width: 200px;
+  max-width: min(320px, 90vw);
+  max-height: 60vh;
+  overflow: auto;
+}
+#book .bk-pages-menu small {
+  min-width: 14px;
+}
+#book .bk-menu-day {
+  margin: 0;
+  padding: 10px 16px 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bk-muted);
+}
+#book .bk-pages-menu hr {
+  margin: 0 12px;
+  border: 0;
+  border-top: 1px solid var(--bk-line);
+}

@@ -2,7 +2,7 @@
 // gave it) against the agent time the job took, by agent, by area, by sizer and by how the job was queued; and the ETAs
 // the prediction log (predictionlog.ts) held an hour, six hours and a day before each landing against the landing. Also
 // the threads merged in the window, their work, review and waiting time (threadtime.ts).
-import { cleanPastJobs, pastJobs, type PastJob } from './matching.ts';
+import { cleanPastJobs, pastJobsSoon, type PastJob } from './matching.ts';
 import { latestSizes, type JobSize } from './predictions.ts';
 import { landings } from './landings.ts';
 import * as predictionlog from './predictionlog.ts';
@@ -11,35 +11,40 @@ import { spread } from './accuracy.ts';
 import { db } from './db.ts';
 import { usualOf, WINDOW_MS as BIAS_WINDOW_MS } from './sizerbias.ts';
 import { threadTimes } from './threadtime.ts';
+import * as latency from './latency.ts';
 
 const DAY_MS = 24 * 60 * 60_000;
 
-// Its parts each run in a turn of HQ's thread of their own, so the server answers other requests between them.
+// Its parts each run in a turn of HQ's thread of their own, so the server answers other requests between them, and one
+// that holds it half a second or more is named in the status report's holds (latency.ts turns).
 export async function report(ask: { days?: unknown }, now = Date.now()) {
   const days = ask.days === undefined ? 7 : Number(ask.days);
   if (!Number.isInteger(days) || days < 1 || days > 30) return 400;
+  const turn = latency.turns('hq estimate --calibration');
   const since = new Date(now - days * DAY_MS).toISOString(),
     lookback = new Date(now - days * DAY_MS - BIAS_WINDOW_MS).toISOString();
-  const recent = pastJobs().filter(j => j.finished >= lookback);
+  const recent = (await turn('the pool', pastJobsSoon())).filter(j => j.finished >= lookback);
   const done = recent.filter(j => j.finished >= since);
-  const sizes = await sizeMisses(done, recent);
-  await turn();
-  const eta = await etaMisses(done.map(j => j.id));
-  await turn();
-  return { days, sizes, eta, threads: threadTimes(since) };
+  await turn('the window');
+  const sizes = await sizeMisses(done, recent, turn);
+  const eta = await etaMisses(
+    done.map(j => j.id),
+    turn,
+  );
+  return { days, sizes, eta, threads: await threadTimes(since, turn) };
 }
-const turn = () => new Promise(setImmediate);
 
 // ---- layer 1: the sizes
 
 type Sized = { j: PastJob; size: JobSize };
 
-async function sizeMisses(done: PastJob[], recent: PastJob[]) {
-  const sizes = latestSizes();
-  await turn();
+async function sizeMisses(done: PastJob[], recent: PastJob[], turn: latency.Turn) {
+  const sizes = latestSizes(recent.map(j => j.id));
+  await turn('the sizes');
   const sized = sizedOf(done, sizes);
   const queued = queuedHow(sized.map(s => s.j.id));
-  return {
+  await turn('how the jobs were queued');
+  const misses = {
     count: sized.length,
     by_agent: grouped(sized, s => s.j.agent),
     by_area: grouped(sized, s => areaOf(s.j)),
@@ -47,6 +52,8 @@ async function sizeMisses(done: PastJob[], recent: PastJob[]) {
     by_queue: grouped(sized, s => queued.get(s.j.id)!),
     ...givenSizes(sized, sizedOf(cleanPastJobs(recent), sizes)),
   };
+  await turn("the sizes' groups");
+  return misses;
 }
 
 // The jobs with a size given before they ended.
@@ -67,18 +74,22 @@ function grouped(sized: Sized[], keyOf: (s: Sized) => string) {
 // How each job came to be queued, the first that holds: a board call's (its follow-up, or work carrying a call's item),
 // a meeting's (queued by an agent seated in a meeting live then: db.ts sittingIn), an accepted proposal's (the inbox),
 // HQ's own (no agent queued it), else an agent's hq job.
+// (the jobs, done work, read from db.ts's indexes: a row's brief and report are seconds off a cold disk)
 export type QueuedHow = 'call' | 'meeting' | 'inbox' | 'hq' | 'agent';
 function queuedHow(ids: number[]) {
   const rows = db
     .prepare(
       `select j.id, case
-        when j.call is not null or j.item is not null or j.id in (select job from calls where job is not null)
+        when j.id in (select id from jobs indexed by jobs_called where call is not null)
+          or j.id in (select id from jobs indexed by jobs_carried where item is not null)
+          or j.id in (select job from calls where job is not null)
           or j.id in (select job from call_items where job is not null) then 'call'
         when exists (select 1 from meeting_seats s join meetings m on m.id = s.meeting where s.agent = j.queued_by
           and m.started <= j.created and (m.ended is null or m.ended >= j.created)) then 'meeting'
         when j.id in (select accepted from proposals where accepted is not null) then 'inbox'
         when j.queued_by is null then 'hq' else 'agent' end how
-      from jobs j where j.id in (select value from json_each(?))`,
+      from jobs j indexed by jobs_history where j.kind = 'work' and j.status = 'done'
+        and j.id in (select value from json_each(?))`,
     )
     .all(JSON.stringify(ids)) as { id: number; how: QueuedHow }[];
   return new Map(rows.map(r => [r.id, r.how]));
@@ -150,17 +161,17 @@ export function areaOf(j: Pick<PastJob, 'pr' | 'files'>) {
 // ---- layer 2: the ETAs
 
 // For each job that landed and each lead, the log's row standing that long before the landing (the last one written
-// by then): a row stands until the next one moves it.
-async function etaMisses(jobs: number[]) {
+// by then): a row stands until the next one moves it. One seek each (predictionlog.jobAt), never a job's every row.
+async function etaMisses(jobs: number[], turn: latency.Turn) {
   const landed = landings(jobs);
-  await turn();
-  // (each job's own rows, in order)
-  const rows = Map.groupBy(predictionlog.ofJobs([...landed.keys()]), r => r.job);
+  await turn('the landings');
   const samples: Sample[] = [];
   for (const { lead, ms } of LEADS)
     for (const [job, at] of landed) {
-      const standing = rows.get(job)?.findLast(r => r.at <= at - ms);
+      const standing = predictionlog.jobAt(job, at - ms);
       if (standing) samples.push({ lead, merged: standing.merged, held: standing.held, landed: at });
     }
-  return byLead(samples);
+  const misses = byLead(samples);
+  await turn("the ETAs' log");
+  return misses;
 }

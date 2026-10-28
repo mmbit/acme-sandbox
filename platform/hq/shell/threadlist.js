@@ -21,7 +21,7 @@ export function threadList(key, board, opening) {
   if (key === 'finished')
     return list(
       finishedThreads(projects, board.completed ?? []).map(x => finishedRow(x, opening)),
-      'No thread finished in the last day.',
+      'No deliverable finished in the last day.',
     );
   const threads = runningThreads(projects);
   if (!threads.length) return list([], 'Nothing running or waiting.');

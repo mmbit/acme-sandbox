@@ -52,6 +52,10 @@ once('2026-10-26-messages-next-run', () => {
   if (!columnsOf('messages').includes('next_run')) db.exec('alter table messages add column next_run integer not null default 0');
 });
 db.exec('create index if not exists messages_goal on messages (goal) where goal is not null');
+// A job's messages still on their way (take, jobEnded): read at every step and every end, they read every message's
+// text without it.
+db.exec(`create index if not exists messages_open on messages (job)
+  where delivered is null and became is null and lapsed is null`);
 
 export const MAX = 8000;        // characters; a longer text is refused (hq say tells the sender), never cut
 export const PER_HOUR = 30;     // per sending job (or call): a loop can't flood a colleague with jobs

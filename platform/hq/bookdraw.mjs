@@ -1,10 +1,11 @@
-// book-check.mjs's stories of the book's drawing tools (shell/bookpalette.js, bookerase.js, bookshapes.js,
-// bookselect.js, bookedit.js): with a mouse on a desktop and with the Pencil on an iPad mini, ink erased at two sizes
-// (cut where the eraser passed, the rest kept), an ellipse and a rectangle filled and outlined and an arrow, some ink
-// and a picture selected, moved, cut, pasted and deleted, and Undo taking every step back and Redo making them again.
-// Each asserts what the board sees (pixels on the book's paper) and what the store keeps (the page saved).
+// book-check.mjs's stories of the book's drawing tools (shell/ink/bookpalette.js, bookerase.js, bookshapes.js,
+// bookselect.js, bookedit.js; Ink's folder): with a mouse on a desktop and with
+// the Pencil on an iPad mini, ink erased at two sizes (cut where the eraser passed, the rest kept), an ellipse and a
+// rectangle filled and outlined and an arrow, some ink and a picture selected, moved, cut, pasted and deleted, and Undo
+// taking every step back and Redo making them again. Each asserts what the board sees (pixels on the book's paper) and
+// what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, savedWhere, tool, GREEN } from './bookmouse.mjs';
+import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, pick, savedWhere, GREEN } from './bookmouse.mjs';
 
 const NIGHT = [42, 35, 82],
   PAPER = [255, 250, 240];
@@ -27,8 +28,9 @@ async function erasesAndShapes(browser, c) {
   const free = freePage(c);
   const { page, errors, done } = await onDesk(browser, c);
   try {
+    // (right of the tool strip down the paper's left)
     const box = await paperBox(page),
-      at = [box.x + 80, box.y + 200];
+      at = [box.x + 100, box.y + 200];
     await erases(page, c, free, at);
     const drawn = await shapes(page, c, free, at);
     // Undo takes every step back, the page empty again; Redo makes them all again
@@ -45,17 +47,20 @@ async function erasesAndShapes(browser, c) {
 }
 // Two lines, each cut by one pass of the eraser: a fine one, then a wide one
 async function erases(page, c, free, [x, y]) {
-  await tool(page, 'Pen').click();
+  await pick(page, 'Pen');
   await drag(page, [x, y], [x + 360, y]);
   await drag(page, [x, y + 110], [x + 360, y + 110]);
   await savedWhere(c, free.id, p => p.ink.length === 2);
   // the eraser, fine: one pass down through the first line cuts it in two
-  await tool(page, 'Eraser').click();
+  await pick(page, 'Eraser');
   await card(page, 'Fine eraser');
+  // (the card stays open over the paper beside the strip: Escape closes it.)
+  await page.keyboard.press('Escape');
   await pass(page, x + 120, y - 40, 80);
   await savedWhere(c, free.id, p => p.ink.length === 3);
   // wide: through the second, a wider gap
   await card(page, 'Wide eraser');
+  await page.keyboard.press('Escape');
   await pass(page, x + 120, y + 70, 80);
   const erased = await savedWhere(c, free.id, p => p.ink.length === 4);
   const fine = await gapIn(page, y),
@@ -70,7 +75,7 @@ async function erases(page, c, free, [x, y]) {
 }
 // An ellipse filled, a rectangle outlined, an arrow, under the lines
 async function shapes(page, c, free, [x, y]) {
-  await tool(page, 'Shapes: rectangle').click();
+  await pick(page, 'Shapes: rectangle');
   await card(page, 'Ellipse');
   await card(page, 'Filled', { keep: true });
   await c.shot('book-draw-shapes-card', page);
@@ -104,7 +109,7 @@ async function selects(browser, c) {
     const box = await paperBox(page),
       x = box.x + 80,
       y = box.y + 160;
-    await tool(page, 'Pen').click();
+    await pick(page, 'Pen');
     await line(page, x, y, 200);
     await pasteGreen(page);
     const placed = await savedWhere(c, free.id, p => p.ink.length === 1 && p.scraps.length === 1);
@@ -132,7 +137,7 @@ async function selects(browser, c) {
 // and dragged, both move
 async function selectsAndMoves(page, c, free, placed, [x, y]) {
   const green = await colourIn(page, GREEN);
-  await tool(page, 'Select').click();
+  await pick(page, 'Select');
   await drag(page, [Math.min(x, green.x - 140) - 20, y - 30], [green.x + 140, green.y + 100]);
   await page.waitForTimeout(250);
   await c.shot('book-draw-selected', page);
@@ -186,8 +191,9 @@ async function pencil(browser, c) {
     await page.goto(`${c.base}/?intro=0`);
     await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
     await c.settled(page, 'open');
+    // (right of the tool strip down the paper's left)
     const box = await paperBox(page),
-      at = [box.x + 60, box.y + 180];
+      at = [box.x + 140, box.y + 180];
     const shaped = await pencilInks(page, c, free, at);
     await pencilSelects(page, c, free, shaped, at);
     assert.deepEqual(
@@ -240,11 +246,15 @@ async function pencilSelects(page, c, free, shaped, [x, y]) {
     page,
     Array.from({ length: 11 }, (_, i) => [x + 100, y + i * 5]),
   );
-  const moved = await savedWhere(c, free.id, p => p.ink[0].points[0][1] !== shaped.ink[0].points[0][1]);
-  assert.ok(Math.abs(moved.ink[2].points[0][1] - shaped.ink[2].points[0][1] - 50) < 2, 'all of it moved down');
+  // (the page goes to the store group by group, its order theirs: waited for till nothing is where it was.)
+  const was = starts(shaped);
+  const moved = await savedWhere(c, free.id, p => starts(p).every(s => !was.includes(s)));
+  assert.deepEqual(starts(moved, 50), was, 'all of it moved down');
   await tap(page, 'Undo');
-  await savedWhere(c, free.id, p => p.ink[0].points[0][1] === shaped.ink[0].points[0][1]);
+  await savedWhere(c, free.id, p => starts(p).join() === was.join());
 }
+// Where a page's strokes start (dy down from there), sorted, to tell them apart whatever their order on the page
+const starts = (p, dy = 0) => p.ink.map(s => `${Math.round(s.points[0][0])},${Math.round(s.points[0][1] - dy)}`).sort();
 
 // ---- helpers
 
@@ -305,13 +315,15 @@ async function pixel(page, x, y) {
     `data:image/png;base64,${png.toString('base64')}`,
   );
 }
-// A tool's button tapped with a finger
-const tap = async (page, name) =>
-  page
+// A tool's button tapped with a finger, unless it's the tool in hand (tapped again, it opens its card over the paper
+// beside the strip.)
+async function tap(page, name) {
+  const b = page
     .locator('#book')
     .getByRole('button', { name, exact: typeof name === 'string' })
-    .first()
-    .tap();
+    .first();
+  if ((await b.getAttribute('aria-pressed')) !== 'true') await b.tap();
+}
 // The Pencil along points, as Safari hands it over (book-check.mjs's penOn)
 const pen = (page, points) =>
   page.evaluate(pts => {

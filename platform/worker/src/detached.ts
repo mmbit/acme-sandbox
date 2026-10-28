@@ -19,6 +19,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
+import { constants } from 'node:os';
 import { redact } from './safety.ts';
 
 // A process as /proc/<pid>/stat has it; its start (clock ticks since boot) and pid together name it, since a pid is
@@ -93,7 +94,7 @@ export function endSeen(runs: string, l: Launched) {
   return how && (how.exit ?? 1);
 }
 // The same, with a signal kept apart from an exit code (a push's check stopped by a signal isn't a finding:
-// pushchecks.ts).
+// pushchecks.ts), by its name: supervise.py writes an orphan's by its number.
 export function howEnded(runs: string, l: Launched): { exit?: number; signal?: string } | undefined {
   let how: string;
   try {
@@ -103,7 +104,9 @@ export function howEnded(runs: string, l: Launched): { exit?: number; signal?: s
   }
   const m = how.match(/^(exit|signal) (\S+)$/);
   if (!m) return undefined;
-  return m[1] === 'exit' ? { exit: Number(m[2]) } : { signal: m[2] };
+  if (m[1] === 'exit') return { exit: Number(m[2]) };
+  const named = Object.entries(constants.signals).find(([, n]) => String(n) === m[2]);
+  return { signal: named?.[0] ?? m[2] };
 }
 // A CLI another worker process launched: its end, once supervise.py has written it (it reaps the process just after).
 export async function endOf(runs: string, l: Launched, wait = (ms: number) => new Promise(r => setTimeout(r, ms))) {
@@ -175,8 +178,8 @@ export type RunRecord = {
 export type Checks = { body: Record<string, unknown>; spent: unknown; runs: Record<string, CheckRun> };
 // A check launched (and when, for its time in the log and a lent launch's limit ms), or none while it waits for its
 // turn. lent: the launch sends it to a lent machine's helper (pushchecks.ts CheckSpec). stopped: what the job's shares
-// stopped of it, so it couldn't complete (worker.ts stopProcess). unreached: its launches in a row that lost HQ
-// (pushchecks.ts runCheck). (ms, lent);
+// stopped of it, so it couldn't complete (worker.ts stopProcess). unreached: its launches in a row that lost HQ, and
+// noRoom: that the platform had no room for (pushchecks.ts runCheck). (ms, lent);
 export type CheckRun = {
   launched?: Launched;
   began?: number;
@@ -184,8 +187,12 @@ export type CheckRun = {
   lent?: boolean;
   stopped: string[];
   unreached?: number;
+  noRoom?: number;
   // of stopped, the stops that were the platform's: its disk accounting unavailable, not the job's use
   platformStops?: number;
+  // of stopped, the shares' blocks of a run only past the share a starved worker leaves (shares.ts Block.starved):
+  // pushchecks.ts runs it again once there's room
+  roomStops?: number;
 };
 export const recordOf = (runs: string, job: number) => `${runs}/${job}.json`;
 export function keepRecord(runs: string, r: RunRecord) {

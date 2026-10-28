@@ -16,7 +16,7 @@ import {
   settingsSections,
 } from './desk.js'; // (openJob)
 import { openProjects } from './projects.js';
-import { stepName } from './threads.js';
+import { boardKind, stepName } from './threads.js';
 import { nameText } from './jobs.js'; // (the board's names)
 import { libraryEntries } from './news.js';
 import { openAgent } from './panel.js';
@@ -81,13 +81,13 @@ async function work() {
       ...p.threads.map(t => ({
         key: t.id,
         title: nameText(t, 'name'),
-        sub: `Thread · ${nameText(p, 'name')}`,
+        sub: `${cap(boardKind(t))} · ${nameText(p, 'name')}`,
         open: () => openProjects({ project: p.id, thread: t.id }),
       })),
       ...(p.done ?? []).map(t => ({
         key: t.id,
         title: nameText(t, 'name'),
-        sub: `Done thread · ${nameText(p, 'name')}`,
+        sub: `Done ${boardKind(t)} · ${nameText(p, 'name')}`,
         at: t.done,
         open: () => openProjects({ project: p.id, thread: t.id, done: true }),
       })),

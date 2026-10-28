@@ -5,11 +5,11 @@
 // are its own (book_sheets.notebook_page), never an owner's batch on the old book's pages.
 import { rmSync } from 'node:fs';
 import { db, inOneStep } from './db.ts';
-import { BOARD } from './book.ts';
-import { render } from './bookrender.ts';
+import { BOARD } from './ink/book.ts';
+import { render } from './ink/bookrender.ts';
 import { DIR } from './pagescraps.ts';
-import { SEND_MS, insertNote, note, sheetRow, type Note } from './booknotes.ts';
-import { deliverDue } from './booksheets.ts';
+import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
+import { deliverDue } from './ink/booksheets.ts';
 import { changed, gone, newPage, pageOf, pageRow, shut } from './notebook.ts';
 import { insertGroup, partsOf, putAside, row, type Group } from './notebookgroups.ts';
 import { boxOf } from './notebookparts.ts';
@@ -19,6 +19,8 @@ import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechec
 const PAD = 24;
 
 // POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first
+// (RESEND: a call's page sent at hang-up is sent again on it.)
+export const RESEND = 'the page changed while it was being sent: send it again';
 export async function sendPage(b: any, who = BOARD) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
@@ -41,7 +43,7 @@ export async function sendPage(b: any, who = BOARD) {
     after.length !== groups.length ||
     after.some((g, i) => g.id !== groups[i].id || g.updated !== groups[i].updated)
   )
-    return [409, 'the page changed while it was being sent: send it again'] as Refused;
+    return [409, RESEND] as Refused;
   inOneStep(() => {
     const sheets = new Map<string | null, number>();
     groups.forEach((g, i) => {

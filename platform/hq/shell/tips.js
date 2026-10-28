@@ -139,7 +139,7 @@ export const TIPS = [
   {
     key: 'pausing',
     name: 'Pausing work',
-    when: 'the first thread to run past its window',
+    when: 'the first deliverable to run past its window',
     title: 'Some work ran past its time',
     lines: ({ thread } = {}) =>
       `${thread ? `${thread} ran past the time it was due. ` : ''}You can have work paused to make room for what matters more, and started again when you like: ask on the intercom. Projects shows what’s running.`,

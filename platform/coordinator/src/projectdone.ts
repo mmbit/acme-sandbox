@@ -1,5 +1,6 @@
 // A project's end, apart from the rest of its plan (plan.ts, which hands it on): the schedule ends a routine's project
 // by the same rules (schedule.ts keepProjects), and loads before plan.ts's imports can.
+// (its messages say deliverable, the board's word for a thread)
 import { db, mergePending, planChange } from './db.ts';
 import { projects } from './company.ts';
 import { findProject } from './projects.ts';
@@ -31,7 +32,7 @@ export function projectDone(id: string, agent: string) {
   }[];
   const makers = madeInto(id);
   const left = [
-    threads.length && `open threads ${threads.map(t => t.id).join(', ')} (hq plan done, or hq thread move)`,
+    threads.length && `open deliverables ${threads.map(t => t.id).join(', ')} (hq plan done, or hq deliverable move)`,
     work.length && `work still to run or in review: ${work.map(j => `#${j.id}`).join(', ')}`,
     proposed.length && `proposals in its inbox: ${proposed.map(p => `#${p.id}`).join(', ')} (hq inbox)`,
     makers.length && `HQ's own jobs going to it: move ${makers.join(', ')} to another open project`,

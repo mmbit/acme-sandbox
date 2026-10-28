@@ -263,22 +263,22 @@ test('job and inbox accept refuse a priority where it used to be, saying how to 
   assert.equal(last().body.title, '3');
 });
 
-test('job --thread sends it to an open thread or starts one, --check marks a check (anywhere after job); HQ\'s thread is printed', async () => {
-  const into = await hq('job', 'juno', 'Build the levels', `${tmp}/body.md`, '--thread', 'game/levels');
+test('job --deliverable (or --thread, its old name) sends it to an open deliverable or starts one, --check marks a check (anywhere after job); HQ\'s deliverable is printed', async () => {
+  const into = await hq('job', 'juno', 'Build the levels', `${tmp}/body.md`, '--deliverable', 'game/levels');
   assert.deepEqual(last().body, { agent: 'juno', title: 'Build the levels', after: null, prompt: 'Please decide.', thread: 'game/levels' });
-  assert.equal(into, 'Queued job #42 TOMAK for juno: Build the levels\nIn thread game/levels.\n');
+  assert.equal(into, 'Queued job #42 TOMAK for juno: Build the levels\nIn deliverable game/levels.\n');
   const started = await hq('job', '--thread', 'new:game', 'Bonus levels', 'ten levels are playable', '--check', 'juno', 'Audit the save files', `${tmp}/body.md`);
   assert.deepEqual(last().body, { agent: 'juno', title: 'Audit the save files', after: null, prompt: 'Please decide.',
     newThread: { project: 'game', name: 'Bonus levels', goal: 'ten levels are playable' }, check: true });
-  assert.equal(started, 'Queued job #42 TOMAK for juno: Audit the save files\nIn thread game/bonus-levels.\n');
+  assert.equal(started, 'Queued job #42 TOMAK for juno: Audit the save files\nIn deliverable game/bonus-levels.\n');
   await hq('job', '--check', 'juno', 'Read the logs', `${tmp}/body.md`);
   assert.deepEqual(last().body, { agent: 'juno', title: 'Read the logs', after: null, prompt: 'Please decide.', check: true });
   const before = seen.length;
-  for (const bad of [['--thread'], ['--thread', 'game'], ['--thread', 'game/levels/x'], ['--thread', 'new:game', 'Bonus levels'],
-    ['--thread', 'game/levels', '--thread', 'shop/checkout']]) {
+  for (const bad of [['--deliverable'], ['--deliverable', 'game'], ['--thread', 'game/levels/x'], ['--deliverable', 'new:game', 'Bonus levels'],
+    ['--deliverable', 'game/levels', '--thread', 'shop/checkout']]) {
     const r = await run(['job', 'juno', 'T', `${tmp}/body.md`, ...bad]);
     assert.equal(r.code, 1, bad.join(' '));
-    assert.match(r.err, /^No job was queued: --thread /, bad.join(' '));
+    assert.match(r.err, /^No job was queued: --deliverable /, bad.join(' '));
   }
   assert.equal(seen.length, before);
 });
@@ -289,43 +289,47 @@ test('job with no thread to inherit or name prints HQ\'s refusal, open threads a
   assert.equal(r.err, `No job was queued: ${NO_THREAD}\n`);
 });
 
-test('plan thread, plan done and thread list send what HQ needs and print what it answered; refusals say why', async () => {
-  const made = await run(['--as', 'rivet', 'plan', 'thread', 'game', 'Bonus levels', 'ten levels are playable', '--needs', 'game/levels']);
+test('plan deliverable, plan done and deliverable list (and their old name, thread) send what HQ needs and print what it answered; refusals say why', async () => {
+  const made = await run(['--as', 'rivet', 'plan', 'deliverable', 'game', 'Bonus levels', 'ten levels are playable', '--needs', 'game/levels']);
   assert.deepEqual([last().url, last().body], ['/api/agent/plan/thread', { project: 'game', name: 'Bonus levels', goal: 'ten levels are playable', needs: ['game/levels'], as: 'rivet' }]);
   // (read back as the board reads it, beside the project's other open threads.)
-  assert.equal(made.out, 'Thread drawn, needing game/levels:\n  Play › The game › Bonus levels (game/bonus-levels)\n  done when ten levels are playable\n'
-    + 'The game\'s other open threads:\n  game/levels  Levels\nIts tasks: hq job --thread game/bonus-levels <agent> "title" <brief> --code WORD\n');
+  assert.equal(made.out, 'Deliverable drawn, needing game/levels:\n  Play › The game › Bonus levels (game/bonus-levels)\n  done when ten levels are playable\n'
+    + 'The game\'s other open deliverables:\n  game/levels  Levels\nIts tasks: hq job --deliverable game/bonus-levels <agent> "title" <brief> --code WORD\n');
   assert.match((await run(['plan', 'thread', '--slug', 'wk', 'game', 'Bonus levels', 'it runs'])).out, /^ {2}Play › The game › Bonus levels \(game\/wk\)$/m);
   assert.equal(last().body.slug, 'wk');
-  const refused = await run(['plan', 'thread', 'nowhere', 'Side quest', 'it is fun']);
+  const refused = await run(['plan', 'deliverable', 'nowhere', 'Side quest', 'it is fun']);
   assert.equal(refused.code, 1);
-  assert.equal(refused.err, 'No thread was drawn: there\'s no project "nowhere"\n');
-  assert.equal((await run(['plan', 'done', 'game/levels'])).out, 'Thread game/levels is done.\n');
+  assert.equal(refused.err, 'No deliverable was drawn: there\'s no project "nowhere"\n');
+  assert.equal((await run(['plan', 'done', 'game/levels'])).out, 'Deliverable game/levels is done.\n');
   assert.deepEqual(last().body, { thread: 'game/levels' });
   assert.equal((await run(['plan', 'done', 'shop/checkout'])).err, 'Nothing changed: only its owner (moss) or the CEO\n');
-  assert.equal((await run(['thread', 'list'])).out, 'game/levels  Levels (wren, 3 open)  done when ten levels are playable\n'
+  assert.equal((await run(['deliverable', 'list'])).out, 'game/levels  Levels (wren, 3 open)  done when ten levels are playable\n'
     + 'shop/checkout  Checkout (moss, 1 open)  done when a buyer can pay\n');
-  assert.equal((await run(['thread', 'list', 'game', '--all'])).out, 'game/levels  Levels (wren, 3 open)  done when ten levels are playable\n'
+  assert.equal((await run(['deliverable', 'list', 'game', '--all'])).out, 'game/levels  Levels (wren, 3 open)  done when ten levels are playable\n'
     + 'game/tutorial  Tutorial (wren, done)  done when a player learns the controls\n');
   assert.equal(last().url, '/api/agent/threads?project=game&all=1');
-  assert.equal((await run(['thread', 'list', 'unused'])).out, 'No open threads in unused.\n');
+  assert.equal((await run(['thread', 'list', 'unused'])).out, 'No open deliverables in unused.\n');
+  const help = (await run([])).out;
+  assert.match(help, /^# +hq deliverable list \[<project>\] \[--all\]/m, 'the help lists the new name');
+  assert.doesNotMatch(help, /hq thread (list|move|pause|resume|<)/, 'never the old one');
+  assert.equal(help.match(/hq thread, the old name, still works/g)?.length, 1, 'says once that the old name works');
   const before = seen.length;
-  for (const bad of [['plan', 'thread', 'game', 'Bonus levels'], ['plan', 'done'], ['thread', 'close', 'game/levels'],
-    ['plan', 'thread', 'game', 'W', 'g', '--slug'], ['plan', 'thread', 'game', 'W', 'g', '--needs'], ['plan', 'move', 'x', '1']]) {
+  for (const bad of [['plan', 'deliverable', 'game', 'Bonus levels'], ['plan', 'done'], ['deliverable', 'close', 'game/levels'],
+    ['plan', 'deliverable', 'game', 'W', 'g', '--slug'], ['plan', 'deliverable', 'game', 'W', 'g', '--needs'], ['plan', 'move', 'x', '1']]) {
     assert.equal((await run(bad)).code, 1, bad.join(' '));
   }
-  assert.match((await run(['plan', 'thread', 'game', 'Bonus levels'])).err, /A thread takes its project to its "done when"/);
-  assert.match((await run(['thread', 'new', 'game', 'W', 'g'])).err, /hq plan thread <project>/);
-  assert.match((await run(['thread', 'done', 'game/levels'])).err, /hq plan done/);
+  assert.match((await run(['plan', 'deliverable', 'game', 'Bonus levels'])).err, /A deliverable takes its project to its "done when"/);
+  assert.match((await run(['thread', 'new', 'game', 'W', 'g'])).err, /hq plan deliverable <project>/);
+  assert.match((await run(['deliverable', 'done', 'game/levels'])).err, /hq plan done/);
   assert.equal(seen.length, before);
 });
 
 test('plan rename and title, project rename and done send what HQ needs and print what it answered; the levels in help and usage', async () => {
   const renamed = await run(['plan', 'rename', 'game/levels', 'Ten levels to play', 'all ten are playable', '--slug', 'ten-levels']);
   assert.deepEqual([last().url, last().body], ['/api/agent/plan/rename', { thread: 'game/levels', name: 'Ten levels to play', goal: 'all ten are playable', slug: 'ten-levels' }]);
-  assert.equal(renamed.out, 'Thread renamed (game/levels still finds it):\n  Play › The game › Ten levels to play (game/ten-levels)\n'
-    + '  done when all ten are playable\nIt\'s the only open thread in The game.\n');
-  assert.match((await run(['plan', 'rename', 'game/levels', 'Ten levels to play'])).out, /^Thread renamed:\n/);
+  assert.equal(renamed.out, 'Deliverable renamed (game/levels still finds it):\n  Play › The game › Ten levels to play (game/ten-levels)\n'
+    + '  done when all ten are playable\nIt\'s the only open deliverable in The game.\n');
+  assert.match((await run(['plan', 'rename', 'game/levels', 'Ten levels to play'])).out, /^Deliverable renamed:\n/);
   assert.equal(last().body.goal, undefined, 'the "done when" stays as it was');
   assert.equal((await run(['plan', 'rename', 'game/levels', 'Game'])).err, 'Nothing changed: "Game" is the name of the project game: No two levels share a name.\n');
   assert.equal((await run(['plan', 'title', '42', 'Draw the tenth level'])).out, 'Job #42 is titled Draw the tenth level now.\n');
@@ -339,11 +343,11 @@ test('plan rename and title, project rename and done send what HQ needs and prin
     ['plan', 'title', '42'], ['project', 'rename', 'game'], ['project', 'done'], ['project', 'done', 'game', 'shop']])
     assert.equal((await run(bad)).code, 1, bad.join(' '));
   assert.equal(seen.length, before);
-  assert.match((await run(['plan', 'rename', 'game/levels'])).err, /A thread takes its project to its "done when"/);
+  assert.match((await run(['plan', 'rename', 'game/levels'])).err, /A deliverable takes its project to its "done when"/);
   assert.match((await run(['project', 'new', 'game'])).err, /A project is a part of its product with one owner/);
-  assert.match((await run(['job', 'moss', 'T', '--thread', 'game'])).err, /A thread takes its project to its "done when"/);
+  assert.match((await run(['job', 'moss', 'T', '--deliverable', 'game'])).err, /A deliverable takes its project to its "done when"/);
   const help = (await run([])).out;
-  for (const level of ['A product is what', 'A project is a part of its product', 'A thread takes its project', 'A task is one agent\'s step', 'No two levels share a name.', "That's the foundation's naming guide", 'Every name the board reads'])
+  for (const level of ['A product is what', 'A project is a part of its product', 'A deliverable takes its project', 'A task is one agent\'s step', 'No two levels share a name.', "That's the foundation's naming guide", 'Every name the board reads'])
     assert.ok(help.includes(level), level);
   assert.doesNotMatch(help, /It marks a task|it says so:/, 'no sizes or look ahead of its own: none said');
 });
@@ -357,12 +361,12 @@ test("help and usages show the company's own lines for its levels, the sizes hq 
     execFile('bash', [HQ, ...args], { env: { ...env, HQ_REPO: repo } }, (_e, out, err) => resolve({ out, err })));
   const help = (await own([])).out.replace(/\n# +/g, ' ');
   for (const said of ['A project here is one milestone.', 'A thread here ends within hours.', 'A task is one agent\'s step',
-    'It marks a task to start sized past 1 h 30 min and a thread whose tasks to do add up past 6 h, to split.',
+    'It marks a task to start sized past 1 h 30 min and a deliverable whose tasks to do add up past 6 h, to split.',
     'it says so: Plan the next milestone.'])
     assert.ok(help.includes(said), said);
   // (the company's line after the foundation's guide.)
-  assert.ok(help.includes('A thread takes its project'), "the foundation's line, the company's after it");
-  assert.match((await own(['plan', 'thread', 'game', 'Bonus levels'])).err, /\. A thread here ends within hours\.\n$/);
+  assert.ok(help.includes('A deliverable takes its project'), "the foundation's line, the company's after it");
+  assert.match((await own(['plan', 'deliverable', 'game', 'Bonus levels'])).err, /\. A thread here ends within hours\.\n$/);
   assert.match((await own(['plan', 'rename', 'game/levels'])).err, /\. A thread here ends within hours\.\n$/);
   assert.match((await own(['project', 'new', 'game'])).err, /\. A project here is one milestone\.\n$/);
   assert.match((await own(['job', 'moss', 'T', '--thread', 'game'])).err, /A thread here ends within hours\.\n$/);
@@ -375,9 +379,9 @@ test("hq plan says HQ's marks with the company's sizes, and its look ahead when 
   assert.equal(game[1], "It's Play's only open project: nothing is planned beyond it. Plan the next one. The CEO makes projects (hq project new).");
   const marked = game.flatMap((line, i) => (/split it into its steps/.test(line) ? [game[i - 1], line] : []));
   assert.deepEqual(marked, ['  1. #2 bolt (2 h 30 min, queued): Step 2',
-    '     Sized past 2 h: split it into its steps (hq plan drop, then hq job --thread for each).']);
+    '     Sized past 2 h: split it into its steps (hq plan drop, then hq job --deliverable for each).']);
   assert.ok(game.includes('  Its tasks to do add up to 8 h 30 min, past 8 h: draw its later part as '
-    + 'a thread of its own (hq plan thread with --needs game/levels) and move its tasks there (hq job move).'));
+    + 'a deliverable of its own (hq plan deliverable with --needs game/levels) and move its tasks there (hq job move).'));
   const shop = (await run(['plan', 'shop'])).out;
   assert.doesNotMatch(shop, /nothing is planned beyond|split it|add up to/, 'a product with another project, nothing marked');
   assert.doesNotMatch((await run(['plan', 'till'])).out, /nothing is planned beyond/, 'a company that says nothing on looking ahead');

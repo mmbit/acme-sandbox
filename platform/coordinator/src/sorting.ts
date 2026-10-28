@@ -5,6 +5,7 @@
 // own (hq job) and dropped. A job waits for that on a 'sorted' wake (wakes.ts, jobs.ts READY), its proposal (sorts.job)
 // in the owner's inbox; work that joins it after it was sorted (a later message, more feedback) holds it again. A
 // template proposal with no job (sorts.job null: followups.ts) is accepted only under a title of the accepter's.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, planChange } from './db.ts';
 import { publish } from './events.ts';
 import * as jobs from './jobs.ts';
@@ -127,14 +128,14 @@ export function accept(
   const thread = jobs.threadOf(job);
   const to = ask.newThread != null ? 'new' : ask.thread == null ? thread : findThread(String(ask.thread))?.id;
   if (to !== thread)
-    return `job #${job} is in ${thread ?? 'no thread'}: move it there first (hq job move ${job} <thread>)`;
+    return `job #${job} is in ${thread ?? 'no deliverable'}: move it there first (hq job move ${job} <deliverable>)`;
   // (the desk is the CEO's own work alone: anyone else's goes to its project first.)
   if (
     !thread &&
     projects().requireThread &&
     (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string }).agent !== ceo()
   )
-    return `job #${job} is in no thread. ${whereWorkGoes()} Move it to that project's thread first (hq job move ${job} <project>/<slug>)`;
+    return `job #${job} is in no deliverable. ${whereWorkGoes()} Move it to that project's deliverable first (hq job move ${job} <project>/<slug>)`;
   const had = codeOf(job);
   const named = ask.code == null && had ? { code: had } : claim(ask.code, thread);
   if ('refused' in named) return named.refused;
@@ -152,13 +153,13 @@ export function accept(
       job,
       p.id,
     );
-    const what = `task #${job} sorted${own ? ', and its thread named' : ''}: ${title}`;
+    const what = `task #${job} sorted${own ? ', and its deliverable named' : ''}: ${title}`;
     if (thread) planChange({ project: findThread(thread)!.project, thread, what, by });
     return { job, code: named.code, thread, sorted: true };
   });
 }
 
-// The owner's planning job's prompt (planning.ts), the one sort step per owner and project (null: no project's), which
+// The owner's planning job's prompt (planning.ts; its words, deliverables drawn whole), the one sort step per owner and project (null: no project's), which
 // reads that project's inbox when it starts (proposals.ts list). It ends with the
 // levels each name shows, in the company's lines (levels.ts), and how its plans look ahead.
 // (HQ's own to sort)
@@ -169,38 +170,42 @@ export const planning = (
 ) => `Proposals, review findings and HQ's own work to sort for ${project ? `the project ${project}` : 'no project, yours as the CEO'} arrive here: it waits in your inbox, out of the queue, until you decide it.
 
 1. Read the inbox: \`hq inbox\` lists what waits for you here, \`hq inbox <id>\` shows one in full.
-2. Read the plan it would go in: \`hq plan ${project ?? '<project>'}\` (its threads, their "done when", needs and tasks in order).
+2. Read the plan it would go in: \`hq plan ${project ?? '<project>'}\` (its deliverables, their "done when", needs and tasks in
+   order).
 3. Decide each one:
-   - review findings: read their domains and files, then draw one fix task per discipline with
+   - review findings: read their domains and files, then draw one job for the ruling on this pull request with
      \`hq inbox accept findings:<pr> --for <agent> --findings <id,id,...>\`, or
-     \`hq job --thread <thread> --findings <id,id,...> <agent> "title" <brief>\`.
-     Name every finding the task answers. Its title is the reviewer's for those findings (\`hq inbox findings:<pr>\`
-     shows it by each), or yours with --title when they're under more than one. The last fix task's push starts the
-     next round. A closed review needs its thread redrawn or the findings dropped.
+     \`hq job --deliverable <deliverable> --findings <id,id,...> <agent> "title" <brief>\`.
+     Name all blocking findings together. Its title combines the reviewer's names for those findings (\`hq inbox findings:<pr>\`
+     shows them by each), or yours with --title. Finish them all before the final verification and push, which
+     starts the next round. A closed review needs its deliverable redrawn or the findings dropped.
    - HQ's own work under a template name, or holding several things (a colleague's message, the board's feedback, a
      return to the board, a review's follow-ups): name it for what it does with --title on the accept. A job HQ made
-     waits unstarted until \`hq inbox accept <id> --title "..." [--code WORD]\` (in another thread: \`hq job move\` it
+     waits unstarted until \`hq inbox accept <id> --title "..." [--code WORD]\` (in another deliverable: \`hq job move\` it
      first). Unrelated parts are tasks of their own: queue each (\`hq job\`, with its part of the brief), then accept
      it as the part left, or drop it saying where its parts went, which cancels it.
-     A message marked \`--needs-answer\` needs its answer during the caller's run. HQ gives it an independent thread.
+     A message marked \`--needs-answer\` needs its answer during the caller's run. HQ gives it a task of its own.
      Keep it independent of the caller's completion when sorting or splitting it.${
        projects().requireThread
          ? `
-     Place it first: ${whereWorkGoes()} One in no thread goes to the thread of its project it serves (\`hq job
-     move <job> <project>/<slug>\`, a thread drawn for it there if none fits), unless it's the CEO's own.`
+     Place it first: ${whereWorkGoes()} One in no deliverable goes to the deliverable of its project it serves (\`hq
+     job move <job> <project>/<slug>\`, one drawn for it there if none fits), unless it's the CEO's own.`
          : ''
      }
-   - part of a thread's "done when": \`hq inbox accept <id> --thread <project>/<slug>\`, then \`hq plan move\` it to its
-     place among the thread's tasks if it isn't last;
-   - beyond every thread: a thread of its own, \`hq inbox accept <id> --thread new:<project> "name" "done when"\`, with
-     what it needs first (\`hq plan need <thread> <thread>\`);
+   - part of a feature an open deliverable makes, whoever proposed it and whichever agent does it: add it there,
+     \`hq inbox accept <id> --deliverable <project>/<slug>\` (its "done when" grows with \`hq plan rename\` if it must),
+     then \`hq plan move\` it to its place among the deliverable's tasks if it isn't last. Several agents take turns
+     in one deliverable, on one branch, reviewed once at its end;
+   - a feature no open deliverable makes: a deliverable of its own, cut by what the board will see go live (never one
+     per note or proposal), \`hq inbox accept <id> --deliverable new:<project> "name" "done when"\`, with what it
+     needs first (\`hq plan need <deliverable> <deliverable>\`);
    - another owner's project: drop it saying whose it is, so its proposer proposes it there;
    - not worth doing now: \`hq inbox drop <id> "why"\` (its proposer reads why).
-4. Read \`hq plan <project>\` again for each thread you added to: split a task it marks to split into its steps, and
-   draw the later part of a thread it marks as a thread of its own.
+4. Read \`hq plan <project>\` again for each deliverable you added to: split a task it marks to split into its steps,
+   and draw the later part of a deliverable it marks as a deliverable of its own, cut where a piece can go live alone.
 5. Before you end, read \`hq inbox\` again: what arrived while you worked waits there too. End when nothing waits for
    you. Change only the plans these inbox items require. Write no code.
 
-Each name shows its level: a task whose title isn't its step gets one (\`hq plan title <job> "title"\`), a thread
-whose name needs context a new one (\`hq plan rename <thread> "name" ["done when"]\`).
+Each name shows its level: a task whose title isn't its step gets one (\`hq plan title <job> "title"\`), a
+deliverable whose name needs context a new one (\`hq plan rename <deliverable> "name" ["done when"]\`).
 ${[levels(own.lines), own.ahead].filter(Boolean).join('\n')}`;

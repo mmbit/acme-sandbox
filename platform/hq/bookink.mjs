@@ -11,6 +11,10 @@ const RING = { x: 248, y: 305, rx: 70, ry: 50 },
   ON_RING = [RING.x + RING.rx, RING.y];
 // (the ink lifting into the book: lift.js's flight, then gone)
 const LIFT_MS = 900;
+// (a lift in flight by its own clock let land, however late the machine draws its frames: headless WebKit on a helper
+// with no GPU composites on the CPU, and a fresh run, with no shader cache yet, held a page's frames ~0.9 s as the
+// first lift took off. A lift still there this long after is one that never lands.)
+const LANDS_MS = 5000;
 
 // c: book-check's { browser, hqIn, base, MINI, settled, penOn, ring, inkAt, notes, org, posts, shot, noErrorsIn }, and
 // look ('&renderer=wire' for Wire)
@@ -43,10 +47,11 @@ export async function inkStory(c) {
 
 // Nothing drawn over the page: review mode's ink layers blank to the last pixel, a second screen's ink blank, no ring
 // or pointer of a call's agent, nothing lifting into the book. Read from the layers themselves, never a guess at what's
-// on them; waits up to `within` ms for a lift in flight to land.
+// on them; waits up to `within` ms for a lift in flight to land. A lift is held to its own clock: a flight of at most
+// LIFT_MS by its animations' timing, waited for while it's flying (LANDS_MS at most), never the machine's frames.
 export async function nothingDrawn(page, where, within = LIFT_MS) {
   const left = () =>
-    page.evaluate(() => {
+    page.evaluate(within => {
       const inked = c => {
         if (!c.width || !c.height) return false;
         const { data } = c.getContext('2d').getImageData(0, 0, c.width, c.height);
@@ -59,12 +64,19 @@ export async function nothingDrawn(page, where, within = LIFT_MS) {
         ...[...document.querySelectorAll('canvas.pair-ink')].filter(inked).map(() => 'the other screen’s ink'),
         ...[...document.querySelectorAll('[data-call-ink]')].map(() => 'a call’s ring'),
         ...[...document.querySelectorAll('.hq-pointer')].map(() => 'a call’s pointer'),
-        ...[...document.querySelectorAll('review-lift')].map(() => 'ink lifting into the book'),
+        ...[...document.querySelectorAll('review-lift')].map(l => {
+          const flight = l.getAnimations();
+          // (by its own clock: a frame held up can see it finished before the frame that lands it)
+          const flying = flight.length && flight.every(a => a.effect.getComputedTiming().endTime <= within);
+          return flying ? 'ink lifting into the book (flying)' : 'ink lifting into the book';
+        }),
       ];
-    });
+    }, within);
   let found = await left();
-  for (const end = Date.now() + within; found.length && Date.now() < end; found = await left())
-    await page.waitForTimeout(50);
+  const end = Date.now() + within,
+    landed = Date.now() + LANDS_MS;
+  const flying = () => found.every(f => f.endsWith('(flying)'));
+  for (; found.length && Date.now() < (flying() ? landed : end); found = await left()) await page.waitForTimeout(50);
   assert.deepEqual(found, [], `${where}: nothing drawn on HQ`);
 }
 

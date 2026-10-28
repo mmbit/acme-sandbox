@@ -1,5 +1,6 @@
 // A meeting's chair (meetings.ts, meetingseats.ts): the CEO, seated in every meeting. What it judges the meeting's progress
 // by, the tally it reviews once every seat has handed in, and its summary of the meeting in HQ's news feed.
+// (its messages say deliverable, the board's word for a thread)
 import { readFileSync } from 'node:fs';
 import { Marked } from 'marked';
 import { columnsOf, db, meetingChanges, meetingProjects, once } from './db.ts';
@@ -23,11 +24,11 @@ export const CHAIR = `You chair this meeting: you keep the whole in shape, and o
   changes (it shows in your \`hq meeting listen\` within a few minutes): every deadline and window, against how they
   stood when the meeting began.
 - Then review the whole: is it headed in the right direction and in line with our strategy, is the scope right, are the
-  threads real threads (one deliverable, done in hours) and the projects real projects (a finished product), do the
-  owners' conventions match? Stop sprawl: needless substructures, threads nobody needs, over-engineering, each owner
-  with its own conventions. Is it split for speed? Parts that don't need each other go in threads of their own, so they
-  run side by side; steps that build on each other go in one thread, where its agents take turns on one branch and one
-  review reads them at the end; a wait for another thread's merge only where the work truly needs it merged. Send
+  deliverables real deliverables (one pull request, done in hours) and the projects real projects (a finished product), do the
+  owners' conventions match? Stop sprawl: needless substructures, deliverables nobody needs, over-engineering, each owner
+  with its own conventions. Is it split for speed? Parts that don't need each other go in deliverables of their own, so they
+  run side by side; steps that build on each other go in one deliverable, where its agents take turns on one branch and one
+  review reads them at the end; a wait for another deliverable's merge only where the work truly needs it merged. Send
   what needs changing back with \`hq meeting reopen <agent>... "what to change"\`: their
   hand-ins reopen, and the tally runs again once they hand in again.
 - Close it with \`hq meeting close\` once the review is done (with \`--stalled\` when it has stalled before everyone

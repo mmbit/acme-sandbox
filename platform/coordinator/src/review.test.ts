@@ -85,11 +85,14 @@ setInterval(async () => {
 // ---- a job's life, through the worker's routes
 type Listed = { id: number; agent: string; kind: string; stage: string | null; step: string | null; status: string; pr: number; round: number; title: string;
   engine: string; until: number | null; ready: number; after: number | null; waits: { id: number }[] };
-type Run = Running & Listed & { seat: string; sha: string | null; prompt: string; note: string | null; customers: number; writes: string | null };
+type Run = Running & Listed & { seat: string; sha: string | null; prompt: string; note: string | null; customers: number; writes: string | null; landing: string | null };
 // What HQ lists as queued for pull request n, oldest first: its review runs and its author's jobs on it
 const queued = (n: number) => (h.jobs.listJobs() as unknown as Listed[]).filter(j => j.pr === n && j.status === 'queued').reverse();
 const reviewers = (n: number) => queued(n).filter(j => j.kind === 'review').map(j => j.agent);
 const doing = (n: number) => queued(n).map(j => j.step);
+// A refused merge's retries (1, 3, 9 ms) can each come later than settled()'s 25 quiet ms on a loaded machine, so a test
+// whose merge GitHub refuses again and again waits for its outcome itself (the author's job, or stuck).
+const outlasted = (n: number, ended: () => unknown) => until(ended, `PR #${n}'s refused merge to end`);
 // The worker's seats take PR n's queued jobs that are ready (those `which` picks), each engine's oldest first. A job of
 // another pull request a seat takes first (a test's leftovers, a retry come due) goes back to wait for the seat's reset.
 async function claim(n: number, which: (j: Listed) => boolean = () => true) {
@@ -168,6 +171,7 @@ async function retryWithApproval(n: number, approval: string[]) {
 // STATUS.md's table of pull requests (infra/report.sh), as agents read it
 const prs = (n: number) => ({ ...db.prepare('select round, status from prs where number = ?').get(n) });
 const why = (n: number) => (db.prepare('select why from prs where number = ?').get(n) as { why: string | null }).why;
+const mergedAs = (n: number) => (db.prepare('select merged_as from prs where number = ?').get(n) as { merged_as: string | null }).merged_as;
 // Long ago: no route moves the clock
 const longAgo = (n: number) =>
   db.prepare("update jobs set created = '2026-01-01T00:00:00.000Z', finished = '2026-01-01T00:00:00.000Z' where pr = ? or branch = ?").run(n, `review/${n}`);
@@ -632,10 +636,12 @@ test('a migrated waiting pull request stops repeated merge refusals until hq rev
   const denied = { status: 403, message: 'Repository rules refuse this token' };
   github.refuse.push(...Array(16).fill(denied));
   await decide(n, 'merge');
+  await outlasted(n, () => queued(n).length);
   assert.deepEqual(doing(n), ['Bringing up to date']);
   await submit(n, { sha });
   const check = await decide(n, 'merge');
   assert.equal(check.stage, 'merge');
+  await outlasted(n, () => prs(n).status === 'stuck');
   assert.equal(prs(n).status, 'stuck');
   assert.ok(why(n)?.includes(denied.message));
   assert.deepEqual(queued(n), []);
@@ -654,9 +660,11 @@ test('a refused kept touch-up stops unchanged pushes and resumes through hq revi
   github.refuse.push(...Array(16).fill({ status: 403, message: 'Repository rules refuse this token' }));
   await pushAt(n, [PAGE], head, head, []);
   await decide(n, 'merge');
+  await outlasted(n, () => queued(n).length);
   assert.deepEqual(doing(n), ['Bringing up to date']);
   await pushAt(n, [PAGE], head, head, []);
   await decide(n, 'merge');
+  await outlasted(n, () => prs(n).status === 'stuck');
   assert.equal(prs(n).status, 'stuck');
   assert.deepEqual(queued(n), []);
   github.refuse.length = 0;
@@ -1882,7 +1890,7 @@ test("tests that couldn't complete hold the push before any review, its author p
   assert.equal((await claim(n)).length, 0, 'nobody reviews it');
 });
 
-test("hq review gives a pull request stuck on tests that couldn't complete to its author, whose push of the same commit runs them again, and the round goes on", async () => {
+test("hq review pushes a pull request stuck on tests that couldn't complete again, the same commit with no agent run, and the round goes on", async () => {
   const n = 3915, gates = { passed: true, report: 'ok' };
   const incomplete = { passed: null, report: 'The tests could not run: fetch failed' };
   await gated(n, gates, incomplete);
@@ -1894,22 +1902,38 @@ test("hq review gives a pull request stuck on tests that couldn't complete to it
   const [rerun, ...rest] = await claim(n);
   assert.equal(rest.length, 0, 'no review yet');
   assert.match(rerun.title, /^Running the tests again/);
-  assert.ok(rerun.prompt.includes('Change nothing') && rerun.prompt.includes('fetch failed'), rerun.prompt);
-  assert.equal((await hqReview(n)).status, 409, 'its author is on it');
-  await submit(n, { files: NORMAL, sha, gates, tests: { passed: true, report: 'Tests passed: 1 area against origin/main, 3 s' } }, rerun);
+  // the worker lands it (worker.ts land): the push, the pull request found, the checks, and no CLI started
+  const landing = JSON.parse(rerun.landing ?? 'null') as { summary: string; result: string } | null;
+  assert.ok(landing, 'no landing');
+  assert.ok(landing.result.includes('fetch failed') && landing.result.includes('runs no agent'), landing.result);
+  assert.equal(landing.summary, landing.result, 'the pull request body, if the worker opens one, says the same');
+  assert.equal((await hqReview(n)).status, 409, 'its push is under way');
+  // its landing run fails (the clone, say): the retry lands the same way, never an agent's run on that report
+  assert.equal((await worker('finish', { job: rerun.id, seat: rerun.seat, status: 'failed', result: 'The run ended with an error: clone failed' })).status, 200);
+  await settled();
+  later(n);
+  const [retry, ...others] = await claim(n);
+  assert.equal(others.length, 0, 'no review yet');
+  assert.notEqual(retry.id, rerun.id);
+  assert.equal(retry.landing, rerun.landing, 'the retry lands, with no CLI');
+  await submit(n, { files: NORMAL, sha, gates, tests: { passed: true, report: 'Tests passed: 1 area against origin/main, 3 s' } }, retry);
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   assert.ok((await claim(n)).every(j => j.kind === 'review'), 'the panel has it');
 });
 
-test("tests the platform stopped (its disk accounting down) give their author no job: the pull request waits stuck until hq review", async () => {
-  const n = 3919, gates = { passed: true, report: 'ok' };
-  const stopped = { passed: null, platform: true, report: 'Could not complete: job #9: Disk accounting unavailable for job 9.' };
-  await gated(n, gates, stopped);
-  assert.deepEqual(prs(n), { round: 0, status: 'stuck' });
-  assert.match(why(n)!, /^the platform couldn't run its tests \(Could not complete: .*\); `hq review 3919` runs them again$/);
-  assert.equal((await claim(n)).length, 0, 'no repair job, no review');
-  assert.equal((await hqReview(n)).status, 200);
-  assert.match((await claim(n))[0].title, /^Running the tests again/);
+test("tests the platform stopped (its disk accounting down, or no room on the worker past its tries) give their author no job: the pull request waits stuck until hq review", async () => {
+  const gates = { passed: true, report: 'ok' };
+  for (const [n, report] of [
+    [3919, 'Could not complete: job #9: Disk accounting unavailable for job 9.'],
+    [3920, "Could not complete: the worker blocked its run 17880 (the job's 2257 MB, past a job's share of 1536 MB)."],
+  ] as const) {
+    await gated(n, gates, { passed: null, platform: true, report });
+    assert.deepEqual(prs(n), { round: 0, status: 'stuck' });
+    assert.match(why(n)!, new RegExp(`^the platform couldn't run its tests \\(Could not complete: .*\\); \`hq review ${n}\` runs them again$`));
+    assert.equal((await claim(n)).length, 0, 'no repair job, no review');
+    assert.equal((await hqReview(n)).status, 200);
+    assert.match((await claim(n))[0].title, /^Running the tests again/);
+  }
 });
 
 test("failing gates and incomplete tests keep streaks of their own: a push without one ends its streak, and a push with both counts towards each", async () => {
@@ -2023,9 +2047,11 @@ test('a ruling GitHub never took is acted on after all: merged, or back to its a
   await decide(n, 'merge');
   assert.deepEqual(prs(n), { round: 1, status: 'open' });
   hold = undefined;
+  const commit = (github.pr(n).mergeCommit = newSha());
   await review.actOnRulings();
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
   assert.equal(github.pr(n).merged, true);
+  assert.equal(mergedAs(n), commit, "the commit GitHub's merge made is HQ's (carries.ts)");
 
   const c = 961;
   await submit(c);
@@ -2049,9 +2075,11 @@ test('a ruling GitHub never took is acted on after all: merged, or back to its a
 test('a merge that went through but was never heard back is recorded as merged, not sent back to its author', async () => {
   const n = 963;
   await submit(n);
+  const commit = newSha();
   hold = (method, k) => {
     if (method !== 'PUT' || k !== n) return;
-    Object.assign(github.pr(n), { state: 'closed', merged: true });
+    const { sha } = db.prepare('select sha from prs where number = ?').get(n) as { sha: string };
+    Object.assign(github.pr(n), { state: 'closed', merged: true, head: sha, mergeCommit: commit });
     throw new Error('connection reset');
   };
   await decide(n, 'merge');
@@ -2059,6 +2087,22 @@ test('a merge that went through but was never heard back is recorded as merged, 
   await review.actOnRulings();
   assert.deepEqual(prs(n), { round: 1, status: 'merged' });
   assert.deepEqual(queued(n), []);
+  // (HQ never heard its merge made it: someone else's merge of the same head looks the same)
+  assert.equal(mergedAs(n), null, 'its merge commit is checked like any outside commit (carries.ts)');
+});
+
+test('a pull request GitHub merged at a head other than the reviewed one leaves no merge commit as HQ\'s', async () => {
+  const n = 964;
+  await submit(n);
+  hold = (method, k) => {
+    if (method !== 'PUT' || k !== n) return;
+    Object.assign(github.pr(n), { state: 'closed', merged: true, head: newSha(), mergeCommit: newSha() });
+    throw new Error('connection reset');
+  };
+  await decide(n, 'merge');
+  hold = undefined;
+  await review.actOnRulings();
+  assert.equal(mergedAs(n), null, 'its merge commit is checked like any outside commit (carries.ts)');
 });
 
 test("a close ruling GitHub didn't take is acted on again", async () => {
@@ -2145,6 +2189,7 @@ test('a real conflict goes back to its author at once, told which files; a refus
   github.pr(s).mergeable = null;
   github.refuse.push(...Array(10).fill(BASE_MOVED));
   await decide(s, 'merge');
+  await outlasted(s, () => queued(s).length);
   assert.deepEqual(doing(s), ['Bringing up to date']);
   assert.equal(github.pr(s).merged, false);
 });
@@ -3256,6 +3301,34 @@ test('a "changes" ruling already delivered with a blocking finding that is a str
 
 // A thread's "changes" that names nothing to fix leaves its owner nothing to draw: its consolidator runs again. Touch-ups
 // alone are something to fix, once the worker pushed them.
+test('a ruling queues all its blockers in one fix job whose push starts the next round', async () => {
+  const inbox = await import('./reviewinbox.ts');
+  await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
+    const n = 8100, file = 'platform/coordinator/src/total.ts';
+    const thread = h.dueThread({ deadline: Date.now() + 86_400_000 });
+    const work = await h.start({ agent: 'bolt', branch: `review/${n}`, thread });
+    await withConsolidators(async () => {
+      await submit(n, { files: [file] }, work);
+      for (const run of await claim(n, j => j.kind === 'review')) await end(run);
+      const [ruler] = await claim(n, j => j.kind === 'consolidate');
+      const blocking = [
+        { file, line: 1, issue: 'The fee is missing', task: 'Add the fee' },
+        { file, line: 2, issue: 'The voucher is counted twice', task: 'Count the voucher once' },
+      ];
+      await end(ruler, { output: JSON.stringify({ major_visual: false, decision: 'changes', blocking }) });
+      const tasks = inbox.tasks(n, 1);
+      assert.equal(tasks.length, 1);
+      assert.equal(tasks[0].findings.length, 2);
+      const fix = await h.claimJob(tasks[0].id);
+      assert.equal(fix.title, 'Add the fee; Count the voucher once');
+      await submit(n, { files: [file] }, fix);
+      assert.deepEqual(prs(n), { round: 2, status: 'open' });
+      assert.equal(inbox.tasks(n, 1).filter(task => task.status === 'done').length, 1);
+      assert.equal(queued(n).some(job => job.kind === 'work'), false);
+    });
+  });
+});
+
 test('a touch-up-only ruling passes its Stop check before publication and merges after the author keeps its pushed edits', async () => {
   const inbox = await import('./reviewinbox.ts');
   await withSetting(JSON.stringify({ review: { drawWindowedChanges: true } }), async () => {
@@ -3907,14 +3980,26 @@ test('Changes first invalidates the old visual ruling, even when its next push k
   assert.equal(github.pr(n).merged, true);
 });
 
-test('one visual card covers the reviewed pull requests waiting on the same thread', async () => {
-  const thread = h.dueThread();
+test('one visual card covers the waiting thread and its own thread follows the held window', async () => {
+  const projects = await import('./projects.ts');
+  const regroup = await import('./regroup.ts');
+  const deadline = Date.now() + 4 * 3_600_000;
+  const thread = h.dueThread({ deadline, aim: deadline - 3_600_000 });
+  const earlier = h.dueThread({ deadline: deadline - 2 * 3_600_000, aim: deadline - 3 * 3_600_000 });
   let cardAuthor: Running | null = null;
+  let firstWork = 0;
   for (const n of [8182, 8183]) {
+    if (n === 8183) assert.equal(typeof regroup.moveJob(firstWork, earlier, 'juno'), 'object');
     const author = await h.start({ agent: 'bolt', thread });
     await submit(n, { branch: `job/${author.id}`, files: ['products/site/page.css'] }, author);
     await decide(n, 'merge', true);
-    if (n === 8182) cardAuthor = await h.claim();
+    if (n === 8182) { firstWork = author.id; cardAuthor = await h.claim(); }
+    assert.ok(cardAuthor);
+    const cardThread = projects.findThread(h.jobs.threadOf(cardAuthor.id)!);
+    assert.ok(cardThread, 'the pictures have a thread of their own');
+    assert.notEqual(cardThread.id, thread, 'the pictures can merge before the held branch');
+    const source = projects.findThread(n === 8182 ? thread : earlier)!;
+    assert.deepEqual([cardThread.deadline, cardThread.aim], [source.deadline, source.aim]);
   }
   assert.ok(cardAuthor);
   const card = await visualCard(8182, cardAuthor, [8183]);
@@ -3922,6 +4007,93 @@ test('one visual card covers the reviewed pull requests waiting on the same thre
   await settled();
   assert.equal(github.pr(8182).merged, true);
   assert.equal(github.pr(8183).merged, true);
+});
+
+test("a visual hold's thread ETA waits for the pictures to merge and the board to answer", async () => {
+  const forecast = await import('./forecast.ts');
+  await worker('room', { short: false, free: 8192, jobs: [],
+    capacity: { slots: { claude: 1, codex: 1 }, seatRuns: { claude: 1, codex: 1 }, room: 16 } });
+  await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', util: 0.1, week: 0.1 });
+  const n = 8178, pictures = 8179;
+  const thread = h.dueThread({ deadline: Date.now() + 4 * 3_600_000 });
+  const author = await h.start({ agent: 'bolt', thread, branch: `review/${n}` });
+  await submit(n, { files: ['products/site/page.css'] }, author);
+  await decide(n, 'merge', true);
+  const held = forecast.play().threads.get(thread)!;
+  assert.equal(held.eta, null, 'an unfiled visual card has no answer time yet');
+  assert.equal(held.slack, null, 'the hold cannot claim spare time');
+  assert.ok(held.waits.some(w => w.on === 'board'));
+  const cardAuthor = await h.claim();
+  assert.ok(cardAuthor);
+  assert.ok(held.waits.some(w => w.on === 'job' && w.job === cardAuthor.id && w.thread === h.jobs.threadOf(cardAuthor.id)));
+  const card = await h.ask(cardAuthor, { title: 'The new look', body: 'Before and after.', decides: visualDecision(cardAuthor) });
+  await submit(pictures, { branch: `job/${cardAuthor.id}`, files: ['products/site/before.svg'] }, cardAuthor);
+  const played = forecast.play();
+  const pictureMerge = played.usual.get(cardAuthor.id)!.merged;
+  const waiting = played.threads.get(thread)!;
+  assert.ok(pictureMerge !== null, JSON.stringify(played.usual.get(cardAuthor.id)));
+  assert.ok(waiting.eta !== null && waiting.eta >= pictureMerge, 'filing the card cannot skip its pictures review');
+  assert.ok(waiting.cards.some(c => c.request === card));
+  await decide(pictures, 'merge', false);
+  assert.equal(github.pr(n).merged, false);
+  assert.equal(github.pr(pictures).merged, true);
+  assert.notEqual(forecast.play().threads.get(thread)!.eta, null, 'merged pictures leave only the board to wait for');
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+});
+
+test("a decision's card job's own pull request opens no decision, though review calls it a major visual change, even once its card is replaced", async () => {
+  const thread = h.dueThread();
+  const n = 8190;
+  await submit(n, { files: ['products/site/page.css'] }, await h.start({ agent: 'bolt', branch: `review/${n}`, thread }));
+  await decide(n, 'merge', true);
+  const author = await h.claim();
+  assert.ok(author);
+  const decision = visualDecision(author);
+  await h.ask(author, { title: 'The new look', body: 'Before and after, on phone and desktop.', decides: decision });
+  const pictures = 8191;
+  await submit(pictures, { branch: `job/${author.id}`, files: ['products/_cycles/site/after.png'] }, author);
+  for (const run of await claim(pictures, j => j.kind === 'review')) await end(run);
+  const [quill] = await claim(pictures, j => j.kind === 'consolidate');
+  // Another change joins the thread while the pictures' ruling runs: the card is replaced, and a new card job queued.
+  const joined = 8194;
+  await submit(joined, { files: ['products/site/page.css'] }, await h.start({ agent: 'bolt', branch: `review/${joined}`, thread }));
+  await decide(joined, 'merge', true);
+  const decisions = () => (db.prepare('select count(*) n from decisions').get() as { n: number }).n;
+  const before = decisions();
+  await end(quill, { output: JSON.stringify({ decision: 'merge', summary: 'ok', major_visual: true }) });
+  assert.equal(decisions(), before, 'no decision, so no card job of its own');
+  assert.equal(db.prepare('select 1 from decision_merges where pr = ?').get(pictures), undefined);
+  await settled();
+  assert.equal(github.pr(pictures).merged, true, 'the pictures land, so the card can show them');
+  assert.equal(github.pr(n).merged, false, 'the change itself still waits for the card');
+  const card = await visualCard(n, undefined, [joined]);
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+  assert.equal(github.pr(joined).merged, true);
+});
+
+test("a decision's card job's pull request with a live file besides its pictures is held like any visual change", async () => {
+  const n = 8192;
+  await submit(n, { files: ['products/site/page.css'] });
+  await decide(n, 'merge', true);
+  const author = await h.claim();
+  assert.ok(author);
+  const card = await h.ask(author, { title: 'The new look', body: 'Before and after, on phone and desktop.', decides: visualDecision(author) });
+  const mixed = 8193;
+  await submit(mixed, { branch: `job/${author.id}`, files: ['products/_cycles/site/after.png', 'products/site/page.css'] }, author);
+  await decide(mixed, 'merge', true);
+  assert.ok(db.prepare('select 1 from decision_merges where pr = ?').get(mixed), 'the mixed pull request opens a hold');
+  await h.answer(card, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(n).merged, true);
+  assert.equal(github.pr(mixed).merged, false, 'its own card, not the one it carries pictures for');
+  const own = await visualCard(mixed);
+  await h.answer(own, '', { answers: ['Go live'] });
+  await settled();
+  assert.equal(github.pr(mixed).merged, true);
 });
 
 test("the CEO settles a visual hold citing the board's word: the merge goes on, the card job and open card end; no other word does", async () => {

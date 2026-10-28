@@ -148,6 +148,7 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 //   steps (jobcodes.ts).
 // - landing: a run that ended well but whose push or pull request the worker couldn't make (JSON: its pull request's
 //   body and its report, jobs.ts finish): its next run only lands it.
+// - carry: a commit main took outside a pull request HQ merged (carries.ts): the job only runs a push's checks on it
 //
 // seats: each seat as the worker last reported it.
 // - util, week: windows used (0 to 1), with each reset time in resets and week_resets (ms).
@@ -171,6 +172,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // prs: each pull request the review loop runs (review.ts).
 // - since: the last job id before its current round started (only later runs are that round's).
 // - review_since: the last job id before the board sent it back. Rulings before it belong to the previous review.
+// - merged_as: the merge commit GitHub made when HQ merged it (review.ts merge), which a carry's checks leave to the
+//   review (carries.ts).
 // - panel: the current round's panel (toPanel: full, held, light, deck, two, one).
 // - review_class: the risk class used to measure review rounds, retained when a later panel is partial.
 // - fixes_from: the commit a round reviews the author's fixes from (null: a full review).
@@ -245,7 +248,7 @@ db.exec(`
     about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
     is_check integer not null default 0, seq real, suspending text, step text,
     code text, landing text, engine_only text, judges text, off_worker integer not null default 0,
-    expedite integer not null default 0);
+    expedite integer not null default 0, carry text);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -260,7 +263,8 @@ db.exec(`
     since integer not null default 0, review_since integer not null default 0,
     files text not null default '[]', added integer, removed integer, links text not null default '[]', why text,
     panel text, review_class text, gate_fails integer not null default 0, fixes_from text, checks_note text not null default '',
-    tests_incomplete integer not null default 0, merged_at text, merge_refused text, expedited integer not null default 0);
+    tests_incomplete integer not null default 0, merged_at text, merge_refused text, expedited integer not null default 0,
+    merged_as text);
   create table if not exists schedule_runs (id text not null, slot text not null, job integer, kind text,
     routine text, primary key (id, slot));
   create table if not exists settings (key text primary key, value text not null);
@@ -316,8 +320,11 @@ db.exec(`create index if not exists prs_plan on prs (number, branch, author, pan
 db.exec(`create index if not exists jobs_tasks on jobs (thread, coalesce(seq, id), id)
   where kind = 'work' and pr is null and status != 'cancelled'`);
 // Wire's work tallies (work.ts) without a row read: each agent's jobs done by day and last finished work job, and the
-// merges by day.
-db.exec(`create index if not exists jobs_done_by on jobs (finished, agent) where status = 'done';
+// merges by day. And HQ's throughput (work.ts piles, every open HQ's foot each 30 s), which splits the day's done jobs
+// by kind: from the rows it would read each one's brief and output, ~11 MB a day's 1,500 jobs. Both queries name it with `indexed by`. Its own filter's column too: SQLite reads the row for a term
+// the index's where implies.
+db.exec(`create index if not exists jobs_done_tally on jobs (finished, agent, kind, status) where status = 'done';
+  drop index if exists jobs_done_by;
   create index if not exists jobs_last_work on jobs (agent, finished, title) where status = 'done' and kind = 'work';
   create index if not exists prs_merged on prs (merged_at, author) where merged_at is not null`);
 // The CEO's summary (summary.ts, threats.ts, finished.ts) counts and picks jobs by when they came in and ended without a
@@ -328,6 +335,8 @@ db.exec('create index if not exists jobs_counts on jobs (created, kind, status, 
 // which each statement wrapped in redraws.query reads whole.
 db.exec(`create index if not exists jobs_state on jobs (id, kind, status, branch);
   create index if not exists jobs_carried on jobs (item, kind) where item is not null`);
+// The jobs queued on a board call, by it: hq estimate --calibration lists them (calibration.ts queuedHow).
+db.exec('create index if not exists jobs_called on jobs (call) where call is not null');
 // A pull request's review loop as the hourly check's summary reads it (threats.ts latestMove, when work last moved),
 // without each review's brief. That query names it with `indexed by`.
 db.exec(`create index if not exists jobs_pr_loop on jobs (pr, kind, round, sha, stage, created, status, finished, voided)
@@ -341,6 +350,8 @@ db.exec('create index if not exists jobs_queued_for on jobs (queued_by, created,
 // Done work as matching.ts pastJobs reads it, every column it takes from a job: without it the read walks every done
 // job's brief and output, seconds when they're off the disk (the claim's plan, sizing a job just queued). That query
 // names it with `indexed by`. Its own filter's columns too: SQLite reads the row for a term the index's where implies.
+// It replaced jobs_past, dropped here: no other line may create that again, or every start drops and rebuilds it (seconds
+// of HQ's start, and a crash loop on a nearly full disk).
 db.exec(`create index if not exists jobs_history on jobs (id, agent, title, engine, created, finished, stage, round,
   queued_by, pr, branch, thread, customers, about_keys, kind, status) where kind = 'work' and status = 'done';
   drop index if exists jobs_done_work; drop index if exists jobs_past`);
@@ -524,10 +535,6 @@ db.exec(`create index if not exists jobs_open_tasks on jobs (id, thread, branch)
 // row (seconds off a cold disk). Kind and pr are columns too: SQLite reads the row for a term the index's where implies.
 db.exec(`create index if not exists jobs_merge_pending on jobs (thread, status, branch, kind, pr)
   where kind = 'work' and pr is null`);
-// The covering index keeps claim-time history reads (matching.ts pastJobs, named by `indexed by`) off the jobs table's
-// prompt and output overflow pages.
-db.exec(`create index if not exists jobs_past on jobs (id, agent, title, engine, created, finished, thread, branch, stage,
-  round, queued_by, pr) where kind = 'work' and status = 'done'`);
 // goal_told: jobs that heard an item's goal when linked while queued or running (ledger.ts goalTo). They hear it only
 // once. They hear when the item is dropped or replaced (ledger.ts stop).
 db.exec('create table if not exists goal_told (job integer not null, item integer not null, primary key (job, item))');
@@ -648,6 +655,9 @@ redacted('pauses', 'why');
 db.exec(`create table if not exists decisions (id integer primary key, name text not null, by text not null, at text not null,
   request integer, answered text, released text, card_job integer, settled text)`);
 redacted('decisions', 'name');
+// Every card job a visual hold queued (visualapproval.ts prepareCard), the replaced ones too: decisions.card_job keeps
+// only the latest, and an earlier one's pictures may still be in review.
+db.exec('create table if not exists card_jobs (job integer primary key, decision integer not null)');
 // A review's major visual changes share a decision within their thread. Only their merges wait for it.
  db.exec(`create table if not exists decision_merges (pr integer primary key, decision integer not null,
    sha text not null, scope text not null)`);
@@ -731,6 +741,10 @@ export const lacks = (table: string, column: string) =>
   !(db.prepare(`pragma table_info(${table})`).all() as { name: string }[]).some(c => c.name === column);
 once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table jobs add column code text'));
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
+once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter table jobs add column carry text'));
+db.exec('create index if not exists jobs_carry on jobs (carry) where carry is not null');
+once('2026-10-27-prs-merged-as', () => lacks('prs', 'merged_as') && db.exec('alter table prs add column merged_as text'));
+db.exec('create index if not exists prs_merged_as on prs (merged_as) where merged_as is not null');
 once('2026-10-22-findings-routing', () => lacks('findings', 'cross_project') && db.exec('alter table findings add column cross_project integer not null default 0'));
 once('2026-10-22-prs-review-since', () => lacks('prs', 'review_since') && db.exec('alter table prs add column review_since integer not null default 0'));
 // An expedited fix (jobs.expedite: the CEO's hq job --expedite) and the pull request it merged ahead of its review
@@ -751,6 +765,9 @@ once('2026-10-27-decisions-settled', () => {
       and j.prompt like 'Review found a major visual change to something live. Decision #' || decisions.id || ' holds its merge.%')
     where exists (select 1 from decision_merges m where m.decision = decisions.id)`);
 });
+// The card jobs from before card_jobs: each decision's latest
+once('2026-10-27-card-jobs', () =>
+  db.exec('insert or ignore into card_jobs (job, decision) select card_job, id from decisions where card_job is not null'));
 // A pause's time (pauses.until_time)
 once('2026-10-24-pauses-until-time', () => lacks('pauses', 'until_time') && db.exec('alter table pauses add column until_time text'));
 // When each push was first pushed (pushes.at): those from before, when the first run on that commit was made.

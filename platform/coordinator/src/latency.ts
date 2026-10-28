@@ -18,10 +18,27 @@ db.exec(
 // reader of hq.db (infra/report.sh), up to db.ts's 1.5 s.
 db.exec('create table if not exists slow_holds (at integer not null, ms integer not null, name text not null)');
 let holds: { at: number; ms: number; name: string }[] = [];
+// (what counts as holding it: half a second)
+export const HOLD_MS = 500;
 export function held(name: string, ms: number) {
   console.error(`held the server ${Math.round(ms)} ms: ${name}`);
   if (onStall) recent.push({ name, ms });
   holds.push({ at: Date.now(), ms: Math.round(ms), name: name.slice(0, 300) });
+}
+
+// A long report's turns of HQ's thread, each ended by `await turn('<its part>')`: one that held the thread half a second
+// or more is held() as `<what>: <its part>`, so the holds say which. With `until`, the turn ends in waiting for it (its
+// value returned) rather than for the next turn, and the clock starts again once `until` settles.
+export type Turn = <T = void>(part: string, until?: Promise<T>) => Promise<T>;
+export function turns(what: string): Turn {
+  let began = performance.now();
+  return async <T>(part: string, until?: Promise<T>) => {
+    const ms = performance.now() - began;
+    if (ms >= HOLD_MS) held(`${what}: ${part}`, ms);
+    const value = await (until ?? new Promise<T>(setImmediate));
+    began = performance.now();
+    return value;
+  };
 }
 
 // A stall: the loop STALL_MS or more late, with the hold that explains it, among those held since the last tick. That's

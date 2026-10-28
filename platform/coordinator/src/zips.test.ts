@@ -252,6 +252,24 @@ test('a zipped folder of one concept keeps its folder, and only the folders list
   ]);
 });
 
+test("a zip's own _import.md is left out, at the top or in the folder around it all, and the server's note stays", async () => {
+  for (const names of [
+    ['_import.md', 'puzzle/a.ts'],
+    ['all/_import.md', 'all/puzzle/a.ts', 'all/kites/b.ts'],
+  ]) {
+    const { id } = await ask();
+    await send(id, makeZip(names.map(name => ({ name, data: Buffer.from('# mine\n') }))));
+    const done = await imported(id);
+    assert.equal(done.state, 'imported', done.error);
+    assert.equal(done.imported.leftOut.files, 1);
+    const note = readFileSync(`${done.imported.folder}/_import.md`, 'utf8');
+    assert.ok(note.includes('- unusable names: 1 files'), note);
+  }
+  const { id } = await ask();
+  await send(id, makeZip([{ name: '_import.md', data: Buffer.from('# mine\n') }]));
+  assert.match((await imported(id)).error, /nothing in it/);
+});
+
 test('a dropped line costs one chunk: the upload goes on from the bytes the server has, and only the same file does', async () => {
   const { id } = await ask();
   const zip = makeZip(CONCEPTS, { descriptor: true });

@@ -34,7 +34,7 @@ export const say = {
                                                      project's owner (else the CEO) has sorted it into the plan, named for
                                                      what it does. "-" as the message reads it from stdin.
                                                      --needs-answer: you need the answer during this job. If HQ makes a
-                                                     job, it gets its own thread in your project, outside your task order.
+                                                     job, it runs on its own in your project, outside your task order.
                                                      It still waits for its owner's sort and available capacity.
                                                      Up to 8000 characters; longer work goes by hq job. A chain of
                                                      messages may start 3 jobs; past that, only a running job gets one.

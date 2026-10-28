@@ -1,11 +1,11 @@
-// book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/book.js, bookui.js,
-// bookcover.js, pair.js's card): one object under a strong shadow, its controls floating over its paper with the book's
-// own tooltips; the spine let go where it was dragged, never sliding back first; the cover with its name swinging open
-// in well under a second (at once with reduced motion); and the "Draw from your phone" card whole at the book's widest
-// and narrowest; on a laptop-height window, every control whole (a second column). Each asserts what the board sees:
-// boxes, pixels, words. (the short window)
+// book-check.mjs's stories of the book as an object on a desktop, with a mouse (shell/ink/book.js, bookui.js,
+// pair.js's card; Ink's folder): one object under a strong shadow, its controls
+// floating over its paper with the book's own tooltips; the cover's edge let go where it was dragged, never sliding
+// back first; the book opening straight onto its page, no cover, in well under a second (a crossfade with reduced
+// motion); and the "Draw from your phone" card whole at the book's widest and narrowest; on a laptop-height window,
+// every control whole (a second column). Each asserts what the board sees: boxes, pixels, words. (the short window)
 import assert from 'node:assert/strict';
-import { foldBySpine } from './bookchrome.mjs';
+import { shutBook } from './bookchrome.mjs';
 
 const DESKTOP = { width: 1440, height: 900 };
 // Laptops' windows under their browser's bars: a 768 px screen's, a 13-inch's with its bookmarks and Dock, and one
@@ -21,9 +21,9 @@ export function frameStories(c) {
   return {
     'the book as one object: a strong shadow on HQ beside it, its controls floating over its paper, no column':
       browser => oneObject(browser, c),
-    'the spine let go stays where it was let go: no slide back to where it began': browser => letGo(browser, c),
-    'opening the book: the cover with its name swings open in well under a second; reduced motion, at once': browser =>
-      opening(browser, c),
+    "the cover's edge let go stays where it was let go: no slide back to where it began": browser => letGo(browser, c),
+    'opening the book: straight onto its page, no cover, in well under a second; reduced motion, a crossfade':
+      browser => opening(browser, c),
     '"Draw from your phone" whole at any book width: its code field and Join never clipped': browser =>
       pairCard(browser, c),
     "a laptop-height window: every control in the book's islands whole, Undo and Redo at their foot among them":
@@ -39,7 +39,7 @@ async function oneObject(browser, c) {
     const paper = await box(page, '#book section > div'),
       spine = await box(page, '#book [role=separator]'),
       hqWidth = await page.evaluate(() => document.body.getBoundingClientRect().width);
-    assert.ok(Math.abs(hqWidth - spine.x) <= 1, `HQ's page ends at the spine (${hqWidth} vs ${spine.x})`);
+    assert.ok(Math.abs(hqWidth - spine.x) <= 1, `HQ's page ends at the cover's edge (${hqWidth} vs ${spine.x})`);
     // the controls: small islands over the paper's right edge, no full-height column of their own
     const islands = await page.$$eval('#book nav [role=toolbar]', all =>
       all.map(el => el.getBoundingClientRect().toJSON()).filter(r => r.width),
@@ -52,10 +52,10 @@ async function oneObject(browser, c) {
     // ...in one stack, a second column only for a short window (shortWindow)
     const lefts = new Set((await stackOf(page)).map(r => Math.round(r.left)));
     assert.equal(lefts.size, 1, `the stack in ${lefts.size} columns at ${DESKTOP.width} × ${DESKTOP.height}`);
-    // the shadow: HQ's page darker just beside the spine than a little further off, on the same row
+    // the shadow: HQ's page darker just beside the book than a little further off, on the same row
     const near = await meanLight(page, { x: spine.x - 8, y: 300, width: 6, height: 300 }),
       far = await meanLight(page, { x: spine.x - 70, y: 300, width: 6, height: 300 });
-    assert.ok(near < far * 0.6, `the book's shadow on HQ: ${near} beside the spine, ${far} further off`);
+    assert.ok(near < far * 0.6, `the book's shadow on HQ: ${near} beside the book, ${far} further off`);
     // the book's own tooltip on a control, never the browser's title
     const undo = page.locator('#book').getByRole('button', { name: 'Undo' });
     await undo.hover();
@@ -80,7 +80,7 @@ async function letGo(browser, c) {
     await page.mouse.move(from - 140, y, { steps: 10 });
     await page.waitForTimeout(100);
     const held = await spineLeft(page);
-    assert.ok(Math.abs(held - (from - 6 - 140)) <= 2, `the spine follows the pointer: at ${held}`);
+    assert.ok(Math.abs(held - (from - 6 - 140)) <= 2, `the cover's edge follows the pointer: at ${held}`);
     await page.mouse.up();
     // every frame after: where it was let go, never back towards where it began
     const after = await page.evaluate(
@@ -98,7 +98,7 @@ async function letGo(browser, c) {
     );
     assert.ok(
       after.every(x => Math.abs(x - held) <= 1),
-      `the spine after it was let go at ${held}: ${after.join(' ')}`,
+      `the cover's edge after it was let go at ${held}: ${after.join(' ')}`,
     );
     assert.deepEqual(errors, []);
   } finally {
@@ -110,35 +110,25 @@ async function opening(browser, c) {
   for (const reducedMotion of ['no-preference', 'reduce']) {
     const { page, errors, done } = await onDesk(browser, c, { reducedMotion });
     try {
-      await foldBySpine(page);
+      await shutBook(page);
       await c.settled(page, 'folded');
       const t0 = Date.now();
       await page.locator('#book .bk-lip').click();
-      // the cover, its name on it, shows as the book lands, and is gone, the page open, well under a second on
-      const seen = await page.evaluate(
+      // no cover and no title: the book comes in on its page and is laid out open well under a second on
+      const opened = await page.evaluate(
         () =>
           new Promise(resolve => {
             const start = performance.now(),
-              frames = [],
               frame = () => {
-                const cover = [...document.querySelectorAll('#book section > *')].find(
-                  el => el.classList.contains('bk-cover') && el.getBoundingClientRect().width > 100,
-                );
-                const r =
-                  cover && !cover.hidden && getComputedStyle(cover).display !== 'none' && cover.getBoundingClientRect();
-                frames.push({ t: Math.round(performance.now() - start), cover: !!(r && r.width) });
-                if (performance.now() - start < 1200) requestAnimationFrame(frame);
-                else resolve(frames);
+                if (document.documentElement.dataset.book === 'open' || performance.now() - start > 2000)
+                  resolve(Math.round(performance.now() - start));
+                else requestAnimationFrame(frame);
               };
             frame();
           }),
       );
-      const shown = seen.filter(f => f.cover);
-      if (reducedMotion === 'reduce') assert.equal(shown.length, 0, 'with reduced motion, no cover swings');
-      else {
-        assert.ok(shown.length > 3, `the cover shows as the book opens (${shown.length} frames)`);
-        assert.ok(shown.at(-1).t < 900, `the book is open by ${shown.at(-1).t} ms`);
-      }
+      assert.equal(await page.locator('#book .bk-cover').count(), 0, 'no cover: the book opens straight onto its page');
+      assert.ok(opened < 900, `the book is open by ${opened} ms`);
       assert.ok(Date.now() - t0 < 5000);
       assert.equal(await page.evaluate(() => document.documentElement.dataset.book), 'open');
       assert.deepEqual(errors, []);

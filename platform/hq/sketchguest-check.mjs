@@ -91,7 +91,7 @@ const until = (page, holds, what) =>
 await page.goto(base + door);
 await page.locator('a[href="/guest/sketchbook/"]').tap();
 await page.waitForSelector('.sk-grid .sk-new');
-assert.equal(await page.locator('h1').textContent(), 'Ines’s Sketchbook');
+assert.equal(await page.locator('h1').textContent(), 'Ines’s Notebook');
 await shot('guest-shelf-ipad', page);
 
 // ---- a new sketch, drawn with the pen, saved, labelled
@@ -119,7 +119,7 @@ await shot('guest-page-ipad', page);
 await page.locator('[data-send]').tap();
 await until(page, () => /^Sent to /.test(document.querySelector('.sk-state')?.textContent ?? ''), 'sent');
 const line = (await h.board('/api/chat')).body.messages.at(-1);
-assert.deepEqual([line.who, line.text], ['guest', `From Ines’s Sketchbook: “Bigger logo” (sketch #${mine.id})`]);
+assert.deepEqual([line.who, line.text], ['guest', `From Ines’s Notebook: “Bigger logo” (sketch #${mine.id})`]);
 assert.equal(line.pictures.length, 1);
 await shot('guest-sent-ipad', page);
 

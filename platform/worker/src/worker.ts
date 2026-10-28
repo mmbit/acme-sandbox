@@ -50,6 +50,7 @@ import { fewAtOnce } from './turns.ts';
 import { handBack, noteHandBacks } from './handback.ts';
 import { hqReports, ResponseError } from './reports.ts';
 import { openPullRequest as openOn } from './pulls.ts';
+import { tellMainLine, type ToldMain } from './mainline.ts';
 import { alive, dropRun, endOf, endSeen, exitOf, follow, keepRecord, launch as launchDetached, launchesOf, processesOf, procStat, recordOf, records, sweepRuns, type CheckRun, type Checks, type Launched, type RunRecord } from './detached.ts';
 import { inChecks, runChecks, testsOnce, type CheckOutcome, type CheckSpec, type TestsOutcome } from './pushchecks.ts';
 import { answering, askAgainPrompt, cantAsk, lacksVerdict, see, seeSessionLogs, touchedFiles, verdictFromAnswer, verdictOf, written } from './verdict.ts';
@@ -429,7 +430,23 @@ function refreshLoop() {
   setInterval(() => {
     if (refreshing || !mirrorReady) return;
     refreshing = flow.refreshMirror().catch(err => log('mirror refresh:', err)).then(gcMirror).finally(() => { refreshing = undefined; });
+    void refreshing.then(tellMain);
   }, 60_000);
+}
+
+// Main's line, told to HQ each time main moves (mainline.ts). Outside `refreshing`, so no job's start waits on HQ, and
+// never two at once (a later line would move HQ past the pages left); each request is given up well before the next
+// refresh: what HQ didn't hear is told again then.
+const TELL_MAIN_MS = 10_000;
+let toldMain: string | undefined, tellingMain = false;
+async function tellMain() {
+  if (tellingMain) return;
+  tellingMain = true;
+  const tell = async (told: ToldMain) =>
+    await hq.api('main-moved', told, AbortSignal.timeout(TELL_MAIN_MS)) as { seen?: string };
+  try { toldMain = await tellMainLine(flow, tell, toldMain); }
+  catch (err) { log('main moved:', err); }
+  finally { tellingMain = false; }
 }
 
 // Main merged into a passed pull request that GitHub calls conflicting, when the coordinator asks (git.ts mergeBase): after
@@ -1058,6 +1075,7 @@ type Job = { id: number; agent: string; title: string; prompt: string; engine: s
   resize?: { size: string | null };   // its saved size and author (sizes.ts withSize)
   stopping?: string | null;   // hq stop: who stopped it, and why (jobs.ts stopJob)
   landing?: string | null;   // JSON: its last run ended well, but its push or pull request snagged; this run only lands it (land).
+  carry?: string | null;   // a commit main took outside a pull request: this run only checks it (carryChecks).
   agentInfo?: { name: string; role: string; department: string; charter: string; model?: string | null; effort?: string | null;
     autocompact?: number | string | null };
   company: Partial<Company> & Pick<Company, 'stylePrompt'> };
@@ -1104,7 +1122,7 @@ How a meeting goes:
 - You're in a meeting with colleagues whose sessions started together with yours. \`hq meeting listen --wait 60\` gives
   what they say (in Claude Code their lines also reach you by themselves between steps), and \`hq meeting say "..."\`
   speaks to all of them: short lines, one point each.
-- Change your own plans during the meeting with hq (\`hq job\`, \`hq thread\`, \`hq propose\`, whatever your brief
+- Change your own plans during the meeting with hq (\`hq job\`, \`hq deliverable\`, \`hq propose\`, whatever your brief
   names), never with files: nothing you write in files is kept, committed or pushed. No team members in a meeting.
 - Nobody leaves early, and the meeting has no time limit. When you think you're finished, hand your changes in (the
   chair doesn't: its part is in the brief above):
@@ -1139,7 +1157,7 @@ function budget(engine: string) {
 const boardLanguage = (c: Company) => !c.language || c.language === 'English' ? '' : `
 - The board reads and hears ${c.language}: write everything that reaches it in ${c.language} (${c.phone} cards, ${c.newsletter},
   the board report, slide decks, the ${c.intercom}'s answers, a call's notes) and speak it on calls. The plan
-  is the board's too: name work in ${c.language} (job and proposal titles, codes' words in plain capitals, threads' names
+  is the board's too: name work in ${c.language} (job and proposal titles, codes' words in plain capitals, deliverables' names
   and done-when lines, projects' names). Code and the company's own documents (briefs, notes, profiles, DECISIONS.md,
   commit messages) stay English.`;
 // The board's clock (the coordinator's company.ts timeZone): every time it reads or hears is on it. The intercom's run
@@ -1250,7 +1268,7 @@ How work happens here:
   Omit --refs only when no comparable job fits, and say why. HQ saves this estimate once, when queued.
   ${DEFAULT_ESTIMATE_SCALE}
   For new work, get the time for the board with \`hq when "..." --size <90m>\`,
-  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq thread <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
+  with its dependencies and \`--by\` the board's time when it named one. For queued work, read \`hq deliverable <project>/<slug>\` (by its name or words: \`hq projects <words>\`). Give one plain time.${resizeLine(job)}${budget(job.engine)}${boardLanguage(c)}${boardClock(c, job.kind === 'chat')}${job.kind === 'chat' ? '' : `
 - Nobody reads this session live, the board included: you run in the background, and your messages go to the job's
   log. Write them as a report on the work, never as a reply to the board, even when you're acting on its answer.
   The board sees only the ${c.phone}, ${c.newsletter} and the ${c.intercom} (and a call's notes, when your job says so).
@@ -1264,11 +1282,12 @@ Its task has no code yet: name it first, \`hq code WORD\`, a word for what it do
 calls can say it.`;
 // A task in a thread: its place in the thread before its brief, and where its work goes (threads.ts).
 const inThreadLines = (job: Job, conflicts: string[]) => job.inThread ? `${threadBriefing(job.inThread, conflicts)}\n\n` : '';
-const THREAD_PUSH = `pushes them to the thread's branch, which opens the thread's one pull request for review, or starts its
-  next round if it's open. Your own
-  profile and archive lines go to main by themselves. A step that needs this thread's work live is no task of it:
+// (a thread is a deliverable in the board's word)
+const THREAD_PUSH = `pushes them to the deliverable's branch, which opens the deliverable's one pull request for review, or
+  starts its next round if it's open. Your own
+  profile and archive lines go to main by themselves. A step that needs this deliverable's work live is no task of it:
   Propose it to the project's owner with \`hq propose\`. The owner or CEO queues it with
-  \`hq job --when deployed:<this job>\`, which gives it a thread of its own after the release.`;
+  \`hq job --when deployed:<this job>\`, which gives it a task of its own after the release.`;
 
 // The saved size stays fixed until the CEO changes it after reported slippage.
 const resizeLine = (job: Job) => !job.resize ? '' : `
@@ -1641,6 +1660,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     await waitOwned(Promise.resolve(refreshing));
     assertOwned();
     syncMirror();
+    if (job.carry) return await carryChecks(job, me, launches);
     // A fresh run starts clean. A paused review keeps its verdict file with its session.
     if (!job.session) remove(home);
     if (!job.session) remove(dir);
@@ -2140,7 +2160,7 @@ async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: str
   // A thread's task opens the thread's pull request, under the thread's name.
   let thread: { pull?: Pull } | undefined;
   try { if (pushed && job.inThread) thread = await hq.report('thread-push', { job: job.id }); }
-  catch (err) { return { status: 'failed', session, branch, profile, result: o.failure(result, `the thread's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
+  catch (err) { return { status: 'failed', session, branch, profile, result: o.failure(result, `the deliverable's pull request couldn't be named: ${String((err as Error).message ?? err)}`) }; }
   const pr = pushed ? await openPullRequest(branch, await jobPullRequest(job, summary, thread?.pull)) : undefined;
   if (pr === 'unreached') return snagged("GitHub couldn't be reached to open its pull request");
   // Refused, the work stays on its branch, and the run fails with GitHub's reason: its sha makes the branch its thread's
@@ -2201,7 +2221,7 @@ type Profile = { pr: number; branch: string; sha: string; files: string[] };
 async function profileToMain(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, job: Job): Promise<Profile | undefined> {
   const author = authorOf(job), paths = profilePaths(job.agent), profileBranch = `profile/${job.id}`;
   const title = `${nameOf(job)}: profile lines from job #${job.id}`;
-  const body = `${nameOf(job)}'s own profile and archive lines from job #${job.id}, apart from its thread's branch (${branch}).`;
+  const body = `${nameOf(job)}'s own profile and archive lines from job #${job.id}, apart from its deliverable's branch (${branch}).`;
   const lines = splitProfile(g, dir, { base: BASE, branch: profileBranch, paths, message: title, author });
   if (!lines) return undefined;
   const pushed = lines.push ? await g.pushProfile(dir, profileBranch, lines.ref, paths, lines.over) : { sha: lines.sha, files: lines.files };
@@ -2255,7 +2275,8 @@ type CheckName = 'gates' | 'tests';   // (each one's field in the finish report)
 const CHECKS: Record<CheckName, string> = { gates: GATES, tests: TESTS };
 // Two pushes' tests at a time here, the rest waiting their turn: a node --test run takes every core, so more at once
 // slow each other down. While a lent machine has a helper of the `tests` kind (the coordinator's runs.ts), they go
-// there instead, with no turn: tests.ts --helper sends them as a run of the job, and runs them here only if none takes it.
+// there instead, with no turn: tests.ts --helper sends them as a run of the job, waits for it while it's there, and runs
+// them here only once it's gone.
 // The gates go there too (gates.ts --helper), when their type check runs.
 const testsTurn = fewAtOnce(2);
 const TESTS_KIND = 'tests';
@@ -2362,13 +2383,45 @@ function testsCheckout(job: Job, me: Me, tested: TestedCode) {
 // wait for it, and the next worker process takes the run on from its checks.
 // keep: writes the run's record with its checks in it.
 async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (checks: Checks) => void, launches: Launched[]) {
+  // (the pushed commit, tested as such against its base, in a checkout of its own)
+  const at = testsCheckout(job, me, flow.testedCode(String(checks.body.sha)));
+  const body = await pushChecks(job, me, dir, at, { checks, keep, launches });
+  await keepRendersOf(job, me, dir, checks.body.files as string[]);
+  return body;
+}
+
+// A commit main took outside a pull request HQ merged (a foundation carry, any direct commit: the coordinator's
+// carries.ts) gets a push's checks all the same, and nothing else: no agent runs. The gates run in the job's clone of the
+// commit, the tests in their own checkout, both against main before it. Like a landing it keeps no run record: a reload
+// leaves the job to go stale and be queued again, and the checks run again.
+async function carryChecks(job: Job, me: Me, launches: Launched[]) {
+  const { dir, home } = jobDirs(WORK, job.id), sha = job.carry!;
+  log(`job #${job.id}: the checks of ${sha.slice(0, 9)}, a commit main took outside a pull request`);
+  for (const p of [dir, home]) remove(p);
+  makeDir(home, me);
+  runAs(me, 'mkdir', ['-m', '700', `${home}/tmp`]);
+  makeDir(dir, me);
+  flow.forAgent(me).clone(dir, `job/${job.id}`, { sha }, cloneIdentity(job));
+  const at = testsCheckout(job, me, flow.testedCode(sha, 'parent'));
+  const base = at.tested.base;
+  const checks = { body: { status: 'done' }, spent: {}, runs: {} };
+  const body = await pushChecks(job, me, dir, at, { checks, keep: () => {}, launches, gatesBase: base });
+  const passed = (name: CheckName) => (body[name] as CheckOutcome | undefined)?.passed;
+  const said = (name: CheckName) => `${name} ${passed(name) ? 'passed' : passed(name) === false ? 'failed' : 'not run'}`;
+  // (done only with both verdicts: a check that couldn't run fails the job, and HQ hands the commit to the keeper)
+  const status = (['gates', 'tests'] as const).every(name => typeof passed(name) === 'boolean') ? 'done' : 'failed';
+  return { ...body, status, carry: { sha, base }, result: `On ${sha} against ${base}: ${said('gates')}, ${said('tests')}.` };
+}
+
+// A push's gates and tests (pushchecks.ts) on the commit `at` checks out, the gates in `dir` against `gatesBase` (main,
+// unless it's given).
+async function pushChecks(job: Job, me: Me, dir: string, at: TestsCheckout,
+  { checks, keep, launches, gatesBase }: { checks: Checks; keep: (checks: Checks) => void; launches: Launched[]; gatesBase?: string }) {
   const takeMinutes = await testsHelper(job);
   assertOwned();
   const helper = takeMinutes !== undefined;
   if (helper) log(`job #${job.id}: ${TESTS} and ${GATES}: helper dispatch enabled`);
   const lent: Record<string, string> = helper ? { HQ_URL: HQ, HQ_TOKEN: job.token } : {};
-  // (the pushed commit, tested as such against its base, in a checkout of its own)
-  const at = testsCheckout(job, me, flow.testedCode(String(checks.body.sha)));
   const count = (run: () => Promise<CheckOutcome>) => async () => at.counted(await run());
   const comparison: Record<string, string> = { HQ_URL: HQ, HQ_TOKEN: job.token };
   const tests = checkSpec(job, me, dir, 'tests', launches, run => testsOnceOf(job, at.tested, ticket => {
@@ -2378,13 +2431,13 @@ async function afterPush(job: Job, me: Me, dir: string, checks: Checks, keep: (c
   }),
     { args: [...helper ? ['--helper'] : [], ...at.args], base: at.tested.base, env: comparison, where: at.launching });
   const gates = checkSpec(job, me, dir, 'gates', launches, undefined,
-    { args: [], env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
+    { args: [], base: gatesBase, env: {}, lent: helper ? { args: ['--helper'], env: lent, ms: gatesLentMs(takeMinutes) } : undefined });
   const specs = [gates, tests];
   const body = await waitOwned(runChecks(job.id, checks, specs.filter(spec => spec !== undefined), { runs: RUNS, keep,
     watch: (pid, check) => checking.set(pid, check), unwatch: pid => checking.delete(pid),
-    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers }));
+    said: (name, words) => log(`job #${job.id}: ${CHECKS[name]} ${words}`), signal: ownershipSignal(), reachable: hqAnswers,
+    roomy: roomBack }));
   remove(`${TESTED}/${job.id}`);
-  await keepRendersOf(job, me, dir, checks.body.files as string[]);
   return body;
 }
 
@@ -2396,6 +2449,22 @@ async function hqAnswers() {
     assertOwned();
     try {
       if ((await fetch(`${HQ}/health`, { signal: requestSignal(AbortSignal.timeout(10_000)) })).ok) return;
+    } catch { /* not yet */ }
+    await sleep(HEALTH_POLL_MS);
+  }
+}
+
+// Resolves once the worker has room again, for a check it had none for to run again (pushchecks.ts): memory for a job
+// to start (no longer short, so no share block for the run) and more disk free than the jobs leave for a deploy's build
+// and the database (HQ's disk reserve).
+async function roomBack() {
+  for (;;) {
+    assertOwned();
+    try {
+      if (room(false)) {
+        const disk = await hq.api('disk', {}, AbortSignal.timeout(ROOM_REQUEST_MS)) as { freeBytes: number; reserveBytes: number };
+        if (disk.freeBytes > disk.reserveBytes) return;
+      }
     } catch { /* not yet */ }
     await sleep(HEALTH_POLL_MS);
   }

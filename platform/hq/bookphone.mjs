@@ -1,11 +1,11 @@
-// book-check.mjs's phone story (shell/pair.js, pairink.js, shared/review/handover.js): a phone paired with the desktop
-// by the book's code, as the iPad is in bookpair.mjs. A ring round part of HQ's scene, which the desktop lays out its
-// own way, shows nowhere on the desktop's page, live or lifted; rested, it goes into the book from the phone with the
-// phone's own picture of it, and the desktop's book turns to it. No post-it on either screen, drawing or scrolling.
-// A ring round something both screens show (a card of the desk phone's) shows on the desktop's page in place while
-// it's drawn; once it's in the book nothing of it is drawn on either screen, nor once its sheet is sent (rule zero:
-// bookink.mjs); a ring still being drawn as the phone ends the pairing leaves
-// nothing behind (rested, it goes in from the phone), and none of the phone's rings shows over HQ's own view there.
+// book-check.mjs's phone story (shell/ink/pair.js, pairink.js, shared/review/handover.js; Ink's folder): a phone paired with the desktop by the book's code, as the iPad is in bookpair.mjs. A ring
+// round part of HQ's scene, which the desktop lays out its own way, shows nowhere on the desktop's page, live or
+// lifted; rested, it goes into the book from the phone with the phone's own picture of it, and the desktop's book turns
+// to it. No post-it on either screen, drawing or scrolling. A ring round something both screens show (a card of the
+// desk phone's) shows on the desktop's page in place while it's drawn; once it's in the book nothing of it is drawn on
+// either screen, nor once its sheet is sent (rule zero: bookink.mjs); a ring still being drawn as the phone ends the
+// pairing leaves nothing behind (rested, it goes in from the phone), and none of the phone's rings shows over HQ's own
+// view there.
 import assert from 'node:assert/strict';
 import { until } from '../../shared/browser/browser.mjs';
 import { nothingDrawn } from './bookink.mjs';
@@ -210,8 +210,10 @@ async function whileMade(c, desk, phone, feed) {
     return sheet.owner;
   }, kept.id);
   await desk.waitForTimeout(10_200);
+  // (its ten seconds over, the send delivered as the coordinator's clock does: the stand-in delivers on a read of the
+  // sheets, which the book no longer makes with the sheets' screens gone.)
+  await desk.evaluate(() => fetch('/api/book/sheets').then(r => r.json()));
   feed.push({ type: 'book', agent: sheet, text: 'sent' });
-  // (the desktop reads the sheets again on the feed's word, which delivers the send)
   for (let i = 0; i < 30 && kept.status !== 'sent'; i++) await desk.waitForTimeout(150);
   assert.equal(kept.status, 'sent', 'its sheet went');
   await nothingDrawn(desk, 'the desktop, the phone’s ring sent');

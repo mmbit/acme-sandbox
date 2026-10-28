@@ -22,9 +22,14 @@ where it suffices.
   and keeps only its own additions in `prompt`.
 - **Roles**: who does what (`roles:` in `company/org.yaml`), never an agent's name in platform code.
 - **Settings**: the server's names and switches in `company/infra.env`; a product's needs in its `product.yaml`.
+  `company/brand.yaml` `names: book` names the board's book on its tips book's cover; left out, the cover reads Tips
+.
 - **Looks**: the company's HQ theme and renderer choice in `theme/hq.yaml`. Wire's colourways name the one thing lit
   `accent`, `side` and `onAccent`: a company's `theme/hq.yaml` still saying `knop` and `onKnop` renames them at the
   carry, or Wire falls back to its own Day and Night.
+- **The brand's colours**: `company/brand.yaml`'s `colours`, each a `--<name>` on HQ's `:root` (main.js); its
+  `notebook` is the Notebook's accent, the pull tab's colour, asked at onboarding (left out: HQ's ink, never a colour of
+  the platform's own).
 - **Shows**: `company/shows.yaml`.
 - **Covers**: each artifact's `picture` (artifact.yaml, product.yaml or a company/artifacts.yaml entry), shot from the
   company's own list by `node platform/hq/covers.mjs <list.json>`. The list is a JSON array kept in the company's
@@ -57,3 +62,18 @@ where it suffices.
   rows) write on that sheet in their colour, and the board's Send and Discard (review mode, HQ's viewer) and Reviews'
   waiting notes are gone, for every company, with no setting. Before it carries, Knop's agreement is asked through the
   Overseer; a switch only if Knop asks for one.
+- Threads called deliverables wherever people read them: HQ's projects view
+  (HQ's one-task threads shown as tasks), the `hq` commands (`hq deliverable`, `hq plan deliverable`, `--deliverable`,
+  the old names kept as aliases), the worker's briefing, the drawing prompts and the naming guide, and the
+  coordinator's own messages (refusals, log and plan-change lines, the summary, the review and call prompts)
+, for every company; the schema, the API and the code keep "thread". Before it carries, Knop's agreement is asked through the Overseer.
+  If Knop's board keeps "thread", HQ's words come from `company/brand.yaml` `names` (shell/brand.js) and the prompts'
+  from a setting, rather than two words in the platform.
+- Seat savings, for every company: (1) HQ's stall alarms (`platform/coordinator/src/stalljobs.ts`) file one stall job
+  for the process role, not one per cause: every stall, of any cause, joins the queued one until it starts, it is
+  downtime work (it waits for the seats' spare room), and its agent judges which causes are worth the work. (2) A
+  weekly seat-spend read, `shared/routines/seat-spend.md`: cost per merged change and the share of spend that bought
+  no change, from the status report's usage tables, at most three fixes a week, generic ones in the foundation; a
+  company runs it from its `company/schedule.yaml` and keeps its numbers in its own note. The first has no setting;
+  the second is a routine like any other. Before they carry, Knop's agreement is asked through the Overseer; a switch
+  only if Knop asks for one.

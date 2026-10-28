@@ -7,6 +7,12 @@
 // as it was drawn (draw's `until`). A pen's pressure is its own; a mouse's or a finger's comes from its speed. A filled
 // shape has fill: true, its points going round it: the line and everything inside it are ink.
 
+// The stroke's shapes are inkshape.js's, and the live line's repaints and its tail inklive.js's, which draws with the
+// same shapes: neither imports this file back
+import { HALO, HALO_ALPHA, outline } from './inkshape.js';
+import { ahead, dropTail, samples, show } from './inklive.js';
+export { outline }; // (the book's page picture draws with it)
+
 // The inks a small tool strip offers: the review pin's red first, then black, blue, green and a see-through highlighter
 export const INKS = [
   { name: 'Red', color: '#ff5a5f', size: 5 },
@@ -16,53 +22,8 @@ export const INKS = [
   { name: 'Highlighter', color: '#ffd23f', size: 20, alpha: 0.45 },
 ];
 
-// a line's radius at a point: a light touch draws about a third of the ink's size, a firm press half again as wide
-const radius = (size, pressure) => (size * (0.3 + 1.2 * Math.min(1, Math.max(0.05, pressure)))) / 2;
 // how far a line's point goes towards the pointer, the rest left behind against a hand's jitter (an ink can have its own)
 const FOLLOW = 0.6;
-const HALO = 2; // px of white around review mode's ink, so it shows on any page (not under a highlighter)
-const HALO_ALPHA = 0.9; // (the white's, a little see-through; a pen's under canvas has it as its opacity)
-
-// Where a stroke's ink is: one disc per point and the band between each two, filled together (nonzero), which gives
-// round ends and joins at any width. As an SVG path, so a canvas (Path2D) and an SVG <path> draw the very same shape.
-export function outline(stroke, grow = 0) {
-  const pts = stroke.points,
-    size = stroke.size;
-  let d = '';
-  for (let i = 0; i < pts.length; i++) {
-    const [x, y, p] = pts[i],
-      r = radius(size, p) + grow;
-    d += disc(x, y, r);
-    if (i) d += band(pts[i - 1], radius(size, pts[i - 1][2]) + grow, x, y, r);
-  }
-  return stroke.fill ? d + inside(pts) : d;
-}
-// A filled shape's inside: its points as one polygon, turned clockwise on screen like the discs and bands, so the
-// nonzero rule adds it to them and never cuts a hole where they overlap
-function inside(pts) {
-  if (pts.length < 3) return '';
-  let area = 0;
-  for (let i = 0; i < pts.length; i++) {
-    const [ax, ay] = pts[i],
-      [bx, by] = pts[(i + 1) % pts.length];
-    area += ax * by - bx * ay;
-  }
-  const round = area < 0 ? pts.slice().reverse() : pts;
-  return `M${round.map(([x, y]) => `${f(x)} ${f(y)}`).join('L')}Z`;
-}
-const f = n => Math.round(n * 100) / 100;
-// (both turn the same way, clockwise on screen, so the nonzero rule joins them and never cuts a hole)
-const disc = (x, y, r) =>
-  `M${f(x - r)} ${f(y)}a${f(r)} ${f(r)} 0 1 1 ${f(2 * r)} 0a${f(r)} ${f(r)} 0 1 1 ${f(-2 * r)} 0Z`;
-function band([ax, ay], ra, bx, by, rb) {
-  const dx = bx - ax,
-    dy = by - ay,
-    len = Math.hypot(dx, dy);
-  if (len < 0.01) return '';
-  const nx = -dy / len,
-    ny = dx / len;
-  return `M${f(ax - nx * ra)} ${f(ay - ny * ra)}L${f(bx - nx * rb)} ${f(by - ny * rb)}L${f(bx + nx * rb)} ${f(by + ny * rb)}L${f(ax + nx * ra)} ${f(ay + ny * ra)}Z`;
-}
 
 // Draws strokes on a 2D canvas context, in its current transform. halo: a white edge around each (not a highlighter),
 // all the halos first, so none covers another stroke's ink. until: only what was drawn by then (ms from each stroke's
@@ -145,12 +106,14 @@ export function pen(surface, wet, opts) {
   }
   const move = e => {
     if (!line || e.pointerId !== line.id) return;
-    show(line, follow(line, e, 'move'));
+    // (the tail, and its timeout)
+    show(line, follow(line, e, 'move'), ahead(line, e));
+    dropTail(line, () => line);
     tell('move', line);
   };
   function finish(e) {
     if (!line || e.pointerId !== line.id) return;
-    show(line, follow(line, e, 'end'));
+    show(line, follow(line, e, 'end'), null); // (no tail)
     tell('end', line);
     const done = line.stroke;
     line = null;
@@ -219,13 +182,6 @@ const track = (e, at, ink, { rect = false, halo = false } = {}) => ({
   pressure: 0, // (a pen's last, for a lift that reports none)
 });
 
-// The samples a pointer event brings: those a fast hand left between two frames, else the event itself. The list can
-// be there and empty (Chromium's pointerdown, and an event a script made in any browser), which is no samples at all.
-const samples = e => {
-  const c = e.getCoalescedEvents?.();
-  return c?.length ? c : [e];
-};
-
 // What one pointer event ('start', 'move' or 'end') adds to a line: the indexes of the points it kept. A rectangle's
 // points are all made again each time: null.
 function follow(line, e, phase) {
@@ -263,111 +219,6 @@ function extend(line, e, phase = 'move') {
   if (prev && Math.hypot(kept[0] - prev[0], kept[1] - prev[1]) < 0.6) return false;
   pts.push(kept);
   return true;
-}
-
-// What drawing point i of a stroke repaints, for a canvas k device px to the CSS px: a box of whole device px around
-// its new disc and band (and their white edge, grow), and the stroke's every disc and band that reaches into it, as
-// outline() has them. Inside the box the canvas is cleared and those are filled again together, so each pixel there
-// is filled once, by the very shapes and in the very way draw() fills the whole stroke: pieces filled one over
-// another would add up their soft edges, and the line would thin and lighten as it goes dry. Only a few shapes
-// around the new point are filled, each found by a box test over the stroke's points (cheap, though it grows with the
-// line).
-function piece(stroke, i, { grow = 0, k = 1 } = {}) {
-  const pts = stroke.points,
-    size = stroke.size,
-    // (a soft edge reaches a device px past its shape)
-    reach = 1 / k;
-  const boxOf = (j, g) => {
-    const [x, y, p] = pts[j],
-      r = radius(size, p) + g + reach;
-    return [x - r, y - r, x + r, y + r];
-  };
-  const joined = (a, b) => [Math.min(a[0], b[0]), Math.min(a[1], b[1]), Math.max(a[2], b[2]), Math.max(a[3], b[3])];
-  const meets = (a, b) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
-  const near = i ? joined(boxOf(i - 1, grow), boxOf(i, grow)) : boxOf(i, grow);
-  const box = [Math.floor(near[0] * k), Math.floor(near[1] * k), Math.ceil(near[2] * k), Math.ceil(near[3] * k)];
-  const inBox = box.map(v => v / k);
-  const shapes = g => {
-    let d = '';
-    for (let j = 0; j < pts.length; j++) {
-      const own = boxOf(j, g),
-        [x, y, p] = pts[j],
-        r = radius(size, p) + g;
-      if (meets(own, inBox)) d += disc(x, y, r);
-      if (j && meets(joined(boxOf(j - 1, g), own), inBox))
-        d += band(pts[j - 1], radius(size, pts[j - 1][2]) + g, x, y, r);
-    }
-    return d;
-  };
-  return { box, ink: shapes(0), halo: grow ? shapes(grow) : '' };
-}
-
-// The line's new points on its canvases (null: all of it again, a rectangle's)
-function show(line, kept) {
-  if (!kept) return paint(line, null, outline(line.stroke), line.halo ? outline(line.stroke, HALO) : '');
-  const k = line.g.getTransform().a;
-  for (const i of kept) {
-    const p = piece(line.stroke, i, { grow: line.halo ? HALO : 0, k });
-    paint(line, p.box, p.ink, p.halo);
-  }
-}
-
-// Ink, and its white edge, filled once in a box of whole device px (null: the whole canvas), what was there wiped.
-// The edge goes on the under canvas, opaque (the canvas has draw's opacity), else under the ink on the wet one.
-function paint(line, box, ink, halo) {
-  const inked = [ink, line.stroke.color, 1];
-  if (!halo) fill(line.g, box, [inked]);
-  else if (line.u) {
-    fill(line.u, box, [[halo, '#fff', 1]]);
-    fill(line.g, box, [inked]);
-  } else fill(line.g, box, [[halo, '#fff', HALO_ALPHA], inked]);
-}
-
-// A rasteriser fills a soft edge a little differently where a clip or the canvas's own edge cuts the path (Skia, in
-// Chromium and WebKit, a few px in): a box is filled on a scratch canvas this many device px bigger all round, and
-// only the box is copied, pixel for pixel. With 8, the live line is the dry one but for a stray pixel; with none, a
-// few hundred per line differ. Each canvas has its own scratch, of its own kind (drawn on the CPU when it is), so both
-// fill paths the same way.
-const SPARE = 8;
-const scratches = new WeakMap();
-function fill(c, box, layers) {
-  const m = c.getTransform(),
-    paths = g => {
-      for (const [d, color, alpha] of layers) {
-        g.globalAlpha = alpha;
-        g.fillStyle = color;
-        g.fill(new Path2D(d));
-      }
-    };
-  c.save();
-  c.setTransform(1, 0, 0, 1, 0, 0);
-  if (!box) {
-    c.clearRect(0, 0, c.canvas.width, c.canvas.height);
-    c.setTransform(m);
-    paths(c);
-    return c.restore();
-  }
-  const [x0, y0, x1, y1] = box,
-    w = x1 - x0,
-    h = y1 - y0;
-  let scratch = scratches.get(c.canvas);
-  if (!scratch) {
-    scratch = document.createElement('canvas');
-    scratch.getContext('2d', { willReadFrequently: !!c.getContextAttributes?.().willReadFrequently });
-    scratches.set(c.canvas, scratch);
-  }
-  if (scratch.width < w + 2 * SPARE) scratch.width = w + 2 * SPARE;
-  if (scratch.height < h + 2 * SPARE) scratch.height = h + 2 * SPARE;
-  const g = scratch.getContext('2d');
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  g.clearRect(0, 0, w + 2 * SPARE, h + 2 * SPARE);
-  g.setTransform(m.a, m.b, m.c, m.d, m.e + SPARE - x0, m.f + SPARE - y0);
-  paths(g);
-  c.clearRect(x0, y0, w, h);
-  c.globalAlpha = 1;
-  c.globalCompositeOperation = 'source-over';
-  c.drawImage(scratch, SPARE, SPARE, w, h, x0, y0, w, h);
-  c.restore();
 }
 
 // A rectangle, from where it started to where it is now: its four corners as the line, back to the first

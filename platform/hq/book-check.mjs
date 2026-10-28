@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // The book's stories as the board lives them, held like an iPad mini in WebKit (touch, 744 × 1133). One check for all of
 // them; each thread adds its story here.
-//   node platform/hq/book-check.mjs [--shots dir] [--stories words]
+//   node platform/hq/book-check.mjs [--shots dir] [--stories words [--webkit]]
 // The Pencil on HQ: a ring drawn on HQ's own page with a pen, no button first; nothing moves as the pen lifts (the line
 // on screen just before is the line after, pixel for pixel but antialiasing); no number on a lone mark; the pen rested,
 // the note goes on its sheet in the book with no post-it (the anchor in document px, the words said while drawing, a
@@ -16,18 +16,19 @@
 // grows as it's written down and New page starting the next. A ring on a phone, the book folded, rests into the book.
 // The Pencil on HQ's page, never over the book beside it, in WebKit and Chromium at iPad mini landscape: review mode's
 // layer the page's width, a pen on the book's paper drawing nothing, a ring at the page's edge going in, the pin on the
-// page, over a dialog too, and the spread covering it with the page. Pinched out, the day's pages side by side, then the week as a contact sheet, and back.
+// page, over a dialog too, and the spread covering it with the page. Pinched out, the notebook's pages as a grid, then the Shelf of notebooks, and back.
 // A guest's note on the board's sheet: their name tag in their colour, beside the board's own, one plane for both.
 // A second screen: an iPad (WebKit) paired with a desktop (Chromium) by the book's code, a ring live across, finished
 // on the other screen, swapped, flicked back, closed (bookpair.mjs).
 // A picture pasted into the book landing taped on the page in view.
 // A walk-through of finished work from its desk-phone card (bookwalk.mjs), and of a preview in HQ's viewer, the agent
 // pointing and ringing inside it. (the preview: job #18848)
-// An agent's answer clipping onto its note within seconds, with then and now, ticked and replied to (bookslip.mjs),
-// and in Wire too, in Chromium. (Wire: job #19103)
+// An agent's answer under its group within seconds, ticked and replied to (booknotebook.mjs), and an agent's
+// desk-phone card about a note under the note's group, answered there by a chip (booknotebookasks.mjs).
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
+// The tips book (booktips.mjs): the Tips control opens it on its cover, every tip a page, turned at once, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone; summoned by opening the book or the book's
 // pin control (on a phone, the control folds the book onto HQ with the pin), away again folded or with the control; an
 // artifact's pin as it was; a note's sheet and review mode's menu naming one owner. Carried and let go, it stays
@@ -49,11 +50,10 @@ import { playwright, errorsOf, until, openPage } from '../../shared/browser/brow
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { wetDry, STILL } from '../../shared/review/inkcheck.mjs';
 import { callStory } from './bookcall.mjs';
+import { notesPageStories } from './booknotespage.mjs';
 import { walkStory } from './bookwalk.mjs';
 import { pairStory } from './bookpair.mjs';
 import { phoneStory } from './bookphone.mjs';
-import { slipStory } from './bookslip.mjs';
-import { askStory } from './bookask.mjs';
 import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
 import { mouseStories } from './bookmouse.mjs';
@@ -61,26 +61,77 @@ import { drawStories } from './bookdraw.mjs';
 import { spaceStories } from './bookspace.mjs';
 import { deskStories, notPaper, inkPixels } from './bookdesk.mjs';
 import { frameStories } from './bookframe.mjs';
+import { openStories } from './bookopen.mjs';
 import { bodyStories } from './bookbody.mjs';
 import { inkStory, nothingDrawn } from './bookink.mjs';
-import { sentStory, phoneSendStory } from './booksent.mjs'; // (phoneSendStory: job #19631)
-import { sendFaceStories } from './booksendface.mjs';
+import { shareStories } from './bookshare.mjs';
 import { pinStory, pinScreensStory } from './bookpin.mjs'; // (pinScreensStory: job #20358)
+import { tipsStory } from './booktips.mjs';
 import { chromeStories } from './bookchrome.mjs';
 import { circleStories } from './bookcircle.mjs';
 import { liftStories } from './booklift.mjs';
 import { penStories } from './bookpen.mjs';
+import { pasteStories } from './bookpaste.mjs';
+import { stripStories } from './bookstrip.mjs';
+import { webkitStories } from './bookwebkit.mjs';
+import { editStories } from './bookedits.mjs';
+import { notebookPlay } from './shell/ink/notebookplay.js';
+import { notebookStories } from './booknotebook.mjs';
+import { notebookAskStories } from './booknotebookasks.mjs';
+import { notebookRowStories } from './booknotebookrow.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
 
 const only = process.argv.includes('--stories') ? process.argv[process.argv.indexOf('--stories') + 1] : null;
 const shots = process.argv.includes('--shots') ? process.argv[process.argv.indexOf('--shots') + 1] : null;
+// (--webkit with --stories: those stories in WebKit, the iPad's engine, where it's installed.)
+const inWebKit = process.argv.includes('--webkit');
 if (shots) await mkdir(shots, { recursive: true });
 const shot = async (name, page) => shots && page.screenshot({ path: `${shots}/${name}.png` });
 const server = await serve(),
   base = `http://localhost:${server.address().port}`;
 const org = await (await fetch(`${base}/mock/org.json`)).json();
 const reviewJs = (await readFile(`${ROOT}/shared/review/review.js`, 'utf8')).replace('{{HQ_ORIGIN}}', base);
+
+// ---- the Notebook's store, played (notebookplay.js): the one a story's page made by freePage (bookmouse.mjs) is on,
+// each page mirrored into pages (its box, and its groups' ink, texts and pictures as the page's ink, texts and scraps) as it's saved,
+// so a story reads what was saved where it always has. A story's own seed (hqIn's notebooks) plays on its own. Its
+// pages are numbered from 9001, clear of the sheets' store's.
+const T0 = new Date().toISOString();
+const notebook = notebookPlay({
+  seed: {
+    notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: T0, updated: T0 }],
+    pages: [{ id: 9000, notebook: 1, pos: 0, archived: true, created: T0, updated: T0, w: 1200, h: 1600 }],
+  },
+});
+notebook.listen(({ page: id }) =>
+  queueMicrotask(() => {
+    // (a page's own content until HQ opens on it: what the story puts on it)
+    const p = pages.find(x => x.id === id && x.seeded);
+    if (!p) return;
+    const { groups } = notebook.route('/api/notebooks/pages/groups', { page: id }),
+      box = notebook.route('/api/notebooks/pages', { notebook: p.notebook }).pages.find(x => x.id === id);
+    // (in the order the story saw them made: what's still there where it was, what's new after it)
+    const kept = (was, kind) => {
+      const now = groups.flatMap(g => g[kind]),
+        key = el => JSON.stringify(el),
+        left = new Set(now.map(key));
+      const stay = (was ?? []).filter(el => left.delete(key(el)));
+      return [...stay, ...now.filter(el => left.has(key(el)))];
+    };
+    Object.assign(p, { ink: kept(p.ink, 'ink'), texts: kept(p.texts, 'texts'), scraps: kept(p.scraps, 'pictures') });
+    for (const k of ['x', 'y', 'w', 'h']) p[k] = box?.[k] ?? p[k];
+  }),
+);
+// What a story put on its page before HQ opened, onto the played page as one group
+function seedPages() {
+  for (const p of pages.filter(p => p.notebook && !p.seeded)) {
+    p.seeded = true;
+    const parts = { ink: p.ink, texts: p.texts, pictures: p.scraps };
+    if (Object.values(parts).some(l => l.length))
+      notebook.route('/api/notebooks/groups/create', {}, { page: p.id, ...parts });
+  }
+}
 
 // ---- the book's store, played (booknotes.ts): today's pages, notes numbered on their sheet, wiped. A note's sheet is
 // its owner's (owner on it; none: the CEO's), open, in its ten seconds to undo, or sent; notes edited, moved, put in
@@ -123,47 +174,14 @@ function deliverDue() {
       });
       sheets.delete(owner);
     }
-  // (a page given on its own: a one-off sheet, sent once its seconds are over.)
-  for (const s of pageSends.filter(p => p.send_at <= Date.now())) {
-    pageSends.splice(pageSends.indexOf(s), 1);
-    sentSheets.unshift({ ...s, status: 'sent', send_at: null, sent: new Date().toISOString() });
-  }
-}
-// pages given by their corner, in their seconds to undo (booksend.ts).
-const pageSends = [];
-function pageSendStore(path, body) {
-  if (path === '/api/book/page/send') {
-    const page = pages.find(p => p.id === body.id);
-    if (!['free', 'call'].includes(page?.kind))
-      return { refused: [400, 'a free page or a call’s is given on its own'] };
-    const id = ++ids,
-      note = { id: ++ids, n: 1, page: page.id, status: 'open', words: page.label ?? '', slips: [], links: [] };
-    pageSends.push({
-      id,
-      owner: body.to,
-      name: null,
-      status: 'sending',
-      send_at: Date.now() + 10_000,
-      sent: null,
-      page: page.id,
-      notes: [note],
-    });
-    return pageSends.at(-1);
-  }
-  const s = path === '/api/book/undo' && pageSends.find(p => p.id === body.id);
-  if (!s) return null;
-  pageSends.splice(pageSends.indexOf(s), 1);
-  return { id: s.id, status: 'undone' };
 }
 function sheetStore(path, body, q) {
-  const given = pageSendStore(path, body);
-  if (given) return given;
   const note = notes.find(n => n.id === body?.id);
   if (path === '/api/book/sheets') {
     deliverDue();
     const owners = [...new Set([...sheets.keys(), ...notes.filter(n => n.status === 'open').map(ownerOf)])];
     return {
-      open: [...owners.filter(o => !o.startsWith('call ') && openOf(o).length).map(shownSheet), ...pageSends],
+      open: owners.filter(o => !o.startsWith('call ') && openOf(o).length).map(shownSheet),
       sent: sentSheets,
     };
   }
@@ -228,6 +246,26 @@ function sheetStore(path, body, q) {
 }
 function store(path, body, q) {
   if (path === '/api/book') return { day: '2026-10-26', today: '2026-10-26', days: [], pages };
+  // (a live call's notes page, made as it's picked up: in today's book, a page of the call's own notebook.)
+  if (path === '/api/notebooks/call') {
+    let page = pages.find(p => p.kind === 'call' && p.call === body.call && p.notebook);
+    if (!page)
+      pages.push(
+        (page = {
+          id: ++ids,
+          day: '2026-10-26',
+          kind: 'call',
+          call: body.call,
+          notebook: 900,
+          label: '',
+          x: 0,
+          y: 0,
+          w: 1024,
+          h: 768,
+        }),
+      );
+    return { notebook: page.notebook, page, day: page.day };
+  }
   if (path === '/api/book/page/new') {
     const page = { id: ++ids, day: '2026-10-26', ...body }; // (its day)
     pages.push(page);
@@ -328,8 +366,10 @@ function voiceLine(ws) {
 const reader = { words: '', ms: 0, inks: [], refused: null };
 
 const IPAD_MINI = { viewport: { width: 744, height: 1133 }, deviceScaleFactor: 2, hasTouch: true };
-// HQ held like an iPad mini in a browser, its coordinator and voice line played
-async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
+// HQ held like an iPad mini in a browser, its coordinator and voice line played. more: the context's options, and
+// notebooks, the Notebook's seed (notebookplay.js; none: My Notebook with one blank page), played on context.notebook.
+// (notebooks)
+async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, ...more } = {}) {
   const context = await browser.newContext({
     ...IPAD_MINI,
     ...more,
@@ -368,9 +408,25 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
     if (path === '/__review/mine') return r.fulfill({ json: { notes: 0 } });
     return r.fulfill({ json: { show: false } });
   });
+  seedPages();
+  context.notebook = notebooks ? notebookPlay({ seed: notebooks }) : notebook;
+  // (a change on the store reaches every page of the context as the coordinator's event does, through events.js)
+  const heard = context.notebook.listen(({ page }) => {
+    for (const p of context.pages())
+      p.evaluate(
+        page => import('/shell/events.js').then(m => m.onEvent({ type: 'book', text: 'notebook', page })),
+        page,
+      ).catch(() => {});
+  });
+  context.on('close', heard);
   await context.route(`${base}/api/**`, async r => {
-    const url = new URL(r.request().url()),
-      body = r.request().method() === 'POST' && url.pathname !== '/api/book/scrap' ? r.request().postDataJSON() : null;
+    const url = new URL(r.request().url());
+    if (url.pathname.startsWith('/api/notebooks') || url.pathname === '/api/book/search') {
+      if (r.request().method() === 'GET') carryNotes(context.notebook);
+      return notebookRoute(r, url, context.notebook);
+    }
+    const body =
+      r.request().method() === 'POST' && url.pathname !== '/api/book/scrap' ? r.request().postDataJSON() : null;
     if (url.pathname === '/api/org') return r.fulfill({ json: org });
     // (a call reads the board's language before it dials, and its Show starts a watch-along: nothing recorded here)
     if (url.pathname === '/api/language') return r.fulfill({ json: { lang: 'en' } });
@@ -417,6 +473,51 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, more = {}) {
   });
   return context;
 }
+// Review mode's notes written the old way (the book's store above) carried onto the current page as scraps at the
+// Notebook's next read, as the coordinator's carry does with late notes (notebookcarry.ts): the board's, open, not a
+// call's, each note then naming its scrap (group).
+const carried = new WeakMap();
+function carryNotes(play) {
+  const done = carried.get(play) ?? carried.set(play, new Set()).get(play);
+  const late = notes.filter(
+    n =>
+      n.status === 'open' && n.by === 'board' && !done.has(n.id) && pages.find(p => p.id === n.page)?.kind !== 'call',
+  );
+  for (const n of late) {
+    done.add(n.id);
+    const scrap = { anchor: n.anchor, words: n.words ?? '', said: n.said ?? null, snip: snips.get(n.id) ?? SNIP };
+    try {
+      n.group = play.route('/api/notebooks/groups/scrap', {}, { ...scrap, owner: n.owner ?? null }).id;
+    } catch (e) {
+      // (said, not thrown: a route that throws is never answered, and the story would only time out)
+      console.error(`note ${n.id} not carried: ${e.message}`);
+    }
+  }
+}
+// A picture's bytes WebKit didn't hand over (a blob's body comes as null there) with none pasted before: the snip
+// stands in for them.
+const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
+// The Notebook's routes answered by a story's play (notebookplay.js): a refusal as the coordinator's, the posts kept
+// (a picture's as its type and size).
+function notebookRoute(r, url, play) {
+  const req = r.request(),
+    picture = url.pathname === '/api/notebooks/pictures';
+  const body =
+    req.method() !== 'POST'
+      ? undefined
+      : picture
+        ? { bytes: req.postDataBuffer() ?? pasted ?? unseen(), type: req.headers()['content-type'] }
+        : req.postDataJSON();
+  if (body) posts.push({ path: url.pathname, body: picture ? { type: body.type, size: body.bytes.length } : body });
+  try {
+    const answer = play.route(url.pathname, url.searchParams, body);
+    if (picture && !body) return r.fulfill({ contentType: answer.type, body: Buffer.from(answer.bytes) });
+    return r.fulfill({ json: answer });
+  } catch (e) {
+    if (!e.status) throw e;
+    return r.fulfill({ status: e.status, json: { error: e.message } });
+  }
+}
 // ---- the book beside HQ's page, a story at a time, in a browser: the failures counted, each one told
 const MINI = { width: 1133, height: 744 },
   MINI_PORTRAIT = { width: 744, height: 1133 },
@@ -436,14 +537,19 @@ async function inLooks(browser, story) {
 }
 function STORIES() {
   return {
-    "a morning: yesterday's sheet in the book, sent, its answer clipped on": browser =>
+    "a morning: yesterday's page in the book, sent, its answer under its scrap": browser =>
       morningStory(browser, { hq, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
+    // (the Notebook's page: its groups, Send, the store's changes and answers, on an iPad mini, a desktop and a phone.
+    ...notebookStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...notebookRowStories({ hqIn, base, settled, shot, noErrorsIn, shots }),
+    ...notebookAskStories({ hqIn, base, settled, shot, noErrorsIn, shots, org }),
     // (the book's tools with a mouse on a desktop.)
     ...mouseStories({
       hqIn,
       base,
       store,
       pages,
+      notebook,
       notes,
       posts,
       org,
@@ -453,17 +559,42 @@ function STORIES() {
       noErrorsIn,
       settle: SETTLE_MS,
     }),
+    // (the board's controls: the strip, the mouse's, a finger's and the Pencil's bindings, the preferences, the voice
+    // note held.)
+    ...stripStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    ...webkitStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    // (handwriting edited with the pen and the mouse: a word struck out, a sentence sliced open.)
+    ...editStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn }),
+    // (what lands from outside: pictures by address and file, pasted words and links.)
+    ...pasteStories({
+      hqIn,
+      base,
+      store,
+      pages,
+      notebook,
+      notes,
+      posts,
+      org,
+      renumber,
+      shot,
+      settled,
+      noErrorsIn,
+      settle: SETTLE_MS,
+    }),
+    // (a call's notes page: the agent's scraps landing on it, the book opening there where it fits.)
+    ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
-    ...drawStories({ hqIn, base, store, pages, shot, settled, settle: SETTLE_MS }),
+    ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
     // (the paper's space: every way, the pinch, never frozen.)
-    ...spaceStories({ hqIn, base, store, pages, shot, settled, noErrorsIn, settle: SETTLE_MS }),
+    ...spaceStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, settle: SETTLE_MS }),
     // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
-    ...penStories({ hqIn, base, store, pages, shot, settled }),
+    ...penStories({ hqIn, base, store, pages, notebook, shot, settled }),
     // (moving about the book's pages with a mouse: the overview, the zoom, the pan, New page, the heading.)
-    ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS }),
+    ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS, hqIn, base, store, pages, settled }),
     // (the book as an object: its shadow, its floating controls, its spine let go, its cover and name, the pairing
     // card at any width.)
     ...frameStories({ hq, shot, settled, settle: SETTLE_MS }),
+    ...openStories({ hq, shot, settled, settle: SETTLE_MS }),
     // (the book's body: its handle, where it's let go, the table under it, its open and its turns.)
     ...bodyStories({ hq, shot, settled, settle: SETTLE_MS }),
     // (the book's chrome: the column, the foot and the overview, the pages' names, Safari's strip.)
@@ -504,11 +635,12 @@ function STORIES() {
           await done();
         }
       },
-    'a flick of the spine to the right puts the book away; the lip pulled left brings it back': async browser => {
+    // (the pull tab opens and closes, the cover's edge only resizes)
+    'the pull tab drawn right puts the book away; drawn left it brings it back': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const open = await sight(page);
-        await drag(page, await spineAt(page), 120, 3);
+        await pullLip(page, 300);
         await settled(page, 'folded');
         assert.equal((await sight(page)).mode, 'folded');
         await pullLip(page, -600);
@@ -522,7 +654,7 @@ function STORIES() {
       }
     },
     // (the spread only where HQ would be narrower than a phone)
-    'the spine let go with HQ narrower than a phone spreads the book over the screen, the rail still there':
+    "the cover's edge let go with HQ narrower than a phone spreads the book over the screen, the rail still there":
       async browser => {
         const { page, errors, done } = await hq(browser, MINI);
         try {
@@ -537,7 +669,8 @@ function STORIES() {
           );
           railStays(seen, open);
           await shot('book-spread', page);
-          await putAway(page);
+          // its edge drawn back right: HQ's page beside it again
+          await drag(page, await spineAt(page), open.page, 14, undefined, HOLD_MS);
           await settled(page, 'open');
           assert.equal((await sight(page)).page, open.page, 'the page is back at its open width');
           assert.deepEqual(errors, []);
@@ -585,7 +718,7 @@ function STORIES() {
           await done();
         }
       },
-    'remembered: folded stays folded after a reload, and the width the spine was dragged to': async browser => {
+    "remembered: folded stays folded after a reload, and the width the cover's edge was dragged to": async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const before = (await sight(page)).book.width;
@@ -666,21 +799,31 @@ function STORIES() {
         const paper = (await sight(page)).book,
           stored = await storedPages(page);
         await page.mouse.move(paper.left + paper.width / 2, MINI.height / 2);
-        for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 400);
+        // (a trackpad's scroll, a touch sideways too: a mouse's wheel notch picks the next tool, bookpan.js.)
+        for (let i = 0; i < 6; i++) await page.mouse.wheel(1, 400);
         await page.waitForTimeout(SETTLE_MS);
         assert.deepEqual(await notPaper(page), [], 'the paper shows past the page');
-        await write(page, paper.left + 60, MINI.height - 40);
+        // (clear of the tool strip and the foot row.)
+        await write(page, paper.left + 160, MINI.height / 2);
         await page.waitForTimeout(SETTLE_MS);
-        const grown = (await storedPages(page)).find(p => p.h > stored.find(q => q.id === p.id).h);
-        assert.ok(grown, 'no page grew in the store');
         await shot('book-grown', page);
+        const after = await storedPages(page),
+          grown = after.find(p => p.h > stored.find(q => q.id === p.id).h);
+        const said = () =>
+          page.evaluate(() =>
+            [...document.querySelectorAll('#book .bk-refusal:not([hidden])')].map(r => r.textContent),
+          );
+        assert.ok(
+          grown,
+          `no page grew in the store (${JSON.stringify({ stored, after })}; the book said: ${await said()})`,
+        );
         assert.deepEqual(errors, []);
       } finally {
         await done();
       }
     },
-    // (the pages control says which page of the day it is)
-    'New page starts the next: the day gets a page more, and writing on it keeps it': async browser => {
+    // (the pages control says which page of the notebook it is; a new page is in the store at once.)
+    'New page starts the next: the notebook gets a page more, and writing on it keeps it': async browser => {
       const { page, errors, done } = await hq(browser, MINI);
       try {
         const paper = (await sight(page)).book,
@@ -688,38 +831,25 @@ function STORIES() {
           where = () =>
             page
               .locator('#book')
-              .getByRole('button', { name: /^The day's pages/ })
+              .getByRole('button', { name: /^The notebook's pages/ })
               .getAttribute('aria-label'),
           [, n] = (await where()).match(/(\d+) of \d+$/);
         await page.getByRole('button', { name: 'New page', exact: true }).click();
         await page.waitForTimeout(SETTLE_MS);
-        assert.match(await where(), new RegExp(`Free page, ${+n + 1} of ${+n + 1}$`));
+        assert.match(await where(), new RegExp(`Untitled page, ${+n + 1} of ${+n + 1}$`));
         assert.equal(await inkPixels(page), 0, 'the new page has ink on it');
-        assert.equal((await storedPages(page)).length, stored, 'a page was kept before anything was written on it');
-        await write(page, paper.left + 80, MINI.height / 2);
+        assert.equal((await storedPages(page)).length, stored + 1, 'the new page in the store');
+        await write(page, paper.left + 160, MINI.height / 2); // (right of the tool strip)
         await page.waitForTimeout(SETTLE_MS);
         const kept = await storedPages(page);
         assert.equal(kept.length, stored + 1);
-        assert.equal(kept[kept.length - 1].strokes, 1);
+        assert.equal(kept[kept.length - 1].groups, 1, 'what was written on it, a group');
         await shot('book-new-page', page);
         assert.deepEqual(errors, []);
       } finally {
         await done();
       }
     },
-    'an answer clips onto its note within seconds: then and now, ticks, a reply, a running preview': browser =>
-      slipStory({
-        ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
-        ...{ shot, settled, fingerTap, noErrorsIn },
-      }),
-    "a card about a note: on the desk phone with the note, Open in the book on it, answered by a tap under it in the book; a key's only on the desk phone":
-      browser =>
-        inLooks(browser, (look, shot) =>
-          askStory({
-            ...{ browser, hqIn, base, MINI, store, pages, notes, snips, posts, org },
-            ...{ shot, settled, noErrorsIn, look },
-          }),
-        ),
     "the pin comes as the book opens, a note's sheet and the menu name one owner; dropped, it stays": browser =>
       inLooks(browser, (look, shot) =>
         pinStory({
@@ -728,6 +858,8 @@ function STORIES() {
       ),
     'the pin away as HQ loads on a desktop and a phone, summoned and put away; an artifact keeps its own': browser =>
       pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
+    'the Tips control opens the tips book on its cover, every tip a page with its scene, turned at once; put away by Escape or a tap outside':
+      browser => tipsStory({ browser, hqIn, base, settled, shot, noErrorsIn }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
     ...circleStories({
       hqIn,
@@ -752,7 +884,9 @@ function STORIES() {
       const { page, errors, done } = await hqOnStore(browser);
       try {
         const paper = (await sight(page)).book,
-          from = posts.length;
+          from = posts.length,
+          had = new Set(taped().map(t => t.picture.file)),
+          fresh = () => taped().filter(t => !had.has(t.picture.file));
         // (WebKit's Playwright doesn't hand over a Blob's body: the store takes the picture's bytes from here then)
         pasted = Buffer.from(
           await page.evaluate(async () => {
@@ -771,20 +905,15 @@ function STORIES() {
             new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }),
           );
         });
-        const saved = () =>
-          posts
-            .slice(from)
-            .filter(p => p.path === '/api/book/page/save' && p.body.scraps?.length)
-            .at(-1)?.body;
-        for (let i = 0; i < 40 && !saved(); i++) await page.waitForTimeout(250);
-        const uploads = posts.slice(from).filter(p => p.path === '/api/book/scrap');
+        // (a picture uploaded to the Notebook, then a group holding it saved.)
+        const uploaded = at => posts.slice(at).filter(p => p.path === '/api/notebooks/pictures');
+        for (let i = 0; i < 40 && !fresh().length; i++) await page.waitForTimeout(250);
+        const uploads = uploaded(from);
         assert.equal(uploads.length, 1, 'the picture went to the book once');
         assert.equal(uploads[0].body.type, 'image/png');
-        const kept = saved();
-        assert.ok(kept, 'the page with the picture on it was saved');
-        const onPage = pages.find(p => p.id === kept.id);
-        assert.equal(onPage.kind, 'free', "it's taped on today's free page, the page in view");
-        const [scrap] = kept.scraps;
+        assert.equal(fresh().length, 1, 'a group with the picture on it was saved');
+        const [{ page: onPage, picture: scrap }] = fresh();
+        assert.ok(!onPage.sent && !onPage.sending, "it's taped on an open page of My Notebook");
         assert.ok(Math.abs(scrap.tilt) <= 4, `a touch askew, not ${scrap.tilt} degrees`);
         assert.ok(scrap.w <= onPage.w / 2 + 0.01 && scrap.x >= 0 && scrap.x + scrap.w <= onPage.w, 'on the page');
         // ...and the board sees it there, on the book's paper
@@ -816,13 +945,13 @@ function STORIES() {
           drag('dragover');
           drag('drop');
         }, at);
-        const keptDrop = () =>
-          posts
-            .slice(dropped)
-            .some(p => p.path === '/api/book/page/save' && p.body.id === kept.id && p.body.scraps?.length > 1);
-        for (let i = 0; i < 40 && !keptDrop(); i++) await page.waitForTimeout(250);
-        assert.ok(keptDrop(), 'the page was saved with the dropped picture beside the pasted one');
-        assert.equal(posts.slice(dropped).filter(p => p.path === '/api/book/scrap').length, 1, 'the drop went in once');
+        for (let i = 0; i < 40 && fresh().length < 2; i++) await page.waitForTimeout(250);
+        assert.deepEqual(
+          fresh().map(t => t.page.id),
+          [onPage.id, onPage.id],
+          'the page was saved with the dropped picture beside the pasted one',
+        );
+        assert.equal(uploaded(dropped).length, 1, 'the drop went in once');
         await page.waitForTimeout(SETTLE_MS);
         const after = await greenIn(page, await page.screenshot({ clip: spot }));
         assert.ok(after > 0.6 * 4 * 60 * 40 && before < after / 2, `taped where it was let go (${before}, ${after})`);
@@ -832,203 +961,14 @@ function STORIES() {
         await done();
       }
     },
-    "a guest's note joins the board's sheet, in their colour with their name tag": async browser => {
-      // Esmee, invited into the board's book, wrote on a preview the board shared: her note is on the board's open
-      // sheet for the page's owner (feedback.ts, bookguests.ts), beside the board's own
-      const ORANGE = '#d9480f',
-        view = { w: 1133, h: 744, x: 0, y: 0, dpr: 2 },
-        mark = (x, color) => [{ color, size: 5, points: [0, 1, 2, 3].map(i => [x + i * 20, 300, 0.5, i * 16]) }];
-      // (on the CEO's sheet page of today if the Pencil left one: one an owner a day, whatever its url)
-      const had = pages.find(p => p.kind === 'sheet' && p.owner === org.company.ceo),
-        sheet = had ?? { id: ++ids, kind: 'sheet', owner: org.company.ceo, url: '/?intro=0', w: 700, h: 700 },
-        note = (n, words, ink, guest) => ({
-          id: ++ids,
-          sheet: 1,
-          page: sheet.id,
-          n,
-          by: guest ? 'guest:1' : 'board',
-          anchor: { v: 1, url: 'https://hello.preview.example/basket', el: null, view, ink },
-          words,
-          said: 'typed',
-          snip: null,
-          status: 'open',
-          links: [],
-          slips: [],
-          guest,
-        }),
-        theirs = note(1, 'The price is hard to read', mark(200, ORANGE), { name: 'Esmee', colour: ORANGE }),
-        ours = note(2, 'yes, both', mark(400, '#ff5a5f'), null);
-      if (!had) pages.push(sheet);
-      notes.push(theirs, ours);
-      renumber();
-      const { page, errors, done } = await hqOnStore(browser);
-      try {
-        // (a note numbered only to tell it apart from a snip's)
-        const hers = page.getByRole('group', { name: /^Note( \d+)?, Esmee/ });
-        await hers.waitFor({ timeout: 5000 });
-        // her name on it, in her colour; the board's own note beside it carries no name
-        const tag = hers.getByText('Esmee', { exact: true });
-        assert.ok(await tag.isVisible(), 'her name tag shows on her note');
-        const tagColour = await tag.evaluate(e => getComputedStyle(e).backgroundColor);
-        assert.equal(tagColour, 'rgb(217, 72, 15)', 'her name tag is in her colour');
-        // (a note's words as the board reads them: in its words' box)
-        const wordsOf = g => g.getByRole('textbox').first().inputValue();
-        assert.equal(await wordsOf(hers), 'The price is hard to read');
-        const boards = [];
-        for (const g of await page.getByRole('group', { name: /^Note( \d+)?$/ }).all())
-          if ((await wordsOf(g)) === 'yes, both') boards.push(g);
-        assert.equal(boards.length, 1, "the board's own note is on the same sheet");
-        assert.equal(await boards[0].getByText('Esmee').count(), 0, "the board's note has no name tag");
-        // both go in one send: the one plane by the face
-        const plane = page.getByRole('button', { name: /^Send to / });
-        assert.ok(await plane.isVisible(), 'one plane sends the lot');
-        await shot('book-guest-note', page);
-        noErrorsIn(errors);
-      } finally {
-        if (!had) pages.splice(pages.indexOf(sheet), 1);
-        notes.splice(notes.indexOf(theirs), 1);
-        notes.splice(notes.indexOf(ours), 1);
-        renumber();
-        await done();
-      }
-    },
-    "two notes on an agent's page land on its sheet and send in one tap, undo within ten seconds": async browser => {
-      // Kit's page in today's book with two of the Pencil's notes on it, as the Pencil leaves them (marks.js)
-      const kit = 'kit',
-        view = { w: 1133, h: 744, x: 0, y: 0, dpr: 2 },
-        sheetPage = { id: ++ids, kind: 'sheet', owner: kit, url: '/?open=shop', label: '', w: 700, h: 700 };
-      const theirs = ['The price is too small', 'And warmer, like Inkbath'].map((words, i) => {
-        const id = ++ids;
-        snips.set(id, SNIP);
-        const ink = [
-          { color: '#2a2352', size: 5, points: [0, 1, 2].map(j => [100 + j * 40, 200 + i * 90, 0.5, j * 16]) },
-        ];
-        return {
-          id,
-          page: sheetPage.id,
-          owner: kit,
-          anchor: { v: 1, url: '/?open=shop', el: null, view, ink },
-          words,
-          said: 'spoken',
-          snip: `/api/book/snip?id=${id}`,
-          status: 'open',
-          links: [],
-          slips: [],
-        };
-      });
-      pages.push(sheetPage);
-      notes.push(...theirs);
-      renumber();
-      const { page, errors, done } = await hqOnStore(browser);
-      try {
-        // Kit's face in the rail counts them, and a tap on it opens Kit's sheet in the book
-        const face = page.locator('#book nav [aria-label^="For Kit"]');
-        await face.waitFor({ timeout: 5000 });
-        await face.click();
-        await page.waitForTimeout(SETTLE_MS);
-        // (Kit's sheet: another one of today's sheets has its own Note 1)
-        const kits = page.getByRole('region', { name: 'For Kit' });
-        // two numbered notes, each with its snip and its words
-        for (const [i, words] of ['The price is too small', 'And warmer, like Inkbath'].entries()) {
-          const note = kits.getByRole('group', { name: `Note ${i + 1}` });
-          await note.waitFor({ timeout: 5000 });
-          await shot(`book-sheet-note${i + 1}`, page);
-          assert.ok(
-            await inBook(page, note),
-            `note ${i + 1} shows on the book's paper (${JSON.stringify(await note.boundingBox())} in ${JSON.stringify(await page.locator('#book section').first().boundingBox())})`,
-          );
-          assert.equal((await note.innerText()).trim().split('\n')[0], String(i + 1), `its number is ${i + 1}`);
-          assert.equal(await note.getByRole('textbox').inputValue(), words);
-          assert.ok(await note.getByRole('textbox').isEditable(), 'its words can be written over');
-          assert.equal(
-            await note.locator('img').evaluate(img => img.complete && img.naturalWidth > 0),
-            true,
-            'its snip',
-          );
-        }
-        await shot('book-sheet', page);
-        // a finger held still on a note lifts it, and brings no Paste bubble under it (the bubble is the page's, for
-        // a finger held on its paper: booktape.js).
-        const held = await fingerHold(kits.getByRole('group', { name: 'Note 1' }).locator('img'), 900);
-        assert.deepEqual(held, { lifted: true, paste: false }, 'a held note lifts, with no Paste bubble under it');
-        await page.waitForTimeout(SETTLE_MS);
-        // one tap on the plane by Kit's face: no question asked, the ring runs out round it (by the face, was in the page's heading)
-        const plane = page.getByRole('button', { name: 'Send to Kit' });
-        await plane.click();
-        const timer = page.locator('#book .bk-plane[data-for="kit"] .bk-ring');
-        await timer.waitFor({ timeout: 3000 });
-        assert.equal(await page.getByRole('dialog').count(), 0, 'nothing asks "are you sure?"');
-        const ring = () =>
-          timer.evaluate(t =>
-            [...t.querySelectorAll('circle')].map(c => parseFloat(getComputedStyle(c).strokeDashoffset)).at(-1),
-          );
-        const early = await ring();
-        await page.waitForTimeout(1500);
-        assert.ok((await ring()) > early + 5, 'the ring runs out as the seconds pass');
-        await shot('book-sheet-sending', page);
-        assert.ok(
-          posts.some(p => p.path === '/api/book/send' && p.body.id === sheetFor(kit).id),
-          'the sheet is sent',
-        );
-        // Undo within the seconds: the sheet is open again, the plane back
-        await page.locator('#book .bk-undo').click();
-        await plane.waitFor({ timeout: 3000 });
-        assert.ok(
-          posts.some(p => p.path === '/api/book/undo'),
-          'the send is taken back',
-        );
-        assert.equal(sheetFor(kit).status, 'open');
-        // sent again and left: after ten seconds the sheet reads "Sent 08:16", creased, its words read-only
-        await plane.click();
-        await timer.waitFor({ timeout: 3000 });
-        const went = page.getByText(/^2 notes sent to Kit · \d\d:\d\d$/);
-        await went.waitFor({ timeout: 16_000 });
-        assert.ok(await inBook(page, went), '"Sent" shows at the sheet\'s head');
-        assert.equal(await timer.count(), 0, 'the seconds to undo are over');
-        // (a sent note shows no number)
-        assert.equal(
-          await kits.getByRole('group').first().getByRole('textbox').isEditable(),
-          false,
-          'a sent note is read-only',
-        );
-        assert.equal(await face.count(), 0, "Kit's face has no notes waiting");
-        await shot('book-sheet-sent', page);
-        noErrorsIn(errors);
-      } finally {
-        pages.splice(pages.indexOf(sheetPage), 1);
-        for (const n of theirs) notes.splice(notes.indexOf(n), 1);
-        sentSheets.splice(0, sentSheets.length, ...sentSheets.filter(s => s.owner !== kit));
-        sheets.delete(kit);
-        await done();
-      }
-    },
     // (Search, bookfind.mjs)
     "Search: a word said while drawing yesterday found as it's written, its page opened at the note, the number lit":
-      browser => findStory(browser, { hq, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
+      browser => findStory(browser, { hqIn, base, inBook, shot, noErrorsIn, viewport: MINI, settle: SETTLE_MS }),
     'Search on a desktop: in the overview, its words kept when the overview closes and opens again, Esc wiping them':
-      browser => keptStory(browser, { hq, noErrorsIn, desktop: DESKTOP }),
+      browser => keptStory(browser, { hqIn, base, noErrorsIn, desktop: DESKTOP }),
     // (handwriting read into type, bookwritten.mjs)
-    // (a send that says what went to whom, a plane in view, notes clear of the writing: booksent.mjs; in Wire too: job #19359)
-    "a sheet's send: notes clear of the board's writing, numbered only to tell apart, the plane in view, what went to whom":
-      browser =>
-        inLooks(browser, (look, shot) =>
-          sentStory({
-            ...{ browser, hqIn, base, viewport: MINI, settled, pages, notes, snips, sentSheets, sheets },
-            ...{ renumber, SNIP, shot, noErrorsIn, look, posts },
-          }),
-        ),
-    // (giving through the faces: a face's sheet turned to, handed over, a page by its corner.)
-    ...sendFaceStories({
-      ...{ hqIn, base, viewport: MINI, settled, pages, notes, snips, posts, sheets, org, renumber },
-      ...{ SNIP, shot, noErrorsIn },
-    }),
-    // (the board's phone, 420 × 912)
-    "a phone's folded book: its handle nudges no one; opened, a face turns it to their sheet, the plane in view":
-      browser =>
-        phoneSendStory({
-          ...{ browser, hqIn, base, viewport: { width: 420, height: 912 }, settled, pages, notes, snips, sentSheets },
-          ...{ sheets, renumber, SNIP, shot, noErrorsIn },
-        }),
+    // (a page shared by its corner, the paper's feel)
+    ...shareStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, SNIP }),
     'handwriting on the page read into type: beside the ink, into the book as written, read late, refused': browser =>
       writtenStory(browser, {
         hqOnStore,
@@ -1047,27 +987,27 @@ function STORIES() {
     'rule zero: nothing stays drawn on HQ once a note is saved or let go, sent, reloaded, or in another tab': browser =>
       inLooks(browser, (look, shot) =>
         inkStory({
-          ...{ browser, hqIn, base, MINI, settled, ui, penOn, ring, inkAt, fingerTap, notes, org, posts },
+          ...{ browser, hqIn, base, MINI, settled, penOn, ring, inkAt, notes, org, posts },
           ...{ shot, noErrorsIn, look },
         }),
       ),
     "HQ's page never under the book, at every width that keeps a page: split screen to a big desktop": browser =>
       everyWidthStory(browser, { hq, sight, beside, hqWhole, settled, shot, noErrorsIn }),
     // (the overview opens from its button, never a pinch on the page.)
-    "the overview: the day's pages side by side, in order; pinched out, the week as a contact sheet; a page tapped, or pinched in, back":
+    "the overview: the notebook's pages as a grid, in order; pinched out, the Shelf of notebooks; a page tapped, or pinched in, back":
       async browser => {
         const { page, errors, done } = await hq(browser, MINI);
         try {
           const paper = (await sight(page)).book,
-            today = (await storedPages(page)).length;
+            stored = (await storedPages(page)).length;
           await overviewButton(page).click();
           await page.waitForTimeout(SETTLE_MS);
           let far = await farView(page);
-          assert.equal(far.level, 'day', 'the overview shows the day');
-          assert.equal(far.days.length, 1);
-          assert.equal(far.days[0].frames.length, today, "every page of the day's");
-          const row = far.days[0].frames;
-          // (side by side, in rows where the book is too narrow for them all: none out of sight.)
+          assert.equal(far.level, 'pages', "the overview shows the notebook's pages");
+          // (the notebook's pages, sent ones too: the store's, no longer one day's.)
+          assert.equal(far.tiles.length, stored, "every page of the notebook's");
+          const row = far.tiles;
+          // (side by side, in rows where the book is too narrow for them all.)
           assert.ok(
             row.every((f, i) => !i || (f.top === row[i - 1].top ? f.left > row[i - 1].right : f.top > row[i - 1].top)),
             `side by side, in order: ${JSON.stringify(row)}`,
@@ -1076,36 +1016,36 @@ function STORIES() {
             row.every(f => f.left >= paper.left && f.right <= paper.left + paper.width),
             'all in the book',
           );
-          assert.ok(
-            row.every(f => f.inked),
-            'each with its ink',
+          await page.waitForFunction(() =>
+            [...document.querySelectorAll('#book .bk-far .bk-tile[data-id] img')].every(
+              i => i.complete && i.naturalWidth,
+            ),
           );
-          await shot('book-pinch-day', page);
+          assert.ok(
+            (await farView(page)).tiles.every(f => f.inked),
+            'each with its picture',
+          );
+          assert.equal(far.newPage, true, 'New page at its end');
+          assert.ok(far.first >= far.strip, `the pages clear of the tool strip: ${far.first} ${far.strip}`);
+          await shot('book-pinch-pages', page);
           await pinch(page, paper, 0.5);
           far = await farView(page);
-          assert.equal(far.level, 'week', 'again, the week');
-          assert.deepEqual(
-            far.days.map(d => d.name),
-            ['Today', far.days[1]?.name].filter(Boolean),
-            'a row a day with pages, the latest first',
-          );
-          assert.ok(far.days.length >= 2, "the week has the day before's pages too");
-          assert.ok(far.days[1].frames[0].top > far.days[0].frames[0].top, 'its days in rows, a contact sheet');
-          await shot('book-pinch-week', page);
-          // a page tapped there opens it in the book, on its own day
-          await page.locator('#book [data-level=week] .bk-frame').last().click();
+          assert.equal(far.level, 'shelf', 'again, the Shelf');
+          assert.equal(far.books[0], 'My Notebook', 'My Notebook first on it');
+          assert.ok(far.first >= far.strip, `the notebooks clear of the tool strip: ${far.first} ${far.strip}`);
+          await shot('book-pinch-shelf', page);
+          // pinched in, the notebook's pages again; its first page tapped opens it in the book, on its own day
+          await pinch(page, paper, 2);
+          assert.equal((await farView(page)).level, 'pages', 'a pinch in goes back to the pages');
+          await page.locator('#book .bk-far .bk-tile[data-id] .bk-tile-open').first().click();
           await page.waitForTimeout(SETTLE_MS);
           assert.equal((await farView(page)).level, undefined, 'a page tapped goes back to the page');
-          // (its heading on the page says the day.)
           const day = await page.locator('#book .bk-page:not([hidden]) .bk-when').textContent();
-          assert.ok(
-            far.days[1].name.split(' ').every(w => day.includes(w)),
-            `on its own day: ${day}, not ${far.days[1].name}`,
-          );
-          // and a pinch in comes back from the day
+          assert.doesNotMatch(day, /today/i, `the oldest page, on its own day: ${day}`);
+          // and a pinch in comes back from the pages
           await overviewButton(page).click();
           await page.waitForTimeout(SETTLE_MS);
-          assert.equal((await farView(page)).level, 'day');
+          assert.equal((await farView(page)).level, 'pages');
           await pinch(page, paper, 2);
           assert.equal((await farView(page)).level, undefined, 'a pinch in goes back to the page');
           assert.deepEqual(
@@ -1214,25 +1154,15 @@ const fingerTap = (page, x, y) =>
     },
     [x, y],
   );
-// A finger held still on an element for ms, then let go where it was, as Safari hands it over: whether a note had
-// lifted, and whether a Paste bubble was showing, just before the finger let go.
-const fingerHold = (el, ms) =>
-  el.evaluate(async (target, ms) => {
-    const r = target.getBoundingClientRect(),
-      [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
-    const fire = type =>
-      target.dispatchEvent(
-        new PointerEvent(type, {
-          ...{ pointerId: 9, pointerType: 'touch', isPrimary: true, clientX: x, clientY: y },
-          ...{ bubbles: true, composed: true, cancelable: true },
-        }),
-      );
-    fire('pointerdown');
-    await new Promise(res => setTimeout(res, ms));
-    const seen = { lifted: !!document.querySelector('.bs-lifted'), paste: !!document.querySelector('.bk-paste') };
-    fire('pointerup');
-    return seen;
-  }, ms);
+// The pictures taped on My Notebook's pages in the shared play, each with its page
+const taped = () =>
+  notebook
+    .route('/api/notebooks/pages', { notebook: 1 })
+    .pages.flatMap(p =>
+      notebook
+        .route('/api/notebooks/pages/groups', { page: p.id })
+        .groups.flatMap(g => g.pictures.map(picture => ({ page: p, picture }))),
+    );
 // How many of a screenshot's pixels are the pasted picture's green (#1d9a5b), counted in the page
 const greenIn = (page, png) =>
   page.evaluate(
@@ -1293,21 +1223,37 @@ const pinch = (page, paper, k) =>
     },
     [paper.left + paper.width / 2, MINI.height / 2, k],
   );
-// The view pinched out: its level ('day', 'week' or none), and its days' names and frames (boxes, and ink drawn)
+// The view pinched out: its level ('pages', 'shelf' or none), its pages' tiles (boxes, and a picture drawn), whether
+// New page is there, and the Shelf's notebooks' names
 const farView = page =>
   page.evaluate(() => {
     const far = document.querySelector('#book .bk-far');
     return {
       level: far.hidden ? undefined : far.dataset.level,
-      days: [...far.querySelectorAll('.bk-far-day')].map(d => ({
-        // (the day's name: the week's row's, or the day's at the overview's head.)
-        name: (d.querySelector('.bk-far-name') ?? far.querySelector('.bk-far-nav b')).textContent,
-        frames: [...d.querySelectorAll('.bk-frame')].map(f => {
-          const r = f.getBoundingClientRect(),
-            c = f.querySelector('canvas');
-          return { left: Math.round(r.left), right: Math.round(r.right), top: Math.round(r.top), inked: c.width > 0 };
-        }),
-      })),
+      tiles: [...far.querySelectorAll('.bk-tile[data-id]:not(.bk-tile-new)')].map(f => {
+        const r = f.getBoundingClientRect(),
+          img = f.querySelector('img');
+        return {
+          left: Math.round(r.left),
+          right: Math.round(r.right),
+          top: Math.round(r.top),
+          inked: !!img?.naturalWidth,
+        };
+      }),
+      newPage: !!far.querySelector('[data-new]'),
+      books: [...far.querySelectorAll('.bk-book .bk-cover-label b')].map(b => b.textContent),
+      // (what of the tool strip shows over it: its right edge, and the leftmost tile's or notebook's.)
+      strip: Math.round(
+        Math.max(
+          0,
+          ...[...document.querySelectorAll('#book .bk-strip > *')]
+            .filter(el => el.offsetWidth && getComputedStyle(el).opacity !== '0')
+            .map(el => el.getBoundingClientRect().right),
+        ),
+      ),
+      first: Math.round(
+        Math.min(...[...far.querySelectorAll('.bk-tile, .bk-book')].map(el => el.getBoundingClientRect().left)),
+      ),
     };
   });
 
@@ -1326,11 +1272,12 @@ const pageAtMiddle = (page, paper, screen = MINI) =>
     },
     [paper.left + paper.width / 2, screen.height / 2],
   );
-// Today's pages as the store keeps them (dev mode's, in memory): { id, h, strokes }
+// My Notebook's pages as dev mode's store has them
 const storedPages = page =>
   page.evaluate(async () => {
-    const book = await import('/shell/bookdata.js');
-    return (await book.loadDay(true)).pages.map(({ id, h, strokes }) => ({ id, h, strokes }));
+    const book = await import('/shell/ink/notebookdata.js');
+    const mine = (await book.loadShelf(true)).shelf.find(n => n.kind === 'mine');
+    return (await book.loadPages(true, mine.id)).pages.map(({ id, h, groups }) => ({ id, h, groups }));
   });
 // A mouse line across the paper from x, a little wavy, at y
 async function write(page, x, y) {
@@ -1348,8 +1295,8 @@ async function hq(browser, viewport, options = {}, look = '') {
   return { page, errors, done: () => context.close() };
 }
 async function ready(page) {
-  // (folded away, the rail's faces are out of sight)
-  await page.waitForSelector('#book [aria-label^="For "]', { state: 'attached', timeout: 30_000 });
+  // (the newest page's groups drawn, folded away too.)
+  await page.waitForSelector('#book .bk-clip', { state: 'attached', timeout: 30_000 });
   await page.waitForTimeout(SETTLE_MS);
 }
 // What the board sees, measured: the book's mode, HQ's page width, the book's paper, the rail's (the controls floating
@@ -1373,7 +1320,9 @@ const sight = page =>
       page: document.body.getBoundingClientRect().width,
       book: box(document.querySelector('#book section > div')),
       rail: (() => {
+        // (the tool strip down the paper's left is the paper's, not the rail's: strip.)
         const all = [...document.querySelectorAll('#book nav [role="toolbar"][aria-orientation="vertical"]')]
+          .filter(el => !el.closest('.bk-strip'))
           .map(el => el.getBoundingClientRect())
           .filter(r => r.width);
         const left = Math.min(...all.map(r => r.left)),
@@ -1386,13 +1335,19 @@ const sight = page =>
         };
       })(),
       lip: { ...box(lip), shows: getComputedStyle(lip).opacity > 0.5 },
+      strip: (el => el && box(el))(document.querySelector('#book .bk-strip [data-island="tools"]')),
       away: getComputedStyle(document.querySelector('#book section')).visibility === 'hidden',
       tools: [...document.querySelectorAll('#hud .tools > *')].filter(shown).map(box),
     };
   });
-// The rail where it was before the book moved
+// The rail where it was before the book moved, and the tool strip where it was on the book's paper, its left
 function railStays(seen, before) {
   assert.deepEqual(seen.rail, before.rail, 'the rail moved');
+  const inset = s => s.strip && s.strip.left - s.book.left;
+  assert.ok(
+    Math.abs(inset(seen) - inset(before)) <= 1,
+    `the strip moved on the paper: ${inset(before)} to ${inset(seen)}`,
+  );
 }
 // The open book beside HQ's page, never over it
 const beside = seen => assert.ok(seen.book.left >= seen.page, `the book at ${seen.book.left} is over the page`);
@@ -1433,6 +1388,7 @@ function hqWhole(seen) {
   for (const t of seen.tools)
     assert.ok(t.left >= 0 && t.right <= seen.page, `a tool at ${t.left}-${t.right}, past the page's ${seen.page}`);
 }
+// (the cover's edge: the separator that resizes the book)
 const spineAt = async page => {
   const r = await page.locator('#book [role=separator]').boundingBox();
   return r.x + r.width / 2;
@@ -1448,11 +1404,9 @@ async function drag(page, x, dx, steps, y = (page.viewportSize().height * 2) / 3
 }
 // (longer than a flick's reading of the last moves, booklayout.js)
 const HOLD_MS = 200;
-// The book put away: its spine flicked right, to the screen's edge (the rail's
-// arrow gone)
+// The book put away: its pull tab tapped
 async function putAway(page) {
-  const x = await spineAt(page);
-  await drag(page, x, page.viewportSize().width - 10 - x, 3);
+  await page.locator('#book .bk-lip').click();
 }
 // The book in a mode, laid out: headless WebKit's frames come slowly under HQ's scene, and it tells the page a new
 // size up to a second or two late
@@ -1464,7 +1418,7 @@ async function settled(page, mode) {
 async function bookStories(browser, which) {
   let failed = 0;
   for (const [name, story] of Object.entries(STORIES())) {
-    if (only && !name.includes(only)) continue;
+    if (only && !only.split('|').some(w => name.includes(w))) continue;
     try {
       await story(browser);
       console.log(`ok   ${which}: ${name}`);
@@ -1479,7 +1433,7 @@ async function bookStories(browser, which) {
 // (--stories: Chromium, which this machine has; the whole check's first part is WebKit's. Chromium's microphone is its
 // fake one, allowed: the words of a ring come over the voice line only once the mic starts.)
 const FAKE_MIC = ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'];
-const browser = await (only
+const browser = await (only && !inWebKit
   ? playwright().chromium.launch({ args: ['--disable-dev-shm-usage', ...FAKE_MIC] })
   : playwright().webkit.launch());
 let context = await hqIn(browser);
@@ -1768,11 +1722,10 @@ const noErrors = () =>
     [],
   );
 
-// --stories <words>: only the book's stories whose names hold those words, in Chromium, nothing else (a check's share of
-// the worker's memory holds one part at a time).
+// --stories <words>: only the book's stories whose names hold those words (or any of words|words), in Chromium, nothing else (a check's share of the worker's memory holds one part at a time).
 if (only) {
   await context.close();
-  const failed = await bookStories(browser, 'chromium');
+  const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium');
   await browser.close();
   server.close();
   process.exit(failed ? 1 : 0);
@@ -1882,11 +1835,6 @@ await callStory({
   look: 'wire',
 });
 noErrors();
-// ---- an answer clipping onto its note, in Wire (bookslip.mjs.)
-await slipStory({
-  ...{ browser: chromium, hqIn, base, MINI, store, pages, notes, snips, posts, org },
-  ...{ shot, settled, fingerTap, noErrorsIn, look: 'wire' },
-});
 await besideTheBook(chromium);
 failed += await bookStories(chromium, 'chromium');
 await chromium.close();
@@ -1894,6 +1842,6 @@ await chromium.close();
 server.close();
 // (Search; handwriting; a morning, a picture dragged in, every width)
 console.log(
-  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a two-finger tap taking it back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; an answer clipping onto its note in Wire (Chromium); a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, nothing of it left on either screen, swapped, flicked back, closed); the book's stories above (the overview of the day and the week among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
+  `book-check: on HQ in WebKit at iPad mini size, a pen's ring with no button first (nothing moving at the lift: at most ${jump.worst} off on an edge, ${wire.jump.worst} in Wire), no number on it (no page made for it), the pen rested and the note in the book with no post-it (anchor, words, snip), nothing of the mark left on the page once it's in (rule zero), in Brownstone and in Wire (Chromium); a finger's drag drawing nothing; a voice note held still; a two-finger tap taking it back off its sheet; a call (in Brownstone, and in Wire in Chromium): the Pencil making it small, a note to the call's page and the line with the words heard, a private part painted over in its snip, a line drawn while it goes in drawn and the next note, a mark the book didn't take kept and told, one whose line was lost as the call ended not sent twice (a line drawn after it sent alone, also after an undo), the agent's ask and Show, its ring where it aimed in its own ink and never in the book, its projects view and a preview opened alone, its rings gone when the board speaks again and at hang-up, nothing drawn on HQ after it, the page thrown away, the cards' answers Wire's keys; a walk-through from a card (its page opened at pickup, the agent's Open card and nothing left over what opened, its pointer where it aimed, a miss told, the empty page gone at hang-up, a written one kept), and of a preview in HQ's viewer (the agent's pointer and its ring in its ink where it aimed inside the frame, the ring following as the preview scrolls, nothing on HQ's page, both gone at hang-up); every kind of line the same wet and dry; the Pencil's layer HQ's page beside the open book (a pen on the book's paper drawing nothing, a ring at its edge going in, the pin on the page, over a dialog too, the spread covering it), in WebKit and Chromium; an iPad paired with a desktop by the book's code (a ring live across, finished, nothing of it left on either screen, swapped, flicked back, closed); the book's stories above (the Notebook's groups drawn, joined, split, moved, deleted and sent, with Undo, answers under them, an agent's card answered under its group, and a second screen's change, on an iPad mini, a desktop and a phone; the overview of the notebook's pages and the Shelf among them, Search, handwriting read into type, a morning with yesterday's answer, a picture dragged in, and HQ's page at every width)${failed ? `, ${failed} failing` : ''}${shots ? ` (screenshots in ${shots})` : ''}`,
 );
 if (failed) process.exitCode = 1;

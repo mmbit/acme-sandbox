@@ -9,6 +9,7 @@ import { nameText } from './jobs.js';
 import { withJobLinks, covered } from './prose.js';
 import {
   word,
+  boardKind,
   kindOf,
   doingOf,
   cardsOf,
@@ -47,7 +48,7 @@ export function taskRows(t, p, view) {
     ...stepsOf(j, t).map(x => taskRow(x, t, true)),
     ...(under.get(j.id) ?? []).map(c => heldRow(c, t)),
   ]);
-  return boardRows(t, p, first) + tasks.join('') || '<li class="pj-none">Nothing open in this thread.</li>';
+  return boardRows(t, p, first) + tasks.join('') || `<li class="pj-none">Nothing open in this ${boardKind(t)}.</li>`;
 }
 // A task's row in its own state (rowState), each its own look: its agent's face with the state's mark, its title (a
 // step's name under its task), who and where it is, with the planner's times until it runs, and its size as a bar and

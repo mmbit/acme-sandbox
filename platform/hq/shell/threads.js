@@ -28,6 +28,9 @@ export function stateOf(j) {
 }
 const ORDER = { you: 0, working: 1, next: 2, waits: 3, ended: 4, done: 5 };
 export const word = j => CHIP[jobState(j)] ?? j.status;
+// What the board calls a thread: a deliverable, but a task when it's HQ's wrapper of one job of its own (a routine's run,
+// a loose job, a message's), which the coordinator marks oneTask (projectboard.ts)
+export const boardKind = t => (t.oneTask ? 'task' : 'deliverable');
 // A task's state in words where nothing it waits on names it: a queued one's the seat it starts at, when it goes on or
 // the event it waits for (jobs.js whereNow), never a bare "Next" or "Paused".
 export const queuedWords = j => cap(j.status === 'queued' ? whereNow(j, { who, ago }) : word(j));

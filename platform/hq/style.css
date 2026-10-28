@@ -23,7 +23,7 @@
   --px-button-hover: round(down, calc((var(--depth-button) + var(--depth-pressed)) / 4), 1px);
   --hover-button: translate(calc(var(--px-button) - var(--px-button-hover)), calc(var(--px-button) - var(--px-button-hover)));
   --shadow-hover-button: var(--px-button-hover) var(--px-button-hover) 0 var(--ink);
-  /* (and --ease: the pixel art moves in steps, a skin may ease) */
+  /* (and --ease, --ease-in: the pixel art moves in steps, a skin may ease) */
   /* the space a key keeps from the box beside it, counted from its lip; the company may set it (theme/hq.yaml styles)
  */
   --gap: 18px;
@@ -45,10 +45,10 @@
 ::-webkit-scrollbar-thumb { background: var(--line); background-clip: padding-box; border: 2px solid transparent; border-radius: 8px; }
 /* (no ligatures: Pixelify Sans joins fi and fl into one glyph that reads as an A) */
 html, body { margin: 0; height: 100%; height: var(--app-h, 100dvh); overflow: hidden; overscroll-behavior: none; background: var(--ink); color: var(--ink); font: 16px/1.4 var(--font); font-variant-ligatures: none; -webkit-tap-highlight-color: transparent; }
-/* HQ's page is <body>, in the room the book beside it leaves (--book-room, shell/book.js). Its layout containment holds
-   its fixed layers in its own box (a container query's no longer does), and as a container it answers the width
-   queries (@container page) and cqw lengths a window's media queries and vw can't. It clips rather than hides: the
-   fixed layers overflow it now, and a focus or a scrollIntoView must never scroll the page sideways. */
+/* HQ's page is <body>, in the room the book beside it leaves (--book-room, shell/ink/book.js; Ink's folder). Its layout containment holds its fixed layers in its own box (a container query's no
+   longer does), and as a container it answers the width queries (@container page) and cqw lengths a window's media
+   queries and vw can't. It clips rather than hides: the fixed layers overflow it now, and a focus or a scrollIntoView
+   must never scroll the page sideways. */
 body { width: calc(100% - var(--book-room, 0px)); contain: layout; container: page / inline-size; overflow: clip; }
 button { font: inherit; color: inherit; cursor: pointer; touch-action: manipulation; }
 #hud, #zoom, #status, #hint, .toast, #card { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
@@ -648,8 +648,19 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call { --cb-accent: var(--gold); }
 .intercom .call .call-face { position: relative; display: grid; place-items: end center; height: 184px; margin: 0 0 10px; overflow: hidden; --cb-level: 0;
   background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); }
+/* Its picture, the figure, its light and a look's floor: dark while it rings, switched on like an old TV's as the agent
+   picks up (a line opening out), and off as the call ends (a line, then a dot), in the screen's own light, played only as
+   it switches (callscreen.js). */
+.intercom .call .cf-picture { position: absolute; inset: 0; display: grid; place-items: end center; opacity: 0; --cf-line: color-mix(in srgb, var(--cb-accent) 35%, var(--scr-hi)); }
+.intercom .call .call-face.lit .cf-picture { opacity: 1; }
+.intercom .call .call-face.switching.lit .cf-picture { animation: cf-on .3s var(--ease, steps(3)) both; }
+.intercom .call .call-face.switching.unlit .cf-picture { animation: cf-off .4s var(--ease-in, steps(3)) both; }
+@keyframes cf-on { from { opacity: 1; transform: scale(.3, .01); background-color: var(--cf-line); } 40% { transform: scale(1, .01); background-color: var(--cf-line); } 75% { background-color: transparent; } to { opacity: 1; } }
+@keyframes cf-off { from { opacity: 1; } 35% { opacity: 1; transform: scale(1, .08); background-color: transparent; } 45% { opacity: 1; transform: scale(1, .01); background-color: var(--cf-line); } 75% { opacity: 1; transform: scale(.02, .02); background-color: var(--cf-line); } to { opacity: 0; transform: scale(0, .02); background-color: var(--cf-line); } }
+@keyframes cf-fade { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .intercom .call .call-face.switching.lit .cf-picture { animation: cf-fade .3s both; } .intercom .call .call-face.switching.unlit .cf-picture { animation: cf-fade .3s reverse both; } }
 /* (the light it stands in, brighter as it speaks; no floor drawn under it.) */
-.intercom .call .call-face::before { content: ''; position: absolute; inset: 0; pointer-events: none;
+.intercom .call .cf-picture::before { content: ''; position: absolute; inset: 0; pointer-events: none;
   background: radial-gradient(ellipse 46% 70% at 50% 100%, color-mix(in srgb, var(--cb-accent) calc(22% + var(--cb-level) * 40%), transparent), transparent 70%); }
 .intercom .call .cf-figure { position: relative; z-index: 1; display: grid; place-items: end center; margin-bottom: 12px; }
 .intercom .call .cf-figure > canvas { width: 70px; height: 140px; image-rendering: pixelated; transform-origin: 50% 100%; }
@@ -760,8 +771,9 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   .callbubble .cb-eye svg { width: 13px; height: 13px; }
 }
 @media (prefers-reduced-motion: reduce) { .callbubble .cb-face > *, .callbubble .cb-eye svg, .intercom .call .cf-figure > *, .intercom .call .lines li { animation: none !important; } #call-layer, #call-layer.leaving { animation: none; } } /* (the little screen, the lines.) */
-/* A call's cards (shell/calldraw.js): the agent's ask to see, with Show and Not now, and the page a call left, kept or
-   thrown away; over HQ and the call alike, in a toast's look, waiting until tapped. */
+/* A call's cards (shell/ink/calldraw.js; Ink's folder): the agent's ask to see,
+   with Show and Not now, and the page a call left, kept or thrown away; over HQ and the call alike, in a toast's look,
+   waiting until tapped. */
 #call-cards { position: fixed; top: calc(70px + var(--sat)); left: 50%; transform: translateX(-50%); z-index: 46; display: grid; gap: 8px; width: min(92vw, 380px); }
 #call-cards:empty { display: none; }
 #call-cards .call-card p { margin: 0 0 8px; }
@@ -791,7 +803,7 @@ body.keys.keys .callbubble .cb-hangup { background: var(--red); color: #fff; bor
 /* Wire: the call's little screen set in like the bubble's face, the figure standing on its own soft shadow, the lines
    easing in. */
 body.keys .intercom .call .call-face { border: 0; border-radius: 16px; background: color-mix(in srgb, var(--k-ink) 7%, var(--key-bg)); }
-body.keys .intercom .call .call-face::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
+body.keys .intercom .call .cf-picture::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 8px; width: 96px; height: 12px; translate: -50% 0; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--k-ink) 12%, transparent); }
 body.keys .intercom .call .cf-figure { margin-bottom: 14px; }
 body.keys .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
 body.keys .intercom .call .call-face .state { top: 10px; left: 14px; font-size: 12px; color: var(--k-muted); }

@@ -1,7 +1,7 @@
-// The open mark on a second screen: HQ pairs a phone or tablet with a desktop (platform/hq/shell/pair.js), and a mark
-// begun on one can be finished on the other: ring on the phone and type on the computer, ring with the mouse and
-// scribble on the phone. HQ's pairing and the Pencil talk only through the document's events, and only while
-// <html data-paired> says a second screen is there:
+// The open mark on a second screen: HQ pairs a phone or tablet with a desktop (platform/hq/shell/ink/pair.js; Ink's
+// folder), and a mark begun on one can be finished on the other: ring on the
+// phone and type on the computer, ring with the mouse and scribble on the phone. HQ's pairing and the Pencil talk only
+// through the document's events, and only while <html data-paired> says a second screen is there:
 //   pencil:mark  { mark | null }        (out) the open mark now, each time it changes (a line, its words), null once gone
 //   pencil:flick { mark }               (out) the board flicked the post-it away: HQ sends it to the other screen
 //   pencil:hand  { take: mark, back, reply }  (in) a mark from the other screen opens here, post-it and caret ready

@@ -290,3 +290,14 @@ test('an edited org.yaml or note is what HQ shows next, even at the same size', 
   assert.equal(await wren(), 'Wran');
   assert.match((await board('/api/library')).body.find((d: { path: string }) => d.path === 'company/playbooks/support.md').html, /other/);
 });
+
+// (the old addresses' redirect gone once every page had reloaded)
+test("HQ's files are served where they are: shell/ and shell/ink/ each its own, an old address before shell/ink/ a 404", async () => {
+  mkdirSync(`${repo}/platform/hq/shell/ink`, { recursive: true });
+  writeFileSync(`${repo}/platform/hq/shell/booktips.js`, 'export {};\n');
+  writeFileSync(`${repo}/platform/hq/shell/ink/book.js`, 'export {};\n');
+  assert.equal((await page('/shell/booktips.js', h.boardCookie)).status, 200, 'the tips book, in shell/');
+  assert.equal((await page('/shell/ink/book.js', h.boardCookie)).status, 200, "Ink's book, in shell/ink/");
+  const old = await page('/shell/book.js', h.boardCookie);
+  assert.deepEqual([old.status, old.headers.get('location')], [404, null], 'no redirect to shell/ink/');
+});

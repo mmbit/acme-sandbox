@@ -266,7 +266,7 @@ test("a first round near its thread's deadline is a later one, and the upstream 
   await push(n, 'game/levels');
   const panel = await claim(n, 'review');
   for (const run of panel) {
-    assert.match(run.prompt, /## Round 1: the thread's deadline is near/);
+    assert.match(run.prompt, /## Round 1: the deliverable's deadline is near/);
     await end(run);
   }
   windows.set(thread, null, 'juno');

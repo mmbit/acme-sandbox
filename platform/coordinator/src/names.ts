@@ -1,4 +1,5 @@
 // Names that show their level (worker/hq/levels.ts): the levels a plan is drawn in, and no two of them sharing a name.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { projects, type Project } from './company.ts';
 import { oneLine } from './agreements.ts';
@@ -23,9 +24,9 @@ export const anyProject = (id: string): (Project & { status: 'open' | 'done' }) 
 };
 // Why a thread's name and "done when" won't do as they are (one line each, in length), or undefined
 export function checkThreadName(name: string, goal: string) {
-  if (!name || name.length > NAME_MAX) return `a thread needs a name of up to ${NAME_MAX} characters`;
+  if (!name || name.length > NAME_MAX) return `a deliverable needs a name of up to ${NAME_MAX} characters`;
   if (!goal || goal.length > GOAL_MAX)
-    return `a thread needs its "done when" line (the goal, naming its deliverables), up to ${GOAL_MAX} characters`;
+    return `a deliverable needs its "done when" line (the goal, naming what it makes), up to ${GOAL_MAX} characters`;
 }
 
 // Why there's no open project by this id: it's done, or there's none
@@ -51,7 +52,7 @@ export function threadClash(project: Project, name: string, self?: string) {
   const level = around.find(p => nameKey(p.name) === key);
   if (level) return clash(name, `the project ${level.id}`, 'thread');
   const sibling = openThreadsOf(around).find(t => t.id !== self && nameKey(t.name) === key);
-  if (sibling) return clash(name, `the open thread ${sibling.id}`, 'thread');
+  if (sibling) return clash(name, `the open deliverable ${sibling.id}`, 'thread');
 }
 export function projectClash(project: Project, name: string) {
   const key = nameKey(name),
@@ -59,13 +60,13 @@ export function projectClash(project: Project, name: string) {
   const level = around.find(p => p.id !== project.id && nameKey(p.name) === key);
   if (level) return clash(name, `the project ${level.id}`, 'project');
   const thread = openThreadsOf(around).find(t => nameKey(t.name) === key);
-  if (thread) return clash(name, `the open thread ${thread.id}`, 'project');
+  if (thread) return clash(name, `the open deliverable ${thread.id}`, 'project');
 }
 // (thread: an open one, or one about to be drawn)
 export function taskClash(title: string, thread: { id?: string; name: string; project: string }) {
   const key = nameKey(title),
     project = projects().list.find(p => p.id === thread.project);
-  if (key === nameKey(thread.name)) return clash(title, `its thread ${thread.id ?? `"${thread.name}"`}`, 'task');
+  if (key === nameKey(thread.name)) return clash(title, `its deliverable ${thread.id ?? `"${thread.name}"`}`, 'task');
   if (project && key === nameKey(project.name)) return clash(title, `its project ${project.id}`, 'task');
 }
 const nameKey = (name: string) =>

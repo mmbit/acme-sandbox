@@ -2,7 +2,7 @@
 // coordinator's proposals.ts.
 import * as api from './api.ts';
 import { readTextOrStdin } from './files.ts';
-import { takeThread, takeValues } from './flags.ts';
+import { deliverableFlag, takeThread, takeValues } from './flags.ts';
 import { inbox as messageInbox } from './messages.ts';
 import { minute, print, stop, text } from './output.ts';
 
@@ -26,27 +26,31 @@ type Proposal = {
 
 export const propose = {
   help: `
-   hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--thread <project>/<slug>]
-                                                     propose new work beyond your job's thread to the owner of the
-                                                     project it's for (--project, else your thread's), instead of queueing
+   hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>]
+                                                     propose new work beyond your job's deliverable to the owner of the
+                                                     project it's for (--project, else your deliverable's), instead of queueing
                                                      it: it waits in their inbox, not the queue, until they accept it into
                                                      their plan (a job with your brief, for you or --for) or drop it with
                                                      why. Your job's own follow-ups (its fixes, hand-offs within its
-                                                     thread) are hq job, as before`,
+                                                     deliverable) are hq job, as before`,
 
   async run(given: string[]) {
-    const { values, args } = takeValues(given, ['--for', '--thread', '--project'], 'Nothing was proposed');
+    const { values, args } = takeValues(
+      deliverableFlag(given),
+      ['--for', '--deliverable', '--project'],
+      'Nothing was proposed',
+    );
     const [title, briefPath, ...rest] = args;
     if (!title?.trim() || !briefPath || rest.length)
       stop(
-        'usage: hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--thread <project>/<slug>]',
+        'usage: hq propose "title" <brief-file | -> [--project <project>] [--for <agent>] [--deliverable <project>/<slug>]',
       );
     const brief = readTextOrStdin(briefPath).trim();
     const body = api.withSpeaker({
       title,
       brief,
       ...(values.for && { for: values.for }),
-      ...(values.thread && { thread: values.thread }),
+      ...(values.deliverable && { thread: values.deliverable }),
       ...(values.project && { project: values.project }),
     });
     const answer = await api.call('proposals', { body });
@@ -67,20 +71,21 @@ export const inbox = {
                                                      for the CEO what no owner has), then what became of your own
                                                      proposals; <id>: one proposal's brief; --all: the CEO's view of
                                                      every open proposal, whoever's it is
-   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]
+   hq inbox accept <id> --code WORD --size <90m> --why "scope comparison" [--refs <job,job>] [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"]
                                                      its project's owner (or the CEO) queues it as a job with its
-                                                     proposer's brief, in a thread of their plan: the one named, else the
+                                                     proposer's brief, in a deliverable of their plan: the one named, else the
                                                      one proposed, else the proposer's job's when it's in that project.
                                                      --code: its task's word, as hq job's; --for: who takes it (a review
                                                      follow-up bundle's), else the one it was proposed for; --title: the
                                                      task's, else the proposal's. HQ's own from a template (a held job, a
                                                      follow-up bundle) needs --title, for what it does: a held job keeps
                                                      its brief and agent and starts (--code only if it has none)
-   hq inbox accept findings:<pr> --for <agent> --findings <id,id,...> [--title "..."] [--thread <thread>]
-                                                     draw one fix task naming its review findings, in the reviewed thread,
-                                                     under the reviewer's title for them (--title when they're under more
-                                                     than one); a closed item: --for and --thread draw replacement work
-                                                     and move its waits
+   hq inbox accept findings:<pr> --for <agent> --findings <id,id,...> [--title "..."] [--deliverable <deliverable>]
+                                                     draw one fix task naming its review findings, in the reviewed
+                                                     deliverable, under the reviewer's title for them (--title when
+                                                     they're under more than one); a closed item: --for and --deliverable
+                                                     draw replacement work and move its waits. --thread, the old name of
+                                                     --deliverable, still works
    hq inbox drop <id> "why"                          its owner (or the CEO) drops it, why in a line the proposer hears${messageInbox.help}`,
 
   async run(given: string[]) {
@@ -131,11 +136,11 @@ async function accept(given: string[]) {
   // Old briefs and memories pass a numeric priority after the proposal id.
   if (/^[0-4]$/.test(rest[0] ?? ''))
     stop(
-      `Not accepted: hq inbox accept takes no priority any more. Work runs in the order of its thread's window (hq window) and what waits on it. Remove the priority ${rest[0]} after the proposal id and run the same command again, keeping all other arguments.`,
+      `Not accepted: hq inbox accept takes no priority any more. Work runs in the order of its deliverable's window (hq window) and what waits on it. Remove the priority ${rest[0]} after the proposal id and run the same command again, keeping all other arguments.`,
     );
   if (!INBOX_ID.test(id ?? '') || rest.length)
     stop(
-      'usage: hq inbox accept <id> --code WORD [--title "..."] [--for <agent>] [--thread <project>/<slug> | --thread new:<project> "name" "done when"]',
+      'usage: hq inbox accept <id> --code WORD [--title "..."] [--for <agent>] [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"]',
     );
   const body = {
     ...(values.size && { size: values.size }),

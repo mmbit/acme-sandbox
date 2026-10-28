@@ -39,7 +39,7 @@ body {
 .callbubble .cb-keys .cb-hangup { background: color-mix(in srgb, var(--red) 70%, transparent); color: #fff; border-color: var(--red); border-radius: 999px; }
 /* the call's little screen a projector's, plain dark glass the figure stands in (no grid.) */
 .intercom .call .call-face { border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 10, 16, .7); }
-.intercom .call .call-face::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
+.intercom .call .cf-picture::after { content: ''; position: absolute; pointer-events: none; left: 50%; right: auto; bottom: 6px; width: 120px; height: 16px; translate: -50% 0; border: 1px solid color-mix(in srgb, var(--cb-accent) 60%, transparent); border-radius: 50%;
   background: radial-gradient(closest-side, color-mix(in srgb, var(--cb-accent) 30%, transparent), transparent); box-shadow: 0 0 14px color-mix(in srgb, var(--cb-accent) 40%, transparent); }
 .intercom .call .call-face.talking .cf-figure > * { animation: cb-talk-smooth .5s ease-in-out infinite; }
 .intercom .call .lines { border-radius: 10px; }

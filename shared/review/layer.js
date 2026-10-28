@@ -1,9 +1,9 @@
 // Review mode's own element over the page: a closed shadow root (product styles can't touch it) at the page's end, and
 // above the page's popups.
-// On HQ's own pages (r.book) the page is <body>, beside the book (platform/hq/shell/book.js): the host lives in it, and
-// its layout containment fits the host's fixed box to the page, so the Pencil never draws over the book's paper or
-// rail, and the book's spread covers it with the page. In the top layer (over one of HQ's dialogs) the host leaves the
-// book's room itself, and its own layout containment keeps the fixed .ui in its box.
+// On HQ's own pages (r.book) the page is <body>, beside the book (platform/hq/shell/ink/book.js; Ink's folder): the host lives in it, and its layout containment fits the host's fixed box to the
+// page, so the Pencil never draws over the book's paper or rail, and the book's spread covers it with the page. In the
+// top layer (over one of HQ's dialogs) the host leaves the book's room itself, and its own layout containment keeps the
+// fixed .ui in its box.
 const homeOf = r => (r.book ? document.body : document.documentElement);
 
 // The host and its shadow root, with css and the markup in it: r.host, r.root

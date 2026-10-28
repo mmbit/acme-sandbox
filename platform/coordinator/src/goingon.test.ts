@@ -107,11 +107,11 @@ test("a call hears who's at work as HQ counts them, why each runs through the ho
     );
     assert.match(
       lineOf(text, windowed.id),
-      /in "The checkout" \(The shop\), window to .* Through the hold: its thread isn't paused \(it has a window\)\./,
+      /in "The checkout" \(The shop\), window to .* Through the hold: its deliverable isn't paused \(it has a window\)\./,
     );
     assert.match(
       lineOf(text, loose.id),
-      /in no thread\. Through the hold: it is in no thread, so no project or thread pause reaches it\./,
+      /in no deliverable\. Through the hold: it is in no deliverable, so no project or deliverable pause reaches it\./,
     );
     assert.match(
       text,

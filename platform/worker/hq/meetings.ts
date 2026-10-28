@@ -270,7 +270,7 @@ function tallyLines(t: Tally | null, seats: Heard['seats']) {
   const when = (ms: number | null) => (ms === null ? 'no finish in sight' : `${minute(new Date(ms).toISOString())}`);
   const outlook = (o: Outlook) => `${when(o.finish)}${o.standing ? `, ${o.standing}` : ''}`;
   return [
-    `The tally (${minute(t.at)}): every thread of the meeting's projects and every windowed one, played with the changes.`,
+    `The tally (${minute(t.at)}): every deliverable of the meeting's projects and every windowed one, played with the changes.`,
     ...t.threads.map(
       x =>
         `  ${x.id} (${x.owner}'s): ${outlook(x)}${x.deadline ? ` (deadline ${when(x.deadline)})` : ''}` +

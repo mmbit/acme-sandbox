@@ -103,7 +103,7 @@ export function piles(now = Date.now()) {
   const hours = Array.from({ length: HOURS }, () => [0, 0]),
     done = db
       .prepare(
-        `select finished, kind in ('review', 'consolidate') review from jobs
+        `select finished, kind in ('review', 'consolidate') review from jobs indexed by jobs_done_tally
         where kind != 'chat' and status = 'done' and finished >= ?`,
       )
       .all(new Date(now - HOURS * 36e5).toISOString()) as { finished: string; review: number }[];
@@ -132,7 +132,7 @@ export function agents(now = Date.now()) {
     > = {};
   const of = (agent: string) => (out[agent] ??= { jobs: 0, days: list.map(() => 0), prs: 0, last: null });
   for (const r of db
-    .prepare("select agent, finished from jobs indexed by jobs_done_by where status = 'done' and finished >= ?")
+    .prepare("select agent, finished from jobs indexed by jobs_done_tally where status = 'done' and finished >= ?")
     .all(since) as {
     agent: string;
     finished: string;

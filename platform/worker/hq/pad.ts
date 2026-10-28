@@ -12,7 +12,7 @@ export const pad = {
                                                      call with the CEO reads it, and the board sees it atop the projects
    hq pad --history                                  every version, newest first, with its time and job
    hq pad write -                                    the CEO's jobs rewrite it whole, from stdin. Times live in queued jobs
-                                                     and threads' windows: the page names them, never holds them`,
+                                                     and deliverables' windows: the page names them, never holds them`,
 
   async run([command, ...rest]: string[]) {
     if (command === 'write') {

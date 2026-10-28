@@ -26,6 +26,8 @@ const SHOW = 'Show my screen',
   UNSEEN = name => `Your screen isn’t reaching ${name} right now.`;
 // How near the transcript's end counts as reading the newest line (the board scrolled up past it: it stays put)
 const FOLLOW_PX = 24;
+// How long the layer waits for its little screen to switch off (style.css's cf-off, .4 s, and a margin)
+const SWITCH_OFF_MS = 600;
 export function openLayer(c) {
   const layer = (c.layer = document.createElement('div'));
   layer.id = 'call-layer';
@@ -34,7 +36,7 @@ export function openLayer(c) {
   layer.innerHTML = `<div class="device intercom in-call${big}" role="dialog" aria-modal="true" aria-label="Call with ${esc(c.name)}">
     <header><span class="grille" aria-hidden="true"></span><b>Call · ${esc(c.name)}</b><span class="onair" aria-hidden="true">ON AIR</span><button class="past-btn" id="call-min" aria-label="Minimise" title="Minimise: keep talking while you look around">${MINIMISE}</button></header>
     <div class="screen"><div class="call" id="call-screen">
-      <div class="call-face" id="call-face"><span class="cf-figure" aria-hidden="true"></span><p class="state" id="call-state" aria-live="polite">Connecting…</p></div>
+      <div class="call-face" id="call-face"><span class="cf-picture" aria-hidden="true"><span class="cf-figure"></span></span><p class="state" id="call-state" aria-live="polite">Connecting…</p></div>
       <p class="note" id="call-note" role="status" hidden></p>
       <p class="note" id="call-mic" role="status" hidden></p><!-- (the microphone hears nothing) -->
       <p class="note" id="call-net" role="status" hidden></p><!-- (the line hears the board late: lagging) -->
@@ -46,6 +48,7 @@ export function openLayer(c) {
       <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW}</span></button><button class="hangup" id="call-end">Hang up</button></div>
     </div></div>
   </div>`;
+  document.querySelector('#call-layer')?.remove(); // (the last call's, still switching off: closeLayer)
   document.body.append(layer);
   c.face = callFace(c, layer.querySelector('#call-face'));
   // the backdrop and the minimise key make the call small; it goes on
@@ -59,16 +62,25 @@ export function openLayer(c) {
   $('#call-screenshare').onclick = () => showScreen(c);
   cue('open');
 }
+// Its little screen switches off first, if the agent's on it (the board hung up), as the hang-up's sound plays: the layer
+// goes once it has, taking no taps meanwhile.
 export function closeLayer(c) {
-  c.layer?.remove();
+  const layer = c.layer;
+  if (!layer) return;
   if (!c.small) cue('close');
+  if (c.small || !c.face.lit(false)) return layer.remove();
+  layer.inert = true;
+  layer.querySelector('.cf-picture').addEventListener('animationend', () => layer.remove(), { once: true });
+  setTimeout(() => layer.remove(), SWITCH_OFF_MS); // (a page out of view runs no animation)
 }
 
 // The agent's little screen at the top of the call's: its portrait, bobbing with its voice (call.js feeds it as it feeds
-// the bubble's), leaning in while it thinks
+// the bubble's), leaning in while it thinks. The screen is dark while it rings, and its picture switches on like an old
+// TV's as the agent picks up, and off as the call ends (lit; style.css).
 function callFace(c, el) {
-  const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
-  el.firstElementChild.append(
+  const portrait = scene.portrait?.({ kind: 'agent', id: c.agent }),
+    picture = el.querySelector('.cf-picture');
+  el.querySelector('.cf-figure').append(
     portrait?.img ??
       Object.assign(document.createElement('span'), { className: 'cb-initial', textContent: c.name[0] ?? '?' }),
   );
@@ -81,6 +93,16 @@ function callFace(c, el) {
       el.classList.toggle('talking', talking);
     },
     state: state => (el.dataset.state = state),
+    // (unlit: switched off once; never lit, it's simply dark. The switch plays only as it changes, so a return from the
+    // bubble, its picture shown again, doesn't replay it. Whether it switched.)
+    lit(on) {
+      if (el.classList.contains('lit') === on) return false;
+      el.classList.toggle('lit', on);
+      el.classList.toggle('unlit', !on);
+      el.classList.add('switching');
+      picture.addEventListener('animationend', () => el.classList.remove('switching'), { once: true });
+      return true;
+    },
   };
 }
 

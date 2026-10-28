@@ -2,6 +2,7 @@
 // them a job to judge it, and the pause stays on. They lift it, take the results to the board, or keep it on for what's
 // still missing; nothing but a resume lifts it. A pause waiting for the board's decision is lifted by the board's
 // answer.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, mergePending } from './db.ts';
 import { ceo, projects } from './company.ts';
 import { deliveredWords } from './followthroughwords.ts';
@@ -80,7 +81,7 @@ function wake(p: Row, t: number) {
 // and then the wake job holds them too (`customers`).
 function wakeBrief(p: Row, t: number, owner: string) {
   const name = jobs.pauseName(targetOf(p));
-  const kind = p.thread ? 'thread' : 'project';
+  const kind = p.thread ? 'deliverable' : 'project';
   const until = untilsOf([p.id]).get(p.id) ?? [];
   const reports = new Map(
     (

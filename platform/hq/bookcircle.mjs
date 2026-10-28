@@ -1,9 +1,12 @@
 // book-check.mjs's stories of a circle on HQ's page and a pen's tap (shared/review/pencil.js, callnotes.js, marks.js,
-// gestures.js; shell/calldraw.js), held like an iPad mini in landscape, on book-check's played store and voice line.
+// gestures.js; shell/ink/calldraw.js; Ink's folder), held like an iPad mini in
+// landscape, on book-check's played store and voice line.
 // One flow, on a call or not (Moss's): a ring round something on HQ's page, the pen rested, goes into the book as a note
-// with its snip, no post-it and no Send; off a call on its owner's sheet, on a call on the call's page, where the book
-// shows it, with the words the call heard. Nothing of it is left on HQ's page (rule zero: bookink.mjs), so the board rings the next thing at once, and a line drawn beside where one was is a
-// note of its own. On a call, the pen held still while talking leaves a voice note there with the words the call heard.
+// with its snip, no post-it and no Send; off a call on its owner's sheet, on a call on the call's page, with the words
+// the call heard (the book shows a call's notes once they have a notebook of their own: job #20753). Nothing of it is
+// left on HQ's page (rule zero: bookink.mjs), so the board rings the next thing at once, and a line drawn beside where
+// one was is a note of its own. On a call, the pen held still while talking leaves a voice note there with the words
+// the call heard.
 // A mouse's ring with the pin goes into the book the same way. A finger carries a ring still open onto the open book,
 // its cut-out taped there.
 // A quick tap with the pen, wobbling a few px as a hand's does, clicks what's under it (focused, clicked once), on HQ's
@@ -70,24 +73,28 @@ async function offCallStory(c) {
 // A ring still open (drawn, not yet rested) pressed inside by a finger and dragged onto the open book: its cut-out taped
 // there, and the note with no words goes (the ring was for keeping: pencil.js carry); nothing left on HQ
 async function ringCarried(c, page, ring) {
+  // (the cut-out uploaded to the Notebook and a group holding it saved.)
   const from = c.posts.length;
-  const scrap = () => c.posts.slice(from).some(p => p.path === '/api/book/scrap'),
+  const uploaded = () => c.posts.slice(from).some(p => p.path === '/api/notebooks/pictures'),
     note = () => c.posts.slice(from).some(p => p.path === '/api/book/note');
   await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
   // (a press lifts it once its screenshot is in, before it rests: till then the finger is the page's)
-  for (let i = 0; i < 12 && !scrap() && !note(); i++) {
+  for (let i = 0; i < 12 && !uploaded() && !note(); i++) {
     await page.waitForTimeout(100);
     await carry(page, ring);
-    for (let k = 0; k < 3 && !scrap(); k++) await page.waitForTimeout(100);
+    for (let k = 0; k < 3 && !uploaded(); k++) await page.waitForTimeout(100);
   }
-  assert.ok(
-    c.posts.slice(from).some(p => p.path === '/api/book/scrap'),
-    'an open ring carried onto the book: its cut-out taped there',
-  );
+  assert.ok(uploaded(), 'an open ring carried onto the book: its cut-out taped there');
   // (the still once it's taped on the page and the turn to it is over, not caught mid-turn)
-  const taped = () => c.posts.slice(from).some(p => p.path === '/api/book/page/save' && p.body.scraps?.length);
+  const taped = () =>
+    c.posts.slice(from).some(p => /^\/api\/notebooks\/groups\/(create|edit)$/.test(p.path) && p.body.pictures?.length);
   for (let i = 0; i < 40 && !taped(); i++) await page.waitForTimeout(250);
-  assert.ok(taped(), '...taped on a page of the book');
+  if (!taped()) {
+    const refused = await page.evaluate(() =>
+      [...document.querySelectorAll('#book .bk-refusal:not([hidden])')].map(r => r.textContent),
+    );
+    assert.fail(`...taped on a page of the book (posted: ${c.posts.slice(from).map(p => p.path)}; said: ${refused})`);
+  }
   await page.waitForTimeout(SETTLE_MS);
   assert.ok(!note(), '...and no note of its own');
   await nothingDrawn(page, 'a ring carried into the book');
@@ -170,11 +177,6 @@ async function onCallStory(c) {
       assert.match(note.snip ?? '', /^data:image\/jpeg;base64,/, `ring ${i + 1}: its snip`);
       assert.equal(c.pages.find(p => p.id === note.page)?.kind, 'call', `ring ${i + 1}: on the call's page`);
       await heardNotes(page, line, i + 1);
-      // (the book shows it on the call's page, its snip with it)
-      const id = c.notes.find(n => n.page === note.page && n.words === note.words)?.id;
-      await page
-        .locator(`#book .bk-page[data-kind=call] .bs-note[data-id="${id}"] img.bs-snip`)
-        .waitFor({ state: 'attached', timeout: 5000 });
       await cleared(page, `ring ${i + 1}`);
     }
     await heldStill(c, page, line);

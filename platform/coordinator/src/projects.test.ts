@@ -101,7 +101,7 @@ test('a job with no open thread to inherit must name one, and the refusal lists 
   const loose = await h.start({ agent: 'wren' });
   const refused = await handOff(loose);
   assert.equal(refused.status, 409);
-  assert.match(refused.body.error, /no open thread to inherit/);
+  assert.match(refused.body.error, /no open deliverable to inherit/);
   assert.match(refused.body.error, /game\/levels {2}Thread levels \(wren\), done when It works/);
   assert.equal(
     (db.prepare("select count(*) n from jobs where title = 'Next step'").get() as { n: number }).n,
@@ -113,7 +113,7 @@ test('a job with no open thread to inherit must name one, and the refusal lists 
   h.cancelQueued();
   const lead = await inThread('wren', levels);
   assert.deepEqual(plan.done(levels, 'wren'), { ok: true });
-  assert.match((await handOff(lead)).body.error, /its thread game\/levels is done/);
+  assert.match((await handOff(lead)).body.error, /its deliverable game\/levels is done/);
   // a company that doesn't ask for threads queues it without one
   const file = `${h.repo}/company/projects.yaml`;
   writeFileSync(file, 'projects:\n  - { id: game, name: The game, owner: wren }\n');
@@ -383,7 +383,10 @@ test("threads: drawn, listed and closed through hq plan, by the project's owner 
     goal: 'Again',
   });
   assert.equal(same.status, 400);
-  assert.match(same.body.error, /is the name of the open thread game\/boss-fight-final: No two levels share a name/);
+  assert.match(
+    same.body.error,
+    /is the name of the open deliverable game\/boss-fight-final: No two levels share a name/,
+  );
   const again = await h.agent('plan/thread', lead.token, {
     project: 'game',
     name: 'Boss fight final, again',
@@ -698,16 +701,16 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   const hq = async (...args: string[]) => h.hq(lead, ...args);
   assert.match(
     (await hq('plan', 'thread', 'game', 'Boss fight', 'You beat the boss')).out,
-    /Thread drawn:\n {2}Play › The game › Boss fight \(game\/boss-fight\)\n {2}done when You beat the boss\n/,
+    /Deliverable drawn:\n {2}Play › The game › Boss fight \(game\/boss-fight\)\n {2}done when You beat the boss\n/,
   );
   const queued = await hq('job', 'moss', 'The boss', '--thread', 'game/boss-fight', '--check', '--new');
   assert.equal(queued.code, 0, queued.out);
-  assert.match(queued.out, /In thread game\/boss-fight\./);
+  assert.match(queued.out, /In deliverable game\/boss-fight\./);
   const id = Number(/Queued job #(\d+)/.exec(queued.out)![1]);
   assert.deepEqual([thread(id), h.job(id).check], ['game/boss-fight', 1]);
   const refused = await hq('job', 'moss', 'Loose work', '--new');
   assert.notEqual(refused.code, 0);
-  assert.match(refused.out, /No job was queued: name the thread .*game\/boss-fight {2}Boss fight/s);
+  assert.match(refused.out, /No job was queued: name the deliverable .*game\/boss-fight {2}Boss fight/s);
   // the CEO's own work needs none: it's the desk's
   const ceo = await h.start({ agent: 'juno' });
   const own = await h.hq(ceo, 'job', 'juno', 'Sort the loose work', '--new');
@@ -735,15 +738,15 @@ test('hq plan thread, hq job --thread, hq project say and hq plan done, end to e
   // (a thread started for a job is drawn in its project's plan: shop's is moss's or the CEO's.)
   const payment = ['job', 'moss', 'The payment form', '--thread', 'new:shop', 'The checkout', 'A buyer pays', '--new'];
   assert.match((await hq(...payment)).out, /No job was queued: The shop's plan is moss's .* hq propose --project shop/);
-  assert.match((await h.hq(ceo, ...payment)).out, /In thread shop\/the-checkout\./);
-  assert.match((await hq('thread', 'sort')).out, /hq plan thread .* hq job move/);
+  assert.match((await h.hq(ceo, ...payment)).out, /In deliverable shop\/the-checkout\./);
+  assert.match((await hq('thread', 'sort')).out, /hq plan deliverable .* hq job move/);
   assert.match(
     (await hq('thread', 'list', 'game')).out,
     /game\/boss-fight {2}Boss fight \(wren, 1 open\) {2}done when You beat the boss/,
   );
   assert.match((await hq('project', 'say', 'game', 'The boss is next.')).out, /Recorded game's sentence\./);
-  assert.match((await hq('thread', 'new', 'game', 'X', 'Y')).out, /hq plan thread/);
-  assert.match((await hq('plan', 'done', 'game/boss-fight')).out, /Thread game\/boss-fight is done\./);
+  assert.match((await hq('thread', 'new', 'game', 'X', 'Y')).out, /hq plan deliverable/);
+  assert.match((await hq('plan', 'done', 'game/boss-fight')).out, /Deliverable game\/boss-fight is done\./);
 });
 
 // The jobs HQ makes from the same template every time go to the project projects.yaml's made sets for their kind and

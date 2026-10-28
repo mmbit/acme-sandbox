@@ -8,6 +8,7 @@
 // fills the line's part a hair differently from its whole); one that moves, thickens or fades changes hundreds.
 // platform/hq/book-check.mjs calls it; shared/review/ink.test.js checks the same thing as shapes, without a browser.
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 const HOST = 'https://ink.test';
 const CLOSE = 24; // (a channel's difference above it is a change an eye could see, not a soft edge's rounding)
@@ -67,23 +68,27 @@ const html = gpu => `<!doctype html><meta name="viewport" content="width=device-
   window.__ready = true;
 </script>`;
 
-// A line drawn with synthetic pointer events, each move its own coalesced sample, then lifted with pressure 0
+// A line drawn with synthetic pointer events, each move its own coalesced sample and two predicted ones on past it
+// (the pen's tail, which must be gone by the lift), then lifted with pressure 0
 const drawLine = (page, ink, points) =>
   page.evaluate(
     async ([ink, points]) => {
       window.__ink = ink;
       const box = document.querySelector('#box'),
         b = box.getBoundingClientRect();
-      const send = (type, [x, y, pressure]) => {
+      const send = (type, [x, y, pressure], [px, py] = [x, y]) => {
         const pen = { pointerId: 7, pointerType: 'pen', isPrimary: true, bubbles: true, cancelable: true },
-          e = new PointerEvent(type, { ...pen, clientX: b.left + x, clientY: b.top + y, pressure });
+          at = (x, y) => new PointerEvent(type, { ...pen, clientX: b.left + x, clientY: b.top + y, pressure }),
+          e = at(x, y),
+          ahead = [1, 2].map(j => at(x + (x - px) * j * 2, y + (y - py) * j * 2));
         Object.defineProperty(e, 'getCoalescedEvents', { value: () => [e] });
+        Object.defineProperty(e, 'getPredictedEvents', { value: () => (type === 'pointermove' ? ahead : []) });
         box.dispatchEvent(e);
       };
       const frame = () => new Promise(r => requestAnimationFrame(() => r()));
       send('pointerdown', points[0]);
       for (let i = 1; i < points.length; i++) {
-        send('pointermove', points[i]);
+        send('pointermove', points[i], points[i - 1]);
         if (i % 4 === 0) await frame();
       }
       const last = points[points.length - 1];
@@ -121,12 +126,17 @@ const compare = (page, a, b) =>
     [a.toString('base64'), b.toString('base64'), CLOSE],
   );
 
-// file: the ink.js to try (another version of it, to compare), by default the one beside this file; gpu: the canvases
-// as a page has them, on the GPU where the browser puts them
+// file: the ink.js to try (another version of it, to compare, with the files it imports beside it), by default the
+// one beside this file; gpu: the canvases as a page has them, on the GPU where the browser puts them
 export async function wetDry(page, { file = new URL('./ink.js', import.meta.url), gpu = false } = {}) {
-  const source = await readFile(file, 'utf8');
-  const headers = { 'access-control-allow-origin': '*' };
-  await page.route(`${HOST}/**`, route => route.fulfill({ contentType: 'text/javascript', headers, body: source }));
+  const headers = { 'access-control-allow-origin': '*' },
+    ink = file instanceof URL ? file : pathToFileURL(file);
+  // (each file by its name, from beside the ink.js)
+  await page.route(`${HOST}/**`, async route => {
+    const asked = new URL(route.request().url()).pathname.slice(1),
+      body = await readFile(new URL(asked, ink), 'utf8');
+    return route.fulfill({ contentType: 'text/javascript', headers, body });
+  });
   await page.setContent(html(gpu));
   await page.waitForFunction(() => window.__ready);
   const box = page.locator('#box'),

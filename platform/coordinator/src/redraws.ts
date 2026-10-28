@@ -1,4 +1,5 @@
 // Closed reviews carry merge dependencies across owner decisions, branches and thread boundaries.
+// (its messages say deliverable, the board's word for a thread)
 import './inbox.ts';
 import { PlanCycleError, dependencyGraph, refuseNewLoops } from './plancycles.ts';
 import { orderingSnapshot } from './backlog.ts';
@@ -100,7 +101,7 @@ export function withoutLoop<T>(thread: string, change: () => T): T | string {
       const task = selfWaitingTasks(currentThread).find(task => !waiting.has(task.id));
       if (task)
         throw new PlanCycleError(
-          `plan cycle: task #${task.id} in ${currentThread} waits on itself. Change its waits, thread order or needs`,
+          `plan cycle: task #${task.id} in ${currentThread} waits on itself. Change its waits, task order or needs`,
         );
       return done;
     });
