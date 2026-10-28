@@ -37,7 +37,7 @@ export function isAuthed(req: IncomingMessage) {
   return !!row && row.expires > Date.now();
 }
 
-function startSession(res: ServerResponse) {
+export function startSession(res: ServerResponse) {
   const token = randomBytes(32).toString('base64url');
   db.prepare('insert into sessions (token, expires) values (?, ?)').run(token, Date.now() + SESSION_DAYS * 864e5);
   setCookie(res, 's', token, SESSION_DAYS * 86400);

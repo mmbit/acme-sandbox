@@ -22,6 +22,7 @@ import * as feedback from '../feedback.ts';
 import { BOARD, sheetPageFor } from './book.ts';
 import { addNote } from './booknotes.ts';
 import { WORDS_MAX, isRefused } from '../pagechecks.ts';
+import { createScrap } from '../notebookgroups.ts';
 
 // The words' most: the book's, the cut's mark ("… (cut here)") included
 const WORDS_CUT = WORDS_MAX - 20;
@@ -49,7 +50,7 @@ export async function toBook(
   b: any,
   by = BOARD,
   open: () => feedback.Refusal | null = () => null,
-): Promise<feedback.Refusal | Booked> {
+): Promise<feedback.Refusal | Booked | Scrap> {
   const words = feedback.words(b?.note, WORDS_CUT);
   if (!words) return { status: 400, error: 'bad note' };
   const page = feedback.localPath(b.page, host, base),
@@ -75,12 +76,20 @@ export async function toBook(
   const shut = open();
   if (shut) return shut;
   const { owner, name } = ownerOf(slug, page);
-  const sheetPage = sheetPageFor(owner, url, viewport.w, viewport.h);
   // (video: a film's moment.)
   const { v, el, view, ink, video } = element,
     anchor = { v, url: element.url, el, view, ink, video };
   const said = b.said === 'spoken' ? 'spoken' : 'typed';
-  const noted = addNote({ page: sheetPage.id, anchor, words, said, snip }, BOARD, false, null, by);
+  // The board's own note is a scrap on the newest page of My Notebook, not on a sheet (the board's pin flow, 27 Oct):
+  // it reaches the owner when the board sends that page. A guest's still joins the board's sheet.
+  const note = { anchor, words, said, snip, owner, name };
+  if (by === BOARD) return scrapped(slug, page, note);
+  return onSheet(slug, page, note, sheetPageFor(owner, url, viewport.w, viewport.h).id, by);
+}
+// A guest's note on the board's sheet for the owner
+function onSheet(slug: string, page: string, b: Scrapped, sheetPage: number, by: string): feedback.Refusal | Booked {
+  const { anchor, words, said, snip, owner, name } = b;
+  const noted = addNote({ page: sheetPage, anchor, words, said, snip }, BOARD, false, null, by);
   if (typeof noted === 'number') return { status: noted, error: 'no such page' };
   if (isRefused(noted)) return { status: noted[0], error: noted[1] };
   // (no words here: they're page-controlled until the board has looked at them)
@@ -92,13 +101,33 @@ export async function toBook(
   return { ok: true, id: noted.note.id, n: noted.note.n, owner, name };
 }
 
+// The board's note as a scrap (notebookgroups.ts createScrap), heard by the owner's log as a sheet's note was
+function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | Scrap {
+  // (its lines only in its snip, never on its anchor: rule zero, the board's, 2026-10-27)
+  const anchor = { ...(b.anchor as object), ink: [] };
+  // (no notebook asked for: My Notebook, made when there's none, so never createScrap's 404)
+  const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }, BOARD) as Exclude<
+    ReturnType<typeof createScrap>,
+    number
+  >;
+  if (isRefused(g)) return { status: g[0], error: g[1] };
+  publish({
+    type: 'log',
+    agent: b.owner,
+    text: `A review note on ${owed.about(slug, page)} is in the board's Notebook, for ${b.name}`,
+  });
+  return { ok: true, id: g.id, page: g.page, owner: b.owner, name: b.name };
+}
+type Scrapped = { anchor: any; words: string; said: string; snip: string | null; owner: string; name: string };
+type Scrap = { ok: true; id: number; page: number; owner: string; name: string };
+
 // For review mode's menu on a page (GET /__review/mine, the board's): whose sheet a note there joins, and how many
 // notes are on it now. On HQ, where each thing on the page names its own owner (the Pencil's markpage.js), the menu
 // names the sheet the board's last note there went to (last: an agent id, ?owner=), else the page's own: the same
 // owner the sheet goes to, never another's (the board, 2026-10-26).
 export function menuOf(slug: string, page: string, last: string | null = null) {
   const { owner, name } = slug === feedback.HQ && last && findAgent(last) ? named(last) : ownerOf(slug, page);
-  return { book: { owner, name }, notes: onSheet(owner) };
+  return { book: { owner, name }, notes: onNewestPage() };
 }
 
 // Whose sheet a note on a page goes on: an agent on a desk, or the CEO, who passes it on. HQ's page as a whole is
@@ -109,16 +138,17 @@ function ownerOf(slug: string, page: string) {
   return named(findAgent(agent) ? agent : ceo());
 }
 const named = (owner: string) => ({ owner, name: findAgent(owner)?.name ?? owner });
-// The open notes on the board's unsent sheet for an owner (not a notebook send's)
-const onSheet = (owner: string) =>
+// The board's open groups on the newest page of My Notebook, where its notes go now: none before it has one
+const onNewestPage = () =>
   (
     db
       .prepare(
-        `select count(*) n from book_notes n join book_sheets s on s.id = n.sheet
-         where s.who = ? and s.owner = ? and s.status in ('open', 'sending') and s.page is null and s.notebook_page is null
-         and n.status = 'open'`,
+        `select count(*) n from notebook_groups where parent is null and deleted is null and page = (
+           select p.id from book_pages p join notebooks b on b.id = p.notebook
+           where b.who = ? and b.kind = 'mine' and p.archived = 0 and p.send_at is null order by p.created desc, p.id desc
+           limit 1)`,
       )
-      .get(BOARD, owner) as { n: number }
+      .get(BOARD) as { n: number }
   ).n;
 // Whether a writer has had PER_HOUR notes on this product (its pages' addresses start with origin) in the last hour
 function overHour(by: string, origin: string) {
@@ -126,10 +156,17 @@ function overHour(by: string, origin: string) {
   const { n } = db
     .prepare(
       `select count(*) n from book_notes where by = ? and created > ?
-       and substr(json_extract(anchor, '$.url'), 1, ?) = ?`,
+       and substr(json_extract(anchor, '$.url'), 1, ?3) = ?4`,
     )
     .get(by, hourAgo, origin.length, origin) as { n: number };
-  return n >= feedback.PER_HOUR;
+  // (and the board's notes in its Notebook not sent yet, a scrap or a typed note: a sent one is a book note above.
+  const scraps = db
+    .prepare(
+      `select count(*) n from notebook_groups where by = ? and created > ? and note is null and parent is null
+       and substr(json_extract(anchor, '$.url'), 1, ?3) = ?4`,
+    )
+    .get(by, hourAgo, origin.length, origin) as { n: number };
+  return n + scraps.n >= feedback.PER_HOUR;
 }
 
 // The snip as a JPEG data URL, or null with neither a screenshot nor a picture: the screenshot around the mark (the

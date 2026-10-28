@@ -10,7 +10,7 @@
 //   - Delete keeps it aside SWEEP_MS for Undo (restore).
 import { existsSync, rmSync } from 'node:fs';
 import { keepPicture, ours, pictureUrl } from './notebookpictures.ts';
-import { boxOf, emptyGroup, hasAny, joined, picks, shifted, type Parts } from './notebookparts.ts';
+import { boxOf, emptyGroup, hasAny, joined, picks, shifted, typedBoxes, type Parts } from './notebookparts.ts';
 import { db, inOneStep } from './db.ts';
 import { findAgent } from './jobs.ts';
 import { pictureSize } from '../../../shared/pictures/size.ts';
@@ -61,7 +61,7 @@ export type Group = {
   deleted: number | null;
 };
 // Where a scrap lands on its page: under what's there, this far apart
-const STACK = { x: 40, gap: 32, w: 360 };
+const STACK = { x: 40, gap: 32, w: 360, top: 80 }; // (top: under the page's heading)
 
 // ---------------------------------------------------------------- a page whole
 // GET /api/notebooks/pages/groups?page=: the page and its groups, each with its children
@@ -86,7 +86,7 @@ export function createGroup(b: any, who = BOARD) {
   if (isRefused(p)) return p;
   const parts = elementsOf(b, who, emptyGroup);
   if (isRefused(parts)) return parts;
-  if (!hasAny(parts)) return [400, 'a group holds something: ink, words or a picture'] as Refused;
+  if (!hasAny(parts)) return [400, 'a group holds something: ink, words or a picture', 'noteEmpty'] as Refused;
   return shown(insertGroup(p, 'drawing', who, parts, {}));
 }
 // POST /api/notebooks/groups/scrap { anchor, words?, said?, snip, owner?, notebook? }: a scrap onto the current page of
@@ -100,6 +100,15 @@ export function createScrap(b: any, who = BOARD) {
   if (isRefused(said)) return said;
   if (b.owner != null && !(typeof b.owner === 'string' && findAgent(b.owner)))
     return [400, 'owner is the agent whose work the scrap was cut from, or null'] as Refused;
+  // (no snip, review mode's general note: its words typed, stacked as a scrap.)
+  if (b.snip == null) {
+    if (!said.words) return [400, 'a note with no picture holds words', 'noteEmpty'] as Refused;
+    const texts = textsOf(typedBoxes(said.words, { x: STACK.x, w: STACK.w, color: NOTE_INK }))!;
+    if (isRefused(texts)) return texts;
+    const p = pageRow(currentPage(nb.id), who)!;
+    const parts = shifted({ ...emptyGroup, texts }, 0, stackFoot(p.id));
+    return shown(insertGroup(p, 'drawing', who, parts, { anchor, owner: b.owner ?? null, said: said.said }));
+  }
   const snip = dataUrlPicture(b.snip);
   if (isRefused(snip)) return snip;
   const big = tooBig(snip.clean);
@@ -120,6 +129,7 @@ export function createScrap(b: any, who = BOARD) {
   const g = insertGroup(p, 'scrap', who, parts, { anchor, words: said.words, said: said.said, owner: b.owner ?? null });
   return shown(g);
 }
+const NOTE_INK = '#1d1a2f'; // (a typed note's ink: the post-it's, shared/review/postit.js)
 // POST /api/notebooks/groups/edit { id, since, ink?, texts?, pictures?, words?, said? }: an open group's elements
 // changed (drawn on, moved on its page, its post-it typed again). since: its updated as the screen last read it; one
 // changed since on another screen is refused, to read again.
@@ -127,12 +137,12 @@ export const CHANGED = 'this group changed on another screen: read it again';
 export function editGroup(b: any, who = BOARD) {
   const g = openGroup(Number(b?.id), who);
   if (isRefused(g)) return g;
-  if (b.since !== g.updated) return [409, CHANGED] as Refused;
+  if (b.since !== g.updated) return [409, CHANGED, 'noteChanged'] as Refused;
   const parts = elementsOf(b, who, partsOf(g));
   if (isRefused(parts)) return parts;
   const said = b.words === undefined ? { words: g.words, said: g.said } : wordsOf(b.words, b.said);
   if (isRefused(said)) return said;
-  if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead'] as Refused;
+  if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead', 'noteDelete'] as Refused;
   write(g.id, parts, { words: said.words, said: said.said });
   return shown(row(g.id)!);
 }
@@ -163,7 +173,7 @@ export function deleteGroup(b: any, who = BOARD) {
   if (!g || !p || g.deleted !== null) return 404;
   if (g.kind === 'reply') return [409, 'a reply is taken back with /api/notebooks/replies/delete'] as Refused;
   if (g.status !== 'open' || shut(p))
-    return [409, 'a sent page is read-only: what the board wrote there stays'] as Refused;
+    return [409, 'a sent page is read-only: what the board wrote there stays', 'pageReadonly'] as Refused;
   putAside(g, p);
   return { ok: true, id: g.id };
 }
@@ -173,7 +183,8 @@ export function restoreGroup(b: any, who = BOARD) {
   const g = row(Number(b?.id));
   const p = g && pageRow(g.page, who);
   if (!g || !p || g.deleted === null) return 404;
-  if (g.kind === 'reply') return [409, "a reply taken back isn't sent again: write it again"] as Refused;
+  if (g.kind === 'reply')
+    return [409, "a reply taken back isn't sent again: write it again", 'replyRewrite'] as Refused;
   const page = g.parent === null && shut(p) ? currentPage(p.notebook) : p.id;
   db.prepare('update notebook_groups set deleted = null, page = ? where (id = ? or parent = ?) and deleted = ?').run(
     page,
@@ -306,19 +317,20 @@ export function stackFoot(page: number) {
     .map(g => boxOf(partsOf(g)))
     .filter(b => b !== null)
     .map(b => b.y + b.h);
-  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.gap;
+  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.top;
 }
 export function openPage(id: number, who: string): NotebookPage | Refused {
   const p = pageRow(id, who);
-  if (!p) return [404, 'no such page'];
-  if (shut(p)) return [409, 'a sent page is read-only: draw on the current page'];
+  if (!p) return [404, 'no such page', 'unavailable'];
+  if (shut(p)) return [409, 'a sent page is read-only: draw on the current page', 'pageReadonly'];
   return p;
 }
 function openGroup(id: number, who: string): Group | Refused {
   const g = row(id);
   const p = g && g.deleted === null && pageRow(g.page, who);
-  if (!g || !p) return [404, 'no such group'];
-  if (g.status !== 'open' || shut(p)) return [409, 'a sent page is read-only: what the board wrote there stays'];
+  if (!g || !p) return [404, 'no such group', 'unavailable'];
+  if (g.status !== 'open' || shut(p))
+    return [409, 'a sent page is read-only: what the board wrote there stays', 'pageReadonly'];
   return g;
 }
 // A group deleted, with its children, kept aside SWEEP_MS for Undo

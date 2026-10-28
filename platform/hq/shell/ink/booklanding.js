@@ -1,7 +1,11 @@
 // Where a mark lifted off HQ's page lands in the book (review mode's lift.js asks with 'pencil:landing'): open, on the
 // page its note went on, turned to first, where the note's snip will show; folded, in its handle, which then shows the
-// snip for a moment (book:landed). With a soft paper sound as it goes.
+// snip for a moment (book:landed). With a soft paper sound as it goes. A Notebook scrap (ask.group: its id the group's)
+// lands on its page, where its photo shows; one saved with no mark to fly ('book:scrap' { id, page }, an artifact's
+// Save) is turned to.
 import { foley } from '../audio.js';
+import { pageOf, showGroup } from './bookgroupshow.js';
+import { STACK, nextScrap } from './bookgroupbox.js';
 
 // The sheets' notes as their list laid them out (px on the page, till the pin flow lands a scrap instead.): the list's padding at its top and left, a note's
 // number column with its gap, the cutting's white border, and the room under a note
@@ -31,9 +35,11 @@ export function mountLanding({ pages, lip, paper, layout }) {
     if (mode === 'folded') {
       ask.land = inHandle(lip, ask.from);
       const { id, page, snip } = ask;
-      ask.arrived = () => document.dispatchEvent(new CustomEvent('book:landed', { detail: { id, page, snip } }));
+      ask.arrived = () =>
+        document.dispatchEvent(new CustomEvent('book:landed', { detail: { id, page, snip, group: !!ask.group } }));
       return;
     }
+    if (ask.group) return landGroup(desk, pages, ask);
     // (a page of the day shows at once, under its turning leaf: bookflip.js swaps it in before the leaf moves)
     if (ask.page && pages.page()?.id !== ask.page) pages.show(ask.page);
     const shown = pages.page()?.id === ask.page;
@@ -41,7 +47,59 @@ export function mountLanding({ pages, lip, paper, layout }) {
     ask.aim = () => onSnip(desk, ask);
     if (!shown && ask.page) turnWhenRead(pages, layout, ask.page);
   });
+  document.addEventListener('book:scrap', e => {
+    const { id, page } = e.detail ?? {},
+      mode = layout()?.mode;
+    if (!id || !page || !mode) return;
+    if (mode === 'folded')
+      return document.dispatchEvent(new CustomEvent('book:landed', { detail: { id, page, snip: null, group: true } }));
+    showGroup(pages, { page, id });
+  });
 }
+
+// A scrap's ink lands where its photo will show on its page: until it's read, under the page's groups (where the store
+// stacks it), kept in the paper's visible part; then on its photo, turned as it is. One lifted before the scrap is made
+// (no id yet) lands under the groups of the page shown: its 'book:scrap' turns there.
+function landGroup(desk, pages, ask) {
+  const { id, from } = ask,
+    page = ask.page ?? pages.page()?.id ?? null;
+  if (id && page) showGroup(pages, { page, id });
+  const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
+    d = desk.getBoundingClientRect(),
+    snip = snipOf(from);
+  const foot = nextScrap([...(pageOf(page)?.groups.values() ?? [])]),
+    origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
+    k = onPage ? scaleOf(onPage) : 1,
+    w = Math.min(STACK.w, snip.w) * k;
+  ask.land = within(
+    inkIn({ x: origin.left + foot.x * k, y: origin.top + foot.y * k, w, h: (w * snip.h) / snip.w }, from),
+    d,
+  );
+  ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
+}
+// Where the ink is on a scrap's photo once its page shows with the scrap read (the photo's one of the page's pictures,
+// in its group: bookpage.js draws it)
+function onPhoto(desk, pages, { id, page, from }) {
+  const photo = pages.page()?.id === page ? pageOf(page)?.scraps.find(s => s.g === id) : null,
+    onPage = desk.querySelector('.bk-world .bk-page:not([hidden])');
+  if (!photo || !onPage?.offsetWidth) return null;
+  const o = onPage.getBoundingClientRect(),
+    k = scaleOf(onPage),
+    rect = { x: o.left + photo.x * k, y: o.top + photo.y * k, w: photo.w * k, h: photo.h * k };
+  return { ...within(inkIn(rect, from), desk.getBoundingClientRect()), turn: photo.tilt ?? 0 };
+}
+// The ink's place on a picture of its snip (a rect on screen) as the snip has it
+function inkIn(rect, from) {
+  const snip = snipOf(from);
+  return {
+    x: rect.x + ((from.x - snip.x) / snip.w) * rect.w,
+    y: rect.y + ((from.y - snip.y) / snip.h) * rect.h,
+    w: (from.w / snip.w) * rect.w,
+    h: (from.h / snip.h) * rect.h,
+  };
+}
+// How far the paper is zoomed, from a page's box on screen and as laid out
+const scaleOf = el => el.getBoundingClientRect().width / Math.max(el.offsetWidth, 1);
 
 // A page made for the note is in the book once the day is read again (it may be read twice: the note heard, the page
 // made), each read turned to the note's page if it shows another

@@ -236,6 +236,23 @@ test('a picture uploaded to an open page is placed in a group; a scrap lands on 
   );
 });
 
+// (as notebookgroups.ts stacks a scrap and types a note with no picture)
+test("a page's first scrap goes under its heading; a note with no picture is its words typed, stacked as a scrap", () => {
+  const { post, page } = played();
+  const anchor = { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] };
+  const snip = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;
+  const scrap = post('groups/scrap', { anchor, words: 'Warmer?', said: 'spoken', snip });
+  assert.deepEqual([scrap.page, scrap.pictures[0].x, scrap.pictures[0].y], [page, 40, 80]);
+  const typed = post('groups/scrap', { anchor, words: 'Same everywhere', said: 'typed', owner: 'moss' });
+  assert.deepEqual(
+    [typed.kind, typed.page, typed.words, typed.said, typed.owner, typed.pictures],
+    ['drawing', page, '', 'typed', 'moss', []],
+  );
+  // (under the scrap's picture, the snip's 1 px, by the stack's gap)
+  assert.deepEqual(typed.texts, [{ x: 40, y: 80 + 1 + 32, w: 360, text: 'Same everywhere', color: '#1d1a2f' }]);
+  assert.throws(() => post('groups/scrap', { anchor, words: '' }), refusal(400, 'a note with no picture holds words'));
+});
+
 test("pages are titled, ordered and archived; dev mode's seed reads whole", () => {
   const seed = JSON.parse(readFileSync(new URL('../../mock/notebook.json', import.meta.url), 'utf8'));
   const { play, notebook, post, groups } = played(seed);

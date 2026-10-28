@@ -13,6 +13,7 @@ import {
   refuse,
   shifted,
   textsOf,
+  typedBoxes,
   wordsOf,
 } from './notebookplaychecks.js';
 
@@ -20,7 +21,7 @@ export const BOARD = 'board';
 export const CHANGED = 'this group changed on another screen: read it again';
 const SENT = 'a sent page is read-only: what the board wrote there stays';
 // Where a scrap lands on its page: under what's there, this far apart
-const STACK = { x: 40, gap: 32, w: 360 };
+const STACK = { x: 40, gap: 32, w: 360, top: 80 }; // (top: under the page's heading)
 
 // A route's handler for its 'METHOD path': (s, the body)
 export const GROUP_ROUTES = {
@@ -94,6 +95,8 @@ function createScrap(s, b) {
   // (an agent the seed names, or any id when it names none)
   const agent = o => typeof o === 'string' && !!o && (!Object.keys(s.names).length || o in s.names);
   if (b.owner != null && !agent(b.owner)) refuse(400, 'owner is the agent whose work the scrap was cut from, or null');
+  // (no snip: a note pinned to nothing is its words typed on the page.)
+  if (b.snip == null) return typedNote(s, nb, said, { anchor, said: said.said, owner: b.owner ?? null });
   const snip = dataUrlPicture(b.snip);
   const p = s.page(s.currentPage(nb.id)),
     w = Math.min(STACK.w, snip.width);
@@ -101,6 +104,13 @@ function createScrap(s, b) {
   picture.h = Math.round((snip.height * w) / snip.width);
   const more = { anchor, words: said.words, said: said.said, owner: b.owner ?? null };
   return shown(s, insertGroup(s, p, 'scrap', BOARD, { ...emptyGroup, pictures: [picture] }, more));
+}
+// A note with no picture: its words typed in the post-it's ink, stacked as a scrap is (notebookgroups.ts typedNote)
+function typedNote(s, nb, said, more) {
+  if (!said.words) refuse(400, 'a note with no picture holds words');
+  const texts = textsOf(typedBoxes(said.words, { x: STACK.x, w: STACK.w, color: '#1d1a2f' })),
+    p = s.page(s.currentPage(nb.id));
+  return shown(s, insertGroup(s, p, 'drawing', BOARD, shifted({ ...emptyGroup, texts }, 0, stackFoot(s, p.id)), more));
 }
 // Open groups of one page as one, the first's (or the scrap's): the others deleted, for Undo's split
 function joinGroups(s, b) {
@@ -195,7 +205,7 @@ function stackFoot(s, page) {
     .map(g => boxOf(partsOf(g)))
     .filter(b => b !== null)
     .map(b => b.y + b.h);
-  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.gap;
+  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.top;
 }
 // What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came) and its
 // asks

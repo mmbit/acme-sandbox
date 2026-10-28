@@ -117,9 +117,9 @@ export async function undo(r) {
   if (r.mode !== 'idle') return;
   const step = r.steps.pop();
   if (!step) return;
-  if (step.kind === 'note') {
+  if (step.kind === 'note' || step.kind === 'scrap') {
     try {
-      await marks.wipe(step.id);
+      await (step.kind === 'scrap' ? marks.unscrap : marks.wipe)(step.id); // (a scrap)
     } catch (err) {
       r.steps.push(step); // (the book didn't take it: the step is still there to undo)
       throw err;
@@ -137,7 +137,7 @@ export function setupPencil(r) {
   r.steps = [];
   forgetHairlines();
   r.listen = r.$('.listen');
-  r.pinIt.textContent = 'Send';
+  r.pinIt.textContent = 'Save';
   written.typing(r);
   r.pencil = inkjs.pen(r.$('.pencil'), r.wet, {
     halo: true,
@@ -184,6 +184,6 @@ export const unmark = r => {
   unpen(r);
   if (r.listen && !r.holding) r.listen.hidden = true;
   r.spoken = r.typed = false;
-  if (r.book) r.pinIt.textContent = 'Send';
+  if (r.book) r.pinIt.textContent = 'Save';
   if (r.book) moved(r); // (no open mark now: a second screen hears so.)
 };

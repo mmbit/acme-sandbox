@@ -7,9 +7,12 @@ const json = async res => {
   if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { status: res.status });
   return body;
 };
+// ...and the Notebook's (the coordinator's /api/notebooks routes, notebookgroups.ts), where a note off a call goes as a
+// scrap (marks.js post)
+export const toNotebook = (path, body) => send(path, body, '/api/notebooks');
 export const get = path => fetch(API + path, { credentials: 'same-origin' }).then(json);
-export const send = (path, body) =>
-  fetch(API + path, {
+export const send = (path, body, api = API) =>
+  fetch(api + path, {
     method: 'POST',
     credentials: 'same-origin',
     headers: { 'content-type': 'application/json' },

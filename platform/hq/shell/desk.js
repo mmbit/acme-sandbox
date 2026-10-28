@@ -397,6 +397,9 @@ function fromViewer(e) {
     // (from the viewer's page whatever its hello: a goodbye that came late, the page before's, mustn't lose the way to
     // the book, which only opens HQ's own.)
     else if (d.book) bookAt(d.book);
+    // (the board's note saved there as a scrap in its Notebook: the book lands it, booklanding.js.)
+    else if (d.scrap && Number.isInteger(d.scrap.id) && Number.isInteger(d.scrap.page))
+      document.dispatchEvent(new CustomEvent('book:scrap', { detail: { id: d.scrap.id, page: d.scrap.page } }));
     paintPin();
   } else if (tag === 'backdrop') {
     frame.style.background = backdropOf(d) ?? '';

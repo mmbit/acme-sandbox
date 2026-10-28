@@ -21,10 +21,10 @@ const PAD = 24;
 // POST /api/notebooks/pages/send { id }: the page's groups go in SEND_MS, unless it's undone first
 // (RESEND: a call's page sent at hang-up is sent again on it.)
 export const RESEND = 'the page changed while it was being sent: send it again';
-export async function sendPage(b: any, who = BOARD) {
+export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
-  if (shut(p)) return [409, 'this page has been sent'] as Refused;
+  if (shut(p)) return [409, 'this page has been sent', 'pageSent'] as Refused;
   const sendable = () =>
     db
       .prepare(
@@ -32,7 +32,7 @@ export async function sendPage(b: any, who = BOARD) {
       )
       .all(p.id) as Group[];
   const groups = sendable();
-  if (!groups.length) return [409, 'nothing on this page to send'] as Refused;
+  if (!groups.length) return [409, 'nothing on this page to send', 'pageEmpty'] as Refused;
   const snips = await Promise.all(groups.map(snipOf));
   // (a group changed, gone or added while its pictures were drawn: sent as the board sees it now, so read again)
   const now = pageRow(p.id, who),
@@ -43,7 +43,8 @@ export async function sendPage(b: any, who = BOARD) {
     after.length !== groups.length ||
     after.some((g, i) => g.id !== groups[i].id || g.updated !== groups[i].updated)
   )
-    return [409, RESEND] as Refused;
+    return [409, RESEND, 'pageChanged'] as Refused;
+  if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   inOneStep(() => {
     const sheets = new Map<string | null, number>();
     groups.forEach((g, i) => {
@@ -67,8 +68,8 @@ export async function sendPage(b: any, who = BOARD) {
 export function undoSend(b: any, who = BOARD) {
   const p = pageRow(Number(b?.id), who);
   if (!p) return 404;
-  if (p.send_at === null) return [409, "this page hasn't been sent"] as Refused;
-  if (gone(p)) return [409, 'too late to undo: the page has gone'] as Refused;
+  if (p.send_at === null) return [409, "this page hasn't been sent", 'pageNotSent'] as Refused;
+  if (gone(p)) return [409, 'too late to undo: the page has gone', 'pageGone'] as Refused;
   const groups = db
     .prepare('select * from notebook_groups where page = ? and parent is null and note is not null')
     .all(p.id) as Group[];
@@ -90,7 +91,7 @@ export function undoSend(b: any, who = BOARD) {
 }
 // POST /api/notebooks/groups/reply { answer, words?, said?, ink? }: the board's reply under an agent's answer (a slip):
 // a reply group under the answered group, gone to the agent who answered in SEND_MS (deleteReply takes it back)
-export async function replyTo(b: any, who = BOARD) {
+export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
   const slip = db.prepare('select id, note, by from book_slips where id = ?').get(Number(b?.answer)) as
     { id: number; note: number; by: string } | undefined;
   const answered =
@@ -101,10 +102,11 @@ export async function replyTo(b: any, who = BOARD) {
   if (isRefused(said)) return said;
   const ink = b.ink === undefined ? [] : inkOf(b.ink);
   if (isRefused(ink)) return ink;
-  if (!said.words && !ink.length) return [400, 'a reply has words or ink'] as Refused;
+  if (!said.words && !ink.length) return [400, 'a reply has words or ink', 'replyEmpty'] as Refused;
   const top = answered.parent === null ? answered : row(answered.parent)!;
   const parts = { ink, texts: [], pictures: [] };
   const snip = ink.length ? await snipOf({ ...top, ...partsJson(parts) }) : null;
+  if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   const reply = inOneStep(() => {
     const g = insertGroup(p, 'reply', who, parts, {
       parent: top.id,
@@ -130,7 +132,7 @@ export function deleteReply(b: any, who = BOARD) {
   const n = note(g.note!)!,
     s = sheetRow(n.sheet, null)!;
   if (s.status !== 'sending' || s.send_at! <= Date.now())
-    return [409, 'too late to take back: the reply has gone'] as Refused;
+    return [409, 'too late to take back: the reply has gone', 'replyGone'] as Refused;
   inOneStep(() => {
     unsend(n);
     putAside(g, p);
@@ -165,7 +167,8 @@ function anchorOf(g: Group): Anchor {
 // A group's words as its note's: its post-it's, else its typed words
 const saidOf = (g: Group) => {
   const typed = (JSON.parse(g.texts) as { text: string }[]).map(t => t.text).join('\n');
-  return g.words ? { words: g.words, said: g.said } : { words: typed, said: typed ? 'typed' : null };
+  // (a typed note from review mode keeps how it was said)
+  return g.words ? { words: g.words, said: g.said } : { words: typed, said: typed ? (g.said ?? 'typed') : null };
 };
 const partsJson = (p: { ink: unknown[]; texts: unknown[]; pictures: unknown[] }) => ({
   ink: JSON.stringify(p.ink),

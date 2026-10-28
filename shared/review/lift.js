@@ -24,7 +24,7 @@ const STEPS = 36;
 const AIM_AT = [0.4, 0.6, 0.75];
 
 // The ink lifted into the book. lines: the mark's strokes in screen px (ink.js's); note: { id, page }, the book page it
-// went on; snip: its snip (a data URL) or null. Resolves once it has landed.
+// went on (group: true, a Notebook scrap's: its group's id and page); snip: its snip (a data URL) or null. Resolves once it has landed.
 // Where it lands is asked on the document, synchronously: 'pencil:landing' with { id, page, snip, from, land: null },
 // from the ink's box ({ x, y, w, h }, screen px). A listener (the book) sets land to the rect to land in, turning the
 // book there first; land.handle: true when that's a folded book's handle, land.turn: the degrees it lands turned. It
@@ -34,7 +34,10 @@ export function lift(_r, { lines, note, snip = null }) {
   const strokes = (lines ?? []).filter(l => l.points?.length);
   if (!strokes.length) return Promise.resolve();
   const from = boxOfLines(strokes),
-    ask = { id: note?.id ?? null, page: note?.page ?? null, snip, from, land: null, aim: null, arrived: null };
+    ask = {
+      ...{ id: note?.id ?? null, page: note?.page ?? null, snip, from, land: null, aim: null, arrived: null },
+      group: !!note?.group, // (a scrap's group, not a sheet's note)
+    };
   document.dispatchEvent(new CustomEvent('pencil:landing', { detail: ask }));
   const layer = layerOf(strokes, from);
   const flights = matchMedia('(prefers-reduced-motion: reduce)').matches

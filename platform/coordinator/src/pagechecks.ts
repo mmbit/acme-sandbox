@@ -34,7 +34,8 @@ export const SAVE_MAX = 100 + MAX_POINTS * 140 + MAX_SCRAPS * 200 + TEXTS_MAX * 
   NOTE_MAX = Math.ceil(pictures.MAX_BYTES / 3) * 4 + MAX_POINTS * 140 + 64 * 1024;
 export const FULL = 'This page is full: start a new page to keep drawing (undo the last lines to save this one)';
 // (every check refuses the same way: a [status, why] pair)
-export type Refused = [number, string];
+// The optional reason lets a guest page word a refusal in its own language.
+export type Refused = [number, string, string?];
 export const isRefused = (v: unknown): v is Refused => Array.isArray(v) && typeof v[0] === 'number';
 
 // A page's side: whole CSS px within PAGE, or the refusal
@@ -75,7 +76,7 @@ export function inkOf(v: unknown): Stroke[] | Refused {
     if (!stroke)
       return [400, 'a stroke is { color: "#rrggbb", size, alpha?, fill?: true, points: [[x, y, pressure, t], ...] }'];
     points += stroke.points.length;
-    if (points > MAX_POINTS) return [413, FULL];
+    if (points > MAX_POINTS) return [413, FULL, 'pageFull'];
     strokes.push(stroke);
   }
   return strokes;
@@ -90,15 +91,15 @@ export function textsOf(v: unknown): Typed[] | Refused | undefined {
   // (x and y either side of the page's heading: it grows every way.)
   const on = (n: unknown, max: number, min = 0): n is number => typeof n === 'number' && n >= min && n <= max;
   if (!Array.isArray(v)) return why;
-  if (v.length > TEXTS_MAX) return [413, `a page holds at most ${TEXTS_MAX} typed notes`];
+  if (v.length > TEXTS_MAX) return [413, `a page holds at most ${TEXTS_MAX} typed notes`, 'notesFull'];
   const texts: Typed[] = [];
   for (const t of v) {
     if (!t || typeof t !== 'object' || !on(t.x, GROWN_MAX, -GROWN_MAX) || !on(t.y, GROWN_MAX, -GROWN_MAX)) return why;
     if (!on(t.w, GROWN_MAX) || t.w < TEXT_W_MIN) return why;
     if (typeof t.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(t.color)) return why;
     if (typeof t.text !== 'string' || !t.text.trim()) return why;
-    if (t.text.includes('\0')) return [400, "a typed note can't hold a NUL character"];
-    if ([...t.text].length > TEXT_MAX) return [400, `a typed note is at most ${TEXT_MAX} characters`];
+    if (t.text.includes('\0')) return [400, "a typed note can't hold a NUL character", 'noteCharacter'];
+    if ([...t.text].length > TEXT_MAX) return [400, `a typed note is at most ${TEXT_MAX} characters`, 'noteLong'];
     const round = (n: number) => Math.round(n * 100) / 100;
     texts.push({ x: round(t.x), y: round(t.y), w: round(t.w), text: t.text, color: t.color.toLowerCase() });
   }
@@ -191,7 +192,7 @@ export function wordsOf(v: unknown, said: unknown): { words: string; said: strin
   if (v == null || v === '') return { words: '', said: null };
   if (typeof v !== 'string') return [400, "a note's words are text"];
   const words = v.trim();
-  if ([...words].length > WORDS_MAX) return [400, `a note's words are at most ${WORDS_MAX} characters`];
+  if ([...words].length > WORDS_MAX) return [400, `a note's words are at most ${WORDS_MAX} characters`, 'replyLong'];
   if (!SAID.includes(said as (typeof SAID)[number])) return [400, `said is how the words came: ${SAID.join(', ')}`];
   return { words, said: words ? (said as string) : null };
 }

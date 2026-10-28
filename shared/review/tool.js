@@ -117,7 +117,7 @@ export function reset(r) {
   dock.settle(r);
   r.root.querySelectorAll('.drop').forEach(d => d.remove());
   r.hl.hidden = true;
-  r.pinIt.textContent = 'Pin it';
+  r.pinIt.textContent = postit.saveWord(r); // (Save, the board's; Pin it, a guest's)
   pencil.unmark(r);
   pictures.clearPictures(r);
   r.penOn?.cancel();

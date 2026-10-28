@@ -76,10 +76,9 @@ async function boot() {
   // the book beside the page, before the stage, so the building is framed in the room it leaves (a book that can't start
   // stops HQ's start, as the stage does).
   await initBook();
-  // the tips' films, before anything can show a tip (a paired screen opens the phone).
+  // The tutorial films load before a tip can open.
   await loadFilms();
-  // (a second screen, paired by the book's code, opening what this one opens.)
-  initPair({ phone: () => openPhone(), intercom: openIntercom, computer: app => openComputer(app), close: closeTool });
+  initPair();
   await stage(q.get('intro') !== '0');
   initFinder();
   initPanel();

@@ -1,5 +1,6 @@
 // A notebook group's elements as one (notebookgroups.ts): their box, joined, shifted, and a lasso's picks of them, in
 // page px. Pure: nothing stored here.
+import { TEXT_MAX } from './pagechecks.ts';
 import type { Scrap } from './pagescraps.ts';
 
 export type Parts = { ink: unknown[]; texts: unknown[]; pictures: Scrap[] };
@@ -42,4 +43,21 @@ export function boxOf(p: Parts) {
   const x = Math.min(...boxes.map(b => b.x)),
     y = Math.min(...boxes.map(b => b.y));
   return { x, y, w: Math.max(...boxes.map(b => b.x + b.w)) - x, h: Math.max(...boxes.map(b => b.y + b.h)) - y };
+}
+// Words as typed boxes one under another from y 0, at most max (TEXT_MAX) characters each, a box ending at its last
+// space where it has one (kept: together the boxes are the words whole).
+export function typedBoxes(words: string, at: { x: number; w: number; color: string }, max = TEXT_MAX) {
+  const boxes: { x: number; y: number; w: number; text: string; color: string }[] = [];
+  let rest = [...words],
+    y = 0;
+  while (rest.length) {
+    const space = rest.length > max ? rest.lastIndexOf(' ', max - 1) : -1;
+    const cut = rest.length <= max ? rest.length : space > 0 ? space + 1 : max;
+    const box = { ...at, y, text: rest.slice(0, cut).join('') };
+    rest = rest.slice(cut);
+    if (!box.text.trim()) continue;
+    boxes.push(box);
+    y += boxOf({ ...emptyGroup, texts: [box] })!.h;
+  }
+  return boxes;
 }

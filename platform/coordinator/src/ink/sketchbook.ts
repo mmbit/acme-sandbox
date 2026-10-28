@@ -18,6 +18,7 @@ import { pictureOf, servePicture } from './bookpicture.ts';
 import { isRefused, SAVE_MAX, type Refused } from '../pagechecks.ts';
 import { DIR, MAX_SCRAPS, type Scrap } from '../pagescraps.ts';
 import { books, openRoom, sendAsGuest } from './sketchpeople.ts';
+import { managedPage } from '../notebookguests.ts';
 
 // HQ's addresses for the board's routes
 const HQ_BASE = '/api/sketches';
@@ -64,6 +65,7 @@ export async function sendSketch(id: number, who = BOARD) {
 
 // An invited person's page on the guest desk: the same, for their own book at its addresses
 openRoom({
+  hasSketch: (id, who) => !!book.row(id, who) && !managedPage(id),
   list: (who, base) => ({ sketches: listed(who).map(p => sketchOf(p, base)) }),
   get: getSketch,
   picture: servePicture,
@@ -147,7 +149,11 @@ once('2026-10-25-sketches-to-book', () => void foldSketches());
 // A person's sketches (who), newest drawn first
 const listed = (who: string) =>
   db
-    .prepare(`select ${book.COLUMNS} from book_pages where who = ? and kind = 'free' order by updated desc, id desc`)
+    .prepare(
+      `select ${book.COLUMNS} from book_pages where who = ? and kind = 'free'
+      and not exists (select 1 from notebook_guests where notebook = book_pages.notebook)
+      order by updated desc, id desc`,
+    )
     .all(who) as Page[];
 const drawn = (p: Page) => p.strokes > 0 || JSON.parse(p.scraps).length > 0;
 // A page as the Sketchbook shows a sketch. picture: its address (v: its last change, so no browser shows an old one),

@@ -10,7 +10,9 @@ import { expose, photo, snapshot } from './snapshot.js';
 import { addFrame, picturesNow, unpicture } from './pictures.js';
 import { canRecord, startMic, stopMic } from './dictation.js';
 import { paint, redrawInk, refresh, reset } from './acts.js';
-import { toBook } from './settle.js';
+import { nextMark, toBook } from './settle.js';
+import { lift } from './lift.js';
+import { openLines, paint as paintInk } from './marks.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
 import { setupPostitPen } from './postitpen.js';
@@ -104,9 +106,8 @@ export function compose(r) {
   // ended meanwhile shows it on this screen, the mic not started.)
   const unseen = across(r);
   if (canRecord && !r.rec && !r.stopping && !unseen) startMic(r);
-  // (a mark on HQ, the Pencil's or a mouse's, has no post-it: it goes into the book as it settles, settle.js; a page
-  // with no book keeps it.)
-  if (r.book) return;
+  // (a mark on HQ, the Pencil's or a mouse's, has its post-it too, as on any page: its Save puts it in the Notebook as
+  // a scrap, the board's pin flow.)
   setTimeout(() => stuck(r, mark, unseen), 380); // let the pin land, then the note
 }
 // The mark's screenshot, developed in the polaroid while the mark is open: the picture is the mark's either way, for
@@ -145,17 +146,15 @@ function stuck(r, mark, unseen) {
   showSheet(r);
   if (mark.frameless) r.msg.textContent = `${r.msg.textContent} ${mark.frameless}`.trim();
 }
-// Where the note goes, on its post-it: its Send names the sheet's owner ("Send to Juno"), and the line under its head
-// says it's that sheet in the Sketchbook, the same owner the note is filed under (marks.js post). Not on a call, where
-// the call's page takes it.
+// Where the note goes, on its post-it: the line under its head says the newest page of the Notebook, and whose work it's
+// about, the owner its page's send gives it to (marks.js post). Not on a call, where the call's page takes it.
 export function towards(r, mark) {
   r.towards = null;
   if (r.call) return;
   ownerNamed(r, mark.el).then(
     ({ name }) => {
       if (r.mark !== mark) return;
-      r.towards = `For ${name}’s sheet in your Notebook`;
-      r.pinIt.textContent = `Send to ${name}`;
+      r.towards = `To your Notebook’s newest page, for ${name}`;
       if (!r.sheet.hidden) r.$('.page').textContent = r.towards;
     },
     () => {}, // (the org unread: a plain Send, which still files it)
@@ -233,6 +232,7 @@ function opened(r) {
 // the script
 async function pinIt(r) {
   if (r.mode !== 'note') return;
+  if (r.book) return booked(r); // (its words waited for there, once its strokes are gone)
   const open = opened(r); // (asked after each wait, the mic's too.)
   // words still being spoken or transcribed belong in this note: wait for them before reading it
   if (r.rec || r.stopping) {
@@ -251,7 +251,6 @@ async function pinIt(r) {
     if (r.mode !== 'note') return;
   }
   const note = r.text.value.trim();
-  if (r.book) return booked(r);
   if (!note) {
     r.text.focus();
     r.msg.textContent = 'A word or two first?';
@@ -299,6 +298,9 @@ async function pinned(r, note, url, added) {
             : 'The review key has expired: open this page from HQ again.',
       );
     r.state.notes += 1;
+    // (the board's, inside HQ's viewer: a scrap on its Notebook's newest page, which HQ's book turns to or keeps for
+    // the pull tab's tap.)
+    if (r.framed && !r.outside) res.json().then(a => r.toHq({ scrap: { id: a.id, page: a.page } }));
     if (r.mark === mark) {
       r.text.value = '';
       r.sheet.classList.add('away');
@@ -318,41 +320,71 @@ async function pinned(r, note, url, added) {
     r.msg.textContent = err instanceof RefusedError ? err.message : 'Could not reach HQ. Try again?';
   }
 }
-// On HQ: the note on its sheet in the book (a mark needs no words there: its ink says it), and the post-it flies off;
-// as pinned's, only while its mark is the one open
+// On HQ: the note a scrap on the Notebook's newest page (a mark needs no words there: its ink says it). Its strokes go
+// from the page the moment Save is pressed (rule zero), flying into the Notebook while the last words said come and the
+// scrap goes in; then the book turns to it ('book:scrap' { id, page }: HQ's booklanding.js) and the post-it flies off.
+// As pinned's, each step only while its mark is the one open; one the Notebook didn't take keeps its strokes and its
+// post-it, and says why.
 async function booked(r) {
-  if (r.mark.kind === 'general' && !r.mark.snap && !r.text.value.trim()) {
-    r.text.focus();
-    r.msg.textContent = 'A word or two first?';
-    return;
-  }
+  const mark = r.mark,
+    open = () => r.mark === mark,
+    wordless = () => mark.kind === 'general' && !mark.snap && !r.text.value.trim();
+  if (wordless() && !r.rec && !r.stopping) return askWords(r);
   r.mode = 'sending';
   r.pinIt.disabled = true;
-  r.msg.textContent = 'Putting it in the book…';
-  const mark = r.mark,
-    open = () => r.mark === mark;
+  r.msg.textContent = 'Saving…';
+  const lines = openLines(r);
+  mark.filed = true;
+  paintInk(r);
+  if (!r.call) lift(r, { lines, note: { id: null, page: null, group: true } });
   try {
-    const { photoless } = (await toBook(r)) ?? {};
+    if (r.rec || r.stopping) await stopMic(r);
+    if (!open()) return;
+    if (wordless()) {
+      refiled(r, mark);
+      return askWords(r);
+    }
+    const { photoless, note } = (await toBook(r)) ?? {};
     if (!open()) return;
     r.text.value = '';
+    if (note?.group)
+      document.dispatchEvent(new CustomEvent('book:scrap', { detail: { id: note.id, page: note.page } }));
     // (a note that went without its photo says so before the post-it goes)
-    if (photoless) r.msg.textContent = 'In the book. No photo this time.';
-    setTimeout(
-      () => {
-        if (!open()) return;
-        r.sheet.classList.add('away');
-        setTimeout(() => open() && reset(r), 450);
-      },
-      photoless ? 1800 : 0,
-    );
+    if (photoless) r.msg.textContent = 'In the Notebook. No photo this time.';
+    setTimeout(() => open() && away(r), photoless ? 1800 : 0);
   } catch (err) {
     if (!open()) return;
-    r.mode = 'note';
-    r.pinIt.disabled = false;
-    r.msg.textContent = err?.status ? `The book said no: ${err.message}` : 'Could not reach the book. Try again?';
+    refiled(r, mark);
+    r.msg.textContent = err?.status
+      ? `The Notebook said no: ${err.message}`
+      : 'Could not reach the Notebook. Try again?';
   }
 }
+// The note open again as it was, its strokes drawn, Save ready
+function refiled(r, mark) {
+  mark.filed = false;
+  r.mode = 'note';
+  r.pinIt.disabled = false;
+  paintInk(r);
+  nextMark(r);
+}
+function askWords(r) {
+  r.text.focus();
+  r.msg.textContent = 'A word or two first?';
+}
+function away(r) {
+  const mark = r.mark;
+  r.sheet.classList.add('away');
+  setTimeout(() => {
+    if (r.mark !== mark) return;
+    reset(r);
+    nextMark(r);
+  }, 450);
+}
+// The post-it's button: the board's note is saved into its Notebook, a guest's pinned
+export const saveWord = r => (r.outside ? 'Pin it' : 'Save');
 export function setupPostit(r) {
+  r.pinIt.textContent = saveWord(r);
   r.$('[data-cancel]').onclick = () => reset(r);
   // (words typed after any were said: the Pencil keeps its own.)
   if (!r.book) r.text.addEventListener('input', () => (r.typed = true));

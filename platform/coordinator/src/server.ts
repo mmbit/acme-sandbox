@@ -113,6 +113,8 @@ import * as booksearch from './ink/booksearch.ts';   // and its Search.
 import './ink/bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
 import * as sketchbook from './ink/sketchbook.ts';   // and the Sketchbook, its free pages
+import * as notebookguests from './notebookguests.ts';
+import * as notebookguestroom from './notebookguestroom.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
@@ -338,12 +340,14 @@ async function cyclePage(req: IncomingMessage, res: ServerResponse, path: string
 type BoardRoute = (req: IncomingMessage, res: ServerResponse, body: any) => unknown;
 // Its sign-in, before it has a session (auth.ts)
 const signIn: Record<string, BoardRoute> = {
+  'POST /api/notebooks/pair/join': (q, s, b) => pair.joinDevice(q, s, b),
   'POST /api/enroll/options': enrollOptions,
   'POST /api/enroll/verify': enrollVerify,
   'POST /api/login/options': loginOptions,
   'POST /api/login/verify': loginVerify,
 };
 const api: Record<string, BoardRoute> = {
+  'POST /api/notebooks/pair': q => pair.createCode(q),
   // (machines: the machines lent for long runs, live, as GET /api/machines has them, for every look's rig; shows: On
   // Air's, by name and hosts, for Brownstone's recording booth)
   // (studio: the photo studio's darkroom, or null: studio.ts office.)
@@ -448,11 +452,6 @@ const api: Record<string, BoardRoute> = {
   'POST /api/book/page/send': async (q, s, b) => refusal(await booksheets.sendPage(b)),
   'POST /api/book/slip/tick': (q, s, b) => refusal(bookslips.tick(b)),
   'POST /api/book/slip/reply': (q, s, b) => refusal(bookslips.replyTo(b)),
-  // two of the board's devices paired by a one-time code, and their pairing ended (pair.ts; its stream and sends are board
-  // rows).
-  'POST /api/pair': (q, s, b) => refusal(pair.createPair(b)),
-  'POST /api/pair/join': (q, s, b) => refusal(pair.joinPair(b)),
-  'POST /api/pair/end': (q, s, b) => refusal(pair.endPair(b)),
   // the book's words found: notes written, said or typed, and answers
   'GET /api/book/search': (q, s, b) => booksearch.searchBook(b.q),
   // the words in the board's ink, read by a small model (handwriting.ts.)
@@ -467,10 +466,16 @@ const api: Record<string, BoardRoute> = {
   'POST /api/sketches/send': async (q, s, b) => refusal(await sketchbook.sendSketch(Number(b.id))),
   // the Notebook: the shelf, a notebook's pages, a page's groups, a page sent (notebook*.ts; a group's elements are board
   // rows, for their size.).
+  'GET /api/notebooks/guests': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
+  'GET /api/notebooks/guests/list': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
+  'POST /api/notebooks/guests': (q, s, b) => refusal(notebookguests.createNotebook(b)),
+  'POST /api/notebooks/guests/revoke': (q, s, b) => refusal(notebookguests.revokeNotebook(b)),
+  'GET /api/notebooks/guests/pages': (q, s, b) => refusal(notebookguests.listPages(b)),
+  'GET /api/notebooks/guests/groups': (q, s, b) => refusal(notebookguestroom.listBoardGroups(b)),
   'GET /api/notebooks': () => notebook.listNotebooks(),
   'POST /api/notebooks/archive': (q, s, b) => refusal(notebook.archiveNotebook(b)),
-  'GET /api/notebooks/pages': (q, s, b) => refusal(notebook.listPages(b)),
-  'POST /api/notebooks/pages/create': (q, s, b) => refusal(notebook.createPage(b)),
+  'GET /api/notebooks/pages': (q, s, b) => refusal(notebookguests.boardPages(b)),
+  'POST /api/notebooks/pages/create': (q, s, b) => refusal(notebookguests.boardCreatePage(b)),
   'POST /api/notebooks/pages/order': (q, s, b) => refusal(notebook.orderPages(b)),
   'POST /api/notebooks/pages/archive': (q, s, b) => refusal(notebook.archivePage(b)),
   'POST /api/notebooks/pages/title': (q, s, b) => refusal(notebook.titlePage(b)),
@@ -1824,7 +1829,7 @@ const board: RouteTable = {
   // slip's (book.ts, booknotes.ts, bookslips.ts).
   // (who and every book's pictures)
   // (a question typed there asks: booktyped.ts.)
-  'POST /api/book/page/save': boardJson((q, s, b) => inBook(b.who, who => refusal(booktyped.savePage(b, who))), SAVE_MAX),
+  'POST /api/book/page/save': boardJson((q, s, b) => notebookguests.managedPage(Number(b.id)) ? 403 : inBook(b.who, who => refusal(booktyped.savePage(b, who))), SAVE_MAX),
   'POST /api/book/note': boardJson((q, s, b) => refusal(booknotes.addNote(b)), NOTE_MAX),
   'GET /api/book/picture': ({ req, res }) => servePicture(req, res, null),
   'POST /api/book/scrap': ({ req, res, url }) =>
@@ -1835,28 +1840,18 @@ const board: RouteTable = {
   'GET /api/book/snip': ({ req, res }) => booknotes.serveSnip(req, res),
   'GET /api/book/slip/picture': ({ req, res }) => bookslips.serveSlipPicture(req, res),
   // a notebook group's elements, a scrap with its snip, a reply with its ink, and a group's pictures
+  'GET /api/notebooks/guests/pictures': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
+  'GET /api/notebooks/guests/slip/picture': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
+  'GET /api/notebooks/guests/slip/now': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
   'POST /api/notebooks/groups/create': boardJson((q, s, b) => refusal(notebookgroups.createGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/edit': boardJson((q, s, b) => refusal(notebookgroups.editGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(notebookgroups.createScrap(b)), NOTE_MAX),
   'POST /api/notebooks/groups/reply': boardJson(async (q, s, b) => refusal(await notebooksend.replyTo(b)), NOTE_MAX),
   'POST /api/notebooks/pictures': ({ req, res }) => notebookpictures.uploadPicture(req, res),
   'GET /api/notebooks/pictures': ({ req, res }) => notebookpictures.servePicture(req, res),
-  // a paired device's stream, and its events for the other one, over HQ's JSON cap when a mark carries its strokes
-  // (pair.ts).
-  'GET /api/pair/live': ({ req, res, url }) => {
-    const refused = pair.listen(req, res, url.searchParams);
-    return refused && answer(res, refusal(refused));
-  },
-  'POST /api/pair/send': async ({ req, res }) => {
-    const bytes = await readBody(req, pair.SEND_MAX);
-    if (!bytes) return answer(res, 413);
-    const body = parseJson(bytes);
-    return answer(res, body === null ? new Refused(400, 'the body: JSON') : refusal(pair.sendEvents(body)));
-  },
-  // a slip's "now", the note's place cut again from the live page
+  // a slip's current picture and the board's own free-page saves
   'GET /api/book/slip/now': ({ req, res }) => bookslips.serveSlipPicture(req, res, undefined, 'now'),
-  // a sketch's ink and scraps, its picture and a scrap (sketchbook.ts, book.ts; the board sees every book's).
-  'POST /api/sketches/save': boardJson((q, s, b) => refusal(sketchbook.saveSketch(b)), SAVE_MAX),
+  'POST /api/sketches/save': boardJson((q, s, b) => notebookguests.managedPage(Number(b.id)) ? 403 : refusal(sketchbook.saveSketch(b)), SAVE_MAX),
   'GET /api/sketches/picture': ({ req, res }) => servePicture(req, res, null),
   'POST /api/sketches/scrap': ({ req, res }) => book.uploadScrap(req, res, book.BOARD, '/api/sketches'),
   'GET /api/sketches/scrap': ({ req, res }) => book.serveScrap(req, res, null),
@@ -1951,6 +1946,9 @@ const hq = routes({
 
   // From HQ's own pages, or a page of its own without the board's session
   ...wrapped(signIn, (key, handle) => sameOrigin(boardJson(handle, JSON_MAX))),
+  'GET /pair': ({ res }) => send(res, 200, pair.pairPage, 'text/html; charset=utf-8'),
+  'GET /pair/signin.js': hqFile(hqDir('/pairsignin.js'), '/pairsignin.js'),
+  'GET /pair/signin.css': hqFile(hqDir('/pairsignin.css'), '/pairsignin.css'),
   // The guest desk (guests.ts): an outside colleague's page (and its script), opened by its link and a code by email, never by the board's session
   '* /guest/*': sameOrigin(({ req, res }) => guests.page(req, res)),
   // A call out's join link (callouts.ts): its page by its token, never the board's session
@@ -2091,7 +2089,6 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
-  pair.startSweep(); // pairings never joined, left by both devices, or ended a day ago
   watchGazette(); // new posts: a toast in HQ, the unread count, a push
   onair.watchOnAir(); // new episodes: a push
   studio.watch(); // the photo studio's waiting photos, once its key is in.
@@ -2161,7 +2158,6 @@ export function stop(on = server, exit: (code: number) => void = code => process
     void memory.stopModel().then(() => exit(0));
   });
   endAll();
-  pair.endStreams();
   on.closeIdleConnections();
   setTimeout(() => exit(0), 5_000).unref();
 }

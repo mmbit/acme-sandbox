@@ -9,6 +9,7 @@
 //   or brings it back (never My Notebook).
 // Its head holds what's used from here: Search and the phone (bookui.js's overview island). What it reads and does is
 // notebookdata.js's; the grid's numbers bookshelfgrid.js's. Drawn at once from what it read last, read again behind.
+import { showGuestNotebooks } from './bookinvites.js';
 import { esc } from '../../util.js';
 import { island } from './bookui.js';
 // (the Notebook's store)
@@ -194,7 +195,7 @@ function drawShelf(s) {
     'archive',
     'Archive',
     read?.archive.length || '',
-  )}</div>`;
+  )}</div><button type="button" class="bk-far-go" data-invite>Invite</button>`;
   if (!read) return void (s.body.innerHTML = '');
   const books = shelfOrder(archive ? read.archive : read.shelf),
     here = s.here;
@@ -215,6 +216,7 @@ function columns(s) {
 function clicked(s, e) {
   const t = e.target;
   if (s.swallow) return;
+  if (t.closest('[data-invite]')) return showGuestNotebooks();
   if (t.closest('[data-go=shelf]')) return s.hooks.shelf();
   const tab = t.closest('[role=tab]');
   if (tab) return switchTab(s, tab.dataset.tab);
@@ -230,6 +232,7 @@ function clicked(s, e) {
   if (tile.dataset.book) {
     const n = [...s.read.shelf.shelf, ...s.read.shelf.archive].find(b => String(b.id) === tile.dataset.book);
     if (act) return putAway(s, n, act.dataset.act === 'archive');
+    if (n.kind === 'round' || n.kind === 'invited') return showGuestNotebooks(n.id);
     return s.hooks.notebook(n.id);
   }
   const read = s.read.books.get(s.id),
