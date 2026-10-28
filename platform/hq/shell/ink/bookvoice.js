@@ -1,5 +1,5 @@
 // A voice note on a page: held still (a mouse's press, a double tap held: bookinput.js), the book listens where the
-// press is, the words showing as they're heard beside a red pulse; let go, they land there as a box of words on the
+// press is, the words showing as they're heard beside a red dot and its bars moving with the voice; let go, they land there as a box of words on the
 // page (booktexts.js put), one step Undo takes back. Nothing heard, or the microphone blocked, says so and goes. The
 // listening slip is the moment's only: nothing of it stays drawn.
 //
@@ -110,21 +110,37 @@ function slip(down) {
   const el = document.createElement('div');
   el.className = 'bk-voice';
   el.setAttribute('role', 'status');
-  el.innerHTML = '<i class="bk-voice-dot" aria-hidden="true"></i><span>Listening…</span>';
+  el.innerHTML =
+    '<i class="bk-voice-dot" aria-hidden="true"></i><i class="bk-voice-wave" aria-hidden="true">' +
+    '<b></b><b></b><b></b><b></b><b></b></i><span>Listening…</span>';
   Object.assign(el.style, { left: `${down.clientX}px`, top: `${down.clientY}px` });
   (document.getElementById('book') ?? document.body).append(el);
+  onScreen(el);
   return el;
+}
+// Kept on the screen: moved in from a side it would pass, and below the press where there's no room above it, from its
+// layout box (not its rect: it scales in).
+const EDGE = 8,
+  NEAR = 18, // its left edge this far left of the press...
+  ABOVE = 22; // ...and its foot this far above it (bookinput.css)
+function onScreen(el) {
+  const x = parseFloat(el.style.left) - NEAR,
+    y = parseFloat(el.style.top),
+    dx = x < EDGE ? EDGE - x : Math.min(0, innerWidth - EDGE - x - el.offsetWidth);
+  el.style.setProperty('--dx', `${Math.round(dx)}px`);
+  if (y - ABOVE - el.offsetHeight < EDGE) el.dataset.below = '';
 }
 function shown(v) {
   const text = words(v);
-  if (text) v.el.querySelector('span').textContent = text;
+  if (!text) return;
+  v.el.querySelector('span').textContent = text;
+  onScreen(v.el);
 }
-// The dot breathes with the voice's level
+// The dot and the bars move with the voice's level
 function pulse(v) {
-  const dot = v.el.querySelector('.bk-voice-dot');
   const step = () => {
     if (v.done) return;
-    dot.style.setProperty('--lvl', String(Math.min(1, v.rec?.level?.() ?? 0)));
+    v.el.style.setProperty('--lvl', String(Math.min(1, v.rec?.level?.() ?? 0)));
     v.frame = requestAnimationFrame(step);
   };
   v.frame = requestAnimationFrame(step);
@@ -132,5 +148,6 @@ function pulse(v) {
 function say(v, message) {
   v.el.dataset.state = 'said';
   v.el.querySelector('span').textContent = message;
+  onScreen(v.el);
   setTimeout(() => v.el.remove(), SAID_MS);
 }

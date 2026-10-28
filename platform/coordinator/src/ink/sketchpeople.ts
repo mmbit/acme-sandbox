@@ -27,7 +27,7 @@ db.exec(`create table if not exists sketch_guests (id integer primary key autoin
 // Everyone invited (guests.ts invite: on a share, a checklist, or by a guest asking a colleague) has a book of their
 // own at the address they have now (the one they had there before comes back as it was): the board draws with them in
 // it, so it is given, never asked for. The same grant puts the notes they write on a preview the board shares with them
-// on the board's open sheet for its owner (feedback.ts, a share's note), in their colour with their name (guestOf).
+// in the board's Notebook for its owner (feedback.ts, a share's note), signed as theirs (guestOf).
 export function give(name: string) {
   const email = guests.emailOf(name);
   if (!email || grantOf(name)) return;

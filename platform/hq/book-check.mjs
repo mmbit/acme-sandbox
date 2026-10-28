@@ -61,6 +61,7 @@ import { findStory, keptStory } from './bookfind.mjs';
 import { writtenStory } from './bookwritten.mjs';
 import { mouseStories } from './bookmouse.mjs';
 import { drawStories } from './bookdraw.mjs';
+import { highlightStories } from './bookhighlight.mjs';
 import { spaceStories } from './bookspace.mjs';
 import { deskStories, notPaper, inkPixels } from './bookdesk.mjs';
 import { frameStories } from './bookframe.mjs';
@@ -84,7 +85,7 @@ import { notebookPlay } from './shell/ink/notebookplay.js';
 import { notebookStories } from './booknotebook.mjs';
 import { notebookAskStories } from './booknotebookasks.mjs';
 import { notebookRowStories } from './booknotebookrow.mjs';
-import { scrapStories, savedScrap } from './bookscrap.mjs'; // (the pin flow)
+import { scrapStories, savedScrap, talked } from './bookscrap.mjs'; // (the pin flow)
 import { groupsOf } from './bookplayed.mjs';
 // (LOOKS: job #19359)
 import { morningStory, everyWidthStory, LOOKS } from './bookfilm.mjs';
@@ -262,26 +263,6 @@ function sheetStore(path, body, q) {
 }
 function store(path, body, q) {
   if (path === '/api/book') return { day: '2026-10-26', today: '2026-10-26', days: [], pages };
-  // (a live call's notes page, made as it's picked up: in today's book, a page of My Notebook.)
-  if (path === '/api/notebooks/call') {
-    let page = pages.find(p => p.kind === 'call' && p.call === body.call && p.notebook);
-    if (!page)
-      pages.push(
-        (page = {
-          id: ++ids,
-          day: '2026-10-26',
-          kind: 'call',
-          call: body.call,
-          notebook: 1,
-          label: '',
-          x: 0,
-          y: 0,
-          w: 1024,
-          h: 768,
-        }),
-      );
-    return { notebook: page.notebook, page, day: page.day };
-  }
   if (path === '/api/book/page/new') {
     const page = { id: ++ids, day: '2026-10-26', ...body }; // (its day)
     pages.push(page);
@@ -437,6 +418,8 @@ async function hqIn(browser, viewport = IPAD_MINI.viewport, { notebooks, ...more
   context.on('close', heard);
   await context.route(`${base}/api/**`, async r => {
     const url = new URL(r.request().url());
+    if (url.pathname === '/api/notebooks/call')
+      return r.fulfill({ json: callPage(context.notebook, r.request().postDataJSON()) });
     if (url.pathname.startsWith('/api/notebooks') || url.pathname === '/api/book/search') {
       if (r.request().method() === 'GET') carryNotes(context.notebook);
       return notebookRoute(r, url, context.notebook);
@@ -515,6 +498,16 @@ function carryNotes(play) {
 const unseen = () => Buffer.from(SNIP.split(',')[1], 'base64');
 // The Notebook's routes answered by a story's play (notebookplay.js): a refusal as the coordinator's, the posts kept
 // (a picture's as its type and size).
+// A live call's notes page, as the store makes it at pickup (ink/callnotes.ts openFor): a new page of My Notebook,
+// titled for the call, the same page at the call's every ask
+const callPages = new Map();
+function callPage(play, { call }) {
+  const mine = play.route('/api/notebooks').shelf.find(n => n.kind === 'mine').id;
+  const key = `${mine} ${call}`;
+  if (!callPages.has(key)) callPages.set(key, play.route('/api/notebooks/pages/create', {}, { notebook: mine }).id);
+  const page = play.route('/api/notebooks/pages/title', {}, { id: callPages.get(key), title: 'Call with Lyra, 15:34' });
+  return { notebook: mine, page, day: page.created.slice(0, 10) };
+}
 function notebookRoute(r, url, play) {
   const req = r.request(),
     picture = url.pathname === '/api/notebooks/pictures';
@@ -601,6 +594,7 @@ function STORIES() {
     ...notesPageStories({ hqIn, base, shot, settled, noErrorsIn, MINI, DESKTOP, PHONE }),
     // (the drawing tools: the eraser, shapes, Select, Undo and Redo, with a mouse and the Pencil.)
     ...drawStories({ hqIn, base, store, pages, notebook, shot, settled, settle: SETTLE_MS }),
+    ...highlightStories({ hqIn, base, pages, notebook, shot, settled }),
     // (the paper's space: every way, the pinch, never frozen.)
     ...spaceStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, settle: SETTLE_MS }),
     // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
@@ -1630,7 +1624,7 @@ async function redAt(x, y) {
 }
 
 // ---- a ring round something on HQ's page: no button, no veil, and nothing moves at the lift; its number at it, the
-// words said while drawing, no picture taken in, and Send. look: what the stills' names end in. Returns the note sent
+// words said once its post-it's mic is tapped (never at the ring: the board, call 154), no picture taken in, and Send. look: what the stills' names end in. Returns the note sent
 // and how much moved at the lift.
 async function ringed(look) {
   const url = new URL(page.url()),
@@ -1639,7 +1633,7 @@ async function ringed(look) {
   const loop = ring(372, 330, 150, 60),
     clip = { x: 372 - 175, y: 330 - 85, width: 350, height: 170 };
   await pen(loop, { lift: false });
-  // (a ring takes a moment to draw: the mic, on from the pen's touch, is listening by its end)
+  // (a ring takes a moment to draw)
   await page.waitForTimeout(1500);
   const { wet, dry } = await lifting(clip);
   // (the mark's number may land in the very frame of the lift, its disc in the clip's top left 32 px, 64 device px:
@@ -1657,7 +1651,8 @@ async function ringed(look) {
   // a lone mark carries no number: numbers only tell several apart (shared/review/notenumbers.js)
   assert.ok(!(await redAt(372 - 150 - 6, 330 - 60 - 6)), `a lone mark shows no number${look}`);
   await shot(`book-pencil-ring${look}`, page);
-  // (its post-it, saved: a scrap on the Notebook's newest page, the page clean at once.)
+  // (its post-it, its mic tapped, saved: a scrap on the Notebook's newest page, the page clean at once.)
+  await talked(page);
   const sent = await savedScrap({ page, posts }, from, `the ring${look}`);
   assert.ok(
     posts.filter(p => p.path === '/api/book/page/new' && p.body.url === here).length <= 1,
@@ -1671,7 +1666,7 @@ async function ringed(look) {
     Math.abs(Math.min(...sent.anchor.ink[0].points.map(p => p[0])) - 222) < 6,
     'its ink in document px, where it was drawn',
   );
-  assert.match(sent.words, /shorter/, 'the words said while drawing are its words');
+  assert.match(sent.words, /shorter/, 'the words said into its mic are its words');
   assert.equal(sent.said, 'spoken');
   assert.match(sent.snip ?? '', /^data:image\/jpeg;base64,/, 'a snip of the page around it goes with it');
   await shot(`book-pencil-sent${look}`, page);

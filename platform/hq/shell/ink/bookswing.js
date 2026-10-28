@@ -41,7 +41,7 @@ const NUDGE = -1.4;
 // blur off on this device, for good (a plain fade instead): the prototype's "measure, then fall back"
 const SLOW_FRAME = 1 / 45;
 // The book's own shadow on HQ's page grows in over the last this much of its drop (px of height over the page)
-const REST = 240;
+const SHADOW_GROW_PX = 240;
 // Landed or shut, HQ's page stays gone while it lays itself out in its new room: two frames, then whatever its own
 // transitions and animations do about it, at most this long (ms); then it comes back in over about three of these (s)
 const SETTLE_MAX = 450,
@@ -134,12 +134,12 @@ function begin(a, w) {
 }
 // Back at rest: the swing's own drawing taken off (book.js's layout has the parts)
 function rest() {
-  root.classList.remove('bk-swinging', 'bk-lifted');
+  root.classList.remove('bk-swinging');
   for (const el of [parts.edge, parts.leaf, parts.lip]) el.style.transformOrigin = '';
   cast.style.visibility = 'hidden';
   shade.style.opacity = 0;
   block.style.transform = '';
-  root.style.removeProperty('--bk-rest');
+  for (const el of [parts.edge, parts.table]) el.style.removeProperty('--bk-shadow');
 }
 
 function run() {
@@ -237,7 +237,6 @@ function draw() {
   // the book lies over all of it)
   const tab = Math.max(innerWidth - Math.max(0, reachAt(a, b)), geo.over ? lipWidth : 0);
   parts.lip.style.transform = `translate3d(${(tab - geo.x).toFixed(2)}px, 0, 0)`;
-  root.classList.toggle('bk-lifted', a > 0.002);
   shade.style.opacity = (0.22 * Math.sin(a)).toFixed(3);
   block.style.transform = `scaleX(${Math.sin(a).toFixed(3)})`;
   // (the shadow reaches past the board's edge the higher it's held, as a light above and behind the screen would throw
@@ -250,9 +249,11 @@ function draw() {
   cast.style.transform = `translate3d(${sl.toFixed(1)}px, ${(z * 0.03).toFixed(1)}px, 0) scaleX(${(Math.max(0, x) / (innerWidth - geo.x)).toFixed(4)})`;
   cast.firstChild.style.opacity = (dark * lift).toFixed(3);
   cast.lastChild.style.opacity = (dark * (1 - lift)).toFixed(3);
-  // (the book's own shadow on the page beside it grows in over the last REST px of its drop, as the cast draws in
-  // under it, and goes as it lifts: never popping in as it lands. The board's call 152)
-  root.style.setProperty('--bk-rest', ((1 - Math.min(1, z / REST)) ** 2).toFixed(3));
+  // (the book's own shadow on the page beside it grows in over the last SHADOW_GROW_PX of its drop, as the cast draws
+  // in under it, and goes as it lifts; set on the shadows' own hosts, as on #book it would restyle the whole notebook
+  // every frame.)
+  const shadow = ((1 - Math.min(1, z / SHADOW_GROW_PX)) ** 2).toFixed(3);
+  for (const el of [parts.edge, parts.table]) el.style.setProperty('--bk-shadow', shadow);
 }
 
 // HQ's page dissolving as the board lowers and back in, sharp, in its new room (never where the book lies over it)

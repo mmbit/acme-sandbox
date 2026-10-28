@@ -20,14 +20,15 @@
 //     board wrote on it, and goes by itself if not (walkthroughs.ts sweeps one HQ couldn't).
 //   - The call's notes page (the coordinator's ink/callnotes.ts) is open from pickup: the book turns to it if it's open,
 //     with a page brought by its folded corner on it first (bookshare.js), and the agent's scraps land there one by
-//     one (asked twice at pickup, and a card says so if it couldn't be opened). A scrap doesn't open the shut book:
-//     HQ's book doesn't draw a notebook's groups yet (the pin flow's layer). Hung up, the store sends the page and
-//     archives it.
+//     one (asked twice at pickup, and a card says so if it couldn't be opened). The first to land opens the book there,
+//     where it lies beside HQ's page (a desktop, an iPad in landscape); on a phone or in portrait it stays shut. Hung
+//     up, the store sends the page, which stays in My Notebook. (opens)
 import { esc } from '../../util.js';
 import { minimise, share, shown } from '../callscreen.js';
 import { aimed } from '../calldrive.js';
 import { cardOf } from '../callcards.js'; // (the call engine's)
 import { inkOf } from './agentink.js'; // (an agent's ink, shared with the store's typed answers)
+import { initial, shapeOf } from './booklayout.js';
 
 const $ = s => document.querySelector(s);
 const event = (name, detail = null) => document.dispatchEvent(new CustomEvent(name, { detail }));
@@ -69,14 +70,32 @@ export function startDrawing(c) {
   document.addEventListener('call:noted', onNoted);
   addEventListener('pointerdown', onPen, true);
   for (const type of pen) addEventListener(type, penMoved, true);
+  const unwatch = openOnFirstNote(c);
   notesPage(c);
   c.drawing = () => {
+    unwatch();
     document.removeEventListener('pencil:note', onNote);
     document.removeEventListener('call:noted', onNoted);
     removeEventListener('pointerdown', onPen, true);
     for (const type of pen) removeEventListener(type, penMoved, true);
   };
   event('call:on', { call: c.call, agent: c.agent, name: c.name, color: c.color, walk: c.walk });
+}
+// The call's notes page: the agent's first note on it while the book is shut opens it there, where it lies beside HQ's
+// page; once a call, so a book the board shuts stays shut. The page's own news, made or titled, isn't a note. → its
+// stop
+function openOnFirstNote(c) {
+  // (book.js read when it's needed: it imports the desk, which imports the call)
+  const onPage = async e => {
+    if (c.over || c.notesOpened || !c.notesPage || e.detail?.page !== c.notesPage.id) return;
+    if (initial(shapeOf(innerWidth, innerHeight)).mode !== 'open') return;
+    if (!(await agentWrote(c, c.notesPage.id)) || c.over || c.notesOpened) return;
+    c.notesOpened = true;
+    const { bookLayout, openAt } = await import('./book.js');
+    if (bookLayout()?.mode === 'folded') openAt({ page: c.notesPage.id, notebook: c.notesPage.notebook });
+  };
+  document.addEventListener('book:notebook', onPage);
+  return () => document.removeEventListener('book:notebook', onPage);
 }
 // The call's notes page, made as the call is picked up (with the page brought to it, c.brought), and the book turned to
 // it if it's open. Asked once more if the network dropped the ask; one the store still can't make, the board hears of
@@ -86,13 +105,18 @@ async function notesPage(c) {
   try {
     const r = await ask().catch(ask);
     if (!r.ok) throw new Error(`the store answered ${r.status}`);
-    const { page } = await r.json();
-    c.notesPage = { id: page.id };
+    const { page, notebook } = await r.json();
+    c.notesPage = { id: page.id, notebook };
     if (!c.over) event('book:paged', { page: page.id });
   } catch (err) {
     console.error("HQ: the call's notes page", err);
     if (!c.over) notesCard(c);
   }
+}
+// Whether the call's agent has a note on the page (a group of its own: a scrap or its typed words)
+async function agentWrote(c, page) {
+  const r = await fetch(`/api/notebooks/pages/groups?page=${page}`, { credentials: 'same-origin' }).catch(() => null);
+  return !!r?.ok && (await r.json()).groups.some(g => g.by === c.agent);
 }
 function notesCard(c) {
   const card = cardOf(c, 'notes');

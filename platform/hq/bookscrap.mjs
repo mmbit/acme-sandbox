@@ -102,7 +102,8 @@ async function savedOnHq(s, { spoken, what = '' }) {
   await landedHeard(page);
   await markOnHq(s);
   const sheet = await postIt(s, page, s.screen.viewport);
-  if (!spoken) await sheet.locator('textarea').fill(`Tighten this line${what && `, ${what}`}`);
+  if (spoken) await talked(page);
+  else await sheet.locator('textarea').fill(`Tighten this line${what && `, ${what}`}`);
   await s.shot(s.named(`postit${what && `-${what}`}`), page);
   await sheet.locator('.send').dispatchEvent('click'); // (a tap: no navigation to wait for)
   // rule zero: nothing of the mark on the screen the moment it's saved (its ink lifted into the book)
@@ -372,6 +373,19 @@ async function posted(s, from, path, what) {
 // ---- for the other stories: a mark on HQ, its post-it saved as the board does (shown, Save tapped), the mark gone
 // from the screen at once (rule zero); the body of the scrap it posted. on: { page, posts }; from: the posts before the
 // mark; what: where, for the asserts
+// The post-it's mic tapped, the words said as they're heard, and tapped again: the mark never started it (the board,
+// call 154). The stand-in voice line's words (book-check.mjs's voiceLine).
+export async function talked(page) {
+  const sheet = page.locator(ui('.sheet')),
+    mic = sheet.locator('.mic'),
+    heard = re => until(async () => re.test(await sheet.locator('textarea').inputValue()), 15_000);
+  await sheet.waitFor({ state: 'visible', timeout: 15_000 });
+  assert.equal(await mic.evaluate(b => b.classList.contains('on')), false, 'the mark started no recording');
+  await mic.click();
+  assert.ok(await heard(/^Make this$/), 'the words come as they’re said, once the mic is tapped');
+  await mic.click();
+  assert.ok(await heard(/shorter$/), 'tapped again, the last words come in');
+}
 export async function savedScrap({ page, posts }, from, what) {
   const sheet = page.locator(ui('.sheet'));
   await sheet.waitFor({ state: 'visible', timeout: 15_000 }); // (its photo first: slow on a loaded worker)

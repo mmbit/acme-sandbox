@@ -1365,6 +1365,11 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   // them: hq job --notes); hq route log --since: every note sent since then, with
   // its times (routing.ts).
   'GET /api/agent/route': (b, me) => (me.agent === ceo() ? { text: routing.read(me) } : 403),
+  // hq guestnotes: the CEO reads where invited people's notes wait in the board's Notebook, and sends one owner's on the
+  // board's word (notebooksend.ts).
+  'GET /api/agent/guestnotes': (b, me) => (me.agent === ceo() && !me.call ? notebooksend.guestNotes() : 403),
+  'POST /api/agent/guestnotes/send': async (b, me) =>
+    me.agent === ceo() && !me.call ? refusal(await notebooksend.sendGuestNotes(b)) : 403,
   'POST /api/agent/route': (b, me) => {
     if (me.agent !== ceo()) return 403;
     const notes = Array.isArray(b.notes) ? [...new Set<number>(b.notes.map(Number))] : [];

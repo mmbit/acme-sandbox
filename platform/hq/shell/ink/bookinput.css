@@ -1,23 +1,36 @@
 /* A held press's parts (bookinput.js): the voice note's listening slip at the press (bookvoice.js) and the radial
    menu round the pen (bookradial.js). Both are the moment's only: gone once it's over. */
 
-/* ---- the listening slip: a red pulse at the press, the words as they're heard beside it */
+/* ---- the listening slip: a small pill beside the press, a red dot with its ripples and a few bars that move with the
+   voice, the words as they're heard after them. Its own size and place: the book's own parts fill the screen's height
+   (book.css's #book > *), which made it a tall box shifted off the screen; bookvoice.js keeps it on screen (--dx, and
+   data-below where there's no room above the press). */
+#book > .bk-voice {
+  height: auto;
+}
 .bk-voice {
   position: fixed;
   z-index: 61;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: min(360px, 70vw);
-  padding: 7px 12px 7px 9px;
-  border-radius: 18px;
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 8px 14px 8px 12px;
+  border-radius: 20px;
   background: var(--bk-paper, #fffaf0);
   color: var(--bk-ink, #2a2352);
   box-shadow: var(--bk-lift);
   font: 600 14px/1.3 var(--bk-font, system-ui, sans-serif);
-  transform: translate(-14px, calc(-100% - 18px));
+  translate: calc(-18px + var(--dx, 0px)) calc(-100% - 22px);
+  transform-origin: 18px 100%;
   pointer-events: none;
-  animation: bk-voice-in 0.14s ease-out;
+  animation: bk-voice-in 0.22s cubic-bezier(0.3, 1.5, 0.5, 1);
+}
+.bk-voice[data-below] {
+  translate: calc(-18px + var(--dx, 0px)) 26px;
+  transform-origin: 18px 0;
 }
 .bk-voice span {
   overflow: hidden;
@@ -25,35 +38,102 @@
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
 }
+/* the dot, swelling a little with the voice, and two ripples spreading from it while it listens */
 .bk-voice-dot {
   position: relative;
   flex: none;
-  width: 12px;
-  height: 12px;
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: #d0443a;
+  scale: calc(1 + 0.3 * var(--lvl, 0));
+  transition: scale 0.08s;
 }
-.bk-voice-dot::before {
+.bk-voice-dot::before,
+.bk-voice-dot::after {
   content: '';
   position: absolute;
   inset: 0;
   border-radius: 50%;
+  border: 2px solid #d0443a;
+  animation: bk-voice-ripple 1.6s ease-out infinite;
+}
+.bk-voice-dot::after {
+  animation-delay: 0.8s;
+}
+/* the bars: each its own share of the level, never still while it listens */
+.bk-voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: 18px;
+}
+.bk-voice-wave b {
+  width: 3px;
+  height: calc(4px + 14px * var(--lvl, 0) * var(--k, 1));
+  min-height: 4px;
+  border-radius: 2px;
   background: #d0443a;
-  opacity: 0.35;
-  transform: scale(calc(1 + 1.6 * var(--lvl, 0)));
-  transition: transform 0.08s;
+  transition: height 0.08s;
+  animation: bk-voice-bar 0.9s ease-in-out infinite alternate;
 }
-.bk-voice[data-state='writing'] .bk-voice-dot,
-.bk-voice[data-state='said'] .bk-voice-dot {
+.bk-voice-wave b:nth-child(1) {
+  --k: 0.55;
+}
+.bk-voice-wave b:nth-child(2) {
+  --k: 0.9;
+  animation-delay: -0.3s;
+}
+.bk-voice-wave b:nth-child(3) {
+  --k: 1;
+  animation-delay: -0.6s;
+}
+.bk-voice-wave b:nth-child(4) {
+  --k: 0.75;
+  animation-delay: -0.15s;
+}
+.bk-voice-wave b:nth-child(5) {
+  --k: 0.45;
+  animation-delay: -0.45s;
+}
+/* writing the words, or a message: the dot grey and still, the bars gone */
+.bk-voice[data-state] .bk-voice-dot {
   background: var(--bk-muted, #5a5478);
+  scale: 1;
 }
-.bk-voice[data-state] .bk-voice-dot::before {
+.bk-voice[data-state] .bk-voice-dot::before,
+.bk-voice[data-state] .bk-voice-dot::after,
+.bk-voice[data-state] .bk-voice-wave {
   display: none;
+}
+.bk-voice[data-state='writing'] .bk-voice-dot {
+  animation: bk-voice-writing 0.8s ease-in-out infinite alternate;
 }
 @keyframes bk-voice-in {
   from {
     opacity: 0;
-    transform: translate(-14px, calc(-100% - 12px));
+    scale: 0.6;
+  }
+}
+@keyframes bk-voice-ripple {
+  from {
+    opacity: 0.6;
+    scale: 1;
+  }
+  to {
+    opacity: 0;
+    scale: 2.6;
+  }
+}
+@keyframes bk-voice-bar {
+  to {
+    scale: 1 1.35;
+  }
+}
+@keyframes bk-voice-writing {
+  to {
+    opacity: 0.35;
   }
 }
 
@@ -121,6 +201,9 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .bk-voice,
+  .bk-voice-dot::before,
+  .bk-voice-dot::after,
+  .bk-voice-wave b,
   .bk-radial::before,
   .bk-radial .bk-btn {
     animation: none;

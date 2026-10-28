@@ -17,7 +17,7 @@ import { DIR } from './pagescraps.ts';
 import { rmSync } from 'node:fs';
 
 // kind: 'mine' (a person's own, where pins and their notes go, and a call's notes page: ink/callnotes.ts), 'round' (a
-// guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows. (no 'call' kind)
+// guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows.
 db.exec(`create table if not exists notebooks (id integer primary key autoincrement, who text not null, kind text not null,
   name text not null default '', archived integer not null default 0, created text not null, updated text not null);
   create index if not exists notebooks_who on notebooks (who)`);
@@ -85,12 +85,19 @@ export function mine(who = BOARD) {
   const found = db.prepare("select * from notebooks where who = ? and kind = 'mine'").get(who) as Notebook | undefined;
   if (found && !uncarried(who)) return found;
   return inOneStep(() => {
-    const id = found?.id ?? makeNotebook(who, 'mine', 'My Notebook');
+    const id = ownNotebook(who);
     // (notes written the old way since land on the current page: every screen showing it reads it again.)
     const late = carryInto(id, who, () => currentPage(id));
     if (late) changed(id, late);
     return notebookRow(id, who)!;
   });
+}
+// A person's own notebook's id, made if there's none, their old book not carried in (a call's notes page takes it so:
+// ink/callnotes.ts.)
+export function ownNotebook(who: string) {
+  const found = db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(who) as
+    { id: number } | undefined;
+  return found?.id ?? makeNotebook(who, 'mine', 'My Notebook');
 }
 export function makeNotebook(who: string, kind: Notebook['kind'], name: string) {
   const now = new Date().toISOString();
@@ -169,18 +176,22 @@ export function currentPage(notebook: number) {
 export function newPage(notebook: number) {
   const n = db.prepare('select who from notebooks where id = ?').get(notebook) as { who: string },
     now = new Date().toISOString();
-  const { last } = db.prepare('select max(pos) last from book_pages where notebook = ?').get(notebook) as {
-    last: number | null;
-  };
   const id = Number(
     db
       .prepare(
         "insert into book_pages (who, day, kind, label, created, updated, w, h, notebook, pos) values (?, ?, 'free', '', ?, ?, ?, ?, ?, ?)",
       )
-      .run(n.who, companyDay(Date.now()), now, now, NEW_PAGE.w, NEW_PAGE.h, notebook, (last ?? -1) + 1).lastInsertRowid,
+      .run(n.who, companyDay(Date.now()), now, now, NEW_PAGE.w, NEW_PAGE.h, notebook, endOf(notebook)).lastInsertRowid,
   );
   changed(notebook, id);
   return id;
+}
+// The place after a notebook's last page
+export function endOf(notebook: number) {
+  const { last } = db.prepare('select max(pos) last from book_pages where notebook = ?').get(notebook) as {
+    last: number | null;
+  };
+  return (last ?? -1) + 1;
 }
 // A page has changed: its box grows round its groups, its picture is drawn again when next read, its notebook moves up
 // the shelf, and every screen showing it reads it again

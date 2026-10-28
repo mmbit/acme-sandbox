@@ -11,8 +11,8 @@
 //     agent or call before the board has seen it. Nothing sends one but fromReview's test; HQ's tray shows those
 //     still waiting.
 //   - Any job reads every page (hq sketches, hq sketch <id>), and a board call's agent one by number or label words
-//     (bookreads.ts): the board shares its book with the whole team. A call's page reads as its call does (who may read
-//     a call about a customer, memory.ts callAccess). An invited person's are theirs, outside text.
+//     (bookreads.ts): the board shares its book with the whole team, a call's pages too (but a call about a card for
+//     keys: its own). An invited person's are theirs, outside text.
 //   - The Sketchbook's screens and an invited person's room read and write their sketches, the free pages,
 //     through sketchbook.ts.
 import { existsSync, mkdirSync, rmSync, utimesSync } from 'node:fs';

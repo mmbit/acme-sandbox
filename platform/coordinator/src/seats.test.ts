@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
 import { harness } from './harness.ts';
+import { SEAT_ID, SEAT_RULE } from '../../worker/src/seatid.ts';
 
 const h = await harness('seats', {
   before: repo =>
@@ -394,4 +395,14 @@ test('a paced seat reaches HQ as the worker last reported it, and stops being on
   await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', week: 0.8, pace: true });
   await worker('seat', { seat: 'claude-1', engine: 'claude', state: 'ready', week: 0.8 });
   assert.equal((await seat('claude-1')).pace, null);
+});
+
+test("a seat's name: dash-separated lowercase parts with digits anywhere after the first letter", async () => {
+  for (const id of ['claude-team-2', 'claude-team2'])
+    assert.equal((await board('/api/seats/add', { id, provider: 'anthropic-key', key: KEY })).body.ok, true, id);
+  assert.ok((await list()).seats.some(s => s.id === 'claude-team-2'));
+  for (const id of ['codex-team-b-3', 'claude-1', 'codex-board', 'mistral-1']) assert.ok(SEAT_ID.test(id), id);
+  for (const id of ['claude', '2claude-1', 'claude--2', '-claude-2', 'claude-2-', 'Claude-2', 'claude 2', 'claude_2', 'claude-2/x'])
+    assert.ok(!SEAT_ID.test(id), id);
+  assert.equal((await board('/api/seats/add', { id: 'claude--2', provider: 'anthropic-key', key: KEY })).body.error, SEAT_RULE);
 });

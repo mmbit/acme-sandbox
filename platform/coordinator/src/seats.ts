@@ -4,6 +4,7 @@
 import { db, remember, setting } from './db.ts';
 import { yamlFile } from './company.ts';
 import { createRequest, endRequest, releaseSeat, setSeat } from './jobs.ts';
+import { SEAT_ID, SEAT_RULE } from '../../worker/src/seatid.ts';
 
 // The work the worker runs comes in two engines: `claude`, the company's own work, and `codex`, the share a model of
 // another family takes (the second opinion in reviews). A seat runs one CLI at one provider, and takes its provider's
@@ -78,8 +79,6 @@ const PLATFORM_PROVIDERS: Provider[] = [
 // A seat from the worker's SEATS setting signs in as its engine's subscription.
 const SUBSCRIPTION: Record<Engine, string> = { claude: 'anthropic', codex: 'openai' };
 
-// A seat's id names its folder on the worker: a lowercase name, a dash, then digits or a lowercase word (the worker's SEAT_ID).
-const SEAT_ID = /^[a-z]+-([0-9]+|[a-z]+)$/;
 const PROVIDER_ID = /^[a-z][a-z0-9-]{1,30}$/;
 const MODEL = /^[\w.:/@-]{1,100}$/;
 const KEY_MAX = 1000,
@@ -263,8 +262,7 @@ export function listSeats() {
 
 export function addSeat(b: Record<string, unknown>) {
   const id = String(b.id ?? '').trim();
-  if (!SEAT_ID.test(id))
-    return "A seat's name is a lowercase word, a dash, then a number or another word, like claude-4 or mistral-1.";
+  if (!SEAT_ID.test(id)) return SEAT_RULE;
   if (db.prepare('select 1 from seat_list where id = ?').get(id)) return `There's already a seat called ${id}.`;
   const made = b.provider === 'new' ? boardProvider(b) : findProvider(String(b.provider ?? ''));
   if (typeof made === 'string') return made;

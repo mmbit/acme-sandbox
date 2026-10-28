@@ -12,8 +12,6 @@ const { ORIGIN } = await import('../config.ts');
 const { onPublish } = await import('../events.ts');
 const ledger = await import('../ledger.ts');
 const jobs = await import('../jobs.ts');
-const booksheets = await import('./booksheets.ts');
-const { SEND_MS } = await import('./booknotes.ts');
 const callnotes = await import('./callnotes.ts');
 const { handOver } = await import('../call.ts');
 const { moveGroup, deleteGroup } = await import('../notebookgroups.ts');
@@ -426,66 +424,40 @@ test("a call page the shelf carried into My Notebook is the call's notes page th
   assert.equal(myNotebook().archived, 0, 'My Notebook stays on the shelf');
 });
 
-test("a customer call's notes page reads as the call does, and the jobs made from it hold the customer's details", async () => {
-  const { call, token } = await h.liveCall('juno');
-  const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
-  await h.board('/api/book/note', {
-    page,
-    anchor,
-    words: 'their address goes here',
-    said: 'spoken',
-    snip: `data:image/png;base64,${THREE.toString('base64')}`,
-  });
-  const region = { x: 0, y: 0, width: 1 / 3, height: 1 };
-  await h.voice('scrap', { call, from: 'note 1', region, words: "Show the customer's address here", owner: 'kit' });
-  await h.voice('scrap', { call, from: 'note 1', region, words: 'And their order number' });
-  ledger.add(
-    call,
-    { kind: 'promise', owner: 'kit', what: 'Call the customer back', goal: 'Sorted', quote: 'call' },
-    null,
-  );
+test("a call's notes page reads like any page, a customer call's too; a call about a card for keys keeps its own", async () => {
   const sketches = async (token: string, archived = '') =>
     ((await h.agent(`sketches${archived}`, token)).body.sketches as { id: number }[]).map(p => p.id);
-  const kit = await h.start({ agent: 'kit' });
-  // (while it's live, only the jobs working on the call read it)
-  assert.ok(!(await sketches(kit.token)).includes(page));
-  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 404);
-
-  // A look-up later in the call hands it a customer's details: what the page holds is theirs from then on
-  jobs.readerHanded({ id: 0, agent: 'juno', callId: call });
-  // (another call's agent finds it as hq call would: about a customer, not for wren)
-  const other = await h.liveCall('wren');
-  assert.equal((await h.voice('sketch', { call: other.call, sketch: `#${page}` })).status, 404);
-  await h.voice('call-end', { agent: 'wren', lines: ['Board: hello.'], token: other.token });
-  await h.voice('call-end', { agent: 'juno', lines: ['Board: put their address here.'], token });
-  await until(() => pageNow(page).archived === 1, 'the page was sent and archived');
-
-  // An unrelated job is refused the page with why, and holds nothing; roles.customerData reads it and holds them
-  assert.ok(!(await sketches(kit.token, '?archived=1')).includes(page));
-  const refused = await h.agent(`sketch?id=${page}`, kit.token);
-  assert.equal(refused.status, 403);
-  assert.match(refused.body.error, /is about a customer/);
   const holds = async (job: number) => (await h.worker('customers', { job })).body.customers as boolean;
-  assert.equal(await holds(kit.id), false);
-  const vera = await h.start({ agent: 'vera' });
-  assert.ok((await sketches(vera.token, '?archived=1')).includes(page));
-  assert.equal(await holds(vera.id), true, 'listing its title holds them');
-  assert.equal((await h.agent(`sketch?id=${page}`, vera.token)).status, 200);
+  const kit = await h.start({ agent: 'kit' });
+  const { call, token } = await h.liveCall('juno');
+  db.prepare('update calls set customers = 1 where id = ?').run(call);
+  const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
+  await h.board('/api/book/note', { page, anchor, words: 'the colours here', said: 'spoken' });
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
+  await until(() => pageNow(page).archived === 1, 'the page was sent and archived');
+  assert.ok((await sketches(kit.token, '?archived=1')).includes(page));
+  assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 200);
+  assert.equal(await holds(kit.id), false, 'and nothing marked');
 
-  // Sent: kit's task, and the CEO's check that routes the scrap nobody owns, hold them
-  booksheets.deliverDue(Date.now() + SEND_MS);
-  const made = (
-    db
-      .prepare(
-        `select s.owner, s.job from notebook_groups g join book_notes n on n.id = g.note join book_sheets s on s.id = n.sheet
-          where g.page = ? and g.kind = 'scrap' order by g.id`,
-      )
-      .all(page) as { owner: string | null; job: number }[]
-  ).map(s => [s.owner, jobs.holdsCustomerData(s.job)]);
-  assert.deepEqual(made, [
-    ['kit', true],
-    [null, true],
-  ]);
+  const card = jobs.createRequest({
+    kind: 'credential',
+    title: 'A key',
+    body: 'b',
+    agent: 'wren',
+    secrets: 'CALLNOTES_TEST_KEY',
+  }) as {
+    id: number;
+  };
+  const keys = await h.liveCall('wren');
+  const kept = (await h.board('/api/notebooks/call', { call: keys.call })).body.page.id as number;
+  await h.board('/api/book/note', { page: kept, anchor, words: 'where it goes', said: 'spoken' });
+  await h.voice('call-end', { agent: 'wren', lines: ['Board: done.'], token: keys.token });
+  await until(() => pageNow(kept).archived === 1, 'the page was sent and archived');
+  db.prepare('update calls set request = ? where id = ?').run(card.id, keys.call); // (the call the card was rung about)
+  assert.ok(!(await sketches(kit.token, '?archived=1')).includes(kept));
+  assert.equal((await h.agent(`sketch?id=${kept}`, kit.token)).status, 404);
+  const wren = await h.start({ agent: 'wren' });
+  assert.equal((await h.agent(`sketch?id=${kept}`, wren.token)).status, 200, "its own agent's");
 });
 
 test("the call engine's split: the watch-along, the screen and the line's drawing and driving read nothing of Ink", () => {

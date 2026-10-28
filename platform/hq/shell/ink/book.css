@@ -61,12 +61,12 @@
   background: repeating-conic-gradient(#d4d4d4 0 25%, #f4f4f4 0 50%) 0 0 / 32px 32px;
   filter: blur(var(--bk-blur, 0px));
 }
-/* (the resting book's shadow: the cast's while it's lifted, growing in as it drops: --bk-rest, bookswing.js) */
+/* (the resting book's shadow: the cast's while it's lifted, growing in as it drops: --bk-shadow, bookswing.js.) */
 #book .bk-table::after {
   box-shadow:
     0 6px 18px rgba(0, 0, 0, 0.45),
     0 1px 3px rgba(0, 0, 0, 0.5);
-  opacity: var(--bk-rest, 1);
+  opacity: var(--bk-shadow, 1);
 }
 /* the book's leaf: the cover's board, its squares showing round the paper (booklook.css draws the board), the paper
    on it (bookpages.js fills .bk-paper) up to the spine, and the controls over the paper */
@@ -175,7 +175,8 @@
   touch-action: none;
   cursor: ew-resize;
 }
-/* the book's strong shadow on HQ's page beside it (a blur of about 30 px at 0.8 black), on HQ's side only */
+/* the book's strong shadow on HQ's page beside it (a blur of about 30 px at 0.8 black), on HQ's side only, growing in
+   as the book drops: --bk-shadow, bookswing.js */
 #book .bk-edge::before {
   content: '';
   position: absolute;
@@ -192,7 +193,7 @@
     transparent
   );
   pointer-events: none;
-  opacity: var(--bk-rest, 1);
+  opacity: var(--bk-shadow, 1);
 }
 #book .bk-edge::after {
   content: '';
@@ -269,8 +270,7 @@
 /* ---- the swing (bookswing.js): the board opening and shutting round its spine. Its shadow on HQ's page, soft while
    it's high and tight near the surface (two layers blurred once, crossfaded and scaled: nothing re-blurred per frame);
    the page face's shade; the page block's edge at the outer edge, showing as the board lifts. The book's own shadow on
-   the page beside it is the cast's while it's lifted, and grows back in with its drop, rather than popping in as it
-   lands (the board's call 152). */
+   the page beside it is the cast's while it's lifted, and grows back in with its drop. */
 #book .bk-cast {
   right: 0;
   top: calc(var(--bk-top) + 8px);

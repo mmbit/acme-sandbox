@@ -102,6 +102,8 @@ export default (g, { W, C, R, lite, fg, outdoors, parcel, figure }) => {
 node shared/covers/render.mjs knowledge/posts/<date>-<slug>/cover.js --recent   # writes cover.png, and a sheet of it
                                                                                 # next to the feed's last six
 node shared/covers/render.mjs --all                                             # every post's cover
+node shared/covers/render.mjs <x.js…> --out=<dir> --scale=8 --sheet              # other drawings (a theme's): into
+                                                                                # <dir> at 8x, and a sheet of only those
 ```
 
 Then look at the sheet before you publish: is the new cover readable at card size, and does it look unlike the

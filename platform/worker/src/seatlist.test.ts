@@ -67,24 +67,31 @@ test("the worker's seats follow HQ's list: new ones start, changes are heard, an
       listed('claude-1'),
       listed('mistral-1', { provider: 'mistral', sign_in: 'key', url: 'https://x.example' }),
       listed('bad id'),
+      listed('claude-team-2'),
+      listed('claude--3'),
     ],
     w.hooks,
   );
-  assert.deepEqual(w.said, ['start claude-1', 'start mistral-1', 'drop codex-1']);
+  assert.deepEqual(w.said, ['start claude-1', 'start mistral-1', 'start claude-team-2', 'drop codex-1']);
   assert.deepEqual(
     w.seats.map(s => [s.id, s.signIn, s.url]),
     [
       ['claude-1', 'login', undefined],
       ['mistral-1', 'key', 'https://x.example'],
+      ['claude-team-2', 'login', undefined],
     ],
   );
   w.said.length = 0;
   applyList(
     w.seats,
-    [listed('claude-1', { paused: true }), listed('mistral-1', { sign_in: 'key', url: 'https://x.example' })],
+    [
+      listed('claude-1', { paused: true }),
+      listed('mistral-1', { sign_in: 'key', url: 'https://x.example' }),
+      listed('claude-team-2'),
+    ],
     w.hooks,
   );
-  applyList(w.seats, [listed('claude-1'), listed('mistral-1', { sign_in: 'key' })], w.hooks);
+  applyList(w.seats, [listed('claude-1'), listed('mistral-1', { sign_in: 'key' }), listed('claude-team-2')], w.hooks);
   assert.deepEqual(w.said, ['changed claude-1 off', 'changed claude-1 on']);
   // a seat held off at this start (its login move failed) isn't brought back by the list
   w.hooks.held.add('claude-7');

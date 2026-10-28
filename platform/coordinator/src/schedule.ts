@@ -1,6 +1,5 @@
 // Recurring work from company/schedule.yaml: every minute, due entries become jobs (once per slot).
-import { readFileSync, existsSync } from 'node:fs';
-import { parse } from 'yaml';
+import { readFileSync } from 'node:fs';
 import { db } from './db.ts';
 import { REPO_DIR } from './config.ts';
 import { createJob, WORK_LEAD } from './jobs.ts';
@@ -10,22 +9,9 @@ import * as meetings from './meetings.ts';
 import { oneTaskThread } from './made.ts';
 import { projectDone } from './projectdone.ts';
 import { endedEmpty } from './threadends.ts';
+// (the entries and their projects in schedulelist.ts, which tools read too)
+import { type Entry, entries, projectOf, routineProjectsOf } from './schedulelist.ts';
 
-// downtime: true runs the entry on spare capacity only (jobs.ts claim), for maintenance.
-// week: "k of n" runs the entry one week in n, so a rotation of n entries costs one job a week (the refactoring pass).
-// model, effort: a light check can run cheaper than its agent does (a model id or alias for the agent's engine).
-// kind: what infra/report.sh's usage per kind of job counts the entry's jobs as, the reviews and fixes of their pull
-// requests included ("refactoring": the refactoring passes, so the process review sees their share).
-// routine: a recurring job every company runs, from shared/routines/<name>.md: its text first, then the entry's own prompt.
-// project: the id of the routine's project its runs go to (keepProjects), else the entry's own; entries that take turns at
-// one task (the security audits) name one. An entry names no thread: each run is a thread of its own, which ends.
-// with: other agents: at its time a meeting of the entry's agent and those (meetings.ts), its prompt the brief, instead
-// of one job.
-// code: the word of its runs' task code (jobcodes.ts), each entry its own, which no queuer may claim (jobcodes.ts
-// standingWords); a show's from shows.yaml. Without one, each run's agent names its own; a meeting's (with:) has no one
-// to name it, so an entry with `with:` needs one.
-type Entry = { id: string; agent: string; at: string; title: string; prompt?: string; downtime?: boolean; week?: string;
-  model?: string; effort?: string; kind?: string; routine?: string; with?: string[]; code?: string; project?: string };
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], FULL = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 // A moment on the company's clock: its weekday as schedule.yaml writes it, its day and its time
@@ -33,15 +19,6 @@ function local(d: Date) {
   const f = companyFormats(), date = f.dayAt(d.getTime());
   return { day: DAYS[new Date(`${date}T12:00:00Z`).getUTCDay()], date, time: f.time(d.getTime(), 'en') };
 }
-
-// The entries: schedule.yaml's, and one per show in shows.yaml (On Air, shared/routines/show.md), whose job the show's
-// producer (its first host unless named) runs from the show's own settings there. A show with no time runs on demand only.
-type Show = { id: string; name: string; at?: string; hosts: string[]; producer?: string; code?: string }; // (code)
-const read = <T>(name: string): T[] => { const file = `${REPO_DIR}/company/${name}`;
-  try { return existsSync(file) ? parse(readFileSync(file, 'utf8')) ?? [] : []; } catch (err) { console.error(`Could not read ${name}:`, err); return []; } };
-export const entries = (): Entry[] => [...read<Entry>('schedule.yaml'), ...read<Show>('shows.yaml').map(s => ({ id: `show-${s.id}`,
-  agent: s.producer ?? s.hosts?.[0], at: s.at ?? '', title: `On Air: ${s.name}`, routine: 'show', code: s.code,
-  prompt: `The show: \`${s.id}\` in company/shows.yaml.` }))];
 
 // An entry is due from its time until the end of that day, so a restart around the slot doesn't skip it. Its runs go to
 // its routine's project, so the projects come first: if they fail, no entry runs.
@@ -131,16 +108,12 @@ function meet(e: Entry, slot: string, brief: string, code: string | undefined) {
 // and opens again if one comes back. An entry whose project id another project holds runs nowhere till it names its own
 // (routineProject).
 export const ROUTINES = 'schedule.yaml';
-export const projectOf = (e: Pick<Entry, 'id' | 'project'>) => e.project ?? e.id;
 function keepProjects(list: Entry[]) {
-  const now = new Date().toISOString(), kept = new Set(list.map(projectOf));
+  const now = new Date().toISOString(), projects = routineProjectsOf(list), kept = new Set(projects.map(p => p.id));
   const keep = db.prepare(`insert into projects (id, name, owner, created, by) values (?, ?, ?, ?, '${ROUTINES}')
     on conflict(id) do update set name = excluded.name, owner = excluded.owner, status = 'open', done = null
     where projects.by = '${ROUTINES}' and (name, owner, status) is not (excluded.name, excluded.owner, 'open')`);
-  for (const id of kept) {
-    const first = list.find(e => projectOf(e) === id)!;
-    keep.run(id, first.title, first.agent, now);
-  }
+  for (const p of projects) keep.run(p.id, p.name, p.owner, now);
   for (const p of routineProjects()) if (!kept.has(p.id)) projectDone(p.id, p.owner);
   intoThreads(list);
 }

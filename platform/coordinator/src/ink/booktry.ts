@@ -11,17 +11,13 @@
 //   - One run per note at a time: a note written on the group or one of its versions while its try still runs goes to
 //     that run (a message its hook hands the session at its next step; one not started yet takes it in its brief).
 //   - On a call the run's the same; the call's agent writes text answers itself (answer_note: callanswer.ts), so onCall
-//     tells the quick run's caller to leave the note to it. A call about a customer's details (memory.ts customerCall),
-//     live or ended, hands them on with the note (charter rule 7): the run holds them (customers), its title and its
-//     versions page's label leave the words out, a later note reaches it as a customer's message, and the versions page
-//     is the call's (book_pages.call), so its reads and the replies on it go as the call's do.
+//     tells the quick run's caller to leave the note to it.
 import { readFileSync } from 'node:fs';
 import { db, lacks } from '../db.ts';
 import { ceo, companyDay } from '../company.ts';
-import { createJob, findAgent, handedCustomerData } from '../jobs.ts';
+import { createJob, findAgent } from '../jobs.ts';
 import * as feedback from '../feedback.ts';
 import { forRun } from '../messages.ts';
-import { customerCall } from '../memory.ts';
 import { changed, pageRow } from '../notebook.ts';
 import { row as groupRow, type Group } from '../notebookgroups.ts';
 import { row as bookPage } from './book.ts';
@@ -120,26 +116,21 @@ const callOf = (page: number) => bookPage(page, null)?.call ?? null;
 export function tryNow(t: Target, verdict: { id: number; why: string }) {
   const o = on(t);
   if (!o) return null;
-  const call = callOf(o.page);
-  const customers = call !== null && customerCall(call);
   const going = openTry(o);
   if (going) {
-    toRun(going, o, t, customers);
+    toRun(going, o, t);
     return going.id;
   }
-  const page = versionsPage(o, call, customers);
+  const page = versionsPage(o);
   const kept = o.kind === 'note' ? keep(o.root, null) : null;
   const job = createJob({
     agent: o.owner,
     kind: 'try',
-    title: customers
-      ? "Versions for the board's note on a call"
-      : `Versions for the board's note: ${oneLine(o.words) || 'a drawing'}`.slice(0, 140),
+    title: `Versions for the board's note: ${oneLine(o.words) || 'a drawing'}`.slice(0, 140),
     prompt: tryBrief(o, page, verdict, kept?.id ?? null),
     queuedBy: 'hq',
     expedite: true,
     thread: null,
-    customers,
   }).id;
   if (kept) feedback.fromBook(kept.from, job);
   db.prepare(`update ${o.kind === 'group' ? 'notebook_groups' : 'book_notes'} set tried = ? where id = ?`).run(
@@ -150,15 +141,13 @@ export function tryNow(t: Target, verdict: { id: number; why: string }) {
   return job;
 }
 
-// A later note while the run goes: the session hears it at its next step; one not started yet takes it in its brief.
-// customers: the note is on a call about a customer's details, so the run holds them from then on (and so the line).
-function toRun(going: { id: number; status: string }, o: On, t: Target, customers: boolean) {
+// A later note while the run goes: the session hears it at its next step; one not started yet takes it in its brief
+function toRun(going: { id: number; status: string }, o: On, t: Target) {
   const later = t.grp ? groupRow(t.grp) : t.note ? noteRow(t.note) : undefined;
   const words = oneLine(later?.words ?? '') || '(ink only: `hq sketch` the page to see it)';
   const on = later && 'answers' in later && later.answers ? ` on version ${versionName(later.answers)}` : '';
   const line = `The board wrote again on the note you're trying${on}: “${words}”. Take it into the versions still to \
 come, or make one more for it, clipped the same way.`;
-  if (customers) handedCustomerData(going.id);
   if (going.status === 'running') return forRun(o.owner, line, going.id);
   db.prepare("update jobs set prompt = prompt || ? where id = ? and status = 'queued'").run(`\n\n${line}`, going.id);
 }
@@ -168,9 +157,8 @@ const versionName = (slip: number) => {
 };
 
 // The versions page: right after the note's page in its notebook (between it and the next), made once per note; an old
-// book's page has no order but its day's, so it goes last in the day. The note's call's, if it's on one: a customer's
-// leaves the words out of its label.
-function versionsPage(o: On, call: number | null, customers: boolean) {
+// book's page has no order but its day's, so it goes last in the day
+function versionsPage(o: On) {
   const column = o.kind === 'group' ? 'tries' : 'tries_note';
   const found = db.prepare(`select id from book_pages where ${column} = ?`).get(o.root.id) as
     { id: number } | undefined;
@@ -191,15 +179,15 @@ function versionsPage(o: On, call: number | null, customers: boolean) {
   const pos = p.notebook === null ? null : next === null ? (p.pos ?? 0) + 1 : ((p.pos ?? 0) + next) / 2;
   const now = new Date().toISOString(),
     name = findAgent(o.owner)?.name ?? o.owner;
-  const whole = `${name} tries: ${customers ? "the board's note on a call" : oneLine(o.words) || 'a drawing'}`;
+  const whole = `${name} tries: ${oneLine(o.words) || 'a drawing'}`;
   const title = whole.length > LABEL_MAX ? `${whole.slice(0, LABEL_MAX - 1)}…` : whole;
   const id = Number(
     db
       .prepare(
-        `insert into book_pages (who, day, kind, label, created, updated, w, h, notebook, pos, call, ${column})
-          values (?, ?, 'free', ?, ?, ?, 1200, 1600, ?, ?, ?, ?)`,
+        `insert into book_pages (who, day, kind, label, created, updated, w, h, notebook, pos, ${column})
+          values (?, ?, 'free', ?, ?, ?, 1200, 1600, ?, ?, ?)`,
       )
-      .run(p.who, companyDay(Date.now()), title, now, now, p.notebook, pos, call, o.root.id).lastInsertRowid,
+      .run(p.who, companyDay(Date.now()), title, now, now, p.notebook, pos, o.root.id).lastInsertRowid,
   );
   if (p.notebook !== null) changed(p.notebook, id);
   return id;

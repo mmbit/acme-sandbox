@@ -1,12 +1,13 @@
-// Review mode's notes on a product preview (feedback.ts saveNote), into the board's book: each one a note on the open
-// sheet for the product's owner (a cycle folder's maker; HQ's the Process role's), on today's sheet page for that
-// owner. Nothing on a sheet reaches an agent until the board taps the plane in HQ, behind its sign-in, after seeing the
-// notes there (booksheets.ts send), so a note the product's own code posted waits with the rest, in plain sight.
+// Review mode's notes on a product preview (feedback.ts saveNote), into the board's book: each one a scrap on the
+// newest page of the board's My Notebook, for the product's owner (a cycle folder's maker; HQ's the Process role's),
+// the board's own and an invited person's alike. Nothing there reaches an agent
+// until the board sends that page in HQ, behind its sign-in, after seeing the notes on it (notebooksend.ts), so a note
+// the product's own code posted waits with the rest, in plain sight.
 //   - The note keeps its anchor (anchor.js v1: the page's whole address, the element, the view, the lines) and its
 //     words. Its snip is the screenshot around the mark, with the pictures added to it below, in one picture (the book
 //     keeps one a note). Its trail, the element's HTML and the browser it was seen on stay out: the book has no place
 //     for them.
-//   - A note's words never ask from here: only the board's own, in HQ (booknotes.ts addNote).
+//   - A note's words never ask from here: only the board's own, in HQ.
 //   - The limits review mode always had hold: PER_HOUR notes an hour for each writer on each product, the ink's and
 //     pictures' caps, and no screenshot while the disk is low (feedback.ts).
 import { readFileSync } from 'node:fs';
@@ -39,8 +40,7 @@ const OVER_HOUR = {
   status: 429,
   error: `${feedback.PER_HOUR} notes in an hour is the most, so a page stuck in a loop can't flood the book. Try again in a while.`,
 };
-type Booked = { ok: true; id: number; n: number; owner: string; name: string };
-// The note review mode posted (feedback.ts saveNote's body) on its owner's sheet. by: who wrote it ('board', or an
+// The note review mode posted (feedback.ts saveNote's body), for its owner, in the board's Notebook. by: who wrote it ('board', or an
 // invited guest's 'guest:<grant>'). open: checked after the snip is cut, before anything is written (a guest's link may
 // have ended meanwhile).
 export async function toBook(
@@ -50,7 +50,7 @@ export async function toBook(
   b: any,
   by = BOARD,
   open: () => feedback.Refusal | null = () => null,
-): Promise<feedback.Refusal | Booked | Scrap> {
+): Promise<feedback.Refusal | Scrap> {
   const words = feedback.words(b?.note, WORDS_CUT);
   if (!words) return { status: 400, error: 'bad note' };
   const page = feedback.localPath(b.page, host, base),
@@ -58,7 +58,7 @@ export async function toBook(
   if (overHour(by, feedback.urlOf(host, base, '/'))) return OVER_HOUR;
   const tooMuch = feedback.overInk(b);
   if (tooMuch) return tooMuch;
-  const { element, viewport, shot } = feedback.markOf(b, url);
+  const { element, shot } = feedback.markOf(b, url);
   const full = feedback.noRoomFor(shot);
   if (full) return full;
   const added = feedback.picturesIn(b?.pictures);
@@ -80,33 +80,18 @@ export async function toBook(
   const { v, el, view, ink, video } = element,
     anchor = { v, url: element.url, el, view, ink, video };
   const said = b.said === 'spoken' ? 'spoken' : 'typed';
-  // The board's own note is a scrap on the newest page of My Notebook, not on a sheet (the board's pin flow, 27 Oct):
-  // it reaches the owner when the board sends that page. A guest's still joins the board's sheet.
-  const note = { anchor, words, said, snip, owner, name };
-  if (by === BOARD) return scrapped(slug, page, note);
-  return onSheet(slug, page, note, sheetPageFor(owner, url, viewport.w, viewport.h).id, by);
-}
-// A guest's note on the board's sheet for the owner
-function onSheet(slug: string, page: string, b: Scrapped, sheetPage: number, by: string): feedback.Refusal | Booked {
-  const { anchor, words, said, snip, owner, name } = b;
-  const noted = addNote({ page: sheetPage, anchor, words, said, snip }, BOARD, false, null, by);
-  if (typeof noted === 'number') return { status: noted, error: 'no such page' };
-  if (isRefused(noted)) return { status: noted[0], error: noted[1] };
-  // (no words here: they're page-controlled until the board has looked at them)
-  publish({
-    type: 'log',
-    agent: owner,
-    text: `A review note on ${owed.about(slug, page)} is on the board's sheet for ${name}`,
-  });
-  return { ok: true, id: noted.note.id, n: noted.note.n, owner, name };
+  // A note is a scrap on the newest page of the board's My Notebook, not on a sheet (the board's pin flow, 27 Oct): it
+  // reaches the owner when the board sends that page. An invited person's too, theirs (by), where the board sees its own
+  // (a sheet's notes had no view since the pin flow)
+  return scrapped(slug, page, { anchor, words, said, snip, owner, name }, by);
 }
 
-// The board's note as a scrap (notebookscraps.ts createScrap), heard by the owner's log as a sheet's note was
-function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | Scrap {
+// The note as a scrap (notebookscraps.ts createScrap), heard by the owner's log as a sheet's note was
+function scrapped(slug: string, page: string, b: Scrapped, by: string): feedback.Refusal | Scrap {
   // (its lines only in its snip, never on its anchor: rule zero, the board's, 2026-10-27)
   const anchor = { ...(b.anchor as object), ink: [] };
   // (no notebook asked for: My Notebook, made when there's none, so never createScrap's 404)
-  const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }, BOARD) as Exclude<
+  const g = createScrap({ anchor, words: b.words, said: b.said, snip: b.snip, owner: b.owner }, BOARD, by) as Exclude<
     ReturnType<typeof createScrap>,
     number
   >;

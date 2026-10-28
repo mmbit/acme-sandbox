@@ -250,9 +250,13 @@ async function tapStory(c) {
     await tap(c, page, '#tap-dialog');
     assert.equal(c.posts.length, from, 'nothing went to the book');
     assert.equal(await page.evaluate(() => window.micsAsked), 0, 'nor to the microphone: a tap is heard by nobody');
-    // a ring's line, once it's no tap, listens
+    // a ring's line doesn't listen either: its post-it's mic does, once tapped (the board, call 154)
     await page.evaluate(() => document.querySelector('dialog').close());
     await c.penOn(page)(c.ring(400, 640, 80, 45));
+    await page.locator(ui('.sheet')).waitFor({ state: 'visible', timeout: 15_000 });
+    await page.waitForTimeout(1000);
+    assert.equal(await page.evaluate(() => window.micsAsked), 0, 'a ring records nothing by itself');
+    await page.locator(ui('.sheet .mic')).click();
     await page.waitForFunction(() => window.micsAsked === 1, null, { timeout: 3000 });
     await c.shot('circle-tap', page);
     c.noErrorsIn(errors);

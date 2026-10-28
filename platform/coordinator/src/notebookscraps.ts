@@ -16,8 +16,9 @@ import { insertGroup, partsOf, shown, type Group } from './notebookgroups.ts';
 const STACK = { x: 40, gap: 32, w: 360, top: 80 }; // (top: under the page's heading)
 
 // POST /api/notebooks/groups/scrap { anchor, words?, said?, snip, owner?, notebook? }: a scrap onto the current page of
-// a notebook (My Notebook by default), stacked under what's on it: the snip (a PNG or JPEG data URL) its picture
-export function createScrap(b: any, who = BOARD) {
+// a notebook (My Notebook by default), stacked under what's on it: the snip (a PNG or JPEG data URL) its picture.
+// by: who wrote it, the notebook's own person, or an invited person's note on a share in the board's (ink/bookreview.ts)
+export function createScrap(b: any, who = BOARD, by = who) {
   const nb = b?.notebook === undefined ? mine(who) : notebookRow(Number(b.notebook), who);
   if (!nb) return 404;
   const anchor = anchorOf(b.anchor);
@@ -29,7 +30,7 @@ export function createScrap(b: any, who = BOARD) {
   // (no snip, review mode's general note: its words typed, stacked as a scrap.)
   if (b.snip == null) {
     if (!said.words) return [400, 'a note with no picture holds words', 'noteEmpty'] as Refused;
-    const g = stackWords(pageRow(currentPage(nb.id), who)!, who, said.words, {
+    const g = stackWords(pageRow(currentPage(nb.id), who)!, by, said.words, {
       anchor,
       owner: b.owner ?? null,
       said: said.said,
@@ -40,13 +41,13 @@ export function createScrap(b: any, who = BOARD) {
   if (isRefused(snip)) return snip;
   const big = tooBig(snip.clean);
   if (big) return big;
-  const g = stackPicture(pageRow(currentPage(nb.id), who)!, who, snip, {
+  const g = stackPicture(pageRow(currentPage(nb.id), who)!, by, snip, {
     anchor,
     words: said.words,
     said: said.said,
     owner: b.owner ?? null,
   });
-  if (who === BOARD) judgeLater({ grp: g.id }); // (a ring without words too)
+  if (by === BOARD) judgeLater({ grp: g.id }); // (a ring without words too; the board's own)
   return shown(g);
 }
 // A scrap of a picture on a page, under what's on it (a call's notes page's too: ink/callnotes.ts.)
@@ -69,7 +70,7 @@ export function stackPicture(
     };
   return insertGroup(p, 'scrap', who, { ...emptyGroup, pictures: [picture] }, more);
 }
-// Typed words on a page, under what's on it (a call agent's notes too: ink/callnotes.ts)
+// Typed words on a page, under what's on it (a call agent's notes too: ink/callnotes.ts.)
 export function stackWords(
   p: NotebookPage,
   who: string,

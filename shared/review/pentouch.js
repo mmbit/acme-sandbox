@@ -3,7 +3,7 @@
 import { under } from './layer.js';
 import { audioContext, canRecord, startMic, stopMic } from './dictation.js';
 import { reset } from './acts.js';
-import { TAP_MS as PEN_TAP_MS, TAP_PX, distance, isTap } from './tap.js';
+import { distance, isTap } from './tap.js';
 import { settleSoon } from './settle.js';
 import { across } from './postit.js';
 import { holdMs } from './prefs.js';
@@ -38,8 +38,8 @@ const TAP_SLOP = 12;
 
 // The pen on the page: down, then moved past MOVE, draws (the line from where it touched); held still, listens; a
 // quick tap that would start a mark is a click (tap.js), its line thrown away.
-// p: the pen's state, { down: its pointerdown, drawing, timer: a hold's or the mic's, reach: the farthest it got from down, in px, mic: the
-// pointer whose touch may start the mic, ctx: the audio context made at that touch, until the mic starts with it }
+// p: the pen's state, { down: its pointerdown, drawing, timer: a hold's, reach: the farthest it got from down, in px, mic: the
+// pointer whose hold may start the mic, ctx: the audio context made at that touch, until the mic starts with it }
 // (a line drawn, a voice note or a tap clicked here is no click of the browser's on what the pen lifted over: its next
 // one goes, and a click this file makes passes)
 function noClick() {
@@ -72,15 +72,16 @@ const penDown = (r, p, begin) => e => {
   Object.assign(p, { down: e, drawing: false, reach: 0 });
   // (a pen held this still this long starts a voice note: the device's own hold, prefs.js.)
   p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), holdMs());
-  // off a call the mic listens from a new mark's first line, once it can't be a tap, or a held note (on one, the call
-  // hears: callnotes.js): a tap never opens it (house rule 7). Its audio context is made here, at the pen's touch, a
-  // gesture, so Safari lets it run; a paired page's mark goes to the other screen with no mic
+  // off a call the mic listens only for a held note (on one, the call hears: callnotes.js): a circle or a tap never
+  // starts it, the mic button on its post-it does (the board, call 154). Its
+  // audio context is made here, at the pen's touch, a gesture, so Safari lets it run; a paired page's mark goes to the
+  // other screen with no mic
   if (!r.call && r.mode === 'idle' && canRecord && !r.rec && !r.stopping && !across(r)) {
     p.mic = e.pointerId;
     p.ctx = audioContext();
   }
 };
-// The mic, for the mark or held note this touch began
+// The mic, for the held note this touch began
 const listen = (r, p) => {
   if (!p.ctx) return;
   startMic(r, p.ctx);
@@ -94,17 +95,13 @@ const penMove = (r, p) => e => {
     clearTimeout(p.timer);
     p.drawing = r.pencil.start(p.down);
     if (!p.drawing) return (p.down = null);
-    // (the mic once the line can't be a tap: past a tap's time, or its reach below. tap.js)
-    const down = p.down;
-    p.timer = setTimeout(() => p.down === down && listen(r, p), PEN_TAP_MS - (performance.now() - down.timeStamp));
   }
-  if (p.reach >= TAP_PX) listen(r, p);
   e.stopPropagation();
   r.pencil.move(e);
 };
 const penUp = (r, p) => e => {
-  // (the mic it started stops unheard if no mark began: a tap, or a touch that drew nothing; one it never started has
-  // only its audio context to close)
+  // (the mic a hold started stops unheard if no mark began; a touch that never held has only its audio context to
+  // close)
   if (p.mic === e.pointerId) {
     p.mic = null;
     if (p.ctx) p.ctx.close();
