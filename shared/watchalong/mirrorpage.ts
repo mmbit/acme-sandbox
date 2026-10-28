@@ -114,4 +114,7 @@ export const OWN: Record<string, Own> = {
   '/replay.css': { type: 'text/css', file: 'style.css' },
   '/strokes.js': { type: 'text/javascript', url: new URL('strokes.js', import.meta.url) },
   '/ink.js': { type: 'text/javascript', url: new URL('../review/ink.js', import.meta.url) },
+  // (ink.js's live line and the stroke's shapes, which it imports)
+  '/inklive.js': { type: 'text/javascript', url: new URL('../review/inklive.js', import.meta.url) },
+  '/inkshape.js': { type: 'text/javascript', url: new URL('../review/inkshape.js', import.meta.url) },
 };

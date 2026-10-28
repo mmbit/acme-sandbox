@@ -1,6 +1,7 @@
 // What's going on right now, as a call hears it (call.ts's briefing, and hq now: the eta tool with no query): everyone
 // HQ counts at work, each on its run with its seat, thread and window and, while a hold is on, why it runs; and each
 // open desk phone card with the work that waits on it.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { org, companyTime } from './company.ts';
 import { boardId, findAgent, nameOf, paused, held, pauseAllowed, pauseLets, FOLLOW_THROUGH } from './jobs.ts';
@@ -122,7 +123,7 @@ function runLine(r: Run) {
   const since = r.started ? `, since ${at(r.started)}` : '';
   const where = r.thread
     ? `in "${r.thread_name}" (${r.project}), ${r.deadline ? `window to ${companyTime(r.deadline)}` : 'no window'}`
-    : 'in no thread';
+    : 'in no deliverable';
   return `#${r.id}, ${r.agent}: ${nameOf(r)} (${what}${r.seat ? ` on ${r.seat}` : ''}${since}), ${where}.`;
 }
 
@@ -146,8 +147,8 @@ function through(r: Run, h: Holds) {
         ? `it started before ${p.target} was paused (${at(p.at)}), and a pause doesn't stop a run under way`
         : `${p.target} is paused since ${at(p.at)}, yet this started after it: a leak`,
     );
-  else if (!r.thread) reasons.push('it is in no thread, so no project or thread pause reaches it');
-  else if (h.pauses.length) reasons.push(`its thread isn't paused${r.deadline ? ' (it has a window)' : ''}`);
+  else if (!r.thread) reasons.push('it is in no deliverable, so no project or deliverable pause reaches it');
+  else if (h.pauses.length) reasons.push(`its deliverable isn't paused${r.deadline ? ' (it has a window)' : ''}`);
   return reasons.join('; ');
 }
 
@@ -218,7 +219,7 @@ function waitingOn(card: number, f: Forecast, decided: pauses.Pause[]) {
   ];
   return parts.length
     ? `${parts.join('; ')}.`
-    : "nothing in HQ waits on it: no job is queued after it, no thread's plan counts on it and no pause waits for it.";
+    : "nothing in HQ waits on it: no job is queued after it, no deliverable's plan counts on it and no pause waits for it.";
 }
 
 const threadName = (id: string) =>

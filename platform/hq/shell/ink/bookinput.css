@@ -1,0 +1,128 @@
+/* A held press's parts (bookinput.js): the voice note's listening slip at the press (bookvoice.js) and the radial
+   menu round the pen (bookradial.js). Both are the moment's only: gone once it's over. */
+
+/* ---- the listening slip: a red pulse at the press, the words as they're heard beside it */
+.bk-voice {
+  position: fixed;
+  z-index: 61;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(360px, 70vw);
+  padding: 7px 12px 7px 9px;
+  border-radius: 18px;
+  background: var(--bk-paper, #fffaf0);
+  color: var(--bk-ink, #2a2352);
+  box-shadow: var(--bk-lift);
+  font: 600 14px/1.3 var(--bk-font, system-ui, sans-serif);
+  transform: translate(-14px, calc(-100% - 18px));
+  pointer-events: none;
+  animation: bk-voice-in 0.14s ease-out;
+}
+.bk-voice span {
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}
+.bk-voice-dot {
+  position: relative;
+  flex: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #d0443a;
+}
+.bk-voice-dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: #d0443a;
+  opacity: 0.35;
+  transform: scale(calc(1 + 1.6 * var(--lvl, 0)));
+  transition: transform 0.08s;
+}
+.bk-voice[data-state='writing'] .bk-voice-dot,
+.bk-voice[data-state='said'] .bk-voice-dot {
+  background: var(--bk-muted, #5a5478);
+}
+.bk-voice[data-state] .bk-voice-dot::before {
+  display: none;
+}
+@keyframes bk-voice-in {
+  from {
+    opacity: 0;
+    transform: translate(-14px, calc(-100% - 12px));
+  }
+}
+
+/* ---- the radial menu: the tools in a ring round the pen, the one it points at inked */
+.bk-radial {
+  position: fixed;
+  z-index: 61;
+  width: 0;
+  height: 0;
+}
+.bk-radial::before {
+  content: '';
+  position: absolute;
+  left: -96px;
+  top: -96px;
+  width: 192px;
+  height: 192px;
+  border-radius: 50%;
+  background: rgba(255, 250, 240, 0.72);
+  box-shadow: var(--bk-lift);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: bk-radial-in 0.14s ease-out;
+}
+.bk-radial .bk-btn {
+  position: absolute;
+  left: 0;
+  top: 0;
+  translate: calc(var(--dx) - 50%) calc(var(--dy) - 50%);
+  background: var(--bk-paper, #fffaf0);
+  box-shadow: 0 0 0 1px var(--bk-edge);
+  animation: bk-radial-in 0.14s ease-out;
+}
+.bk-radial .bk-btn[aria-checked='true'] {
+  box-shadow: inset 0 0 0 2px var(--bk-ink, #2a2352);
+  color: var(--bk-ink, #2a2352);
+}
+.bk-radial .bk-btn[data-sliding] {
+  background: var(--bk-ink, #2a2352);
+  color: var(--bk-paper, #fffaf0);
+}
+/* the tool's name under the one pointed at */
+.bk-radial-name {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 50%;
+  translate: -50% 0;
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: var(--bk-ink, #2a2352);
+  color: var(--bk-paper, #fffaf0);
+  font: 600 12px/1.25 var(--bk-font, system-ui, sans-serif);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+}
+.bk-radial .bk-btn[data-sliding] .bk-radial-name {
+  opacity: 1;
+}
+@keyframes bk-radial-in {
+  from {
+    opacity: 0;
+    scale: 0.85;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .bk-voice,
+  .bk-radial::before,
+  .bk-radial .bk-btn {
+    animation: none;
+  }
+}

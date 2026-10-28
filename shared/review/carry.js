@@ -5,7 +5,8 @@
 //
 // The book hears it as document events, never through its DOM: 'book:tape' (cancelable), detail { phase, x, y,
 // picture }. phase 'over' as the finger moves (the book cancels it while the point is over its paper), 'drop' as it lets
-// go (the book cancels it if it takes the picture: a promise of a PNG blob). platform/hq/shell/booktape.js answers.
+// go (the book cancels it if it takes the picture: a promise of a PNG blob). platform/hq/shell/ink/booktape.js answers
+// (Ink's folder).
 
 // a finger moves this far inside the ring before the cut-out lifts (less is a tap, the page's)
 const LIFT_PX = 8;

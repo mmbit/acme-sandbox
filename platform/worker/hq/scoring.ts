@@ -36,7 +36,7 @@ type WaitPart = 'line' | 'line_review' | 'order' | 'after' | 'card_or_time' | 'f
 const WAIT_WORDS: Record<WaitPart, string> = {
   line: 'in line for a start (the machine)',
   line_review: 'only review steps in that line',
-  order: 'held for the task before (threads in order)',
+  order: 'held for the task before (deliverables in order)',
   after: "another branch's job, its review and merge",
   card_or_time: 'a card, a time or an event',
   fix_drawn: 'a fix still to be drawn',
@@ -107,16 +107,16 @@ export async function calibration(days: URLSearchParams) {
 }
 
 function threads(t: Threads) {
-  print('', 'Threads: the pull requests merged in the window, by their thread.');
+  print('', 'Deliverables: the pull requests merged in the window, by their deliverable.');
   if (!t.count) return print('  none merged.');
   const each = (n: number, of: number) => Math.round((n / of) * 10) / 10;
   print(
-    `  ${plural(t.count, 'thread')}: ${t.one_agent} with one agent, ${t.count - t.one_agent} with two or more; ` +
-      `${plural(each(t.tasks, t.count), 'task')} and ${plural(each(t.pull_requests, t.count), 'pull request')} a thread, ` +
+    `  ${plural(t.count, 'deliverable')}: ${t.one_agent} with one agent, ${t.count - t.one_agent} with two or more; ` +
+      `${plural(each(t.tasks, t.count), 'task')} and ${plural(each(t.pull_requests, t.count), 'pull request')} a deliverable, ` +
       `${plural(each(t.rounds, t.pull_requests), 'review round')} a pull request (${plural(t.review_runs, 'review run')}).`,
-    `  From the first task queued to the last merge: work ${minutesWords(t.work, 'thread')}, review ${minutesWords(t.review, 'thread')}, ` +
-      `waiting ${minutesWords(t.waiting, 'thread')}; review ${percent(t.review_share ?? 0)} and waiting ` +
-      `${percent(t.waiting_share ?? 0)} of all thread time.`,
+    `  From the first task queued to the last merge: work ${minutesWords(t.work, 'deliverable')}, review ${minutesWords(t.review, 'deliverable')}, ` +
+      `waiting ${minutesWords(t.waiting, 'deliverable')}; review ${percent(t.review_share ?? 0)} and waiting ` +
+      `${percent(t.waiting_share ?? 0)} of all deliverable time.`,
   );
   const h = t.handoffs;
   if (!h.count) print("  Hand-offs (a task queued --after another branch's job): none.");
@@ -130,7 +130,7 @@ function threads(t: Threads) {
 
 function waitingSplit(t: Threads) {
   const parts = Object.entries(t.waiting_split) as [WaitPart, { minutes: number; share: number | null }][];
-  print('  The waiting, by what held the thread (a minute two held counts for the first):');
+  print('  The waiting, by what held the deliverable (a minute two held counts for the first):');
   for (const [part, { minutes, share }] of parts)
     print(`    ${WAIT_WORDS[part]}: ${duration(minutes)}${share === null ? '' : ` (${percent(share)})`}`);
   const s = t.side_by_side;
@@ -186,11 +186,11 @@ function leadLine(l: Lead) {
 }
 
 export function byThread(b: ByThread) {
-  if (!b.jobs) return print('  within the thread: no job done had 3 or more of its thread done before it');
+  if (!b.jobs) return print('  within the deliverable: no job done had 3 or more of its deliverable done before it');
   print(
-    `  on the ${plural(b.jobs, 'job')} with 3 or more of its thread done before it:`,
+    `  on the ${plural(b.jobs, 'job')} with 3 or more of its deliverable done before it:`,
     `    agent, kind and words (the mean): ${b.usual.count ? spreadWords(b.usual) : 'no size'}`,
-    `    the same within its thread: ${b.thread_first.count ? spreadWords(b.thread_first) : 'no size'}`,
+    `    the same within its deliverable: ${b.thread_first.count ? spreadWords(b.thread_first) : 'no size'}`,
   );
 }
 

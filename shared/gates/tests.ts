@@ -26,7 +26,7 @@ import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSyn
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { compareBase } from './comparison.ts';
-import { HqUnreachable, onLent, UNREACHED_EXIT } from './lent.ts';
+import { HqUnreachable, NO_ROOM_EXIT, NoRoom, onLent, UNREACHED_EXIT } from './lent.ts';
 import { areaOf, git, gitFiles, plural, TOOLS_HOME, workingTree } from './repo.ts';
 import { changeAt, noTests, SUITES, type Run } from './suites.ts';
 import type { FileEnd } from './timings.ts';
@@ -84,10 +84,10 @@ try {
     : ((args.includes('--helper') ? await onHelper() : undefined) ?? (await checkChange()));
 } catch (err) {
   // tests that couldn't run say so: the worker reports them as not run, never as passed. Those that lost HQ, the worker
-  // runs again once it answers.
+  // runs again once it answers, and those with no room here to bundle them, once there's room.
   const unreached = err instanceof HqUnreachable;
   console.log(`The tests could not ${unreached ? 'reach HQ' : 'run'}: ${(err as Error).message}`);
-  process.exitCode = unreached ? UNREACHED_EXIT : 2;
+  process.exitCode = unreached ? UNREACHED_EXIT : err instanceof NoRoom ? NO_ROOM_EXIT : 2;
 }
 
 async function checkChange() {
@@ -132,6 +132,9 @@ async function onHelper(): Promise<number | undefined> {
     bring: [OUTCOMES_FILE],
     tools,
     limitIsResult: true,
+    // (while a helper of the kind is there, they wait for it, its helpers busy with other pushes' tests or not: run here
+    // instead they'd take the worker's memory, and a worker short of it stops them)
+    waitWhilePresent: true,
   });
   if (!ran) return undefined;
   if (ran.timedOut) {

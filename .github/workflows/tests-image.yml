@@ -1,0 +1,33 @@
+# The push tests' image (platform/worker/Dockerfile's `tests` stage: the worker's Node, tools and Playwright's Chromium):
+# built and published to GitHub's registry when it changes, so a company's `tests` run kind can name it by digest. The
+# digest is in the run's summary.
+name: Push tests image
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [platform/worker/Dockerfile, .github/workflows/tests-image.yml]
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          # (the repo's root, as compose builds the worker: platform/worker/Dockerfile.dockerignore)
+          context: .
+          file: platform/worker/Dockerfile
+          target: tests
+          push: true
+          provenance: false
+          tags: ghcr.io/${{ github.repository_owner }}/worker-tests:${{ github.sha }}
+      - run: echo "Image ghcr.io/${{ github.repository_owner }}/worker-tests@${{ steps.build.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"

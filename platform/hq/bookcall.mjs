@@ -1,5 +1,4 @@
-// book-check.mjs's call story (shell/calldraw.js, shared/review/callnotes.js), held like an iPad mini in WebKit, its
-// voice line played.
+// book-check.mjs's call story (shell/ink/calldraw.js, shared/review/callnotes.js; Ink's folder), held like an iPad mini in WebKit, its voice line played.
 // A call with the CEO: the Pencil down on the page makes the call small; a ring drawn while the board talks goes into
 // the call's page (not a sheet) with the words the call heard, and down the call's own socket to the line as the Pencil
 // stays up; the agent asks to see a page by name, the card waits with Show and Not now while the call goes on, nothing
@@ -27,7 +26,7 @@ export async function callStory(c) {
   const line = await playLine(c.context);
   await c.open(`/?intro=0&open=intercom${c.look ? `&renderer=${c.look}` : ''}`);
   const page = c.page(),
-    s = { ...c, page, line, named: name => `${name}${c.look ? `-${c.look}` : ''}`, shown: 0 };
+    s = { ...c, page, line, named: name => `${name}${c.look ? `-${c.look}` : ''}`, shown: 0, from: c.posts.length };
   // (the screen goes to the agent only as a watch-along: counted, to know it starts at Show and not before.)
   page.on('request', r => r.url().endsWith('/api/watchalong/start') && s.shown++);
   await page.click('#call');
@@ -42,7 +41,7 @@ export async function callStory(c) {
   await openedClean(s);
   await openedPreview(s);
   await lostAtTheEnd(s);
-  await thrownAway(s);
+  await wentIn(s);
   await drawnAfterTheLoss(s);
   await drawnAfterTheLoss(s, 'undo');
 }
@@ -110,8 +109,7 @@ async function noteOnTheCall(s) {
   await page.waitForTimeout(400);
   assert.equal(await page.locator(s.ui('.sheet')).isHidden(), true, 'no post-it on a call: the call is listening');
   const sent = await heard(s, 'note');
-  const made = s.posts.find(p => p.path === '/api/book/page/new' && p.body.kind === 'call')?.body;
-  assert.deepEqual(made && [made.kind, made.call], ['call', 9], "the call's page in today's book, at its first mark");
+  onTheNotesPage(s);
   const note = lastNote(s);
   assert.equal(note.words, 'This one feels too big', 'the words the call heard while drawing are the note’s');
   assert.equal(note.said, 'spoken');
@@ -137,6 +135,12 @@ async function noteOnTheCall(s) {
   await s.shot(s.named('book-call-note'), page);
 }
 
+// The call's notes page, made as it was picked up: the mark goes on it, never a second page.
+function onTheNotesPage(s) {
+  assert.ok(s.pages.find(p => p.kind === 'call' && p.call === 9)?.notebook, "the call's page is its notes page");
+  const made = s.posts.filter(p => p.path === '/api/book/page/new' && p.body.kind === 'call');
+  assert.equal(made.length, 0, 'no second page at its first mark');
+}
 const notes = s => s.posts.filter(p => p.path === '/api/book/note');
 // The board's notes in the book, waited for until there are n
 async function noted(s, n) {
@@ -346,21 +350,19 @@ const twoFingerTap = async page => {
 };
 
 // Hung up: the call's page stays in the day unless thrown away, in one tap
-async function thrownAway(s) {
+// Hung up, the call's notes page goes in by itself (the store sends and archives it: callnotes.ts): no card asks to
+// keep it or throw it away, and HQ throws nothing away. (was the page's Keep and
+// Throw away card)
+async function wentIn(s) {
   const { page } = s;
-  const callPage = s.pages.findLast(p => p.kind === 'call');
-  const kept = page.locator('#call-cards [data-card="page"]');
-  await kept.waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(500); // (a toast's way in)
-  await keys(s, kept, "the call's page");
-  await s.shot(s.named('book-call-page'), page);
-  await kept.locator('[data-away]').click();
-  await kept.waitFor({ state: 'detached' });
+  await page.waitForTimeout(1500); // (the hang-up's notes settled: calldraw.js)
+  assert.equal(await page.locator('#call-cards [data-card="page"]').count(), 0, 'nothing asks about the page');
   assert.equal(
-    s.posts.findLast(p => p.path === '/api/book/page/delete')?.body.id,
-    callPage.id,
-    "the call's page thrown away",
+    s.posts.slice(s.from).filter(p => p.path === '/api/book/page/delete').length,
+    0,
+    'HQ throws nothing away',
   );
+  await s.shot(s.named('book-call-page'), page);
 }
 
 // In Wire, a card's answers are keys of its height, with a lip, the one to press lit (renderers/wire/skin.css)

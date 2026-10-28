@@ -3,7 +3,7 @@
 `qr.js` makes a QR code (ISO/IEC 18004) from a short text, in byte mode (UTF-8), at error correction level L, M, Q or
 H, in the smallest version that holds it (1 to 40), with the mask the standard's penalty rules score lowest. One plain
 module for the browser and Node, no dependencies. HQ's book shows one to pair a phone with the desktop
-(`platform/hq/shell/pair.js`).
+(`platform/hq/shell/ink/pair.js`; Ink's folder).
 
 ```js
 import { qrCode, qrPath } from '../../../../shared/qr/qr.js';

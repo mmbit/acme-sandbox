@@ -86,7 +86,7 @@ test('the extra-seat command prints usual-pace exhaustions, interrupted work, id
     assert.match(stdout, /hold active at cutoff, original start unknown, return unknown, idle unknown/);
     assert.match(stdout, /work continues, then idle 1 h/);
     assert.match(stdout, /Job 18: 1 h remaining/);
-    assert.match(stdout, /Thread finishes: 4 earlier, 1 later, 3 unchanged, 2 unresolved/);
+    assert.match(stdout, /Deliverable finishes: 4 earlier, 1 later, 3 unchanged, 2 unresolved/);
     assert.doesNotMatch(stdout, /slow-only/);
   } finally {
     server.close();

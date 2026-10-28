@@ -2,6 +2,7 @@
 // decision of the board's whose answer lifts one (decisions.ts), and the queued work they hold. Every pause names what
 // wakes its owner, or that nothing does (by hand). Nothing but a resume lifts a pause otherwise: a condition met wakes
 // its owner, who lifts it, tells the board or keeps it on for what's still missing. In words: pausewords.ts.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, prepared } from './db.ts';
 import { ceo } from './company.ts';
 import { publish } from './events.ts';
@@ -205,7 +206,9 @@ export function untilJobs() {
 export function openPause(target: string): Row | string {
   const found = targetIn(target.includes('/') ? { thread: target } : { project: target }, true);
   if (typeof found === 'string') return found;
-  return openOn(found.project.id, found.thread) ?? `${target} isn't paused (hq thread pause or hq project pause first)`;
+  return (
+    openOn(found.project.id, found.thread) ?? `${target} isn't paused (hq deliverable pause or hq project pause first)`
+  );
 }
 
 // Why work on thread `from` (null: in no thread, held by the desk's pause) can't move to `to` (regroup.ts): an open pause
@@ -312,7 +315,7 @@ const shownOf = (p: Row, until: Until[]) => ({
 function targetIn(ask: { thread?: string; project?: string }, closedToo = false) {
   if (ask.thread != null) {
     const thread = findThread(String(ask.thread));
-    if (!thread) return `there's no thread ${ask.thread} (hq thread list)`;
+    if (!thread) return `there's no deliverable ${ask.thread} (hq deliverable list)`;
     if (thread.status !== 'open' && !closedToo) return `${thread.id} is done`;
     const project = findProject(thread.project);
     if (!project) return `${thread.id}'s project ${thread.project} isn't a project (hq plan)`;

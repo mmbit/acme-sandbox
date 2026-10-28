@@ -3,6 +3,7 @@
 // pull requests merged and a deploy that has it (wakes.ts). A thread's done is its owner's word and needs nothing merged,
 // so its work's merges are read here: a fix round is on its job's branch, and a re-land and the job for a card's answer
 // are on the same thread. It tells nobody: whether the board hears is the CEO's call.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import * as wakes from './wakes.ts';
 import * as agreements from './agreements.ts';
@@ -86,7 +87,7 @@ function threadsDone(since: number, now: number, moved: Set<number>) {
     const deployed = live.deployed ? `its work deployed ${clock(live.at, now)}` : 'nothing of it to deploy';
     return [
       {
-        line: `thread ${t.id} (${t.name}, ${ownerOf(t)}'s): done ${clock(Date.parse(t.done), now)}, ${deployed}${carries.length ? `. It carries ${carries.join('; ')}` : ''}`,
+        line: `deliverable ${t.id} (${t.name}, ${ownerOf(t)}'s): done ${clock(Date.parse(t.done), now)}, ${deployed}${carries.length ? `. It carries ${carries.join('; ')}` : ''}`,
         board: carries.length > 0,
         items: items.map(i => i.id),
       },

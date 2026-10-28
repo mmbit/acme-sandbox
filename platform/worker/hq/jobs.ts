@@ -31,7 +31,7 @@ export const code = {
 export const job = {
   // (the title's step alone)
   help: `
-   hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--thread <project>/<thread> | --thread new:<project> "name" "done when"] [--check]
+   hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
           [--by <when | project/slug | none>] --size <90m> [--refs <job,job>] --why "scope comparison"
                                                      first inspect hq estimate for clean past jobs and judge their scope.
@@ -43,8 +43,8 @@ export const job = {
                                                      (- : on stdin); prints the job number. The title is what the board
                                                      reads in its projects view: plain words for the work, no job, card,
                                                      call or PR numbers (--after, --item and the brief carry those), and
-                                                     the step alone: the view shows it inside its thread, so never the
-                                                     thread's or project's name in front.
+                                                     the step alone: the view shows it inside its deliverable, so never
+                                                     the deliverable's or project's name in front.
                                                      --code: a word for what the task does (COVERS, FLIGHT, IMPRINT), in
                                                      capitals, at most 8 letters, easy to say on a call; HQ puts its
                                                      project's prefix in front (HQ-COVERS), and that's how the board and
@@ -62,35 +62,37 @@ export const job = {
                                                      on it until it runs. --downtime: maintenance
                                                      (refactoring, hardening, log scans) that runs only on spare capacity
                                                      and pauses when other work needs the room. A job queued from a
-                                                     running job stays in its thread by itself. A thread is one pull
-                                                     request, opened by its first task's push; each later push is its
-                                                     next round. Propose work needing its release to the project's
+                                                     running job stays in its deliverable by itself. A deliverable is one
+                                                     pull request, opened by its first task's push; each later push is
+                                                     its next round. Propose work needing its release to the project's
                                                      owner (hq propose). The owner or CEO queues it with --when
-                                                     deployed: on that thread's work, giving the job a thread of its
-                                                     own after the release.
-                                                     --thread <project>/<thread>
-                                                     sends it to another (hq thread list), --thread new:<project> "name"
-                                                     "done when" draws one for it in the project's plan, as hq plan
-                                                     thread does (its owner or the CEO). With requireThread enabled in
-                                                     company/projects.yaml, a job with no thread to inherit must name
-                                                     one. --check: QA, audits, security and compliance reads, which
+                                                     deployed: on that deliverable's work, giving the job a deliverable
+                                                     of its own after the release.
+                                                     --deliverable <project>/<slug>
+                                                     sends it to another (hq deliverable list), --deliverable
+                                                     new:<project> "name" "done when" draws one for it in the project's
+                                                     plan, as hq plan deliverable does (its owner or the CEO). --thread,
+                                                     the old name, still works. With requireThread enabled in
+                                                     company/projects.yaml, a job with no deliverable to inherit must
+                                                     name one. --check: QA, audits, security and compliance reads, which
                                                      fold in the projects view. --item <item>: the job
                                                      carries an item from a call (hq items), with the words from the call;
                                                      the item is handled when the job ends done. One open job per item.
                                                      --lands <job>: replace that failed or stopped job for its own agent, landing
-                                                     its saved work or retrying a thread task that saved nothing.
+                                                     its saved work or retrying a deliverable's task that saved nothing.
                                                      It keeps its place, code, call and item. No brief file is needed:
                                                      HQ reuses the failed job's brief. Work on a PR continues there.
                                                      --findings names the review findings a fix task answers.
                                                      It carries any call item, handled when it ends done.
-                                                     A time for the work is its thread's window (hq window): a call
-                                                     item's time goes there by itself, and a job with one that would
-                                                     be in no open thread is refused. --by <when> gives it one as it's
-                                                     queued (never later than its thread's), --by <project>/<slug> the
-                                                     window of the deliverable it serves. The board's ask (handing out
-                                                     an item, on a call, from the intercom) with no time, on a thread
-                                                     nothing timed waits on, asks the CEO: the CEO's own is refused
-                                                     until it says --by <when>, <project>/<slug> or none.
+                                                     A time for the work is its deliverable's window (hq window): a
+                                                     call item's time goes there by itself, and a job with one that
+                                                     would be in no open deliverable is refused. --by <when> gives it
+                                                     one as it's queued (never later than its deliverable's), --by
+                                                     <project>/<slug> the window of the deliverable it serves. The
+                                                     board's ask (handing out an item, on a call, from the intercom)
+                                                     with no time, on a deliverable nothing timed waits on, asks the CEO:
+                                                     the CEO's own is refused until it says --by <when>, <project>/<slug>
+                                                     or none.
                                                      --when <event>: it starts once that has happened, and reads what did
                                                      (repeat it: all of them). deploy or deploy:<n>, the next n deploys from
                                                      now; recreated:<service>, a deploy that recreates that container
@@ -110,11 +112,12 @@ export const job = {
                                                      task takes on those notes, at the end of its brief.
                                                      --expedite (the CEO only): a structural fix to HQ itself, when a fault
                                                      could also stall its own fix. It starts first, ahead of the plan,
-                                                     pacing and pauses, in no thread; once a push passes its gates and
+                                                     pacing and pauses, in no deliverable; once a push passes its gates and
                                                      tests it merges and deploys, and its review comes after (hq expedite)
-   hq job move <job id> <project>/<slug>             move work still going on into another thread, its pull request's
-                                                     reviews and fix rounds with it (its agent, its thread's owner, the CEO
-                                                     or Process), naming threads that need the old one for their owners to decide.
+   hq job move <job id> <project>/<slug>             move work still going on into another deliverable, its pull
+                                                     request's reviews and fix rounds with it (its agent, its
+                                                     deliverable's owner, the CEO or Process), naming deliverables that
+                                                     need the old one for their owners to decide.
                                                      Out of a pause: its owner or the CEO, with --why "reason" on the feed`,
   // (--when; move: --now)
 
@@ -215,7 +218,7 @@ function readArguments(args: string[]) {
   // Old briefs and memories pass a numeric priority before the title.
   if (/^[0-4]$/.test(title ?? '') && brief !== undefined) {
     stop(
-      `No job was queued: hq job takes no priority any more. Work runs in the order of its thread's window (hq window) and what waits on it. Remove the priority ${title} after the agent and run the same command again, keeping all other arguments.`,
+      `No job was queued: hq job takes no priority any more. Work runs in the order of its deliverable's window (hq window) and what waits on it. Remove the priority ${title} after the agent and run the same command again, keeping all other arguments.`,
     );
   }
   // On a live call (the voice line sets HQ_CALL) the brief comes on stdin (-), never from a file: a file argument
@@ -250,11 +253,11 @@ function printQueued(
   const id = shown(queued.id);
   // (its code after the number, which tools read; none for a step of a task that had none)
   print(`Queued job #${id}${present(queued.code) ? ` ${text(queued.code)}` : ''} for ${agent}: ${title}`);
-  if (present(queued.thread)) print(`In thread ${text(queued.thread)}.`);
+  if (present(queued.thread)) print(`In deliverable ${text(queued.thread)}.`);
   if (present(queued.followOn))
     print(
-      `Not in ${text(queued.followOn)}: a thread is one pull request, and this waits for that thread's own work to be ` +
-        `deployed, so it's a thread of its own after the release.`,
+      `Not in ${text(queued.followOn)}: a deliverable is one pull request, and this waits for that deliverable's own ` +
+        `work to be deployed, so it's a deliverable of its own after the release.`,
     );
   const paused = queued.paused as
     { target: string; why: string; untilTime: string | null; until: number[] } | undefined;
@@ -267,7 +270,7 @@ function printQueued(
     print("It starts once this call ends: what's added to it before then goes into its brief.");
   // (the time given, or its item's, on its thread now; or the window of the deliverable it serves, or none: askwindow.ts;
   // on the board's clock on a call: estimate.ts at)
-  if (present(queued.deadline)) print(`Its thread's deadline: ${at(Date.parse(String(queued.deadline)))}.`);
+  if (present(queued.deadline)) print(`Its deliverable's deadline: ${at(Date.parse(String(queued.deadline)))}.`);
   const serves = queued.serves as { thread: string; deadline: string } | undefined;
   if (serves) print(`It serves ${text(serves.thread)}'s window: ${at(Date.parse(serves.deadline))}.`);
   if (present(queued.untimed)) print(text(queued.untimed));
@@ -337,8 +340,8 @@ export const expedite = {
                                                      met) and merges on its gates and tests; one that has pushed, its
                                                      pull request still in review, merges now if its last push passed
                                                      them. Its review follows on what merged, and anything blocking is
-                                                     its author's next job. A thread's task
-                                                     that hasn't started leaves its thread as its own job; one that ran
+                                                     its author's next job. A deliverable's task
+                                                     that hasn't started leaves its deliverable as its own job; one that ran
                                                      stays (queue the fix with hq job --expedite). Never ordinary work`,
 
   // (a refusal opens "Nothing expedited", as the call's expedite tool reads it: hq_tools.py.)
@@ -366,8 +369,8 @@ export const stopJob = {
                                                      keeps its commits on its branch and opens no pull request. Its item
                                                      stays open for its owner to judge. Within a minute; a paused
                                                      job stops as it starts again. The reason is logged. A job that never
-                                                     ran: hq cancel. A review or ruling on a paused thread pauses at its
-                                                     next step instead, and goes on once the pause lifts`,
+                                                     ran: hq cancel. A review or ruling on a paused deliverable pauses at
+                                                     its next step instead, and goes on once the pause lifts`,
 
   async run([id, why = '', ...rest]: string[]) {
     if (!/^[0-9]+$/.test(id ?? '') || !why.trim() || rest.length) stop('usage: hq stop <job id> "why"');
@@ -503,13 +506,13 @@ type Miss = { project: string; name: string; deadline: number; finish: number | 
 export const window = {
   help: `
    hq window ${TARGET} <deadline | none> [--aim <time>] [--try]
-                                                     a thread's window (named by it, or a job or PR on it). The deadline,
+                                                     a deliverable's window (named by it, or a job or PR on it). The deadline,
                                                      the latest it may be merged and deployed and still be what was
                                                      agreed, orders its work; --aim, the time we said, at or before it
                                                      (else the aim stays, or is the deadline). 2h, 90m or 1h30m from now;
                                                      the board's own time with its date and no zone (2026-10-26 09:00, on
                                                      the company's clock); one with Z or a time of day alone (14:30) is
-                                                     UTC; none takes it off. Prints the threads whose
+                                                     UTC; none takes it off. Prints the deliverables whose
                                                      planned finish moves and the windows the plan misses; --try: nothing saved`,
 
   async run(given: string[]) {
@@ -531,7 +534,7 @@ export const window = {
       );
     if (tried) print('Nothing was saved.');
     if (Array.isArray(set.moves)) {
-      if (!set.moves.length) print('Moves no thread.');
+      if (!set.moves.length) print('Moves no deliverable.');
       for (const move of set.moves as Move[]) print(`Moves ${moveWords(move)}.`);
     }
     const misses = (set.misses ?? []) as Miss[];

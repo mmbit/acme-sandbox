@@ -112,6 +112,8 @@ function stroked(r, stroke, e) {
 // Undo: the last line goes; the last mark gone, it's back to tapping or drawing, the words kept
 export function undo(r) {
   if (r.mode !== 'note' || r.veil.hidden) return;
+  // (the post-it's words edited with the Pencil first: postitpen.js.)
+  if (r.wordSteps?.length) return r.wordSteps.pop()();
   if (r.strokes.length) {
     r.strokes.pop();
     if (r.strokes.length || r.mark.kind === 'pin') {

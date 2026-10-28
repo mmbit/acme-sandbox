@@ -50,7 +50,7 @@ import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
 import * as watchalong from './watchalong.ts';   // (the recorder).
 import { DIR as BOOK_DIR } from './pagescraps.ts';   // a book note's snip (fromBook).
-import * as sketchPeople from './sketchpeople.ts';   // invited people's own Sketchbooks.
+import * as sketchPeople from './ink/sketchpeople.ts';   // invited people's own Sketchbooks. (Ink's folder)
 
 const SHOTS = `${DATA_DIR}/review`;
 const MAX_SHOT = 1536 * 1024; // a viewport JPEG is ~100-600 KB; review.js steps down to fit
@@ -93,6 +93,8 @@ once('2026-10-24-review-notes-answered', () => {
 });
 // (a job's answer and fix line are model text, which may carry a key: db.ts redacted)
 redacted('review_notes', 'answered', 'fixed');
+// A job's notes (openNotes, as each work job ends done): without it, every note's row is read, trail included.
+db.exec('create index if not exists review_notes_job on review_notes (job) where job is not null');
 
 // ---------------------------------------------------------------- the gate
 // The product a request is for: the Host must be <slug>.preview.<zone> for an existing products/<slug>, or the cycles'
@@ -219,7 +221,7 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (path === '/__review/mine' && req.method === 'GET') {
     const on = reviewerOn(req), query = new URL(req.url ?? '/', 'http://x').searchParams;
     if (!on || on.share) return json(res, 404, { error: 'not found' });
-    return json(res, 200, (await import('./bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base), query.get('owner')));   // (owner)
+    return json(res, 200, (await import('./ink/bookreview.ts')).menuOf(on.slug, localPath(query.get('page'), on.host, on.base), query.get('owner')));   // (owner)
   }
   if (req.method !== 'POST' || !['/__review/notes', '/__review/voice', '/__review/thanked', '/__review/coach'].includes(path)) return json(res, 404, { error: 'not found' });
   const p = reviewerOn(req);
@@ -397,7 +399,7 @@ export const urlOf = (host: string, base: string, page: string) => `https://${ho
 // owner, signed as theirs.
 export async function saveNote(slug: string, host: string, b: any, base = '', book: IntoBook | null = null): Promise<Refusal | { ok: true; id: number }> {
   forgetOld();
-  const { toBook } = await import('./bookreview.ts');
+  const { toBook } = await import('./ink/bookreview.ts');
   return !book ? toBook(slug, host, base, b) : book.open() ?? toBook(slug, host, base, b, book.by, book.open);
 }
 // The screenshots and pictures of notes sent more than SHOT_DAYS ago go, as each new note comes
@@ -913,12 +915,12 @@ export async function hq(req: IncomingMessage, res: ServerResponse) {
 
 // For the owner's job: `hq note <id>` (the job's token: noteFor) gets a note the board sent, and its screenshot
 // and the pictures added to it.
-// An outside note an early look has, before it's sent, is that look's.
+// An outside note an early look had before the book, and that was never sent, stays readable to that look.
 // An outside reviewer's comes with the title the board gave them.
 // An outside note carries its reviewer's own details (their address; on a tester's checkout and confirmation page, what
-// they typed in), so like a customer's (jobs.ts holdsCustomerData) it's read only by the jobs its share's notes went to
-// (the gather's and the early looks, each holding the mark) and roles.customerData, never by the owner's other jobs. A
-// board's note stays its agent's: a later job of theirs may fix it.
+// they typed in), like a customer's (jobs.ts holdsCustomerData). So it's read only by roles.customerData and the jobs
+// that hold its share's notes, each holding the mark: the job they went to (the gather's before the book, leftOver's
+// since) and an early look from before the book. Never by the owner's other jobs. A board's note stays its agent's: a later job of theirs may fix it.
 // An invited guest's note from the board's book (fromBook: an author, no share) is outside text the same way, read only
 // by the job it went to and roles.customerData (readsGuest).
 export const readsOutside = (share: number, me: Reader) => readsCustomerData(me.agent)

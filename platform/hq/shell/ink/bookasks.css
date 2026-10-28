@@ -1,0 +1,144 @@
+/* The desk phone's cards under a Notebook group (bookasks.js): a slip in the answers' look (review mode's slip.js
+   gives it its clip, name and typed words), tinted as an ask, its choices as chips, its questions' fields, the words
+   written under it; answered, ticked with the pick. */
+#book .ask-slip {
+  position: relative;
+  margin: 14px 0 2px;
+  padding: 16px 14px 10px;
+  background: #fff4cf;
+  color: var(--bk-cloth);
+  border-radius: 2px;
+  transform: rotate(-0.4deg);
+  box-shadow:
+    0 1px 0 rgba(42, 35, 82, 0.08),
+    0 3px 10px rgba(42, 35, 82, 0.14);
+  font:
+    14px/1.45 'Atkinson Hyperlegible',
+    system-ui,
+    -apple-system,
+    sans-serif;
+  text-align: left;
+}
+#book .ask-slip[data-answered] {
+  background: #fffaea;
+}
+#book .ask-slip[aria-busy='true'] {
+  opacity: 0.7;
+}
+#book .ask-chips,
+#book .ask-q .qa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+#book .ask-slip .chip {
+  all: unset;
+  box-sizing: border-box;
+  min-height: 36px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 2px var(--bk-cloth);
+  background: #fffdf6;
+  color: var(--bk-cloth);
+  font-weight: 700;
+  white-space: normal;
+  cursor: pointer;
+}
+#book .ask-slip .chip.on {
+  background: var(--bk-cloth);
+  color: #fffdf6;
+}
+#book .ask-slip .chip:focus-visible {
+  outline: 2px solid var(--bk-cloth);
+  outline-offset: 2px;
+}
+#book .ask-q {
+  margin-top: 12px;
+}
+#book .ask-qt {
+  display: block;
+  font-weight: 700;
+}
+#book .ask-qd {
+  display: block;
+  font-size: 12.5px;
+  color: #5a5478;
+}
+#book .ask-q input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px dashed #c9bfa6;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  outline: none;
+}
+#book .ask-q .num {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+}
+#book .ask-words {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 10px 0 0;
+  padding: 4px 0;
+  resize: none;
+  border: 0;
+  border-bottom: 1px dashed #c9bfa6;
+  background: transparent;
+  color: var(--bk-cloth);
+  font: inherit;
+  outline: none;
+  overflow: hidden;
+}
+#book .ask-words::placeholder {
+  color: #8a7f5e;
+}
+#book .ask-words:focus,
+#book .ask-q input:focus {
+  border-bottom: 2px solid var(--bk-cloth);
+}
+#book .ask-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 8px 0 0;
+  font-size: 12.5px;
+  color: #6b6150;
+}
+#book .ask-send {
+  all: unset;
+  padding: 4px 14px;
+  border-radius: 999px;
+  background: var(--bk-cloth);
+  color: #fffdf6;
+  font-weight: 700;
+  cursor: pointer;
+}
+#book .ask-send[hidden] {
+  display: none;
+}
+#book .ask-answer {
+  margin: 8px 40px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+#book .ask-tick {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  width: 26px;
+  height: 26px;
+  fill: none;
+  stroke: #e03131;
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}

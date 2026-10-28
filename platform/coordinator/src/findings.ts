@@ -1,5 +1,6 @@
 // What becomes of a review's findings: the ones on code the change doesn't touch are set apart as pre-existing, a bug
 // class is one finding, and each finding that reached the author gets its outcome from the ruling after its fixes.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep } from './db.ts';
 
 // The lines a pushed commit adds or alters, per file, as [first, last] on its side (the worker's push)
@@ -99,7 +100,7 @@ For example, a merged class reported by reviewer-a at indices 0 and 2 and review
 Set the ruling's "finding_sources": true even when all three entry lists are empty.
 This source list is the ruling's format. A reviewer's "from" still labels where its case comes from.
 Set "cross_project": true only for a follow-up belonging outside this pull request's project. The CEO routes those.
-Other follow-ups go to this project's owner. Judge ownership from the thread and department responsibilities.`;
+Other follow-ups go to this project's owner. Judge ownership from the deliverable and department responsibilities.`;
 export const PRE_EXISTING_FIELD = `, "pre_existing": [{"file": "...", "line": 0, "issue": "...", "fix": "...", "by": ["reviewer id"], "from": [{"by": "reviewer id", "finding": 0}]}]`;
 
 // A merge check's blocking findings: findings like any ruling's, so they reach the author by number and the next round

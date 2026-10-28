@@ -109,7 +109,7 @@ test("after a restart a thread's last row is one seek on the log's index, never 
       detail: string;
     }[];
     assert.ok(
-      plan.some(p => p.detail.includes(`prediction_log_${by === 'job' ? 'job' : 'thread_at'}`)),
+      plan.some(p => p.detail.includes(`prediction_log_${by}_at`)),
       by,
     );
     assert.ok(!plan.some(p => p.detail.includes('TEMP B-TREE')), `${by}: ${JSON.stringify(plan)}`);
@@ -158,7 +158,7 @@ test("a play's rows written in a step whose commit fails come back for the next 
     reader.close();
   }
   predictionlog.record(play); // (unchanged: nothing new to keep)
-  assert.equal(predictionlog.ofJobs([job]).length, 1, "the job's row, written after all");
+  assert.equal(predictionlog.jobAt(job, at)?.merged, T0 + 4 * HOUR, "the job's row, written after all");
   assert.equal(predictionlog.threadAt('hq/estimates', at)?.merged, T0 + 4 * HOUR, "the thread's row, under its own id");
   // a second write in the same step (a read after regroup's) inserts nothing again
   predictionlog.record(played(at + MIN, job, T0 + 50 * MIN, T0 + 5 * HOUR));
@@ -377,17 +377,18 @@ test('hq estimate --calibration times the threads merged lately: work, review an
   assert.deepEqual([t.review_share, t.waiting_share], [0.09, 0.64]);
   assert.deepEqual(t.handoffs, { count: 1, review: { total: 120, median: 120 }, start: { total: 60, median: 60 } });
   const { out } = await h.hq(reader, 'estimate', '--calibration');
-  assert.match(out, /2 threads: 1 with one agent, 1 with two or more/);
-  assert.match(out, /review 9% and waiting 64% of all thread time/);
+  assert.match(out, /2 deliverables: 1 with one agent, 1 with two or more/);
+  assert.match(out, /review 9% and waiting 64% of all deliverable time/);
 });
 
 test("the forecast's every play is logged, and its input kept for the backtest", async () => {
   const forecast = await import('./forecast.ts');
-  await import('./snapshots.ts');
+  const snapshots = await import('./snapshots.ts');
   const job = h.queue({ agent: 'kit', title: 'Played for real', engine: 'claude' });
   const f = forecast.refresh(T0 + 3 * HOUR);
   const [row] = logged(job);
   assert.deepEqual([row.at, row.merged, row.sized_by], [T0 + 3 * HOUR, f.usual.get(job)!.merged, 'tool']);
+  snapshots.write();
   const kept = h.db.prepare('select at from play_snapshots where at = ?').get(T0 + 3 * HOUR);
   assert.ok(kept);
 });

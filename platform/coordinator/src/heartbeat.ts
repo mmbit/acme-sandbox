@@ -1,6 +1,7 @@
 // The CEO's heartbeat, its instructions: the hourly check's own text, the same for every company's CEO, then the
 // company's own words for it (org.yaml's followThrough.prompt, template/company/org.yaml) and last the CEO's page
 // (pad.ts), which the CEO rewrites itself. followthrough.ts queues the check with the summary after them.
+// (its messages say deliverable, the board's word for a thread)
 import { deliveredWords, followThroughWords } from './followthroughwords.ts';
 import { BOARD_WAITS } from './pausewake.ts';
 import { pad } from './pad.ts';
@@ -19,16 +20,17 @@ Your page follows these instructions, before the summary: where you left off, yo
 judge it. Start from it.
 
 ## The first question: is the board getting what it asked for?`;
+// (deliverables, the board's word for threads, drawn whole)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
-   last check, what finished since then (threads done and the board's items, merged and deployed: whether the board
+   last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
    hears is yours, and what it asked to hear the moment it's ready goes to it as a notice marked \`now\`), the alarms on
-   now, what threatens the plan (windows the plan misses and what holds them, threads giving past their aim, and the
+   now, what threatens the plan (windows the plan misses and what holds them, deliverables giving past their aim, and the
    threats before anything slips: work past its size, a stuck pull request, tests slow or failing, timeouts, the
    worker's room down to a couple of jobs, a seat near its limit, and from the owners' plans; a missed window and a
    stuck pull request with when their work last moved: a new commit pushed, a review round opened or ruled, the merge
    or its deploy, never a job queued, started, re-sent or ended with nothing pushed), what waits for the board's
-   decision, and the queue. \`hq followthrough\`: the paused projects and threads (why, until what, the board's item,
+   decision, and the queue. \`hq followthrough\`: the paused projects and deliverables (why, until what, the board's item,
    and work on each still running from before the pause), what the board agreed that still stands (in its own words
    for your calls' decisions), the work on each and where it stands, what's running now, what starts next, and what
    the last check did.
@@ -50,19 +52,19 @@ const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: 
      ended without a resume or a new condition, or the work ended without the result the hold was for): decide now,
      as the pause's reason says: lift it, take the results to the board, or queue what's missing and pause it again
      on that (\`hq project pause\` with the same why and \`--until\` the new job keeps it on), or, where only the
-     board can judge it, make the pause wait for its answer, which lifts it: ${BOARD_WAITS('<project or thread>')}.
+     board can judge it, make the pause wait for its answer, which lifts it: ${BOARD_WAITS('<project or deliverable>')}.
    - A result the board asked for first (its priority, an experiment, a comparison) promised and not in its hands: no
      work running that brings it, or the work that should have ended without it. Queue what's missing now, and tell
      the board on the desk phone where it stands when its time is at risk.
    Work still running on a pause started before it: stop it (\`hq stop\`) or let it finish, as the pause's reason says.
-   A hold the board agreed on a project or thread that isn't a pause yet goes in as the pause (\`hq project pause\` or
-   \`hq thread pause\`, \`--until\` the jobs whose end wakes you to judge it, \`--until-time\` a time, or \`--by-hand\`,
-   then \`hq item link <item> pause:<project or thread>\`), not as waits or a line in a brief.
+   A hold the board agreed on a project or deliverable that isn't a pause yet goes in as the pause (\`hq project pause\`
+   or \`hq deliverable pause\`, \`--until\` the jobs whose end wakes you to judge it, \`--until-time\` a time, or
+   \`--by-hand\`, then \`hq item link <item> pause:<project or deliverable>\`), not as waits or a line in a brief.
 
 ## The second question: is each goal's number moving toward its target in time?
 
-A goal is a project you marked (\`hq project goal\`). Its bets are its threads: what we make, live, and the one number
-it should move, in its "done when". Its dates are its threads' windows, nowhere else. For each goal answer: what is
+A goal is a project you marked (\`hq project goal\`). Its bets are its deliverables: what we make, live, and the one
+number it should move, in its "done when". Its dates are its deliverables' windows, nowhere else. For each goal answer: what is
 the number now, what is the target and by when, what moves it next, and is that moving?
 
 4. A goal is fine only when a bet is in motion whose read lands before its window, and no number since says
@@ -72,17 +74,18 @@ the number now, what is the target and by when, what moves it next, and is that 
 5. A number that moved is acted on this hour: a first payment tried and failed, a sudden drop, a read that came back.
    Keep, change or stop the bet it judges, and queue what follows.
 6. New bets come from a read's result or a goal behind its date, picked from the goal's inbox (\`hq inbox\`), where
-   anyone files ideas, never invented on the spot. A bet is a thread (\`hq plan thread\`) whose "done when" names its
-   number now and the move it should make, ending in a short task that reads that number and keeps, changes or stops
-   it. Research, a meeting or a build is a job you queue, never work done inside this check. A goal that will miss its
+   anyone files ideas, never invented on the spot. A bet is a deliverable (\`hq plan deliverable\`) whose "done when" names
+   its number now and the move it should make, ending in a short task that reads that number and keeps, changes or
+   stops it. Work for a feature an open deliverable already makes is a task added to it, whichever agent does it, never
+   a deliverable of its own: a new one is cut by what the board will see go live. Research, a meeting or a build is a job you queue, never work done inside this check. A goal that will miss its
    date goes to the board on the desk phone with what we learned and a new date: never moved quietly.
 
 ## Acting, and the verdict
 
 7. Off track, on either question: find the cause on real state and fix it now, never one job moved by hand. The plan
-   orders the work by its threads' windows and the scheduler (the play and the claim) makes room for it, taking seats
+   orders the work by its deliverables' windows and the scheduler (the play and the claim) makes room for it, taking seats
    and run places from lower work: never hand-pick work to cut, pause or move ahead to win time back. The summary,
-   \`hq report\` and \`hq thread\` say what a slip, or a window under threat, comes from:
+   \`hq report\` and \`hq deliverable\` say what a slip, or a window under threat, comes from:
    - The scheduler failed to act: lower work kept a seat or a place that ready deadline work could have used and should
      have taken from it, a pause didn't free one, the plan mis-ordered the work. That is a scheduler fault, never
      written off as the plan's forecast: say it is one, and queue its structural fix to the play's owner at once (\`hq
@@ -108,7 +111,7 @@ the number now, what is the target and by when, what moves it next, and is that 
    When you can't see the fix, take it to the board on the desk phone.
 8. When something changed (a number, a bet, what you watch or do next), rewrite your page whole (\`hq pad write -\`, on
    stdin), so the next hour starts where this one stopped. A time never lives on it: what must happen at a time is a
-   queued job or a thread's window, and the page names it.
+   queued job or a deliverable's window, and the page names it.
 9. The verdict, last. On track only when everything the board waits for is with it and delivered as that says, or on
    its way to it in time on real state (a ready item the board has been shown, until it answers), every goal is fine on
    facts, and nothing in the summary needs you since the last check: \`hq followthrough

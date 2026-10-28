@@ -1,15 +1,16 @@
 // node --test src/notebook.test.ts   (the harness: the test company, the real server, the board's session, a job's hq)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import sharp from 'sharp';
 import { harness, type Running } from './harness.ts';
 
 const h = await harness('notebook');
 const { agent, db } = h;
 const { ORIGIN } = await import('./config.ts');
-const booknotes = await import('./booknotes.ts');
-const booksheets = await import('./booksheets.ts');
+const booknotes = await import('./ink/booknotes.ts');
+const booksheets = await import('./ink/booksheets.ts');
 const { onPublish } = await import('./events.ts');
 const DIR = `${h.dataDir}/book`;
 
@@ -146,6 +147,23 @@ test('the old book carried into My Notebook once, nothing lost: its ink in group
     [kits.id, sheet.id, free.id, fresh, late.id],
   );
   assert.equal((await shelf()).shelf.length, 1, 'one My Notebook');
+  // (a note written the old way since, onto a page already carried: an open scrap on the current page, under what's
+  // there, and every screen told.)
+  const drawn = (await draw(late.id, [stroke(20, 300)])).body;
+  const told: any[] = [],
+    off = onPublish(e => void (e.type === 'book' && told.push(e)));
+  await h.board('/api/book/note', { page: sheet.id, anchor: anchor(), words: 'Round it', said: 'typed', snip: SNIP });
+  await pages(books[0].id);
+  off();
+  const landed = (await groups(late.id)).find(g => g.words === 'Round it');
+  assert.deepEqual([landed?.kind, landed?.status, landed?.owner], ['scrap', 'open', 'moss']);
+  assert.ok(landed.box.y > 300, 'under what was drawn there');
+  assert.ok(!db.prepare("select 1 from book_notes where words = 'Round it'").get(), 'off its old sheet');
+  assert.ok(
+    told.some(e => e.text === 'notebook' && e.page === late.id),
+    'the current page read again where it shows',
+  );
+  for (const g of [drawn, landed]) await h.board('/api/notebooks/groups/delete', { id: g.id });
 });
 
 test('groups: drawn, edited (another screen first: read again), joined and split, moved, deleted with undo', async () => {
@@ -356,4 +374,70 @@ test("two pages sent to one agent in their seconds go as two sheets, and an old 
     'open',
     "kit's old sheet waits for its own send",
   );
+});
+
+// (the agents' cards under their group)
+test("an agent's card about a sent group's note: under the group, Open in the book at its page, answered either place", async () => {
+  const nb = await myNotebook();
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;
+  const cut = (await scrap({ owner: 'moss', words: 'Which blue for the basket?' })).body;
+  await h.board('/api/notebooks/pages/send', { id: page });
+  const { review, job } = await delivered(cut.id);
+  const told: any[] = [],
+    off = onPublish(e => void (e.type === 'book' && e.text === 'ask' && told.push(e)));
+  const file = `${mkdtempSync(`${tmpdir()}/notebook-ask-`)}/card.md`;
+  writeFileSync(file, 'Two blues read well. Which stays?\n\nChoose:\n- Teal: calmer.\n- Navy: stronger.');
+  const filed = await h.hq(
+    job,
+    'ask',
+    'decision',
+    'today',
+    'The basket: which blue?',
+    file,
+    '--note',
+    String(review),
+    '--topic',
+    'shop',
+  );
+  const id = Number(filed.out.match(/Request #(\d+)/)?.[1]);
+  assert.ok(id, filed.out);
+  assert.deepEqual(
+    told.map(e => e.page),
+    [page],
+    "the group's page read again",
+  );
+  const under = async () => (await groups(page)).find(g => g.id === cut.id).asks as any[];
+  const [shown] = await under();
+  assert.deepEqual([shown.id, shown.status, shown.name, shown.desk], [id, 'open', 'Moss', false]);
+  assert.match(shown.body, /Choose:/);
+  // the desk phone's card opens the book at the group's page, in its notebook
+  const card = ((await h.board('/api/requests')).body as any[]).find(r => r.id === id);
+  assert.deepEqual([card.place.page, card.place.notebook, card.place.words], [page, nb, 'Which blue for the basket?']);
+
+  // a key card shows under the group too, answered only on the desk phone
+  const keys = await agent('request', job.token, {
+    ...{ kind: 'credential', title: 'The basket feed', body: 'Its key.', secrets: 'STRIPE_TEST_KEY' },
+    ...{ topic: 'shop', note: review },
+  });
+  assert.equal(keys.status, 200, JSON.stringify(keys.body));
+  assert.deepEqual(
+    (await under()).map(a => [a.id, a.desk]),
+    [
+      [id, false],
+      [keys.body.id, true],
+    ],
+  );
+
+  // the book's chip posts the desk phone's own answer: off the desk phone, answered under the group
+  told.length = 0;
+  assert.equal((await h.board('/api/requests/answer', { id, answer: 'Teal' })).status, 200);
+  off();
+  assert.ok(!((await h.board('/api/requests')).body as any[]).some(r => r.id === id), 'off the desk phone');
+  const answered = (await under()).find(a => a.id === id);
+  assert.deepEqual([answered.status, answered.answer], ['answered', 'Teal']);
+  assert.deepEqual(
+    told.map(e => e.page),
+    [page],
+  );
+  await h.finish(job);
 });

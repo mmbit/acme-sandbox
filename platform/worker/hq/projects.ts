@@ -1,4 +1,5 @@
-// The company's projects and their threads (hq thread, hq project): HQ's projects view groups every job by them.
+// The company's projects and their deliverables (hq deliverable, hq project): HQ's projects view groups every job by
+// them.
 import * as api from './api.ts';
 import { companyLevels } from './files.ts';
 import { takeValues } from './flags.ts';
@@ -7,34 +8,35 @@ import { print, shown, stop, text } from './output.ts';
 import * as outlooks from './outlooks.ts';
 import * as pauses from './pauses.ts';
 
-export const thread = {
+export const deliverable = {
   help: `
-   hq thread list [<project>] [--all]                the open threads, all or one project's (--all: the done ones too)
-   hq thread move <project>/<slug> <project>         move the thread to another project, as <project>/<slug> there, with its
-                                                     jobs, reviews, pause and estimates (its owner, the CEO or Process). The
-                                                     old id keeps working. Out of a pause: its owner or the CEO, with
-                                                     --why "reason", shown on the feed${outlooks.help}${pauses.help('thread')}`,
+   hq deliverable list [<project>] [--all]           the open deliverables, all or one project's (--all: the done ones
+                                                     too). hq thread, the old name, still works
+   hq deliverable move <project>/<slug> <project>    move the deliverable to another project, as <project>/<slug> there,
+                                                     with its jobs, reviews, pause and estimates (its owner, the CEO or
+                                                     Process). The old id keeps working. Out of a pause: its owner or
+                                                     the CEO, with --why "reason", shown on the feed${outlooks.help}${pauses.help('thread')}`,
 
   async run([action, ...args]: string[]) {
     if (action === 'pause') return pauses.pause('thread', args);
     if (action === 'resume') return pauses.resume('thread', args);
     if (action?.includes('/') && !args.length) return outlooks.thread(action);
     if (action === 'new')
-      stop('A thread is drawn in its project\'s plan now: hq plan thread <project> "name" "done when"');
-    if (action === 'done') stop("A thread is closed in its project's plan now: hq plan done <project>/<slug>");
+      stop('A deliverable is drawn in its project\'s plan now: hq plan deliverable <project> "name" "done when"');
+    if (action === 'done') stop("A deliverable is closed in its project's plan now: hq plan done <project>/<slug>");
     if (action === 'list') return listThreads(args);
     if (action === 'sort')
       stop(
-        `Project owners draw their threads: hq plan thread <project> "name" "done when". The job's agent, the CEO or Process places unthreaded work: hq job move <job> <project>/<slug>`,
+        `Project owners draw their deliverables: hq plan deliverable <project> "name" "done when". The job's agent, the CEO or Process places work in no deliverable: hq job move <job> <project>/<slug>`,
       );
     if (action === 'move') return moveThread(args);
     stop(
-      'usage: hq thread list [<project>] [--all], hq thread move <project>/<slug> <project>, hq thread <project>/<slug>, or hq thread pause | resume <project>/<slug> (a new thread: hq plan thread)',
+      'usage: hq deliverable list [<project>] [--all], hq deliverable move <project>/<slug> <project>, hq deliverable <project>/<slug>, or hq deliverable pause | resume <project>/<slug> (a new deliverable: hq plan deliverable)',
     );
   },
 };
 
-// hq projects: every open thread's live estimate in a line (outlooks.ts).
+// hq projects: every open deliverable's live estimate in a line (outlooks.ts).
 export const projectLines = {
   help: outlooks.projectsHelp,
   run: outlooks.projects,
@@ -59,17 +61,19 @@ export const project = {
                                                      owner, who draws its plan (hq plan). --code: two or three capitals,
                                                      the prefix of its tasks' codes (HQ-COVERS), its own for good.${asHelp(companyLevels().lines.project)}
    hq project goal <project> on | off                the CEO marks a project one of our goals, or no longer: its bets are
-                                                     its threads, their windows its dates and their done when its number.
+                                                     its deliverables, their windows its dates and their done when its
+                                                     number.
                                                      While a goal is open, the CEO's check runs every hour with it
    hq project code <project> XX                      the CEO gives a project made before codes its prefix, once
    hq project owner <project> <agent>                the CEO names a project's owner
    hq project business <project> <business | none>   the CEO moves a project into a business (one of projects.yaml's),
-                                                     or out of any: its id, code and threads stay
+                                                     or out of any: its id, code and deliverables stay
    hq project rename <project> "name"                the CEO's: the name only. A project under a new id is hq project
-                                                     new, its threads moved there (hq thread move), then hq project done
+                                                     new, its deliverables moved there (hq deliverable move), then hq
+                                                     project done
    hq project done <project>                         a finished project leaves the lists (its owner or the CEO), once it
-                                                     has no open thread, work or proposal: a new thread or task in it is
-                                                     refused. A finished area that comes back is a new project${pauses.help('project')}`;
+                                                     has no open deliverable, work or proposal: a new deliverable or task
+                                                     in it is refused. A finished area that comes back is a new project${pauses.help('project')}`;
   },
 
   async run([action, ...args]: string[]) {
@@ -169,21 +173,21 @@ async function moveThread(given: string[]) {
     values: { why },
     args: [id, project, ...rest],
   } = takeValues(given, ['--why'], 'Nothing moved');
-  if (!id || !project || rest.length) stop('usage: hq thread move <project>/<slug> <project>');
+  if (!id || !project || rest.length) stop('usage: hq deliverable move <project>/<slug> <project>');
   const answer = await api.change('threads/move', { body: api.withSpeaker({ id, project, why }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing moved: ${api.errorIn(answer.body, 'no answer')}`);
   const moved = JSON.parse(answer.body) as Thread;
-  print(`Thread ${text(moved.name)} is ${text(moved.id)} now; ${id} still finds it.`);
+  print(`Deliverable ${text(moved.name)} is ${text(moved.id)} now; ${id} still finds it.`);
 }
 
 async function listThreads(given: string[]) {
   const all = given.includes('--all');
   const [projectId, ...rest] = given.filter(arg => arg !== '--all');
-  if (rest.length) stop('usage: hq thread list [<project>] [--all]');
+  if (rest.length) stop('usage: hq deliverable list [<project>] [--all]');
   const query = [projectId && `project=${api.uri(projectId)}`, all && 'all=1'].filter(Boolean).join('&');
   const route = query ? `threads?${query}` : 'threads';
-  const threads: Thread[] = JSON.parse(await api.orStop(api.get(route), "Couldn't list the threads."));
-  if (threads.length === 0) return print(`No ${all ? '' : 'open '}threads${projectId ? ` in ${projectId}` : ''}.`);
+  const threads: Thread[] = JSON.parse(await api.orStop(api.get(route), "Couldn't list the deliverables."));
+  if (threads.length === 0) return print(`No ${all ? '' : 'open '}deliverables${projectId ? ` in ${projectId}` : ''}.`);
   print(...threads.map(threadLine));
 }
 

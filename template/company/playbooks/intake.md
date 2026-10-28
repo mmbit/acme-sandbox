@@ -85,4 +85,5 @@ Settle these, roughly in this order:
    picture filled with it), which HQ's colourways, its title bar and the guest page wear. On the `brownstone` look it
    also pixels the wordmark into `logo.pixels` (rows of `#` for its letters, `o` for the colour, `.` for none,
    `lines` to stack one wider than the billboard's 36 pixels) with `logo.colours` (`ink`, `accent` the colour,
-   `shadow`), which the billboard and the rooftop sign draw. HQ wears it once the founding is deployed.
+   `shadow`), which the billboard and the rooftop sign draw. It sets `colours.notebook` in `company/brand.yaml` too, the
+   Notebook's accent and its pull tab's colour: the brand's colour, unless the board's wishes named another. HQ wears it once the founding is deployed.

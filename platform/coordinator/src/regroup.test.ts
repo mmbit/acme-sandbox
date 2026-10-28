@@ -111,7 +111,7 @@ test("a thread doesn't move to where a project or another open thread has its na
   const tune = started('tune');
   const melody = projects.createThread({ project: 'shop', name: 'Thread tune', goal: 'It works', slug: 'melody' });
   assert.equal(typeof melody, 'object');
-  assert.match(String(regroup.moveThread(tune, 'shop', 'juno')), /the open thread shop\/melody/);
+  assert.match(String(regroup.moveThread(tune, 'shop', 'juno')), /the open deliverable shop\/melody/);
   const named = projects.createThread({ project: 'game', name: 'The tools', goal: 'It works', slug: 'kit' });
   assert.match(String(regroup.moveThread((named as { id: string }).id, 'tools', 'juno')), /the project tools/);
   assert.deepEqual([projects.findThread(tune)?.id, projects.findThread('game/kit')?.id], [tune, 'game/kit']);
@@ -389,12 +389,12 @@ test("a thread's task that ran stays in its thread, and expedite's refusal says 
   const expedite = async (id: number) => (await h.agent('expedite', ceo, { id })).body.error;
   assert.equal(
     await expedite(running.id),
-    `job #${running.id} is running now on the branch it shares with the rest of ${levels}, so it can't leave that thread: ${fix}`,
+    `job #${running.id} is running now on the branch it shares with the rest of ${levels}, so it can't leave that deliverable: ${fix}`,
   );
   await h.finish(running, { status: 'done', branch: `job/${running.id}`, sha: 'abc' });
   assert.equal(
     await expedite(running.id),
-    `job #${running.id} has already run on the branch it shares with the rest of ${levels}, so it merges with that thread: ${fix}`,
+    `job #${running.id} has already run on the branch it shares with the rest of ${levels}, so it merges with that deliverable: ${fix}`,
   );
   assert.equal(threadOf(running.id), levels);
   assert.equal(await expedite(999_999), "there's no job #999999: check the number");

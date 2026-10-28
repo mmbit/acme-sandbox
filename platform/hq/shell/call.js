@@ -24,7 +24,7 @@ import {
   turnTakenBack,
 } from './callscreen.js';
 import { startPictures, picturesLive, pictureState, stopPictures } from './callpictures.js';
-import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './calldraw.js';
+import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
 import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
 
@@ -38,16 +38,16 @@ export const minimiseCall = () => call && minimise(call);
 // Call someone: the call opens over whatever is on screen (their panel, a card, Reviews, the intercom), which is there
 // again when it ends. request: the card it's about. onIntercom: started from the intercom, which shows why it ended, if
 // not by hanging up.
-// walk: from a card's Walk me through it (calldraw.js).
+// walk: from a card's Walk me through it (calldraw.js). page: a page of the Notebook in front of both, shared by its
+// corner (bookshare.js). (request and the rest named)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
-  request = 0,
-  onIntercom = false,
-  walk = false,
+  { request = 0, onIntercom = false, walk = false, page = 0 } = {},
 ) {
   if (call) return expand(call);
-  const c = (call = { agent, name, request, onIntercom, walk, voiced: [], kept: [], keptFrom: 0 });
+  // (brought: the page in front of both, the call's notes page's first scrap: calldraw.js.)
+  const c = (call = { agent, name, request, onIntercom, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
   c.hangUp = () => endCall();
   c.audio = new CallAudio({
     worklet: 'shell/mic-worklet.js',
@@ -57,6 +57,7 @@ export async function callAgent(
     warn: why => showSoundNote(soundNote(why)),
     tick: () => {
       onAir(c);
+      switchOffOnTone(c);
       lagging(c);
     },
   });
@@ -82,7 +83,8 @@ export async function callAgent(
   c.ring = setTimeout(() => {
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
-  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}) }); // (walk)
+  // (walk; page)
+  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}), ...(page ? { page } : {}) });
 }
 
 // It rings until the line picks up, as a phone does, and the handset clacks then (FROM_LINE.call): in the call's own
@@ -153,6 +155,7 @@ const FROM_LINE = {
       cue('pickUp');
     }
     resend(c, ev.heard);
+    c.face.lit(true); // (the agent's little screen switches on)
     picturesLive(c);
     shareKey(c); // (Show my screen, once picked up)
     startDrawing(c);
@@ -174,19 +177,23 @@ const FROM_LINE = {
     c.said = '';
     wiped(); // (the board's turn: the agent's last one's rings go.)
     if (ev.back) turnTakenBack(c); // (the board went on before the reply was heard: the turn's line is open again)
+    relight(c);
     transcribe(c, 'board', ev.text);
     DRAWING.heard(c, ev);
   },
   said(c, ev) {
     c.said = `${c.said ?? ''} ${ev.text}`.trim();
+    relight(c);
     transcribe(c, 'agent', c.said);
     c.audio.startSentence('voice');
     c.ticking = false;
   },
-  // the line's tick while a tool step runs: not a sentence, but its own start too
-  tick(c) {
+  // the line's tick while a tool step runs: not a sentence, but its own start too. And the hang-up tone's start, the
+  // agent's goodbye said: the little screen switches off as it plays (toneNext).
+  tick(c, ev) {
     c.audio.startSentence('tick');
     c.ticking = true;
+    c.toneNext = ev.tone === 'hangup';
   },
   // the line's own words when the agent can't answer (its seat at its limit, signed out, an error), from pickup on,
   // until a reply gets through: shown apart from what's being said, so they stay in view
@@ -240,6 +247,10 @@ function resend(c, heard) {
 function play(c, buf) {
   const at = c.audio.play(new Int16Array(buf)),
     last = c.voiced.at(-1);
+  if (c.toneNext) {
+    c.offAt = at.start; // (the hang-up tone's first sound: switchOffOnTone switches the little screen off as it plays)
+    c.toneNext = false;
+  }
   if (c.ticking) return;
   if (last && at.start <= last[1] + 1e-6) last[1] = at.end;
   else c.voiced.push([at.start, at.end]);
@@ -247,6 +258,20 @@ function play(c, buf) {
 function stopPlayback(c) {
   c.audio.stopPlayback();
   c.voiced = [];
+}
+// The agent hung up and the board spoke over its hang-up tone, or the agent said more: the line keeps the call, and the
+// little screen is on again.
+function relight(c) {
+  c.toneNext = false;
+  c.offAt = undefined;
+  c.face.lit(true);
+}
+// The agent's little screen switches off as the hang-up tone's first sound plays (play).
+function switchOffOnTone(c) {
+  if (c.offAt <= c.audio.ctx.currentTime) {
+    c.offAt = undefined;
+    c.face.lit(false);
+  }
 }
 // The ON AIR sign lights while someone on the call speaks: the board (the microphone loud enough to be a voice, about
 // -34 dBFS once the browser has taken the room's noise out) or the agent (its voice playing). Only while the call's audio

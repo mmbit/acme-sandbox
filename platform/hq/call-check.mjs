@@ -20,7 +20,8 @@
 // stopped audio clock asks for a tap if it cannot wake itself.
 // A new call clears the last one's status, hanging up adds no line, and the ON AIR sign lights while the board or the
 // agent speaks, never for the line's tick. A line that doesn't go through shows as an error until the board types again.
-// It rings until the line picks up, and the agent's handset clacks then, both in the call's own sound.
+// It rings until the line picks up, and the agent's handset clacks then, both in the call's own sound. The agent's little
+// screen is dark while it rings, and switches on at pickup and off at either side's hang-up.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -140,6 +141,7 @@ async function call(slow, stall) {
   const scheduled = await page.evaluate(() => window.scheduled), speaker = await page.evaluate(() => window.speaker);
   await page.click('#call-end');
   for (let i = 0; i < 50 && !bye; i++) await page.waitForTimeout(100);
+  await page.waitForSelector('#call-layer', { state: 'detached' }); // (once its little screen has switched off)
   if (noted) noted.after = await page.evaluate(() => (document.querySelector('#call-note')?.hidden ?? true));   // (gone with the call's layer)
   await context.close();
   assert.deepEqual(errors, []);
@@ -471,6 +473,83 @@ async function ringing() {
   console.log(`ok: it rings once the microphone is on (${rings.join(', ')} ms), is cut as the line picks up, and the handset clacks then`);
 }
 await ringing();
+
+// The agent's little screen is dark while it rings, switches on as the line picks up, and off as the agent's hang-up
+// tone plays (the line's tick that says so), the layer going at the hang-up after it. It switches on once: back from the
+// bubble, it doesn't again. The board hanging up switches it off before the layer goes, and a call started meanwhile has
+// the only layer.
+async function switchedOnAndOff() {
+  const { context, page, errors } = await callPage();
+  let line = null;
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"agent"/.test(m)) line = ws; }));
+  // (whether its picture shows, and whether the layer takes taps)
+  const face = () => page.evaluate(() => [+getComputedStyle(document.querySelector('.cf-picture')).opacity > 0, document.querySelector('#call-layer').inert]);
+  const shows = on => page.waitForFunction(on => +getComputedStyle(document.querySelector('.cf-picture')).opacity > 0 === on, on);
+  const tone = Array.from({ length: 40 }, () => Buffer.alloc(640));
+  const seen = {};
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  seen.ringing = await face();
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 9 }));
+  await page.waitForTimeout(500);
+  seen.picked = await face();
+  await page.click('#call-min'); await page.waitForTimeout(500);
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' });
+  seen.back = await page.evaluate(() => document.querySelector('.cf-picture').getAnimations().length);
+  line.send(JSON.stringify({ type: 'tick' })); // (a tool step's tick: still on)
+  await page.waitForTimeout(200);
+  seen.ticked = await face();
+  line.send(JSON.stringify({ type: 'tick', tone: 'hangup' }));
+  for (const f of tone) line.send(f);
+  await shows(false);
+  seen.tone = await face();
+  line.send(JSON.stringify({ type: 'heard', text: 'Wait, one more thing' })); // (the board spoke over it: the call stays)
+  await page.waitForTimeout(400);
+  seen.stayed = await face();
+  line.send(JSON.stringify({ type: 'hangup' }));
+  await page.waitForSelector('#call-layer', { state: 'detached' });
+  line = null;
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 10 }));
+  await shows(true);
+  // (the board hangs up: read in the page as it does and as the switch-off ends, before the layer's own listener takes
+  // it away, as Playwright's own steps can take longer than the switch-off under load)
+  await page.evaluate(() => {
+    const layer = document.querySelector('#call-layer'),
+      seen = () => [+getComputedStyle(layer.querySelector('.cf-picture')).opacity > 0, layer.inert];
+    layer.addEventListener('animationend', () => (window.ended = seen()), { capture: true });
+    document.querySelector('#call-end').click();
+    window.hungUp = seen();
+  });
+  await page.waitForSelector('#call-layer', { state: 'detached' });
+  [seen.hungUp, seen.ended] = await page.evaluate(() => [window.hungUp, window.ended]);
+  // (and hangs up and calls again at once: the layers the new call leaves)
+  line = null;
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 }));
+  await shows(true);
+  seen.layers = await page.evaluate(() => {
+    document.querySelector('#call-end').click();
+    document.querySelector('#call').click();
+    return document.querySelectorAll('#call-layer').length;
+  });
+  await context.close();
+  assert.deepEqual(errors, []);
+  assert.deepEqual(seen.ringing, [false, false], 'the little screen shows the agent while it rings');
+  assert.deepEqual(seen.picked, [true, false], 'the little screen doesn\'t switch on at pickup');
+  assert.equal(seen.back, 0, 'back from the bubble, the little screen switches on again mid-call');
+  assert.deepEqual(seen.ticked, [true, false], 'a tool step\'s tick switches the little screen off');
+  assert.deepEqual(seen.tone, [false, false], 'the little screen stays on through the hang-up tone');
+  assert.deepEqual(seen.stayed, [true, false], 'the board spoke over the tone and the little screen stays off');
+  assert.deepEqual(seen.hungUp, [true, true], 'the board\'s hang-up doesn\'t switch the little screen off first, taking no taps');
+  assert.deepEqual(seen.ended, [false, true], 'the layer went before its little screen switched off');
+  assert.equal(seen.layers, 1, 'a call started as the last one switched off has two layers');
+  console.log('ok: the little screen is dark while it rings, switches on at pickup and off with the hang-up tone or the board\'s hang-up');
+}
+await switchedOnAndOff();
 
 // The board's screen is shared only when it says so: minimising the call (its
 // key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call

@@ -1,6 +1,7 @@
 // The review panel: independent reviews, verified rulings, author fixes and merges.
+// (its messages say deliverable, the board's word for a thread)
 import { readFileSync } from 'node:fs';
-import { db, inOneStep } from './db.ts';
+import { db, inOneStep, redactedJson } from './db.ts';
 import { publish, KEYS } from './events.ts';
 import * as secrets from './secrets.ts';
 import { markMerged } from './work.ts';
@@ -202,7 +203,7 @@ function heldForThread(push: waiting.Push) {
   const next = push.job === undefined ? undefined : threadorder.nextReady(push.job);
   if (next === undefined) return false;
   waiting.keep({ ...push, heldFor: next });
-  publish({ type: 'log', agent: push.author, text: `PR #${push.pr}: held for #${next}, the thread's next task, so the thread is reviewed once at its end` });
+  publish({ type: 'log', agent: push.author, text: `PR #${push.pr}: held for #${next}, the deliverable's next task, so the deliverable is reviewed once at its end` });
   return true;
 }
 
@@ -507,7 +508,8 @@ function sendBack(push: { pr: number; branch: string; author: string; sha?: stri
 }
 
 // The gates' or the tests' report on a push, from the worker: passed, failed, or not run (null).
-// platform: it couldn't complete only because the worker couldn't measure its disk use (pushchecks.ts)
+// platform: it couldn't complete only because of the platform: the worker couldn't measure its disk use, or had no room
+// for it past its tries (pushchecks.ts)
 export type Check = { passed: boolean | null; report: string; platform?: boolean };
 const CHECKS = [
   { name: 'gates', what: 'the gates (Prettier, ESLint and the type check, on what it adds: CODE_STYLE.md, "The gates")' },
@@ -748,6 +750,7 @@ function again(j: Run, delay = RETRY_MS, agent = j.agent) {
     model: sameAgent ? j.model ?? undefined : undefined, judges: j.judges ? JSON.parse(j.judges) : undefined });   // (judges)
   reviewinbox.copyTask(j.id, id);
   reviewsources.copy(j.id, id);
+  retests.copy(j.id, id);
   if (owesDiagnosis(j.id)) oweDiagnosis(id);
   db.prepare('update jobs set not_before = ?, note = ? where id = ?').run(delay ? Date.now() + delay : 0, failedNote(j.note), id);
   return id;
@@ -844,7 +847,7 @@ function releaseHeld(push: waiting.Push) {
   waiting.drop(push.pr);
   const pr = db.prepare('select status from prs where number = ?').get(push.pr) as Pick<Pr, 'status'> | undefined;
   if (pr && !['open', 'stuck', 'board'].includes(pr.status)) return;
-  publish({ type: 'log', agent: push.author, text: `PR #${push.pr}: #${push.heldFor}, the thread's next task, isn't starting now, so the push held for it is reviewed now` });
+  publish({ type: 'log', agent: push.author, text: `PR #${push.pr}: #${push.heldFor}, the deliverable's next task, isn't starting now, so the push held for it is reviewed now` });
   const { pr: n, branch, author, files, sha, links, frontmatter, knowledge, pushedSince, gates, tests, lines } = push;
   startReview(n, branch, author, files, sha, links, frontmatter, knowledge, pushedSince, [], gates, tests, lines);
 }
@@ -1046,6 +1049,8 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
   for (let tries = 1; !m.ok; tries++) {
     if (!m.moved) {
       const gh = await pullRequestState(pr.number);
+      // (merged without HQ's answer: nothing shows HQ's merge made its merge commit rather than someone else's at the same
+      // head, so a carry's checks run on it all the same.)
       if (gh?.state === 'merged') { m = { ok: true, moved: false, why: '' }; break; }
       if (gh?.state === 'closed') return { ok: false, moved: false, why: 'closed on GitHub', closed: true };
       // GitHub merges without .gitattributes' merge drivers, so a branch that only adds to the files every branch adds to
@@ -1081,11 +1086,13 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
     m = await mergePullRequest(pr.number, title, pr.sha);
   }
   if (m.moved) stuck(pr.number, `the branch changed after the panel reviewed ${pr.sha.slice(0, 7)}, so it is not merged (${m.why})`);
+  // the commit HQ's merge made, the only one on main a carry's checks leave to the review (carries.ts)
+  if (m.ok && m.commit) db.prepare('update prs set merged_as = ? where number = ?').run(m.commit, pr.number);
   return m;
 }
 // `superseded`: a push started a new round while it waited, which the old ruling no longer decides, or the ruling was set
-// aside (`voided`)
-type Merged = { ok: boolean; moved: boolean; why: string; closed?: boolean; superseded?: boolean; needsChecks?: boolean };
+// aside (`voided`). `commit`: the merge commit GitHub made of the reviewed head.
+type Merged = { ok: boolean; moved: boolean; why: string; closed?: boolean; superseded?: boolean; needsChecks?: boolean; commit?: string };
 // Tries again after 5, 15 and 45 seconds
 const MERGE_TRIES = 3, MERGE_WAIT = Number(process.env.MERGE_RETRY_MS) || 5000;
 
@@ -1361,11 +1368,12 @@ export async function actOnRulings() {
 // The sweep's action and the author work that must finish before it can act.
 export function sweepAction(
   pr: Pick<Pr, 'number' | 'branch' | 'author' | 'round' | 'status' | 'sha' | 'since' | 'files' | 'links'>,
+  beforeVisualDecision = false, // (the play adds the hold at the merge endpoint)
 ) {
   if (pr.status !== 'open' || !pr.sha) return undefined;
   // A ruling delivered to the owner's inbox waits for the owner, even on a pull request that's now only records.
   const saved = sweepRuling(pr);
-  if (saved?.decision === 'merge' && !misjudged(saved.job) && visualapproval.waitReason(pr.number)) return undefined;
+  if (!beforeVisualDecision && saved?.decision === 'merge' && !misjudged(saved.job) && visualapproval.waitReason(pr.number)) return undefined;
   if (saved && reviewinbox.get(pr.number)?.ruling === saved.job.id) {
     // (one whose entries aren't findings, delivered before misjudged refused it, goes back to its consolidator:
     // reviewFinished.)
@@ -2115,8 +2123,8 @@ export async function heldDecided(merges: { number: number }[]) {
 // on (it passed, but the branch moved before the merge) or one with no commit pinned goes on with a push instead (the
 // author's job ends): after a ruling, the push is a round of its own, counted like a merge that couldn't happen (the consolidator
 // checks the merge); with no commit pinned, it gets the same round again (startReview). One stuck because its tests
-// couldn't complete goes back to its author for a push of the same commit, at which the worker runs the gates and tests
-// again, and the round goes on from there (startReview). A ruled branch that moved outside any job gets that push from
+// couldn't complete gets a push of the same commit with no agent run (testsAgain), at which the worker runs the gates
+// and tests again, and the round goes on from there (startReview). A ruled branch that moved outside any job gets that push from
 // its author's job (movedOutside). Its author, the CEO or the process team can ask. A later valid ruling that finished
 // while the PR was stuck is acted on without another review. A merge GitHub refused twice on the same head is tried
 // again (movedOutside).
@@ -2172,18 +2180,34 @@ function panelNow(pr: Pr, by: string): { ok: true; jobs: number[] } {
   publish({ type: 'log', agent: by, text: `PR #${pr.number}'s round ${pr.round} never reached its panel: it starts now (asked by ${by}), job #${triage.id}` });
   return { ok: true, jobs: [triage.id] };
 }
-// Stuck because its tests couldn't complete (startReview): its author's job on the branch changes nothing, so the push
-// at its end is the same commit, and the worker runs the gates and tests on it again.
+// Stuck because its tests couldn't complete (startReview): the same commit is pushed again, and the worker runs the gates
+// and tests on it. No agent runs for that: the job lands as a run that ended well (the worker's land, as for a snagged
+// push), so the worker pushes the branch as it is, finds its pull request and runs the checks, and the review goes on.
+// Its landing is kept in retests too, since a run's end clears jobs.landing: a run that fails is retried (fixFailed,
+// again) with the same landing, never as an agent's job.
+db.exec('create table if not exists retests (job integer primary key, landing text not null)');
+redactedJson('retests', 'landing');
+const retests = {
+  add: (job: number, landing: string) => {
+    db.prepare('insert into retests (job, landing) values (?, ?)').run(job, landing);
+    db.prepare('update jobs set landing = ? where id = ?').run(landing, job);
+  },
+  copy: (from: number, to: number) => {
+    const kept = db.prepare('select landing from retests where job = ?').get(from) as { landing: string } | undefined;
+    if (kept) retests.add(to, kept.landing);
+  },
+};
 function testsAgain(pr: Pr, by: string): { ok: true; jobs: number[] } | string {
   const n = pr.number;
   const on = openJobOn(pr.branch);
   if (on) return `job #${on.id} is on ${pr.branch} already: the push at its end runs the tests again`;
   db.prepare("update prs set status = 'open', why = null where number = ?").run(n);
-  const id = fixJob(pr, 'Running the tests again', `Your pull request #${n} (branch ${pr.branch}) was stuck: ${pr.why ?? `its tests couldn't complete on ${GATE_TRIES} pushes in a row`}. ` +
-    `Nothing in them failed, and ${findAgent(by)?.name ?? by} asked for them to run again (\`hq review ${n}\`). Change nothing on the branch, ` +
-    'don\'t merge main into it, and end with one line saying so: the worker pushes it as it is, runs the gates and the tests on that same commit, ' +
-    'and the review starts once they pass.', `asked by ${by}, its tests to run again`);
-  return { ok: true, jobs: [id!] };
+  const report = `Pull request #${n} (branch ${pr.branch}) was stuck: ${pr.why ?? `its tests couldn't complete on ${GATE_TRIES} pushes in a row`}. ` +
+    `Nothing in them failed, and ${findAgent(by)?.name ?? by} asked for them to run again (\`hq review ${n}\`). This job runs no agent: ` +
+    'the worker pushes the branch as it is and runs the gates and the tests on that same commit, and the review starts once they pass.';
+  const id = fixJob(pr, 'Running the tests again', report, `asked by ${by}, its tests to run again`)!;
+  retests.add(id, JSON.stringify({ summary: report, result: report }));
+  return { ok: true, jobs: [id] };
 }
 // A ruled round whose branch moved outside any job (the Overseer's push, or the board's Claude Code's) goes to its author
 // as HQ's fix job on the branch: that job's push is the worker's, which inspects the commit, runs the gates and tests

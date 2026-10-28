@@ -17,6 +17,7 @@ only one company's goes in its entry's `prompt`.
 | `books.md` | The weekly books: reported costs and invoices booked against approvals, costs coming, the month's close to the board |
 | `docs-sweep.md` | A weekly sweep of the written memory: contradictions, drift and sprawl compressed or archived, the shared memory staged |
 | `security-audit.md` | A weekly security audit of what changed in the apps and sites: realistic paths only, small fixes, the rest queued |
+| `seat-spend.md` | A weekly read of where the AI seats' week went: cost per merged change, the share that bought no change, at most three fixes |
 | `process-review.md` | A weekly look at whether the way the company works costs more than it brings: at most three changes |
 | `newsletter.md` | Every day, a short issue of the company's newsletter: at most five things, at most 100 words, with a cover |
 | `cve-watch.md` | Twice a day, major vulnerabilities in what the company runs (Node, the server and its images, Docker, dependencies): patched or mitigated at once, the rest to the Overseer or the board |

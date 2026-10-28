@@ -37,6 +37,9 @@ export const OPEN_EXTRAS = {
 export const REVIEW_PARTS = {
   '/__review/frame.js': 'shared/review/frame.js',
   '/__review/ink.js': 'shared/review/ink.js',
+  // (its live line and the stroke's shapes)
+  '/__review/inklive.js': 'shared/review/inklive.js',
+  '/__review/inkshape.js': 'shared/review/inkshape.js',
   '/__review/anchor.js': 'shared/review/anchor.js',
   '/__review/paper.js': 'shared/review/paper.js',
   '/__review/tap.js': 'shared/review/tap.js',

@@ -26,6 +26,17 @@ const NEVER_CONNECTED = ['ECONNREFUSED', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_CONN
 // its author.
 export const UNREACHED_EXIT = 3;
 export class HqUnreachable extends Error {}
+// A check's exit code when its bundle couldn't be made here: this machine's disk was full (a deploy's build peaks it),
+// not the change, so the worker runs it again on the same commit once there's room (platform/worker's pushchecks.ts
+// NO_ROOM_EXIT), and it never goes back to its author.
+export const NO_ROOM_EXIT = 4;
+export class NoRoom extends Error {}
+// A bundle that failed for want of disk (ENOSPC, or its tool's own words for it) is NoRoom; any other failure (a tool
+// missing, git's own error) stays what it was, one that couldn't run
+export function bundleFailure(err: Error & { code?: unknown; stderr?: unknown }) {
+  const full = err.code === 'ENOSPC' || String(err.stderr ?? '').includes('No space left on device');
+  return full ? new NoRoom(`its bundle couldn't be made here, the disk full (${err.message})`) : err;
+}
 const BUNDLE = 'tests.bundle';
 const FILES = 'files.tar.gz';
 const execute = promisify(execFile);
@@ -173,8 +184,11 @@ async function sendRun(root: string, check: LentCheck): Promise<number | string>
   };
   try {
     const header = Buffer.from(JSON.stringify(spec)).toString('base64url');
-    // (sent from a process of its own, which ends with the send and takes the bundle's memory with it: lentsend.ts;
-    const { stdout } = await execute(process.execPath, [SEND, await bundleOf(root, check, dir), header]);
+    const bundle = await bundleOf(root, check, dir).catch((err: Error) => {
+      throw bundleFailure(err);
+    });
+    // (lentsend.ts sends it)
+    const { stdout } = await execute(process.execPath, [SEND, bundle, header]);
     const said = JSON.parse(stdout) as { id?: number; refused?: string; unreached?: string };
     if (said.unreached !== undefined) throw new HqUnreachable(said.unreached);
     return said.id ?? said.refused!;
@@ -184,7 +198,8 @@ async function sendRun(root: string, check: LentCheck): Promise<number | string>
 }
 
 // The bundle a run carries: the base and the tree, each a commit of its own on refs/tests/change (the base its parent,
-// with none before it), in a git bundle, and the tools when there are any, as a gzipped tar: its file
+// with none before it), in a git bundle, and the tools and inputs when there are any. It returns the gzipped tar
+// they're packed in.
 async function bundleOf(root: string, check: LentCheck, dir: string) {
   const env = {
     ...process.env,

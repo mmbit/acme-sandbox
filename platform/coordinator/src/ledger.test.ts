@@ -1728,7 +1728,7 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   const banner = (await agent('item', c.token, { kind: 'promise', owner: 'bolt', goal: 'g', what: 'The banner', deadline: '2h' })).body.id;
   const unnamed = await agent('job', c.token, { agent: 'bolt', title: 'The banner', prompt: 'Make it.', item: banner });
   assert.equal(unnamed.status, 409);
-  assert.match(unnamed.body.error, new RegExp(`this job would be in none: name the thread it serves.*\\n  ${onCall} `, 's'));
+  assert.match(unnamed.body.error, new RegExp(`this job would be in none: name the deliverable it serves.*\\n  ${onCall} `, 's'));
   assert.equal(count('The banner'), 0, 'nothing queued');
   const named = await agent('job', c.token, { agent: 'bolt', title: 'The banner', prompt: 'Make it.', item: banner, thread: onCall });
   assert.equal(named.status, 200, JSON.stringify(named.body));
@@ -1770,7 +1770,7 @@ test("a promise's time, noted on the call, becomes the deadline of the thread of
   const before = item(byLoose);
   const untimed = await agent('item-link', t, { id: byLoose, to: { job: loose } });
   assert.equal(untimed.status, 400);
-  assert.match(untimed.body.error, new RegExp(`job #${loose} is in no thread`));
+  assert.match(untimed.body.error, new RegExp(`job #${loose} is in no deliverable`));
   assert.deepEqual(item(byLoose), before);
   assert.equal(job(loose).item, null);
   // finished work (its pull request merged) linked as the record of an item: its thread, where other work goes on with a
@@ -1809,7 +1809,7 @@ test("a follow-up that isn't the CEO's links a timed promise to the call's work 
   const before = item(menu);
   const bare = await agent('item-link', t, { id: menu, to: { job: queued.body.id } });
   assert.equal(bare.status, 400);
-  assert.match(bare.body.error, /is in no thread: link it with --thread <project>\/<slug>/);
+  assert.match(bare.body.error, /is in no deliverable: link it with --deliverable <project>\/<slug>/);
   assert.deepEqual(item(menu), before);
   // named (by hq, as the follow-up runs it): the work and its fix go on that thread, and the time with them, from kit
   const menus = h.dueThread();
@@ -1856,7 +1856,7 @@ test("a follow-up that isn't the CEO's links a timed promise to the call's work 
   const loose = jobs.createJob({ agent: 'bolt', title: 'The soups', prompt: 'x', queuedBy: 'juno', thread: null }).id;
   const valueless = await h.hq({ token: t, agent: 'kit' }, 'item', 'link', String(soups), `job:${loose}`, '--thread');
   assert.notEqual(valueless.code, 0);
-  assert.match(valueless.out, /Not linked: --thread needs a value/);
+  assert.match(valueless.out, /Not linked: --deliverable needs a value/);
   assert.equal(item(soups).job, null);
   assert.equal(threadOf(loose), null);
 });

@@ -1,7 +1,8 @@
 // book-check.mjs's film stories that no build thread's story walks, on HQ's
 // mock book, held like an iPad mini:
-// A morning: the book open on today beside HQ's page, its head offering yesterday; turned back, yesterday's sheet for
-// Moss, sent at its time, its note with Moss's answer clipped on under its name, a box to tick it; and on to today again.
+// A morning: the book open on its newest page beside HQ's page; from its pages' list, the page sent yesterday, stamped
+// with its time, Moss's answer under its scrap with Moss's name, a box to tick it and a line to reply on; and on to the
+// newest page again.
 // HQ's page never under the book, at any width it keeps a page at: half an iPad mini's split screen, a split laptop
 // window, an iPad Air upright, a 10-inch iPad, a 13-inch, a big desktop. Open there, or folded and pulled open, the
 // book sits beside the page and none of HQ's buttons is cut by its edge, in Brownstone and in Wire (Wire's narrow
@@ -13,44 +14,34 @@ import assert from 'node:assert/strict';
 export async function morningStory(browser, c) {
   const { page, errors, done } = await c.hq(browser, c.viewport);
   try {
-    // (the day in the shown page's heading, written out; yesterday from the pages' list.)
-    const shown = page.locator('#book .bk-page:not([hidden]) .bk-title'),
-      when = shown.locator('.bk-when');
-    assert.match(await shown.textContent(), /Today/i, 'the book opens on today');
+    // (the pages by name in the notebook's list: the sent one, the newest the one shown.)
+    const shown = page.locator('#book .bk-page:not([hidden])'),
+      list = page.locator('#book').getByRole('button', { name: /^The notebook's pages/ });
+    assert.match(await list.getAttribute('aria-label'), /(\d+) of \1$/, 'the book opens on its newest page');
+    await list.click();
     await page
       .locator('#book')
-      .getByRole('button', { name: /^The day's pages/ })
+      .getByRole('menuitem', { name: /Cover ideas/ })
       .click();
-    const back = page.locator('#book').getByRole('menuitem', { name: /^‹ / }),
-      yesterday = (await back.textContent()).slice(2);
-    await back.click();
-    const sheet = page.getByRole('region', { name: 'For Moss' }),
-      // (a lone note carries no number)
-      note = sheet.getByRole('group', { name: /^Note( 1)?$/ });
-    await note.waitFor({ timeout: 5000 });
+    const slip = shown.locator('.answer-slip').first();
+    await slip.waitFor({ timeout: 5000 });
     await page.waitForTimeout(c.settle);
-    // ("Sun 25 Oct" in the list is "Sunday 25 October" on the page)
-    const written = (await when.textContent()).split(' ');
-    assert.ok(
-      yesterday.split(' ').every((w, i) => written[i]?.startsWith(w)),
-      `the book on yesterday: ${written.join(' ')}, not ${yesterday}`,
-    );
-    // (what went to whom and when)
-    assert.match(await sheet.textContent(), /sent to Moss · \d+ \w+ \d\d:\d\d/, 'the sheet marked sent, with its time');
-    assert.match(await note.textContent(), /The tear line is too dark/);
-    const answer = note.getByText('Lighter now, half the old ink');
-    assert.ok(await c.inBook(page, answer), "the answer clipped on, on the book's paper");
-    assert.equal(await note.getByText('Moss', { exact: true }).isVisible(), true, 'under its name');
-    assert.equal(await note.getByRole('button', { name: 'Tick it: done' }).isVisible(), true, 'a box to tick');
-    assert.equal(await note.getByRole('textbox', { name: 'Reply to Moss' }).isVisible(), true, 'a line to reply on');
+    // (the turn's picture of the leaf gone first: it copies the pages it turns.)
+    await page.waitForFunction(() => !document.querySelector('#book .bk-turn-picture'), null, { timeout: 5000 });
+    // (what went, and when)
+    assert.match(await shown.locator('[data-slot=stamp]').textContent(), /^Sent \w+ \d\d:\d\d/, 'the page stamped');
+    assert.match(await shown.locator('.bk-scrap-words').first().textContent(), /headline be a touch warmer/);
+    await slip.scrollIntoViewIfNeeded();
+    const answer = slip.getByText('Warmer it is', { exact: false });
+    assert.ok(await c.inBook(page, answer), "the answer under its scrap, on the book's paper");
+    assert.equal(await slip.getByText('Moss', { exact: true }).isVisible(), true, 'under its name');
+    assert.equal(await slip.getByRole('button', { name: 'Tick it: done' }).isVisible(), true, 'a box to tick');
+    assert.equal(await slip.getByRole('textbox', { name: 'Reply to Moss' }).isVisible(), true, 'a line to reply on');
     await c.shot('book-morning', page);
-    await page
-      .locator('#book')
-      .getByRole('button', { name: /^The day's pages/ })
-      .click();
-    await page.locator('#book').getByRole('menuitem', { name: 'Today ›' }).click();
+    await list.click();
+    await page.locator('#book').getByRole('menuitem').last().click();
     await page.waitForTimeout(c.settle);
-    assert.match(await shown.textContent(), /Today/i, 'and on to today');
+    assert.match(await list.getAttribute('aria-label'), /(\d+) of \1$/, 'and on to the newest page');
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -66,6 +57,8 @@ const SCREENS = [
   { width: 1024, height: 768 },
   { width: 1366, height: 1024 },
   { width: 1920, height: 1080 },
+  // (a phone on its side: too short for the whole tool strip, which scrolls.)
+  { width: 844, height: 390 },
 ];
 // (Wire in Chromium only: Linux's headless WebKit can't start it, book-check's Wire stories say why)
 export const LOOKS = browser => (browser.browserType().name() === 'chromium' ? ['', '&renderer=wire'] : ['']);
@@ -96,6 +89,7 @@ async function atWidth(browser, c, screen, look) {
     }
     assert.deepEqual(await cut(page), [], `${at}, HQ's buttons cut by the book`);
     await c.shot(`book-width-${screen.width}${look && '-wire'}`, page);
+    assert.deepEqual(await unreached(page), [], `${at}, the tool strip's controls out of reach`);
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -111,3 +105,15 @@ const cut = page =>
       .filter(e => getComputedStyle(e).visibility !== 'hidden' && across(e.getBoundingClientRect()))
       .map(e => (e.getAttribute('aria-label') || e.title || e.textContent).trim().slice(0, 40));
   });
+// The tool strip's controls that can't be brought onto the screen: on a short one, its island scrolls to each.
+const unreached = page =>
+  page.evaluate(() =>
+    [...document.querySelectorAll('#book .bk-strip .bk-btn')]
+      .filter(b => b.offsetParent)
+      .filter(b => {
+        b.scrollIntoView({ block: 'nearest' });
+        const r = b.getBoundingClientRect();
+        return r.top < 0 || r.bottom > innerHeight;
+      })
+      .map(b => b.getAttribute('aria-label')),
+  );

@@ -119,8 +119,7 @@ export function fill(
     }
     const filled = line.replace(SLOT, (_, name) => value(name));
     if (line.match(SLOT) && !filled.trim()) continue;
-    const alone = line.trim().match(ONLY_SLOT);
-    const brought = alone && !linkSlots.includes(alone[1]) ? value(alone[1]).split('\n') : null;
+    const brought = slotAlone && !linkSlots.includes(slotAlone) ? value(slotAlone).split('\n') : null;
     lines.push(...(brought ? brought.map(text => ({ text, ours: false })) : [{ text: line, ours: true }]));
   }
   const text =
@@ -191,36 +190,6 @@ function htmlOf(lines: Line[], styles: Look['styles'], value: (name: string) => 
     return tag('li', inline({ ...line, text: words }));
   };
 
-  // The picture's cell is there on every row, empty without one, so the names line up
-  const receipt = (rows: Row[]) =>
-    tag(
-      'rows',
-      rows
-        .map(row => {
-          const picture = row.picture && WHOLE_URL.test(row.picture) ? row.picture : null;
-          const img = picture
-            ? `<img src="${escapeHtml(picture)}" width="${PICTURE_PX}" alt=""${styles.row_img ? ` style="${escapeHtml(styles.row_img)}"` : ''}>`
-            : '';
-          const words = [
-            tag('strong', escapeHtml(row.name)),
-            ...row.details.map(d => tag('row_detail', escapeHtml(d))),
-          ];
-          return `<tr>${tag('row_picture', img, ` width="${PICTURE_PX + 14}"`)}${tag('row_text', words.join('<br>'))}${tag('row_amount', escapeHtml(row.amount), ' align="right"')}</tr>`;
-        })
-        .join(''),
-      ' role="presentation" cellspacing="0" cellpadding="0" width="100%"',
-    );
-
-  // The picture's cell as wide as the picture, beside the words' first line (the look pads the gap)
-  const markedLine = ({ text, picture }: Marked) => {
-    if (!picture) return null;
-    const img = `<img src="${escapeHtml(picture.src)}" width="${picture.width}" height="${picture.height}" alt=""${styles.marked_img ? ` style="${escapeHtml(styles.marked_img)}"` : ''}>`;
-    const cells =
-      tag('marked_picture', img, ` width="${picture.width}" valign="top"`) +
-      tag('marked_text', escapeHtml(text), ' valign="top"');
-    return tag('marked', `<tr>${cells}</tr>`, ' role="presentation" cellspacing="0" cellpadding="0" width="100%"');
-  };
-
   const blocks: string[] = [];
   let paragraph: string[] = [];
   let list: string[] = [];
@@ -232,10 +201,10 @@ function htmlOf(lines: Line[], styles: Look['styles'], value: (name: string) => 
     list = [];
   };
   for (const line of lines) {
-    const withPicture = line.marked ? markedLine(line.marked) : null;
+    const withPicture = line.marked ? markedOf(line.marked, styles) : null;
     if (line.rows) {
       close();
-      blocks.push(receipt(line.rows));
+      blocks.push(receiptOf(line.rows, styles));
     } else if (withPicture) {
       close();
       blocks.push(withPicture);
@@ -261,6 +230,34 @@ function htmlOf(lines: Line[], styles: Look['styles'], value: (name: string) => 
   }
   close();
   return blocks.join('\n');
+}
+// The picture's cell is there on every row, empty without one, so the names line up
+function receiptOf(rows: Row[], styles: Look['styles']) {
+  const tag = tagIn(styles);
+  const tableRows = rows.map(row => {
+    const picture = row.picture && WHOLE_URL.test(row.picture) ? row.picture : null;
+    const img = picture
+      ? `<img src="${escapeHtml(picture)}" width="${PICTURE_PX}" alt=""${styleOf(styles, 'row_img')}>`
+      : '';
+    const words = [tag('strong', escapeHtml(row.name)), ...row.details.map(d => tag('row_detail', escapeHtml(d)))];
+    const cells =
+      tag('row_picture', img, ` width="${PICTURE_PX + 14}"`) +
+      tag('row_text', words.join('<br>')) +
+      tag('row_amount', escapeHtml(row.amount), ' align="right"');
+    return `<tr>${cells}</tr>`;
+  });
+  return tag('rows', tableRows.join(''), ' role="presentation" cellspacing="0" cellpadding="0" width="100%"');
+}
+// The picture's cell as wide as the picture, beside the words' first line (the look pads the gap)
+function markedOf({ text, picture }: Marked, styles: Look['styles']) {
+  if (!picture) return null;
+  const tag = tagIn(styles);
+  const { src, width, height } = picture;
+  const img = `<img src="${escapeHtml(src)}" width="${width}" height="${height}" alt=""${styleOf(styles, 'marked_img')}>`;
+  const cells =
+    tag('marked_picture', img, ` width="${width}" valign="top"`) +
+    tag('marked_text', escapeHtml(text), ' valign="top"');
+  return tag('marked', `<tr>${cells}</tr>`, ' role="presentation" cellspacing="0" cellpadding="0" width="100%"');
 }
 function signatureOf(signature: string, styles: Look['styles']) {
   const tag = tagIn(styles),
@@ -296,6 +293,6 @@ const tagIn =
   (styles: Look['styles']) =>
   (part: Part, inner: string, attributes = '') => {
     const name = TAGS[part] ?? part;
-    const style = styles[part] ? ` style="${escapeHtml(styles[part])}"` : '';
-    return `<${name}${attributes}${style}>${inner}</${name}>`;
+    return `<${name}${attributes}${styleOf(styles, part)}>${inner}</${name}>`;
   };
+const styleOf = (styles: Look['styles'], part: Part) => (styles[part] ? ` style="${escapeHtml(styles[part])}"` : '');

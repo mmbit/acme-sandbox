@@ -22,7 +22,7 @@ const projects = await import('./projects.ts');
 const { MIN, HOUR, t0, reset, agreed, handedOut, jobEngine } = await followthroughFixture(h);
 
 // What's late, for the CEO's summary (summary.ts): its threads' lines, those past their windows
-const lateLines = (now = Date.now()) => threats.lines(forecast.refresh(now)).filter(l => l.startsWith('thread '));
+const lateLines = (now = Date.now()) => threats.lines(forecast.refresh(now)).filter(l => l.startsWith('deliverable '));
 
 // bolt's call's follow-up hands chime the item with a deadline, which goes on their thread; chime's job fails before it
 // opens a pull request (a push GitHub refused), its commits left on the mirror's refs/outgoing/job/<n>, with the
@@ -102,7 +102,7 @@ test("hq job --lands: the landing job takes over the failed job's item and threa
   assert.match(row.prompt, new RegExp(`git fetch origin refs/outgoing/job/${failed}\``));
   const lines = lateLines();
   assert.equal(lines.length, 1);
-  assert.match(lines[0], new RegExp(`^thread ${thread} \\(`));
+  assert.match(lines[0], new RegExp(`^deliverable ${thread} \\(`));
 
   // done and merged, the item is handled and the clock stops
   await h.finish(bolt);

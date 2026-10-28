@@ -20,8 +20,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { constants } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parse } from '../coordinator/node_modules/yaml/dist/index.js';
-import { serve, ROOT } from './serve.mjs';
+import { mockBrand, serve, ROOT } from './serve.mjs';
 import { serve as serveRepo } from '../../shared/demo/core.mjs';
 import { playwright } from '../../shared/browser/browser.mjs';
 import { authenticatePreview } from '../../shared/demo/preview.mjs';
@@ -201,10 +200,7 @@ async function answering(url) {
   throw new Error(`${url} never answered`);
 }
 
-// HQ in dev mode, worn as the company wears it (theme/hq.yaml over the mock brand)
+// HQ in dev mode, worn as the company wears it
 async function themed() {
-  const theme = await readFile(join(ROOT, 'theme/hq.yaml'), 'utf8').then(parse, () => null);
-  const brand = JSON.parse(await readFile(join(ROOT, 'platform/hq/mock/brand.json'), 'utf8'));
-  if (theme) brand.theme = { ...brand.theme, ...theme };
-  return serve(undefined, 0, { 'mock/brand.json': JSON.stringify(brand) });
+  return serve(undefined, 0, { 'mock/brand.json': JSON.stringify(await mockBrand()) });
 }

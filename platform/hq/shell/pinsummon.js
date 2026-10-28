@@ -4,9 +4,9 @@
 // puts it away. A phone has no room for HQ's page beside the open book (it opens as the spread over HQ): there the
 // control folds the book and leaves HQ with the pin on it, and opening the book again puts it away. Review mode shows
 // and hides it ('review:summon': dock.js) with its quick pop and shrink. (the board, 2026-10-27)
-import { foldBook } from './book.js';
-import { layout } from './booklayout.js';
-import { button, island, lineIcon, setPressed } from './bookui.js';
+import { foldBook } from './ink/book.js';
+import { layout } from './ink/booklayout.js';
+import { button, island, lineIcon, setPressed } from './ink/bookui.js';
 
 // a pushpin in the islands' own line, tilted as review mode's pin is
 const ICON = lineIcon(

@@ -8,7 +8,7 @@ and a clock that moves with the audio (32 ms a VAD window). The Call tests need 
 `python3 -m venv /tmp/v && /tmp/v/bin/pip install numpy`, then run this with /tmp/v/bin/python); without it only stray()
 is tested. replay.py runs the same kind of call through the real models.
 """
-import asyncio, base64, contextlib, io, json, os, re, sys, tempfile, threading, types, unittest, unittest.mock
+import asyncio, base64, contextlib, io, json, os, re, sys, tempfile, threading, time, types, unittest, unittest.mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -1551,7 +1551,8 @@ class HangUp(Juno):
         self.assertEqual(sum(self.audio), 2 * 16000)
         await self.wait(20)
         self.assertEqual(self.audio[-1], len(server.hang_up_tone()), 'the hang-up tone')
-        self.assertEqual(self.events[-1], {'type': 'tick'})  # (HQ counts it as a start of its own, as the tick's)
+        # (HQ counts it as a start of its own, as the tick's, and switches the agent's little screen off as it plays;
+        self.assertEqual(self.events[-1], {'type': 'tick', 'tone': 'hangup'})
         self.assertEqual(self.hung, [], 'not over the tone')
         await self.tone()
         self.assertEqual(len(self.hung), 1)
@@ -1692,6 +1693,89 @@ class HangUp(Juno):
         await self.wait(300)
         self.assertEqual(self.hung, [])
         self.assertTrue(self.call.lines[-1].startswith('(The line, not Juno:'))
+
+
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class Hello(Juno):
+    """The board's call: Juno says hello in its own few words right after the pickup, never over the board."""
+    async def test_juno_says_its_own_hello_at_pickup_and_the_board_goes_on(self):
+        self.brain.reply = 'Hi, Juno here.'
+        await self.call.greet()
+        await self.settle()
+        self.assertEqual(self.brain.asked, [server.HELLO])
+        self.assertEqual(self.call.lines, ['Juno: Hi, Juno here.'])
+        self.assertIn({'type': 'said', 'text': 'Hi, Juno here.'}, self.events)
+        self.assertTrue(self.audio)
+        await self.quiet(150)  # (it has played)
+        self.brain.reply = REPLY
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await self.settle()
+        self.assertEqual(self.brain.asked, [server.HELLO, 'Can you check the orders?'])
+        self.assertEqual((self.call.lines[1:], self.brain.recap), (['Board: Can you check the orders?', f'Juno: {REPLY}'], ''))
+
+    async def test_no_hello_once_the_board_has_started_talking(self):
+        self.brain.thinking = asyncio.Event()
+        await self.call.greet()
+        hello = self.call.turn
+        await self.talk('Can you check the orders?', 30)
+        self.brain.thinking.set()  # (its hello comes while the board talks)
+        await hello
+        self.assertEqual((self.audio, self.call.lines), ([], []))
+        await self.quiet(20)
+        await self.settle()
+        # (the stand-in brain leaves the recap where Agent.ask puts it in front of the board's words)
+        self.assertEqual(self.brain.asked, [server.HELLO, 'Can you check the orders?'])
+        self.assertEqual(self.brain.recap, "(Your hello wasn't said: they started talking first.)")
+        self.assertEqual(self.call.lines, ['Board: Can you check the orders?', f'Juno: {REPLY}'])
+
+    async def test_talking_over_the_hello_stops_it_and_is_a_turn_of_its_own(self):
+        self.brain.reply = 'Hi, Juno here.'
+        await self.call.greet()
+        await self.settle()
+        self.brain.reply = REPLY
+        await self.talk('Can you check the orders?', 30)
+        await self.quiet(20)
+        await self.settle()
+        self.assertIn({'type': 'clear'}, self.events)
+        self.assertEqual(self.brain.asked, [server.HELLO, 'Can you check the orders?'])  # (nothing taken back)
+
+    async def test_the_board_talking_while_the_hellos_audio_is_still_made_after_the_cap_cuts_it(self):
+        """The ring's cap passes while the hello's audio is still being made, and the board talks: its words stop that
+        synthesis, so their reply isn't held for the rest of it."""
+        slow, made = server.pocket.generate_audio_stream, []
+
+        def generate_audio_stream(state, text, stop=None):  # (the hello: 2 s to make, a piece at a time until stop)
+            for piece in slow(state, text, stop):
+                if text == 'Hi, Juno here.':
+                    if stop.is_set():
+                        return
+                    time.sleep(0.5)
+                    made.append(text)
+                yield piece
+
+        self.brain.reply = 'Hi, Juno here.'
+        with unittest.mock.patch.object(server.pocket, 'generate_audio_stream', generate_audio_stream), \
+                unittest.mock.patch.object(server, 'HELLO_WAIT_SECONDS', 0.05):
+            await self.call.ringing()
+            self.assertFalse(self.call.hello_made.done())
+            await self.call.greet()
+            self.brain.reply = REPLY
+            t0 = time.monotonic()
+            await self.talk('Can you check the orders?', 30)
+            await self.quiet(20)
+            await self.settle()
+            self.assertLess(time.monotonic() - t0, 1.2, "the reply wasn't held for the hello's synthesis")
+        self.assertLess(len(made), 4, 'the synthesis was cut')
+        self.assertEqual(self.brain.recap, "(Your hello wasn't said: they started talking first.)")
+        self.assertEqual(self.call.lines, ['Board: Can you check the orders?', f'Juno: {REPLY}'])
+
+    async def test_a_seat_at_its_limit_is_said_at_pickup(self):
+        self.brain.reply = [server.Unanswered('limit', 1909174200000)]
+        await self.call.greet()
+        await self.settle()
+        self.assertTrue(self.call.lines[0].startswith("(The line, not Juno: Juno can't answer right now"))
+        self.assertTrue(self.audio)
 
 
 OPENING = "Hi, this is Juno from Testco. I'm an AI assistant, calling about our parcel."
@@ -2213,7 +2297,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         (request): call-context hears it on the new call, and not on a restart (the coordinator keeps it on the call's
         row). Without a card, or as anything but true, it isn't one."""
         hellos = ({'request': 31, 'walk': True}, {'walk': True}, {'request': 31, 'walk': 'yes'}, {'request': 31})
-        self.procs = [Proc([None]), Proc(['Here it is.']), *(Proc([]) for _ in hellos[1:])]
+        self.procs = [Proc(['Hi.', None]), Proc(['Here it is.']), *(Proc(['Hi.']) for _ in hellos[1:])]
         for hello in hellos:
             ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en', **hello}))
             task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))  #.
@@ -2221,6 +2305,7 @@ class Restart(unittest.IsolatedAsyncioTestCase):
                 await asyncio.sleep(0.01)
                 if any(json.loads(m)['type'] == 'call' for m in ws.sent if isinstance(m, str)):
                     break
+            await self.picked_up(self.calls[-1])
             if hello is hellos[0]:  # (the session dies on the first words: a restart)
                 await self.calls[-1].answer('Walk me through it.', None)
             ws.put(json.dumps({'type': 'bye'}))
@@ -2244,6 +2329,24 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([b['token'] for b in end], ['t1'])
         self.assertEqual(end[0]['lines'][-2:], ['Board: Can you build the page?', 'Juno: Yes, I will build it.'])
         self.assertEqual(self.live, set(), 'no token outlives the call')
+
+    async def test_a_reply_lost_with_its_session_that_cannot_restart_says_so_and_the_line_listens(self):
+        """The call agent dies mid-reply and the coordinator refuses the restart:
+        the line says why, and the turn ends as any does, with HQ's call screen back on listening."""
+        events, answer = [], self.coordinator
+
+        def coordinator(method, path, body=None):
+            if path == 'call-context' and body.get('token'):
+                raise HTTPError(f'{server.HQ}/api/voice/call-context', 503, 'Unavailable', None, None)
+            return answer(method, path, body)
+        self.coordinator = coordinator
+        call = self.call(send_event=lambda e: events.append(e) or asyncio.sleep(0))
+        await call.start()
+        await call.answer('Can you build the page?', None)
+        states = [e['state'] for e in events if e.get('type') == 'state']
+        self.assertEqual((len(self.started), states[-2:]), (1, ['speaking', 'listening']))
+        self.assertEqual(call.noticed, 'error', 'the line said why')
+        call.end()
 
     # The phone line has no screen: its call agent's briefing leaves out the pictures, also after a restart.
     async def test_a_phone_call_asks_for_its_briefing_as_a_phone_call_also_after_a_restart(self):
@@ -2377,12 +2480,138 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events[0]['type'], 'call')
         self.assertEqual([e for e in events if e['type'] == 'picture'], [{'type': 'picture', 'id': 17, 'state': 'failed', 'why': 'lost'}])
 
+    async def picked_up(self, call):
+        """Once the line has picked up and the agent's hello (Call.hello) has gone out."""
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if call.turn and call.turn.done():
+                return
+        self.fail('no hello at pickup')
+
+    async def test_the_line_picks_up_with_its_hello_ready_and_a_stuck_session_holds_the_ring_no_longer(self):
+        """HQ rings while the hello is thought of, so the clack and the hello come together; a session that never
+        answers lets the line pick up after HELLO_WAIT_SECONDS all the same."""
+        class Stuck(Hung):  # (killed from call.end's thread, as the line's hang-up does: no asyncio.Event across threads)
+            async def line(self):
+                while self.returncode is None:
+                    await asyncio.sleep(0.01)
+                return b''
+
+        for stuck in (False, True):
+            self.procs, self.calls = [Stuck() if stuck else Proc(['Hi, Juno here.'])], []
+            ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en'}))
+            with unittest.mock.patch.object(server, 'HELLO_WAIT_SECONDS', 0.3):
+                task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
+                for _ in range(300):
+                    await asyncio.sleep(0.01)
+                    if any(json.loads(m)['type'] == 'call' for m in ws.sent if isinstance(m, str)):
+                        break
+            call = self.calls[-1]
+            self.assertEqual(call.hello_made.done(), not stuck)
+            if not stuck:
+                self.assertEqual(call.hello_made.result()[0], 'Hi, Juno here.')
+                await self.picked_up(call)
+                self.assertEqual(call.lines, ['Juno: Hi, Juno here.'])
+            ws.put(json.dumps({'type': 'bye'}))
+            await asyncio.wait_for(task, 5)
+            self.assertEqual(len(self.started), 1 + stuck, 'a stuck hello cut by the hang-up starts no new session')
+
+    async def test_hq_rings_until_the_hellos_audio_is_made_and_it_plays_with_the_pickup(self):
+        """The first sentence the line voices after it starts is slow to make. The ring lasts until the hello's audio is
+        made, and its first frame goes out right behind the pickup, not after a synthesis."""
+        slow = server.pocket.generate_audio_stream
+
+        def generate_audio_stream(state, text, stop=None):  # (a cold first sentence: 0.8 s to make)
+            for piece in slow(state, text, stop):
+                time.sleep(0.2)
+                yield piece
+
+        SPOKEN.clear()
+        self.procs, self.calls, sent = [Proc(['Hi, Juno here.'])], [], []
+        ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en'}))
+        send = ws.send
+        ws.send = lambda m: sent.append((time.monotonic(), m)) or send(m)
+        with unittest.mock.patch.object(server.pocket, 'generate_audio_stream', generate_audio_stream):
+            task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
+            for _ in range(300):
+                await asyncio.sleep(0.01)
+                if self.calls:
+                    break
+            await self.picked_up(self.calls[-1])
+        picked = next(i for i, (_, m) in enumerate(sent) if isinstance(m, str) and json.loads(m)['type'] == 'call')
+        frames = [at for at, m in sent[picked:] if isinstance(m, bytes)]
+        self.assertLess(frames[0] - sent[picked][0], 0.1, 'its first sound with the pickup, not after a synthesis')
+        made, call = self.calls[-1].hello_made, self.calls[-1]
+        self.assertEqual((made.result()[0], len(made.result()[1])), ('Hi, Juno here.', 4))
+        self.assertEqual(SPOKEN, ['Hi, Juno here.'], 'made once, while it rang')
+        self.assertEqual(call.lines, ['Juno: Hi, Juno here.'])
+        ws.put(json.dumps({'type': 'bye'}))
+        await asyncio.wait_for(task, 5)
+
+    async def test_a_hello_lost_with_its_session_is_thought_of_again_in_the_fresh_one(self):
+        """The call agent dies while it thinks of the hello: a fresh session that
+        knows the call so far thinks of it once more, and the board hears it at the pickup."""
+        self.procs = [Proc([None]), Proc(['Hi, Juno here.'])]
+        call = self.call()
+        await call.start()
+        await call.greet()
+        await call.turn
+        self.assertEqual((len(self.started), call.lines), (2, ['Juno: Hi, Juno here.']))
+        call.end()
+
+    async def test_a_hello_lost_with_a_session_that_cannot_restart_says_so_and_the_line_listens(self):
+        """The call agent dies while it thinks of the hello and the coordinator refuses the restart: the line says why, and the turn ends as a reply's does, with HQ's call screen back on
+        listening."""
+        events, answer = [], self.coordinator
+
+        def coordinator(method, path, body=None):
+            if path == 'call-context' and body.get('token'):
+                raise HTTPError(f'{server.HQ}/api/voice/call-context', 503, 'Unavailable', None, None)
+            return answer(method, path, body)
+        self.coordinator, self.procs = coordinator, [Proc([None])]
+        call = self.call(send_event=lambda e: events.append(e) or asyncio.sleep(0))
+        await call.start()
+        await call.greet()
+        await call.turn
+        states = [e['state'] for e in events if e.get('type') == 'state']
+        self.assertEqual((len(self.started), states[-2:], call.noticed), (1, ['speaking', 'listening'], 'error'))
+        call.end()
+
+    async def test_hq_hanging_up_while_the_line_rings_leaves_the_call_held_as_any_drop_does(self):
+        """The board cancels while HQ rings for the hello: the id never reaches
+        HQ, and the call is held for its reconnect, then ended, as at any drop."""
+        class Stuck(Hung):
+            async def line(self):
+                while self.returncode is None:
+                    await asyncio.sleep(0.01)
+                return b''
+
+        self.procs, self.calls = [Stuck()], []
+        ws = LiveSocket(json.dumps({'agent': 'juno', 'lang': 'en'}))
+        with unittest.mock.patch.object(server, 'HELLO_WAIT_SECONDS', 0.3):
+            task = asyncio.create_task(server.app_call(ws, self.make_call, self.wiring))
+            for _ in range(300):
+                await asyncio.sleep(0.01)
+                if self.calls:
+                    break
+            await ws.close()
+            await asyncio.wait_for(task, 5)
+        held = list(server.CALLS.values())
+        try:
+            self.assertEqual([e['call'] for e in held], [self.calls[-1]])
+            self.assertIsNotNone(held[0]['timer'], 'held for its reconnect, then hung up')
+        finally:
+            for cid in list(server.CALLS):
+                if timer := server.CALLS.pop(cid)['timer']:
+                    timer.cancel()
+            self.calls[-1].end()
+
     # The agent hangs up: HQ hears it and hangs up as its own button does, saying
     # how the voice played; an HQ that doesn't is told the call is gone. The phone line closes Twilio's stream.
     async def answer_with_a_goodbye(self, ws, feed, found):
         """The route `found` (given its make_call and self.wiring) answers ws, and the agent says goodbye and hangs up; HQ
         is waited for 0.2 s."""
-        self.procs = [Proc([BYE])]
+        self.procs = [Proc(['Hello.', BYE])]
         quick = lambda *args, **given: self.make_call(*args, limits={'hang_up_wait_seconds': 0.2}, **given)
         task = asyncio.create_task(found(ws, quick, self.wiring))
         for _ in range(200):
@@ -2390,15 +2619,16 @@ class Restart(unittest.IsolatedAsyncioTestCase):
             if self.calls:
                 break
         call = self.calls[-1]
+        await self.picked_up(call)
         await call.answer("That's all for today. Bye!", None)
-        for _ in range(250):  # 5 s of quiet: the goodbye plays for 2 s
+        for _ in range(400):  # 8 s of quiet: the hello and the goodbye play for 2 s each
             ws.put(feed)
         return task, call
 
     def ended(self):
         end = [b for m, p, b in self.asked if p == 'call-end']
         self.assertEqual(len(end), 1)
-        self.assertEqual(end[0]['lines'], ["Board: That's all for today. Bye!", 'Juno: Bye for now!', '(Juno ended the call.)'])
+        self.assertEqual(end[0]['lines'], ['Juno: Hello.', "Board: That's all for today. Bye!", 'Juno: Bye for now!', '(Juno ended the call.)'])
         self.assertEqual(self.live, set())
 
     async def test_hq_hangs_up_as_its_button_does_when_the_agent_hangs_up(self):
@@ -2531,8 +2761,6 @@ class Restart(unittest.IsolatedAsyncioTestCase):
         self.procs = [Proc([LIMITED, LIMITED, 'Back again.'])]
         call = self.recording_call()
         await call.start()
-        await call.greet()  # (the coordinator's reading had room: nothing said at pickup)
-        self.assertIsNone(call.turn)
         await call.answer('Are you there?', None)
         self.assertEqual(call.lines[-1], "(The line, not Juno: Juno can't answer right now: our Claude seat is at its limit until 00:10. "
                                          "What you say is still written down, and Juno follows up after the call.)")
@@ -3501,6 +3729,75 @@ class BoardDrawing(Juno):
 
 
 
+
+# The call's notes page in the board's Notebook (callnotes.py)
+@unittest.skipIf(np is None, 'numpy is not installed (see the docstring)')
+class BoardCallNotes(Juno):
+    """On the board's own call (call 7) the agent puts one scrap per change on the call's notes page and titles it,
+    each straight to the coordinator's Ink store (its scrap and title routes), never through HQ's socket."""
+    told = BoardDrawing.told
+
+    async def asyncSetUp(self):
+        await super().asyncSetUp()
+        self.asked = []
+
+    def coordinator(self, method, path, body=None):
+        if path in ('scrap', 'title'):
+            self.asked.append((method, path, body))
+            if body.get('from') == 'note 9':
+                raise HTTPError('http://hq/api/voice/scrap', 404, 'Not Found', {},
+                                io.BytesIO(b'{"error": "The board has no note 9 with a picture on this call."}'))
+            return {'ok': f"Scrap {len(self.asked)} is on the call's page"} if path == 'scrap' else {'ok': 'Titled.'}
+        return super().coordinator(method, path, body)
+
+    async def test_three_changes_go_as_three_scraps_each_with_its_own_crop(self):
+        socket_path = Path(self.tmp.name) / 'screen.sock'
+        screens = await server.serve_screens(socket_path)
+        self.addAsyncCleanup(screens.wait_closed)
+        self.addCleanup(screens.close)
+        self.call.new_screen_key()
+        changes = [({'x': 0, 'y': 0, 'width': 0.34, 'height': 1}, 'Make the price  smaller'),
+                   ({'x': 0.33, 'y': 0, 'width': 0.34, 'height': 1}, 'Move the basket up here'),
+                   ({'x': 0.66, 'y': 0, 'width': 0.34, 'height': 1}, 'Drop the banner')]
+        for region, words in changes:
+            reader, writer = await asyncio.open_unix_connection(str(socket_path))
+            asked = {'scrap': {'from': 'note 2', 'region': region, 'words': words}, 'key': self.call.screen_key}
+            writer.write((json.dumps(asked) + '\n').encode())
+            self.assertIn('is on the call', json.loads(await reader.read())['ok'])
+            writer.close()
+        self.assertEqual(self.asked, [('POST', 'scrap', {'call': 7, 'from': 'note 2', 'region': {k: float(v) for k, v in r.items()},
+                                                         'words': ' '.join(w.split())}) for r, w in changes])
+        self.assertEqual(self.events, [], 'nothing of the page goes through HQ\'s socket: the store tells the screens')
+        title = await self.call.page.title_tool({'title_page': 'Shop page: price, basket'})
+        self.assertEqual((title, self.asked[-1]), ({'ok': 'Titled.'}, ('POST', 'title', {'call': 7, 'title': 'Shop page: price, basket'})))
+
+    async def test_what_the_page_cannot_take_is_refused_in_words(self):
+        tool = self.call.page.scrap_tool
+        box = {'x': 0, 'y': 0, 'width': 0.5, 'height': 1}
+        for wrong in ({'from': 'the pricing page', 'region': box, 'words': 'x'}, {'from': 'note 2', 'region': {**box, 'x': 0.8}, 'words': 'x'},
+                      {'from': 'note 2', 'region': box, 'words': ''}, {'from': 'note 2', 'region': box, 'words': 'x', 'colour': 'red'}):
+            self.assertEqual(await tool({'scrap': wrong}), {'error': server.SCRAP_WORDS['shape']})
+        self.assertEqual(await tool({'scrap': {'from': 'note 9', 'region': box, 'words': 'x'}}),
+                         {'error': 'The board has no note 9 with a picture on this call.'})
+        self.assertEqual(await self.call.page.title_tool({'title_page': 'a title of far more than eight words for this one call'}),
+                         {'error': server.TITLE_WORDS_SAID['shape']})
+        for callout, phone in ((12, False), (0, True)):
+            self.call.callout, self.call.phone = callout, phone
+            self.assertEqual(await tool({'scrap': {'from': 'note 2', 'region': box, 'words': 'x'}}), {'error': server.SCRAP_WORDS['none']})
+        self.call.callout, self.call.phone, self.call.ended = 0, False, True
+        self.assertEqual(await tool({'scrap': {'from': '-20s', 'region': box, 'words': 'x'}}), {'error': server.SCRAP_WORDS['gone']})
+        self.assertEqual(len(self.asked), 1)
+
+    def test_the_call_engine_reads_nothing_of_the_page(self):
+        """The engine's split: the line's drawing and driving halves, and the screen tool, import nothing of the notes
+        page; the page reads them."""
+        for engine in ('drawing.py', 'driving.py'):
+            imports = [line for line in (Path(__file__).parent / engine).read_text().splitlines()
+                       if line.startswith(('import ', 'from '))]
+            self.assertEqual([line for line in imports if 'callnotes' in line], [], engine)
+        self.assertIn('from drawing import', (Path(__file__).parent / 'callnotes.py').read_text())
+
+
 # The agent driving a piece of work on the board's screen
 TEACUP_PAGE = 'https://teacups.preview.onlyonery.com/'
 
@@ -3696,6 +3993,58 @@ class RealCli(unittest.IsolatedAsyncioTestCase):
                                    "written down, and Juno follows up after the call.",
                                    "Juno still can't answer: our Claude seat is at its limit until 00:10. What you say is written down."])
         self.assertEqual([e['text'] for e in self.events if e.get('type') == 'said'], notices)
+
+    def model_replying(self, script):
+        """A stand-in for the model API the CLI talks to, answering each request with the script's next words (the CLI's
+        side requests get a 404), until the test ends: its URL and the requests' bodies, in order."""
+        bodies = []
+
+        class Model(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def do_POST(self):
+                body = json.loads(self.rfile.read(int(self.headers.get('content-length', 0))) or b'{}')
+                if not self.path.startswith('/v1/messages') or not body.get('stream') or body.get('max_tokens', 0) < 100:
+                    self.send_response(404)
+                    return self.end_headers()
+                bodies.append(body)
+                events = [{'type': 'message_start', 'message': {'id': 'm', 'type': 'message', 'role': 'assistant', 'model': 'claude-opus-5-5',
+                                                                'content': [], 'usage': {'input_tokens': 2, 'output_tokens': 1}}},
+                          {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+                          {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': script[len(bodies) - 1]}},
+                          {'type': 'content_block_stop', 'index': 0},
+                          {'type': 'message_delta', 'delta': {'stop_reason': 'end_turn'}, 'usage': {'output_tokens': 9}},
+                          {'type': 'message_stop'}]
+                self.send_response(200)
+                self.send_header('content-type', 'text/event-stream')
+                self.end_headers()
+                self.wfile.write(''.join(f"event: {e['type']}\ndata: {json.dumps(e)}\n\n" for e in events).encode())
+        model = ThreadingHTTPServer(('127.0.0.1', 0), Model)
+        threading.Thread(target=model.serve_forever, daemon=True).start()
+        self.addCleanup(model.server_close)
+        self.addCleanup(model.shutdown)
+        return f'http://127.0.0.1:{model.server_address[1]}', bodies
+
+    async def test_the_hello_at_pickup_through_the_real_cli(self):
+        """The board's call: the hello is the model's own words, asked for while
+        HQ rings, said at the pickup, and the session goes on from it with the board's first words."""
+        url, bodies = self.model_replying(['Hi, Juno here.', 'Sure.'])
+        call = self.line(url, limit_model.tmp())
+        await call.start()
+        with unittest.mock.patch.object(server, 'HELLO_WAIT_SECONDS', 60):
+            await call.ringing()
+        self.assertEqual(call.hello_made.result()[0], 'Hi, Juno here.')
+        await call.greet()
+        await asyncio.wait_for(call.turn, 60)
+        await asyncio.wait_for(call.answer('Can you check the orders?', None), 60)
+        call.end()
+        self.assertEqual(call.lines, ['Juno: Hi, Juno here.', 'Board: Can you check the orders?', 'Juno: Sure.'])
+        self.assertEqual([e['text'] for e in self.events if e.get('type') == 'said'], ['Hi, Juno here.', 'Sure.'])
+        texts = lambda body, role: [c.get('text', '') for m in body['messages'] if m['role'] == role
+                                    for c in (m['content'] if isinstance(m['content'], list) else [{'text': m['content']}])]
+        self.assertTrue(any(server.HELLO in text for text in texts(bodies[0], 'user')))
+        self.assertIn('Hi, Juno here.', texts(bodies[1], 'assistant'))
 
     async def test_the_call_agent_s_session_records_go_when_its_cli_ends_and_the_log_keeps_numbers_only(self):
         """HQ's transcript is the only copy of a call (audit 2026-10-04, P19): the CLI's own record of the session, every

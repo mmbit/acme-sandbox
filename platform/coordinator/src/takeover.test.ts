@@ -276,10 +276,11 @@ test("a takeover stays on the failed job's thread, and the CEO's summary follows
 
   // the summary's late line for the thread, as the minute's forecast has it (the check's own thread, past its hour, has
   // one too.)
-  const late = (t = Date.now()) => threats.lines(forecast.refresh(t)).filter(l => l.startsWith(`thread ${thread} `));
+  const late = (t = Date.now()) =>
+    threats.lines(forecast.refresh(t)).filter(l => l.startsWith(`deliverable ${thread} `));
   // it names bolt as who gave the time, not the CEO who queued the takeover
   assert.equal(late().length, 1);
-  assert.match(late()[0], new RegExp(`^thread ${thread} \\([^)]*\\): .*its deadline .*, set by bolt\\.`));
+  assert.match(late()[0], new RegExp(`^deliverable ${thread} \\([^)]*\\): .*its deadline .*, set by bolt\\.`));
   const extended = Date.now() + 4 * HOUR;
   setDeadline(thread, extended, 'kit');
   assert.deepEqual(given(), { deadline: extended, deadline_by: 'kit' });

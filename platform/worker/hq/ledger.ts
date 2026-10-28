@@ -5,7 +5,7 @@ import * as api from './api.ts';
 import { at } from './estimate.ts';
 import { readGoalAndWords, readTextOrStdin } from './files.ts';
 import { present, print, shown, stop, text } from './output.ts';
-import { takeItemFlags, takeValues, type ItemFlags } from './flags.ts';
+import { deliverableFlag, takeItemFlags, takeValues, type ItemFlags } from './flags.ts';
 import { stopped, stoppedOnCall } from './corrections.ts';
 
 // roles.asks in the help below
@@ -68,10 +68,10 @@ function itemInFull(item: Record<string, unknown>) {
 }
 
 const ADD_USAGE =
-  'usage: hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id> [--thread <project>/<slug>]]]';
+  'usage: hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id> [--deliverable <project>/<slug>]]]';
 const REPLACE_USAGE = 'usage: hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]';
 const LINK_USAGE =
-  'usage: hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"';
+  'usage: hq item link <item> job:<id> [--deliverable <project>/<slug>] | request:<id> | pause:<project or deliverable> | "<ref>"';
 const DROP_USAGE = 'usage: hq item drop <item> "why"';
 const DONE_USAGE = 'usage: hq item done <item> "what the board said"';
 
@@ -79,7 +79,7 @@ const DONE_USAGE = 'usage: hq item done <item> "what the board said"';
 export const item = {
   help: `
    hq item add <kind> <owner> "what" - [a-b] --goal - [--call <id>] [--replaces <item>] [--deadline <when> [--job <id>
-                                                     [--thread <project>/<slug>]]]
+                                                     [--deliverable <project>/<slug>]]]
                                                      record one item (kind: task, decision, briefing, promise or question)
                                                      on the call you follow up (--call: which one, if you follow up more
                                                      than one): "what" is one plain line the board reads; a-b its
@@ -95,22 +95,23 @@ export const item = {
                                                      --deadline: the time the board was given for it on the call (its own
                                                      with its date and no zone, 2026-10-26 09:00, on the company's clock;
                                                      one with Z or a time of day alone, 14:30, is UTC; 2h counts from
-                                                     now): the thread of
+                                                     now): the deliverable of
                                                      the job that carries it (hq job --item) or of the job it's linked to
                                                      takes it as its window (hq window); a correction keeps the
                                                      earlier time. --job <id>, on a live call: a promise about
                                                      its owner's work under way, linked to it as it's recorded (handled
-                                                     when it ends done), whose thread takes the time at once;
-                                                     --thread puts a job the call queued in no thread on that one
+                                                     when it ends done), whose deliverable takes the time at once;
+                                                     --deliverable puts a job the call queued in no deliverable on that
+                                                     one (--thread, the old name, still works)
    hq item replace <item> "what" - [a-b] --goal - [--call <id>] [--deadline <when>]
                                                      the same as add --replaces, with the earlier item's kind and owner.
                                                      On a live call (its own token): only an open item, while the board is
                                                      on the line. "Not confirmed" (exit 3, for add too): it may be
                                                      recorded, don't record it again
-   hq item link <item> job:<id> [--thread <project>/<slug>] | request:<id> | pause:<project or thread> | "<ref>"
+   hq item link <item> job:<id> [--deliverable <project>/<slug>] | request:<id> | pause:<project or deliverable> | "<ref>"
                                                      what shows it's done: a job (handled when it ends done; a task or
                                                      a promise is ready then, open until hq item done), a pause
-                                                     the board agreed (hq thread pause, hq project pause: it carries the
+                                                     the board agreed (hq deliverable pause, hq project pause: it carries the
                                                      item, handled already or not), or a request to the board or a ref
                                                      (a DECISIONS.md entry, a note, a commit) saying what your job did:
                                                      then it's your job's work, handled when it ends done with a pull
@@ -123,9 +124,10 @@ export const item = {
                                                      A job linked while it's queued or running hears the item's goal.
                                                      An item already handled (or dropped, replaced): the call's follow-up
                                                      links it to note it went through it; nothing about it changes.
-                                                     The item's time goes on the job's thread: --thread puts work still
-                                                     going on that's in no open thread (none, or one that's done) on that
-                                                     open thread first, its reviews and fixes with it (hq thread list)
+                                                     The item's time goes on the job's deliverable: --deliverable puts
+                                                     work still going on that's in no open deliverable (none, or one
+                                                     that's done) on that open deliverable first, its reviews and fixes
+                                                     with it (hq deliverable list)
    hq item drop <item> "why"                         it won't happen, and why (one line the board reads); the call's
                                                      follow-up only (it cancels the item's jobs that never ran and
                                                      tells a running one at its next step), and the CEO on a ready item
@@ -140,9 +142,9 @@ export const item = {
     const replaces = flags.replaces === undefined ? null : Number(flags.replaces);
     const callId = flags.call === undefined ? null : Number(flags.call);
     if (action === 'add') {
-      // (--thread: with --job, on a live call)
-      const { values, args: given } = takeValues(rest, ['--thread'], 'Nothing recorded');
-      if (given.length < 4 || (values.thread !== undefined && flags.job === undefined)) stop(ADD_USAGE);
+      // (--deliverable: with --job, on a live call)
+      const { values, args: given } = takeValues(deliverableFlag(rest), ['--deliverable'], 'Nothing recorded');
+      if (given.length < 4 || (values.deliverable !== undefined && flags.job === undefined)) stop(ADD_USAGE);
       const [kind, owner, what, quote, lines = ''] = given;
       return recordItem({
         action,
@@ -154,7 +156,7 @@ export const item = {
         replaces,
         callId,
         deadline: flags.deadline,
-        work: flags.job === undefined ? undefined : { job: flags.job, thread: values.thread },
+        work: flags.job === undefined ? undefined : { job: flags.job, thread: values.deliverable },
         goal: flags.goal,
       });
     }
@@ -317,14 +319,14 @@ async function record(body: object) {
   );
 }
 
-// (--thread)
+// (--deliverable)
 async function linkItem(given: string[]) {
-  const { values, args } = takeValues(given, ['--thread', '--why'], 'Not linked');
-  const { thread, why } = values;
+  const { values, args } = takeValues(deliverableFlag(given), ['--deliverable', '--why'], 'Not linked');
+  const { deliverable: thread, why } = values;
   const [id, target, ...rest] = args;
   if (!/^[0-9]+$/.test(id ?? '') || !target || rest.length) stop(LINK_USAGE);
   if (thread !== undefined && !/^[^/\s]+\/[^/\s]+$/.test(thread))
-    stop('Not linked: --thread takes an open thread, <project>/<slug> (hq thread list)');
+    stop('Not linked: --deliverable takes an open deliverable, <project>/<slug> (hq deliverable list)');
   const jobOrRequest = target.match(/^(job|request):([0-9]+)$/);
   if (!jobOrRequest && /^#?[0-9]+$/.test(target))
     stop(`Is ${target} a job or a request? Say job:<id> or request:<id>.`);

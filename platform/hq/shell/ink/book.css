@@ -1,0 +1,308 @@
+/* The Notebook beside HQ's page (book.js): a hardcover, its board round its paper at the head, the foot and the outer
+   edge, its spine at the screen's right edge, the controls floating over the paper (bookui.css) and its pull tab on the
+   cover's outer edge. One object under one strong shadow, set apart from HQ. The book's own look (booklook.css), the
+   same on every HQ look: no look's stylesheet styles it, and only the table under it wears the look's tones (book.js
+   reads them). (one object, the rail's column gone) (the hardcover) */
+#book {
+  /* (its paper's colours, dots and gold are review mode's paper.js, shared with the post-it: book.js) */
+  --bk-lamp: #ffd966;
+  --bk-red: #ff5a5f;
+  --bk-rail: #f3e6d0;
+  --bk-table: #3a3148;
+  /* the cover's squares: how far its board shows past the paper at the head and the foot (the outer edge is .bk-edge),
+     and the spine's width at the screen's right edge */
+  --bk-square: 10px;
+  --bk-back: 7px;
+  --bk-font: 'Atkinson Hyperlegible', 'Atkinson', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font: 16px/1.4 var(--bk-font);
+  color: var(--bk-night);
+  -webkit-tap-highlight-color: transparent;
+  /* the book's words are its controls': a drag of the cover's edge or a page never selects them */
+  -webkit-user-select: none;
+  user-select: none;
+}
+#book > * {
+  position: fixed;
+  top: 0;
+  height: var(--app-h, 100dvh);
+  box-sizing: border-box;
+}
+/* the table under the book, where the page has given up its room: what shows while the book moves off it, a quiet
+   checkerboard in the tones of HQ's look (--bk-ground, --bk-check: book.js), in HQ's shade at its edge. Gradients only,
+   painted once: the book moves over it. */
+#book .bk-table {
+  right: 0;
+  background-color: var(--bk-ground, var(--bk-table));
+  background-image: repeating-conic-gradient(
+    color-mix(in srgb, var(--bk-check, #fff) 6%, transparent) 0 25%,
+    transparent 0 50%
+  );
+  background-size: 24px 24px;
+  box-shadow: inset 12px 0 16px -12px rgba(0, 0, 0, 0.5);
+  z-index: 40;
+}
+/* the book's leaf: the cover's board, its squares showing round the paper (booklook.css draws the board), the paper
+   on it (bookpages.js fills .bk-paper) up to the spine, and the controls over the paper */
+#book .bk-leaf {
+  z-index: 41;
+  overflow: hidden;
+  background-color: var(--bk-cloth);
+}
+/* (its own stacking: whatever lies on the paper, a turning leaf too, stays under the controls floating over it) */
+#book .bk-paper {
+  position: absolute;
+  z-index: 0;
+  inset: var(--bk-square) var(--bk-back) var(--bk-square) 0;
+  overflow: hidden;
+  background-color: var(--bk-paper);
+  background-image: var(--bk-dots);
+  background-size: 22px 22px;
+  /* the page block's edges at the head, foot and outer edge: a few leaves' paper under the top one */
+  box-shadow:
+    0 0 0 1px #e9dcc2,
+    -1px 1px 0 1px #d9cab0,
+    -2px 2px 0 1px #efe3cc,
+    -2px 3px 6px 1px rgba(0, 0, 0, 0.5);
+}
+/* the gutter: the paper curving into the spine, under everything on it */
+#book .bk-leaf::before {
+  content: '';
+  position: absolute;
+  right: var(--bk-back);
+  top: var(--bk-square);
+  bottom: var(--bk-square);
+  width: 30px;
+  background: linear-gradient(270deg, rgba(29, 26, 47, 0.22), rgba(29, 26, 47, 0.07) 40%, rgba(29, 26, 47, 0));
+  z-index: 5;
+  pointer-events: none;
+}
+/* the controls: islands floating over the paper's right edge, the pages' row at its foot (bookui.js, bookrail.js) */
+#book .bk-rail {
+  container: bk-rail / inline-size;
+  position: absolute;
+  inset: var(--bk-square) var(--bk-back) var(--bk-square) 0;
+  z-index: 8;
+  pointer-events: none;
+}
+/* (clear of Safari's blurred strip at the top: style.css's --sat, as HQ's own controls are.) */
+#book .bk-islands {
+  position: absolute;
+  /* (below the page's turned-down corner, which shares it: bookshare.css.) */
+  top: calc(12px + var(--bk-ear, 0px) + var(--sat, 0px));
+  right: 12px;
+  bottom: max(12px, env(safe-area-inset-bottom));
+  justify-content: flex-start;
+  /* (one width for every island in the stack: the widest's) */
+  align-items: stretch;
+}
+/* (too short for one column even then: what doesn't fit goes on in a second to the left, the book's own island at its
+   foot. bookui.js decides.) */
+#book .bk-islands.bk-two {
+  flex-wrap: wrap-reverse;
+  align-content: flex-start;
+}
+#book .bk-island {
+  flex-shrink: 0;
+}
+/* the book's own island (Undo, Redo) sits at the foot of the stack, the others from the top */
+#book .bk-island[data-island='book'] {
+  margin-top: auto;
+}
+/* (centred in the paper the stack and the tool strip leave between them, so a narrow book's row never runs under
+   either: --bk-stack and --bk-strip, their widths, bookui.js and bookstrip.js. The strip) */
+#book .bk-island[data-island='pages'] {
+  position: absolute;
+  left: calc(50% + (var(--bk-strip, 0px) - var(--bk-stack, 52px)) / 2 - 9px);
+  max-width: calc(100% - var(--bk-stack, 52px) - var(--bk-strip, 0px) - 44px);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+}
+/* a narrow book (a phone's): the pages' row has the foot to itself, across the paper, and the stack stands above it */
+@container bk-rail (max-width: 460px) {
+  #book .bk-islands {
+    bottom: 76px;
+  }
+  #book .bk-island[data-island='pages'] {
+    left: 50%;
+    max-width: calc(100% - 24px);
+  }
+}
+#book .bk-arrow svg {
+  transition: transform 0.25s;
+}
+#book[data-mode='folded'] .bk-arrow svg {
+  transform: scaleX(-1);
+}
+/* the cover's outer edge: the board past the pages on HQ's side, dragged to resize the book (never to close it). Wider to
+   the touch than it looks, so a finger finds it; its shadow is the book's, thrown on HQ's page beside it */
+#book .bk-edge {
+  width: 12px;
+  z-index: 42;
+  touch-action: none;
+  cursor: ew-resize;
+}
+/* the book's strong shadow on HQ's page beside it (a blur of about 30 px at 0.8 black), on HQ's side only */
+#book .bk-edge::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 100%;
+  width: 48px;
+  background: linear-gradient(
+    270deg,
+    rgba(0, 0, 0, 0.8),
+    rgba(0, 0, 0, 0.5) 15%,
+    rgba(0, 0, 0, 0.2) 45%,
+    rgba(0, 0, 0, 0.06) 75%,
+    transparent
+  );
+  pointer-events: none;
+}
+#book .bk-edge::after {
+  content: '';
+  position: absolute;
+  left: -14px;
+  right: -10px;
+  top: 0;
+  bottom: 0;
+}
+/* shut, past the screen's edge: out of sight, its shadows too, all but its pull tab (book.js) */
+#book.bk-away > :not(.bk-lip) {
+  visibility: hidden;
+}
+/* the pull tab: sewn to the cover's outer edge (booklook.css draws it), hanging out of it over HQ's page and taking none
+   of its width; shut, at the screen's edge. book.js puts it at the edge and moves it with the book. A dot when an
+   answer waits to be read; a note that lands in the shut book shows its snip beside it for a moment (bookhandle.js).
+   Wider and taller to the touch than it looks. */
+#book .bk-lip {
+  all: unset;
+  position: fixed;
+  top: calc(var(--app-h, 100dvh) / 2);
+  width: 22px;
+  height: 68px;
+  translate: -100% -50%;
+  border-radius: 10px 0 0 10px;
+  z-index: 44;
+  touch-action: none;
+  cursor: grab;
+}
+#book .bk-lip:active {
+  cursor: grabbing;
+}
+#book .bk-lip::after {
+  content: '';
+  position: absolute;
+  left: -18px;
+  right: 0;
+  top: -12px;
+  bottom: -12px;
+}
+#book .bk-lip:focus-visible {
+  outline: 2px solid var(--bk-lamp);
+  outline-offset: 2px;
+}
+/* a landed note's snip, small, tucked in beside the handle */
+#book .bk-lip .bk-snip {
+  position: absolute;
+  right: calc(100% + 8px);
+  top: 50%;
+  height: 52px;
+  max-width: 96px;
+  margin-top: -26px;
+  object-fit: cover;
+  border: 3px solid var(--bk-paper);
+  border-radius: 2px;
+  box-shadow: -2px 3px 8px rgba(0, 0, 0, 0.45);
+  pointer-events: none;
+}
+#book .sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-arrow svg {
+    transition: none;
+  }
+}
+
+/* ---- the pages: bookdesk.css (bookpages.js). */
+/* ---- the swing (bookswing.js): the board opening and shutting round its spine. Its shadow on HQ's page, soft while
+   it's high and tight near the surface (two layers blurred once, crossfaded and scaled: nothing re-blurred per frame);
+   the page face's shade; the page block's edge at the outer edge, showing as the board lifts. The book's own shadow on
+   the page beside it is the cast's while it's lifted, and snaps back as it lands. */
+#book .bk-cast {
+  right: 0;
+  top: 8px;
+  height: calc(var(--app-h, 100dvh) - 16px);
+  z-index: 40;
+  pointer-events: none;
+  visibility: hidden;
+  transform-origin: 100% 50%;
+}
+#book .bk-cast i {
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.55);
+}
+#book .bk-cast-soft {
+  filter: blur(18px);
+}
+#book .bk-cast-tight {
+  filter: blur(3px);
+}
+#book .bk-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 9;
+  background: #0b0d18;
+  opacity: 0;
+  pointer-events: none;
+}
+#book .bk-block {
+  position: absolute;
+  right: 0;
+  top: var(--bk-square);
+  bottom: var(--bk-square);
+  width: 10px;
+  transform: scaleX(0);
+  transform-origin: 100% 50%;
+  background: repeating-linear-gradient(90deg, var(--bk-paper) 0 2px, #e2d6bd 2px 3px);
+  box-shadow:
+    inset 0 1px 0 #d9cab0,
+    inset 0 -1px 0 #d9cab0;
+  pointer-events: none;
+}
+#book.bk-lifted .bk-edge::before {
+  visibility: hidden;
+}
+#book.bk-swinging :is(.bk-edge, .bk-leaf, .bk-lip, .bk-cast) {
+  will-change: transform;
+}
+/* the pull tab lifts a little while it's held: up and out, its shadow deeper (by translate, never scale, which would
+   scale the swing's transform after it too) */
+#book .bk-lip {
+  transition:
+    translate 0.16s ease,
+    box-shadow 0.16s ease;
+}
+#book .bk-lip.bk-gripped {
+  translate: calc(-100% - 2px) calc(-50% - 2px);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    -5px 8px 16px rgba(0, 0, 0, 0.45);
+}
+#book[data-mode='spread'] .bk-lip.bk-gripped {
+  translate: 2px calc(-50% - 2px);
+}
+/* (held still, it's lifted at once; after its rule, which it overrides) */
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-lip {
+    transition: none;
+  }
+}

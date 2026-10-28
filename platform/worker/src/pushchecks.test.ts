@@ -229,6 +229,72 @@ test("a lent check that lost HQ runs again on the lent machine; past UNREACHED_T
   rmSync(dir, { recursive: true });
 });
 
+test("a check with no room to bundle it (exit 4), or killed with no stop of the shares', waits for room and runs again on the same commit, a lent one on the lent machine; past NO_ROOM_TRIES it is the platform's", async () => {
+  const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+  const roomless =
+    'if [ -f "$1/tried" ]; then echo clean; else touch "$1/tried"; echo "The tests could not run: no room"; exit 4; fi';
+  const said: string[] = [];
+  let roomy = 0;
+  const waiting = { ...options(dir, said), roomy: async () => void roomy++ };
+  const report = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [stand(dir, 'tests', roomless)], waiting);
+  assert.deepEqual(report.tests, { passed: true, report: 'clean' });
+  assert.equal(launches(dir), 'tests\ntests\n');
+  assert.equal(roomy, 1, 'it waited for room before it ran again');
+  assert.deepEqual(said, [
+    'tests had no disk room to bundle it for the lent machine',
+    'tests had no room, so it runs again on the same commit once there is',
+    'tests passed',
+  ]);
+  // a lent launch runs again there; with never any room it runs here, as one with no verdict there does: its verdict is
+  // the check's, and one with no room here either is the platform's (no author's job: review.ts)
+  rmSync(`${dir}/launches`);
+  const lentRoomless = (here: string) => [
+    { ...stand(dir, 'gates', here), lent: lentOf(dir, 'echo no room; exit 4', 10_000) },
+  ];
+  const fails = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, lentRoomless('echo "1 finding here"; exit 1'), waiting);
+  assert.deepEqual(fails.gates, { passed: false, report: '1 finding here' });
+  assert.equal(launches(dir), 'gates-lent\n'.repeat(4) + 'gates\n');
+  rmSync(`${dir}/launches`);
+  const never = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, lentRoomless('echo no room here; exit 4'), waiting);
+  assert.deepEqual(never.gates, { passed: null, report: 'no room here', platform: true });
+  assert.equal(launches(dir), 'gates-lent\n'.repeat(4) + 'gates\n');
+  // killed with no stop of the shares' (the worker's container recreated under it): it runs again too
+  rmSync(`${dir}/launches`);
+  rmSync(`${dir}/tried`);
+  said.length = 0;
+  const killedOnce = 'if [ -f "$1/tried" ]; then echo clean; else touch "$1/tried"; kill -9 $$; fi';
+  const again = await (
+    await workerProcess()
+  ).runChecks(8, { body: pushed(), spent: {}, runs: {} }, [stand(dir, 'tests', killedOnce)], waiting);
+  assert.deepEqual(again.tests, { passed: true, report: 'clean' });
+  assert.equal(launches(dir), 'tests\ntests\n');
+  assert.equal(said[0], 'tests was killed (SIGKILL), its container stopped or out of memory');
+  // an orphan's end, as supervise.py writes it (the signal's number) for a check an earlier worker process launched
+  rmSync(`${dir}/launches`);
+  said.length = 0;
+  const orphan = { pid: 2 ** 22 + 7, start: '1', out: `${dir}/orphan.out`, err: `${dir}/orphan.err` };
+  for (const f of [orphan.out, orphan.err]) writeFileSync(f, '');
+  writeFileSync(`${dir}/pid-${orphan.pid}-${orphan.start}`, 'signal 9');
+  const taken = await (
+    await workerProcess()
+  ).runChecks(
+    8,
+    { body: pushed(), spent: {}, runs: { tests: { launched: orphan, began: Date.now(), stopped: [] } } },
+    [stand(dir, 'tests', 'echo clean')],
+    waiting,
+  );
+  assert.deepEqual(taken.tests, { passed: true, report: 'clean' });
+  assert.equal(launches(dir), 'tests\n');
+  assert.equal(said[0], 'tests was killed (SIGKILL), its container stopped or out of memory');
+  rmSync(dir, { recursive: true });
+});
+
 test("a reload keeps a lent launch's own limit, whatever the spec the next process builds", async () => {
   const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
   const there = 'echo started > "$1/lent-ran"; while [ ! -f "$1/go" ]; do sleep 0.05; done; echo "clean (on attic)"';
@@ -254,107 +320,121 @@ test("a reload keeps a lent launch's own limit, whatever the spec the next proce
 });
 
 test('a push check keeps its worker stop reason even when HQ cannot confirm the block report', async context => {
-  // (and one the platform stopped, its disk accounting down: the outcome says so)
-  for (const [confirmed, accountingError] of [
-    [true],
-    [false],
-    [true, { reason: 'worker-ancestor', message: 'Disk accounting unavailable for job 8: EACCES' }],
-    [true, { reason: 'job-tree', message: 'Disk accounting unavailable for job 8: EACCES' }],
+  // (and one the platform stopped, its disk accounting down: the outcome says so. A block only past the share a starved
+  // worker leaves is its lack of room: it runs again once there's room, each launch blocked here, and past
+  // NO_ROOM_TRIES it's the platform's; one past the job's own most stays the author's)
+  const starvedBlock = { used: 2257, share: 1536, starved: true as const };
+  for (const [name, confirmed, past, accountingError] of [
+    ['HQ confirms', true, starvedBlock],
+    ['HQ reply lost', false, starvedBlock],
+    ['past the most', true, { used: 3100, share: 2560 }],
+    [
+      'worker-ancestor',
+      true,
+      { used: 3100, share: 2560 },
+      { reason: 'worker-ancestor', message: 'Disk accounting unavailable for job 8: EACCES' },
+    ],
+    [
+      'job-tree',
+      true,
+      { used: 3100, share: 2560 },
+      { reason: 'job-tree', message: 'Disk accounting unavailable for job 8: EACCES' },
+    ],
   ] as const)
-    await context.test(
-      accountingError ? accountingError.reason : confirmed ? 'HQ confirms' : 'HQ reply lost',
-      async () => {
-        const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
-        const said: string[] = [],
-          stoppedLog: string[] = [];
-        const checks: Checks = { body: pushed(), spent: {}, runs: {} };
-        const commandValue = 'fixture-argument-' + 'v'.repeat(400);
-        writeFileSync(
-          `${dir}/command.cjs`,
-          `require('node:fs').writeFileSync(process.argv[2], 'ready'); setTimeout(() => {}, 30000);`,
-        );
-        const checking = new Map<number, CheckRun>();
-        const owner = { job: 8, uid: process.getuid!(), gid: process.getgid!() };
-        let stopping: Promise<void> | undefined, failure: Error | undefined;
-        let run: ProcessSnapshot[] = [];
-        const report = await (
-          await workerProcess()
-        ).runChecks(
-          8,
-          checks,
-          [
-            stand(
-              dir,
-              'tests',
-              `sh -c 'node "$1/command.cjs" "$1/ready" "$2" & wait' sh "$1" "${commandValue}"; echo ok`,
-            ),
-          ],
-          {
-            ...options(dir, said),
-            watch: (pid, check) => {
-              checking.set(pid, check);
-              if (stopping) return;
-              stopping = (async () => {
-                await until(() => existsSync(`${dir}/ready`), 'check child ready');
-                const procs = await processesFor([owner]);
-                const root = procs.find(p => p.ppid === pid && p.comm === 'sh')!;
-                assert.ok(root, 'the check runs a child command');
-                run = procs.filter(p => p.pid === root.pid || p.ppid === root.pid);
-                await blockRun(
-                  owner,
-                  { uid: owner.uid, measure: 'memory', used: 3100, share: 2560, root, run, accountingError },
-                  procs,
-                  {
-                    checking,
-                    stopped: text => stoppedLog.push(text),
-                    ask: async body => {
-                      assert.equal(typeof body.event, 'string', 'the blocked delivery has an identity');
-                      assert.deepEqual(body.accountingError, accountingError);
-                      assert.ok(
-                        String(body.command).includes(commandValue),
-                        'HQ receives the full value before redaction and shortening',
-                      );
-                      await until(
-                        () => run.every(p => procStat(p.pid)?.state === 'T'),
-                        'the command tree is frozen while reporting',
-                      );
-                      assert.match(
-                        check.stopped[0],
-                        accountingError ? /Disk accounting unavailable/ : /the worker blocked its run/,
-                      );
-                      if (!confirmed) throw new TypeError('fetch failed');
-                      return { text: 'HQ stopped this command. Offload it.' };
-                    },
-                  },
-                );
-              })().catch(err => {
-                failure = err;
+    await context.test(name, async () => {
+      const dir = mkdtempSync(`${tmpdir()}/pushchecks-test-`);
+      const said: string[] = [],
+        stoppedLog: string[] = [];
+      const checks: Checks = { body: pushed(), spent: {}, runs: {} };
+      const commandValue = 'fixture-argument-' + 'v'.repeat(400);
+      writeFileSync(
+        `${dir}/command.cjs`,
+        `require('node:fs').writeFileSync(process.argv[2], 'ready'); setTimeout(() => {}, 30000);`,
+      );
+      const checking = new Map<number, CheckRun>();
+      const owner = { job: 8, uid: process.getuid!(), gid: process.getgid!() };
+      const stopping: Promise<void>[] = [];
+      let failure: Error | undefined,
+        roomy = 0;
+      let run: ProcessSnapshot[] = [];
+      const report = await (
+        await workerProcess()
+      ).runChecks(
+        8,
+        checks,
+        [
+          stand(
+            dir,
+            'tests',
+            `sh -c 'node "$1/command.cjs" "$1/ready-$3" "$2" & wait' sh "$1" "${commandValue}" $$; echo ok`,
+          ),
+        ],
+        {
+          ...options(dir, said),
+          roomy: async () => void roomy++,
+          watch: (pid, check) => {
+            checking.set(pid, check);
+            const blocking = (async () => {
+              await until(() => existsSync(`${dir}/ready-${pid}`), 'check child ready');
+              const procs = await processesFor([owner]);
+              const root = procs.find(p => p.ppid === pid && p.comm === 'sh')!;
+              assert.ok(root, 'the check runs a child command');
+              run = procs.filter(p => p.pid === root.pid || p.ppid === root.pid);
+              await blockRun(owner, { uid: owner.uid, measure: 'memory', ...past, root, run, accountingError }, procs, {
+                checking,
+                stopped: text => stoppedLog.push(text),
+                ask: async body => {
+                  assert.equal(typeof body.event, 'string', 'the blocked delivery has an identity');
+                  assert.deepEqual(body.accountingError, accountingError);
+                  assert.ok(
+                    String(body.command).includes(commandValue),
+                    'HQ receives the full value before redaction and shortening',
+                  );
+                  await until(
+                    () => run.every(p => procStat(p.pid)?.state === 'T'),
+                    'the command tree is frozen while reporting',
+                  );
+                  assert.match(
+                    check.stopped[0],
+                    accountingError ? /Disk accounting unavailable/ : /the worker blocked its run/,
+                  );
+                  if (!confirmed) throw new TypeError('fetch failed');
+                  return { text: 'HQ stopped this command. Offload it.' };
+                },
               });
-            },
-            unwatch: pid => {
-              checking.delete(pid);
-            },
+            })().catch(err => {
+              failure = err;
+            });
+            stopping.push(blocking);
           },
-        );
-        await stopping;
-        const outcome = report.tests as CheckOutcome;
-        assert.equal(outcome.passed, null, 'the parent exits zero but this check could not complete');
-        assert.equal(
-          outcome.platform,
-          accountingError?.reason === 'worker-ancestor' ? true : undefined,
-          "only the platform's stop is the platform's",
-        );
-        if (accountingError) assert.match(outcome.report, /Could not complete: Disk accounting unavailable/);
-        else assert.match(outcome.report, /Could not complete: the worker blocked its run.*3,?100 MB.*2,?560 MB/s);
-        assert.match(outcome.report, /ok/);
-        assert.equal(stoppedLog.length, 1, 'the worker records the stop even without a reply');
-        assert.ok(!stoppedLog.join().includes(commandValue), 'the worker log never includes the command');
-        assert.ok(run.length >= 2 && run.every(p => !alive(p.pid, p.start)), 'the whole tree ends');
-        if (confirmed) assert.equal(failure, undefined);
-        else assert.match(String(failure), /block report outcome is unknown.*may have recorded it/);
-        rmSync(dir, { recursive: true });
-      },
-    );
+          unwatch: pid => {
+            checking.delete(pid);
+          },
+        },
+      );
+      await Promise.all(stopping);
+      const outcome = report.tests as CheckOutcome;
+      const launched = 'starved' in past ? 4 : 1;
+      assert.equal(outcome.passed, null, 'the parent exits zero but this check could not complete');
+      assert.equal(launches(dir), 'tests\n'.repeat(launched), 'a share block runs it again, past it no more');
+      assert.equal(roomy, launched - 1, 'each run again waited for room');
+      assert.equal(
+        outcome.platform,
+        accountingError?.reason === 'worker-ancestor' || 'starved' in past ? true : undefined,
+        "only the platform's stop is the platform's",
+      );
+      if (accountingError) assert.match(outcome.report, /Could not complete: Disk accounting unavailable/);
+      else if ('starved' in past)
+        assert.match(outcome.report, /Could not complete: the worker blocked its run.*2,?257 MB.*1,?536 MB/s);
+      else assert.match(outcome.report, /Could not complete: the worker blocked its run.*3,?100 MB.*2,?560 MB/s);
+      assert.match(outcome.report, /ok/);
+      assert.equal(stoppedLog.length, launched, 'the worker records the stop even without a reply');
+      assert.ok(!stoppedLog.join().includes(commandValue), 'the worker log never includes the command');
+      assert.ok(run.length >= 2 && run.every(p => !alive(p.pid, p.start)), 'the whole tree ends');
+      if (confirmed) assert.equal(failure, undefined);
+      else assert.match(String(failure), /block report outcome is unknown.*may have recorded it/);
+      rmSync(dir, { recursive: true });
+    });
 });
 
 // ---- the tests, once on the same code

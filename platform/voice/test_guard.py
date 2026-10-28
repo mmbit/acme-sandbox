@@ -285,7 +285,7 @@ class HqTools(unittest.TestCase):
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'ask_to_see', 'draw', 'open_work', 'drive'])
+                                                                                'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):

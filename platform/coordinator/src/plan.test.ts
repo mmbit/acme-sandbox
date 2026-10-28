@@ -101,7 +101,7 @@ test('a thread needs others, in any project; a loop is refused at any depth', as
   assert.match(String(plan.need(a, c, 'wren')), /loop/);
   assert.match(String(plan.need(a, a, 'wren')), /can't need itself/);
   assert.match(String(plan.need(b, a, 'wren')), /already/);
-  assert.match(String(plan.need(a, 'game/none', 'wren')), /no thread game\/none/);
+  assert.match(String(plan.need(a, 'game/none', 'wren')), /no deliverable game\/none/);
   assert.match(String(plan.need(s, a, 'wren')), /The shop's plan is moss's .*hq propose --project shop/);
   assert.deepEqual(plan.need(s, a, 'juno'), { ok: true }, 'the CEO changes any plan');
   assert.deepEqual(plan.unneed(c, b, 'wren'), { ok: true });
@@ -113,7 +113,7 @@ test('a thread needs others, in any project; a loop is refused at any depth', as
   // (read back in its product and project, beside its siblings.)
   assert.match(
     drawn.out,
-    /^Thread drawn, needing game\/a, game\/c:\n {2}Play › The game › Boss \(game\/boss\)\n {2}done when You beat the boss\nThe game's other open threads:\n {2}game\/a {2}Thread a\n/,
+    /^Deliverable drawn, needing game\/a, game\/c:\n {2}Play › The game › Boss \(game\/boss\)\n {2}done when You beat the boss\nThe game's other open deliverables:\n {2}game\/a {2}Thread a\n/,
   );
   assert.deepEqual(projects.needsOf('game/boss'), [a, c]);
   const board = (await h.board('/api/projects')).body.projects.find((p: { id: string }) => p.id === 'game');
@@ -171,6 +171,21 @@ test("a thread's tasks in order: moved by the owner, a later task still last; a 
       [`task #${two} dropped: Not needed now`, 'wren'],
     ],
   );
+});
+
+test("a move's loop check reads a failed task's replacements from their links, under statistics from a near-empty table", () => {
+  const t = thread('stale');
+  const [one, two] = [task(t, 'One'), task(t, 'Two')];
+  // (the planner's statistics taken while jobs held a few rows, as live's stay until the table grows tenfold)
+  db.exec('analyze');
+  try {
+    const sql = `select 1 from jobs j where j.status = 'failed' and ${h.jobs.hasReplacement('j.id')}`;
+    const steps = db.prepare(`explain query plan ${sql}`).all() as { detail: string }[];
+    assert.ok(!steps.some(p => /^SCAN next/.test(p.detail)), JSON.stringify(steps.map(p => p.detail)));
+    assert.deepEqual(plan.move(two, 1, 'wren'), { ok: true, order: [two, one] });
+  } finally {
+    db.exec('delete from sqlite_stat1; analyze sqlite_schema');
+  }
 });
 
 test('hq plan lists threads with those they need first', async () => {
@@ -238,7 +253,7 @@ test("the company's levels: its own lines in a refusal and the planning job, its
     const guide = levels.levelsOf();
     assert.match(
       guide.lines.thread,
-      /^A thread takes its project to its "done when".* A thread here ends within hours\.$/,
+      /^A deliverable takes its project to its "done when".* A thread here ends within hours\.$/,
     );
     assert.deepEqual(guide.examples.at(-1), { level: 'thread', from: 'Levels, done', to: 'Ten playable levels' });
     assert.ok(guide.examples.length > 1, "the foundation's examples first");
@@ -300,11 +315,11 @@ test('no two levels share a name: a thread, a project and a task, compared case-
     plan.newThread({ project, name, goal: 'It ships' }, { agent: 'juno' });
   assert.match(
     String(draw('game', 'the GAME!')),
-    /^"the GAME!" is the name of the project game: No two levels share a name\. A thread /,
+    /^"the GAME!" is the name of the project game: No two levels share a name\. A deliverable /,
   );
   assert.match(
     String(draw('arcade', 'Thread  levels.')),
-    /is the name of the open thread game\/levels: No two levels share a name/,
+    /is the name of the open deliverable game\/levels: No two levels share a name/,
     'in the product',
   );
   assert.match(String(draw('game', 'Arcade')), /the project arcade/, "a sibling project's name too");
@@ -317,7 +332,10 @@ test('no two levels share a name: a thread, a project and a task, compared case-
     String(plan.newProject({ ...made, id: 'arcade-2', code: 'AB' }, 'juno', () => true)),
     /the project arcade/,
   );
-  assert.match(String(plan.renameProject('arcade', 'thread levels', 'juno')), /the open thread game\/thread-levels/);
+  assert.match(
+    String(plan.renameProject('arcade', 'thread levels', 'juno')),
+    /the open deliverable game\/thread-levels/,
+  );
   assert.equal(
     typeof plan.newProject({ ...made, id: 'arcade-3', business: undefined, code: 'AC' }, 'juno', () => true),
     'object',
@@ -330,12 +348,12 @@ test('no two levels share a name: a thread, a project and a task, compared case-
   assert.equal(inherited.status, 400);
   assert.match(
     inherited.body.error,
-    /^"Thread levels" is the name of its thread game\/thread-levels: No two levels share a name\. A task is/,
+    /^"Thread levels" is the name of its deliverable game\/thread-levels: No two levels share a name\. A task is/,
   );
   assert.match((await queue('the game', { thread: 'game/thread-levels' })).body.error, /its project game/);
   assert.match(
     (await queue('Boss', { newThread: { project: 'game', name: 'Boss', goal: 'Beaten' } })).body.error,
-    /its thread "Boss"/,
+    /its deliverable "Boss"/,
   );
   assert.equal(projects.findThread('game/boss'), undefined, 'nothing drawn');
   assert.equal(
@@ -351,9 +369,12 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
   plan.need(boss, levels, 'wren');
   const one = h.queue({ agent: 'bolt', title: 'One', thread: levels, queuedBy: 'wren' });
   assert.match(String(plan.rename(levels, { name: 'Ten levels' }, 'bolt')), /The game's plan is wren's/);
-  assert.match(String(plan.rename(levels, { name: 'Thread boss' }, 'wren')), /the open thread game\/boss/);
+  assert.match(String(plan.rename(levels, { name: 'Thread boss' }, 'wren')), /the open deliverable game\/boss/);
   assert.match(String(plan.rename(levels, { name: 'Ten', slug: 'Bad Slug' }, 'wren')), /a slug is/);
-  assert.match(String(plan.rename(levels, { name: 'Ten', slug: 'boss' }, 'wren')), /game\/boss is already a thread/);
+  assert.match(
+    String(plan.rename(levels, { name: 'Ten', slug: 'boss' }, 'wren')),
+    /game\/boss is already a deliverable/,
+  );
   assert.match(String(plan.rename(levels, { name: 'Thread levels' }, 'wren')), /named that already/);
   const wren = await h.start({ agent: 'wren' });
   const renamed = await h.hq(
@@ -368,8 +389,8 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
   );
   assert.equal(
     renamed.out,
-    'Thread renamed (game/levels still finds it):\n  Play › The game › Ten levels to play (game/ten-levels)\n' +
-      "  done when all ten are playable\nThe game's other open threads:\n  game/boss  Thread boss\n",
+    'Deliverable renamed (game/levels still finds it):\n  Play › The game › Ten levels to play (game/ten-levels)\n' +
+      "  done when all ten are playable\nThe game's other open deliverables:\n  game/boss  Thread boss\n",
   );
   assert.equal(projects.findThread(levels)?.id, 'game/ten-levels', 'the old id resolves');
   assert.deepEqual([h.job(one).thread, projects.needsOf(boss)], ['game/ten-levels', ['game/ten-levels']]);
@@ -381,7 +402,7 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
   plan.done(boss, 'wren');
   assert.match(String(plan.rename(boss, { name: 'Boss' }, 'wren')), /game\/boss is done/);
   // a task's title
-  assert.match(String(plan.title(one, 'Ten levels', 'wren')), /is the name of its thread game\/ten-levels/);
+  assert.match(String(plan.title(one, 'Ten levels', 'wren')), /is the name of its deliverable game\/ten-levels/);
   assert.match(String(plan.title(one, 'Level one', 'bolt')), /wren's/);
   assert.match(
     (await h.hq(wren, 'plan', 'title', String(one), 'Draw level one')).out,
@@ -392,7 +413,7 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
   assert.match(String(plan.title(one, 'Level one', 'wren')), /only a task still to start/);
   // a project's name: the CEO's
   assert.match(String(plan.renameProject('game', 'The games', 'wren')), /only the CEO renames a project/);
-  assert.match(String(plan.renameProject('game', 'Ten levels', 'juno')), /the open thread game\/ten-levels/);
+  assert.match(String(plan.renameProject('game', 'Ten levels', 'juno')), /the open deliverable game\/ten-levels/);
   const juno = await h.start({ agent: 'juno' });
   assert.match((await h.hq(juno, 'project', 'rename', 'game', 'The level game')).out, /game is The level game now\./);
   assert.equal(projects.findProject('game')?.name, 'The level game');
@@ -404,10 +425,10 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
       ['game/levels', `task #${one} added: One`],
       [
         'game/ten-levels',
-        'thread renamed: name Thread levels → Ten levels to play; done when all ten are playable; id game/levels → game/ten-levels',
+        'deliverable renamed: name Thread levels → Ten levels to play; done when all ten are playable; id game/levels → game/ten-levels',
       ],
-      ['game/ten-levels', 'thread renamed: name Ten levels to play → Ten levels'],
-      ['game/boss', 'thread done'],
+      ['game/ten-levels', 'deliverable renamed: name Ten levels to play → Ten levels'],
+      ['game/boss', 'deliverable done'],
       ['game/ten-levels', `task #${one} titled: Draw level one`],
       [null, 'project renamed: The game → The level game'],
       [null, 'project renamed: The level game → The game'],
@@ -416,7 +437,7 @@ test('a thread renamed keeps its old id; a task retitled; a project renamed by t
   // its own old slug may come back; another thread's never
   assert.match(
     String(plan.rename(levels, { name: 'Ten levels', slug: 'boss' }, 'wren')),
-    /game\/boss is already a thread/,
+    /game\/boss is already a deliverable/,
   );
   assert.equal(
     (plan.rename(levels, { name: 'Ten levels', slug: 'levels' }, 'wren') as { id: string }).id,
@@ -441,7 +462,7 @@ test('a project done leaves the lists once nothing is left in it, and stays amon
   assert.match(String(plan.projectDone('privacy', 'bolt')), /wren's/);
   assert.equal(
     plan.projectDone('privacy', 'wren'),
-    `privacy isn't done yet: it has open threads privacy/site-one, privacy/job-${planning!.id} (hq plan done, or hq thread move); work still to run or in review: #${one}, #${planning!.id}; proposals in its inbox: #${proposal.id} (hq inbox)`,
+    `privacy isn't done yet: it has open deliverables privacy/site-one, privacy/job-${planning!.id} (hq plan done, or hq deliverable move); work still to run or in review: #${one}, #${planning!.id}; proposals in its inbox: #${proposal.id} (hq inbox)`,
   );
   assert.equal((await h.finish(asking)).status, 200);
   const dropped = await h.agent('proposals/drop', planning!.token, { id: proposal.id, why: 'One site at a time' });
@@ -538,7 +559,7 @@ test("a project moved into a business by the CEO, or out of any: its name and it
   assert.equal(typeof plan.rename(sibling, { name: 'Shop' }, 'wren'), 'object');
   assert.match(
     String(plan.setBusiness('shop', 'play', 'juno')),
-    /"The shop" is the name of the open thread game\/shop-thread/,
+    /"The shop" is the name of the open deliverable game\/shop-thread/,
   );
   plan.done(sibling, 'wren');
   // and so is one of its open threads', but for HQ's one-task threads, named after their jobs
@@ -548,7 +569,7 @@ test("a project moved into a business by the CEO, or out of any: its name and it
   assert.equal(hqMade.oneTaskThread('shop', { id: made, title: 'The game' }), `shop/job-${made}`);
   assert.match(
     String(plan.setBusiness('shop', 'play', 'juno')),
-    /^"Rumble" is the name of the open thread game\/rumble: No two levels share a name\. A thread /,
+    /^"Rumble" is the name of the open deliverable game\/rumble: No two levels share a name\. A deliverable /,
   );
   plan.done('game/rumble', 'wren');
   const moved = await h.hq(juno, 'project', 'business', 'shop', 'play');
@@ -578,4 +599,25 @@ test("a project moved into a business by the CEO, or out of any: its name and it
       ['business play → none', 'juno'],
     ],
   );
+});
+
+test("HQ's one-task thread is sent to the board as one, its review round's jobs and all; a drawn thread is not", () => {
+  const work = h.jobs.createJob({ agent: 'bolt', title: 'Repair the bridge', prompt: 'Do it.', queuedBy: 'hq' }).id;
+  const wrapper = hqMade.oneTaskThread('game', { id: work, title: 'Repair the bridge' })!;
+  // (the review loop's jobs inherit the work's thread: jobs.ts threadFrom)
+  for (const kind of ['review', 'consolidate']) {
+    const round = h.jobs.createJob({ agent: 'quill', title: `Round 1 ${kind}`, prompt: 'Read it.', queuedBy: 'hq' }).id;
+    db.prepare('update jobs set kind = ?, thread = ? where id = ?').run(kind, wrapper, round);
+  }
+  const drawn = thread('levels');
+  task(drawn, 'Draw the first level');
+  const shown = (id: string) =>
+    projects
+      .listProjectBoard()
+      .projects.flatMap(p => p.threads)
+      .find(t => t.id === id) as { oneTask?: boolean; jobs: unknown[] };
+  assert.equal(shown(wrapper).jobs.length, 3, 'the work and its round');
+  assert.equal(shown(wrapper).oneTask, true);
+  assert.equal(shown(drawn).oneTask, undefined);
+  assert.equal((projects.getThread(wrapper) as { oneTask?: boolean }).oneTask, true, 'opened by its link too');
 });

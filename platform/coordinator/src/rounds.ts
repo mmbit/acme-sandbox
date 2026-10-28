@@ -85,8 +85,10 @@ export function expandRows<T extends OrderingSnapshot>(snapshot: T, keepLoops = 
     }
     if (endpoint !== null) mapTerminal(owner, endpoint, snapshot.jobs, terminals);
   }
+  const expansion = { snapshot: { ...snapshot, jobs: rows }, terminals, stages, sources, pooled };
+  holdEndpoints(expansion, nextId);
   if (!keepLoops) unloop(rows, terminals);
-  return { snapshot: { ...snapshot, jobs: rows }, terminals, stages, sources, pooled };
+  return expansion;
 }
 
 // The sizes of an expansion's rows at a pace: the jobs' own, and each added stage's pooled time.
@@ -95,6 +97,18 @@ export function sized(expansion: Expansion, sizes: ReadonlyMap<number, Size>, pa
   for (const { id, usualMs, slowMs } of expansion.pooled)
     expanded.set(id, { agent_ms: pace === 'slow' ? slowMs : usualMs });
   return expanded;
+}
+
+function holdEndpoints(expansion: Expansion, nextId: number) {
+  const { snapshot, terminals, stages, sources, pooled } = expansion;
+  for (const owner of snapshot.jobs.filter(job => job.mergeHold)) {
+    const id = nextId--;
+    snapshot.jobs.push(heldMerge(owner, id, terminals.get(owner.id) ?? owner.id));
+    sources.set(id, { owner: owner.id, stage: 'visual-decision' });
+    stages.set(owner.id, [...(stages.get(owner.id) ?? []), id]);
+    pooled.push({ id, usualMs: 0, slowMs: 0 });
+    mapTerminal(owner, id, snapshot.jobs, terminals);
+  }
 }
 
 function mapTerminal(owner: QueuedJob, terminal: number, jobs: QueuedJob[], terminals: Map<number, number>) {
@@ -122,6 +136,32 @@ function pendingResolution(owner: QueuedJob, id: number) {
   if (resolutionAfter !== undefined) pending.dependencies.push({ job: resolutionAfter, until: 'done' });
   else if (resolutionAt !== undefined) pending.notBefore = resolutionAt;
   else pending.reasons.push({ on: 'stalled', why: waiting ?? 'Its pull request awaits resolution' });
+  return pending;
+}
+
+function heldMerge(owner: QueuedJob, id: number, prior: number) {
+  const pending = synthetic(
+    owner,
+    {
+      key: 'visual-decision',
+      kind: 'consolidate',
+      agent: owner.agent,
+      engine: owner.engine,
+      usualMs: 0,
+      slowMs: 0,
+      after: [],
+    },
+    id,
+  );
+  pending.kind = 'resolution';
+  pending.dependencies.push({ job: prior, until: 'done' });
+  const hold = owner.mergeHold!;
+  if (hold.job !== null) {
+    pending.dependencies.push({ job: hold.job, until: 'merged' });
+    pending.reasons.push({ on: 'job', job: hold.job });
+  }
+  if (hold.card) pending.cards.push(hold.card);
+  else pending.reasons.push({ on: 'board' });
   return pending;
 }
 
@@ -155,6 +195,7 @@ function synthetic(
     dependencies: [],
     review: null,
     reviewPlan: undefined,
+    mergeHold: undefined,
     opensReview: false,
     reasons: owner.reasons.filter(reason => reason.on === 'stalled' || reason.on === 'board'),
   };

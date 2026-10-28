@@ -10,12 +10,11 @@
 // A scene with a still also gets theme/hq/films/<tip>-<look>.jpg, the Library manual's tile
 //:
 //   node platform/hq/tip-films.mjs stills           (only the stills, from the films there)
-import { readFile, readdir } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { statSync } from 'node:fs';
-import { parse } from '../coordinator/node_modules/yaml/dist/index.js';
-import { serve, ROOT } from './serve.mjs';
+import { mockFiles, serve, ROOT } from './serve.mjs';
 import { lookNames } from './looks.mjs';
 import { TIPS } from './shell/tips.js';
 import { FILMS, PREVIEW } from './films/scenes.mjs';
@@ -29,22 +28,6 @@ const FPS = 24,
   T0 = new Date('2026-10-26T10:00:00Z');
 const at = (...p) => join(ROOT, ...p);
 
-// The company's theme over the mock brand, and the platform's mock data wherever the company's own is empty
-// (screens-check.mjs does the same)
-const theme = await readFile(at('theme/hq.yaml'), 'utf8').then(parse, () => null);
-const brand = JSON.parse(
-  await readFile(at('theme/hq/mock/brand.json'), 'utf8').catch(() =>
-    readFile(at('platform/hq/mock/brand.json'), 'utf8'),
-  ),
-);
-if (theme) brand.theme = { ...brand.theme, ...theme };
-const filled = { 'mock/brand.json': JSON.stringify(brand) };
-for (const name of (await readdir(at('theme/hq/mock')).catch(() => [])).filter(n => n.endsWith('.json'))) {
-  const own = JSON.parse(await readFile(at('theme/hq/mock', name), 'utf8'));
-  if (Array.isArray(own) && !own.length)
-    filled[`mock/${name}`] = await readFile(at('platform/hq/mock', name)).catch(() => '[]');
-}
-
 const { chromium } = playwright();
 if (process.argv[2] === 'stills') {
   for (const tip of TIPS.filter(t => FILMS[t.key]?.still != null)) for (const look of lookNames()) still(tip, look);
@@ -54,7 +37,8 @@ const [onlyTip, onlyLook] = process.argv.slice(2);
 const tips = TIPS.filter(t => FILMS[t.key] && (!onlyTip || t.key === onlyTip));
 if (onlyTip && !tips.length) throw new Error(`${onlyTip}: no tip with a film by that name`);
 const looks = lookNames().filter(l => !onlyLook || l === onlyLook);
-const server = await serve(undefined, 0, filled),
+// HQ as the company wears it, on the mock data
+const server = await serve(undefined, 0, await mockFiles()),
   base = `http://localhost:${server.address().port}`;
 // (a stand-in microphone for the call's film)
 const browser = await chromium.launch({

@@ -2,6 +2,8 @@
    its own: shell/icons.js), and the count badge's number as text. A look's skin.css imports it. */
 body {
   --ease: cubic-bezier(0.2, 0.8, 0.3, 1);
+  /* (and going, as the call's little screen switches off) */
+  --ease-in: cubic-bezier(0.6, 0, 0.8, 0.4);
   --icons: geometricPrecision;
 }
 .count svg {

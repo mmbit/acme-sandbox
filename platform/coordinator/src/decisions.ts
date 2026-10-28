@@ -3,6 +3,7 @@
 // card that asks it. Work it doesn't block goes on. Nothing else ends it, with one exception: the CEO may settle a visual
 // hold on merges without its card, citing the board's word given elsewhere (visualapproval.ts settle). No agent's own
 // reading of it as met ends one.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep } from './db.ts';
 import { publish } from './events.ts';
 import * as pauses from './pauses.ts';
@@ -21,7 +22,8 @@ export function create(name: unknown, blocks: unknown[], by: string) {
   const said = oneLine(String(name ?? ''));
   if (!said || said.length > NAME_MAX) return `name the decision in a line of up to ${NAME_MAX} characters`;
   const targets = [...new Set(blocks.map(String))];
-  if (!targets.length) return 'a decision blocks one project or thread at least (--blocks <project | project/thread>)';
+  if (!targets.length)
+    return 'a decision blocks one project or deliverable at least (--blocks <project | project/slug>)';
   const why = `waiting for the board's decision: ${said}`;
   try {
     return inOneStep(() => {

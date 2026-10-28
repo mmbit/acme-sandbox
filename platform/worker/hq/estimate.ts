@@ -24,7 +24,7 @@ export const estimate = {
    hq estimate --accuracy [--days n]                 how well the estimates held over the last n days (7): agent time and
                                                      ETA against what happened, the worst misses and what moved, and
                                                      the matching tried again on the work done since, beside simpler ways,
-                                                     and the matching within a thread beside HQ's
+                                                     and the matching within a deliverable beside HQ's
    hq estimate --calibration [--days n]              both layers' misses over the last n days (7): sizes against the
                                                      agent time taken by agent, area and sizer; ETAs against the
                                                      landings an hour, six hours and a day ahead (the prediction log)
@@ -34,7 +34,7 @@ export const estimate = {
                                                      platform/coordinator/scripts/backtest.ts to score a branch's play
                                                      beside main's
    hq estimate set <job> <time> ["why"]              re-size a queued or running job: its agent time (90m, 2h, 1h30m)
-                                                     changes the saved queue-time estimate and names the threads whose
+                                                     changes the saved queue-time estimate and names the deliverables whose
                                                      ETA moved. Only the CEO may change it after work slips`,
 
   async run(given: string[]) {

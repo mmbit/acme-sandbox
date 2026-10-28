@@ -1,6 +1,7 @@
-// hq projects and hq thread <id>: each thread's live estimate from HQ's forecast (the coordinator's forecast.ts and
-// outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its planned finish
-// against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of the status report.
+// hq projects and hq deliverable <id>: each deliverable's live estimate from HQ's forecast (the coordinator's
+// forecast.ts and outlooks.ts), in a few lines: its ETA, the agent time its open work has left, what it waits on, its
+// planned finish against its window and the slack that leaves, and its jobs. Agents and the CEO read these instead of
+// the status report.
 import { when } from './when.ts';
 import * as api from './api.ts';
 import { lateLines, missWords } from './deadlines.ts';
@@ -56,22 +57,22 @@ type Detail = Line & {
 };
 
 export const projectsHelp = `
-   hq projects                                       every open thread in a line: its ETA, the agent time its open work
-                                                     has left, what it waits on, its planned finish against its window
+   hq projects                                       every open deliverable in a line: its ETA, the agent time its open
+                                                     work has left, what it waits on, its planned finish against its window
                                                      and the slack that leaves, and the job that goes on next (HQ's live
                                                      estimate, played on the queue as it is)
    hq projects [words] --extra-seat 5x|20x            the whole live plan before and after an added Claude Max seat,
                                                      all windows included, with capacity assumptions and confidence
-   hq projects <words>                               the same for the threads a project's or thread's name or a few words
-                                                     find ("The checkout"), by project, everything in names: what
+   hq projects <words>                               the same for the deliverables a project's or deliverable's name or a
+                                                     few words find ("The checkout"), by project, everything in names: what
                                                      the board hears on a call (its eta tool)`;
 export const nowHelp = `
    hq now                                            what's going on right now: everyone HQ counts at work, each on its
-                                                     run with its seat, thread and window and, while a hold is on, why
+                                                     run with its seat, deliverable and window and, while a hold is on, why
                                                      it runs; then each open desk phone card with the work that waits on
                                                      it (the call's eta tool with no query)`;
 export const help = `
-   hq thread <project>/<slug>                        one thread: its estimate and window, the chain of jobs that sets its
+   hq deliverable <project>/<slug>                   one deliverable: its estimate and window, the chain of jobs that sets its
                                                      ETA, and each open job with its size, time left, start, merge and
                                                      waits`;
 
@@ -82,8 +83,8 @@ export async function projects(args: string[]) {
     return when.run(args.slice(i));
   }
   if (args.length) return printOutlooks(args.join(' '));
-  const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the threads."));
-  if (!threads.length) return print('No open threads.');
+  const threads: Line[] = JSON.parse(await api.orStop(api.get('projects'), "Couldn't read the deliverables."));
+  if (!threads.length) return print('No open deliverables.');
   print(
     ...threads.map(projectLine),
     ...missLines(threads.filter(t => t.outlook?.standing === 'misses').map(t => t.id)),
@@ -142,7 +143,7 @@ const threadWait = (w: ThreadWait, own: string): string =>
 
 export async function thread(id: string) {
   const answer = await api.call(`thread?id=${api.uri(id)}`);
-  if (answer.status === 404) stop(`There's no thread ${id} (hq thread list).`);
+  if (answer.status === 404) stop(`There's no deliverable ${id} (hq deliverable list).`);
   const t = api.parseOrNull(answer.body) as Detail | null;
   if (!api.isSuccess(answer.status) || !t) stop(`Couldn't read ${id}: ${api.errorIn(answer.body, 'no answer')}`);
   const o = t.outlook;
@@ -205,7 +206,7 @@ async function printOutlooks(words: string) {
   const f = api.parseOrNull(answer.body) as OutlookMatches | null;
   if (!api.isSuccess(answer.status) || !f) stop(`Couldn't read the plan: ${api.errorIn(answer.body, 'no answer')}`);
   if (!f.projects.length)
-    return print(`No open thread is called that. The open projects: ${f.known.map(text).join(', ') || 'none'}.`);
+    return print(`No open deliverable is called that. The open projects: ${f.known.map(text).join(', ') || 'none'}.`);
   for (const p of f.projects) {
     print(`${text(p.name)} (${text(p.owner)}'s project):`);
     for (const t of p.threads) {

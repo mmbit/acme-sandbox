@@ -34,6 +34,11 @@ export function inkPicture(lines) {
   return c.toDataURL('image/png');
 }
 
+// Lines of handwriting read into words, '' when they aren't writing: what the pen writes in words opened for more
+// (penwords.js, the book's and the post-it's).
+export const readWords = lines =>
+  send('/read', { ink: inkPicture(lines) }).then(({ writing, words }) => (writing ? words : ''));
+
 // Words typed in the post-it are the board's: words read, changed, no longer stand beside the ink as type
 export function typing(r) {
   r.text.addEventListener('input', () => {
@@ -95,6 +100,7 @@ function took(r, mark, words) {
     const field = r.text.value.trim();
     if (r.typed || r.spoken || (field && field !== mark.written)) return;
     r.text.value = mark.written = words;
+    r.penWords?.refresh(); // (words the pen can edit now)
     if (r.msg.textContent === mark.unread) r.msg.textContent = ''; // (an earlier reading's failure, told: now read)
     r.rec?.typed?.(); // (words said from here on go after them)
     paint(r);

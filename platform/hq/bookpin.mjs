@@ -10,7 +10,7 @@
 // it's dropped, the same button while it's held (pincheck.mjs). (the summon)
 import assert from 'node:assert/strict';
 import { carried } from '../../shared/review/pincheck.mjs';
-import { foldBySpine } from './bookchrome.mjs';
+import { shutBook } from './bookchrome.mjs';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 
 const ui = s => `review-mode >> css=${s}`;
@@ -73,7 +73,7 @@ const pinSeen = page =>
 async function summoned(c, page) {
   await showing(page, false, 'HQ loads with the book open and no pin');
   await c.shot('pin-loaded', page);
-  await foldBySpine(page);
+  await shutBook(page);
   await c.settled(page, 'folded');
   assert.equal((await pinSeen(page)).shows, false, 'folded, no pin');
   await page.click('#book .bk-lip');
@@ -110,7 +110,7 @@ export async function pinScreensStory(c) {
     await showing(page, false, 'a desktop: HQ loads with the book open and no pin');
     await page.click(PIN_CONTROL);
     await showing(page, true, "a desktop: the book's pin control summons it");
-    await foldBySpine(page);
+    await shutBook(page);
     await c.settled(page, 'folded');
     await showing(page, false, 'a desktop: folded, the pin goes');
     await page.click('#book .bk-lip');
@@ -118,10 +118,10 @@ export async function pinScreensStory(c) {
     await showing(page, true, 'a desktop: opening the book summons it');
     await c.shot('pin-desktop', page);
     // the window resized while the book slides open (a dragged window): still the board's opening
-    await foldBySpine(page);
+    await shutBook(page);
     await c.settled(page, 'folded');
     await page.click('#book .bk-lip');
-    assert.ok(await page.evaluate(() => document.querySelector('#book .bk-spine').getAnimations().length), 'sliding');
+    assert.ok(await page.evaluate(() => document.querySelector('#book .bk-edge').getAnimations().length), 'sliding');
     await page.setViewportSize({ width: 1400, height: 900 });
     await c.settled(page, 'open');
     await showing(page, true, 'a desktop: resized as the book slides open, the pin still comes');
@@ -138,7 +138,7 @@ export async function pinScreensStory(c) {
     await c.shot('pin-phone', page);
     await page.click('#book .bk-lip');
     await c.settled(page, 'spread');
-    await foldBySpine(page);
+    await shutBook(page);
     await c.settled(page, 'folded');
     await showing(page, false, 'a phone: the book opened again put it away');
   });

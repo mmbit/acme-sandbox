@@ -29,7 +29,8 @@ export async function blockRun(
     const check = options.checking.get(pid);
     if (!check) continue;
     check.stopped.push(reason);
-    if (block.accountingError && workerAccountingFailure(block.accountingError.reason))
+    if (block.starved) check.roomStops = (check.roomStops ?? 0) + 1;
+    else if (block.accountingError && workerAccountingFailure(block.accountingError.reason))
       check.platformStops = (check.platformStops ?? 0) + 1;
   }
   const body = {

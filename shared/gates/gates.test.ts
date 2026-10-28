@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { ON_HELPER, playedHq } from './fixture.ts';
+import { bundleFailure, NoRoom } from './lent.ts';
 
 const repo = join(import.meta.dirname, '..', '..');
 const CONFIGS = [
@@ -529,4 +530,20 @@ test("--helper stopped at the worker's time limit stops its run on HQ, however l
   const early = gates(onHelper, typeError, { ...sending, stopAfterMs: 1000 });
   assert.equal(early.status, 2, early.out);
   assert.equal(await runOf(sending.env), 'stopped');
+});
+
+test("a bundle that failed for want of disk is no room, any other failure (a tool missing) stays one that couldn't run", () => {
+  const full = Object.assign(new Error('Command failed: tar -czf bundle.tar.gz'), {
+    code: 2,
+    stderr: 'tar: bundle.tar.gz: Wrote only 4096 of 10240 bytes: No space left on device',
+  });
+  assert.ok(bundleFailure(full) instanceof NoRoom);
+  assert.ok(
+    bundleFailure(Object.assign(new Error('ENOSPC: no space left on device, write'), { code: 'ENOSPC' })) instanceof
+      NoRoom,
+  );
+  const missing = Object.assign(new Error("ENOENT: no such file or directory, copyfile 'tools/rg'"), {
+    code: 'ENOENT',
+  });
+  assert.equal(bundleFailure(missing), missing, 'a missing tool stays itself: exit 2, not NO_ROOM_EXIT');
 });

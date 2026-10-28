@@ -18,9 +18,9 @@ export function levelHtml(l, { view, board, opening }) {
   if (l.at === 'home') return home(board, work, projectsOf, groupRows, groupDone);
   if (l.at === 'group') {
     // (the lists of threads across the projects, with their pair of keys: threadlist.js; over the name, that its counts
-    // are threads, where the HUD that opens them counts tasks.)
+    // are deliverables, the board's word for threads, where the HUD that opens them counts tasks.)
     if (LISTS[view.group])
-      return `${keys.head({ back: 'Projects', over: 'Threads', title: LISTS[view.group], keys: listKeys(board, view.group) })}${threadList(view.group, board, opening)}`;
+      return `${keys.head({ back: 'Projects', over: 'Deliverables', title: LISTS[view.group], keys: listKeys(board, view.group) })}${threadList(view.group, board, opening)}`;
     const group = keys.named(view.group, board.groups?.[view.group]);
     // (Recurring: the routines' projects, as any project's tiles.)
     if (view.group === 'recurring')
@@ -52,7 +52,7 @@ export function levelHtml(l, { view, board, opening }) {
       ? p.done.map(t => keys.doneThreadTile(t, opening?.project === p.id ? opening : null))
       : inEtaOrder(p).map(t => threadTile(t, p, openThread));
     return `${keys.head({ back, over, title: nameText(p, 'name'), marks: keys.projectMarks(p), keys: switches })}
-      <div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing threads.</p>'}</div>`;
+      <div class="pj-level pj-grid">${tiles.join('') || '<p class="pj-none">No ongoing deliverables.</p>'}</div>`;
   }
   // A completed thread waits on no decision. Back goes to the list it was opened from, if any.
   const t = l.t,
@@ -95,7 +95,7 @@ const rowsOf = (key, board) => (key === 'recurring' ? routinesOf(board) : (board
 const doneOf = (key, board) => (board[key] ?? []).filter(finished);
 
 // A work link's thread while it loads: its page bare, its head and a few task rows.
-export const SKELETON = `<div class="pj-board pj-skeleton" role="status" aria-label="Opening its thread…">
+export const SKELETON = `<div class="pj-board pj-skeleton" role="status" aria-label="Opening its deliverable…">
   <header class="pj-head"><span class="pj-key pj-back-key" aria-hidden="true">${icon('back')}</span><div class="pj-flow"><div class="pj-where"><small><i></i></small><h1><i></i></h1></div></div>
   <button class="pj-key pj-close" data-leave aria-label="Close the projects">${icon('close')}</button></header>
   <ol class="pj-level pj-tasks" aria-hidden="true">${'<li><div class="pj-task"><i></i><span><i></i><i></i></span></div></li>'.repeat(4)}</ol></div>`;

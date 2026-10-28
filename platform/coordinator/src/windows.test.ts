@@ -153,7 +153,7 @@ test('hq window: on a thread named by its id, a job on it or a pull request; set
   );
   const done = await h.agent('window', kit.token, { thread: shop, deadline: '2h' });
   assert.equal(done.status, 409, 'an open thread');
-  assert.match(done.body.error, new RegExp(`${shop} is done: a window goes on an open thread`));
+  assert.match(done.body.error, new RegExp(`${shop} is done: a window goes on an open deliverable`));
 });
 
 test("a call's item with its time sets its thread's window when it's handed out: deadline and aim at its time, from the call's agent", async () => {
@@ -422,7 +422,7 @@ test("the CEO's summary names a thread whose planned finish is past its deadline
   const [line] = threats.lines(forecast.refresh(T)).filter(l => l.includes(due));
   assert.match(
     line,
-    new RegExp(`^thread ${due} \\(.*\\): finish .*, .* past its deadline .*, set by kit\\. Held by: `),
+    new RegExp(`^deliverable ${due} \\(.*\\): finish .*, .* past its deadline .*, set by kit\\. Held by: `),
   );
   windows.set(windows.threadOf({ thread: due }) as any, { deadline: T + 10 * HOUR, aim: T + 10 * HOUR }, 'juno');
   assert.deepEqual(

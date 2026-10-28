@@ -4,24 +4,32 @@
 // hand-offs between threads: a task queued --after another branch's job waits for that job's review and merge. And
 // what the waiting was (threadwaits.ts).
 import { db } from './db.ts';
+import type { Turn } from './latency.ts';
 import { minutes, share } from './arithmetic.ts';
 import { covered, type Span } from './playtime.ts';
 import { waitingSplit } from './threadwaits.ts';
 import { firstMergeAfter, spanOf, type Group, type Job, type Merge } from './threadgroups.ts';
 
-export function threadTimes(since: string) {
+// Its parts each run in a turn of HQ's thread of their own, each ended by calibration.ts's report's `turn`, which names
+// a slow one (latency.ts turns).
+export async function threadTimes(since: string, turn: Turn) {
   const lately = (db.prepare(MERGED).all(since) as MergeRow[]).map(mergeOf);
-  const jobs = jobsOn(lately);
+  const jobs = await jobsOn(lately, turn);
   const runs = runsOf(jobs.map(j => j.id));
+  await turn("the threads' runs");
   const after = afterJobs(jobs);
   const merges = mergesOn([...lately, ...after].map(x => x.branch));
   const groups = grouped(lately, jobs, merges);
   const tasks = groups.flatMap(g => g.tasks);
-  return {
+  const handed = handoffs(tasks, after, merges, runs);
+  await turn("the threads' groups and hand-offs");
+  const times = {
     ...summed(groups, runs),
-    handoffs: handoffs(tasks, after, merges, runs),
+    handoffs: handed,
     ...waitingSplit(groups, runs, merges),
   };
+  await turn("the threads' sums and waits");
+  return times;
 }
 
 // ---- the rows, ids first and then each row by its id
@@ -31,8 +39,8 @@ type MergeRow = { number: number; branch: string; merged_at: string | null };
 const mergeOf = (r: MergeRow): Merge => ({ number: r.number, branch: r.branch, merged: Date.parse(r.merged_at!) });
 
 // The work jobs on the pull requests' branches (a thread's tasks, a fix task) and the jobs of each pull request's
-// review loop (its fixes, reviews and rulings).
-function jobsOn(lately: Merge[]) {
+// review loop (its fixes, reviews and rulings), read a slice at a time in the order of their ids, a turn after each.
+async function jobsOn(lately: Merge[], turn: Turn) {
   if (!lately.length) return [];
   const ids = db
     .prepare(
@@ -40,15 +48,25 @@ function jobsOn(lately: Merge[]) {
       union select id from jobs where pr in (select value from json_each(?))`,
     )
     .all(JSON.stringify(lately.map(p => p.branch)), JSON.stringify(lately.map(p => p.number))) as { id: number }[];
-  return jobsById(ids.map(r => r.id));
+  const sorted = ids.map(r => r.id).sort((a, b) => a - b),
+    jobs: Job[] = [];
+  for (let i = 0; i < sorted.length; i += SLICE) {
+    jobs.push(...jobsById(sorted.slice(i, i + SLICE)));
+    await turn(i ? "the threads' jobs, a slice" : "the threads' merges and their jobs' first slice");
+  }
+  return jobs;
 }
+// (each read in 50-60 ms off a cold disk on a copy grown to HQ's size)
+const SLICE = 1000;
 
+// (this file's jobs read from db.ts jobs_listed, or jobs_report where it has their columns: a row's brief and report are
+// seconds off a cold disk)
 const jobsById = (ids: number[]) =>
   (
     db
       .prepare(
         `select id, kind, agent, pr, round, created, after, thread, coalesce(branch, 'job/' || id) branch,
-        coalesce(seq, id) seq, finished from jobs where id in (select value from json_each(?))`,
+        coalesce(seq, id) seq, finished from jobs indexed by jobs_listed where id in (select value from json_each(?))`,
       )
       .all(JSON.stringify(ids)) as (Omit<Job, 'created' | 'finished'> & { created: string; finished: string | null })[]
   ).map(r => ({ ...r, created: Date.parse(r.created), finished: r.finished === null ? null : Date.parse(r.finished) }));
@@ -74,7 +92,7 @@ function afterJobs(jobs: Job[]) {
   return (
     db
       .prepare(
-        `select id, finished, coalesce(branch, 'job/' || id) branch from jobs
+        `select id, finished, coalesce(branch, 'job/' || id) branch from jobs indexed by jobs_report
         where id in (select value from json_each(?)) and kind = 'work' and finished is not null`,
       )
       .all(JSON.stringify(ids)) as { id: number; finished: string; branch: string }[]

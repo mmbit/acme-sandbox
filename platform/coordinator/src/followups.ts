@@ -5,6 +5,7 @@
 // while it stays open. A finding in code of a review domain none of the pull request's files are in cuts across
 // projects: it goes to the CEO's bundle (no project), who passes it to the project it belongs to. What a ruling from
 // the upstream round on says went wrong before review reaches the owner the same way, in a proposal of its own.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep } from './db.ts';
 import { findThread } from './projects.ts';
 import * as panel from './panel.ts';
@@ -65,9 +66,9 @@ const briefOf = (lines: string[]) => `What reviews found that their pull request
 documentation, hardening that isn't security, and findings in code a change didn't touch. Pre-existing findings can
 concern customers or security: prioritise each finding by its actual impact.
 
-It's yours to prioritise and assign: accept it as a thread of its own for refactoring or hardening
-(\`hq inbox accept <id> --for <agent> --code WORD --thread new:<project> "name" "done when"\`), with the findings worth
-fixing named in the thread's "done when"; or drop it with why. Findings in
+It's yours to prioritise and assign: accept it as a deliverable of its own for refactoring or hardening
+(\`hq inbox accept <id> --for <agent> --code WORD --deliverable new:<project> "name" "done when"\`), with the findings worth
+fixing named in the deliverable's "done when"; or drop it with why. Findings in
 another project's code: propose them there (\`hq propose "title" <brief-file> --project <id>\`).
 
 ${lines.join('\n')}`;

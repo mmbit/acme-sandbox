@@ -13,6 +13,7 @@ import { paint, redrawInk, refresh, reset } from './acts.js';
 import { toBook } from './settle.js';
 import { PAPER } from './paper.js';
 import { ownerNamed } from './markpage.js';
+import { setupPostitPen } from './postitpen.js';
 
 export const CSS = `
       /* The post-it is a scrap of the book (paper.js): its paper and dot grid, a head torn along
@@ -153,7 +154,7 @@ export function towards(r, mark) {
   ownerNamed(r, mark.el).then(
     ({ name }) => {
       if (r.mark !== mark) return;
-      r.towards = `For ${name}’s sheet in your Sketchbook`;
+      r.towards = `For ${name}’s sheet in your Notebook`;
       r.pinIt.textContent = `Send to ${name}`;
       if (!r.sheet.hidden) r.$('.page').textContent = r.towards;
     },
@@ -237,6 +238,14 @@ async function pinIt(r) {
   if (r.rec || r.stopping) {
     r.pinIt.disabled = true;
     await stopMic(r);
+    if (!open()) return;
+    r.pinIt.disabled = false;
+    if (r.mode !== 'note') return;
+  }
+  // and words written with the Pencil still being read (postitpen.js): the press on Pin closed their gap.
+  if (r.wordGap) {
+    r.pinIt.disabled = true;
+    await r.wordGap.close();
     if (!open()) return;
     r.pinIt.disabled = false;
     if (r.mode !== 'note') return;
@@ -348,6 +357,7 @@ export function setupPostit(r) {
   // (words typed after any were said: the Pencil keeps its own.)
   if (!r.book) r.text.addEventListener('input', () => (r.typed = true));
   r.pinIt.onclick = () => pinIt(r);
+  setupPostitPen(r); // (its words edited with the Pencil.)
   // With the on-screen keyboard up (Chrome on Android resizes only the visual viewport), lift the note above it.
   const vv = window.visualViewport;
   if (!vv) return;

@@ -56,6 +56,8 @@ export const STANDING = {
   studioTakedown: 'TAKEDOWN',
   pauseMet: 'HOLDMET', // (pauses.ts wake)
   threadMerged: 'JUDGE', // (threadjudge.ts wake)
+  carryChecks: 'CARRIED', // (carries.ts)
+  carryFix: 'CARRYFIX',
 } as const;
 // Those, and the company's own standing tasks' words: schedule.yaml's and shows.yaml's `code:` (schedule.ts entries).
 // No queuer may claim one, in any project and before its task first runs: where a standing task's runs go

@@ -143,7 +143,7 @@ async function answered(id: string, [how, ...more]: string[]) {
 }
 
 const ROUTE_USAGE =
-  'usage: hq route | hq route \'#<job>\' [note ids] | hq route log [--since <time>] (a new task of them: hq job <agent> "title" --code WORD --thread <project>/<slug> --notes <ids>)';
+  'usage: hq route | hq route \'#<job>\' [note ids] | hq route log [--since <time>] (a new task of them: hq job <agent> "title" --code WORD --deliverable <project>/<slug> --notes <ids>)';
 const LOG_DAY_MS = 24 * 3_600_000;
 
 // The CEO's routing check (the coordinator's routing.ts). A refusal (4xx) changed nothing (exit 1); anything else may
@@ -152,12 +152,12 @@ export const route = {
   help: `
    hq route                                          the CEO, in a check routing the board's sent notes: the notes still to
                                                      route (a check that ended left some: any CEO job), and the open
-                                                     work by thread. A task of them: hq job <agent> "title" --code WORD
-                                                     --thread <project>/<slug> --notes <ids> --by <when | project/slug |
-                                                     none>: the notes are the board's ask, so the task takes its time
-                                                     (the board's, else hq when's), the window of the deliverable it
-                                                     serves, or none; not needed on a thread with a window or one a
-                                                     windowed thread needs
+                                                     work by deliverable. A task of them: hq job <agent> "title" --code
+                                                     WORD --deliverable <project>/<slug> --notes <ids> --by <when |
+                                                     project/slug | none>: the notes are the board's ask, so the task
+                                                     takes its time (the board's, else hq when's), the window of the
+                                                     deliverable it serves, or none; not needed on a deliverable with a
+                                                     window or one a windowed deliverable needs
    hq route '#<job>' [note ids]                      those notes (all still to route, without ids) go into the brief of
                                                      that job, open work an agent queued that hasn't started
    hq route log [--since <time>]                     every note sent since then (ISO time, UTC; the last 24 h without):

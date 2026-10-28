@@ -9,7 +9,7 @@
 import { db, inOneStep, lacks } from './db.ts';
 import { companyDay } from './company.ts';
 import { publish } from './events.ts';
-import { BOARD, COLUMNS, type Page } from './book.ts';
+import { BOARD, COLUMNS, type Page } from './ink/book.ts';
 import { isRefused, labelOf, type Refused } from './pagechecks.ts';
 import { carryInto, uncarried } from './notebookcarry.ts';
 import { groupsBox } from './notebookgroups.ts';
@@ -71,7 +71,9 @@ export function mine(who = BOARD) {
   if (found && !uncarried(who)) return found;
   return inOneStep(() => {
     const id = found?.id ?? makeNotebook(who, 'mine', 'My Notebook');
-    carryInto(id, who);
+    // (notes written the old way since land on the current page: every screen showing it reads it again.)
+    const late = carryInto(id, who, () => currentPage(id));
+    if (late) changed(id, late);
     return notebookRow(id, who)!;
   });
 }
@@ -91,7 +93,8 @@ export function listPages(b: any, who = BOARD) {
   const n = notebookRow(Number(b?.notebook), who);
   if (!n) return 404;
   if (n.kind === 'mine') mine(who);
-  currentPage(n.id);
+  // (a call's notebook has its one page, made with the call: callnotes.ts.)
+  if (n.kind !== 'call') currentPage(n.id);
   const pages = pagesOf(n.id);
   return {
     notebook: notebookOf(n),

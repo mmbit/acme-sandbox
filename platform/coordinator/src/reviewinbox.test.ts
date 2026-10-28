@@ -133,10 +133,6 @@ test('one review inbox item reaches the project owner with domains and files, an
   assert.match(read.out, /#12 \[engine\] game.ts/);
   assert.match(read.out, /#13 \[art\] world.svg, ship.svg/);
   assert.match(read.out, /Task: Let the level finish[\s\S]*Task: Show the ship/);
-  // two unrelated findings are two tasks: drawn together, they need the owner's own title
-  const together = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13');
-  assert.equal(together.code, 1, together.out);
-  assert.match(together.out, /--title/);
   // a --title that isn't a task's title is refused for that, not replaced
   const overlong = await h.agent('proposals/accept', owner.token, {
     id: 'findings:71',
@@ -147,21 +143,17 @@ test('one review inbox item reaches the project owner with domains and files, an
   assert.deepEqual([overlong.status, overlong.body.error], [400, inbox.BAD_TITLE]);
   assert.equal((await h.hq(author, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12')).code, 1);
   assert.deepEqual(inbox.unassigned(71, 1), [12, 13]);
-  const first = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12');
-  assert.equal(first.code, 0, first.out);
-  assert.deepEqual(inbox.unassigned(71, 1), [13]);
-  const second = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'moss', '--findings', '13');
-  assert.equal(second.code, 0, second.out);
+  const together = await h.hq(owner, 'inbox', 'accept', 'findings:71', '--for', 'kit', '--findings', '12,13');
+  assert.equal(together.code, 0, together.out);
   assert.deepEqual(inbox.unassigned(71, 1), []);
   const tasks = inbox.tasks(71, 1);
   assert.deepEqual(
     tasks.map(t => t.findings),
-    [[12], [13]],
+    [[12, 13]],
   );
-  // each named by the reviewer for what it fixes, no template left
   assert.deepEqual(
     tasks.map(t => h.job(t.id).title),
-    ['Let the level finish', 'Show the ship'],
+    ['Let the level finish; Show the ship'],
   );
   assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'accepted');
 });
@@ -416,12 +408,11 @@ test('with review.drawWindowedChanges, a windowed thread\'s "changes" ruling giv
   const { author, branch } = await deliver();
   const world = projects.findThread('game/world')!.id;
   assert.deepEqual(fixTasks(), [
-    { agent: 'bolt', status: 'queued', thread: world, branch, round: 1, title: 'Let the level finish' },
-    { agent: 'bolt', status: 'queued', thread: world, branch, round: 1, title: 'Show the ship' },
+    { agent: 'bolt', status: 'queued', thread: world, branch, round: 1, title: 'Let the level finish; Show the ship' },
   ]);
   assert.deepEqual(
     inbox.tasks(71, 1).map(t => t.findings),
-    [[12], [13]],
+    [[12, 13]],
   );
   assert.equal(proposals.list('bolt').find(p => p.id === 'findings:71')!.status, 'accepted');
   // no planning job, and the busy session holds nothing
@@ -725,8 +716,8 @@ test("the desk's pause refuses a new thread for threadless findings whole, and t
   const name = 'The desk work lands';
   const drawn = () => ({
     threads: projects.listThreads().filter(t => t.name === name).length,
-    changes: db.prepare('select count(*) n from plan_changes where what = ?').get(`thread drawn: ${name}`),
-    events: db.prepare('select count(*) n from events where text like ?').get(`New thread in %: ${name}`),
+    changes: db.prepare('select count(*) n from plan_changes where what = ?').get(`deliverable drawn: ${name}`),
+    events: db.prepare('select count(*) n from events where text like ?').get(`New deliverable in %: ${name}`),
   });
   const accept = () =>
     h.agent('proposals/accept', ceo.token, {

@@ -1,4 +1,4 @@
-// A thread's release (../docs/projects.md, "Threads in order"): the work its one pull request carries ends at the first
+// A thread's release (../docs/projects.md, "Deliverables in order"): the work its one pull request carries ends at the first
 // task that can't run before that pull request merges (server.ts hq job).
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';

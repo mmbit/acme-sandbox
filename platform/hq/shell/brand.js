@@ -8,6 +8,7 @@ export const names = {
   hq: 'HQ', os: 'Desktop', newsletter: 'the newsletter', newsletterShort: 'News', library: 'the library', libraryShort: 'Library',
   phone: 'desk phone', phoneShort: 'Phone', intercom: 'intercom', computer: 'computer',
 };
+// (and book, the board's book's own name, on its tips book's cover: none unless the company gives it one)
 export const brand = { name: 'Company', names };
 export const theme = { renderer: 'wire' }; // (the plain look, without a theme)
 // (and theme.style, the company's style: pixel, line or a word of its own, none when left out. It picks what the

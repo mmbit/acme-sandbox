@@ -286,7 +286,7 @@ test("a thread's tasks run one at a time on the first task's branch, and each on
     before: null,
   });
   assert.equal(await claim(), null, 'the next task waits for the one before it');
-  assert.deepEqual(h.job(two).wakes, [`after #${one} in its thread`]);
+  assert.deepEqual(h.job(two).wakes, [`after #${one} in its deliverable`]);
   assert.equal(h.job(two).ready, 0);
   const opening = (await h.worker('thread-push', { job: one })).body;
   assert.equal(opening.opens, true, 'finished work opens the pull request, whatever is left in the thread');
@@ -340,10 +340,10 @@ test("a thread's first task waits for the threads it needs to merge; their merge
   assert.equal(judge.agent, 'wren');
   assert.match(judge.prompt, /done when: It works/);
   assert.match(judge.prompt, new RegExp(`#${built} bolt: bolt's step\\. It ended done, its pull request merged`));
-  assert.match(judge.prompt, /hq plan done <thread>/);
+  assert.match(judge.prompt, /hq plan done <deliverable>/);
   assert.match(
     threadjudge.lines(Date.now()).join('\n'),
-    new RegExp(`thread ${engine} .*wren's\\): ready to judge.*needed by ${art}`),
+    new RegExp(`deliverable ${engine} .*wren's\\): ready to judge.*needed by ${art}`),
   );
   assert.equal((await claim())?.id, drawn, 'all of its work merged: what needs it goes on');
   const wren = await h.start({ agent: 'wren' });
@@ -394,7 +394,7 @@ test("an owner's threads merging one after the other wait in one judge, which no
   threadends.merged(9206);
   assert.equal(judgeRow(judgeOf(engine)!).prompt.match(/Thread sound/g)?.length, 1, 'once, woken again');
   const judge = judgeRow(judgeOf(engine)!);
-  assert.equal(judge.title, 'Judge 2 threads: their work merged');
+  assert.equal(judge.title, 'Judge 2 deliverables: their work merged');
   assert.match(judge.prompt, /Thread engine[\s\S]*Thread sound/);
   db.prepare("insert into pauses (project, thread, why, by, at) values ('game', null, 'held', 'wren', ?)").run(
     new Date().toISOString(),
@@ -625,7 +625,7 @@ test("the next task waits while a fix of the thread's pull request is open, and 
   const two = task(t);
   const fix = h.queue({ agent: 'bolt', branch: `job/${one}`, pr: 9302, stage: 'fix' });
   assert.equal(await claim(), null, 'two sessions never push to one branch');
-  assert.deepEqual(h.job(two).wakes, [`until #${fix} on its thread's pull request ends`]);
+  assert.deepEqual(h.job(two).wakes, [`until #${fix} on its deliverable's pull request ends`]);
   db.prepare("update jobs set status = 'done' where id = ?").run(fix);
   assert.equal((await claim())?.id, two, 'the fix pushed: the next task goes on from it');
 });
@@ -893,7 +893,7 @@ test('a task waiting for a later time holds no ready task behind it, nor its pul
   assert.equal(queue.jobs.find(j => j.id === ready)!.opensReview, true, 'the play reviews the ready work at once');
   wakes.check(Date.now() + 25 * 3600_000);
   assert.equal(await claim(), null, 'its time come, it still waits for the task that passed it');
-  assert.ok(h.job(timed).wakes.includes(`after #${ready} in its thread`));
+  assert.ok(h.job(timed).wakes.includes(`after #${ready} in its deliverable`));
   const pushed = (await h.worker('thread-push', { job: ready })).body;
   assert.equal(pushed.opens, true, 'the timed task still to run, the ready one opens the pull request');
   await h.finish(running!, { pr: 9801, branch: `job/${ready}`, files: ['platform/x.ts'], sha: sha('e') });

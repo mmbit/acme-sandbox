@@ -38,8 +38,9 @@ const MAX_DIRECTORY = 256 * 1024 * 1024;
 export async function isZip(path: string) {
   const file = await open(path);
   try {
-    const head = await readAt(file, 0, 4).catch(() => Buffer.alloc(0));
-    return head.length === 4 && [LOCAL, END].includes(head.readUInt32LE(0));
+    const head = Buffer.alloc(4);
+    const { bytesRead } = await file.read(head, 0, 4, 0);
+    return bytesRead === 4 && [LOCAL, END].includes(head.readUInt32LE(0));
   } finally {
     await file.close();
   }

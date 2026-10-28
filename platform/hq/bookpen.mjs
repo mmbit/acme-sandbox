@@ -1,10 +1,10 @@
-// book-check.mjs's stories of the Pencil on the book's paper (shell/bookwrite.js, booktexts.js, bookselect.js,
-// bookselectclip.js, booktape.js), with Chromium's own pen events (trusted: their clicks and capture are the
-// browser's): a quick tap on a box of words or a picture is a click, never a dot, while bare paper keeps its dot; a
-// select box taken off the screen's edge and back still selecting; a picture taped in moved and scaled at once; Copy
-// then Paste; a box of words moved by its grip with nothing drawn, the handwriting beside it keeping its focus, a letter
-// deleted and a space put in without a keyboard, and new boxes in a row. Each asserts what the board sees and what the
-// store keeps.
+// book-check.mjs's stories of the Pencil on the book's paper (shell/ink/bookwrite.js, booktexts.js, bookselect.js,
+// bookselectclip.js, booktape.js; Ink's folder), with Chromium's own pen events
+// (trusted: their clicks and capture are the browser's): a quick tap on a box of words or a picture is a click, never a
+// dot, while bare paper keeps its dot; a select box taken off the screen's edge and back still selecting; a picture
+// taped in moved and scaled at once; Copy then Paste; a box of words moved by its grip with nothing drawn, the
+// handwriting beside it keeping its focus, a letter deleted and a space put in without a keyboard, and new boxes in a
+// row. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
 import { freePage, paperBox, pasteGreen, savedWhere } from './bookmouse.mjs';
 
@@ -77,7 +77,8 @@ async function offTheEdge(browser, c) {
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
     const paper = await paperBox(page),
-      [x, y] = [paper.x + 80, paper.y + 160],
+      // (right of the tool strip down the paper's left)
+      [x, y] = [paper.x + 160, paper.y + 160],
       edge = MINI.width - 3;
     await tool(page, 'Pen');
     await pen.stroke(line([x, y], 140));
@@ -125,8 +126,9 @@ async function copyPaste(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
   try {
+    // (its select box starting right of the tool strip down the paper's left)
     const paper = await paperBox(page),
-      [x, y] = [paper.x + 100, paper.y + 200];
+      [x, y] = [paper.x + 160, paper.y + 200];
     await tool(page, 'Pen');
     await pen.stroke(line([x, y], 160));
     await savedWhere(c, free.id, p => p.ink.length === 1);
@@ -232,8 +234,12 @@ async function pencil(page) {
   };
   return { stroke, tap: at => stroke([at]) };
 }
-// A tool's button tapped with a finger
-const tool = (page, name) => page.locator('#book').getByRole('button', { name, exact: true }).first().tap();
+// A tool's button tapped with a finger, unless it's the one in hand (pressed again, it opens its card over the paper
+// beside the strip.)
+async function tool(page, name) {
+  const b = page.locator('#book').getByRole('button', { name, exact: true }).first();
+  if ((await b.getAttribute('aria-pressed')) !== 'true') await b.tap();
+}
 const key = (page, name) => page.locator('#book .bk-typed[data-editing] .bk-typed-keys').getByRole('button', { name });
 const bar = page => page.locator('#book .bk-sel-bar');
 const middleOf = b => [b.x + b.width / 2, b.y + b.height / 2];

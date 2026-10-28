@@ -59,7 +59,7 @@ const COMMANDS: Record<string, Command> = {
   window: jobs.window,
   when,
   plan,
-  thread: projects.thread,
+  deliverable: projects.deliverable,
   project: projects.project,
   decision,
   followthrough,
@@ -110,6 +110,9 @@ const COMMANDS: Record<string, Command> = {
   overseer,
 };
 
+// Old names that still work
+const ALIASES: Record<string, string> = { thread: 'deliverable' };
+
 const HELP_HEAD =
   "The agents' line to the company. Team members (sub-agents) add --as <their id> to speak as themselves.";
 const HELP_FOOT = 'kind: decision | approval | credential | action | notice; urgency: now | today | whenever';
@@ -126,7 +129,8 @@ async function run(args: string[]) {
     speakAs(args[1]);
     args = args.slice(2);
   }
-  const [name = '', ...rest] = args;
+  const [given = '', ...rest] = args;
+  const name = Object.hasOwn(ALIASES, given) ? ALIASES[given] : given;
   if (Object.hasOwn(COMMANDS, name)) {
     return (await COMMANDS[name].run(rest)) ?? 0;
   }

@@ -1,0 +1,495 @@
+/* The overview (bookzoom.js, bookshelf.js), laid on the book's paper: a notebook's pages as a grid of small pictures,
+   and the Shelf of black hardcovers with the Archive beside it. Its head stays at its top as the grid scrolls under it:
+   Search and the phone (bookui.js's overview island, booksearch.css), then the way about. */
+#book .bk-far {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  overflow: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  /* (its right clear of the controls floating over the paper: bookui.js's --bk-stack; its left of the tool strip,
+     bookstrip.js's --bk-strip. The strip) */
+  --bk-far-right: calc(var(--bk-stack, 56px) + 24px);
+  --bk-far-left: calc(var(--bk-strip, 0px) + 28px);
+  padding: calc(18px + var(--sat, 0px)) var(--bk-far-right) 88px var(--bk-far-left); /* (below Safari's strip) */
+  background-color: var(--bk-paper2);
+  background-image: var(--bk-dots);
+  background-size: 11px 11px;
+  touch-action: pan-y;
+  scrollbar-width: none;
+  --bk-stamp: #c2362f;
+}
+#book .bk-far[hidden] {
+  display: none;
+}
+#book .bk-far-head {
+  position: sticky;
+  top: calc(-18px - var(--sat, 0px)); /* (from the far's very top: a sticky's top counts from inside its padding) */
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: calc(-18px - var(--sat, 0px)) calc(-1 * var(--bk-far-right)) 0 calc(-1 * var(--bk-far-left));
+  padding: calc(18px + var(--sat, 0px)) var(--bk-far-right) 12px var(--bk-far-left);
+  background: linear-gradient(var(--bk-paper2) 82%, transparent);
+}
+#book .bk-far-head .bk-island {
+  width: 100%;
+  max-width: 560px;
+  box-sizing: border-box;
+  padding: 4px 4px 4px 12px;
+  gap: 4px;
+}
+#book .bk-far-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  font-size: 14px;
+  color: var(--bk-muted);
+}
+#book .bk-far-title {
+  flex: 1;
+  min-width: 0;
+  padding: 0 6px;
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--bk-night);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#book .bk-far-go,
+#book .bk-tabs [role='tab'] {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  min-height: 36px;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-weight: 700;
+  color: var(--bk-night);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#book .bk-far-go svg {
+  width: 20px;
+  height: 20px;
+}
+#book .bk-far-go[data-go] {
+  margin-left: -8px;
+  padding-left: 8px;
+}
+#book .bk-far-toggle,
+#book .bk-far-go small,
+#book .bk-tabs small {
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+#book .bk-far-toggle[aria-pressed='true'] {
+  background: var(--bk-ink-wash);
+  color: var(--bk-night);
+}
+@media (hover: hover) {
+  #book .bk-far-go:hover,
+  #book .bk-tabs [role='tab']:hover {
+    background: var(--bk-ink-soft);
+  }
+}
+#book .bk-far-go:focus-visible,
+#book .bk-tabs [role='tab']:focus-visible,
+#book .bk-tile-open:focus-visible .bk-tile-paper,
+#book .bk-tile-open:focus-visible .bk-cover {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 3px;
+}
+/* the Shelf and the Archive: two tabs, the one showing inked in */
+#book .bk-tabs {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--bk-ink-soft);
+}
+#book .bk-tabs [role='tab'] {
+  min-height: 34px;
+  padding: 0 16px;
+  color: var(--bk-muted);
+}
+#book .bk-tabs [aria-selected='true'] {
+  background: var(--bk-paper);
+  color: var(--bk-night);
+  box-shadow: 0 1px 3px rgba(29, 26, 47, 0.18);
+}
+#book .bk-far-sub {
+  margin: 34px 0 14px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--bk-muted);
+}
+#book .bk-far-none {
+  margin: 48px auto;
+  max-width: 28ch;
+  text-align: center;
+  color: var(--bk-muted);
+}
+#book .bk-far-lost {
+  cursor: pointer;
+}
+
+/* ---- the grids: as many columns as fit (bookshelf.js sets --cols and --cell) */
+#book .bk-grid {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), var(--cell, 1fr));
+  column-gap: 16px;
+  row-gap: 22px;
+  padding-top: 6px;
+}
+#book .bk-grid[data-grid='books'] {
+  column-gap: 22px;
+  row-gap: 26px;
+}
+#book .bk-tile {
+  position: relative;
+  min-width: 0;
+  transition: transform 0.16s cubic-bezier(0.2, 0.75, 0.25, 1);
+}
+#book .bk-tile-open {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  cursor: pointer;
+  -webkit-touch-callout: none;
+}
+/* a page: its picture on its own paper, a grown page's top */
+#book .bk-tile-paper {
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 3 / 4;
+  border-radius: 3px;
+  overflow: hidden;
+  background: var(--bk-paper);
+  box-shadow:
+    0 0 0 1px rgba(42, 35, 82, 0.08),
+    0 6px 16px -6px rgba(29, 26, 47, 0.32);
+  transition:
+    transform 0.12s,
+    box-shadow 0.12s;
+}
+#book .bk-tile-paper img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top left;
+  pointer-events: none;
+}
+@media (hover: hover) {
+  #book .bk-tile-open:hover .bk-tile-paper,
+  #book .bk-tile-open:hover .bk-cover {
+    transform: translateY(-3px);
+  }
+  #book .bk-tile-open:hover .bk-tile-paper {
+    box-shadow:
+      0 0 0 1px rgba(42, 35, 82, 0.12),
+      0 12px 22px -6px rgba(29, 26, 47, 0.38);
+  }
+}
+/* the page the book shows: ringed in ink */
+#book .bk-tile[aria-current='page'] .bk-tile-paper {
+  box-shadow:
+    0 0 0 2px var(--bk-night),
+    0 6px 16px -6px rgba(29, 26, 47, 0.32);
+}
+#book .bk-tile-name {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--bk-night);
+}
+#book .bk-tile-name > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#book .bk-tile-name small {
+  flex: none;
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--bk-muted);
+}
+/* New page: a blank leaf drawn in dashes */
+#book .bk-tile-new .bk-tile-paper {
+  background: transparent;
+  box-shadow: none;
+  outline: 2px dashed rgba(42, 35, 82, 0.28);
+  outline-offset: -2px;
+  color: var(--bk-muted);
+}
+#book .bk-tile-new svg {
+  width: 30px;
+  height: 30px;
+}
+#book .bk-tile-new .bk-tile-name {
+  font-weight: 400;
+  color: var(--bk-muted);
+}
+/* sent: a rubber stamp on the page's lower corner, a little crooked, its ink sunk into the paper */
+#book .bk-stamp {
+  position: absolute;
+  right: 7%;
+  bottom: 9%;
+  width: 64%;
+  max-width: 112px;
+  transform: rotate(-9deg);
+  color: var(--bk-stamp);
+  opacity: 0.86;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+#book .bk-stamp rect {
+  fill: none;
+  stroke: currentColor;
+}
+#book .bk-stamp rect:first-child {
+  stroke-width: 3.2;
+}
+#book .bk-stamp rect + rect {
+  stroke-width: 1.3;
+}
+#book .bk-stamp text {
+  fill: currentColor;
+  font: 800 20px/1 var(--bk-font);
+  letter-spacing: 0.16em;
+}
+/* still in its seconds to undo: the stamp's ink still wet, fainter */
+#book .bk-stamp-wet {
+  opacity: 0.4;
+}
+
+/* a tile's small box (archive, or back), at its picture's top right corner: on hover or focus with a mouse, always to
+   the touch */
+#book .bk-tile-act {
+  all: unset;
+  box-sizing: border-box;
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bk-paper);
+  color: var(--bk-muted);
+  box-shadow: var(--bk-lift);
+  cursor: pointer;
+  transition:
+    opacity 0.12s,
+    transform 0.08s;
+}
+#book .bk-tile-act::after {
+  content: '';
+  position: absolute;
+  inset: -6px;
+}
+#book .bk-tile-act svg {
+  width: 17px;
+  height: 17px;
+}
+#book .bk-tile-act:active {
+  transform: scale(0.92);
+}
+#book .bk-tile-act:focus-visible {
+  outline: 2px solid var(--bk-night);
+}
+@media (hover: hover) {
+  #book .bk-tile-act {
+    opacity: 0;
+  }
+  #book .bk-tile:hover .bk-tile-act,
+  #book .bk-tile:focus-within .bk-tile-act {
+    opacity: 1;
+  }
+  #book .bk-tile-act:hover {
+    color: var(--bk-night);
+  }
+}
+
+/* ---- a page picked up: lifted over the others, which slide aside */
+#book .bk-dragging .bk-tile-open {
+  cursor: grabbing;
+}
+#book .bk-tile.bk-lifted {
+  z-index: 3;
+  transition: none;
+}
+#book .bk-lifted .bk-tile-paper {
+  box-shadow:
+    0 0 0 1px rgba(42, 35, 82, 0.12),
+    0 22px 36px -10px rgba(29, 26, 47, 0.5);
+}
+#book .bk-lifted .bk-tile-act {
+  opacity: 0;
+}
+
+/* ---- the Shelf: each notebook a small black hardcover, the cloth catching the light at its top left, its hinge a
+   groove beside the spine, its name on a paper label */
+#book .bk-cover {
+  position: relative;
+  display: block;
+  aspect-ratio: 1 / 1.36;
+  border-radius: 3px 8px 8px 3px;
+  background:
+    linear-gradient(
+      90deg,
+      rgba(0, 0, 0, 0.5) 0 2%,
+      rgba(255, 255, 255, 0.07) 2% 9%,
+      rgba(0, 0, 0, 0.45) 9% 10.4%,
+      rgba(255, 255, 255, 0.05) 10.4% 12%,
+      transparent 12%
+    ),
+    radial-gradient(130% 90% at 18% 0%, rgba(255, 255, 255, 0.14), transparent 58%),
+    repeating-linear-gradient(0deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(90deg, rgba(0, 0, 0, 0.16) 0 1px, transparent 1px 3px), #1b1a1f;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset -1px 0 0 rgba(255, 255, 255, 0.05),
+    2px 2px 0 -0.5px #e9dfc9,
+    0 14px 22px -10px rgba(10, 8, 20, 0.6),
+    0 2px 4px rgba(10, 8, 20, 0.3);
+  transition: transform 0.12s;
+}
+#book .bk-cover-label {
+  position: absolute;
+  top: 16%;
+  left: 17%;
+  right: 8%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 8px 7px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #fbf5e7, #efe5cf);
+  box-shadow:
+    0 1px 1.5px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 1px rgba(120, 100, 60, 0.12);
+  color: var(--bk-night);
+}
+#book .bk-cover-label b {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.2;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+#book .bk-cover-label small {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bk-muted);
+}
+/* the notebook open in the book: its ribbon out at the foot, in the book's accent */
+#book .bk-ribbon {
+  position: absolute;
+  right: 24%;
+  bottom: -12px;
+  width: 9px;
+  height: 26px;
+  background: var(--bk-accent, var(--bk-gold));
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 50% 80%, 0 100%);
+}
+#book .bk-book .bk-tile-name {
+  flex-direction: column;
+  gap: 1px;
+  font-weight: 400;
+}
+#book .bk-book .bk-tile-name > span {
+  font-weight: 700;
+}
+#book .bk-book .bk-tile-act {
+  top: -10px;
+  right: -10px;
+}
+
+/* ---- Undo, a moment over the overview's foot (beside it on the paper, never scrolled away) */
+#book .bk-told {
+  position: absolute;
+  bottom: calc(72px + var(--sab, 0px));
+  left: 50%;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100% - 32px);
+  box-sizing: border-box;
+  transform: translateX(-50%);
+  padding: 6px 6px 6px 16px;
+  border-radius: 12px;
+  background: var(--bk-night);
+  color: var(--bk-paper);
+  font-size: 14px;
+  white-space: nowrap;
+  box-shadow: 0 10px 24px -8px rgba(10, 8, 20, 0.55);
+  animation: bk-told-in 0.16s ease-out;
+}
+#book .bk-told span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#book .bk-told[hidden] {
+  display: none;
+}
+#book .bk-told button {
+  all: unset;
+  min-height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  font-weight: 700;
+  color: var(--bk-lamp);
+  cursor: pointer;
+}
+#book .bk-told button[hidden] {
+  display: none;
+}
+#book .bk-told button:focus-visible {
+  outline: 2px solid var(--bk-lamp);
+}
+@keyframes bk-told-in {
+  from {
+    opacity: 0;
+    translate: 0 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-tile,
+  #book .bk-tile-paper,
+  #book .bk-cover {
+    transition: none;
+  }
+  #book .bk-told {
+    animation: none;
+  }
+}

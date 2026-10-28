@@ -1,5 +1,4 @@
-// book-check.mjs's stories of the lift (shared/review/lift.js, shell/booklanding.js), held like an iPad mini in
-// landscape, on book-check's played store.
+// book-check.mjs's stories of the lift (shared/review/lift.js, shell/ink/booklanding.js; Ink's folder), held like an iPad mini in landscape, on book-check's played store.
 // A mark on HQ's page, once the pen has rested, lifts off as one layer and drifts into the book: open, onto its note's
 // page (turned to first) where the note shows; folded, into the handle, which hears book:landed. Nothing of it stays
 // over HQ (rule zero: bookink.mjs).
@@ -44,7 +43,7 @@ async function openStory(c) {
 async function foldedStory(c) {
   const { page, errors, done } = await hqOpen(c);
   try {
-    await page.evaluate(() => import('/shell/book.js').then(m => m.foldBook()));
+    await page.evaluate(() => import('/shell/ink/book.js').then(m => m.foldBook()));
     await c.settled(page, 'folded');
     const ring = RINGS[0],
       flight = await lifted(c, page, ring),

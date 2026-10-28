@@ -1,7 +1,7 @@
 // A lent run's upload (lent.ts sendRun), in a process of its own that ends once HQ has answered: fetch leaves what it
-// read of the bundle in its process's memory after the send (the repo's is ~370 MB, measured 27 October), and the check
-// then waits on its helper for up to half an hour. Held by the check, that would be the worker's memory, kept from the
-// jobs waiting to start for all that time.
+// read of the bundle in its process's memory after the send (the bundle holds the whole repo), and the check then waits
+// on its helper for up to half an hour. Held by the check, that would be the worker's memory, kept from the jobs
+// waiting to start for all that time.
 // Arguments: the bundle's file and the run's x-run header. Prints {"id"}, {"refused"} (HQ's words) or {"unreached"}.
 import { openAsBlob } from 'node:fs';
 import { HqUnreachable, reaching } from './lent.ts';

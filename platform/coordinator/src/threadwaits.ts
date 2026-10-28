@@ -145,13 +145,16 @@ function holdsOf(jobs: Job[], groups: Group[], merges: Map<string, Merge[]>, run
 const before = (a: Job, b: Job) => a.seq < b.seq || (a.seq === b.seq && a.id < b.id);
 
 // The jobs each waited for (its --after and its hq waits), with their branch and end
+// (this file's jobs read from db.ts jobs_listed, or jobs_report where it has their columns: a row's brief and report are
+// seconds off a cold disk)
 function waitedOn(ids: string) {
   const rows = db
     .prepare(
-      `with waited(job, on_job) as (select id, after from jobs where id in (select value from json_each($ids))
-        and after is not null union select job, on_job from waits where job in (select value from json_each($ids)))
+      `with waited(job, on_job) as (select id, after from jobs indexed by jobs_listed
+        where id in (select value from json_each($ids)) and after is not null
+        union select job, on_job from waits where job in (select value from json_each($ids)))
       select w.job, w.on_job "on", coalesce(o.branch, 'job/' || o.id) branch, o.finished
-      from waited w join jobs o on o.id = w.on_job`,
+      from waited w join jobs o indexed by jobs_report on o.id = w.on_job`,
     )
     .all({ ids }) as { job: number; on: number; branch: string; finished: string | null }[];
   return rows.map(r => ({ ...r, finished: r.finished === null ? null : Date.parse(r.finished) }));
@@ -174,7 +177,7 @@ function cardsOf(ids: string) {
     .prepare(
       `select w.job, null "from", r.answered until from request_waits w join requests r
         on r.id = w.request where w.job in (select value from json_each($ids))
-      union all select j.id, r.created, r.answered from jobs j join requests r on r.id = j.request
+      union all select j.id, r.created, r.answered from jobs j indexed by jobs_listed join requests r on r.id = j.request
         where j.id in (select value from json_each($ids))`,
     )
     .all({ ids }) as { job: number; from: string | null; until: string | null }[];
@@ -236,7 +239,7 @@ function otherPrs(ids: number[]) {
     .prepare(
       `select o.id, (select min(p.number) from prs p where p.branch = coalesce(o.branch, 'job/' || o.id)
         and p.status = 'merged' and p.merged_at >= o.finished) pr
-      from jobs o where o.id in (select value from json_each(?))`,
+      from jobs o indexed by jobs_report where o.id in (select value from json_each(?))`,
     )
     .all(JSON.stringify(ids)) as { id: number; pr: number | null }[];
   return new Map(rows.map(r => [r.id, r.pr]));

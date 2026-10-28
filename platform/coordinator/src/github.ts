@@ -5,8 +5,13 @@ const { GITHUB_TOKEN, REPO } = process.env;
 const timeout = () => AbortSignal.timeout(Number(process.env.GITHUB_TIMEOUT_MS) || 15_000);
 
 // Merges only if the branch head is still `sha`, the commit the panel reviewed. GitHub refuses with 409 (or a 422
-// about the sha) when the branch moved since: `moved` tells the caller not to try again.
-export async function mergePullRequest(pr: number, title: string, sha: string) {
+// about the sha) when the branch moved since: `moved` tells the caller not to try again. `commit`: the merge commit
+// GitHub made.
+export async function mergePullRequest(
+  pr: number,
+  title: string,
+  sha: string,
+): Promise<{ ok: boolean; moved: boolean; why: string; commit?: string }> {
   if (!GITHUB_TOKEN || !REPO) return { ok: false, moved: false, why: 'no GitHub token configured' };
   const res = await fetch(`https://api.github.com/repos/${REPO}/pulls/${pr}/merge`, {
     method: 'PUT',
@@ -15,6 +20,7 @@ export async function mergePullRequest(pr: number, title: string, sha: string) {
     signal: timeout(), // (signal)
   });
   const text = res.ok ? '' : (await res.text()).slice(0, 200);
+  const made = res.ok ? await res.json().catch(() => ({})) : {};
   // GitHub's own words, without the JSON around them
   const said = (() => {
     try {
@@ -27,6 +33,7 @@ export async function mergePullRequest(pr: number, title: string, sha: string) {
     ok: res.ok,
     moved: res.status === 409 || (res.status === 422 && /\bsha\b|head/i.test(text)),
     why: res.ok ? '' : `${res.status} ${said}`,
+    commit: typeof made.sha === 'string' ? made.sha : undefined,
   };
 }
 

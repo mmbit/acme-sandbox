@@ -16,7 +16,7 @@
 //     throughout.
 import { esc } from '../util.js';
 import { minimise, share, shown } from './callscreen.js';
-import { cardOf } from './calldraw.js';
+import { cardOf } from './callcards.js'; // (the call engine's)
 import { PREVIEW, closeTool, openLink, viewerOrigin, viewerUrl } from './desk.js';
 
 const $ = s => document.querySelector(s);

@@ -1,10 +1,11 @@
-// Threads in order (../docs/projects.md, "Threads in order"), how the platform plans: a thread's tasks run one at a time
+// Threads in order (../docs/projects.md, "Deliverables in order"), how the platform plans: a thread's tasks run one at a time
 // in their order (jobs.seq, else their ids) on one branch, the first to push work's, and a task's push opens the thread's
 // one pull request or starts its next round, unless the thread's next task starts now (nextReady): then the review waits
 // for that task's push. The thread's next task to start waits until every thread it needs is done and merged, and until
 // no job of that pull request is open that pushes to its branch. The claim and the play take the order as edges of
 // planner.ts precedence (backlog.ts puts them on the queue), the worker through the claim's answer (inThread) and
 // thread-push.
+// (its messages say deliverable, the board's word for a thread)
 import { db, mergePending, prepared } from './db.ts';
 import { ceo, type Project } from './company.ts';
 import { findProject, findThread, needsOf, type Thread } from './projects.ts';
@@ -198,7 +199,9 @@ export function placing(placeholders: Pick<Planned, 'id' | 'thread'>[] = [], row
       ...(follows !== null && { follows }),
       ...(needs.some(n => n.task !== null) && { needs: needs.flatMap(n => n.task ?? []) }),
       stalls: [
-        ...(w.failed === null ? [] : [`task #${w.failed} before it in its thread failed with nothing in its place`]),
+        ...(w.failed === null
+          ? []
+          : [`task #${w.failed} before it in its deliverable failed with nothing in its place`]),
         ...needs
           .filter(n => n.task === null)
           .map(n => `it needs ${n.thread}, which has no work to merge: its owner draws it or closes it (hq plan)`),
@@ -276,7 +279,7 @@ export function pullOf(id: number) {
   const tasks = tasksOf(thread.id).map(t => `- #${t.id}, ${t.agent}: ${jobs.nameOf(t)}`);
   return {
     title: thread.name,
-    body: `The thread ${thread.id}, done when: ${thread.goal}\n\nIts tasks:\n${tasks.join('\n')}`,
+    body: `The deliverable ${thread.id}, done when: ${thread.goal}\n\nIts tasks:\n${tasks.join('\n')}`,
   };
 }
 
@@ -322,12 +325,12 @@ export function jobRefusal(agent: string, thread: string | null, after?: number)
   if (!theirs) return undefined;
   return theirs === thread
     ? `#${after} is in ${thread} too, whose tasks run one after another already: leave out --after (hq plan move reorders them)`
-    : `#${after} is in ${theirs}: a wait between threads is a need, drawn by ${thread}'s owner: hq plan need ${thread} ${theirs}`;
+    : `#${after} is in ${theirs}: a wait between deliverables is a need, drawn by ${thread}'s owner: hq plan need ${thread} ${theirs}`;
 }
 
 // ---- in words (hq jobs, HQ's line: jobs.ts jobRows) and for checks that read the queue without the plan
 
-// What holds a queued task in its thread's order, in words, each thread read once for a list
+// What holds a queued task in its thread's order, in words (a deliverable's, in the board's word), each thread read once for a list
 export function words() {
   const read = reader();
   return (row: Job & { status: string }) => heldWords(read, row);
@@ -336,9 +339,9 @@ function heldWords(read: ReturnType<typeof reader>, row: Job & { status: string 
   if (!isTask(row) || row.status !== 'queued') return [];
   const w = read.waits(row.id, row.thread);
   return [
-    ...(w.follows === null ? [] : [`after #${w.follows} in its thread`]),
+    ...(w.follows === null ? [] : [`after #${w.follows} in its deliverable`]),
     ...(w.failed === null ? [] : [`task #${w.failed} before it failed`]),
-    ...(w.round === null ? [] : [`until #${w.round} on its thread's pull request ends`]),
+    ...(w.round === null ? [] : [`until #${w.round} on its deliverable's pull request ends`]),
     ...w.needs.map(n => `until ${n.thread} merges`),
   ];
 }

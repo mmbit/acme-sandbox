@@ -1,4 +1,5 @@
 // Who decides a review's findings, the thread their tasks go in, and the review that is current for a thread.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { ceo } from './company.ts';
 import { findProject, findThread, type JobThreadAsk } from './projects.ts';
@@ -15,10 +16,10 @@ export function authorized(item: Item, by: string) {
 
 export function target(item: Item, ask: JobThreadAsk, by: string) {
   const thread = ask.thread ?? (ask.newThread ? undefined : item.thread);
-  if (thread == null && !ask.newThread) return { refusal: 'name the thread for this review with --thread' };
+  if (thread == null && !ask.newThread) return { refusal: 'name the deliverable for this review with --deliverable' };
   const existing = thread == null ? undefined : findThread(String(thread));
   const project = findProject(String(ask.newThread?.project ?? existing?.project ?? ''));
-  if (!project) return { refusal: 'name an existing project or open thread' };
+  if (!project) return { refusal: 'name an existing project or open deliverable' };
   const refused = refusal(project, by);
   if (refused) return { refusal: refused };
   return jobThread({ ...ask, thread: thread ?? undefined }, { agent: by });
@@ -41,7 +42,7 @@ export function current(thread: string | null, pr?: number) {
 
 export function bind(item: Item, thread: string) {
   const target = findThread(thread)!;
-  if (target.branch && target.branch !== item.branch) return 'that thread already holds another branch';
+  if (target.branch && target.branch !== item.branch) return 'that deliverable already holds another branch';
   // (in no thread: what the desk's pause holds, as regroup.ts moveJob.)
   const on = db
     .prepare(

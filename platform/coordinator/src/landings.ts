@@ -5,10 +5,11 @@ import { db } from './db.ts';
 import { workBranch } from './jobs.ts';
 
 // Each of these jobs that landed: its landing time, by job id.
+// (the jobs read from db.ts jobs_history: a row's brief and report are seconds off a cold disk)
 export function landings(jobs: number[]) {
   const rows = db
     .prepare(
-      `select j.id, j.finished, pr.status, pr.merged_at from jobs j
+      `select j.id, j.finished, pr.status, pr.merged_at from jobs j indexed by jobs_history
       left join prs pr on pr.number = (select max(number) from prs where branch = ${workBranch('j')})
       where j.id in (select value from json_each(?)) and j.kind = 'work' and j.status = 'done'`,
     )

@@ -9,16 +9,34 @@ import { whole } from './outcome.ts';
 import { redact } from './safety.ts';
 
 // passed: exit 0; failed: exit 1, a finding; null: it couldn't run (any other end: no tools, a crash). unreached: it
-// ended because HQ couldn't be reached (exit UNREACHED_EXIT), so it runs again (runCheck). platform: it couldn't complete
-// only because the worker couldn't measure its disk use, the platform's fault and not the change's (review.ts
-// heldForChecks).
-export type CheckOutcome = { passed: boolean | null; report: string; unreached?: boolean; platform?: boolean };
+// ended because HQ couldn't be reached (exit UNREACHED_EXIT), so it runs again (runCheck). noRoom: the platform had no
+// room for it (below), so it runs again too. platform: it couldn't complete only because of the platform, not the change
+// (the worker couldn't measure its disk use, or it still had no room past NO_ROOM_TRIES), so it never goes back to its
+// author (review.ts heldForChecks).
+export type CheckOutcome = {
+  passed: boolean | null;
+  report: string;
+  unreached?: boolean;
+  noRoom?: boolean;
+  platform?: boolean;
+};
 // A check's exit when it lost HQ (shared/gates/lent.ts UNREACHED_EXIT): a deploy restarted HQ for longer than its own
 // tries ride out. Nothing of the change failed, so it isn't the author's: the check waits until HQ answers again
 // (CheckOptions.reachable) and runs again on the same commit, up to UNREACHED_TRIES times in a row before it counts as
 // one that couldn't run.
 const UNREACHED_EXIT = 3;
 const UNREACHED_TRIES = 3;
+// A check the platform had no room for: the worker's shares stopped its run only because the worker was starved (it
+// blocks the heaviest run past a job's share then, and a check run here, as the tests are when no helper takes them, is
+// often that one: shares.ts Block.starved; a run past the job's own most is the author's), or its bundle for a lent
+// machine couldn't be made, the disk full (shared/gates/lent.ts NO_ROOM_EXIT), or it was killed (SIGKILL) with no stop
+// of the shares': the worker's container stopped under it (a deploy that recreates it) or the kernel ended it for the
+// container's memory, all jobs' together, since the shares block a single job's run well before that. Nothing of the
+// change failed: it waits until there's room again (CheckOptions.roomy) and runs again on the same commit, a lent
+// machine's helper first where it has one, up to NO_ROOM_TRIES times in a row; past them a lent one runs here as any
+// lent one without a verdict does, and one with still no room is the platform's, never its author's.
+const NO_ROOM_EXIT = 4;
+const NO_ROOM_TRIES = 3;
 // name: its key in the record; launch: starts it (detached.ts launch); turn: waits for a place to run it, if it must
 // (one an earlier process launched takes its place too, so the checks still running count against the limit).
 // A check here runs to its end: it's our own code, so a slow one is fixed where it is, its time in the log (outcomeOf).
@@ -32,7 +50,7 @@ export type CheckSpec<Name extends string = string> = {
 };
 // keep: writes the run's record with these checks in it; watch and unwatch: the shares' view of a running check
 // (worker.ts checking); said: its outcome in the worker's log; reachable: resolves once HQ answers (a check that lost
-// it runs again then).
+// it runs again then); roomy: resolves once the worker has room again (a check it had no room for runs again then).
 export type CheckOptions<Name extends string = string> = {
   runs: string;
   signal?: AbortSignal;
@@ -42,6 +60,7 @@ export type CheckOptions<Name extends string = string> = {
   said: (name: Name, words: string) => void;
   wait?: (ms: number) => Promise<unknown>;
   reachable?: () => Promise<unknown>;
+  roomy?: () => Promise<unknown>;
 };
 
 // The runs in their push's checks, by job, with how to write each one's record: a reload writes them and goes.
@@ -98,6 +117,7 @@ async function runCheck<Name extends string>(
   const start = (launch: () => Launched, lent?: { ms: number }) => {
     o.signal?.throwIfAborted();
     Object.assign(check, { launched: launch(), began: Date.now(), ms: lent?.ms, lent: !!lent, stopped: [] });
+    check.platformStops = check.roomStops = undefined;
     keep();
   };
   if (!check.launched) {
@@ -106,20 +126,41 @@ async function runCheck<Name extends string>(
   }
   for (;;) {
     o.signal?.throwIfAborted();
-    const { unreached, ...ended } = await watchLaunch(spec.name, check, o, wait, tracked);
-    if (unreached && (check.unreached ?? 0) < UNREACHED_TRIES) {
-      check.unreached = (check.unreached ?? 0) + 1;
-      o.said(spec.name, 'lost HQ, so it runs again on the same commit once HQ answers');
-      await o.reachable?.();
+    const { unreached, noRoom, ...ended } = await watchLaunch(spec.name, check, o, wait, tracked);
+    const until = runsAgain(spec.name, check, { unreached, noRoom }, o);
+    if (until) {
+      await until();
       dropLaunch(o.runs, check.launched!);
       if (check.lent && spec.lent) start(spec.lent.launch, spec.lent);
       else start(spec.launch);
       continue;
     }
+    if (noRoom && !check.lent) return { ...ended, platform: true };
     if (!check.lent || ended.passed !== null) return ended;
     o.said(spec.name, 'had no verdict from the lent machine, so it runs here');
     dropLaunch(o.runs, check.launched!);
     start(spec.launch);
+  }
+}
+
+// What a check that ended so waits for before it runs again where it ran, if it does: one that lost HQ until HQ
+// answers, one the platform had no room for until there's room, each up to its tries in a row.
+function runsAgain<Name extends string>(
+  name: Name,
+  check: CheckRun,
+  ended: { unreached?: boolean; noRoom?: boolean },
+  o: CheckOptions<Name>,
+) {
+  const now = async () => {};
+  if (ended.unreached && (check.unreached ?? 0) < UNREACHED_TRIES) {
+    check.unreached = (check.unreached ?? 0) + 1;
+    o.said(name, 'lost HQ, so it runs again on the same commit once HQ answers');
+    return o.reachable ?? now;
+  }
+  if (ended.noRoom && (check.noRoom ?? 0) < NO_ROOM_TRIES) {
+    check.noRoom = (check.noRoom ?? 0) + 1;
+    o.said(name, 'had no room, so it runs again on the same commit once there is');
+    return o.roomy ?? now;
   }
 }
 
@@ -182,14 +223,23 @@ function outcomeOf<Name extends string>(
   else if (!stopped.length && how.exit === 1) passed = false;
   const unreached = !stopped.length && how.exit === UNREACHED_EXIT;
   const platform = stopped.length > 0 && check.platformStops === stopped.length;
-  o.said(name, `${endWords(stopped, unreached, passed)} in ${Math.round((Date.now() - check.began!) / 1000)} s`);
-  return { passed, report, unreached, ...(platform && { platform }) };
+  // (stopped by the starved worker's share alone: any other stop is the platform's at once, or the job's)
+  const killed = !stopped.length && how.signal === 'SIGKILL';
+  const noRoom =
+    (stopped.length > 0 && check.roomStops === stopped.length) ||
+    (!stopped.length && how.exit === NO_ROOM_EXIT) ||
+    killed;
+  const words = endWords(stopped, unreached, killed, noRoom, passed);
+  o.said(name, `${words} in ${Math.round((Date.now() - check.began!) / 1000)} s`);
+  return { passed, report, unreached, ...(noRoom && { noRoom }), ...(platform && { platform }) };
 }
 
 // How a check ended, for the worker's log
-function endWords(stopped: string[], unreached: boolean, passed: boolean | null) {
+function endWords(stopped: string[], unreached: boolean, killed: boolean, noRoom: boolean, passed: boolean | null) {
   if (stopped.length) return `could not complete (${stopped[0]})`;
   if (unreached) return 'could not reach HQ';
+  if (killed) return 'was killed (SIGKILL), its container stopped or out of memory';
+  if (noRoom) return 'had no disk room to bundle it for the lent machine';
   if (passed === null) return 'could not run';
   return passed ? 'passed' : 'failed';
 }

@@ -138,7 +138,7 @@ export function refresh(now = Date.now()): Forecast {
     afters.push(Math.round(performance.now() - ta));
   }
   // (a slow play's parts, in the status report's holds: latency.ts held)
-  if (performance.now() - t0 >= 500)
+  if (performance.now() - t0 >= latency.HOLD_MS)
     latency.held(
       `the play's parts: played ${Math.round(t1 - t0)} ms (${forecast.snapshot.jobs.length} jobs), after each ${afters.join('/')} ms`,
       performance.now() - t0,

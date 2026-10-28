@@ -14,7 +14,9 @@ import type { Forecast } from './forecast.ts';
 db.exec(`create table if not exists prediction_log (id integer primary key, at integer not null, job integer,
   thread text, start integer, merged integer, held integer, agent_ms integer, sized_by text,
   version integer not null);
-  create index if not exists prediction_log_job on prediction_log (job);
+  --.
+  drop index if exists prediction_log_job;
+  create index if not exists prediction_log_job_at on prediction_log (job, at);
   drop index if exists prediction_log_thread;
   create index if not exists prediction_log_thread_at on prediction_log (thread, at)`);
 
@@ -104,12 +106,11 @@ function moved(before: LogRow, now: LogRow) {
 const keyOf = (row: { job: number | null; thread: string | null }) =>
   row.job === null ? `thread:${row.thread}` : `job:${row.job}`;
 
-// A job's and a thread's last row: one seek on its index, never the whole log. A thread's is its latest `at`, the order
-// of prediction_log_thread_at: by id, the first play after a restart sorted every row of each open thread (~0.9 s on
-// HQ's log).
+// A job's and a thread's last row: its latest `at`, one seek on prediction_log_job_at or prediction_log_thread_at,
+// never a sort of its rows.
 export const LAST_ROW = {
   thread: 'select * from prediction_log where thread = ? order by at desc, id desc limit 1',
-  job: 'select * from prediction_log where job = ? order by id desc limit 1',
+  job: 'select * from prediction_log where job = ? order by at desc, id desc limit 1',
 };
 
 function lastOf(row: LogRow) {
@@ -121,15 +122,13 @@ function lastOf(row: LogRow) {
   return last.get(key);
 }
 
-// Every row of these jobs, each job's oldest first, with only the columns hq estimate --calibration reads.
-export function ofJobs(jobs: number[]) {
+// A job's prediction as the log had it at `at`: its latest row by then, or undefined when the log has nothing that old.
+// One seek on prediction_log_job_at: hq estimate --calibration reads it per landing and lead.
+export function jobAt(job: number, at: number) {
   write();
-  return db
-    .prepare(
-      `select job, at, merged, held from prediction_log where job in (select value from json_each(?))
-      order by job, at, id`,
-    )
-    .all(JSON.stringify(jobs)) as (Pick<LogRow, 'at' | 'merged' | 'held'> & { job: number })[];
+  return prepared(
+    'select merged, held from prediction_log where job = ? and at <= ? order by at desc, id desc limit 1',
+  ).get(job, at) as Pick<LogRow, 'merged' | 'held'> | undefined;
 }
 
 // A thread's ETA as the log had it at `at`: its latest row by then (merged null: no merge in sight then), or undefined

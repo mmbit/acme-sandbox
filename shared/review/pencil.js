@@ -24,6 +24,7 @@ import { setupSettle } from './settle.js';
 import { setupCarry } from './carry.js';
 // (handwriting read into type.)
 import * as written from './written.js';
+import { unpen } from './postitpen.js';
 // (the open mark finished on a second screen.)
 import { moved, setupHandover } from './handover.js';
 
@@ -100,6 +101,8 @@ function wipeOpen(r) {
 // Undo anything: the last line of the mark being made (the first one: the mark goes), else the last note sent to the
 // sheet comes off it, else the last mark scribbled out comes back
 export async function undo(r) {
+  // (the post-it's words edited with the Pencil first: postitpen.js.)
+  if (r.mode === 'note' && r.wordSteps?.length) return r.wordSteps.pop()();
   const floor = r.mark?.kind === 'circle' ? 1 : 0;
   if (r.mode === 'note' && r.strokes.length > floor) {
     r.strokes.pop();
@@ -178,6 +181,7 @@ function listening(r, stroke) {
 
 // What a reset leaves
 export const unmark = r => {
+  unpen(r);
   if (r.listen && !r.holding) r.listen.hidden = true;
   r.spoken = r.typed = false;
   if (r.book) r.pinIt.textContent = 'Send';

@@ -3,6 +3,7 @@
 // runs that timed out, the worker's room, a seat near its stop), then the owners' plans (a thread held by a need that
 // misses, an inbox or a meeting ask left waiting, a project growing faster than it finishes). Most serious first, each
 // line naming its cause.
+// (its messages say deliverable, the board's word for a thread)
 import { db } from './db.ts';
 import { ceo } from './company.ts';
 import * as jobs from './jobs.ts';
@@ -89,7 +90,7 @@ function causeOf(o: ThreadOutlook, now: number) {
   const link = [...o.chain].reverse().find(l => l.causes.length);
   if (link) return `${waitWords(link.causes[0], ms => clock(ms, now))} (at #${link.job})`;
   const other = o.waits.find(w => w.on === 'job');
-  if (other?.on === 'job') return `job #${other.job}${other.thread ? ` in thread ${other.thread}` : ''}`;
+  if (other?.on === 'job') return `job #${other.job}${other.thread ? ` in deliverable ${other.thread}` : ''}`;
   return `nothing but its own work, ${span(o.left_ms)} of agent time left`;
 }
 
@@ -266,7 +267,7 @@ function heldByNeeds(open: OpenThread[], now: number) {
     const o = need.outlook;
     const finish = o.finish === null ? 'no finish in sight' : `finish ${clock(o.finish, now)}`;
     return [
-      `${threadName(held)} needs thread ${need.id}, which misses its deadline ${clock(o.deadline!, now)}: ${finish}`,
+      `${threadName(held)} needs deliverable ${need.id}, which misses its deadline ${clock(o.deadline!, now)}: ${finish}`,
     ];
   });
 }
@@ -335,15 +336,15 @@ function sprawl(now: number) {
   return projects
     .filter(p => p.drawn + p.added - p.threads_done - p.tasks_done > SPRAWL_SLACK)
     .map(p => {
-      const grew = `${plural(p.drawn, 'thread')} drawn and ${plural(p.added, 'task')} added`;
-      const done = `${plural(p.threads_done, 'thread')} and ${plural(p.tasks_done, 'task')} finished`;
+      const grew = `${plural(p.drawn, 'deliverable')} drawn and ${plural(p.added, 'task')} added`;
+      const done = `${plural(p.threads_done, 'deliverable')} and ${plural(p.tasks_done, 'task')} finished`;
       return `project ${findProject(p.id)!.name} grew since ${clock(Date.parse(since), now)}: ${grew}, ${done}`;
     });
 }
 
 // ---- words
-
-const threadName = (t: Pick<OpenThread, 'id' | 'name' | 'project'>) => `thread ${t.id} (${t.name}, ${ownerOf(t)}'s)`;
+const threadName = (t: Pick<OpenThread, 'id' | 'name' | 'project'>) =>
+  `deliverable ${t.id} (${t.name}, ${ownerOf(t)}'s)`;
 const span = (ms: number) => duration(ms / MINUTE_MS);
 
 // How long ago or how long waiting, roughly: minutes, hours, then days. (summary.ts too)

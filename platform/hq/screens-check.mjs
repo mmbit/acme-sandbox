@@ -6,28 +6,17 @@
 // screen, a row or tile whose hover box (its outline included) cuts through words outside it.
 //   node platform/hq/screens-check.mjs [renderer] [--out <folder>]   (the company's renderer by default; /tmp/hq-screens)
 // Dev mode on the mock data, with the company's own theme (theme/hq.yaml) when the repo has one.
-import { readFile, readdir, mkdir } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parse } from '../coordinator/node_modules/yaml/dist/index.js';
-import { serve, ROOT } from './serve.mjs';
+import { mockBrand, mockFiles, serve } from './serve.mjs';
 import { contrastChannels } from '../../shared/contrast/contrast.js';
 import { playwright } from '../../shared/browser/browser.mjs';
 
 const args = process.argv.slice(2),
   outAt = args.indexOf('--out'),
   OUT = outAt >= 0 ? args.splice(outAt, 2)[1] : '/tmp/hq-screens';
-const theme = await readFile(join(ROOT, 'theme/hq.yaml'), 'utf8').then(parse, () => null);
-const brand = JSON.parse(await readFile(join(ROOT, 'platform/hq/mock/brand.json'), 'utf8'));
-if (theme) brand.theme = { ...brand.theme, ...theme };
-const RENDERER = args[0] ?? brand.theme.renderer;
-// The platform's mock data wherever the company's own is empty, so every screen has something on it
-const filled = {};
-for (const name of (await readdir(join(ROOT, 'theme/hq/mock')).catch(() => [])).filter(n => n.endsWith('.json'))) {
-  const own = JSON.parse(await readFile(join(ROOT, 'theme/hq/mock', name), 'utf8'));
-  if (Array.isArray(own) && !own.length)
-    filled[`mock/${name}`] = await readFile(join(ROOT, 'platform/hq/mock', name)).catch(() => '[]');
-}
-const server = await serve(undefined, 0, { ...filled, 'mock/brand.json': JSON.stringify(brand) });
+const RENDERER = args[0] ?? (await mockBrand()).theme.renderer;
+const server = await serve(undefined, 0, await mockFiles());
 const url = `http://localhost:${server.address().port}/?renderer=${RENDERER}&intro=0&hour=12&weather=clear`;
 
 const VIEWS = {

@@ -5,11 +5,11 @@ import { org, roles, ceo } from './company.ts';
 import { OPEN_JOBS, workBranchOf } from './jobs.ts';
 import { withPicks } from './models.ts';
 import { fitIn, mean, wholeSeconds } from './arithmetic.ts';
+import { weekOfReviews } from './reviewtime.ts';
 import type { ReviewPlan, ReviewStage } from './rounds.ts';
 import { ownerOf } from './projects.ts';
 
-const WEEK_MS = 7 * 24 * 60 * 60_000,
-  GUESS_MS = 15 * 60_000,
+const GUESS_MS = 15 * 60_000,
   SLOW_SHARE = 0.8;
 type PullRequest = {
   number: number;
@@ -55,7 +55,7 @@ export function reviewPlans(now: number, prospective?: ProspectiveRun) {
     if (work.opensReview === false || work.kind !== 'work' || work.origin === 'fix' || work.origin === 'merge')
       return undefined;
     const pr = record.branches.get(workBranchOf(work));
-    const resolution = pr ? resolutionOf(sweepAction(pr), now) : undefined;
+    const resolution = pr ? resolutionOf(sweepAction(pr, true), now) : undefined;
     if (
       pr &&
       (resolution !== undefined ||
@@ -160,16 +160,10 @@ function records(now: number, prospective?: ProspectiveRun) {
     where p.status in ('open', 'board', 'stuck') order by coalesce(j.seq, j.id), j.id`,
   ).all() as Run[];
   if (prospective) runs.push(prospective);
-  // jobs_review_runs covers the jobs columns here to skip wide job rows (db.ts).
-  const measured = prepared(
-    `select j.engine, case when j.stage = 'triage' then 'triage' else j.kind end kind,
-    sum((julianday(r.ended) - julianday(r.started)) * 86400000) ms
-    from runs r cross join jobs j indexed by jobs_review_runs on j.id = r.job
-    left join review_fix_tasks f on f.job = j.id
-    where r.ended > ? and j.status = 'done'
-    and (j.kind in ('review', 'consolidate') or j.stage = 'fix' and coalesce(f.round, j.round) is not null)
-    and not exists (select 1 from runs o where o.job = j.id and o.ended is null) group by j.id`,
-  ).all(new Date(now - WEEK_MS).toISOString()) as Measurement[];
+  // (the week's done review runs, checks and fixes, none still running: reviewtime.ts weekOfReviews)
+  const measured: Measurement[] = weekOfReviews(now)
+    .filter(job => !job.running)
+    .map(job => ({ engine: job.engine, kind: job.measuredKind, ms: job.ms }));
   const panels = Map.groupBy(
     prs.filter(pr => pr.status === 'merged'),
     pr => pr.review_class ?? 'check',

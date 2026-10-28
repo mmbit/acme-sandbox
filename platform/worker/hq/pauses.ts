@@ -1,5 +1,6 @@
-// hq thread pause | resume and hq project pause | resume: a paused project or thread, whose queued work HQ's claim holds
-// (the coordinator's pauses.ts); hq decision: pauses that wait for a decision of the board's (its decisions.ts).
+// hq deliverable pause | resume and hq project pause | resume: a paused project or deliverable, whose queued work HQ's
+// claim holds (the coordinator's pauses.ts); hq decision: pauses that wait for a decision of the board's (its
+// decisions.ts).
 import * as api from './api.ts';
 import { minute, plural, print, stop, text } from './output.ts';
 
@@ -22,14 +23,16 @@ export type Lift = {
 // (the work in no thread: the coordinator's jobs.ts DESK.)
 const DESK = `
                                                      The project unsorted (or its group's code) is the work in no
-                                                     thread: what a call and HQ queue there (the intercom, meetings,
+                                                     deliverable: what a call and HQ queue there (the intercom, meetings,
                                                      a call's follow-up and expedited work go on)`;
 const named = (kind: Kind) => (kind === 'thread' ? '<project>/<slug>' : '<project>');
+// The command and the word a kind is read by: a thread is a deliverable
+const word = (kind: Kind) => (kind === 'thread' ? 'deliverable' : kind);
 
 // (--until-time's forms, the board's own time with its date and no zone among them)
 export const help = (kind: Kind) => `
-   hq ${kind} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
-                                                     pause the ${kind === 'thread' ? 'thread' : 'project, every thread of it'}: nothing queued on it starts
+   hq ${word(kind)} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)
+                                                     pause the ${kind === 'thread' ? 'deliverable' : 'project, every deliverable of it'}: nothing queued on it starts
                                                      (work, reviews, fixes) until it's resumed. What it waits for wakes
                                                      you, never lifts it: --until jobs once they're all merged or ended,
                                                      --until-time a time (2h, 90m or 1h30m from now; 2026-10-26 09:00
@@ -40,8 +43,8 @@ export const help = (kind: Kind) => `
                                                      conditions). --by-hand: nothing wakes you. Work already running goes
                                                      on (stop it, or let it finish: hq stop pauses a review or ruling). The CEO or the project's owner. A
                                                      hold the board agreed goes in as a pause, then hq item link <item>
-                                                     pause:<${kind}>${kind === 'project' ? DESK : ''}
-   ${`hq ${kind} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
+                                                     pause:<${word(kind)}>${kind === 'project' ? DESK : ''}
+   ${`hq ${word(kind)} resume ${named(kind)}`.padEnd(50)}let its queued work start again (the CEO's pause, or one with
                                                      the board's item: the CEO only)`;
 
 export async function pause(kind: Kind, given: string[]) {
@@ -66,7 +69,7 @@ export async function pause(kind: Kind, given: string[]) {
   }
   const [id, why, ...rest] = args;
   if (!id || !why?.trim() || rest.length)
-    stop(`usage: hq ${kind} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)`);
+    stop(`usage: hq ${word(kind)} pause ${named(kind)} "why" (--until <job>... | --until-time <time> | --by-hand)`);
   const answer = await api.change('pauses', { body: api.withSpeaker({ [kind]: id, why, until, untilTime, byHand }) });
   const paused = api.parseOrNull(answer.body) as Paused | null;
   if (!api.isSuccess(answer.status) || !paused?.target)
@@ -81,8 +84,8 @@ export async function pause(kind: Kind, given: string[]) {
     ...(paused.untilTime ? [`${minute(text(paused.untilTime))} has come`] : []),
   ];
   const resumes = waits.length
-    ? `Once ${waits.join(' and ')}, HQ queues you a job to judge it; only hq ${kind} resume ${text(paused.target)} lifts it.`
-    : `It holds until hq ${kind} resume ${text(paused.target)}: nothing wakes you about it.`;
+    ? `Once ${waits.join(' and ')}, HQ queues you a job to judge it; only hq ${word(kind)} resume ${text(paused.target)} lifts it.`
+    : `It holds until hq ${word(kind)} resume ${text(paused.target)}: nothing wakes you about it.`;
   const running = paused.running.map(r => `#${r.id}${r.status === 'queued' ? ' (held mid-run)' : ''}`);
   print(
     `Paused ${text(paused.target)}: ${text(paused.why)}`,
@@ -109,7 +112,7 @@ export function liftWords(p: Lift) {
 }
 
 export async function resume(kind: Kind, [id, ...rest]: string[]) {
-  if (!id || rest.length) stop(`usage: hq ${kind} resume ${named(kind)}`);
+  if (!id || rest.length) stop(`usage: hq ${word(kind)} resume ${named(kind)}`);
   const answer = await api.change('pauses/resume', { body: api.withSpeaker({ [kind]: id }) });
   if (!api.isSuccess(answer.status)) stop(`Nothing was resumed: ${api.errorIn(answer.body, 'no answer')}`);
   print(`Resumed ${id}: its queued work starts as seats free up.`);
@@ -117,7 +120,7 @@ export async function resume(kind: Kind, [id, ...rest]: string[]) {
 
 export const decision = {
   help: `
-   hq decision "name" --blocks <project | project/thread>...
+   hq decision "name" --blocks <project | project/deliverable>...
                                                      the CEO names a decision the board has yet to make ("pick the art
                                                      direction"), before its card exists, and pauses what depends on it:
                                                      its queued work, reviews and fixes wait. Only the board's answer on
@@ -142,7 +145,7 @@ export const decision = {
     }
     const [name, ...rest] = args;
     if (!name?.trim() || rest.length || !blocks.length)
-      stop('usage: hq decision "name" --blocks <project | project/thread>..., or hq decision link <id> <card>');
+      stop('usage: hq decision "name" --blocks <project | project/deliverable>..., or hq decision link <id> <card>');
     const answer = await api.change('decisions', { body: { name, blocks } });
     const made = api.parseOrNull(answer.body) as { id?: number; blocks?: string[] } | null;
     if (!api.isSuccess(answer.status) || !made?.id)

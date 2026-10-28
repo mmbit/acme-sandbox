@@ -1,0 +1,126 @@
+/* The tool strip down the page's left (bookstrip.js): its island, the tool in use named beside it, a slide along it,
+   and the cog's preferences. Where the strip sits on the page is the book's (--bk-strip-left); its width goes on the
+   book as --bk-strip, for the pages' row and the overview (bookshelf.css). */
+#book .bk-strip {
+  position: absolute;
+  top: calc(12px + var(--sat, 0px));
+  left: var(--bk-strip-left, 40px);
+  bottom: max(12px, env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  pointer-events: none;
+}
+#book .bk-strip .bk-island {
+  flex-shrink: 0;
+  /* (a finger or a pen slides along it: never the page's scroll) */
+  touch-action: none;
+}
+/* a screen too short for the whole strip (a phone on its side): the island scrolls along its length, a drag scrolling
+   it and a press held sliding (bookstrip.js decides) */
+#book .bk-strip .bk-island[data-scrolls] {
+  max-height: 100%;
+  overflow: hidden auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+  touch-action: pan-y;
+}
+
+/* the tool in use, named on the paper beside it: quiet, never in the way of a press */
+#book .bk-now {
+  position: absolute;
+  left: calc(100% + 8px);
+  transform: translateY(-50%);
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgba(255, 250, 240, 0.86);
+  box-shadow: 0 0 0 1px var(--bk-edge);
+  color: var(--bk-ink);
+  font: 600 12px/1.25 var(--bk-font, system-ui, sans-serif);
+  white-space: nowrap;
+  pointer-events: none;
+  transition:
+    top 0.14s ease-out,
+    opacity 0.12s;
+}
+#book .bk-now[hidden],
+#book .bk-now:empty {
+  display: none;
+}
+/* (a tooltip, a card or a slide says it already; and the overview, where nothing's drawn, has its tiles there.) */
+#book:has(> .bk-tip:not([hidden])) .bk-now,
+#book:has(.bk-far:not([hidden])) .bk-now,
+#book .bk-strip:has(.bk-card) .bk-now,
+#book .bk-strip:has([data-sliding]) .bk-now {
+  opacity: 0;
+}
+
+/* a slide along the strip: the tool under the finger or the pen inked lightly */
+#book .bk-strip .bk-btn[data-sliding]:not([aria-pressed='true']) {
+  background: var(--bk-ink-wash);
+  color: var(--bk-ink);
+}
+
+/* ---- the cog's preferences: a card on the paper beside the strip */
+#book .bk-prefs {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 0;
+  width: max-content;
+  max-width: min(320px, 70vw);
+  padding: 10px 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+  animation: bk-palette-in 0.12s ease-out;
+}
+#book .bk-prefs-head {
+  margin: 0 0 2px;
+  font-weight: 700;
+}
+#book .bk-prefs label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  cursor: pointer;
+}
+#book .bk-prefs input {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--bk-ink);
+}
+#book .bk-prefs fieldset {
+  margin: 4px 0 0;
+  padding: 0;
+  border: 0;
+}
+#book .bk-prefs legend {
+  padding: 0;
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+#book .bk-prefs small {
+  color: var(--bk-muted, #5a5478);
+}
+@media (pointer: coarse) {
+  #book .bk-prefs label {
+    min-height: 44px;
+  }
+}
+/* a narrow book (a phone's): the pages' row has the foot to itself, and the strip stands above it, near the edge */
+@container bk-rail (max-width: 460px) {
+  #book .bk-strip {
+    left: 12px;
+    bottom: 76px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-now,
+  #book .bk-prefs {
+    transition: none;
+    animation: none;
+  }
+}

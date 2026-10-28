@@ -3,7 +3,7 @@
 // under theme/hq/ (its logo, icons, mock data) over the foundation's in platform/hq/, and its HQ apps from kits/. The checks serve HQ with it; for a
 // look of your own: node platform/hq/serve.mjs [port]
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { looks } from './looks.mjs';
@@ -34,6 +34,29 @@ export async function serve(read = p => readFile(join(ROOT, p)), port = 0, files
   });
   await new Promise(r => server.listen(port, '127.0.0.1', r)); // (this machine's alone.)
   return server;
+}
+
+// The brand dev mode serves (the company's mock/brand.json, else the foundation's), worn in the company's theme
+// (theme/hq.yaml) when the repo has one: HQ as the company wears it, for the checks and tools that show it so
+export async function mockBrand() {
+  const { parse } = await import('../coordinator/node_modules/yaml/dist/index.js'); // (only the tools that wear it need it)
+  const read = p => readFile(join(ROOT, p), 'utf8');
+  const brand = JSON.parse(await read('theme/hq/mock/brand.json').catch(() => read('platform/hq/mock/brand.json')));
+  const theme = await read('theme/hq.yaml').then(parse, () => null);
+  if (theme) brand.theme = { ...brand.theme, ...theme };
+  return brand;
+}
+
+// The files the checks serve over dev mode's: the brand as mockBrand() gives it, and the platform's mock data wherever
+// the company's own list is empty, so every screen has something on it
+export async function mockFiles() {
+  const files = { 'mock/brand.json': JSON.stringify(await mockBrand()) };
+  for (const name of (await readdir(join(ROOT, 'theme/hq/mock')).catch(() => [])).filter(n => n.endsWith('.json'))) {
+    const own = JSON.parse(await readFile(join(ROOT, 'theme/hq/mock', name), 'utf8'));
+    if (Array.isArray(own) && !own.length)
+      files[`mock/${name}`] = await readFile(join(ROOT, 'platform/hq/mock', name)).catch(() => '[]');
+  }
+  return files;
 }
 
 // a request's address → its path from the root, decoded, or null when it doesn't parse

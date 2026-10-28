@@ -755,7 +755,8 @@ for (const [mode, behavior] of [
   ['memory', 'an interrupted helper blocks the surviving command by live cores after a same-uid memory stop'],
   ['disk', 'a priority block holds the disk stop until the next eligible pass while accounting continues'],
 ]) {
-  test(behavior, async () => {
+  test(behavior, async context => {
+    if (mode === 'disk' && noIoCounters) return context.skip(noIoCounters);
     const fixture = spawn('python3', [
       new URL('./shares.trace.py', import.meta.url).pathname,
       'renice',

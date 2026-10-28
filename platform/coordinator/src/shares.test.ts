@@ -61,8 +61,8 @@ const { db } = await import('./db.ts');
 const feedback = await import('./feedback.ts');
 const shares = await import('./shares.ts');
 const jobs = await import('./jobs.ts');
-const booknotes = await import('./booknotes.ts');
-const booksheets = await import('./booksheets.ts');
+const booknotes = await import('./ink/booknotes.ts');
+const booksheets = await import('./ink/booksheets.ts');
 (await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
 const server = createServer(app).listen(0);
 after(() => server.close());
@@ -754,16 +754,16 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   const fenna = await signIn(again.link);
   // the invite gave her a Sketchbook of her own, a button on her door's page, with no switch; a company shuts it with
   // guest: { sketchbook: false }, or leaves it to HQ's own Sketchbook's setting
-  assert.match((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/">Your Sketchbook</);
+  assert.match((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/">Your Notebook</);
   const brandFile = `${repo}/company/brand.yaml`,
     brandBefore = readFileSync(brandFile, 'utf8');
   const withBrand = async (extra: string) => {
     writeFileSync(brandFile, `${brandBefore}\n${extra}\n`);
     return (await call(fenna.path, { cookie: fenna.g })).text;
   };
-  assert.match(await withBrand('computer: { sketchbook: false }\nguest: { sketchbook: true }'), /Your Sketchbook/);
-  assert.doesNotMatch(await withBrand('computer: { sketchbook: false }'), /Your Sketchbook/);
-  assert.doesNotMatch(await withBrand('guest: { sketchbook: false }'), /Your Sketchbook/);
+  assert.match(await withBrand('computer: { sketchbook: false }\nguest: { sketchbook: true }'), /Your Notebook/);
+  assert.doesNotMatch(await withBrand('computer: { sketchbook: false }'), /Your Notebook/);
+  assert.doesNotMatch(await withBrand('guest: { sketchbook: false }'), /Your Notebook/);
   assert.equal((await call('/guest/sketchbook/api/list', { cookie: fenna.g })).status, 403, 'shut, not only unlisted');
   writeFileSync(brandFile, brandBefore);
   assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);

@@ -142,14 +142,13 @@ export async function upload(req: IncomingMessage, res: ServerResponse) {
   if (offset !== have) return reply(res, 416, { error: 'go on from the bytes received', received: have });
   const reservationId = reservationKey(id, i);
   const toReceive = zipBytes - offset;
-  const short =
-    offset === 0 || !reserved.has(reservationId)
-      ? shortOf(reservationId, toReceive)
-      : diskKeeps(reservationId, toReceive)
-        ? null
-        : 'disk';
-  // short: what ran out, so the desk phone says "try a smaller one" only when it's the zip's size (the disk can be short
-  // for a few minutes while the server builds an update)
+  // What ran out, so the desk phone says "try a smaller one" only when it's the zip's size (the disk can be short for a
+  // few minutes while the server builds an update). An upload under way has its room in the imports reserved already,
+  // so only the disk is checked for its next chunk.
+  const underWay = offset > 0 && reserved.has(reservationId);
+  let short: Short | null;
+  if (underWay) short = diskKeeps(reservationId, toReceive) ? null : 'disk';
+  else short = shortOf(reservationId, toReceive);
   if (short === 'imports') return reply(res, 507, { error: 'the server has no room for a zip that big', short });
   if (short) return reply(res, 507, { error: "the server's disk is short of room right now", short });
   if (offset === 0) {
@@ -189,12 +188,14 @@ function clearField(id: number, i: number, field: Field) {
 // Bytes promised but not on disk yet, by field: what an upload has still to receive (until it lapses), and what an
 // import has still to write (until it ends).
 type Reservation = { bytes: number; until: number };
+// What a zip can run short of: the imports' room or the disk's
+type Short = 'imports' | 'disk';
 const reserved = new Map<string, Reservation>();
 const reservationKey = (id: number, i: number) => `${id}-${i}`;
 
 // What `bytes` more for a field would run out of, besides what the others reserved: the imports' room (ROOM.maxStored for
 // everything in IMPORTS_DIR) or the disk's (ROOM.minFree left on it); null when they fit.
-function shortOf(reservationId: string, bytes: number) {
+function shortOf(reservationId: string, bytes: number): Short | null {
   const stored = storedBytes(IMPORTS_DIR) + reservedBesides(reservationId) + bytes;
   if (stored > ROOM.maxStored) return 'imports';
   return diskKeeps(reservationId, bytes) ? null : 'disk';
@@ -311,9 +312,12 @@ function planImport(entries: unzip.ZipEntry[]): Plan {
     seen.add(path);
     kept.push({ parts: parts!, entry });
   }
-  if (!kept.length) throw new ImportError('nothing in it was worth keeping: only files a computer can rebuild');
-  const wrapper = wrapperOf(kept);
+  const wrapper = kept.length ? wrapperOf(kept) : null;
   if (wrapper) for (const k of kept) k.parts.shift();
+  // The server writes its own note at the top, so the zip's is left out rather than replaced
+  const note = kept.findIndex(k => k.parts.join('/') === IMPORT_NOTE);
+  if (note >= 0) leave('unusable names', kept.splice(note, 1)[0].entry);
+  if (!kept.length) throw new ImportError('nothing in it was worth keeping: only files a computer can rebuild');
   return { kept, leftOut, wrapper };
 }
 

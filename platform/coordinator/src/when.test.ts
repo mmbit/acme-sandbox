@@ -166,7 +166,7 @@ test("each agreed deadline as the answer's play leaves it, against the plan with
   const out = await hqWhen();
   assert.match(
     out,
-    /\nAgreed deadlines \(thread windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nAn agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
+    /\nAgreed deadlines \(deliverable windows\):\n- .*: deadline .* UTC \(given by juno\); done about .* UTC, [\d hmin]+ of slack \(the work takes [\d hmin]+\)\.\nAn agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it asks\. A tight or shrinking margin is yours to plan with/,
   );
   assert.doesNotMatch(out, /\b(safe|tight|moving):/, 'the facts, never a verdict');
 });
@@ -439,7 +439,7 @@ test('an explicit added seat compares every project, thread and window without c
   assert.match(cli.out, /Hypothetical added Claude Max 5x/);
   assert.match(cli.out, /Before, usual pace seat predictions:/);
   assert.match(cli.out, /With added seat, usual pace seat predictions:/);
-  assert.match(cli.out, /Thread finishes: \d+ earlier, \d+ later, \d+ unchanged, \d+ unresolved/);
+  assert.match(cli.out, /Deliverable finishes: \d+ earlier, \d+ later, \d+ unchanged, \d+ unresolved/);
   const eta = await h.hq(await reader(), 'projects', 'Due', '--extra-seat', '20x');
   assert.equal(eta.code, 0, eta.out);
   assert.match(eta.out, /Hypothetical added Claude Max 20x/);

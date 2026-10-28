@@ -1,4 +1,5 @@
 // Holds and redirects the dependencies of work closed into its owner's inbox.
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, planChange } from './db.ts';
 import * as redraws from './redraws.ts';
 import * as pauses from './pauses.ts';
@@ -28,11 +29,11 @@ export function description(branch: string, pr: number) {
     threads = dependentThreads(branch);
   return (
     `\n\nDependent jobs held until this work is replaced or explicitly dropped: ${dependent.map(job => `#${job.id}`).join(', ') || 'none'}.\n` +
-    `Tasks held from this thread until this work is replaced or explicitly dropped: ${continuations.map(task => `#${task.job}`).join(', ') || 'none'}.\n` +
-    `Dependent threads held until this work is replaced or explicitly dropped: ${threads.map(thread => thread.id).join(', ') || 'none'}.\n` +
+    `Tasks held from this deliverable until this work is replaced or explicitly dropped: ${continuations.map(task => `#${task.job}`).join(', ') || 'none'}.\n` +
+    `Dependent deliverables held until this work is replaced or explicitly dropped: ${threads.map(thread => thread.id).join(', ') || 'none'}.\n` +
     `Pauses waiting for this work: ${held.map(pause => pause.target).join(', ') || 'none'}.\n` +
-    'It was closed because it should not land, so dropping it is the usual answer: first drop its dependent jobs, remove its thread needs with hq plan unneed, and explicitly resume its pauses. ' +
-    `Only if it is still wanted in another form, redraw it with hq inbox accept findings:${pr} --for <agent> --thread <replacement-thread>: the dependent jobs, threads and pauses stay held until the replacement merges.`
+    'It was closed because it should not land, so dropping it is the usual answer: first drop its dependent jobs, remove its deliverable needs with hq plan unneed, and explicitly resume its pauses. ' +
+    `Only if it is still wanted in another form, redraw it with hq inbox accept findings:${pr} --for <agent> --deliverable <replacement>: the dependent jobs, deliverables and pauses stay held until the replacement merges.`
   );
 }
 
@@ -42,7 +43,7 @@ export function redraw(item: Item, by: string, ask: JobThreadAsk & { for?: unkno
       const trial = draw(item, by, ask);
       if (typeof trial === 'string') return trial;
       if (jobs.prerequisites([trial.job], { includeFrom: false, ordered: true }).some(job => job.id === trial.job))
-        return 'that redraw creates a cycle through task order, thread needs or merge waits: choose another destination or change those dependencies';
+        return 'that redraw creates a cycle through task order, deliverable needs or merge waits: choose another destination or change those dependencies';
     },
     { keep: false },
   );
@@ -52,7 +53,7 @@ export function redraw(item: Item, by: string, ask: JobThreadAsk & { for?: unkno
 
 function draw(item: Item, by: string, ask: JobThreadAsk & { for?: unknown }) {
   if (ask.thread == null && ask.newThread == null)
-    return 'name the replacement thread with --thread, or drop the closed findings';
+    return 'name the replacement deliverable with --deliverable, or drop the closed findings';
   const latest = db
     .prepare('select status from prs where branch = ? order by number desc limit 1')
     .get(item.branch) as { status: string };
@@ -73,7 +74,7 @@ function draw(item: Item, by: string, ask: JobThreadAsk & { for?: unknown }) {
     title,
     thread,
     code: jobs.codeFrom({ pr: item.pr }) ?? undefined, // (the work redrawn keeps its task's code.)
-    prompt: `${item.brief}\n\nRedraw this work on the replacement thread. Keep the intended outcome and address the named findings.`,
+    prompt: `${item.brief}\n\nRedraw this work on the replacement deliverable. Keep the intended outcome and address the named findings.`,
     queuedBy: by,
     plannedBy: by,
   });
@@ -128,7 +129,7 @@ function destinationRefusal(thread: string | null, branch: string) {
     )
     .get(thread);
   if (active || (target.branch && target.branch !== branch))
-    return 'that destination has work running or waiting to merge: finish it first or choose another thread';
+    return 'that destination has work running or waiting to merge: finish it first or choose another deliverable';
 }
 
 export function redirect(branch: string, job: number, by = 'hq') {
@@ -146,7 +147,7 @@ export function dropRefusal(branch: string) {
     held = paused(branch),
     threads = dependentThreads(branch);
   if (dependent.length || held.length || threads.length)
-    return `redraw the work, or first drop dependent jobs ${dependent.map(job => `#${job.id}`).join(', ') || '(none)'}, remove dependent thread needs ${threads.map(thread => thread.id).join(', ') || '(none)'} with hq plan unneed, and explicitly resume pauses ${held.map(pause => pause.target).join(', ') || '(none)'}`;
+    return `redraw the work, or first drop dependent jobs ${dependent.map(job => `#${job.id}`).join(', ') || '(none)'}, remove dependent deliverable needs ${threads.map(thread => thread.id).join(', ') || '(none)'} with hq plan unneed, and explicitly resume pauses ${held.map(pause => pause.target).join(', ') || '(none)'}`;
 }
 
 // An accepted redraw carries the original work's merge requirement, even when its replacement is in another thread.

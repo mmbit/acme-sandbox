@@ -73,7 +73,10 @@ async function readLate(s) {
   await inBook(s).waitFor({ timeout: 5000 });
   const words = inBook(s).getByRole('textbox');
   await until(() => words.inputValue(), 'Lighter ink', 'the book shows the words read');
+  // (a finger's tap first: on a touch screen a field's words are the pen's to strike until one, penwords.js)
+  await words.tap();
   assert.ok(await words.isEditable(), 'the words can be written over in the book');
+  await words.blur();
   await s.shot('book-written-late', page);
 }
 
@@ -86,6 +89,7 @@ async function typedLate(s) {
   await send(s);
   const id = s.notes.at(-1).id,
     words = inBook(s).getByRole('textbox');
+  await until(() => words.inputValue(), '', 'its note in the book, with no words yet');
   await words.fill('Darker, please');
   await until(() => s.notes.at(-1).words, 'Darker, please', 'typed in the book');
   await until(

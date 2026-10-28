@@ -1,6 +1,7 @@
 // A failed job's work taken over by a job that replaces it (jobs.ts replacements). hq followthrough requeue: the CEO's
 // follow-through check hands a failed job's work on what the board agreed back to the agent whose call it is. hq job
 // --lands: a job lands saved work or retries a thread task that failed without saving work.
+// (its messages say deliverable, the board's word for a thread)
 import { execFileSync } from 'node:child_process';
 import { db } from './db.ts';
 import * as jobs from './jobs.ts';
@@ -89,7 +90,7 @@ export function landing(failed: number, agent: string, by: string) {
     .get(job.branch) as { number: number; open: number } | undefined;
   const empty = pr && job.pr === null && job.thread !== null && pr.open === 1 && emptyThreadTask(job, pr.number);
   if (pr && !empty)
-    return `job #${failed}'s branch has pull request #${pr.number}: its saved work goes on there, not with --lands. Only a thread task that saved nothing can be requeued in its place`;
+    return `job #${failed}'s branch has pull request #${pr.number}: its saved work goes on there, not with --lands. Only a deliverable's task that saved nothing can be requeued in its place`;
   const taken = jobs.replacementOf(failed);
   if (taken) return `job #${taken} has taken over #${failed}'s work already`;
   const ended = itemsOf(failed).find(i => i.status === 'dropped' || i.status === 'replaced');

@@ -1,4 +1,5 @@
 // Cyclic precedence is refused by plan writes and cut into an explicit stall by the live plan.
+// (its messages say deliverable, the board's word for a thread)
 import type { QueuedJob } from './eta.ts';
 import { precedence, dependencyRun } from './planner.ts';
 
@@ -11,7 +12,7 @@ export function unloop(rows: QueuedJob[], terminals: ReadonlyMap<number, number>
   for (;;) {
     const loop = findLoop(rows, byId, terminals);
     if (!loop) return;
-    const why = `plan cycle: ${[...loop.map(edge => label(edge.from)), label(byId.get(loop[0].from.id)!)].join(' → ')}. Change its waits, thread order or needs`;
+    const why = `plan cycle: ${[...loop.map(edge => label(edge.from)), label(byId.get(loop[0].from.id)!)].join(' → ')}. Change its waits, task order or needs`;
     const edge =
       loop.find(edge => edge.from.follows === edge.prior || edge.from.needs?.includes(edge.prior)) ?? loop.at(-1)!;
     cut(edge.from, edge.prior);
@@ -45,7 +46,7 @@ export function refuseNewLoops(before: DependencyGraph, after: DependencyGraph) 
       const path = pathTo(after, prior, id, new Set());
       if (!path) continue;
       const loop = [id, ...path].map(key => label(after.get(key)!.task)).join(' → ');
-      throw new PlanCycleError(`plan cycle: ${loop}. Change its waits, thread order or needs`);
+      throw new PlanCycleError(`plan cycle: ${loop}. Change its waits, task order or needs`);
     }
   }
 }

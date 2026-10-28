@@ -30,18 +30,18 @@ export function changeLines(
   return [
     ...deadlineLines(agreed, it),
     others.length
-      ? `Other threads it moves, for your planning only: ${movesWords(others)}.`
-      : 'It moves no other thread.',
+      ? `Other deliverables it moves, for your planning only: ${movesWords(others)}.`
+      : 'It moves no other deliverable.',
   ];
 }
 // (said once after the facts: the call's and the intercom's briefings say how to judge them)
 const JUDGED =
   'An agreed deadline its finish passes is yours to move back first; the board hears of it when nothing does or it ' +
-  "asks. A tight or shrinking margin is yours to plan with, and other threads' shifts are not news for the board " +
+  "asks. A tight or shrinking margin is yours to plan with, and other deliverables' shifts are not news for the board " +
   'unless it asks.';
 function movesWords(moves: Move[]) {
   const named = moves.slice(0, MOVES_SHOWN).map(moveWords).join(', ');
-  return named + (moves.length > MOVES_SHOWN ? ` and ${plural(moves.length - MOVES_SHOWN, 'more thread')}` : '');
+  return named + (moves.length > MOVES_SHOWN ? ` and ${plural(moves.length - MOVES_SHOWN, 'more deliverable')}` : '');
 }
 
 // Each agreed deadline: who gave it, the finish against it, what `it` did to that, and the slack hours ago; then who
@@ -51,8 +51,8 @@ export function deadlineLines(deadlines: Deadline[], it: string, late: string[] 
     ...late,
     ...missWords(deadlines.filter(d => d.finish === null || d.finish > d.deadline).map(threadWords)),
   ]);
-  if (!deadlines.length) return ['No thread has an agreed deadline.', ...flag];
-  return ['Agreed deadlines (thread windows):', ...deadlines.map(d => deadlineLine(d, it)), JUDGED, ...flag];
+  if (!deadlines.length) return ['No deliverable has an agreed deadline.', ...flag];
+  return ['Agreed deadlines (deliverable windows):', ...deadlines.map(d => deadlineLine(d, it)), JUDGED, ...flag];
 }
 // ["The shop's checkout misses its deadline"], or none.
 export const missWords = (threads: string[]) =>

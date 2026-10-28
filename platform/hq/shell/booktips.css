@@ -1,0 +1,409 @@
+/* The tips book (booktips.js): a small black hardcover over the screen, its cover the book's name, a tip a page.
+ */
+.tb {
+  position: fixed;
+  inset: 0;
+  z-index: 55;
+  display: grid;
+  place-items: center;
+  background: rgba(20, 16, 40, 0.18);
+  touch-action: none;
+}
+.tb-book {
+  --tb-cover: #141414;
+  /* (the Notebook's own gold and face, made for its paper, not the look's) */
+  --tb-accent: var(--bk-gold);
+  position: relative;
+  width: min(340px, 100vw - 32px);
+  height: min(500px, 100dvh - 32px);
+  padding: 7px 7px 7px 4px;
+  box-sizing: border-box;
+  border-radius: 6px 10px 10px 6px;
+  background: var(--tb-cover);
+  box-shadow:
+    0 18px 40px rgba(10, 8, 24, 0.35),
+    0 3px 8px rgba(10, 8, 24, 0.3);
+  perspective: 1400px;
+  color: var(--bk-night);
+  font-family: var(--bk-font);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.tb-leaves {
+  position: absolute;
+  inset: 7px 7px 7px 4px;
+  transform-style: preserve-3d;
+}
+/* a leaf: the paper, turned about its left edge (the spine) */
+.tb-leaf {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 18px 20px 52px;
+  box-sizing: border-box;
+  overflow: hidden auto;
+  border-radius: 2px 6px 6px 2px;
+  background: linear-gradient(90deg, rgba(42, 35, 82, 0.1), transparent 14px), var(--bk-paper);
+  transform-origin: left center;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.tb-leaf.tb-over {
+  transform: rotateY(-180deg);
+}
+.tb-part {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bk-muted);
+}
+.tb-leaf h3 {
+  margin: 14px 0 6px;
+  font-size: 20px;
+  line-height: 1.2;
+}
+.tb-words {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+/* the contents */
+.tb-contents h3 {
+  margin: 12px 0 2px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--bk-muted);
+}
+.tb-contents ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.tb-contents li button {
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  border-bottom: 1px dashed var(--bk-line);
+  background: none;
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.tb-contents li button:hover,
+.tb-contents li button:focus-visible {
+  color: var(--bk-night);
+  text-decoration: underline;
+  text-decoration-color: var(--tb-accent);
+  text-decoration-thickness: 3px;
+}
+.tb-contents li button:focus-visible {
+  outline: 2px solid var(--bk-night);
+  outline-offset: 2px;
+}
+.tb-logo-small {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 18px;
+}
+.tb-logo-small .tb-logo {
+  flex: none;
+  width: 104px;
+  height: 52px;
+  margin: -8px -4px -10px -10px;
+}
+.tb-logo-small .tb-logo text {
+  fill: var(--bk-night);
+}
+
+/* The book's name: the word, its flowing line through its foot */
+.tb-logo {
+  display: block;
+  overflow: visible;
+}
+.tb-logo text {
+  /* (the system's own bold, as the episode's logo: not the look's face) */
+  font:
+    800 112px/1 system-ui,
+    -apple-system,
+    'Segoe UI',
+    sans-serif;
+  fill: var(--bk-paper);
+}
+.tb-logo path {
+  fill: none;
+  stroke: var(--tb-accent);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+
+/* the cover: its face (the logo), the board's inside once it has swung over */
+.tb-cover {
+  position: absolute;
+  inset: 0;
+  z-index: 100;
+  transform-origin: left center;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+.tb-cover.tb-open {
+  visibility: hidden;
+}
+.tb-cover-face,
+.tb-cover-back {
+  position: absolute;
+  inset: 0;
+  border-radius: 6px 10px 10px 6px;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.tb-cover-face {
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  background:
+    radial-gradient(120% 80% at 30% 20%, rgba(255, 255, 255, 0.07), transparent 60%),
+    linear-gradient(90deg, rgba(0, 0, 0, 0.5), transparent 10px), var(--tb-cover);
+}
+.tb-cover-face .tb-logo {
+  width: 220px;
+  height: 110px;
+}
+/* (on the black cover the line is HQ's bright gold, not the Notebook's deeper one made for paper) */
+.tb-cover-face .tb-logo path {
+  stroke: var(--gold);
+}
+.tb-cover-face p {
+  margin: 4px 0 0;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: rgba(255, 250, 240, 0.6);
+}
+.tb-cover-back {
+  transform: rotateY(180deg);
+  background: #222;
+}
+
+/* the turns at the page's foot */
+.tb-turns {
+  position: absolute;
+  left: 4px;
+  right: 7px;
+  bottom: 7px;
+  z-index: 90;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px 6px;
+  border-radius: 0 0 6px 2px;
+  background: var(--bk-paper);
+  box-shadow: 0 -1px 0 var(--bk-line);
+  font-size: 13px;
+  color: var(--bk-muted);
+  pointer-events: none;
+}
+.tb-turns button {
+  width: 40px;
+  height: 36px;
+  border: 0;
+  border-radius: 18px;
+  background: none;
+  font: 700 24px/1 var(--bk-font);
+  color: var(--bk-night);
+  cursor: pointer;
+  pointer-events: auto;
+}
+.tb-turns button:disabled {
+  opacity: 0.2;
+  cursor: default;
+}
+.tb-turns button:focus-visible {
+  outline: 2px solid var(--bk-night);
+}
+
+/* a tip's scene */
+.tb-scene {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin-top: 4px;
+  border-radius: 4px;
+  background: var(--bk-paper2);
+  overflow: hidden;
+}
+.tb-scene * {
+  vector-effect: non-scaling-stroke;
+}
+.tb-hq rect:first-child {
+  fill: #fff;
+  stroke: var(--bk-line);
+}
+.tb-card {
+  fill: #ece6f6;
+}
+.tb-hq-bar {
+  fill: var(--bk-night);
+  opacity: 0.85;
+}
+.tb-paper rect {
+  fill: var(--bk-paper);
+  stroke: var(--bk-line);
+}
+.tb-rule {
+  stroke: var(--bk-line);
+}
+.tb-mini-cover {
+  fill: var(--tb-cover);
+}
+.tb-mini-paper {
+  fill: var(--bk-paper);
+}
+.tb-ink,
+.tb-lasso,
+.tb-scrawl,
+.tb-typed-line,
+.tb-clip,
+.tb-pin path,
+.tb-face-smile {
+  fill: none;
+  stroke: var(--bk-night);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.tb-ink {
+  stroke: #c0392b;
+}
+.tb-scrub {
+  stroke-width: 3.4;
+}
+.tb-lasso {
+  stroke-dasharray: 4 4;
+  stroke: var(--bk-muted);
+}
+.tb-scrawl,
+.tb-typed-line {
+  stroke-width: 1.6;
+  opacity: 0.7;
+}
+.tb-note rect {
+  fill: #fff6c8;
+  stroke: rgba(42, 35, 82, 0.15);
+}
+.tb-slip,
+.tb-typed {
+  fill: #fff;
+  stroke: var(--bk-line);
+}
+.tb-letters {
+  fill: var(--bk-night);
+  opacity: 0.75;
+}
+.tb-box {
+  fill: #fff;
+  stroke: var(--bk-night);
+  stroke-width: 1.5;
+}
+.tb-picked {
+  fill: none;
+  stroke: var(--tb-accent);
+  stroke-width: 3;
+}
+.tb-frame {
+  fill: none;
+  stroke: var(--bk-night);
+  stroke-dasharray: 3 3;
+}
+.tb-pen rect {
+  fill: #f4f4f4;
+  stroke: #9a9a9a;
+}
+.tb-pen-tip {
+  fill: #444;
+}
+.tb-finger {
+  fill: rgba(42, 35, 82, 0.22);
+  stroke: rgba(42, 35, 82, 0.5);
+}
+.tb-ring,
+.tb-undo-ring {
+  fill: none;
+  stroke: var(--tb-accent);
+  stroke-width: 2.5;
+}
+.tb-arrow {
+  fill: #fff;
+  stroke: var(--bk-night);
+  stroke-width: 1.2;
+}
+.tb-face circle:first-child {
+  fill: #e6dff2;
+  stroke: var(--bk-night);
+  stroke-width: 1.2;
+}
+.tb-face-lit circle:first-child {
+  fill: var(--tb-accent);
+}
+.tb-face-eye {
+  fill: var(--bk-night);
+}
+.tb-ear {
+  fill: var(--bk-paper2);
+  stroke: var(--bk-line);
+}
+.tb-plane {
+  fill: #fff;
+  stroke: var(--bk-night);
+  stroke-linejoin: round;
+}
+.tb-photo {
+  fill: #cfe3f7;
+  stroke: #fff;
+  stroke-width: 3;
+}
+.tb-photo-hill {
+  fill: #6fae7a;
+}
+.tb-photo-sun {
+  fill: var(--tb-accent);
+}
+.tb-tape {
+  fill: rgba(240, 225, 170, 0.8);
+}
+.tb-key rect {
+  fill: #fff;
+  stroke: var(--bk-night);
+  stroke-width: 1.2;
+}
+.tb-key text {
+  font: 600 13px var(--bk-font);
+  fill: var(--bk-night);
+}
+.tb-pin path {
+  stroke-width: 1.8;
+}
+.tb-pinned {
+  fill: var(--tb-accent);
+}
+.tb-tab {
+  fill: var(--tb-accent);
+}
+.tb-disc {
+  fill: var(--tb-accent);
+  stroke: var(--bk-night);
+  stroke-width: 1.2;
+}
+.tb-link {
+  fill: none;
+  stroke: var(--bk-night);
+  stroke-width: 1.5;
+}

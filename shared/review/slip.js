@@ -1,8 +1,8 @@
 // A slip: an agent's answer clipped onto a note in the book (the coordinator's bookslips.ts), typed on a strip of paper
 // under a paper clip, with "then and now": the note's snip as it was marked beside the running preview of something
 // new, or a cut of the same place kept from before rule zero (a page no longer cuts one: nothing of a note follows it
-// on the page). A tick in its box closes the note; writing under it is the
-// board's reply, a new note for the same agent. The book (HQ's bookslips.js) draws it with slipHtml and wires it with
+// on the page). A tick in its box closes the note; writing under it is the board's reply, a new note for the same
+// agent. The book (HQ's bookgroups.js) draws it with slipHtml and wires it with
 // wireSlips; isTick, the Pencil's tick written on a slip in the book, is plain maths (slip.test.js).
 
 // The look: the book's paper and indigo, the answer typed
@@ -90,7 +90,7 @@ export function slipHtml(slip, note) {
 
 // The slips under root wired: a tap on a tick box ticks it (or takes the tick back), and words written under one go as
 // the reply once the field is left or Enter is pressed. on: { tick(id, ticked), reply(id, words) → the store's answer
-// ({ note, asked }) }, each a promise; refused, the slip says why and stays as it was.
+// ({ note, asked }, or { said }: what to say of it) }, each a promise; refused, the slip says why and stays as it was.
 export function wireSlips(root, on) {
   for (const slip of root.querySelectorAll('.answer-slip')) {
     const id = Number(slip.dataset.slip),
@@ -116,11 +116,15 @@ export function wireSlips(root, on) {
       if (!words || sending) return;
       sending = true;
       try {
-        const { note, asked } = await on.reply(id, words);
+        // (said: what the reply's owner says of it, a notebook's.)
+        const { note, asked, said: told } = await on.reply(id, words);
         field.value = '';
         fitted();
         tell(
-          asked ? 'Asked: the answer clips on in a moment' : `On the sheet as note ${note.n}: it goes with the plane`,
+          told ??
+            (asked
+              ? 'Asked: the answer clips on in a moment'
+              : `On the sheet as note ${note.n}: it goes with the plane`),
         );
       } catch (e) {
         tell(e.message);

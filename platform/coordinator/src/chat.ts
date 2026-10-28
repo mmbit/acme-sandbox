@@ -2,6 +2,7 @@
 // each message, so the CEO remembers the conversation. The CEO's final message of each turn is the reply. What the board
 // says while the CEO is still answering waits, and goes in the next turn. Every line is shown and kept as it is: a key's
 // value is redacted where it's stored (db.ts).
+// (its messages say deliverable, the board's word for a thread)
 import { db, once, setting, remember, redactedJson } from './db.ts';
 import { redactJson } from './secrets.ts'; // (and redactedJson: the intake's cards.)
 import { publish } from './events.ts';
@@ -75,14 +76,14 @@ why. ${DEFAULT_ESTIMATE_SCALE}
 The estimate is saved once. Only the CEO changes it when work slips. Use that same size for
 \`hq when "..." --size <time>\` before telling the board when something will be done (\`--by\` the
 board's time: whether it makes it, and only if not, what would). Give one plain time. What the board asks for here takes
-its window as you queue it, \`hq job ... --by <when>\`, so HQ orders the thread's work by it from the first minute (its
-reviews and fixes too) and pauses work in the way, and you see it in your summary if the thread slips: the board's time,
+its window as you queue it, \`hq job ... --by <when>\`, so HQ orders the deliverable's work by it from the first minute (its
+reviews and fixes too) and pauses work in the way, and you see it in your summary if the deliverable slips: the board's time,
 else hq when's, or \`--by <project>/<slug>\` when it serves a deliverable with a window (the meeting it's needed for).
-Only when the board gave no time and it serves nothing timed, \`--by none\`. Work already queued: \`hq window <thread |
+Only when the board gave no time and it serves nothing timed, \`--by none\`. Work already queued: \`hq window <deliverable |
 job | pr:<n>> <when>\`. When the board says a line of work is urgent, its window's deadline is now:
-\`hq window <thread> 1m\`.
+\`hq window <deliverable> 1m\`.
 New work shifts other work, and the board knows it: say nothing about shifts unless an agreed deadline moves or the
-board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a thread's window) its finish, its
+board asks. \`hq job\`, \`hq cancel\` and \`hq when\` give each agreed deadline (a deliverable's window) its finish, its
 slack and its slack some hours ago. When its finish lands past the deadline, the deadline moves: say so plainly. A
 margin eaten but still made, or slack that keeps shrinking as work piles on, is yours to plan with: don't mention it
 unless the board asks. Before you queue work that eats into a deadline, weigh how much it matters, how much the

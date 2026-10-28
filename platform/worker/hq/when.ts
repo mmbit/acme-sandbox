@@ -51,7 +51,7 @@ const USAGE = 'usage: hq when "what the work is" --size <90m> [--agent <id>] [--
 export const when = {
   help: `
    hq when --extra-seat 5x|20x                       replay the live plan with one hypothetical Claude Max seat, at
-                                                     any time: every project, thread and window before and after,
+                                                     any time: every project, deliverable and window before and after,
                                                      measured capacity and confidence. Nothing changes.
    hq when "what the work is" --size <90m> [--agent <id>] [--after <job>] [--by <time>]
                                                      when new work could be done (merged and deployed), played into the

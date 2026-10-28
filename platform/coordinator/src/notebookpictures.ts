@@ -6,7 +6,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import * as pictures from './pictures.ts';
 import { keepFile, refuse, reply } from './uploads.ts';
 import { readBody } from '../../../shared/routes/routes.ts';
-import { BOARD } from './book.ts';
+import { BOARD } from './ink/book.ts';
 import { isRefused } from './pagechecks.ts';
 import { DIR, notFound, serveFile, tooBig } from './pagescraps.ts';
 import { pageRow } from './notebook.ts';

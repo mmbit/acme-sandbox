@@ -87,14 +87,14 @@ test('hq summary: what the board asked for and how long it has waited, what thre
   assert.match(
     text,
     new RegExp(
-      `^What threatens the plan:\\n- thread ${stalled} \\(Thread \\d+, juno's\\): no finish in sight for its deadline .*, set by kit\\. Held by: .*paused.*$`,
+      `^What threatens the plan:\\n- deliverable ${stalled} \\(Thread \\d+, juno's\\): no finish in sight for its deadline .*, set by kit\\. Held by: .*paused.*$`,
       'm',
     ),
   );
   assert.match(
     text,
     new RegExp(
-      `^- thread ${late} \\(Thread \\d+, juno's\\): finish .*, .* past its deadline .*, set by you\\. Held by: .+$`,
+      `^- deliverable ${late} \\(Thread \\d+, juno's\\): finish .*, .* past its deadline .*, set by you\\. Held by: .+$`,
       'm',
     ),
   );
@@ -235,7 +235,7 @@ test("finished since the last check: threads done and the board's items, once th
   assert.match(
     await summary(),
     new RegExp(
-      `^Finished since the last check \\(merged and deployed\\):\\n- thread ${own} \\(Thread \\d+, juno's\\): done ${clock(now, now)}, nothing of it to deploy$`,
+      `^Finished since the last check \\(merged and deployed\\):\\n- deliverable ${own} \\(Thread \\d+, juno's\\): done ${clock(now, now)}, nothing of it to deploy$`,
       'm',
     ),
   );
@@ -284,7 +284,7 @@ test("finished since the last check: threads done and the board's items, once th
   const live = clock(now + 3 * MIN, now + 4 * MIN);
   const left = 'its words left out (hq call shows this call only to the jobs it may)';
   assert.deepEqual((await finishedLines()).slice(1), [
-    `- thread ${priced} (Thread ${priced.split('-').at(-1)}, juno's): done ${clock(now, now)}, its work deployed ${live}. It carries item #${item.item} (call ${item.call}, task): ${left}`,
+    `- deliverable ${priced} (Thread ${priced.split('-').at(-1)}, juno's): done ${clock(now, now)}, its work deployed ${live}. It carries item #${item.item} (call ${item.call}, task): ${left}`,
     `- item #${other.item} (call ${other.call}, task for juno): ${left}. Its work (#${alone.id}) deployed ${live}`,
     `- item #${plain.item} (call ${plain.call}, task for juno): A sign for the shop door. Its work (#${alone.id}) deployed ${live}`,
   ]);
@@ -294,7 +294,7 @@ test("finished since the last check: threads done and the board's items, once th
   const [check] = checks();
   assert.ok(check, 'a check');
   const { prompt } = db.prepare('select prompt from jobs where id = ?').get(check.job) as { prompt: string };
-  assert.match(prompt, new RegExp(`\\n- thread ${priced} .*It carries item #${item.item} `));
+  assert.match(prompt, new RegExp(`\\n- deliverable ${priced} .*It carries item #${item.item} `));
   assert.doesNotMatch(prompt, /Jansen/, "nor the customer's details in the check's prompt");
   const ceo = await startCheck();
   assert.equal((await h.agent('followthrough-verdict', ceo.token, { verdict: 'ok' })).status, 200);
@@ -331,8 +331,8 @@ test('a thread done before the last check whose work deploys after it is finishe
   await deploy(now + 6 * MIN);
   mock.timers.setTime(now + 8 * MIN);
   const text = (await h.agent('summary', juno.token)).body.text as string;
-  assert.match(text, new RegExp(`\\n- thread ${late} .*its work deployed ${clock(now + 7 * MIN, now + 8 * MIN)}`));
-  assert.doesNotMatch(text, new RegExp(`thread ${early} `));
+  assert.match(text, new RegExp(`\\n- deliverable ${late} .*its work deployed ${clock(now + 7 * MIN, now + 8 * MIN)}`));
+  assert.doesNotMatch(text, new RegExp(`deliverable ${early} `));
 });
 
 test("an item whose work merged on a branch its job names (the job before it's) and deploys after the last check is finished since; one live before it is not", async () => {
@@ -398,11 +398,14 @@ test("a thread done whose work was closed unmerged shows as finished: that work 
   assert.equal((await h.agent('plan/done', juno.token, { thread })).status, 200);
   assert.match(
     (await h.agent('summary', juno.token)).body.text,
-    new RegExp(`^- thread ${thread} \\(Thread \\d+, juno's\\): done ${clock(now, now)}, nothing of it to deploy$`, 'm'),
+    new RegExp(
+      `^- deliverable ${thread} \\(Thread \\d+, juno's\\): done ${clock(now, now)}, nothing of it to deploy$`,
+      'm',
+    ),
   );
   const { lines } = await import('./finished.ts');
   const carriesNothing = (why: string) => {
-    const line = lines(now).find(l => l.line.startsWith(`thread ${thread} `))!;
+    const line = lines(now).find(l => l.line.startsWith(`deliverable ${thread} `))!;
     assert.equal(line.board, false, `${why}: it carries neither the board's items nor its card, so brings no check`);
     assert.doesNotMatch(line.line, new RegExp(`item #(${handed.item}|${carried.item})|card #${card}`), why);
   };
@@ -470,7 +473,7 @@ test("a finished replacement keeps its failed predecessor's answered card in the
   mock.timers.setTime(now + 4 * MIN);
   assert.equal((await h.agent('plan/done', juno.token, { thread })).status, 200);
   const { lines } = await import('./finished.ts');
-  const line = lines(now + 4 * MIN).find(l => l.line.startsWith(`thread ${thread} `))!;
+  const line = lines(now + 4 * MIN).find(l => l.line.startsWith(`deliverable ${thread} `))!;
   assert.equal(line.board, true);
   assert.match(line.line, new RegExp(`card #${card} `));
 });
@@ -487,7 +490,7 @@ test('a thread giving: its finish past its aim inside its deadline, by how much 
   assert.match(
     line,
     new RegExp(
-      `^thread ${giving} \\(Thread \\d+, juno's\\): finish .*, .* past its aim .*, (\\d+ h )?\\d+ min of slack left to its deadline .*$`,
+      `^deliverable ${giving} \\(Thread \\d+, juno's\\): finish .*, .* past its aim .*, (\\d+ h )?\\d+ min of slack left to its deadline .*$`,
     ),
   );
   const juno = await h.start({ agent: 'juno', title: 'The plan' });
@@ -632,9 +635,9 @@ test("the owners' plans: a thread held by a need that misses, an inbox and a mee
   const juno = await h.start({ agent: 'juno', title: 'The plan' });
   assert.equal((await h.agent('plan/need', juno.token, { thread: held_, needs: needed })).status, 200);
   assert.match(
-    threatsNaming(`thread ${held_} `, now)[0],
+    threatsNaming(`deliverable ${held_} `, now)[0],
     new RegExp(
-      `^thread ${held_} \\(Thread \\d+, juno's\\) needs thread ${needed}, which misses its deadline .*: finish .*$`,
+      `^deliverable ${held_} \\(Thread \\d+, juno's\\) needs deliverable ${needed}, which misses its deadline .*: finish .*$`,
     ),
   );
 
@@ -687,6 +690,6 @@ test('sprawl: a project that drew threads and added tasks faster than it finishe
   assert.deepEqual(threatsNaming('project '), [], 'a thread and two tasks is the plan going on');
   task();
   assert.deepEqual(threatsNaming('project '), [
-    `project Due grew since ${clock(now, now + MIN)}: 1 thread drawn and 3 tasks added, 0 threads and 0 tasks finished`,
+    `project Due grew since ${clock(now, now + MIN)}: 1 deliverable drawn and 3 tasks added, 0 deliverables and 0 tasks finished`,
   ]);
 });

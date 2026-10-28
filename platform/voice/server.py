@@ -35,6 +35,7 @@ from urllib.request import Request, urlopen
 from aloud import DAYS, aloud, number, respelt
 from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
+from callnotes import SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
 from echo import Echo
 from endpoint import Endpoint
 from guard import PARTNER, TOOLS, agent_env, hq_tools_work, sign_in_pipe, take_token
@@ -173,6 +174,18 @@ TONE_TAIL_SECONDS = 0.5
 # ended, or after this much quiet from pickup (OPENING_QUIET_SECONDS on the phone; in a room, where the page said it all
 # before they joined, sooner). The agent's note and no_transcript run nothing: the line acts on them from the stream.
 OPENING_QUIET_SECONDS, ROOM_OPENING_QUIET_SECONDS = 3.0, 1.5
+# The board's call: the agent's first message, at pickup (Call.hello). Its hello is the model's own words, kept short so
+# the board never has to talk over it.
+HELLO = ("(The line has just picked up the board's call: you answer it, as anyone answering their phone does. Say hello "
+         "in a few words of your own, in the call's language, your name if you like, and nothing more: no question, no "
+         '"how are you" or "how can I help", no guess at why they are calling, no recap and no tool. They talk next.)')
+# HQ rings while the hello is thought of and voiced (Call.ringing), up to this long: a call's first reply writes its
+# whole briefing to the cache (1.9 to 3.8 s measured, model-releases.md) after the CLI's own start, and the first
+# sentence the line voices after it starts is slow (measured 11 s for a few words). The cap is only for a stuck
+# session, which must not hold the board's call unanswered: HQ gives up on a line that hasn't picked up 30 s after it
+# dials (call.js), and the line's own start (about 1 s) comes before the ring. Past it the line picks up, and the
+# hello follows once ready if the board hasn't spoken yet.
+HELLO_WAIT_SECONDS = 20.0
 NOTE_TOOL, NO_TRANSCRIPT_TOOL = 'mcp__hq__note', 'mcp__hq__no_transcript'
 # The objection's answer when the coordinator sends none (a company's own words come with call-context)
 OBJECTED = {'en': "No problem, I won't keep one.", 'nl': 'Geen probleem, dan houd ik er geen bij.',
@@ -417,7 +430,9 @@ async def serve_screens(path):
 
 # Each tool's ask on the line's socket, by the key it carries (the screen tool's has none of these), and the tool's words
 # (ask_to_see and draw; open_work and drive)
-ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS}
+# (scrap and title_page: the call's notes page)
+ASKED_WORDS = {'sketch': SKETCH_WORDS, 'ask_to_see': ASK_WORDS, 'draw': INK_WORDS, 'open_work': OPEN_WORDS, 'drive': DRIVE_WORDS,
+               'scrap': SCRAP_WORDS, 'title_page': TITLE_WORDS_SAID}
 
 
 async def screen_asked(reader, writer):
@@ -428,7 +443,8 @@ async def screen_asked(reader, writer):
         call = SCREENS.get(asked.get('key')) if isinstance(asked, dict) and isinstance(asked.get('key'), str) else None
         tool = call and {'screen': call.screen_tool, 'sketch': call.sketch_tool, 'ask_to_see': call.drawing.ask_tool,
                          'draw': call.drawing.ink_tool, 'open_work': call.driving.open_tool,
-                         'drive': call.driving.drive_tool}[kind]
+                         'drive': call.driving.drive_tool, 'scrap': call.page.scrap_tool,
+                         'title_page': call.page.title_tool}[kind]
         answer = await tool(asked) if tool else {'error': ASKED_WORDS.get(kind, SCREEN_WORDS)['gone']}
     except Exception as err:  # (the coordinator failed, or a request of another shape: the agent hears so)
         print(f'{kind} tool: {err!r}', flush=True)
@@ -1162,6 +1178,8 @@ class Call:
         self.drawing = Drawing(self)
         # The agent driving a piece of work on the board's screen (driving.py)
         self.driving = Driving(self)
+        # The call's notes page in the board's Notebook (callnotes.py): the agent's scraps and its title.
+        self.page = CallNotes(self)
         # A stranger's call answered by care: care keeps the words, so the line keeps no transcript file. The opening is
         # said at pickup (care_opening); the caller's first words are kept here (first) until they have heard its notice
         # (the AI line and the transcript line) whole in each of its languages (care_first), and a reply in another
@@ -1177,6 +1195,8 @@ class Call:
         # each language until then
         self.settled, self.replies = False, {}
         self.spoke = None  # when the caller's last words ended, for the reply's timing line (care calls)
+        # the board's call: its hello's words and audio, made while HQ rang (ringing).
+        self.hello_made = None
         if self.care:
             self.them = 'Caller'
             self.brain.informed = self.informed
@@ -1196,8 +1216,9 @@ class Call:
 
     async def greet(self):
         """At pickup, before the board starts talking: when no Claude seat has room (the coordinator's reading of the
-        worker's seats), the line says so at once, as a turn of its own the board can talk over. On a call out the agent
-        speaks first, in the opening's fixed words, once the other side has picked up (opened)."""
+        worker's seats), the line says so at once, as a turn of its own the board can talk over; else the agent says hello
+        (hello). On a call out the agent speaks first, in the opening's fixed words, once the other side has picked up
+        (opened)."""
         if self.callout and self.brain.opening:
             self.opening = {'said': False}
             return
@@ -1206,8 +1227,105 @@ class Call:
             self.turn = asyncio.create_task(self.care_opening())
             return
         seat = self.brain.seat
-        if isinstance(seat, dict) and seat.get('room') is False:
+        if self.seatless_at_pickup():
             self.turn = asyncio.create_task(self.seatless(str(seat.get('why') or 'limit'), seat.get('until') or 0))
+        elif not self.callout:  #.
+            self.turn = asyncio.create_task(self.hello())
+
+    def seatless_at_pickup(self):  #.
+        seat = self.brain.seat
+        return isinstance(seat, dict) and seat.get('room') is False
+
+    async def ringing(self):
+        """Before the line picks up the board's call on HQ: the hello is thought of and voiced while HQ still rings, so
+        the pick-up's clack and the hello's first sound come together, as a phone is answered (HELLO_WAIT_SECONDS at
+        most). Its turn's stop is made now, so the board's first words or the call's end cut a synthesis still running
+        after the cap."""
+        if not self.seatless_at_pickup():
+            self.speaking = threading.Event()
+            self.hello_made = asyncio.create_task(self.think_of_hello(self.speaking))
+            await asyncio.wait({self.hello_made}, timeout=HELLO_WAIT_SECONDS)
+
+    async def think_of_hello(self, stop=None):
+        """The hello's words, the model's own (HELLO), whole, and their audio: made whole as well while HQ rings (stop:
+        the hello's turn's, which ends the synthesis: it plays the moment the line picks up), else None (made as it's
+        said)."""
+        words = ''
+        async for delta in self.brain.ask(HELLO):
+            if type(delta) is str:
+                words += delta
+        words = ' '.join(words.split())
+        text = spoken(words) if stop else ''
+        if not text:
+            return words, None
+        return words, [x async for x in self.audio_of(text, self.lang, stop)]
+
+    async def hello(self):
+        """The board's call, as a phone is answered: at the pickup the agent says hello in its own few words (thought of
+        while HQ rang: ringing), a turn of its own the board can talk over. Once the board has started talking it isn't
+        said, so the two never start at once, and the model hears so with its next message. A seat that turns the turn
+        away is said, as any turn's is, and the turn ends as a reply's does (ended_turn)."""
+        turn = self.last = {'text': '', 'n': len(self.lines), 'heard': None, 'back': False}
+        # (the ring's, which its synthesis heeds)
+        stop = self.speaking = self.speaking if self.hello_made else threading.Event()
+        words, made = await self.hello_thought(self.hello_made or self.think_of_hello(), stop, turn)
+        if self.ended:
+            return
+        if words and (stop.is_set() or self.voiced or self.draft or self.over or self.waiting):
+            print(f'call: {self.agent}: the board spoke first, no hello', flush=True)
+            self.brain.recap = "(Your hello wasn't said: they started talking first.)"
+            return
+        if words:
+            await self.say(words, stop, turn, made=made)
+        await self.ended_turn(words, stop, turn)
+
+    async def hello_thought(self, thinking, stop, turn, last=False):
+        """The hello's words and audio (thinking: the task or coroutine that thinks of them, think_of_hello), '' and
+        None if there are none to say. A seat that turns it away is said (unanswered). A session lost while it thinks of
+        them is renewed, as a lost reply's is, and the fresh one thinks of them once more (last): lost again, the agent
+        waits for the board's first words."""
+        try:
+            return await thinking
+        except Unanswered as err:
+            if not stop.is_set():
+                await self.unanswered(err.why, err.until, stop, turn)
+        except Exception as err:
+            if await self.renew('its hello', err, stop, turn) and not last and not stop.is_set():
+                return await self.hello_thought(self.think_of_hello(), stop, turn, last=True)
+        return '', None
+
+    async def renew(self, what, err, stop, turn, shown=()):
+        """The call agent died or hung in a turn (what it lost, and err: why): a fresh session that knows the call so far
+        (shown: the pictures the lost turn was showing it). Whether it started; if it didn't, the line says so, never
+        silence, unless the call has ended."""
+        print(f'call: {self.agent} lost {what}: {err!r}', flush=True)
+        self.brain.kill()
+        if self.ended:  # (it stopped because the board hung up: no new session for an ended call)
+            return False
+        try:
+            await self.restart(self.lines, shown)
+        except Exception as again:  # (the coordinator refused: the call has ended, or its token expired)
+            print(f'call: {self.agent} could not restart the call agent: {again!r}', flush=True)
+        else:
+            if not self.ended:  # (hung up while it started: Agent.start launched nothing)
+                return True
+        if not self.ended:
+            await self.unanswered('error', 0, stop, turn)
+        return False
+
+    async def ended_turn(self, said, stop, turn):
+        """A reply's or the hello's end, with the agent's words in it (said): once they got through, the call screen's
+        notice goes; they're the turn's transcript line (marked if the board talked over them, left out if taken back),
+        and the call is kept. Unless the board stopped the turn, HQ shows the line listening again. Whether it does."""
+        if said and self.noticed and not stop.is_set():
+            self.noticed = None
+            await self.send_event({'type': 'notice', 'text': ''})
+        if said and not turn['back']:
+            self.write(f'{self.agent.capitalize()}: {said}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
+        self.keep()
+        if not stop.is_set():
+            await self.send_event({'type': 'state', 'state': 'listening'})
+        return not stop.is_set()
 
     def open(self, greeting, at=None):
         """A call out: the other side has picked up and said its first words (greeting), or nothing for a while: the
@@ -2068,27 +2186,18 @@ class Call:
                         await self.unanswered(err.why, err.until, stop, turn)
                     break
         except Exception as err:  # the call agent died or hung: say so, and start a fresh one that knows the call so far
-            print(f'call: {self.agent} lost the reply: {err!r}', flush=True)
             step['on'] = False
             turn['bye'] = False
             if said.strip() and not turn['back']:  # what the board already heard stays in the transcript, marked
                 self.write(f'{self.agent.capitalize()}: {said.strip()} (cut off: the call agent stopped)', self.heard_at(turn))
             buf, said = '', ''
-            self.brain.kill()
-            # It stopped because the board hung up: no new session for an ended call
+            # (not renewed: the line said why, and the turn ends as any does)
+            renewed = await self.renew('the reply', err, stop, turn, shown)
             if self.ended:
                 return
-            try:
-                await self.restart(self.lines, shown)
+            if renewed:
                 said = "Sorry, I lost my train of thought there. Could you say that again?"
-            except Exception as again:  # (the coordinator refused: the call has ended, or its token expired)
-                print(f'call: {self.agent} could not restart the call agent: {again!r}', flush=True)
-            if self.ended:  # (hung up while it started: Agent.start launched nothing)
-                return
-            if said:
                 await self.say(said, stop, turn)
-            else:  # it doesn't start again either: the line says so, never silence
-                await self.unanswered('error', 0, stop, turn)
         else:
             if not delivered:  # (HQ keeps 'received' for them: the model has them with the next request)
                 self.unsent += shown
@@ -2098,18 +2207,10 @@ class Call:
             said += buf
             await self.say(buf, stop, turn)
         await self.notice_after(stop, turn)
-        if said.strip() and self.noticed and not stop.is_set():  # a reply got through: the call screen's notice goes
-            self.noticed = None
-            await self.send_event({'type': 'notice', 'text': ''})
-        if said.strip() and not turn['back']:
-            self.write(f'{self.agent.capitalize()}: {said.strip()}' + (' (interrupted)' if stop.is_set() else ''), self.heard_at(turn))
-        self.keep()
         if self.care and spoke is not None and turn['heard']:
             self.timed(turn, spoke, asked, worded_at)
-        if not stop.is_set():
-            await self.send_event({'type': 'state', 'state': 'listening'})
-            if turn.get('bye') and not self.ended:
-                self.leaving = asyncio.create_task(self.leave(turn))
+        if await self.ended_turn(said.strip(), stop, turn) and turn.get('bye') and not self.ended:
+            self.leaving = asyncio.create_task(self.leave(turn))
 
     def timed(self, turn, spoke, asked, worded_at):
         """Where a care call's reply's wait went, counted from the caller's last word (numbers only, for call-times.sh):
@@ -2145,7 +2246,9 @@ class Call:
             sound = hang_up_tone()
             tone_seconds = len(sound) / RATE
             self.until = self.wiring.monotonic() + tone_seconds
-            await self.send_event({'type': 'tick'})  # (HQ counts it as it does the tick: a start of its own, not the voice)
+            # (HQ counts it as it does the tick: a start of its own, not the voice; and switches the agent's little screen
+            # off as it plays.)
+            await self.send_event({'type': 'tick', 'tone': 'hangup'})
             await self.send_audio(sound)
             await asyncio.sleep(tone_seconds + TONE_TAIL_SECONDS)
             while self.over and not self.ended:  # (the board still talking over the tone: what it says decides)
@@ -2180,17 +2283,26 @@ class Call:
                 await self.send_event({'type': 'tick'})  # (not a sentence: HQ doesn't count the gap before it as a stutter)
                 await self.send_audio(sound)
 
-    async def say(self, sentence, stop, turn, lang=None, keep=False):
+    async def say(self, sentence, stop, turn, lang=None, keep=False, made=None):
         """A sentence in the agent's voice, in the call's language or another (lang: a care call's opening). keep: fixed
-        words, whose audio is kept (SAID) and played from there the next time, with no wait for the synthesis."""
+        words, whose audio is kept (SAID) and played from there the next time, with no wait for the synthesis. made: its
+        audio, made already (the hello's, while HQ rang)."""
         lang = lang or self.lang
         text = spoken(sentence)
         if not text:
             return
         await self.send_event({'type': 'state', 'state': 'speaking'})
         await self.send_event({'type': 'said', 'text': text})
-        q = asyncio.Queue()
-        loop = asyncio.get_running_loop()
+        async for x in self.audio_of(text, lang, stop, keep, made):
+            if not stop.is_set():
+                now = self.wiring.monotonic()
+                turn['heard'] = turn['heard'] or now
+                self.until = max(self.until, now) + len(x) / RATE
+                await self.send_audio(x)
+
+    async def audio_of(self, text, lang, stop, keep=False, made=None):
+        """A sentence's audio (text: as spoken() gives it), piece by piece as it's synthesised in the agent's voice, or
+        all at once if it was made before (made, or kept words' in SAID)."""
         # (HQ shows "€4", "06" and "Acme", the board hears "four euros", "oh six" and "Ak-mee")
         text = aloud(respelt(text, self.brain.respell.get(lang, {})), lang)
         named = getattr(self.brain, 'voices', {}).get(lang)  # (the company's, in the language: Piper's or Pocket's)
@@ -2199,15 +2311,14 @@ class Call:
         voice = named or self.brain.voice
         seed = getattr(self.brain, 'seeds', {}).get(lang, SEED)
         kept = (lang, voice, text, seed)
-        if keep and kept in SAID:
-            for x in SAID[kept]:
-                if stop.is_set():
-                    return
-                now = self.wiring.monotonic()
-                turn['heard'] = turn['heard'] or now
-                self.until = max(self.until, now) + len(x) / RATE
-                await self.send_audio(x)
+        if made is None and keep:
+            made = SAID.get(kept)
+        if made is not None:
+            for x in made:
+                yield x
             return
+        q = asyncio.Queue()
+        loop = asyncio.get_running_loop()
         pieces = []
 
         def synth():  # (in a thread of its own, in parallel with other calls': the note under SPELLED)
@@ -2232,11 +2343,7 @@ class Call:
         threading.Thread(target=synth, daemon=True).start()
         while (x := await q.get()) is not None:
             pieces.append(x)
-            if not stop.is_set():
-                now = self.wiring.monotonic()
-                turn['heard'] = turn['heard'] or now
-                self.until = max(self.until, now) + len(x) / RATE
-                await self.send_audio(x)
+            yield x
         if keep and not stop.is_set():
             SAID[kept] = pieces
 
@@ -2501,16 +2608,18 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
                          walk=walk, wiring=wiring)
         CALLS[cid] = {'call': call, 'line': line, 'timer': None}
         await call.start()
+        await call.ringing()  # (its hello comes with the pick-up)
         print(f'call: {agent} picked up in {time.monotonic() - t0:.1f} s', flush=True)
     call.live_at = call.live_at or call.wiring.now() / 1000
     # id: the line's, to reconnect; call: HQ's calls row; key: HQ's picture uploads for that call carry it; heard: the
     # board's samples the line has (HQ sends the rest again)
-    await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}))
-    await call.retell()  # (what happened to its pictures while HQ was away)
-    if not first.get('resume'):
-        await call.greet()
     bye = False
+    # (from the id on: HQ may hang up while the line rang, and the call must be ended or held then as at any drop)
     try:
+        await ws.send(json.dumps({'type': 'call', 'id': cid, 'call': call.brain.call, 'key': call.brain.key, 'heard': call.got}))
+        await call.retell()  # (what happened to its pictures while HQ was away)
+        if not first.get('resume'):
+            await call.greet()
         async for m in ws:
             if line.ws is not ws:  # (the call moved to a new connection, which counts from what the line has: heard)
                 break

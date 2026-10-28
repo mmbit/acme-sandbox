@@ -1,13 +1,15 @@
-// book-check.mjs's Search story (shell/booksearch.js), on HQ's mock book, held like an iPad mini: the overview holds a
-// line to write on that the Pencil can write in (Apple's Scribble: nothing over the field, nothing cancelling a
-// pen's touch on it, a field that takes text); a word said while drawing yesterday is found as it's written, with how
-// it came, whose sheet and the day, and an answer by its words too; tapped, the book turns to yesterday's page, the
-// note in view and its number lit.
+// book-check.mjs's Search story (shell/ink/booksearch.js; Ink's folder), held
+// like an iPad mini, on a played Notebook of its own: the overview holds a line to write on that the Pencil can write
+// in (Apple's Scribble: nothing over the field, nothing cancelling a pen's touch on it, a field that takes text); a
+// scrap's words said while drawing yesterday are found as they're written, with how they came, who the scrap went to
+// and the day, and an answer under it by its words too; tapped, the book turns to yesterday's page, the scrap in view.
+// (the Notebook's groups)
 import assert from 'node:assert/strict';
+import { errorsOf } from '../../shared/browser/browser.mjs';
 
-// c: book-check's { hq, inBook, shot, noErrorsIn, viewport, settle }
+// c: book-check's { hqIn, base, inBook, shot, noErrorsIn, viewport, settle }
 export async function findStory(browser, c) {
-  const { page, errors, done } = await c.hq(browser, c.viewport);
+  const { page, errors, done } = await searchable(browser, c, c.viewport);
   try {
     await written(page, c);
     await opened(page, c);
@@ -42,35 +44,75 @@ async function written(page, c) {
   await field.fill('purple');
   await until(() => page.getByRole('search').textContent(), 'Nothing in the book says “purple”');
 }
-// Tapped, the book turns to yesterday's page at the note, its number lit
+// Tapped, the book turns to yesterday's page, the scrap on it in view
 async function opened(page, c) {
   await page.getByRole('searchbox', { name: 'Search the book' }).fill('tear');
   await found(page, 'tear line');
-  // (the day in the shown page's heading.)
-  const shownDay = () => page.locator('#book .bk-page:not([hidden]) .bk-when').textContent();
-  const today = await shownDay();
+  const where = () =>
+    page
+      .locator('#book')
+      .getByRole('button', { name: /^The notebook's pages/ })
+      .getAttribute('aria-label');
   await page
     .getByRole('search')
     .getByRole('button', { name: /tear line/ })
     .click();
-  // (a note alone on its page shows no number: the note itself is lit.)
-  const note = page.getByRole('region', { name: 'For Moss' }).getByRole('group', { name: 'Note' }),
-    lit = note.locator('[data-lit]');
-  await lit.waitFor({ timeout: 5000 });
+  await until(where, 'Tear-off cards, 1 of 2');
   await page.waitForTimeout(c.settle);
   assert.equal(await page.getByRole('search').isVisible(), false, 'Search steps aside');
-  const day = await shownDay();
-  assert.notEqual(day, today, `the book still on ${day}`);
-  assert.ok(await c.inBook(page, note), "the note on the book's paper");
+  const scrap = page.locator('#book .bk-page:not([hidden]) .bk-scrap-words', { hasText: 'tear line' });
+  assert.ok(await c.inBook(page, scrap), "the scrap on the book's paper");
   await c.shot('book-search-found', page);
-  // (the light goes out when its animation ends)
-  await lit.waitFor({ state: 'detached', timeout: 5000 });
+}
+
+// HQ on a Notebook of its own: yesterday's page, sent, a spoken scrap on it for Moss and Moss's answer under it, and
+// today's with a drawing
+async function searchable(browser, c, viewport, options = {}) {
+  const context = await c.hqIn(browser, viewport, { ...options, notebooks: seeded() });
+  const page = await context.newPage(),
+    errors = errorsOf(page);
+  await page.goto(`${c.base}/?intro=0`);
+  await page.waitForSelector('#book .bk-clip', { state: 'attached', timeout: 30_000 });
+  return { page, errors, done: () => context.close() };
+}
+function seeded() {
+  const now = new Date(),
+    at = d => d.toISOString(),
+    yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1, 12),
+    then = at(yesterday);
+  const anchor = { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] },
+    snip = { file: 'book-snip-1.svg', x: 60, y: 120, w: 360, h: 154, tilt: 0 },
+    said = { words: 'The tear line is too dark', said: 'spoken', owner: 'moss' },
+    line = {
+      color: '#2a2352',
+      size: 4,
+      points: [0, 1, 2, 3].map(i => [300 + i * 30, 300 + (i % 2) * 12, 0.5, i * 16]),
+    };
+  return {
+    notebooks: [{ id: 1, kind: 'mine', name: 'My Notebook', created: then, updated: at(now) }],
+    pages: [
+      { id: 1, notebook: 1, pos: 0, label: 'Tear-off cards', send_at: yesterday.getTime() + 3_600_000, created: then },
+      { id: 2, notebook: 1, pos: 1, created: at(new Date(now - 60_000)) },
+    ].map(p => ({ updated: p.created, x: 0, y: 0, w: 1200, h: 1600, ...p })),
+    groups: [
+      { id: 1, page: 1, kind: 'scrap', pictures: [snip], anchor, ...said, status: 'sent', note: 1, created: then },
+      { id: 2, page: 2, kind: 'drawing', ink: [line], created: at(now) },
+    ].map(g => ({ updated: g.created, ...g })),
+    slips: [
+      {
+        ...{ id: 1, note: 1, by: 'moss', name: 'Moss', text: 'Lighter now, half the old ink' },
+        ...{ picture: null, link: null, preview: null, now: null, now_at: null, ticked: null },
+        created: at(new Date(yesterday.getTime() + 7_200_000)),
+      },
+    ],
+    names: { moss: 'Moss' },
+  };
 }
 
 // On a desktop, in the overview: a word typed finds as it's written; the overview closed and opened again, the words
 // and their finds still there; Esc wipes the words.
 export async function keptStory(browser, c) {
-  const { page, errors, done } = await c.hq(browser, c.desktop, { hasTouch: false });
+  const { page, errors, done } = await searchable(browser, c, c.desktop, { hasTouch: false });
   try {
     const overview = page.locator('#book').getByRole('button', { name: /^The overview/ }),
       field = page.getByRole('searchbox', { name: 'Search the book' });

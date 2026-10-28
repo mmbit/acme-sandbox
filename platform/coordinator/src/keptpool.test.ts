@@ -1,6 +1,7 @@
 // node --test src/keptpool.test.ts   (throwaway DATA_DIR and the test company): the done jobs an estimate stands on are
 // kept, read again only where their rows changed, and always as a whole read gives them, whatever trigger code an
-// earlier version left in the database, read ahead in slices at a start or not
+// earlier version left in the database, read ahead in slices at a start or not, and ahead for a caller that can wait
+// where it would be read whole.
 import { mock, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { writeFileSync } from 'node:fs';
@@ -73,6 +74,13 @@ test('the done jobs are read again only where their rows changed, and always as 
     same();
   }
 
+  // a column set to the value it had notes nothing, so the pool is the same one (a push sent back sets its pull
+  // request's same files)
+  const unchanged = pastJobs();
+  db.prepare('update prs set files = files where branch = ?').run(`job/${c}`);
+  db.prepare('update jobs set title = title where id = ?').run(a);
+  assert.equal(pastJobs(), unchanged);
+
   // a job no longer done
   db.prepare("update jobs set status = 'failed' where id = ?").run(a);
   assert.ok(!pastJobs().some(j => j.id === a));
@@ -94,7 +102,7 @@ test('the done jobs are read again only where their rows changed, and always as 
   pastJobs();
   db.prepare("update jobs set title = 'Glaze the blue tiles' where id = ?").run(b);
   db.exec('delete from past_changes');
-  db.prepare('update jobs set engine = engine where id = ?').run(c);
+  db.prepare("update jobs set engine = 'codex' where id = ?").run(c);
   assert.equal(pastJobs().find(j => j.id === b)!.title, 'Glaze the blue tiles');
 });
 
@@ -121,13 +129,13 @@ test("a trigger an earlier version made, blind to a column the read takes now, i
   const version = () => (db.prepare('pragma schema_version').get() as { schema_version: number }).schema_version,
     was = version();
   db.exec('delete from past_changes');
-  db.prepare('update jobs set engine = engine where id = ?').run(b);
+  db.prepare("update jobs set engine = 'codex' where id = ?").run(b);
   pastJobs();
   assert.equal(version(), was);
 });
 
 test("the start's read ahead, a slice at a time, is the whole read's, and a change during the slicing is read again", async () => {
-  // more than two slices of done work, between reviews' runs the pool leaves out
+  // more than two slices of done work. The reviews among them are runs the pool leaves out.
   for (let i = 0; i < 1100; i++) {
     const ended = T - DAY + i * 60_000;
     h.pastJob({ title: `Paint tile ${i}`, run: { started: ended - 10 * 60_000, ended } });
@@ -140,7 +148,8 @@ test("the start's read ahead, a slice at a time, is the whole read's, and a chan
   assert.equal(started.pastJobs(), ahead, 'the first call reads none of it again');
   same(started.pastJobs);
 
-  // (the first slice is read before the read ahead yields: b's row, in it, changes after it, and a job is done since)
+  // The read ahead reads its first slice before it yields. b's row is in that slice and changes after it. A new job is
+  // done meanwhile.
   const later = './matching.ts?again',
     again = (await import(later)) as typeof matching,
     reading = again.readPastAhead();
@@ -150,6 +159,31 @@ test("the start's read ahead, a slice at a time, is the whole read's, and a chan
   assert.equal(again.pastJobs().find(j => j.id === b)!.title, 'Glaze the tiles at dusk');
   assert.ok(again.pastJobs().some(j => j.id === late));
   same(again.pastJobs);
+});
+
+test('a caller that can wait reads the pool ahead only where pool() would read it whole', async () => {
+  const read = (only?: number[]) =>
+    (only
+      ? db.prepare('select id, title from jobs where id in (select value from json_each(?))').all(JSON.stringify(only))
+      : db.prepare('select id, title from jobs').all()) as { id: number; title: string }[];
+  // (a job titled Anywhere is noted as any job's change)
+  const probe = keptPool('wholeprobe', () => 'select id, title from jobs', read, {
+    jobs: { of: row => `select iif(${row}.title = 'Anywhere', null, ${row}.id)` },
+  });
+  assert.ok(probe.whole(), 'none kept yet');
+  probe.pool();
+  assert.ok(!probe.whole());
+  db.prepare("update jobs set title = 'Glaze the tiles again' where id = ?").run(b);
+  assert.ok(!probe.whole(), "one job's change is read alone");
+  db.prepare("update jobs set title = 'Anywhere' where id = ?").run(c);
+  assert.ok(probe.whole());
+  probe.pool();
+  assert.ok(!probe.whole());
+
+  const fresh = './matching.ts?soon',
+    soon = (await import(fresh)) as typeof matching;
+  assert.deepEqual(await soon.pastJobsSoon(), soon.pastJobs(ids()));
+  assert.equal(await soon.pastJobsSoon(), soon.pastJobs(), 'then the kept pool');
 });
 
 test('a read that takes a table its notes leave out is refused, so no change to it goes unnoted', () => {

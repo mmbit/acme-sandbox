@@ -2,6 +2,7 @@
 // new:, a review's findings: reviewwork.ts), the one way a thread starts but HQ's own one-task ones (made.ts). Only the
 // project's owner and the CEO draw one, refused before anything is written; each is logged in plan_changes. Kept apart
 // from plan.ts, whose imports run at load, so the claim's modules can reach it.
+// (its messages say deliverable, the board's word for a thread)
 import { db, planChange } from './db.ts';
 import {
   createThread,
@@ -33,7 +34,7 @@ export function newThread(
   const named = (t.needs ?? []).map(String),
     found = named.map(n => findThread(n));
   const missing = named.find((_, i) => !found[i]);
-  if (missing !== undefined) return `there's no thread ${missing} to need (hq thread list)`;
+  if (missing !== undefined) return `there's no deliverable ${missing} to need (hq deliverable list)`;
   const needs = found.map(n => n!.id);
   const made = createThread({
     project: project.id,
@@ -43,7 +44,7 @@ export function newThread(
     by: by.job,
   });
   if (typeof made === 'string') return made;
-  planChange({ project: project.id, thread: made.id, what: `thread drawn: ${made.name}`, by: by.agent });
+  planChange({ project: project.id, thread: made.id, what: `deliverable drawn: ${made.name}`, by: by.agent });
   for (const n of needs) addNeed(made, n, by.agent);
   return { ...made, needs, place: placeOf(made) };
 }

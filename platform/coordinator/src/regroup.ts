@@ -2,6 +2,7 @@
 // thread, by the CEO, the process team or the work's owner. A moved thread's old id keeps resolving (projects.ts
 // findThread). Also a task out of its thread, as the CEO expedites it (hq expedite).
 // (the work's owner: its thread's project's, projects.ts ownerOf)
+// (its messages say deliverable, the board's word for a thread)
 import { db, inOneStep, planChange } from './db.ts';
 import { ceo } from './company.ts';
 import { oneLine } from './agreements.ts';
@@ -24,7 +25,7 @@ import * as predictionlog from './predictionlog.ts'; // (its table, whose thread
 export function moveThread(id: string, to: string, agent: string, why = ''): Thread | string {
   why = oneLine(why);
   const thread = findThread(id);
-  if (!thread) return `there's no thread ${id} (hq thread list)`;
+  if (!thread) return `there's no deliverable ${id} (hq deliverable list)`;
   const project = findProject(to);
   if (!project) return `there's no project "${to}" (hq projects)`;
   if (thread.project === project.id) return `${thread.id} is in ${project.id} already`;
@@ -33,7 +34,7 @@ export function moveThread(id: string, to: string, agent: string, why = ''): Thr
   const from = thread.id,
     moved = `${project.id}/${from.slice(thread.project.length + 1)}`;
   const taken = findThread(moved);
-  if (taken && taken.id !== from) return `${moved} is a thread already`;
+  if (taken && taken.id !== from) return `${moved} is a deliverable already`;
   const clash = thread.status === 'open' && !oneTask(from) ? threadClash(project, thread.name, from) : undefined;
   if (clash) return clash;
   const held = shedRefusal(from, { project: project.id }, agent, why);
@@ -84,7 +85,7 @@ export function moveJob(
   if (dropped(row.lead) || finished(row.lead))
     return `job #${row.lead}'s work has ended: only work still going on moves`;
   const thread = findThread(to);
-  if (thread?.status !== 'open') return `${to} isn't an open thread (hq thread list)`;
+  if (thread?.status !== 'open') return `${to} isn't an open deliverable (hq deliverable list)`;
   const had = row.thread ? findThread(row.thread) : undefined;
   if (had?.id === thread.id) return `job #${job} is on ${thread.id} already`;
   const owner = had && ownerOf(had);
@@ -129,12 +130,12 @@ export function takeOut(
   if (row.status === 'running')
     return {
       taken: false,
-      refusal: `job #${job} is running now on the branch it shares with the rest of ${thread.id}, so it can't leave that thread: ${QUEUE_THE_FIX}`,
+      refusal: `job #${job} is running now on the branch it shares with the rest of ${thread.id}, so it can't leave that deliverable: ${QUEUE_THE_FIX}`,
     };
   if (row.status !== 'queued' || row.started || row.branch || row.pr)
     return {
       taken: false,
-      refusal: `job #${job} has already run on the branch it shares with the rest of ${thread.id}, so it merges with that thread: ${QUEUE_THE_FIX}`,
+      refusal: `job #${job} has already run on the branch it shares with the rest of ${thread.id}, so it merges with that deliverable: ${QUEUE_THE_FIX}`,
     };
   redraws.writePlan(() => {
     redraws.rememberHolds();

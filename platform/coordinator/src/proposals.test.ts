@@ -122,7 +122,7 @@ test("hq propose puts new work in its project owner's inbox, not the queue; the 
   assert.deepEqual(
     history.map(c => [c.what, c.by]),
     [
-      ['thread drawn: Boss rush', 'wren'],
+      ['deliverable drawn: Boss rush', 'wren'],
       ['task #' + drawn.body.job + ' added: A boss rush', 'wren'],
     ],
   );
@@ -209,7 +209,7 @@ test('a proposal is refused for someone who takes no work, a thread that is not 
   const wren = await h.start({ agent: 'wren', title: 'The first world' });
   for (const [body, why] of [
     [{ title: 'X', brief: 'Y', for: 'nobody' }, /isn't a colleague/],
-    [{ title: 'X', brief: 'Y', thread: 'game/none' }, /isn't an open thread/],
+    [{ title: 'X', brief: 'Y', thread: 'game/none' }, /isn't an open deliverable/],
     [{ title: 'X', brief: 'Y', project: 'nowhere' }, /no project "nowhere"/],
     [{ title: 'X', brief: ' ' }, /its whole brief/],
   ] as const) {

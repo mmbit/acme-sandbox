@@ -877,3 +877,36 @@ test("a mirror fetch that can't reach GitHub is told apart from one GitHub refus
   refused.ensureMirror();
   assert.throws(() => refused.fetchMirror(), (e: Error) => !(e instanceof FetchUnreachedError) && /no-such\.git/.test(e.message));
 });
+
+test("a commit main took outside a pull request is tested against main before it, and main's line has each with its parents", () => {
+  const seed = `${tmp}/seed`, at = (ref: string) => git('-C', seed, 'rev-parse', ref);
+  git('-C', seed, 'fetch', '-q', 'origin'); git('-C', seed, 'checkout', '-q', '--detach', 'origin/main');
+  const before = at('HEAD');
+  writeFileSync(`${seed}/direct.md`, 'straight onto main\n');
+  git('-C', seed, 'add', '-A'); git('-C', seed, 'commit', '-qm', 'a direct commit');
+  const direct = at('HEAD');
+  // the foundation's side of a carry: a commit of its own, merged into main as its second parent
+  git('-C', seed, 'checkout', '-q', '--orphan', 'foundation'); git('-C', seed, 'rm', '-rqf', '.');
+  writeFileSync(`${seed}/shared.md`, 'from the foundation\n');
+  git('-C', seed, 'add', '-A'); git('-C', seed, 'commit', '-qm', 'the foundation');
+  const foundation = at('HEAD');
+  git('-C', seed, 'checkout', '-q', '--detach', direct);
+  git('-C', seed, 'merge', '-q', '--allow-unrelated-histories', '-m', 'Merge foundation/main', foundation);
+  const carry = at('HEAD');
+  git('-C', seed, 'push', '-q', 'origin', 'HEAD:main');
+  flow.ensureMirror(); flow.fetchMirror();
+
+  assert.deepEqual(flow.mainLine(2), [
+    { sha: carry, parents: [direct, foundation] },
+    { sha: direct, parents: [before] },
+  ]);
+  assert.deepEqual(flow.mainSince(before), [
+    { sha: direct, parents: [before] },
+    { sha: carry, parents: [direct, foundation] },
+  ]);
+  assert.deepEqual(flow.mainSince(carry), []);
+  assert.equal(flow.mainSince('f'.repeat(40)), undefined, '(a commit the mirror has not)');
+  assert.equal(flow.testedCode(carry, 'parent').base, direct);
+  assert.equal(flow.testedCode(direct, 'parent').base, before);
+  assert.equal(flow.testedCode(carry).base, carry, "(its merge base with main: the commit itself, so nothing to test)");
+});

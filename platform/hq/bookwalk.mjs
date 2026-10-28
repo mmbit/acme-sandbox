@@ -1,5 +1,4 @@
-// book-check.mjs's walk-through story (shell/calldraw.js, calldrive.js, shared/review/drive.js), held like an iPad mini
-// in WebKit, its voice line played.
+// book-check.mjs's walk-through story (shell/ink/calldraw.js, calldrive.js, shared/review/drive.js; Ink's folder.), held like an iPad mini in WebKit, its voice line played.
 // Finished work on the desk phone whose maker offered a walk-through: the card says "Walk me through it", and its tap
 // rings the maker about the card as a walk-through (the line hears walk with the card). Picked up, a page opens in
 // today's book by itself. The agent suggests opening a screen of HQ's: a card with Open and show and Not now; the one tap
@@ -49,13 +48,13 @@ export async function walkStory(c) {
 // goes
 async function walkedThrough(s) {
   const page = await ringFromCard(s);
-  const made = s.posts.findLast(p => p.path === '/api/book/page/new');
-  assert.deepEqual(
-    made && [made.body.kind, made.body.call, /^Walk-through with /.test(made.body.label)],
-    ['call', 9, true],
-    "a walk-through's page in today's book as it's picked up, before anything is drawn",
-  );
+  // (the call's notes page, made as it's picked up: a walk-through's page is it.)
   const walkPage = s.pages.findLast(p => p.kind === 'call');
+  assert.deepEqual(
+    walkPage && [walkPage.call, !!walkPage.notebook],
+    [9, true],
+    "a walk-through's page in today's book as it's picked up, before anything is drawn: the call's notes page",
+  );
 
   // the agent suggests opening one of HQ's screens: the card waits, then Open and show opens it with the call small and
   // the board's screen shown, in the one tap
@@ -84,11 +83,11 @@ async function walkedThrough(s) {
 
   await openAlready(s, page, () => starts);
 
-  // hung up with nothing written: the page goes by itself, and nothing asks
+  // hung up with nothing written: the page is the store's to take (callnotes.ts: a blank one goes), and nothing asks
   await page.click('.callbubble .cb-hangup');
-  for (let i = 0; i < 60 && !deleted(s, walkPage.id); i++) await page.waitForTimeout(250);
-  assert.ok(deleted(s, walkPage.id), "the empty walk-through's page thrown away as the call ends");
-  assert.equal(await page.locator('#call-cards [data-card="page"]').count(), 0, 'no card about a page that is gone');
+  await page.waitForTimeout(1500);
+  assert.equal(deleted(s, walkPage.id), false, 'HQ throws nothing away: the store does');
+  assert.equal(await page.locator('#call-cards [data-card="page"]').count(), 0, 'no card about the page');
   await page.close();
 }
 
@@ -116,7 +115,7 @@ async function openAlready(s, page, starts) {
   }));
   assert.deepEqual(after, { book: before, kept: 'yes' }, 'the open book only came forward');
   assert.equal(starts(), 1, 'no second share');
-  await page.evaluate(() => import('/shell/book.js').then(m => m.foldBook())); // (the book keeps its state for the next)
+  await page.evaluate(() => import('/shell/ink/book.js').then(m => m.foldBook())); // (the book keeps its state for the next)
 }
 
 // Its pointer where it aimed, with its name; words nowhere on the page come back not done, with why
@@ -154,7 +153,7 @@ async function pointed(s, page) {
   assert.match(missed.why, /Nothing on their page says/);
 }
 
-// A second walk-through, written on: its page stays, with the card that keeps or throws it away
+// A second walk-through, written on: its page stays, going in by itself (no card that keeps or throws it away)
 async function keptWhenWritten(s) {
   const page = await ringFromCard(s);
   const walkPage = s.pages.findLast(p => p.kind === 'call');
@@ -166,8 +165,8 @@ async function keptWhenWritten(s) {
   const sent = await heard(s, 'note', e => e.id > 0);
   s.line.send({ type: 'note', id: sent.id, state: 'received' });
   await page.click('.callbubble .cb-hangup');
-  const kept = page.locator('#call-cards [data-card="page"]');
-  await kept.waitFor({ timeout: 15_000 });
+  await page.waitForTimeout(1500);
+  assert.equal(await page.locator('#call-cards [data-card="page"]').count(), 0, 'nothing asks');
   assert.equal(deleted(s, walkPage.id), false, 'a walk-through the board wrote on keeps its page');
   await s.shot('book-walk-kept', page);
   await page.close();
@@ -206,8 +205,12 @@ async function previewWalked(s) {
   // hung up: the ring and the pointer go from the preview, and the untouched walk-through's page with them
   await page.click('.callbubble .cb-hangup');
   await frame.waitForFunction(() => !document.querySelector('.hq-ring, .hq-pointer'), null, { timeout: 5000 });
-  for (let i = 0; i < 60 && !deleted(s, walkPage.id); i++) await page.waitForTimeout(250);
-  assert.ok(deleted(s, walkPage.id), "a preview's rings write nothing on the walk-through's page");
+  await page.waitForTimeout(1500);
+  assert.equal(
+    s.posts.filter(p => p.path === '/api/book/note' && p.body.page === walkPage.id).length,
+    0,
+    "a preview's rings write nothing on the walk-through's page",
+  );
   await page.close();
 }
 
