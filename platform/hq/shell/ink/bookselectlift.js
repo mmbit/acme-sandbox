@@ -1,7 +1,8 @@
 // The select tool's live move and resize (bookselect.js): what's picked lifts off its page's tiles onto a canvas of its
 // own over them and follows the pointer by a CSS transform (moved, or scaled about the opposite corner), its boxes of
 // words by a translate, so what shows while it's held is what lands. Let go, it lands as new things in the page's lists
-// (bookselectmath.js), one step for Undo, and the canvas goes once the tiles under it show them.
+// (bookselectmath.js), one step for Undo, and the canvas goes once the tiles under it show them. Carried onto a call's
+// window instead, its pictures go to the call (calldrop.js) and everything stays where it was on the page.
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
 import { sfx } from '../audio.js';
@@ -9,6 +10,7 @@ import { grownTo } from './bookrow.js';
 import { boundsOf, mapBox, moveBy, movedText, movedThings, scaleAt, union } from './bookselectmath.js';
 import { bounds, boxOfText, frameAt, frameDown, pageOf, swapIn, textEl } from './bookselect.js';
 import { followPress } from './bookpress.js';
+import { callWindowAt, dropOnCall, lightCall } from '../calldrop.js';
 
 // a press moves or scales once it has moved this far (screen px); let go, the lifted things settle in SETTLE_MS
 // (bookselect.css: .bk-sel-lifted's transition)
@@ -32,8 +34,18 @@ export function drag(sel, e, { corner }) {
     const to = pageOf(book, m);
     tr = corner < 0 ? moved(from, to, m.shiftKey) : scaleAt(b, corner, to, book.scale, sel.ink);
     shown(sel, held, tr);
+    held.onCall = !!sel.scraps.length && !!callWindowAt(m.clientX, m.clientY);
+    lightCall(held.onCall);
   };
-  const up = u => held && drop(sel, held, u.type === 'pointercancel' ? null : tr);
+  const up = u => {
+    if (!held) return;
+    const onCall = held.onCall && u.type !== 'pointercancel';
+    lightCall(false);
+    // (on the call, the page keeps its own: the things land back where they were, at once)
+    if (onCall && held.canvas) held.canvas.style.transform = '';
+    drop(sel, held, onCall || u.type === 'pointercancel' ? null : tr);
+    if (onCall) dropOnCall(sel.scraps.map(s => fetch(s.url).then(got => got.blob())));
+  };
   followPress(e, { move, up });
   return true;
 }

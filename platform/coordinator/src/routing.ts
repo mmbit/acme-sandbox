@@ -25,7 +25,6 @@ import { ceo, names } from './company.ts';
 import { manifest } from './manifests.ts';
 import * as forecast from './forecast.ts';
 import { holdOf, holdWords } from './noteholds.ts';
-import { customerCall } from './memory.ts';
 
 // A sent note as feedback.ts hands it over: slug is the product, cycle folder or HQ it was pinned on, owner whose it
 // is, place how a brief names it, returns whether the board's notes on it come back as its return (owed.ts), and text
@@ -80,9 +79,9 @@ export function queue(notes: SentNote[], back: { why: string; board: string } | 
       ...[n.id, job, n.slug, n.owner, n.name, n.place, n.returns ? 1 : 0, n.text, new Date().toISOString()],
       ...[back?.why ?? null, back?.board ?? null],
     );
-  // (an invited guest's note, signed with their address, is outside text kept like a customer's details, and a customer
-  // call's note holds theirs: the check that quotes it holds them, as the job it's routed to does, whether the note is new or one an ended check left: mark.
-  markCustomers(job);
+  // (an invited guest's note, signed with their address, is outside text kept like a customer's details: the check that
+  // quotes it holds them, as the job it's routed to does, whether the note is new or one an ended check left: mark.
+  markGuests(job);
   db.prepare('update jobs set prompt = ? where id = ?').run(checkPrompt(job), job);
   return job;
 }
@@ -91,7 +90,7 @@ export function queue(notes: SentNote[], back: { why: string; board: string } | 
 export function read(me: jobs.Reader) {
   const routes = routable(me.id);
   if (!routes.length) return 'No notes to route: none waits for this job, and no check left any unrouted.';
-  markCustomers(me.id);
+  markGuests(me.id);
   const open = jobs.openJobs({ except: me.id, awaitingMerge: true });
   const byThread = Map.groupBy(open, j => jobs.threadOf(j.id) ?? 'in no deliverable');
   const f = forecast.current();
@@ -261,24 +260,16 @@ const mark = (r: Route, went: Went) => {
     r.note,
   );
   db.prepare("update review_notes set job = ? where id = ? and status = 'sent'").run(went.job, r.note);
-  if (holdsCustomers(r.note)) jobs.handedCustomerData(went.job);
+  if (byGuest(r.note)) jobs.handedCustomerData(went.job);
 };
-// Whether a note holds a customer's details: an invited guest's from the board's book (feedback.ts fromBook: an author,
-// no share), or one from the page of a call about a customer (ink/callnotes.ts sends it at hang-up), as the call is now
-const holdsCustomers = (note: number) => {
-  if (db.prepare('select 1 from review_notes where id = ? and author is not null and share is null').get(note))
-    return true;
-  const page = db
-    .prepare(
-      'select p.call from book_notes n join book_pages p on p.id = n.page where n.review = ? and p.call is not null',
-    )
-    .get(note) as { call: number } | undefined;
-  return !!page && customerCall(page.call);
-};
+// Whether a note is an invited guest's from the board's book (feedback.ts fromBook: an author, no share); a call's notes
+// are the board's like any
+const byGuest = (note: number) =>
+  !!db.prepare('select 1 from review_notes where id = ? and author is not null and share is null').get(note);
 
-// A job that reads the notes it routes (its check's, an ended check's left) holds them if one holds a customer's details
-const markCustomers = (job: number) => {
-  if (routable(job).some(r => holdsCustomers(r.note))) jobs.handedCustomerData(job);
+// A job that reads the notes it routes (its check's, an ended check's left) holds them if one is an invited guest's
+const markGuests = (job: number) => {
+  if (routable(job).some(r => byGuest(r.note))) jobs.handedCustomerData(job);
 };
 
 // The caller's notes to route among ids (all, without): refused in words when it has none, or one isn't its

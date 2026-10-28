@@ -48,11 +48,12 @@ async function pulledOpen(browser, c) {
       `the tab at ${held.tabRight}, the edge at ${held.edgeLeft}`,
     );
     assert.ok(held.hq.opacity < 0.95 && held.hq.opacity > 0, `HQ's page dissolving: ${JSON.stringify(held.hq)}`);
+    assert.ok(held.shadow < 0.1, `the book's own shadow beside it while it's high: ${held.shadow}`);
     // lowered past halfway and let go still: gravity takes it, one tick as it lands, HQ's page back, sharp, in its room
     await page.mouse.move(720, tab.y, { steps: 4 });
     await page.waitForTimeout(500);
     assert.ok((await seen(page)).angle < 1.05, 'lowered past halfway');
-    await letGoShadowGrowing(page, c, held);
+    await letGoShadowGrowing(page, c);
     // (HQ's page settles in its room while it's gone, then comes back in slowly: the board's call 148)
     await page.waitForFunction(
       () => Number(document.body.style.opacity || 1) === 1 && !document.body.style.filter,
@@ -167,10 +168,8 @@ async function onAPhone(browser, c) {
 
 // ---- helpers
 
-// Let go lowered: it lands open, its own shadow on HQ's page beside it growing in with its drop, never popping in as
-// it lands (the board's call 152)
-async function letGoShadowGrowing(page, c, held) {
-  assert.ok(held.shadow < 0.1, `the book's own shadow beside it while it's high: ${held.shadow}`);
+// Let go lowered: it lands open, its own shadow on HQ's page beside it growing in with its drop
+async function letGoShadowGrowing(page, c) {
   await shadowWatched(page);
   await page.mouse.up();
   await c.settled(page, 'open');
@@ -183,7 +182,8 @@ async function letGoShadowGrowing(page, c, held) {
 }
 
 // What the board sees: the book's mode, the board's angle round the spine (rad, from its transform), the paper's laid
-// width, the cover's edge's and the tab's boxes on the screen, HQ's page's width and how dissolved it is
+// width, the cover's edge's and the tab's boxes on the screen, HQ's page's width and how dissolved it is, and how
+// strong the book's own shadow on HQ's page beside it is
 const seen = page =>
   page.evaluate(() => {
     const edge = document.querySelector('#book .bk-edge'),

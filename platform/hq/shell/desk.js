@@ -49,6 +49,7 @@ import { notes, openReviews, holdReviews } from './reviews.js';   // (the comput
 import { openAt } from './ink/book.js';   // (review mode's Open the book: bookAt.)
 import { mountPinSummon, tellPin } from './pinsummon.js';   // (the pin's summon)
 import { mountTips } from './booktips.js';   // (the tips book)
+import { frameMic, stopFrameMic } from './framemic.js';   // (review mode's mic for the viewer's page)
 import { tipHtml, cardAbout, wireTip, tipSettings, tipsSummary } from './tipcard.js';
 import { intakeCardHtml, wireCards, switchesLine } from './intake.js';
 import { ASKS } from './tips.js';
@@ -159,6 +160,7 @@ const PIN = icon('pin');
 let viewing = null; // { url, back, review: the frame's origin while review mode runs there, heard: when it last said hello, link: the outside link } (heard)
 async function openViewer(url, back = null) {
   const v = $('#viewer');
+  stopFrameMic(); // (the page before's recording, if any, goes with it)
   const me = viewing = { url, back, review: null, link: null };
   v.innerHTML = `<div class="bar">${back ? '<button class="glyph" data-back aria-label="Back">‹</button>' : ''}
     <a class="where" target="_blank" rel="noopener" data-external="1" title="Open in the browser">${where(url)}</a>
@@ -170,7 +172,7 @@ async function openViewer(url, back = null) {
       sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-modals allow-downloads"></iframe>`;
   if (v.hidden) { v.hidden = false; sfx.blip(); hush(true); cover(true, 'viewer'); coverPin(true); }   // (cover)
   const frame = v.querySelector('iframe'), out = v.querySelector('.bar .where');
-  v.querySelector('[data-close]').onclick = () => { viewing = null; v.hidden = true; v.innerHTML = ''; hush(false); cover(false, 'viewer'); coverPin(false); };
+  v.querySelector('[data-close]').onclick = () => { stopFrameMic(); viewing = null; v.hidden = true; v.innerHTML = ''; hush(false); cover(false, 'viewer'); coverPin(false); };
   v.querySelector('[data-back]')?.addEventListener('click', () => openViewer(back));
   v.querySelector('.pin').onclick = () => me.review && frame.contentWindow.postMessage({ hq: 'hq', pin: 1 }, me.review);
   frame.addEventListener('load', () => {
@@ -383,7 +385,7 @@ export function wireShare(el, s, o) {
   };
 }
 // Messages from the page in the viewer, and only from it: review mode saying hello (or goodbye, or asking for the book
-// at a sheet: bookAt), a deck's button asking for a preview, a deck saying hello (it gets the look's
+// at a sheet: bookAt, or for the mic: framemic.js), a deck's button asking for a preview, a deck saying hello (it gets the look's
 // slides.css), or a page asking for a backdrop (backdropOf). Anything else, or from anywhere else, is ignored.
 function fromViewer(e) {
   const frame = $('#viewer iframe'), d = e.data, me = viewing;
@@ -393,7 +395,9 @@ function fromViewer(e) {
   const old = d.hq === undefined && d.onlyonery === 'deck', tag = old ? 'deck' : d.hq;
   if (tag === 'review') {
     if (d.hello) { me.review = e.origin; me.heard = performance.now(); e.source.postMessage({ hq: 'hq' }, e.origin); }   // (heard)
-    else if (d.bye && me.review === e.origin) me.review = null;
+    else if (d.bye && me.review === e.origin) { me.review = null; stopFrameMic(); }
+    // (its post-it's mic tapped: HQ records for it, the frame having no microphone: framemic.js.)
+    else if (typeof d.mic === 'string' && Number.isInteger(d.id)) frameMic(d, e.source, e.origin, voiceLang());
     // (from the viewer's page whatever its hello: a goodbye that came late, the page before's, mustn't lose the way to
     // the book, which only opens HQ's own.)
     else if (d.book) bookAt(d.book);

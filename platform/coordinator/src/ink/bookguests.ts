@@ -1,7 +1,7 @@
 // Invited people's notes on the board's sheets. A person the board shared a preview with and invited into its book
-// (sketchpeople.ts grant) has each note they write there join the board's open sheet for the owner of what was shared
-// (feedback.ts saveNote, bookreview.ts toBook, by 'guest:<grant>'), in their colour with their name (sketchpeople.ts
-// guestOf). The board adds its own and sends the lot; their words go as outside text, signed (feedback.ts fromBook).
+// (sketchpeople.ts grant) has each note they write there land as a scrap in the board's Notebook for the owner of what
+// was shared (feedback.ts saveNote, bookreview.ts toBook, by 'guest:<grant>').
+// The board sends its page with its own on it; their words go as outside text, signed (feedback.ts fromBook).
 import { guestOf } from './sketchpeople.ts';
 import { listed } from '../guests.ts';
 import { outsideWords } from '../feedback.ts';

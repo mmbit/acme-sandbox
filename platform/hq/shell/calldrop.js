@@ -35,6 +35,9 @@ export const callWindowAt = (x, y) => call && windowOf(call, document.elementFro
 export const lightCall = on => call && light(call, on);
 // Whether a paste is the call's: the board pressed or focused its window last
 export const pasteForCall = () => !!call?.inWindow;
+// Pictures let go on the call's window from inside HQ (each a File or a promise of one), as a drop's go: a picture
+// taped in the notebook, carried there by the Select tool (bookselectlift.js).
+export const dropOnCall = files => call && showPictures(call, files);
 
 // The window shown: the call's screen, or its bubble while it's small; the one an element is in, else null
 function windowOf(c, el) {

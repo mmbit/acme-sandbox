@@ -10,7 +10,7 @@ import { render } from './ink/bookrender.ts';
 import { DIR } from './pagescraps.ts';
 import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
-import { changed, gone, newPage, pageOf, pageRow, shut, triesPageOfNote, type NotebookPage } from './notebook.ts';
+import { changed, gone, mine, newPage, pageOf, pageRow, shut, triesPageOfNote, type NotebookPage } from './notebook.ts';
 import { insertGroup, partsOf, putAside, row, type Group } from './notebookgroups.ts';
 import { boxOf } from './notebookparts.ts';
 import { judgeLater } from './ink/bookjudge.ts';
@@ -49,22 +49,88 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
     return [409, RESEND, 'pageChanged'] as Refused;
   if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   inOneStep(() => {
-    const sheets = new Map<string | null, number>();
-    groups.forEach((g, i) => {
-      const sheet = sheets.get(g.owner) ?? newSheet(who, g.owner, p.id);
-      sheets.set(g.owner, sheet);
-      const id = insertNote(sheet, p.id, g.by, anchorOf(g), saidOf(g), snips[i], null);
-      db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
-    });
-    // (its seconds start once its notes are on it: a sheet goes with what was on it at the tap, booksheets.ts deliver)
-    const at = Date.now() + SEND_MS;
-    for (const sheet of sheets.values())
-      db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(at, sheet);
+    const at = asNotes(who, groups, snips);
     db.prepare('update book_pages set send_at = ?, fresh = ? where id = ?').run(at, newPage(p.notebook), p.id);
     changed(p.notebook, p.id);
   });
   deliverLater();
   return pageOf(pageRow(p.id, who)!);
+}
+// Groups as notes on a sheet of this send's for each owner, their seconds started: when they go (inside inOneStep)
+function asNotes(who: string, groups: Group[], snips: ({ type: string; clean: Buffer } | null)[]) {
+  const sheets = new Map<string | null, number>();
+  groups.forEach((g, i) => {
+    const sheet = sheets.get(g.owner) ?? newSheet(who, g.owner, g.page);
+    sheets.set(g.owner, sheet);
+    const id = insertNote(sheet, g.page, g.by, anchorOf(g), saidOf(g), snips[i], null);
+    db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
+  });
+  // (its seconds start once its notes are on it: a sheet goes with what was on it at the tap, booksheets.ts deliver)
+  const at = Date.now() + SEND_MS;
+  for (const sheet of sheets.values())
+    db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(at, sheet);
+  return at;
+}
+
+// ---------------------------------------------------------------- invited people's notes, sent for the board
+// An invited person's note on a share waits in the board's My Notebook, an open
+// scrap, until the board sends its page. hq guestnotes: the CEO lists those waiting (never their words) and, on the
+// board's word, sends one owner's as the board's Send would, the board's own notes beside them left on the page.
+const guestsWaiting = (who: string, owner?: string | null) =>
+  (
+    db
+      .prepare(
+        `select g.* from notebook_groups g join book_pages p on p.id = g.page join notebooks b on b.id = p.notebook
+        where b.who = ? and b.kind = 'mine' and g.parent is null and g.deleted is null and g.status = 'open'
+        and g.by like 'guest:%' order by g.id`,
+      )
+      .all(who) as Group[]
+  ).filter(g => owner === undefined || g.owner === owner);
+// GET /api/agent/guestnotes: for each owner, how many wait, on which pages, about which addresses, how many show nothing
+// on their page (no picture, no words: carried from an old sheet without a snip) and since when. (mine(): the notes
+// still on an old sheet carried in first, as the board's shelf does: notebookcarry.ts.)
+export function guestNotes(who = BOARD) {
+  mine(who);
+  const owners = new Map<string | null, Group[]>();
+  for (const g of guestsWaiting(who)) owners.set(g.owner, [...(owners.get(g.owner) ?? []), g]);
+  return {
+    owners: [...owners].map(([owner, groups]) => ({
+      owner,
+      notes: groups.length,
+      pages: [...new Set(groups.map(g => g.page))],
+      places: [...new Set(groups.map(g => addressOf(anchorOf(g).url)))],
+      blank: groups.filter(g => !boxOf(partsOf(g))).length,
+      since: groups[0].created,
+    })),
+  };
+}
+const addressOf = (url: string) => {
+  try {
+    const u = new URL(url);
+    return `${u.host}${u.pathname}`;
+  } catch {
+    return '';
+  }
+};
+// POST /api/agent/guestnotes/send { owner }: those waiting for owner (null: nobody's, the routing check's) go to it in
+// SEND_MS, as one task, their writers' words marked outside text (booksheets.ts deliver)
+export async function sendGuestNotes(b: any, who = BOARD) {
+  const owner = b?.owner === null || typeof b?.owner === 'string' ? (b.owner as string | null) : undefined;
+  if (owner === undefined) return [400, 'owner is the agent the notes are for, or null'] as Refused;
+  mine(who);
+  const groups = guestsWaiting(who, owner);
+  if (!groups.length) return [404, "no invited person's notes wait for that owner"] as Refused;
+  const snips = await Promise.all(groups.map(async g => (await sentSnip(g)) ?? snipOf(g)));
+  // (one changed, gone or sent with its page while their pictures were drawn: sent as the board sees them now)
+  const after = guestsWaiting(who, owner);
+  if (after.length !== groups.length || after.some((g, i) => g.id !== groups[i].id || g.updated !== groups[i].updated))
+    return [409, RESEND] as Refused;
+  inOneStep(() => {
+    asNotes(who, groups, snips);
+    for (const g of groups) changed(pageRow(g.page, who)!.notebook, g.page);
+  });
+  deliverLater();
+  return { owner, notes: groups.length };
 }
 // POST /api/notebooks/pages/undo { id }: a send taken back within its seconds; the page is open again, and the fresh
 // page the send made goes while it's blank and untitled

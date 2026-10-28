@@ -1,8 +1,9 @@
-// Dictation: the first mark starts the mic, and the mic button taps to talk, taps to stop. The words come as they're
+// Dictation: the mic button taps to talk, taps to stop (a mark never starts it: the board, call 154). The words come as they're
 // said, as on a call: the microphone's audio goes as it's heard, 16 kHz PCM, over a WebSocket next to the script
 // (/__review/dictate, which the coordinator hands to the voice line's recogniser), and each phrase's words come back
 // while the board talks, into the note. The clip is recorded too: where that line can't be reached (or drops), the whole
-// clip is transcribed by the coordinator's speech-to-text (POST /__review/voice).
+// clip is transcribed by the coordinator's speech-to-text (POST /__review/voice). In HQ's viewer the page's frame has no
+// microphone, so HQ records for it (askHq).
 import { ACCENT } from './base.js';
 
 export const CSS = `
@@ -20,6 +21,10 @@ export const canRecord = !!(window.isSecureContext && navigator.mediaDevices?.ge
 // r.rec: the recording under way (heard in the board's language, which the coordinator reads). ctx: an audio context
 // made at an earlier gesture (pentouch.js: the pen's touch, the mic asked for only once it draws or holds.)
 export async function startMic(r, ctx = audioContext()) {
+  if (r.framed) {
+    ctx?.close?.();
+    return askHq(r);
+  }
   const rec = (r.rec = { chunks: [], said: r.text.value.trim(), shown: [], taken: [], ctx });
   // What the reviewer types meanwhile stays: the words in the note then are theirs, and only words heard after go in
   rec.typed = () => {
@@ -191,9 +196,11 @@ export function stopMic(r, cancel) {
 // A cancelled recording: no word of it goes in, and the line's last phrase isn't waited for
 function dropped(rec) {
   rec.cancelled = true;
+  rec.finished?.(null); // (HQ's recording, askHq, isn't waited for either)
   if (rec.live && rec.live !== 'failed') rec.live.close();
 }
 async function endMic(r, rec) {
+  if (rec.hq) return endHq(r, rec);
   const m = r.mark;
   r.rec = null;
   clearTimeout(rec.limit);
@@ -281,10 +288,70 @@ async function transcribed(r, rec, clip, m) {
   }
 }
 
+// ---- in HQ's viewer: HQ's page records (its framemic.js), and its words come back here as they're heard. rec.hq: the
+// recording's number, so a word from an earlier one is never taken for this one's.
+let asked = 0;
+function askHq(r) {
+  const rec = (r.rec = { hq: ++asked, said: r.text.value.trim(), shown: [], taken: [] });
+  rec.typed = () => {
+    rec.said = r.text.value;
+    rec.taken = rec.shown;
+    rec.edited = true;
+  };
+  rec.done = new Promise(resolve => (rec.finished = resolve));
+  r.text.addEventListener('input', rec.typed);
+  r.mic.classList.add('on');
+  r.msg.textContent = 'Listening… tap the mic to stop';
+  r.toHq({ mic: 'start', id: rec.hq });
+}
+// HQ's answers: the words so far, the voice's level, the mic refused, or the words once it's stopped
+function fromHq(r, e) {
+  const m = e.data?.mic;
+  if (e.source !== parent || e.origin !== r.HQ || e.data?.hq !== 'hq' || !m) return;
+  const rec = [r.rec, r.endingRec].find(x => x?.hq && x.hq === m.id);
+  if (!rec || rec.cancelled) return;
+  if (typeof m.heard === 'string') words(r, rec, m.heard);
+  if (typeof m.level === 'number' && r.rec === rec) r.mic.style.setProperty('--lvl', Math.min(0.6, m.level).toFixed(2));
+  if (m.failed && r.rec === rec) {
+    r.rec = null;
+    r.mic.classList.remove('on');
+    r.text.removeEventListener('input', rec.typed);
+    r.msg.textContent =
+      m.failed === 'NotAllowedError'
+        ? 'The microphone is blocked for HQ. Type the note instead?'
+        : 'Could not start the microphone.';
+  }
+  if ('done' in m) rec.finished(m);
+}
+async function endHq(r, rec) {
+  r.rec = null;
+  r.mic.classList.remove('on');
+  r.mic.style.setProperty('--lvl', 0);
+  r.toHq({ mic: rec.cancelled ? 'cancel' : 'stop', id: rec.hq });
+  if (rec.cancelled) return;
+  const m = r.mark;
+  r.mic.classList.add('busy');
+  r.mic.disabled = true;
+  r.msg.textContent = 'Turning your words into text…';
+  const end = await Promise.race([rec.done, new Promise(res => setTimeout(() => res(null), 60_000))]);
+  r.mic.classList.remove('busy');
+  r.mic.disabled = false;
+  if (rec.cancelled || r.mark !== m) return;
+  if (end?.done) words(r, rec, end.done);
+  r.msg.textContent = end?.done
+    ? 'Check the words, then pin it.'
+    : end?.why === 'short'
+      ? 'That was very short. Tap, talk, then tap again.'
+      : end?.why === 'transcriber' || !end
+        ? 'The transcriber isn’t available right now. Type it instead?'
+        : 'No words came through. Try again, a little closer?';
+}
+
 export function setupDictation(r) {
   r.rec = null;
   r.stopping = null;
   r.endingRec = null;
+  if (r.framed) addEventListener('message', e => fromHq(r, e));
   if (!canRecord) {
     r.mic.disabled = true;
     r.mic.title = 'This browser can’t record here';

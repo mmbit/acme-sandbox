@@ -90,10 +90,11 @@ export function dried(book, stroke, hooks) {
     size: book.inking.size,
     points: stroke.points.map(([x, y, p, t]) => [round(x / s + pan.x), round(y / s + pan.y), p, t]),
   };
-  // (a scratch-out over a group deletes it: not ink.)
-  if (book.groups?.scratch(v, line)) return book.ink.clear();
-  // (a line over words strikes them out or slices them open: edited, not inked.)
-  if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
+  // Only the pen edits content. A highlighter always leaves ink.
+  if (!(line.alpha < 1)) {
+    if (book.groups?.scratch(v, line)) return book.ink.clear();
+    if (book.amend?.claim(stroke, book.pointer)) return book.ink.clear();
+  }
   // (a page written on keeps its size, whatever the paper does next, and grows to hold what's written on it)
   page.blank = false;
   // (it grows any way, its top-left too.)

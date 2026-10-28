@@ -3,7 +3,7 @@
 // the page starts a note right there, its lines stay open and keep coming until the note goes, a resting palm draws
 // nothing once a pen has, the strip's inks and undo, and the note carries the lines (pressure and time) and a screenshot
 // with them on it, and the post-it shows one Send and Cancel. The pin drags from its menu's handle too, and a tap on
-// the handle still opens the menu. The first mark starts the mic, and the words come in live from a stand-in voice line
+// the handle still opens the menu. The mic button (never the mark) starts the mic, and the words come in live from a stand-in voice line
 // as they're said, the clip taking over where the line can't be reached. Then the same on HQ itself in each of its looks, for the eye. Then
 // an invited reviewer's (review mode as the coordinator serves it on a share's session) gets the same pen: pressure,
 // open lines, inks, undo (the strip's and Cmd+Z), the note carrying its lines, and live words, with no language asked
@@ -320,12 +320,23 @@ assert.equal(await page.locator(inUi('.menu')).isVisible(), true, 'a tap on the 
 await page.locator(inUi('.more')).tap(); // (shut)
 await dictated();
 
-// ---- the first mark starts the mic, and the words come in as they're said
+// ---- the mark starts no mic: its button does, and the words come in as they're said (the board, call 154)
 async function dictated() {
   frames = 0;
   ended = 0;
   clips.length = 0;
   await pen(loop(h1.x + 160, h1.y + h1.height / 2, 180, 45));
+  await page.locator(inUi('.sheet')).waitFor({ state: 'visible' });
+  await page.waitForTimeout(800);
+  assert.equal(frames, 0, 'the mark records nothing by itself');
+  assert.equal(
+    await page.evaluate(() =>
+      document.querySelector('review-mode').shadowRoot.querySelector('.mic').classList.contains('on'),
+    ),
+    false,
+    'its mic waits for a tap',
+  );
+  await page.locator(inUi('.mic')).tap();
   await page.waitForFunction(() =>
     document.querySelector('review-mode').shadowRoot.querySelector('.mic').classList.contains('on'),
   );
@@ -379,6 +390,7 @@ await page.locator(inUi('[data-cancel]')).tap();
 line = 'slow';
 ended = 0;
 await pen(loop(h1.x + 160, h1.y + h1.height / 2, 180, 45));
+await page.locator(inUi('.mic')).tap();
 await page.waitForFunction(
   () => document.querySelector('review-mode').shadowRoot.querySelector('textarea').value === 'Make the Headline.',
   null,
@@ -511,5 +523,5 @@ assert.deepEqual(errors, []);
 await browser.close();
 server.close();
 console.log(
-  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the first mark starting the mic, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z and pin${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
+  `pen-check: a pen's tap is the page's, a pen line starts a note where it's drawn, open lines until it goes, a palm draws nothing, inks and undo, the lines (pressure, time) and a screenshot with them on the note, the pin dragged by its handle (mouse and finger) and the handle's tap opening the menu, the mic started by its button, never the mark, live words and the clip when the line is down, a mouse's lines, rectangle, Cmd+Z and pin${shots ? `, HQ in each look` : ''}, and the same pen for an invited reviewer (no language of ours)${shots ? ` (screenshots in ${shots})` : ''}`,
 );

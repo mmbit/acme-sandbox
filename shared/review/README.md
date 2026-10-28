@@ -104,9 +104,10 @@ alone, so the imports form no circle.
 - **The strip**, over the page while it's marked: five inks (red, black, blue, green and a see-through highlighter,
   remembered on the device) and undo (Cmd or Ctrl+Z too). Undoing the first mark goes back to tapping or drawing, the
   words kept.
-- **The first mark starts the mic**, where the browser records, on a computer and a tablet alike. A web page can't
-  hear a Pencil's double-tap or squeeze (only apps can), so the mark itself is the trigger: the hand that draws needs
-  no second gesture.
+- **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does
+  (the board changed its mind on recording at the mark: call 154). In HQ's
+  viewer the page's frame has no microphone, so a tap there asks HQ, which records on its own page and sends the words
+  back as they're heard (HQ's `framemic.js`).
 - **The words as they're said:** the mic's audio goes as 16 kHz PCM to `/__review/dictate` and each phrase's words come
   back while the reviewer talks (above). The clip is recorded too, and where the line can't be reached (or drops), it's
   transcribed whole by `POST /__review/voice`. Five minutes at most.
@@ -119,7 +120,7 @@ alone, so the imports form no circle.
   tap or Tab gives it back to the keyboard (`node --test shared/review/penedit.test.js`).
 
 `pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
-lines and the screenshot with them on the note, the pin dragged by its menu's handle, the first mark's mic with live words
+lines and the screenshot with them on the note, the pin dragged by its menu's handle, the mic tapped with live words
 from a stand-in line and the clip when it's down, a mouse's lines; `--shots dir` adds HQ in each look.
 
 ## The Pencil on HQ
@@ -132,9 +133,9 @@ handwriting-to-text. A mouse draws with the pin, as everywhere. HQ's page is `<b
 it's the page's width and the book's spread covers it with the page; over a dialog it leaves the book's room
 (`--book-room`); a pen or two fingers on the book are the book's.
 
-- **A mark** is the lines drawn while the pen keeps coming back: its first line starts the mic once it can't be a tap,
-  as a pen held still does (a pulse at the pen's last point while it listens; a tap never asks for the mic, house rule
-  7), and the words said go in its note. **The post-it** comes up at the bottom of HQ's page as on any page (the
+- **A mark** is the lines drawn while the pen keeps coming back, and the words typed, or said once its mic button is
+  tapped, go in its note; a pen held still listens at once (a pulse at the pen's tip while it listens; a tap never asks
+  for the mic, house rule 7). **The post-it** comes up at the bottom of HQ's page as on any page (the
   board's pin flow, 27 Oct): the Notebook's dot paper, its polaroid the live screenshot framed on the mark and
   developed again with every line, the words said or typed, **Save** and Cancel. Save (`postit.js` booked, then
   `settle.js` toBook) puts it in the Notebook as a **scrap on the newest page of My Notebook** (`marks.js` scrap:

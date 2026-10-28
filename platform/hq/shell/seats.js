@@ -233,8 +233,9 @@ function addForm(list, setup) {
 }
 // the APIs a service of the board's own can speak, by the CLI that talks to it
 const SPEAKS = { claude: 'Anthropic’s API (Claude Code)', codex: 'OpenAI’s Responses API (Codex)' };
-// A free name for a new seat: claude-4 for one more Claude subscription, euhost-1 for a service's first. A seat's name is
-// one lowercase word, a dash and a number (the coordinator's SEAT_ID), so the service's name is cut down to its letters.
+// A free name for a new seat: claude-4 for one more Claude subscription, euhost-1 for a service's first. A seat's name
+// starts with a letter (the worker's seatid.ts), so the service's name is cut down to its letters; the board may type any
+// other (claude-team-2).
 function freeName(f, list, providers) {
   const p = providers.find(x => x.id === f.provider);
   const named = f.provider === 'new' ? f.name : p?.from === 'platform' && ['claude', 'codex'].includes(p.cli) ? p.cli : p?.id;

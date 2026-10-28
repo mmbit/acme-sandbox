@@ -96,6 +96,7 @@ const COMMANDS: Record<string, Command> = {
   note: feedback.note,
   notes: feedback.notes,
   route: feedback.route,
+  guestnotes: feedback.guestnotes,
   preview,
   run: runs.run,
   tooling,

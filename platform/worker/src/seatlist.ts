@@ -4,6 +4,7 @@
 import type { SeatProvider } from './providers.ts';
 import { CLI_IDS } from './clis.ts';
 import { DRAIN_AT } from './pace.ts';
+import { SEAT_ID } from './seatid.ts';
 
 // A seat on HQ's list, as the worker gets it
 export type Listed = {
@@ -46,9 +47,6 @@ export function spendCredits(s: { hasCredits?: boolean; useCredits?: boolean; cr
   s.credits = !!s.hasCredits && !!s.useCredits;
   return s.credits;
 }
-
-// The seat ids that are the worker's own (a lowercase name, a dash, then digits or a word): an id that isn't names no folder.
-const SEAT_ID = /^[a-z]+-([0-9]+|[a-z]+)$/;
 
 type ListHooks<S> = {
   make: (id: string, engine: string) => S; // a seat new to the worker

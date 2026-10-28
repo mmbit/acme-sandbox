@@ -150,7 +150,7 @@ function versionHtml(v, i, box, _replies, parts) {
     v.picked ? STAMP : ''
   }</div><figcaption>${i + 1} · ${esc(v.version ?? '')}</figcaption>${parts.replyHtml(
     [],
-    `Write on version ${i + 1}, ${v.version ?? ''}, to reply, or ring it to pick it`,
+    `Write on version ${i + 1}, ${v.version ?? ''}, to reply, or circle it to pick it`,
   )}</figure>`;
 }
 // The pick's stamp, a rubber stamp's "this one" pressed a little crooked on the frame, as a sent page's (bookshelf.css)

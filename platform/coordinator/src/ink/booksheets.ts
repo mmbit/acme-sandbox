@@ -8,7 +8,6 @@ import { ORIGIN } from '../config.ts';
 import { publish } from '../events.ts';
 import { ceo } from '../company.ts';
 import { createJob, NoSeat } from '../jobs.ts';
-import { customerCall } from '../memory.ts';
 import * as feedback from '../feedback.ts';
 import * as routing from '../routing.ts';
 import { BOARD, row as pageRow } from './book.ts';
@@ -168,7 +167,7 @@ function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote:
               title: `The board's notes on ${place}`.slice(0, 200),
               prompt: taskBrief(texts, outsiders, onPreviews(notes)),
             }),
-        customers: outsiders.length > 0 || onCustomerCall(notes),
+        customers: outsiders.length > 0,
       }).id;
     } catch (err) {
       if (!(err instanceof NoSeat)) throw err;
@@ -192,13 +191,6 @@ function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote:
 const fromTheBook = (id: number, page: number | null) =>
   `From the board's book: the job it goes to clips its answer onto it there with \`hq answer ${id} "..."\`\
 ${page ? `; it is page #${page} as the board drew it, which \`hq sketch ${page}\` reads` : ''}.`;
-// Whether some of the notes are from the page of a call about a customer (its notes page, sent at hang-up: callnotes.ts),
-// as the call is now, so a look-up late in the call counts (memory.ts customerCall). (routing.ts marks the routed ones.)
-const onCustomerCall = (notes: Note[]) =>
-  notes.some(n => {
-    const call = pageRow(n.page, null)?.call;
-    return call != null && customerCall(call);
-  });
 // Where the notes were made, as the task's title names it: each address a note was made on (an owner's sheet page holds
 // a day's notes from any of their pages), or a free page's number and label
 const placeOf = (notes: Note[]) =>

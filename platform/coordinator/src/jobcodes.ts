@@ -10,7 +10,7 @@
 // so it never meets a new one.
 import { prepared } from './db.ts';
 import { projects } from './company.ts';
-import { entries } from './schedule.ts';
+import { entries } from './schedulelist.ts'; // (the entries are read in schedulelist.ts)
 
 // A word: plain capitals, a real word or an obvious short form; a prefix: two or three
 export const WORD = /^[A-Z]{2,8}$/;

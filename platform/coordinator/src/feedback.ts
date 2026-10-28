@@ -394,9 +394,8 @@ const clock = (t: number) => {
 };
 // The page a note is on, whole
 export const urlOf = (host: string, base: string, page: string) => `https://${host}${base}${page}`;
-// base: a shelf's. The board's note goes on its sheet in the book (bookreview.ts, loaded as it's needed: it reads the
-// book's store, which reads this file's sent notes); an outsider's (book: intoBook) joins the board's sheet for the
-// owner, signed as theirs.
+// base: a shelf's. The board's note goes into its Notebook (bookreview.ts, loaded as it's needed: it reads the book's
+// store, which reads this file's sent notes); an outsider's (book: intoBook) too, for the owner, signed as theirs.
 export async function saveNote(slug: string, host: string, b: any, base = '', book: IntoBook | null = null): Promise<Refusal | { ok: true; id: number }> {
   forgetOld();
   const { toBook } = await import('./ink/bookreview.ts');

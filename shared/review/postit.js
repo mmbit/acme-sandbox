@@ -8,7 +8,7 @@ import { clock, describe, marked, onScreen, videoAt, viewNow } from './mark.js';
 import { box } from './anchor.js';
 import { expose, photo, snapshot } from './snapshot.js';
 import { addFrame, picturesNow, unpicture } from './pictures.js';
-import { canRecord, startMic, stopMic } from './dictation.js';
+import { stopMic } from './dictation.js';
 import { paint, redrawInk, refresh, reset } from './acts.js';
 import { nextMark, toBook } from './settle.js';
 import { lift } from './lift.js';
@@ -98,14 +98,12 @@ export function compose(r) {
   mark.view = viewNow();
   mark.page = location.href;
   r.shot = shoot(r, mark);
-  // (the mic: the first mark starts it; on a call the call hears the board, and no post-it shows: callnotes.js.
-  // A paired phone's own mark goes to the other screen without a post-it, so without the mic too: nothing listens
-  // unseen.)
+  // (on a call the call hears the board, and no post-it shows: callnotes.js. Off one the mic starts only at its button
+  // on the post-it, never at the mark: the board, call 154.)
   if (r.call) return;
-  // (the mic is decided here, once. A post-it kept back for a mark going across asks again as it lands: a pairing that
-  // ended meanwhile shows it on this screen, the mic not started.)
+  // (a post-it kept back for a mark going across asks again as it lands: a pairing that ended meanwhile shows it on
+  // this screen.)
   const unseen = across(r);
-  if (canRecord && !r.rec && !r.stopping && !unseen) startMic(r);
   // (a mark on HQ, the Pencil's or a mouse's, has its post-it too, as on any page: its Save puts it in the Notebook as
   // a scrap, the board's pin flow.)
   setTimeout(() => stuck(r, mark, unseen), 380); // let the pin land, then the note

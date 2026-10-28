@@ -3,13 +3,14 @@
 // shows PDF, PNG and Juno, the page in hand torn out at the spine while the book's stays whole: let go on PNG the system's share sheet gets the page's picture, named for its title and
 // day; on PDF a one-page PDF; on Juno a call starts with the page's picture in front of Juno; let go
 // anywhere else nothing goes. With the call on, the page carried onto the call's window, a picture file dropped there,
-// and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none.
-// (the call's window) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
+// and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none; a
+// picture taped on the page, picked with Select and carried onto the window or its bubble, goes too, and stays taped
+// where it was. (the call's window; the taped picture) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
 // putting it away. Things deleted crumple over the paper, already gone underneath: the store has them gone at once, a
 // press goes through the crumple, and it's over within half a second.
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
-import { freePage, line, paperBox, savedWhere, tool, until } from './bookmouse.mjs';
+import { freePage, line, paperBox, pick, savedWhere, tool, until } from './bookmouse.mjs';
 
 const DESKTOP = { width: 1440, height: 900 };
 
@@ -26,8 +27,7 @@ export function shareStories(c) {
 // ---- the stories
 
 async function shareStory(browser, c) {
-  const free = freePage(c);
-  Object.assign(free, { ink: [inkLine()] });
+  const free = tapedPage(c);
   // (its title the Notebook's, its day the one it was made on here.)
   const titled = c.notebook.route('/api/notebooks/pages/title', {}, { id: free.id, title: 'Shop: the price' }),
     made = new Date(titled.created),
@@ -69,6 +69,7 @@ async function shareStory(browser, c) {
     await until(() => s.line.hello, 8000, 'a call started');
     assert.equal(s.line.hello.agent, 'juno');
     await ontoTheCall(c, s);
+    await tapedOntoTheCall(c, s, free);
     c.noErrorsIn(s.errors);
   } finally {
     c.pages.splice(c.pages.indexOf(free), 1);
@@ -127,6 +128,61 @@ async function ontoTheCall(c, s) {
   );
   await shownOnCall(s, 4, 'a paste after a press in the call’s window');
   // minimised, its bubble takes the page
+  const bubble = await minimised(page);
+  await dragTo(page, 'mouse', '.callbubble .cb-face', async () => {
+    assert.equal(await bubble.getAttribute('data-drop'), '', 'the bubble lit under the page');
+    await c.shot('share-onto-bubble', page);
+  });
+  await shownOnCall(s, 5, 'the page carried onto the call’s bubble');
+  await page.waitForTimeout(800);
+  assert.equal(taped, 0, 'the book took none of them');
+}
+// A picture taped on the page, picked with Select and carried onto the call's window, then onto its bubble: each time
+// it goes to Juno, the place lit under it, and lands back where it was taped
+async function tapedOntoTheCall(c, s, free) {
+  const { page } = s,
+    box = await paperBox(page);
+  await pick(page, 'Select');
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.keyboard.press('Control+a');
+  const frame = page.locator('#book .bk-sel');
+  await frame.waitFor({ timeout: 3000 });
+  for (const [n, at, where] of [
+    [6, '#call-layer .device', 'the call’s window'],
+    [7, '.callbubble', 'the call’s bubble'],
+  ]) {
+    if (n === 7) await minimised(page);
+    const from = await frame.boundingBox(),
+      target = page.locator(at),
+      to = await target.boundingBox();
+    // (the light goes soon after the last move: whether it came on at all, kept as it does)
+    await target.evaluate(el => {
+      window.__lit = false;
+      new MutationObserver(() => el.hasAttribute('data-drop') && (window.__lit = true)).observe(el, {
+        attributes: true,
+      });
+    });
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+    assert.ok(await page.evaluate(() => window.__lit), `${where} lit under the picture`);
+    if (n === 6) await c.shot('taped-onto-call', page);
+    await page.mouse.up();
+    await shownOnCall(s, n, `the taped picture carried onto ${where}`);
+  }
+  await page.waitForTimeout(800);
+  assert.deepEqual(
+    free.scraps.map(({ x, y, w, h }) => ({ x, y, w, h })),
+    [{ x: TAPED.x, y: TAPED.y, w: TAPED.w, h: TAPED.h }],
+    'the picture still taped where it was',
+  );
+  assert.equal(await page.locator('#book .bk-sel-lifted').count(), 0, 'nothing left lifted');
+}
+// The call minimised (the played store has no call's notes page: the card saying so put away first), its bubble
+// still in its corner
+async function minimised(page) {
+  const notesCard = page.locator('#call-cards [data-card=notes] button');
+  if (await notesCard.isVisible()) await notesCard.click();
   await page.click('#call-min');
   const bubble = page.locator('.callbubble');
   await page.waitForSelector('#call-layer', { state: 'hidden', timeout: 3000 });
@@ -135,13 +191,7 @@ async function ontoTheCall(c, s) {
     await page.waitForTimeout(300);
     [was, now] = [now, await bubble.boundingBox()];
   }
-  await dragTo(page, 'mouse', '.callbubble .cb-face', async () => {
-    assert.equal(await bubble.getAttribute('data-drop'), '', 'the bubble lit under the page');
-    await c.shot('share-onto-bubble', page);
-  });
-  await shownOnCall(s, 5, 'the page carried onto the call’s bubble');
-  await page.waitForTimeout(800);
-  assert.equal(taped, 0, 'the book took none of them');
+  return bubble;
 }
 // The line shown its n-th picture of the call (the played store numbers them from 1)
 async function shownOnCall(s, n, what) {
@@ -289,6 +339,17 @@ const pointer = (page, type, points, last) =>
     },
     [type, points, last],
   );
+// A page of the board's writing with a picture taped below it (the picture kept by the played store, the page's own)
+function tapedPage(c) {
+  const free = freePage(c),
+    kept = c.notebook.route(
+      '/api/notebooks/pictures',
+      { page: free.id },
+      { bytes: Buffer.from(c.SNIP.split(',')[1], 'base64'), type: 'image/png' },
+    );
+  return Object.assign(free, { ink: [inkLine()], scraps: [{ file: kept.file, ...TAPED }] });
+}
+const TAPED = { x: 160, y: 330, w: 220, h: 150, tilt: 0 };
 // A line of the board's writing across the page
 const inkLine = () => ({
   color: '#1d9a5b',

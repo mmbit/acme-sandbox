@@ -21,9 +21,9 @@ const target = (y, label) =>
 export const TIPS = [
   {
     part: 'Writing',
-    title: 'Write on anything',
+    title: 'Draw on HQ to make a note',
     words:
-      'Draw on any page of HQ. Rest the pen a moment and your mark lifts into the book, with what you said as you drew.',
+      'Draw on any page of HQ. Rest the pen a moment and your mark goes into the book, with what you said as you drew.',
     from: 'shared/review/settle.js',
     scene: draw.scene(
       draw.hqPage(),
@@ -35,7 +35,7 @@ export const TIPS = [
   },
   {
     part: 'Writing',
-    title: 'No Pencil? Use the pin',
+    title: 'Tap the pin to draw without a Pencil',
     words: 'With a mouse or a finger, tap the pin among the book’s controls, then draw on HQ the same way.',
     from: 'platform/hq/shell/pinsummon.js',
     scene: draw.scene(
@@ -49,7 +49,7 @@ export const TIPS = [
   },
   {
     part: 'Writing',
-    title: 'Type on a page',
+    title: 'Double-click a page to type',
     words: 'Double-click bare paper in the book and type. Click the words later to change them.',
     from: 'platform/hq/shell/ink/booktexts.js',
     scene: draw.scene(
@@ -69,7 +69,7 @@ export const TIPS = [
   },
   {
     part: 'Writing',
-    title: 'Paste a picture',
+    title: 'Paste or drop a picture on a page',
     words: `Copy a picture anywhere and paste it in the book (${MOD}+V), or drop a picture file on it: it lands taped on the page you’re on.`,
     from: 'platform/hq/shell/ink/booktape.js',
     scene: draw.scene(
@@ -91,7 +91,7 @@ export const TIPS = [
   },
   {
     part: 'Writing',
-    title: 'Say it as you mark',
+    title: 'Hold the Pencil still and say your note',
     words: 'Hold the Pencil still on HQ for a moment and talk: what you say goes into the book with your mark.',
     from: 'shared/review/pentouch.js',
     scene: draw.scene(
@@ -110,8 +110,8 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'Ring what you mean',
-    words: 'With the Pencil, a ring round something on HQ marks just that thing, so your note knows what it’s about.',
+    title: 'Circle something to note about it',
+    words: 'With the Pencil, draw a circle round something on HQ: your note is then about just that thing.',
     from: 'shared/review/gestures.js',
     scene: draw.scene(
       draw.hqPage(8, 10, 224, 130),
@@ -121,8 +121,8 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'Scribble a mark out',
-    words: 'Changed your mind while drawing on HQ? Scribble over the mark before it settles, and it’s gone.',
+    title: 'Scribble over a mark to delete it',
+    words: 'Changed your mind while drawing on HQ? Scribble over the mark before you rest the pen, and it’s gone.',
     from: 'shared/review/gestures.js',
     scene: draw.scene(
       draw.hqPage(8, 10, 224, 130),
@@ -134,7 +134,7 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'Move about the page',
+    title: 'Drag to move the page, pinch to zoom',
     words: `A finger moves the page, two pinch to zoom. With a mouse: scroll, or hold Space and drag. ${MOD} and scroll zooms.`,
     from: 'platform/hq/shell/ink/bookpan.js',
     scene: draw.scene(
@@ -152,9 +152,9 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'See every page',
+    title: 'Tap the grid button to see all pages',
     words:
-      'The grid at the foot of the book shows all its pages: drag one to put it in order, tick its box to archive it. Pinch in once more for the Shelf of every notebook.',
+      'Tap the grid button at the foot of the book to see all its pages: drag one to put it in order, tick its box to archive it. Zoom out from there for the Shelf of every notebook.',
     from: 'platform/hq/shell/ink/bookzoom.js, platform/hq/shell/ink/bookshelf.js',
     scene: draw.scene(
       draw.during(0, 0.42, draw.moved(0.1, 0.4, { scale: 0.3, cx: 120, cy: 75 }, draw.bookPage(20, 8, 200, 134))),
@@ -164,7 +164,7 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'Pick things up',
+    title: 'Loop round ink with Select to move it',
     words:
       'With Select, draw a loop round ink to pick it up, then drag it. Shift adds or takes away. Delete clears it.',
     from: 'platform/hq/shell/ink/bookselect.js',
@@ -183,9 +183,9 @@ export const TIPS = [
   },
   {
     part: 'Answers',
-    title: 'Answer an answer',
+    title: 'Reply to an agent’s answer under it',
     words:
-      'An agent’s answer is written in beside your note. Write a tick, a cross, a ? or a few words in the strip under it: it goes once your pen rests.',
+      'An agent’s answer appears beside your note. Write a tick, a cross, a ? or a few words on the lines under it: it’s sent once you rest the pen.',
     from: 'platform/hq/shell/ink/bookanswerreply.js',
     scene: draw.scene(
       draw.bookPage(),
@@ -197,9 +197,9 @@ export const TIPS = [
   },
   {
     part: 'Answers',
-    title: 'Ring the version you want',
+    title: 'Circle a version to choose it',
     words:
-      'When an agent tries a few versions, ring or tick the one you like on its versions page: it’s stamped THIS ONE and the agent hears which.',
+      'When an agent tries a few versions, circle or tick the one you like on its versions page: it’s stamped THIS ONE and the agent is told which.',
     from: 'platform/hq/shell/ink/bookanswerpace.js',
     scene: draw.scene(
       draw.bookPage(),
@@ -210,9 +210,9 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Share a page by its corner',
+    title: 'Drag a page’s corner to share it',
     words:
-      'Drag the turned-down corner of a page onto PDF or PNG to keep or send it, or onto the agent’s name: it rings them with the page, or shows it on your call. Tap the corner for the same choices.',
+      'Drag the turned-down corner of a page onto PDF or PNG to keep or send it, or onto the agent’s name to call them with the page (on a call, it shows there). Tap the corner for the same choices.',
     from: 'platform/hq/shell/ink/bookdogear.js, platform/hq/shell/ink/bookshare.js',
     scene: draw.scene(
       target(26, 'PDF'),
@@ -234,7 +234,7 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Show it on a call',
+    title: 'Drag a page onto a call to show it',
     words:
       'On a call, drag a page by its corner, or a picture from your desktop, onto the agent’s call window. Click the call first and a paste goes to the call, not the book.',
     from: 'platform/hq/shell/calldrop.js',
@@ -256,7 +256,7 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Undo anything',
+    title: `Press ${MOD}+Z to undo`,
     words: `${MOD}+Z takes a step back and ${MOD}+Shift+Z puts it back. On HQ, tap two fingers together. Nothing asks “are you sure?”: everything undoes.`,
     from: 'platform/hq/shell/ink/bookedit.js, shared/review/pentouch.js',
     scene: draw.scene(
@@ -269,7 +269,7 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Open, close and resize',
+    title: 'Close or widen the book by its edge',
     words:
       'Tap or pull the tab on the book’s edge to close it or bring it back. Drag the cover’s edge to make it wider: far enough and it lies over HQ.',
     from: 'platform/hq/shell/ink/book.js, platform/hq/shell/ink/bookswing.js',
@@ -282,7 +282,7 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Keys for the tools',
+    title: 'Press a letter to pick a tool',
     words:
       'With the pointer over the book: V selects, P is the pen, M the highlighter, E the eraser, S shapes, T type, H moves the page. 1 to 4 pick a colour, [ and ] the width.',
     from: 'platform/hq/shell/ink/bookpalette.js',
@@ -293,7 +293,7 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Search your handwriting',
+    title: 'Search what you wrote and said',
     words:
       'Search, at the top of the grid of pages, reads your handwriting and what you said as you wrote, across all your notebooks. Write in it with the Pencil, or type.',
     from: 'platform/hq/shell/ink/booksearch.js',

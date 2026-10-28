@@ -1,14 +1,14 @@
 // The book's pages as agents and calls read them (book.ts keeps them): any job lists and saves one (hq sketches, hq
 // sketch), and a board call's agent asks for one by number or label words (the voice line's sketch tool). A call's page
-// reads as its call does (callRead).
+// reads like any other, but a call about a card for keys keeps its pages to itself (callRead).
 import { readFileSync } from 'node:fs';
 import sharp from 'sharp';
 import { db } from '../db.ts';
 import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import type { Refused } from '../pagechecks.ts';
-import { readerHanded, type Reader } from '../jobs.ts';
-import { callAccess, customerCall } from '../memory.ts';
+import type { Reader } from '../jobs.ts';
+import { callAccess, keysCall } from '../memory.ts';
 import { DIR } from '../pagescraps.ts';
 import { ownerOf } from './sketchpeople.ts';
 
@@ -87,14 +87,12 @@ const minute = (iso: string) => iso.slice(0, 16).replace('T', ' ');
 const listed = (who: string) =>
   db.prepare(`select ${COLUMNS} from book_pages where who = ? order by updated desc, id desc`).all(who) as Page[];
 
-// A call's page (its notes page, ink/callnotes.ts, or what the board drew on it) reads as the call's lines and pictures
-// do (memory.ts callAccess): not while it's live but by the jobs working on it, and one about a customer only by those
-// and roles.customerData, who hold their details from then on. A call's own pages are its own (own: a live call reading).
+// A call's page (its notes page, ink/callnotes.ts, or what the board drew on it) is the board's like any page, read by
+// anyone at work on it; only a call about a card for keys (memory.ts keysCall) keeps its pages as it keeps its lines,
+// its own agent's (charter rule 8). A call's own pages are its own (own: a live call reading).
 function callRead(p: Page, reader: Reader, own?: number): true | 404 | [403, string] {
-  if (p.call == null || p.call === own) return true;
-  const access = callAccess(p.call, reader);
-  if (access === true && customerCall(p.call)) readerHanded(reader);
-  return access;
+  if (p.call == null || p.call === own || !keysCall(p.call)) return true;
+  return callAccess(p.call, reader);
 }
 // (each call read once)
 function readable(pages: Page[], reader: Reader, own?: number) {

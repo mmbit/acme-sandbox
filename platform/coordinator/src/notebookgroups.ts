@@ -157,7 +157,8 @@ export function restoreGroup(b: any, who = BOARD) {
   return shown(row(g.id)!);
 }
 // POST /api/notebooks/groups/join { ids }: open groups of one page as one, the first's (lasso). One scrap at most: a
-// scrap's place and words are its own. The others are deleted, for Undo's split.
+// scrap's place and words are its own, and a group signed by someone else (an invited person's note) stays theirs.
+// The others are deleted, for Undo's split.
 export function joinGroups(b: any, who = BOARD) {
   const ids: number[] = Array.isArray(b?.ids) ? [...new Set<number>(b.ids.map(Number))] : [];
   if (ids.length < 2) return [400, 'ids is two groups or more'] as Refused;
@@ -168,6 +169,7 @@ export function joinGroups(b: any, who = BOARD) {
   if (all.some(g => g.page !== all[0].page))
     return [400, "groups join on one page: a group doesn't span pages"] as Refused;
   if (all.some(g => g.kind === 'reply')) return [400, 'a reply stays under its answer'] as Refused;
+  if (all.some(g => g.by !== all[0].by)) return [400, 'a note written by someone else stays its own'] as Refused;
   if (all.filter(g => g.kind === 'scrap').length > 1) return [400, 'a group holds one scrap at most'] as Refused;
   const into = all.find(g => g.kind === 'scrap') ?? all[0],
     rest = all.filter(g => g !== into);

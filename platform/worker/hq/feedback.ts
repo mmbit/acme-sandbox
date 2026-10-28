@@ -2,7 +2,7 @@
 // to this agent's jobs listed.
 import * as api from './api.ts';
 import { savePrivately } from './files.ts';
-import { minute, oneLine, print, shown, stop, text } from './output.ts';
+import { minute, oneLine, plural, print, shown, stop, text } from './output.ts';
 
 // (its pictures)
 export const note = {
@@ -181,6 +181,49 @@ export const route = {
       `Notes ${went.notes.map((n: number) => `#${n}`).join(', ')} went into the brief of job #${went.job} (${went.agent}), as it hasn't started.`,
     );
   },
+};
+
+export const guestnotes = {
+  help: `
+   hq guestnotes                                     the CEO: invited people's notes on a share still waiting in the
+                                                     board's Notebook, by owner (how many, their pages and addresses,
+                                                     since when; never their words)
+   hq guestnotes send <owner | nobody>               on the board's word only: those for that agent (nobody: the routing
+                                                     check's) go to it as one task, as the board's Send would`,
+
+  async run(args: string[]) {
+    if (!args.length) {
+      const { owners } = (await api.getJson('guestnotes')) as { owners: GuestNotes[] };
+      if (!owners.length) return print("No invited person's notes wait in the board's Notebook.");
+      return print(
+        ...owners.map(
+          o =>
+            `For ${o.owner ?? 'nobody (the routing check)'}: ${plural(o.notes, 'note')} since ${minute(o.since)}, on ` +
+            `page${o.pages.length === 1 ? '' : 's'} ${o.pages.map(p => `#${p}`).join(', ')}` +
+            `${o.blank ? ` (${o.blank} with nothing to show there)` : ''}; about ${o.places.map(p => oneLine(p)).join(', ')}`,
+        ),
+      );
+    }
+    if (args[0] !== 'send' || args.length !== 2) stop('usage: hq guestnotes [send <owner | nobody>]');
+    const owner = args[1] === 'nobody' ? null : args[1];
+    const answer = await api.orNoAnswer(api.call('guestnotes/send', { body: { owner }, timeoutMs: 60_000 }));
+    if (api.isRefusal(answer.status)) stop(`Nothing was sent: ${api.errorIn(answer.body, 'refused')}`);
+    if (!api.isSuccess(answer.status))
+      stop(`Not confirmed: the notes may or may not have gone (HTTP ${api.httpCode(answer.status)}).`, 3);
+    const went = api.parseOrNull(answer.body) as { notes: number } | null;
+    print(
+      `${plural(went?.notes ?? 0, 'note')} for ${args[1]} go in a few seconds, as the board's Send: \`hq route log\` ` +
+        "(nobody's) or the jobs list (an agent's task, \"The board's notes on ...\") shows where.",
+    );
+  },
+};
+type GuestNotes = {
+  owner: string | null;
+  notes: number;
+  pages: number[];
+  places: string[];
+  blank: number;
+  since: string;
 };
 
 type RouteRow = {

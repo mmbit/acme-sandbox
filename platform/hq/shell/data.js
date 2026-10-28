@@ -876,7 +876,8 @@ function mockKeyTested(row, action, key) {
   finish(action, ok ? 'done' : 'failed', ok ? `The key works. ${row.id} takes work now.` : 'The service refused the key: it isn’t valid.');
 }
 function mockAdd(rows, setup, seat) {
-  if (!/^[a-z]+-([0-9]+|[a-z]+)$/.test(seat.id ?? '')) throw seatRefused('A seat’s name is a lowercase word, a dash, then a number or another word, like claude-4 or mistral-1.');
+  // (the worker's seatid.ts, copied)
+  if (!/^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$/.test(seat.id ?? '')) throw seatRefused("A seat's name is lowercase letters and digits in two or more parts joined by dashes, starting with a letter, like claude-4 or claude-team-2.");
   if (rows.some(s => s.id === seat.id)) throw seatRefused(`There’s a seat called ${seat.id} already. Pick another name.`);
   let provider = setup.providers.find(p => p.id === seat.provider);
   if (seat.provider === 'new') {

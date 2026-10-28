@@ -63,6 +63,8 @@ const shares = await import('./shares.ts');
 const jobs = await import('./jobs.ts');
 const booknotes = await import('./ink/booknotes.ts');
 const booksheets = await import('./ink/booksheets.ts');
+const notebooksend = await import('./notebooksend.ts');
+const sketchPeople = await import('./ink/sketchpeople.ts');
 (await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
 const server = createServer(app).listen(0);
 after(() => server.close());
@@ -182,12 +184,30 @@ const pinNote = (ps: string, host: string, page: string, note = 'The button is h
     },
   });
 const jobsCount = () => (db.prepare('select count(*) n from jobs').get() as { n: number }).n;
-// The notes a person wrote on the board's open sheets, in its book
+// The notes a person wrote waiting in the board's book: scraps in its My Notebook (ink/bookreview.ts), their words
+// on the post-it or typed on the page
 const bookNotesOf = (name: string) =>
-  booksheets
-    .sheets()
-    .open.flatMap((s: any) => s.notes)
-    .filter((n: any) => n.guest?.name === name);
+  (
+    db
+      .prepare(
+        `select g.* from notebook_groups g join book_pages p on p.id = g.page join notebooks b on b.id = p.notebook
+        where b.who = 'board' and b.kind = 'mine' and g.status = 'open' and g.deleted is null and g.by like 'guest:%'
+        order by g.id`,
+      )
+      .all() as any[]
+  )
+    .map(g => ({
+      id: g.id,
+      owner: g.owner,
+      words:
+        g.words ||
+        JSON.parse(g.texts)
+          .map((t: any) => t.text)
+          .join('\n'),
+      anchor: JSON.parse(g.anchor),
+      guest: sketchPeople.guestOf(g.by),
+    }))
+    .filter(n => n.guest?.name === name);
 // Each test starts with no share open: one a page's scope has open takes the board's next invite there
 beforeEach(() => {
   const now = new Date().toISOString();
@@ -770,12 +790,15 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   // (on the board's sheet, sent from its book)
   assert.equal((await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped')).status, 200);
   const [hers] = bookNotesOf('Fenna');
-  const sheet = booksheets.sheets().open.find((s: any) => s.notes.some((n: any) => n.id === hers.id))!;
-  booksheets.send(sheet.id);
+  await notebooksend.sendGuestNotes({ owner: hers.owner });
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS + 1000);
-  const sent = db.prepare('select job from book_sheets where id = ?').get(sheet.id) as { job: number };
+  const sent = db
+    .prepare(
+      'select s.job, n.review from notebook_groups g join book_notes n on n.id = g.note join book_sheets s on s.id = n.sheet where g.id = ?',
+    )
+    .get(hers.id) as { job: number; review: number };
   const job = db.prepare('select prompt from jobs where id = ?').get(sent.job) as any;
-  const review = (db.prepare('select review from book_notes where id = ?').get(hers.id) as { review: number }).review;
+  const review = sent.review;
   assert.match(
     job.prompt,
     /By: Fenna \(fenna@example\.org; the board's title for them: UX specialist\), an outside reviewer/,

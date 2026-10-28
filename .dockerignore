@@ -65,6 +65,8 @@
 !platform/worker/hq/waits.ts
 # a seat's week as pacing reads it, which HQ's play of the queue paces seats by as the worker does (playseats.ts).
 !platform/worker/src/pace.ts
+# a seat's name, which HQ's Seats checks as the worker does (seats.ts).
+!platform/worker/src/seatid.ts
 # the rude-word check, which the jobs' short codes skip words by (platform/coordinator/src/jobcodes.ts).
 !shared/wordcheck/wordcheck.js
 # the rule that places the board's sorted projects, which the projects view's dev mode shares (projectorder.ts).

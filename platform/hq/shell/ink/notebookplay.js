@@ -53,6 +53,12 @@ export function notebookPlay({ seed, now = () => Date.now(), sendMs = 10_000 } =
     // An agent's desk-phone card about a sent group's note (group: its id), as bookasks.ts's asksOn lists it ({ agent,
     // kind, title, body, questions?, desk? }), its id, note and name filled in. → the card.
     ask: (group, card) => askAbout(s, group, card),
+    // An agent's note on a page (a call agent's scrap or typed words: ink/callnotes.ts), by: the agent's id; parts:
+    // { ink, texts, pictures }. → the group
+    note(page, by, parts) {
+      const g = insertGroup(s, s.page(Number(page)), 'scrap', by, { ink: [], texts: [], pictures: [], ...parts });
+      return JSON.parse(JSON.stringify(g));
+    },
     // fn({ notebook, page }) after every change, as the coordinator's `book` event with text `notebook` (page null: a
     // notebook's order)
     listen(fn) {

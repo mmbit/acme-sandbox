@@ -2,8 +2,8 @@
 // a finger works the page. No button and no mode: a pen drawn across any HQ page draws there, and a finger still
 // scrolls and taps under the ink (the page never scrolls under the pen). A pen's tap stays the page's, and a pen in a
 // text field is Apple's handwriting-to-text. A mouse draws with the pin, as review mode always has.
-//   - A mark is the lines drawn while the pen keeps coming back: the mic starts with its first line (on a call, the
-//     call hears it) and the words said go in its note. Rest the pen and it lifts into the book as a note, the page left
+//   - A mark is the lines drawn while the pen keeps coming back: the words said once its mic button is tapped (on a
+//     call, the call hears them) go in its note. Rest the pen and it lifts into the book as a note, the page left
 //     clean: nothing of it stays drawn (settle.js, marks.js paint: rule zero).
 //   - Hold the pen still on one spot and talk: a voice note there, its words landing as the pen lifts.
 //   - Scribble over the mark being made: it's let go. Ring something: the mark is on what's inside the ring.
@@ -12,7 +12,6 @@
 import * as inkjs from './ink.js';
 import { aim, boxOfLines } from './mark.js';
 import { compose, develop, towards } from './postit.js'; // (towards)
-import { canRecord } from './dictation.js';
 import { reset } from './acts.js';
 import { ACCENT } from './base.js';
 import * as marks from './marks.js';
@@ -46,7 +45,6 @@ function lifted(r, stroke) {
     r.nextLines.push(stroke);
     return marks.paint(r);
   }
-  listening(r, stroke);
   const pts = stroke.points,
     area = boxOfLines([stroke]);
   if (scribbled(pts) && marks.markAt(r, area)) return wipeOpen(r);
@@ -168,15 +166,6 @@ function carry(r) {
     carried: () => r.mode === 'note' && !r.text.value.trim() && reset(r),
     onPage: e => !theirs(r, e),
   });
-}
-
-// The mic's pulse at the end of the line just drawn, while it listens for the mark's words (not on a call: the call
-// hears them).
-function listening(r, stroke) {
-  if (r.call || !canRecord || r.mode === 'sending') return;
-  const [x, y] = stroke.points.at(-1);
-  Object.assign(r.listen.style, { left: `${x}px`, top: `${y}px` });
-  r.listen.hidden = false;
 }
 
 // What a reset leaves

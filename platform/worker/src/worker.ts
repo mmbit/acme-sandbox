@@ -37,6 +37,7 @@ import { claudeEnv, cliOf, codexArgs, credentialFile, modelFor, type SeatProvide
 import { CLIS, CLI_CONFIG, resumeOn, sessionTag, type Cli } from './clis.ts';
 import { carrySession, project, type Resumes } from './carry.ts';
 import { applyList, carryOut, off, type Listed, type SeatAction } from './seatlist.ts';
+import { SEAT_NAME } from './seatid.ts';
 import { moveSeats } from './seatmoves.ts';
 import { closing, type OwnedProject } from './closing.ts';
 import { bringUpToDate, profilePaths, rebuildProfile, repairFrom, restoreProfile, splitProfile, startRepair, threadBriefing, type InThread, type Pull } from './threads.ts';
@@ -53,6 +54,7 @@ import { openPullRequest as openOn } from './pulls.ts';
 import { tellMainLine, type ToldMain } from './mainline.ts';
 import { alive, dropRun, endOf, endSeen, exitOf, follow, keepRecord, launch as launchDetached, launchesOf, processesOf, procStat, recordOf, records, sweepRuns, type CheckRun, type Checks, type Launched, type RunRecord } from './detached.ts';
 import { inChecks, runChecks, testsOnce, type CheckOutcome, type CheckSpec, type TestsOutcome } from './pushchecks.ts';
+import { testsCheckout as testsAt, type TestsCheckout } from './testscheckout.ts';
 import { answering, askAgainPrompt, cantAsk, lacksVerdict, see, seeSessionLogs, touchedFiles, verdictFromAnswer, verdictOf, written } from './verdict.ts';
 
 const HQ = process.env.HQ_URL ?? 'http://coordinator:8080';
@@ -93,16 +95,15 @@ type Seat = SeatProvider & { id: string; state: SeatState; until: number; util?:
   hasCredits?: boolean; useCredits?: boolean; creditsLeft?: number; confirmed?: boolean; readFailed?: boolean;
   refusals?: number; refused?: string; closed?: string; paused?: boolean; gone?: boolean; drainAt?: number;
   signInRead?: boolean };
-// A seat's id names its folder under /seats: a lowercase name, a dash, then digits or a lowercase word (codex-board), as
-// review.ts's low-risk SEAT takes them. Anything else is left out, loudly. SEATS is the company's first list: HQ keeps
+// A seat's id names its folder under /seats, by seatid.ts's one rule (codex-board, claude-team-2). Anything else is left out, loudly. SEATS is the company's first list: HQ keeps
 // the list from then on, and the board changes it in Seats (syncSeats). A seat's drain level, the share of its windows it
 // runs to (downtime.ts drainLevel), is the board's too, its stop level in HQ's Settings › Seats (applyList). A SEATS entry
 // may give one in percent (claude-1:claude:95, for a plan big enough that DRAIN_AT's reserve is more than the board
 // needs): HQ takes it once, for a seat the board hasn't set (the coordinator's seedSeats), and until HQ's list comes the
 // seat runs to it.
 const ENGINES = ['claude', 'codex'];
-const SEAT_ID = new RegExp(`^[a-z]+-([0-9]+|[a-z]+):(${ENGINES.join('|')})(:(5[0-9]|[6-9][0-9]))?$`);
-const DRAIN_AT: Map<string, number> = new Map((process.env.SEATS ?? '').split(',').filter(s => SEAT_ID.test(s) && s.split(':')[2])
+const SEATS_ENTRY = new RegExp(`^${SEAT_NAME}:(${ENGINES.join('|')})(:(5[0-9]|[6-9][0-9]))?$`);
+const DRAIN_AT: Map<string, number> = new Map((process.env.SEATS ?? '').split(',').filter(s => SEATS_ENTRY.test(s) && s.split(':')[2])
   .map(s => [s.split(':')[0], Number(s.split(':')[2]) / 100]));
 const newSeat = (id: string, engine: string): Seat => ({ id, engine, cli: listedCli.get(id) ?? engine, signIn: 'login', state: 'login', until: 0, resets: 0, weekResets: 0,
   ...(DRAIN_AT.has(id) ? { drainAt: DRAIN_AT.get(id) } : {}) });
@@ -111,7 +112,7 @@ const newSeat = (id: string, engine: string): Seat => ({ id, engine, cli: listed
 const SEAT_LIST = '/seats/list.json';
 const listedCli = new Map<string, string>();
 const SEATS: Seat[] = (lastList() ?? (process.env.SEATS ?? 'claude-1:claude,codex-1:codex').split(','))
-  .filter(s => SEAT_ID.test(s) || (console.log(`SEATS: ${JSON.stringify(s)} isn't a seat (name-1:claude), left out`), false))
+  .filter(s => SEATS_ENTRY.test(s) || (console.log(`SEATS: ${JSON.stringify(s)} isn't a seat (name-1:claude), left out`), false))
   .map(s => newSeat(s.split(':')[0], s.split(':')[1]));
 function lastList() {
   try {
@@ -2356,50 +2357,9 @@ function testsOnceOf(job: Job, tested: TestedCode, run: (ticket: string) => Prom
   });
 }
 
-// A push's tests run apart from its job's clone: in a clone of the mirror at the pushed commit, made after the session as
-// the job's user (git.ts checkout), with a home and temporary folder of its own and the git that pinnedGitEnv allows.
-// Nothing the session left (its clone's git config, attributes or replacement refs, files it didn't commit, its home's
-// settings) decides what they test or how: the runner and the suites it picks are the pushed commit's, against its base
-// on main. Made when the tests first need it, it's kept until the push's checks end, so tests that outlive a reload
-// still have it; an ended job's goes with its other folders (sweepEnded).
+// A push's tests run in a checkout of their own (testscheckout.ts), under root's tests/.
 const TESTED = `${WORK}/tests`;
-const countIn = (told: string) => {
-  try { return (JSON.parse(told) as { passed?: unknown }).passed; } catch { return undefined; }
-};
-type TestsCheckout = ReturnType<typeof testsCheckout>;
-function testsCheckout(job: Job, me: Me, tested: TestedCode) {
-  const top = `${TESTED}/${job.id}`, at = `${top}/${tested.sha}`, outcomes = `${at}/outcomes.json`;
-  const g = flow.forAgent(me);
-  const made = () => {
-    if (!existsSync(at)) {
-      remove(top);
-      makeDir(top, me);
-      g.as('mkdir', [`${top}/new`, `${top}/new/home`, `${top}/new/tmp`]);
-      g.checkout(`${top}/new/repo`, tested.sha);
-      g.as('mv', ['-T', `${top}/new`, at]);
-    }
-    return { cwd: `${at}/repo`, env: { ...me.env, HOME: `${at}/home`, TMPDIR: `${at}/tmp`, ...pinnedGitEnv } };
-  };
-  return {
-    tested,
-    args: ['--commit', tested.sha, '--outcomes', outcomes],
-    made,
-    // (made, without what an earlier launch's tests said)
-    launching: () => {
-      const where = made();
-      g.as('rm', ['-f', outcomes]);
-      return where;
-    },
-    // What the tests that ran said, with the tests that passed as their --outcomes file has them: none from a branch
-    // from before it. One that isn't a count leaves the tests not run, and nothing of them goes to HQ.
-    counted: (outcome: CheckOutcome): TestsOutcome => {
-      const told = outcome.passed === null ? undefined : readAs(me, outcomes);
-      const tests = told === undefined ? 0 : countIn(told);
-      if (Number.isSafeInteger(tests) && (tests as number) >= 0) return { ...outcome, tests: tests as number };
-      return { passed: null, report: `The tests ran, but their --outcomes file doesn't count the tests that passed, so they're not kept.\n\n${outcome.report}`, tests: 0 };
-    },
-  };
-}
+const testsCheckout = (job: Job, me: Me, tested: TestedCode) => testsAt(TESTED, job.id, me, flow.forAgent(me), tested);
 
 // What's left of a run once its work is pushed: its checks (pushchecks.ts), then its renders kept. A reload doesn't
 // wait for it, and the next worker process takes the run on from its checks.
