@@ -237,6 +237,45 @@ test('a scrap lands on the current page, under what is there; its picture is ser
   assert.equal(drawn.status, 200, 'the page drawn whole, groups and all');
 });
 
+// Review mode's note with nothing to show, or a general one (the pin flow, bookreview.ts)
+test('a scrap with no picture is its words typed on the current page, stacked, kept where it was written; none without words', async () => {
+  const nb = await myNotebook(),
+    page = await current(nb);
+  const above = (await scrap()).body;
+  const res = await scrap({ snip: null, owner: 'kit', words: 'Same on every page', said: 'spoken' });
+  assert.equal(res.status, 200);
+  const g = res.body;
+  assert.deepEqual(
+    [g.page, g.kind, g.pictures, g.texts.map((t: any) => t.text), g.owner, g.anchor.url],
+    [page, 'drawing', [], ['Same on every page'], 'kit', anchor().url],
+  );
+  assert.ok(g.box.y >= above.box.y + above.box.h, 'stacked under');
+  // words past a typed box's 2,000 characters go on in boxes under it, together the words whole
+  const long = `${'Let the header breathe. '.repeat(100)}The end.`;
+  const boxes = (await scrap({ snip: undefined, words: long })).body.texts as any[];
+  assert.deepEqual([boxes.length, boxes.map(t => t.text).join('')], [2, long]);
+  assert.ok(boxes[1].y > boxes[0].y, 'one under the other');
+  for (const words of ['', '   ']) {
+    const none = await scrap({ snip: null, words });
+    assert.deepEqual(
+      [none.status, none.body.error],
+      [400, 'a note with no picture holds words'],
+      JSON.stringify(words),
+    );
+  }
+  // sent, it goes to its owner with its words as said
+  assert.equal((await h.board('/api/notebooks/pages/send', { id: page })).status, 200);
+  const { job } = await delivered(g.id);
+  assert.equal((db.prepare('select agent from jobs where id = ?').get(job.id) as any).agent, 'kit');
+  const { note } = db.prepare('select note from notebook_groups where id = ?').get(g.id) as any;
+  const sent = db.prepare('select words, said, anchor from book_notes where id = ?').get(note) as any;
+  assert.deepEqual(
+    [sent.words, sent.said, JSON.parse(sent.anchor).url],
+    ['Same on every page', 'spoken', anchor().url],
+  );
+  await h.finish(job);
+});
+
 test('send a page: undo in its seconds, then each group to its agent, a fresh page, the page read-only but answered', async () => {
   const nb = (await h.board('/api/notebooks')).body.shelf[0].id;
   const page = (await h.board('/api/notebooks/pages/create', { notebook: nb })).body.id;

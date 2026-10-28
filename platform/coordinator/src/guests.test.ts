@@ -141,10 +141,10 @@ test('a checklist reaches the board as a card, the guest opens it with a code, a
     p.headers.get('content-security-policy')!,
     /^default-src 'none'; script-src 'self'; style-src 'sha256-[^']+'; img-src 'self'/,
   );
-  assert.deepEqual(
-    [...p.html.matchAll(/<script[^>]*>/g)].map(m => m[0]),
-    ['<script src="/guest/guest.js" defer>'],
-  );
+  for (const script of p.html.matchAll(/<script([^>]*)>([^]*?)<\/script>/g)) {
+    assert.match(script[1], /src="\/guest\/[a-z]+\.js"/);
+    assert.equal(script[2], '', 'guest pages never run inline scripts');
+  }
   p = await guest(`${path}/send`, { form: {} });
   assert.match(p.html, /Testmodus: er is geen e-mail verstuurd/);
   assert.match(p.html, /Je code voor Testco/);

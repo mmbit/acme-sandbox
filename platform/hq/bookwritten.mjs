@@ -1,77 +1,76 @@
 // book-check.mjs's handwriting story (shared/review/written.js, the coordinator's handwriting.ts), held like an iPad mini
 // with the book open, the reader and the voice line played, the board saying nothing: words written with the Pencil on
-// HQ's page are read once the pen rests (one reading, of the ink alone), and the note that goes into the book as the
-// mark settles has them as written; a note in before its words were read takes them as they come, and the book shows
-// them there, editable, unless the board typed others there first; a reading refused, or words read that the book
-// didn't take, are told. (no post-it)
+// HQ's page are read once the pen rests (one reading, of the ink alone) into its post-it's field, and Save puts them in
+// the Notebook's scrap as written; a scrap saved before its words were read takes them as they come (groups/edit), and
+// the book shows them there, editable, unless the board typed others there first; a reading refused, or words read that
+// the Notebook didn't take, are told. (the post-it and Save)
 import assert from 'node:assert/strict';
+import { groupsOf } from './bookplayed.mjs';
+import { savedScrap } from './bookscrap.mjs';
 
-// c: book-check's { hqOnStore, ui, reader, hush, posts, notes, pages, ceo (the CEO's name), noErrorsIn, shot }
+// A reading that comes after Save: longer than the post-it's photo takes to develop on a loaded worker
+const LATE_MS = 9000;
+
+// c: book-check's { hqOnStore, ui, reader, hush, posts, play (the Notebook's, played), pages, noErrorsIn, shot }
 export async function writtenStory(browser, c) {
   const { page, errors, done } = await c.hqOnStore(browser),
-    before = { notes: c.notes.length, pages: c.pages.length };
+    before = { pages: c.pages.length };
   c.hush(true);
   try {
-    const s = { ...c, page, seen: c.posts.filter(p => p.path === '/api/book/note').length };
-    await readAndSent(s);
+    const s = { ...c, page };
+    await readAndSaved(s);
     await readLate(s);
     await typedLate(s);
     await notTaken(s);
-    await refusedSent(s);
+    await refusedSaved(s);
     c.noErrorsIn(errors);
   } finally {
     c.hush(false);
     Object.assign(c.reader, { words: '', ms: 0, refused: null });
-    c.notes.splice(before.notes);
     c.pages.splice(before.pages);
     await done();
   }
 }
 
-// Written, the pen resting: one reading of the ink alone, before the type of its words shows; the note in the book
-// has them, said 'written'
-async function readAndSent(s) {
-  const { page, reader } = s;
+// Written, the pen resting: one reading of the ink alone, before the type of its words shows; its post-it's field has
+// them, and the scrap Save puts in the Notebook, said 'written'
+async function readAndSaved(s) {
+  const { page, reader, ui } = s;
   reader.words = '+ same for the Sunday one?';
-  const read = reader.inks.length; // (earlier stories' marks were read too)
+  const read = reader.inks.length, // (earlier stories' marks were read too)
+    from = s.posts.length;
   const box = await write(page, 120, 300);
   assert.equal(await typeBeside(page, box), 0, 'no type before the words are read');
-  await send(s);
-  const id = s.notes.at(-1).id;
-  await until(
-    () => JSON.stringify([s.notes.at(-1).words, s.notes.at(-1).said]),
-    JSON.stringify([reader.words, 'written']),
-    'the words read are the note’s, as written',
-  );
-  assert.equal(s.notes.at(-1).id, id);
+  await until(() => page.locator(ui('.sheet textarea')).inputValue(), reader.words, 'the words read in its post-it');
   assert.equal(reader.inks.length, read + 1, 'one reading, once the pen rested');
   const ink = await picture(page, reader.inks.at(-1));
   assert.ok(ink.dark > 100 && ink.light > ink.dark * 4, `the ink alone, dark on white (${JSON.stringify(ink)})`);
   assert.ok(ink.width >= box.w && ink.height >= box.h, `the whole ink, at least as drawn (${JSON.stringify(ink)})`);
   await s.shot('book-written-read', page);
+  const sent = await savedScrap(s, from, 'written');
+  assert.deepEqual([sent.words, sent.said], [reader.words, 'written'], 'the words read are the scrap’s, as written');
+  assert.equal(reader.inks.length, read + 1, '...read once');
 }
 
-// Read slowly: the words come after the note went in, as its words, and the book shows them on the CEO's sheet, to be
-// written over
+// Read slowly: the words come after the scrap was saved, as its words, and the book shows them on it, to be written
+// over
 async function readLate(s) {
   const { page, reader, posts } = s;
-  Object.assign(reader, { words: 'Lighter ink', ms: 2500 });
-  const read = reader.inks.length;
+  Object.assign(reader, { words: 'Lighter ink', ms: LATE_MS });
+  const read = reader.inks.length,
+    from = posts.length;
   await write(page, 120, 640);
-  const sent = await send(s);
-  assert.equal(sent.words, '', 'in the book with no words yet');
+  const sent = await savedScrap(s, from, 'read late');
+  assert.equal(sent.words, '', 'in the Notebook with no words yet');
   assert.equal(reader.inks.length, read + 1, 'its lines read');
-  const id = s.notes.at(-1).id;
+  const scrap = groupsOf(s.play).at(-1);
   await until(
-    () => JSON.stringify(posts.find(p => p.path === '/api/book/note/edit' && p.body.id === id)?.body ?? null),
-    JSON.stringify({ id, words: 'Lighter ink', said: 'written', was: '' }),
-    'the words read go in the note',
+    () => JSON.stringify(edits(s, from, scrap.id).map(({ words, said }) => ({ words, said }))[0] ?? null),
+    JSON.stringify({ words: 'Lighter ink', said: 'written' }),
+    'the words read go in the scrap',
   );
-  // (by its name: the book has no title= since its own tooltips.)
-  const face = page.locator(`#book nav [aria-label^="For ${s.ceo}"]`);
-  await face.click();
-  await inBook(s).waitFor({ timeout: 5000 });
-  const words = inBook(s).getByRole('textbox');
+  await changed(s, scrap);
+  const words = inBook(s, scrap);
   await until(() => words.inputValue(), 'Lighter ink', 'the book shows the words read');
   // (a finger's tap first: on a touch screen a field's words are the pen's to strike until one, penwords.js)
   await words.tap();
@@ -80,59 +79,66 @@ async function readLate(s) {
   await s.shot('book-written-late', page);
 }
 
-// Read slowly, and words typed on its note in the book while it's read: they're the board's, and the
-// words read, coming later, don't go over them (the store refuses an edit made for the words it had)
+// Read slowly, and words typed on its scrap while it's read (on another screen: a scrap with no words has no field in
+// the book, bookgroups.js): they're the board's, and the words read, coming later, don't go over them (the store
+// refuses an edit made for the words it had)
 async function typedLate(s) {
   const { page, reader, posts } = s;
-  Object.assign(reader, { words: 'Lighter ink', ms: 5000 });
+  Object.assign(reader, { words: 'Lighter ink', ms: LATE_MS + 4000 });
+  const from = posts.length;
   await write(page, 120, 390);
-  await send(s);
-  const id = s.notes.at(-1).id,
-    words = inBook(s).getByRole('textbox');
-  await until(() => words.inputValue(), '', 'its note in the book, with no words yet');
-  await words.fill('Darker, please');
-  await until(() => s.notes.at(-1).words, 'Darker, please', 'typed in the book');
-  await until(
-    () => posts.some(p => p.path === '/api/book/note/edit' && p.body.id === id && p.body.said === 'written'),
-    true,
-    'the words read come',
+  await savedScrap(s, from, 'typed late');
+  const scrap = groupsOf(s.play).at(-1),
+    words = inBook(s, scrap);
+  s.play.route(
+    '/api/notebooks/groups/edit',
+    {},
+    { id: scrap.id, since: scrap.updated, words: 'Darker, please', said: 'typed' },
   );
+  await until(() => words.inputValue(), 'Darker, please', 'the book shows the words typed');
+  await until(() => edits(s, from, scrap.id).some(e => e.said === 'written'), true, 'the words read come');
   await page.waitForTimeout(500);
-  assert.deepEqual([s.notes.at(-1).words, s.notes.at(-1).said], ['Darker, please', 'typed'], "the board's words stay");
+  assert.deepEqual([now(s, scrap).words, now(s, scrap).said], ['Darker, please', 'typed'], "the board's words stay");
   assert.equal(await words.inputValue(), 'Darker, please', '...in the book too');
 }
 
-// Words read after the note went in that the book didn't take (it failed): the board is told on the page
+// Words read after the scrap was saved that the Notebook didn't take (it failed): the board is told on the page
 async function notTaken(s) {
   const { page, reader, ui } = s;
-  Object.assign(reader, { words: 'Lighter ink', ms: 1500 });
-  await page.route('**/api/book/note/edit', r => r.fulfill({ status: 500, json: { error: 'the store broke' } }));
+  Object.assign(reader, { words: 'Lighter ink', ms: LATE_MS });
+  await page.route('**/api/notebooks/groups/edit', r => r.fulfill({ status: 500, json: { error: 'the store broke' } }));
   try {
+    const from = s.posts.length;
     await write(page, 300, 560);
-    await send(s);
+    await savedScrap(s, from, 'not taken');
     await until(() => page.locator(ui('.tip.show')).isVisible(), true, 'the board is told the words read went nowhere');
     assert.equal(
       await page.locator(ui('.tip')).textContent(),
-      `The book said no: the store broke. The words read for note ${s.notes.at(-1).n} aren’t in it.`,
+      'The book said no: the store broke. The words read for the scrap aren’t in it.',
     );
   } finally {
-    await page.unroute('**/api/book/note/edit');
+    await page.unroute('**/api/notebooks/groups/edit');
   }
 }
 
-// A reading refused: the page says so, or the note would look like ink with no writing
-async function refusedSent(s) {
+// A reading refused after Save: the page says so, or the scrap would look like ink with no writing
+async function refusedSaved(s) {
   const { page, reader, ui } = s;
-  Object.assign(reader, { ms: 2500, refused: [504, 'the reader took too long'] });
+  Object.assign(reader, { ms: LATE_MS, refused: [504, 'the reader took too long'] });
   try {
+    const from = s.posts.length;
     await write(page, 300, 700);
-    await send(s);
+    await savedScrap(s, from, 'refused');
+    // (shown for a while: its words read while it shows)
     await until(
-      () => page.locator(ui('.tip')).textContent(),
+      () =>
+        page
+          .locator(ui('.tip.show'))
+          .textContent({ timeout: 500 })
+          .catch(() => null),
       'Your handwriting wasn’t read: the reader took too long. What it says isn’t in its note.',
       'the board is told its handwriting went unread',
     );
-    assert.ok(await page.locator(ui('.tip.show')).isVisible());
   } finally {
     reader.refused = null;
   }
@@ -140,12 +146,20 @@ async function refusedSent(s) {
 
 // ---- the Pencil and what it leaves
 
-// The last note sent, in the book's open sheet of the CEO's: the last on its page (numbered only beside others there:
-const inBook = s =>
-  s.page
-    .getByRole('region', { name: `For ${s.ceo}` })
-    .getByRole('group')
-    .last();
+// The scrap's words in the book, on its page
+const inBook = (s, scrap) => s.page.locator(`#book .bk-under[data-g="${scrap.id}"] textarea.bk-scrap-words`);
+// The scrap as the Notebook has it now
+const now = (s, scrap) => groupsOf(s.play).find(g => g.id === scrap.id);
+// The scrap's edits since from
+const edits = (s, from, id) =>
+  s.posts
+    .slice(from)
+    .filter(p => p.path === '/api/notebooks/groups/edit' && p.body.id === id)
+    .map(p => p.body);
+// The store's 'book' event for the scrap's page, as the coordinator publishes on every change (notebook.ts): the book
+// reads its groups again
+const changed = (s, scrap) =>
+  s.page.evaluate(page => document.dispatchEvent(new CustomEvent('book:changed', { detail: { page } })), scrap.page);
 
 // "Hi" written at x, y with the pen, three lines in a row, as Safari hands them over. Returns the ink's box.
 async function write(page, x, y) {
@@ -179,14 +193,6 @@ async function write(page, x, y) {
       at('pointerup', pts.at(-1), 0);
     }, pts);
   return { x, y, w: 36, h: 40 };
-}
-// The pen rested: the note that went in the book as the mark settled, the one after the last one this story saw
-async function send(s) {
-  const notes = () => s.posts.filter(p => p.path === '/api/book/note'),
-    noted = s.seen;
-  await until(() => notes().length, noted + 1, 'the note went in the book');
-  s.seen = noted + 1;
-  return notes()[noted].body;
 }
 // How many of review mode's ink pixels to the right of a box are type's dark (marks.js TYPE_INK), not the ink's red
 const typeBeside = (page, b) =>
@@ -225,7 +231,7 @@ const picture = (page, src) =>
 // Waits till what() is the value wanted, failing on what it was then
 async function until(what, want, why) {
   let got;
-  for (let i = 0; i < 60; i++) {
+  for (let i = 0; i < 160; i++) {
     got = await what();
     if (got === want) return;
     await new Promise(res => setTimeout(res, 150));

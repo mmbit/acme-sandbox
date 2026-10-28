@@ -28,9 +28,9 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 - the page path and the viewport (size, scroll position, pixel ratio, browser).
 
 **On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
-behind the board's sign-in. Each note goes on the board's sheet in the book for the agent whose work it's on (what's
-drawn on names them, `data-owner`), else the CEO's, as a preview's go on its owner's (The flow, below); the post-it's
-Send names that sheet ("Send to Juno"), and the menu names the sheet the last note went to (the CEO's before one).
+behind the board's sign-in. Each note is a scrap on the newest page of the board's Notebook, for the agent whose work
+it's on (what's drawn on names them, `data-owner`), else the CEO, as a preview's are for its owner (The flow, below);
+the post-it's line says so, its button is Save, and the menu counts the notes on that page.
 A page that loads the tool itself (its script tag has `data-summoned`) hears the menu's Open the book as its
 `review:book` event (detail: whose sheet). (the owners: job #19219)
 A `review:cover` event (detail `true`, later `false`) hides the tool while the page frames another page with its own
@@ -132,14 +132,17 @@ it's the page's width and the book's spread covers it with the page; over a dial
 
 - **A mark** is the lines drawn while the pen keeps coming back: its first line starts the mic once it can't be a tap,
   as a pen held still does (a pulse at the pen's last point while it listens; a tap never asks for the mic, house rule
-  7), and the words said go in its note. **Rest the pen** 1.5 s and the mark is done
-  (`settle.js`, the one way from a mark to the book, on a call or not): its note goes on its sheet in the board's book
-  (`marks.js`: `POST /api/book/note` with the anchor, the words and how they came, and a snip of the page around the
-  mark with its lines, 24 px of margin), and its ink **lifts** off the page into the book (`lift.js`: the book answers
-  `pencil:landing` with where it lands, its page turned there, or the folded book's handle, which hears `book:landed`;
-  `platform/hq/shell/ink/booklanding.js`; Ink's folder). No post-it and no Send:
-  a mouse's mark with the pin goes the same way once the mouse rests; a page with no book keeps the post-it. HQ's page
-  is a sheet's page in today's book for its owner (made at its first note, `page/new`).
+  7), and the words said go in its note. **The post-it** comes up at the bottom of HQ's page as on any page (the
+  board's pin flow, 27 Oct): the Notebook's dot paper, its polaroid the live screenshot framed on the mark and
+  developed again with every line, the words said or typed, **Save** and Cancel. Save (`postit.js` booked, then
+  `settle.js` toBook) puts it in the Notebook as a **scrap on the newest page of My Notebook** (`marks.js` scrap:
+  `POST /api/notebooks/groups/scrap` with the anchor, the words and how they came, a snip of the page around the mark
+  with its lines, 24 px of margin, and the owner the page's send gives it to: `data-owner` on what's marked, else the
+  CEO), never on a sheet; a note pinned to nothing goes as its words typed on that page. Its ink then **lifts** off the
+  page into the book (`lift.js`: the book answers `pencil:landing`, `group: true`, with where the scrap lands, its
+  page turned there, or the folded book's pull tab, which hears `book:landed` and opens there at its tap;
+  `platform/hq/shell/ink/booklanding.js`). The Notebook never opens by itself. A mouse's mark with the pin goes the
+  same way. Only on a call does a mark still settle by itself (`settle.js`, 1.5 s, below).
 - **Rule zero** (the board's, 2026-10-27): nothing stays drawn on HQ or an artifact, ever. The page's ink layer holds
   only the mark being made (`marks.js` paint: its lines, and those drawn while it goes in); once its note is in the
   book, or it's let go, the page is clean at once, and its lines live only in the note's snip. The book keeps no lines
@@ -235,15 +238,15 @@ start there).
    cycle folder the page is in (`cycles/<folder>`), its owner the agent who made the folder: the first agent on a desk
    whose commit added a file to it (`owed.ts` maker()), else the CEO, who hands it on; a page in no folder is
    **Venture cycle pages**, the CEO's. HQ's own pages are the CEO's unless what's marked names an agent (job #19219).
-   The note goes on the board's open sheet
-   in its book for that owner, on today's sheet page for them (one a day, whatever the page's address: `book.ts`
-   sheetPageFor), as a book note: its anchor, its words, and a snip, the screenshot cut around the mark with the
+   The board's note goes onto the newest page of its Notebook as a scrap for that owner (`notebookgroups.ts`
+   createScrap; a guest's still goes on the board's open sheet for them, `book.ts` sheetPageFor): its anchor, its words, and a snip, the screenshot cut around the mark with the
    pictures added under it (`platform/coordinator/src/ink/bookreview.ts`; Ink's folder). It does **not** go to an agent, and its words ask nothing, a question too: only the board's own words
    in HQ do. The trail, the element's HTML and the browser stay out: the book has no place for them. Pinning puts
    nothing over the page: the pin boings and counts the note.
-2. The board reads the sheet in its book in HQ (review mode's Open the book takes it there), where it corrects, wipes
-   and adds to the notes, and taps the plane to send the sheet. The ten seconds after are its undo; a note that joins
-   then waits for the next sheet.
+2. The board reads the page in its Notebook in HQ (review mode's Open the Notebook takes it there), where it edits a
+   scrap's words, draws over its photo (the same group), wipes and adds, and sends the page when it's ready
+   (`notebooksend.ts`: each group routed to its owner as review notes are). The ten seconds after are its undo.
+
 3. The sheet goes to its owner as one job (`booknotes.ts` deliver). Each note is kept as a sent note too, which its job
    reads with `hq note <id>` (the snip as its screenshot) and Reviews lists. A sheet no seat can take goes to the CEO's
    routing check (`routing.ts`), which hands its notes on.

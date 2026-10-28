@@ -1,0 +1,171 @@
+/* Guest invitations stay on the Notebook shelf. */
+.bi-dialog {
+  padding: 0;
+  border: 1px solid #716a5b;
+  border-radius: 10px;
+  background: #fffaf0;
+  color: #292722;
+  width: min(1000px, calc(100vw - 24px));
+  max-height: calc(100dvh - 24px);
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  box-shadow: 0 16px 80px #0005;
+}
+.bi-dialog::backdrop {
+  background: #17171777;
+}
+.bi-dialog [hidden] {
+  display: none !important;
+}
+.bi-dialog * {
+  box-sizing: border-box;
+}
+.bi-bar {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: #171717;
+  color: #fffaf0;
+}
+.bi-dialog button {
+  font: inherit;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid #ada795;
+  border-radius: 7px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.bi-bar button {
+  border-color: #676258;
+}
+.bi-body {
+  padding: 24px;
+}
+.bi-dialog h2 {
+  font-size: 24px;
+  margin: 0 0 20px;
+}
+.bi-create {
+  display: grid;
+  gap: 16px;
+}
+.bi-dialog label {
+  display: block;
+  font-size: 14px;
+}
+.bi-dialog input,
+.bi-dialog select {
+  display: block;
+  width: 100%;
+  font: inherit;
+  padding: 10px;
+  border: 1px solid #ada795;
+  border-radius: 6px;
+  background: #fffdf8;
+  color: inherit;
+  min-height: 44px;
+  margin-top: 4px;
+}
+.bi-dialog fieldset {
+  border: 1px solid #d5cbb7;
+  border-radius: 6px;
+  padding: 16px;
+}
+.bi-person {
+  display: grid;
+  grid-template-columns: 1fr 1.4fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.bi-dialog [name='days'] {
+  display: inline-block;
+  width: 80px;
+  margin: 0 8px;
+}
+.bi-create > button {
+  justify-self: start;
+  background: #292722;
+  color: #fffaf0;
+}
+.bi-error {
+  color: #9d3022;
+}
+.bi-list {
+  display: grid;
+  gap: 16px;
+  margin-top: 32px;
+}
+.bi-list article {
+  padding: 18px;
+  border-top: 1px solid #d5cbb7;
+}
+.bi-list h3 {
+  margin: 0;
+}
+.bi-list p {
+  margin: 8px 0;
+}
+.bi-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.bi-invitation {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.bi-dialog a {
+  color: inherit;
+  text-underline-offset: 3px;
+}
+.bi-watch.ng-book {
+  margin: 0;
+  max-width: none;
+}
+.bi-dialog button:focus-visible,
+.bi-dialog input:focus-visible,
+.bi-dialog select:focus-visible {
+  outline: 3px solid var(--accent, #666);
+  outline-offset: 3px;
+}
+@media (max-width: 600px) {
+  .bi-dialog {
+    width: 100vw;
+    max-height: 100dvh;
+    border-radius: 0;
+    border: 0;
+  }
+  .bi-body {
+    padding: 16px;
+  }
+  .bi-person {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+  .bi-bar {
+    padding: 10px 16px;
+  }
+  .bi-watch.ng-book {
+    border-width: 0;
+    padding: 0;
+    min-height: 0;
+  }
+}
+
+.bi-dialog input[type='checkbox'] {
+  display: inline-block;
+  width: auto;
+  min-height: 0;
+  margin-right: 8px;
+}

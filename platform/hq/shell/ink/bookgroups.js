@@ -20,6 +20,7 @@ import { readAgain, saved, shut, typed } from './booksave.js';
 import { deleteReply, joinGroups, moveGroup, reply, splitGroup } from './notebookdata.js';
 import { nameOf } from './bookhead.js';
 import { asksHtml, wireAsks } from './bookasks.js';
+import { mountShow } from './bookgroupshow.js';
 
 // a reply can be taken back this long after it's written (notebooksend.ts SEND_MS)
 const REPLY_MS = 10_000;
@@ -39,6 +40,7 @@ export function mountGroups(book, hooks) {
     document.head.append(style);
   }
   const gs = { book, hooks, menu: null };
+  mountShow(book); // (a scrap just saved, shown)
   return {
     added: view => layerOf(gs, view),
     drawn: page => {

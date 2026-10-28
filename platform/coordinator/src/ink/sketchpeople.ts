@@ -222,6 +222,7 @@ const FILES: Record<string, () => string> = Object.fromEntries([
 const SMALL = 64 * 1024; // a create, label, archive, delete or send: a few numbers and a label
 // The board's routes, for a book (who) at the page's addresses (base)
 export type Routes = {
+  hasSketch: (id: number, who: string) => boolean;
   list: (who: string, base: string) => unknown;
   get: (id: number, who: string, base: string) => unknown;
   picture: (req: IncomingMessage, res: ServerResponse, who: string) => unknown;
@@ -262,11 +263,9 @@ export const openRoom = (routes: Routes) =>
         return res.end(body);
       }
       if (route === 'GET /api/list') return reply(res, 200, routes.list(who, GUEST_BASE));
-      if (route === 'GET /api/ink')
-        return answer(
-          res,
-          routes.get(Number(new URL(req.url ?? '/', 'http://x').searchParams.get('id')), who, GUEST_BASE),
-        );
+      const id = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('id'));
+      if ((req.method === 'GET' || route === 'POST /api/scrap') && !routes.hasSketch(id, who)) return answer(res, 404);
+      if (route === 'GET /api/ink') return answer(res, routes.get(id, who, GUEST_BASE));
       if (route === 'GET /api/picture') return routes.picture(req, res, who);
       if (route === 'GET /api/scrap') return routes.scrap(req, res, who);
       const open = () => stillOpen(req, name, who);
@@ -275,12 +274,13 @@ export const openRoom = (routes: Routes) =>
       if (!act) return reply(res, 404, { error: 'not found' });
       const raw = await readBody(req, route === 'POST /api/save' ? routes.saveMax : SMALL);
       if (!raw) return reply(res, 413, { error: route === 'POST /api/save' ? FULL : 'too large' }, true);
-      let b: unknown;
+      let b: any;
       try {
         b = JSON.parse(raw.toString() || '{}');
       } catch {
         return reply(res, 400, { error: 'not JSON' });
       }
+      if (route !== 'POST /api/create' && !routes.hasSketch(Number(b?.id), who)) return answer(res, 404);
       const shut = open();
       return answer(res, shut ?? (await act(b, who, GUEST_BASE)));
     },

@@ -31,6 +31,7 @@ import { brand, brandLook, ceo, companyFormats, names } from './company.ts';
 import { LANGUAGES, type BoardLanguage } from './language.ts';
 import { createRequest, closeRequest, findAgent, holdsCustomerData } from './jobs.ts';
 import { clientOf } from './auth.ts';
+import * as guestkeys from './guestkeys.ts';
 import { inside } from './files.ts';
 import { serverKey } from './secrets.ts';
 import { darkLogo, logo } from './pages.ts';
@@ -115,7 +116,7 @@ const items = (id: number) => db.prepare('select * from guest_items where reques
 const thread = (id: number, n: number) => db.prepare('select id, who, person, text, ts, pictures from guest_messages where item = ? and point = ? order by id').all(id, n) as Message[];
 const agentName = (id: string) => String(findAgent(id)?.name ?? id);
 const documents = () => { const d = String(brand().mail?.domain ?? ''); return d ? `documents@${d}` : null; };
-const langOf = (g: Pick<Guest, 'lang'>): Lang => g.lang && Object.hasOwn(COPY, g.lang) ? g.lang as Lang : 'en';
+export const langOf = (g: Pick<Guest, 'lang'>): Lang => g.lang && Object.hasOwn(COPY, g.lang) ? g.lang as Lang : 'en';
 const hourAgo = () => new Date(Date.now() - 3600e3).toISOString();
 const expired = (r: Request) => !!r.closed && Date.parse(r.closed) < Date.now() - KEEP_DAYS * 864e5;
 // a@example.nl → a••••@example.nl: the page says where the code goes without showing the address
@@ -511,6 +512,7 @@ function readdress(g: Guest, address: string) {
     if (g.email !== address) {
       db.prepare('delete from guest_sessions where guest = ?').run(g.name);
       db.prepare('delete from guest_codes where guest = ?').run(g.name);
+      guestkeys.forget(g.name);
     }
     db.prepare('update guests set email = ? where name = ?').run(address, g.name);
     db.exec('commit');
@@ -539,15 +541,23 @@ function nothingOpensFor(g: Guest) {
 // one sign-in opens all their pages and doors; at another address it's refused, never moved: that
 // would lock the known guest out and send their codes to someone else (a new address is the checklist card's), unless
 // nothing opens for them any more (nothingOpensFor). Returns the guest's name as stored.
-export function invite(name: unknown, email: unknown) {
+export function checkInvite(name: unknown, email: unknown) {
   const n = String(name ?? '').trim(), address = mailout.address(email);
-  if (!NAME.test(n)) return [400, 'a guest is named by their first name or full name, capitalised (up to 60 letters)'];
-  if (!address) return [400, 'that email address doesn’t look right'];
+  if (!NAME.test(n)) return [400, 'a guest is named by their first name or full name, capitalised (up to 60 letters)', 'inviteName'];
+  if (!address) return [400, 'that email address doesn’t look right', 'inviteEmail'];
   const known = guest(n);
-  if (known?.revoked) return [409, `the board revoked ${known.name}'s guest access`];
+  if (known?.revoked) return [409, `the board revoked ${known.name}'s guest access`, 'inviteRefused'];
   const moved = !!known?.email && mailout.address(known.email)?.toLowerCase() !== address.toLowerCase();
   if (known?.email && moved && !nothingOpensFor(known))
-    return [409, `${known.name} is already a guest, at ${masked(known.email)}: name this person apart (their full name, say)`];
+    return [409, `${known.name} is already a guest, at ${masked(known.email)}: name this person apart (their full name, say)`, 'inviteRefused'];
+  return { name: n, email: address };
+}
+
+export function invite(name: unknown, email: unknown) {
+  const checked = checkInvite(name, email);
+  if (Array.isArray(checked)) return checked;
+  const n = checked.name, address = checked.email, known = guest(n);
+  const moved = !!known?.email && mailout.address(known.email)?.toLowerCase() !== address.toLowerCase();
   if (!known) db.prepare('insert into guests (name, created) values (?, ?)').run(n, new Date().toISOString());
   const g = guest(n)!;
   if (!g.email || moved) readdress(g, address);
@@ -657,6 +667,7 @@ export function revoke(id: number, what: unknown, person?: unknown) {
   } else if (what === 'guest') {
     db.prepare('update guests set revoked = ? where name = ?').run(new Date().toISOString(), p.guest);
     db.prepare('delete from guest_sessions where guest = ?').run(p.guest);
+    guestkeys.forget(p.guest);
   } else if (what === 'request') {
     shut(r);
   } else {
@@ -919,7 +930,7 @@ function html(res: ServerResponse, status: number, lang: Lang, body: string, pct
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
     'content-security-policy': `default-src 'none'; script-src 'self'; style-src 'sha256-${createHash('sha256').update(css).digest('base64')}'; img-src 'self'; font-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'`, ...headers });
   res.end(`<!doctype html><html lang="${lang}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script>
+<meta name="robots" content="noindex"><title>${esc(n)}</title>${l.favicon ? `<link rel="icon" href="/guest/theme/${l.favicon}">` : ''}<style>${css}</style><script src="/guest/guest.js" defer></script><script src="/guest/webauthn.js" defer></script><script src="/guest/guestkeys.js" defer></script>
 <header>${logoHtml()}</header>
 <main>${body}</main>`); // (logoHtml)
 }
@@ -967,6 +978,9 @@ async function form(req: IncomingMessage) {
 }
 
 const codeHash = (name: string, code: string) => sign(`code:${name.toLowerCase()}:${code}`);
+const passkeyWords = { en: ['Use a passkey', 'Save a passkey'], nl: ['Passkey gebruiken', 'Passkey opslaan'], de: ['Passkey verwenden', 'Passkey speichern'] };
+export const passkeyButton = (name: string, lang: Lang, enroll = true) => enroll && guestkeys.has(name) ? ''
+  : `<p><button type="button" class="soft" data-guest-passkey="${enroll ? 'enroll' : 'login'}">${passkeyWords[lang][enroll ? 1 : 0]}</button></p>`;
 function verifyPage(res: ServerResponse, url: string, g: Guest, o: { code?: boolean; error?: string; test?: { subject: string; text: string } } = {}, status = 200) {
   const lang = langOf(g), t = COPY[lang], who = `<b>${esc(masked(g.email!))}</b>`;
   html(res, status, lang, `<div class="card"><h1>${o.code ? t.codeTitle : t.verifyTitle}</h1>
@@ -975,7 +989,7 @@ ${o.code ? `<p>${t.codeSent} ${who}. ${t.codeWorks}</p>
 ${o.test ? `<div class="alert"><b>${t.test}</b><pre>${esc(o.test.subject)}\n\n${esc(o.test.text)}</pre></div>` : ''}
 <form method="post" action="${url}/verify"><label for="code">${t.code}</label><div class="answer"><input class="code" id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus><button>${t.openPage}</button></div></form>
 <form method="post" action="${url}/send"><button class="link">${t.newCode}</button></form>`
-  : `<p>${esc(t.verify(names().name))} ${who}.</p><form method="post" action="${url}/send"><button>${t.sendCode}</button></form>`}</div>`);
+  : `<p>${esc(t.verify(names().name))} ${who}.</p><form method="post" action="${url}/send"><button>${t.sendCode}</button></form>`}${guestkeys.has(g.name) ? passkeyButton(g.name, lang, false) : ''}</div>`);
 }
 
 // With several people: a person's colour (the legend's class) and their name in it, You for the reader
@@ -1059,7 +1073,7 @@ function requestPage(req: IncomingMessage, res: ServerResponse, url: string, r: 
     and p.released is not null and p.withdrawn is null and (r.status = 'open' or r.closed > ?) order by r.id desc`)
     .all(g.name, r.id, new Date(Date.now() - KEEP_DAYS * 864e5).toISOString()) as { id: number; title: string; nonce: string }[]);
   const mail = documents(), pct = p.total ? Math.round(100 * p.done / p.total) : 100;
-  html(res, status, lang, `<div class="card${open ? '' : ' closed'}"><h1>${esc(r.title)}</h1><div class="meta">${esc(t.from(agentName(r.agent)))}</div>
+  html(res, status, lang, `<div class="card${open ? '' : ' closed'}"><h1>${esc(r.title)}</h1><div class="meta">${esc(t.from(agentName(r.agent)))}</div>${passkeyButton(g.name, lang)}
 ${open && r.before ? `<span class="before">${esc(t.before(r.before))}</span>` : ''}${!open ? `<p><b>${esc(t.closed(day(r.closed!, lang)))}</b><br>${t.closedNote}</p>` : ''}
 ${r.body ? `<div class="intro">${esc(r.body)}</div>` : ''}
 ${p.total ? `<div class="progress" id="progress" data-pct="${pct}"><b>${esc(t.progress(p.done, p.total))}</b><div class="bar" id="bar"><i></i></div></div>` : ''}
@@ -1151,7 +1165,7 @@ function inRoom(req: IncomingMessage, res: ServerResponse, room: Room, rest: str
   if (g && room.opens(g.name)) return room.serve(req, res, g.name, rest);
   if (req.method !== 'GET' || rest.startsWith('/api/')) {
     res.writeHead(g ? 403 : 401, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-    return res.end(JSON.stringify({ error: g ? 'this isn’t open for you' : 'sign in from your own link first' }));
+    return res.end(JSON.stringify({ error: g ? 'this isn’t open for you' : 'sign in from your own link first', reason: g ? 'invitationEnded' : 'signIn' }));
   }
   const lang = g ? langOf(g) : 'en';
   html(
@@ -1193,7 +1207,7 @@ function doorPage(req: IncomingMessage, res: ServerResponse, url: string, d: Doo
   // (and a button to each room the guest has, roomsFor)
   const aside = w.aside ? `<div class="aside"><b>${esc(w.aside.title)}</b><ul>${w.aside.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
   html(res, status, lang, `<div class="card"><h1>${esc(w.title)}</h1>${error ? `<p class="alert" role="alert">${esc(error)}</p>` : ''}
-<div class="intro">${esc(w.text)}</div>${steps}${aside}${w.small ? `<p class="meta small">${esc(w.small)}</p>` : ''}
+${passkeyButton(g.name, lang)}<div class="intro">${esc(w.text)}</div>${steps}${aside}${w.small ? `<p class="meta small">${esc(w.small)}</p>` : ''}
 <p class="acts"><a class="button" href="${url}/go">${esc(w.button)}</a>${talk ? `<a class="button" href="${url}/talk">${esc(talk.button)}</a>` : ''}${roomsFor(g).map(r => `<a class="button soft" href="/guest/${r.path}/">${esc(r.label(lang))}</a>`).join('')}</p></div>
 <p class="note">${esc(COPY[lang].footer(names().name))}</p>`);
 }
@@ -1223,7 +1237,19 @@ async function onDoor(req: IncomingMessage, res: ServerResponse, token: string, 
   return signIn(req, res, step as 'send' | 'verify', url, ng, body);
 }
 
+function passkeyPage(req: IncomingMessage, res: ServerResponse) {
+  const identity = (enroll: boolean, token: string) => {
+    const at = enroll ? undefined : opening(token), door = enroll || at ? undefined : doorOf(sha256(token));
+    const person = enroll ? signedIn(req) : at ? at.g : door?.open ? guest(door.guest) : null;
+    return person?.email && !person.revoked
+      ? { ...person, scope: enroll ? 'passkeys/enroll' : `${token}/passkey`, session: enroll ? sha256(cookies(req).g ?? '') : '' }
+      : null;
+  };
+  return guestkeys.page(req, res, identity, startSession);
+}
+
 export async function page(req: IncomingMessage, res: ServerResponse) {
+  if (await passkeyPage(req, res)) return;
   const path = new URL(req.url ?? '/', 'http://x').pathname;
   if (path === '/guest/onward' && req.method === 'GET') return handOnward(req, res);
   const room = roomOf(path);

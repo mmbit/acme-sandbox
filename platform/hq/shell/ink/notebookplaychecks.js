@@ -191,3 +191,20 @@ export function boxOf(p) {
     y = Math.min(...boxes.map(b => b.y));
   return { x, y, w: Math.max(...boxes.map(b => b.x + b.w)) - x, h: Math.max(...boxes.map(b => b.y + b.h)) - y };
 }
+// Words as typed boxes one under another from y 0, at most max characters each, a box ending at its last space where
+// it has one (notebookparts.ts typedBoxes).
+export function typedBoxes(words, at, max = TEXT_MAX) {
+  const boxes = [];
+  let rest = [...words],
+    y = 0;
+  while (rest.length) {
+    const space = rest.length > max ? rest.lastIndexOf(' ', max - 1) : -1;
+    const cut = rest.length <= max ? rest.length : space > 0 ? space + 1 : max;
+    const box = { ...at, y, text: rest.slice(0, cut).join('') };
+    rest = rest.slice(cut);
+    if (!box.text.trim()) continue;
+    boxes.push(box);
+    y += boxOf({ ...emptyGroup, texts: [box] }).h;
+  }
+  return boxes;
+}

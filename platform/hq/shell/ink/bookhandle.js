@@ -10,7 +10,8 @@ import { tip } from './bookui.js';
 const SNIP_MS = 2600;
 
 let handle;
-let landed = null; // (the note that last landed in the folded book, which the tap opens: { id, page })
+let landed = null; // (the note that last landed in the folded book, which the tap opens: { id, page, group })
+let nudged = -Infinity; // (when the handle last nudged for one: a scrap's ink and then its scrap nudge it once)
 
 // node: the tab's button; on: { open, fold, openOn({ page, id }), shut() }, the book's (book.js): shut() whether it's
 // shut or swinging shut, so a tap mid-swing turns it round
@@ -39,12 +40,16 @@ function draw() {
 const shut = () => (document.documentElement.dataset.book ?? 'folded') === 'folded';
 
 // A note landed in the folded book: its snip tucked in beside the handle for a moment, the handle nudged as it comes
-function land({ id, page, snip }) {
+// (group: a Notebook scrap's, its id null while it's being made: the tap opens at it once it's in.)
+function land({ id, page, snip, group = false }) {
   if (!shut()) return;
-  landed = { id, page };
+  if (id) landed = { id, page, group };
   draw();
-  const still = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  if (!still) handle.animate([{ scale: 1 }, { scale: 1.12 }, { scale: 1 }], { duration: 320, easing: 'ease-out' });
+  const still = matchMedia('(prefers-reduced-motion: reduce)').matches,
+    again = performance.now() - nudged < SNIP_MS;
+  nudged = performance.now();
+  if (!still && !again)
+    handle.animate([{ scale: 1 }, { scale: 1.12 }, { scale: 1 }], { duration: 320, easing: 'ease-out' });
   if (!snip) return;
   handle.querySelector('.bk-snip')?.remove();
   const picture = Object.assign(document.createElement('img'), { className: 'bk-snip', src: snip, alt: '' });

@@ -38,7 +38,7 @@ export const CSS = `
 
 export const HTML = `<div class="menu" hidden role="menu" aria-label="Review mode"><div class="screen"><p class="cap"></p>
           <div class="items"><button role="menuitem" data-general>General note<small>About it all, not one spot</small></button>
-            <button role="menuitem" class="go" data-open-book hidden>Open the book<small></small></button></div></div></div>
+            <button role="menuitem" class="go" data-open-book hidden>Open the Notebook<small></small></button></div></div></div>
         <button class="more" aria-label="Review mode’s menu: a general note" aria-haspopup="menu" aria-expanded="false">${MENU}<span class="count"></span></button>`;
 
 // The board's: whose sheet a note on this page joins and how many are on it (the coordinator's /__review/mine; book:
@@ -73,9 +73,10 @@ export function paint(r) {
 function paintBook(r) {
   const n = r.state.notes,
     name = r.state.book?.name;
-  r.$('.cap').textContent = name && n ? `For ${name} · ${n} on the sheet` : 'Review mode';
+  // (the board's notes go to its Notebook's newest page)
+  r.$('.cap').textContent = n ? `${n} on your Notebook’s newest page` : 'Review mode';
   r.bookButton.hidden = !name;
-  if (name) label(r.bookButton, 'Open the book', `In your book, for ${name}`);
+  if (name) label(r.bookButton, 'Open the Notebook', 'At its newest page');
 }
 
 // it opens over the pin (under it when the pin sits high) and shuts on a choice, a tap anywhere else or Escape

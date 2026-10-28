@@ -1,0 +1,273 @@
+/* Notebook pages shared by the guest and the board's live view. */
+.ng-book {
+  --ng-paper: #fffaf0;
+  --ng-ink: #292722;
+  color: var(--ng-ink);
+  background: var(--ng-paper);
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  max-width: 960px;
+  margin: 24px auto;
+  padding: 28px;
+  border: 10px solid #171717;
+  border-radius: 5px;
+  box-shadow: 0 12px 36px #0002;
+  overflow-wrap: anywhere;
+}
+.ng-book [hidden] {
+  display: none !important;
+}
+.ng-book * {
+  box-sizing: border-box;
+}
+.ng-book h1 {
+  font-size: clamp(22px, 4vw, 32px);
+  line-height: 1.2;
+  margin: 0;
+}
+.ng-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.ng-eyebrow {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #666156;
+  margin: 0 0 8px;
+}
+.ng-book button {
+  font: inherit;
+  min-height: 44px;
+  border: 1px solid #bcb6a8;
+  border-radius: 8px;
+  padding: 8px 14px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.ng-book button:hover {
+  background: #e9e2d4;
+}
+.ng-book button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+.ng-book button:focus-visible,
+.ng-book textarea:focus-visible {
+  outline: 3px solid var(--accent, #5b6040);
+  outline-offset: 3px;
+}
+.ng-notebooks,
+.ng-pages,
+.ng-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 16px 0;
+}
+.ng-book [aria-pressed='true'] {
+  background: #292722;
+  color: #fffaf0;
+}
+.ng-state {
+  font-size: 14px;
+  color: #696253;
+  border-bottom: 1px solid #ded5c3;
+  padding-bottom: 16px;
+}
+.ng-groups {
+  display: grid;
+  gap: 24px;
+  margin: 24px 0;
+}
+.ng-group {
+  position: relative;
+  border: 1px solid #e4daca;
+  border-radius: 3px;
+  padding: 22px 20px;
+  background: #fffdf7;
+  box-shadow: 1px 3px 6px #392d1810;
+}
+.ng-clip {
+  position: absolute;
+  top: -16px;
+  left: 12px;
+  font-size: 32px;
+  transform: rotate(-25deg);
+  color: #817d70;
+}
+.ng-words {
+  white-space: pre-wrap;
+  margin: 6px 0 14px;
+  line-height: 1.6;
+}
+.ng-picture {
+  display: block;
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+}
+.ng-ink {
+  display: block;
+  width: 100%;
+  max-height: 440px;
+  object-fit: contain;
+  object-position: left top;
+}
+.ng-agent {
+  font-size: 13px;
+  color: #68604f;
+  margin: 8px 0;
+}
+.ng-answer {
+  border-left: 3px solid var(--accent, #77735b);
+  padding: 8px 16px;
+  margin: 20px 0 0;
+  background: #f8f1e3;
+}
+.ng-answer form {
+  margin-top: 16px;
+}
+.ng-reply {
+  padding: 8px 16px;
+  border-left: 1px solid #beb29a;
+}
+.ng-book label {
+  display: block;
+  font-size: 14px;
+}
+.ng-book textarea {
+  display: block;
+  width: 100%;
+  font: inherit;
+  line-height: 1.5;
+  background: #fffdf7;
+  color: inherit;
+  border: 1px solid #bcb6a8;
+  border-radius: 6px;
+  padding: 12px;
+  resize: vertical;
+  margin: 8px 0;
+}
+.ng-compose {
+  padding-top: 16px;
+  border-top: 1px solid #ded5c3;
+}
+.ng-drawing canvas {
+  width: 100%;
+  aspect-ratio: 1000/440;
+  background: radial-gradient(#c9bdab 1px, transparent 1px) 0 0/20px 20px;
+  touch-action: none;
+  border: 1px solid #ddd2bf;
+}
+.ng-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 24px;
+}
+.ng-foot [data-send] {
+  background: #292722;
+  color: #fffaf0;
+}
+.ng-error {
+  font-size: 14px;
+  color: #9d3022;
+}
+.ng-book form button {
+  margin-top: 4px;
+}
+.ng-book .ng-groups:empty {
+  margin: 12px 0;
+}
+@media (max-width: 600px) {
+  .ng-book {
+    margin: 0;
+    border-width: 6px;
+    padding: 18px 14px;
+    box-shadow: none;
+    min-height: 100dvh;
+  }
+  .ng-head {
+    align-items: flex-start;
+  }
+  .ng-group {
+    padding: 18px 14px;
+  }
+  .ng-answer {
+    padding: 8px 12px;
+  }
+  .ng-pages {
+    gap: 6px;
+  }
+  .ng-book button {
+    padding: 8px 10px;
+  }
+}
+
+/* Guest invites use the same page controls. */
+.ng-book input {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 44px;
+  margin: 8px 0;
+  padding: 10px;
+  font: inherit;
+  background: #fffdf7;
+  color: inherit;
+  border: 1px solid #bcb6a8;
+  border-radius: 6px;
+}
+.ng-invite {
+  border-top: 1px solid #ded5c3;
+  margin-top: 24px;
+  padding-top: 16px;
+}
+.ng-invite h2 {
+  font-size: 20px;
+}
+.ng-invite a {
+  display: block;
+  color: inherit;
+  padding: 12px 0;
+}
+.ng-book > footer {
+  font-size: 14px;
+}
+
+.ng-book [aria-pressed='true']:hover {
+  background: #292722;
+  color: #fffaf0;
+}
+.notebook-guest-room {
+  margin: 0;
+  background: #f4efe5;
+}
+.notebook-guest-room > footer {
+  max-width: 960px;
+  margin: 20px auto;
+  padding: 0 24px 24px;
+  font:
+    14px/1.5 system-ui,
+    sans-serif;
+  color: #696253;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.notebook-guest-room > footer button {
+  min-height: 44px;
+  padding: 8px 14px;
+  background: #fffaf0;
+  border: 1px solid #bcb6a8;
+  border-radius: 7px;
+  color: #292722;
+  font: inherit;
+}

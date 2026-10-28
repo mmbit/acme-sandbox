@@ -6,7 +6,7 @@
 import * as inkjs from './ink.js';
 import { boxOfLines } from './mark.js';
 import { say } from './dock.js';
-import { send } from './markpage.js';
+import { send, toNotebook } from './markpage.js';
 import { paint } from './marks.js';
 
 const REST_MS = 1200; // the pen resting this long after a line: the mark's lines so far are read
@@ -121,8 +121,14 @@ function settle(r, mark) {
   const { note, read: words } = mark;
   if (!note || !words || words === note.words) return;
   if (note.words && !(note.said === 'written' && note.words === mark.written)) return;
-  // (only over the words it went with: the board may have typed others in the book since, which stay)
-  send('/note/edit', { id: note.id, words, said: 'written', was: note.words }).then(
+  // (only over the words it went with: the board may have typed others in the book since, which stay. A scrap's are
+  // its group's, as it was last read)
+  const edited = note.group
+    ? toNotebook('/groups/edit', { id: note.id, since: note.updated, words, said: 'written' }).then(g => ({
+        note: { ...g, group: true },
+      }))
+    : send('/note/edit', { id: note.id, words, said: 'written', was: note.words });
+  edited.then(
     ({ note: now }) => {
       Object.assign(mark, { note: now, written: words });
       document.dispatchEvent(new CustomEvent('pencil:words', { detail: { id: now.id } }));
@@ -132,7 +138,7 @@ function settle(r, mark) {
       if (err?.status === 404 || err?.status === 409) return;
       console.error('The Pencil: the handwriting', err);
       const why = err?.status ? `The book said no: ${err.message}.` : 'Could not reach the book.';
-      say(r, `${why} The words read for note ${note.n} aren’t in it.`, TOLD_MS);
+      say(r, `${why} The words read for ${note.group ? 'the scrap' : `note ${note.n}`} aren’t in it.`, TOLD_MS);
     },
   );
 }

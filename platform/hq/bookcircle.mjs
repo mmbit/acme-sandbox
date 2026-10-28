@@ -1,19 +1,21 @@
 // book-check.mjs's stories of a circle on HQ's page and a pen's tap (shared/review/pencil.js, callnotes.js, marks.js,
 // gestures.js; shell/ink/calldraw.js; Ink's folder), held like an iPad mini in
 // landscape, on book-check's played store and voice line.
-// One flow, on a call or not (Moss's): a ring round something on HQ's page, the pen rested, goes into the book as a note
-// with its snip, no post-it and no Send; off a call on its owner's sheet, on a call on the call's page, with the words
-// the call heard (the book shows a call's notes once they have a notebook of their own: job #20753). Nothing of it is
-// left on HQ's page (rule zero: bookink.mjs), so the board rings the next thing at once, and a line drawn beside where
-// one was is a note of its own. On a call, the pen held still while talking leaves a voice note there with the words
-// the call heard.
-// A mouse's ring with the pin goes into the book the same way. A finger carries a ring still open onto the open book,
+// A ring round something on HQ's page off a call opens its post-it, and Save puts it in the Notebook as a scrap on its
+// newest page with its photo (the pin flow). On a call (Moss's), the pen rested,
+// it goes into the book as a note with its snip, no post-it and no Send, on the call's page, with the words the call
+// heard (the book shows a call's notes once they have a notebook of their own: job #20753). Nothing of it is left on
+// HQ's page (rule zero: bookink.mjs), so the board rings the next thing at once, and a line drawn beside where one was
+// is a note of its own. On a call, the pen held still while talking leaves a voice note there with the words the call
+// heard.
+// A mouse's ring with the pin opens its post-it the same way. A finger carries a ring still open onto the open book,
 // its cut-out taped there.
 // A quick tap with the pen, wobbling a few px as a hand's does, clicks what's under it (focused, clicked once), on HQ's
 // page and on a dialog over it, and leaves no ink, no post-it and no note, nor asks for the microphone.
 import assert from 'node:assert/strict';
 import { playLine } from './bookcall.mjs';
 import { nothingDrawn } from './bookink.mjs';
+import { savedScrap } from './bookscrap.mjs';
 
 const SETTLE_MS = 1500; // (callnotes.js)
 const RINGS = [
@@ -28,42 +30,41 @@ const ui = s => `review-mode >> css=${s}`;
 // noErrorsIn }
 export function circleStories(c) {
   return {
-    'a ring off a call rests into the book leaving nothing on HQ, a line beside it is a note of its own, a finger carries an open one onto the book':
+    'a ring off a call saved from its post-it leaves nothing on HQ, a line beside it is a note of its own, a finger carries an open one onto the book':
       browser => offCallStory({ ...c, browser }),
     // (in Wire too: its call bubble sits elsewhere.)
     "a ring on a call rests into the call's page in the book, nothing left on HQ; held still, a voice note": browser =>
       c.inLooks(browser, (look, shot) => onCallStory({ ...c, browser, look, shot })),
-    "a mouse's ring with the pin on HQ rests into the book too, no post-it": browser => mouseStory({ ...c, browser }),
+    "a mouse's ring with the pin on HQ opens its post-it too, saved into the Notebook": browser =>
+      mouseStory({ ...c, browser }),
     'a quick pen tap clicks what is under it, on HQ and on a dialog, and leaves no ink': browser =>
       tapStory({ ...c, browser }),
   };
 }
 
 async function offCallStory(c) {
-  const { page, errors, done } = await hqOpen(c);
+  const { page, errors, done } = await hqOpen(c),
+    notes = noted(c).length;
   try {
     for (const [i, ring] of RINGS.entries()) {
-      const from = noted(c).length;
+      const from = c.posts.length;
       await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
-      await page.waitForTimeout(400);
-      assert.equal(await page.locator(ui('.sheet')).isHidden(), true, `ring ${i + 1}: no post-it`);
-      const note = await nextNote(c, page, from, SETTLE_MS);
-      assert.match(note.snip ?? '', /^data:image\/jpeg;base64,/, `ring ${i + 1}: in the book with its snip`);
-      const made = c.pages.find(p => p.id === note.page);
-      assert.deepEqual([made?.kind, made?.owner], ['sheet', c.org.company.ceo], `ring ${i + 1}: on the CEO's sheet`);
+      const scrap = await savedScrap({ page, posts: c.posts }, from, `ring ${i + 1}`);
+      assert.match(scrap.snip ?? '', /^data:image\/jpeg;base64,/, `ring ${i + 1}: in the Notebook with its photo`);
+      assert.equal(noted(c).length, notes, `ring ${i + 1}: nothing on a sheet`);
       await cleared(page, `ring ${i + 1}`);
     }
     // a line just beside where the first ring was: a note of its own, nothing to join (nothing of the first is there)
     const [first] = RINGS,
-      from = noted(c).length,
-      edits = edited(c).length;
+      from = c.posts.length;
     await c.penOn(page)(Array.from({ length: 12 }, (_, i) => [first.x + first.rx + 12 + i * 6, first.y + i * 2]));
-    const beside = await nextNote(c, page, from, SETTLE_MS);
+    const beside = await savedScrap({ page, posts: c.posts }, from, 'the line beside');
     assert.equal(beside.anchor.ink.length, 1, 'the line alone is its ink');
-    assert.equal(edited(c).length, edits, 'no note changed by it');
+    assert.ok(!c.posts.slice(from).some(p => p.path === '/api/notebooks/groups/edit'), 'no note changed by it');
     await cleared(page, 'the line beside');
     await c.shot('circle-off-call', page);
-    await ringCarried(c, page, RINGS[1]);
+    // (above where its post-it opens: a finger there is the post-it's. job #12594)
+    await ringCarried(c, page, { x: 250, y: 190, rx: 80, ry: 45 });
     c.noErrorsIn(errors);
   } finally {
     await done();
@@ -78,8 +79,9 @@ async function ringCarried(c, page, ring) {
   const uploaded = () => c.posts.slice(from).some(p => p.path === '/api/notebooks/pictures'),
     note = () => c.posts.slice(from).some(p => p.path === '/api/book/note');
   await c.penOn(page)(c.ring(ring.x, ring.y, ring.rx, ring.ry));
-  // (a press lifts it once its screenshot is in, before it rests: till then the finger is the page's)
-  for (let i = 0; i < 12 && !uploaded() && !note(); i++) {
+  // (a press lifts it once its screenshot is in, before it rests: till then the finger is the page's. Slow on a loaded
+  // worker)
+  for (let i = 0; i < 40 && !uploaded() && !note(); i++) {
     await page.waitForTimeout(100);
     await carry(page, ring);
     for (let k = 0; k < 3 && !uploaded(); k++) await page.waitForTimeout(100);
@@ -127,7 +129,7 @@ async function carry(page, ring) {
     ],
   );
 }
-// A mouse's ring with the pin goes the same way: no post-it, into the book once the mouse rests. (On a page of its
+// A mouse's ring with the pin goes the same way: its post-it, Save, into the Notebook. (On a page of its
 // own: once a pen has drawn there, the pin's marking takes only the pen, surface.js.)
 async function mouseStory(c) {
   const { page, errors, done } = await hqOpen(c);
@@ -140,7 +142,7 @@ async function mouseStory(c) {
 }
 async function mouseRing(c, page) {
   const mouse = { x: 250, y: 630, rx: 70, ry: 35 },
-    before = noted(c).length;
+    from = c.posts.length;
   await page.click('#book .bk-pin'); // (away till the board summons it: job #20358)
   await page.locator(ui('.fab')).dispatchEvent('click'); // (it bobs: never still for Playwright's click)
   await page.waitForSelector(ui('.veil:not([hidden])'));
@@ -149,10 +151,8 @@ async function mouseRing(c, page) {
   await page.mouse.down();
   for (const at of loop.slice(1)) await page.mouse.move(...at);
   await page.mouse.up();
-  await page.waitForTimeout(400);
-  assert.equal(await page.locator(ui('.sheet')).isHidden(), true, "a mouse's ring: no post-it on HQ");
-  const byMouse = await nextNote(c, page, before, SETTLE_MS);
-  assert.equal(byMouse.anchor.ink.length, 1, "...in the book with the mouse's ring");
+  const byMouse = await savedScrap({ page, posts: c.posts }, from, "a mouse's ring");
+  assert.equal(byMouse.anchor.ink.length, 1, "...in the Notebook with the mouse's ring");
   await page.waitForSelector(ui('.veil'), { state: 'hidden' });
   await cleared(page, "the mouse's ring");
 }
@@ -211,9 +211,8 @@ async function heardNotes(page, line, n) {
   assert.equal(count(), n, `the call heard ${n} notes`);
 }
 
-// The board's notes the book was sent, and the notes changed
+// The board's notes the book was sent
 const noted = c => c.posts.filter(p => p.path === '/api/book/note' && !p.body.by);
-const edited = c => c.posts.filter(p => p.path === '/api/book/note/edit');
 async function nextNote(c, page, from, after = 0) {
   await page.waitForTimeout(after);
   for (let i = 0; i < 80 && noted(c).length <= from; i++) await page.waitForTimeout(100);

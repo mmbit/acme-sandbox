@@ -4,7 +4,7 @@ import { under } from './layer.js';
 import { audioContext, canRecord, startMic, stopMic } from './dictation.js';
 import { reset } from './acts.js';
 import { TAP_MS as PEN_TAP_MS, TAP_PX, distance, isTap } from './tap.js';
-import { file, settleSoon } from './settle.js';
+import { settleSoon } from './settle.js';
 import { across } from './postit.js';
 import { holdMs } from './prefs.js';
 
@@ -24,8 +24,12 @@ export function theirs(r, e) {
 }
 // The pen may draw now: on the page, nothing of review mode's over it (a mouse's marking has its own veil), while the
 // last mark goes in too (settle.js).
+// On HQ the post-it of a mark being made leaves the page to the pen, so its lines go on joining it.
 export const free = r =>
-  !r.covered && r.veil.hidden && r.sheet.hidden && (r.mode === 'idle' || r.mode === 'note' || r.mode === 'sending');
+  !r.covered &&
+  r.veil.hidden &&
+  (r.sheet.hidden || (r.book && r.mark && r.mark.kind !== 'general')) &&
+  (r.mode === 'idle' || r.mode === 'note' || r.mode === 'sending');
 
 // px a pen moves before it draws: less is a tap, the page's own (and so is a quick one lifted short of tap.js's TAP_PX)
 const MOVE = 4;
@@ -203,6 +207,6 @@ async function letGo(r) {
   if (r.call) return settleSoon(r);
   await stopMic(r);
   if (r.mark !== mark || r.mode !== 'note') return;
-  if (r.text.value.trim()) file(r);
-  else if (canRecord) reset(r); // (nothing heard: no note)
+  // (words heard: they wait on the post-it for its Save, the board's pin flow.)
+  if (!r.text.value.trim() && canRecord) reset(r); // (nothing heard: no note)
 }

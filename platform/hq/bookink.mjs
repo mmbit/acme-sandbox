@@ -6,6 +6,7 @@
 // nothing back. nothingDrawn is the assertion, shared with the pairing's and the call's stories (bookpair.mjs,
 // bookcall.mjs).
 import assert from 'node:assert/strict';
+import { savedScrap } from './bookscrap.mjs';
 
 const RING = { x: 248, y: 305, rx: 70, ry: 50 },
   ON_RING = [RING.x + RING.rx, RING.y];
@@ -31,7 +32,6 @@ export async function inkStory(c) {
     const b = await tab(c, context, errors);
     await show(b.page, 'computer');
     await nothingDrawn(b.page, 'another tab, on the same screen');
-    await sent(c, [a, b]);
     await a.page.reload();
     await a.page.waitForSelector('#loading.gone');
     await c.settled(a.page, 'open');
@@ -144,51 +144,33 @@ async function show(page, screen) {
 async function saved(c, { page }) {
   await show(page, 'computer');
   await nothingDrawn(page, 'the computer open, notes kept from before on it');
-  const noted = c.notes.length;
+  const from = c.posts.length;
   await c.penOn(page)(c.ring(RING.x, RING.y, RING.rx, RING.ry));
   assert.ok((await c.inkAt(page, ...ON_RING)) > 0, 'the ring shows while it’s made');
   await c.shot('book-ink-making', page);
-  // (rested, it goes into the book with the words said: the voice line's.)
-  for (let i = 0; i < 80 && c.notes.length === noted; i++) await page.waitForTimeout(100);
-  const note = c.notes[noted];
+  // (its post-it saved: a scrap in the Notebook, the page clean at once.)
+  const note = await savedScrap({ page, posts: c.posts }, from, 'the ring');
   assert.ok(note?.anchor.el?.selector, 'the ring went into the book on what it was drawn round');
   assert.ok(note.snip, '...its lines in its snip');
-  await nothingDrawn(page, 'saved');
   await c.shot('book-ink-saved', page);
 }
 
-// A ring scribbled out before it rests (cancelled): gone at once, and nothing goes into the book
+// A ring's post-it cancelled: gone at once, and nothing goes into the book
 async function cancelled(c, { page }) {
   const posted = c.posts.length;
   await c.penOn(page)(c.ring(RING.x, RING.y, RING.rx, RING.ry));
-  await c.penOn(page)(
-    Array.from({ length: 24 }, (_, i) => [RING.x - RING.rx + (i % 2) * RING.rx * 2, RING.y - 30 + i * 2.5]),
-  );
+  const sheet = page.locator('review-mode >> css=.sheet');
+  await sheet.waitFor({ state: 'visible', timeout: 15_000 });
+  await sheet.locator('[data-cancel]').dispatchEvent('click');
   await nothingDrawn(page, 'cancelled', 0);
   await page.waitForTimeout(2000); // (past a mark's settle: nothing goes)
   assert.deepEqual(
     c.posts
       .slice(posted)
       .map(p => p.path)
-      .filter(p => p.startsWith('/api/book/note')),
+      .filter(p => p.startsWith('/api/book/note') || p.startsWith('/api/notebooks/groups')),
     [],
-    'a scribbled-out ring makes no note',
+    'a cancelled ring makes no note',
   );
   await nothingDrawn(page, 'cancelled, past its settle', 0);
-}
-
-// The sheet sent, its seconds over, the feed telling both tabs: nothing drawn in either
-async function sent(c, tabs) {
-  const [{ page }] = tabs;
-  await page.evaluate(async () => {
-    const api = (path, body) =>
-      fetch(`/api/book${path}`, body && { method: 'POST', body: JSON.stringify(body) }).then(r => r.json());
-    const ceo = (await (await fetch('/api/org')).json()).company.ceo,
-      { open } = await api('/sheets');
-    await api('/send', { id: open.find(s => s.owner === ceo).id });
-  });
-  await page.waitForTimeout(10_200);
-  for (const t of tabs) t.feed.push({ type: 'book', agent: c.org.company.ceo, text: 'sent' });
-  await page.waitForTimeout(1000);
-  for (const [i, t] of tabs.entries()) await nothingDrawn(t.page, `tab ${i + 1}, the sheet sent`);
 }

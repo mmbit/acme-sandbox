@@ -17,6 +17,7 @@ import { mountRail } from './bookrail.js';
 import { mountHandle } from './bookhandle.js';
 import * as swing from './bookswing.js';
 import { mountLanding } from './booklanding.js'; // (a mark lifted into the book.)
+import { showGroup } from './bookgroupshow.js';
 import { island } from './bookui.js';
 import { mountPages } from './bookpages.js';
 import { PAPER } from '/__review/paper.js';
@@ -130,9 +131,10 @@ export function openAt(at = null) {
   openBook();
 }
 // Open the book on a note of today's (the handle's tap after a mark landed in it), found once its pages are laid out for
-// the paper's width.
-export function openOn({ page, id }) {
-  document.addEventListener('book:layout', () => pages.find({ page, note: id }), { once: true });
+// the paper's width; a Notebook scrap's (group) on its page, slid into view. (group)
+export function openOn({ page, id, group = false }) {
+  const find = () => (group ? showGroup(pages, { page, id }) : pages.find({ page, note: id }));
+  document.addEventListener('book:layout', find, { once: true });
   openBook();
 }
 // A page of the day shown turned to (a second screen's turn: pair.js.)

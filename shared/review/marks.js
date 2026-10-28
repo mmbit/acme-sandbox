@@ -6,7 +6,7 @@
 // (pencil.js).
 import * as inkjs from './ink.js';
 import { boxOfLines, nearLines } from './mark.js';
-import { ownerOf, pageOf, send } from './markpage.js';
+import { ownerOf, pageOf, send, toNotebook } from './markpage.js';
 
 // A snip: the page around a mark, the ink on it, with this much margin round the ink (the book shows it at its width)
 const MARGIN = 24;
@@ -112,6 +112,7 @@ export function snipOf({ c, k }, area) {
 // board's notes are heard as they go in ('pencil:note', with the call they're on, if any).
 export async function post(r, { anchor, live, words, said, snip, by }) {
   const owner = r.call ? null : await ownerOf(r, live);
+  if (!r.call) return scrap(r, { anchor, words, said, snip, owner });
   const page = await pageOf(r, owner);
   const { note } = await send('/note', { page: page.id, anchor, words, said, snip, ...(by ? { by } : {}) });
   if (owner) r.lastOwner = owner; // (the sheet review mode's menu names: menu.js.)
@@ -120,6 +121,21 @@ export async function post(r, { anchor, live, words, said, snip, by }) {
       new CustomEvent('pencil:note', { detail: { id: note.id, n: note.n, page: page.id, call: page.call ?? null } }),
     );
   return note;
+}
+// Off a call, the mark is a scrap on the newest page of My Notebook (the board's pin flow, 27 Oct: not a sheet), the
+// owner the one its page's send gives it to. Returns the group, with group: true (its id and page are the group's).
+async function scrap(r, { anchor, words, said, snip, owner }) {
+  const g = await toNotebook('/groups/scrap', { anchor, words, said, snip, owner });
+  r.lastOwner = owner;
+  document.dispatchEvent(
+    new CustomEvent('pencil:note', { detail: { id: g.id, page: g.page, call: null, group: true } }),
+  );
+  return { ...g, group: true };
+}
+// ...taken back: deleted (the Notebook keeps it aside for its Undo)
+export async function unscrap(id) {
+  await toNotebook('/groups/delete', { id });
+  document.dispatchEvent(new CustomEvent('pencil:wiped', { detail: { id, back: false, group: true } }));
 }
 // A note wiped (the last one in, taken back): gone from its sheet, and heard so by whatever else shows the book's notes
 // (a second screen, pair.js)

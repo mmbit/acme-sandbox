@@ -38,7 +38,8 @@ export function setupSettle(r, { lifted }) {
     },
     true,
   );
-  document.addEventListener('ink:stroke', e => e.detail?.phase === 'end' && settleSoon(r));
+  // (only on a call: off one, a mark waits for its post-it's Save, the board's pin flow.)
+  document.addEventListener('ink:stroke', e => e.detail?.phase === 'end' && r.call && settleSoon(r));
 }
 export function settleSoon(r) {
   clearTimeout(r.settleTimer);
@@ -83,6 +84,13 @@ export function file(r) {
       return false;
     },
   ));
+}
+// The lines drawn while a mark went in: the next mark's once it's gone, or its own again if it didn't go (the post-it's
+// Save, postit.js booked)
+export function nextMark(r) {
+  const next = r.nextLines.splice(0);
+  if (r.mode === 'idle') r.markAt = r.nextAt;
+  for (const line of next) liftedLine(r, line);
 }
 // ...its words, its note, then its ink lifted into the book; null if it was let go meanwhile (another maybe begun)
 async function inBook(r, mark) {
@@ -131,7 +139,7 @@ export async function toBook(r) {
       ));
   const anchor = general ? { ...marked(r), el: null } : marked(r);
   const note = await marks.post(r, { anchor, live: r.mark.el, words, said, snip });
-  r.steps.push({ kind: 'note', id: note.id });
+  r.steps.push({ kind: note.group ? 'scrap' : 'note', id: note.id }); // (scrap)
   written.sent(r, mark, note);
   mark.filed = true;
   marks.paint(r);
