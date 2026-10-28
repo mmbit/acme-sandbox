@@ -89,8 +89,7 @@ function draw(gs, view) {
           )}" aria-haspopup="menu">${CLIP}</button>`
         : '';
       const words = g.kind === 'scrap' ? wordsHtml(page, g, open) : '';
-      const under =
-        (g.children ?? []).map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {}))).join('') + asksHtml(g);
+      const under = slipsHtml(g.children ?? []) + asksHtml(g);
       return `${clip}${
         words || under
           ? `<div class="bk-under" data-g="${g.id}" style="left:${box.x}px;top:${box.y + box.h + 10}px;--w:${Math.max(
@@ -176,6 +175,18 @@ function boxNow(page, id) {
 }
 
 // ---- the answers
+
+// A group's children slipped under it, its answers and replies: not an answer the store placed on the page or a
+// version, nor the replies to them, which the answers' layer draws written in (bookanswers.js.)
+function slipsHtml(children) {
+  const written = new Set(
+    children.filter(c => c.kind === 'answer' && (c.spot || c.style === 'version')).map(c => c.id),
+  );
+  return children
+    .filter(c => !written.has(c.id) && !(c.kind === 'reply' && written.has(c.answers)))
+    .map(c => (c.kind === 'reply' ? replyHtml(c) : slipHtml(c, {})))
+    .join('');
+}
 
 const slipsOn = (gs, view) => ({
   tick: (id, ticked) => (gs.book.dev ? Promise.resolve() : act('/api/book/slip/tick', { id, ticked })),

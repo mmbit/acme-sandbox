@@ -26,6 +26,9 @@ export function copy(r, node, waits, v) {
   let out;
   if (tag === 'canvas') {
     out = document.createElement('img');
+    // a canvas that keeps nothing between its frames (WebGL without preserveDrawingBuffer) reads blank outside the
+    // frame that drew it: its owner, asked here, draws one now, in this task, for the copy to read
+    node.dispatchEvent(new Event('snapshot:draw'));
     try {
       out.src = node.toDataURL();
     } catch {

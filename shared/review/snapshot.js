@@ -38,6 +38,9 @@ function popupsOver(r, waits, v) {
   return overPage;
 }
 
+// The screenshot's pixels per CSS px for a W×H screen (also where HQ's book aims a lifted mark, booklanding.js.
+export const snapScale = (W, H) => Math.min(devicePixelRatio || 1, 2, 2000 / Math.max(W, H));
+
 // The page as it is now: { c: a canvas, k: its pixels per CSS px }, or null if the browser won't play along. masked:
 // what the watch-along keeps out painted over (a call's snip, which goes to the call's agent)
 export async function snapshot(r, { masked = false } = {}) {
@@ -81,7 +84,7 @@ export async function snapshot(r, { masked = false } = {}) {
     const img = new Image();
     img.src = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     await img.decode();
-    const k = Math.min(devicePixelRatio || 1, 2, 2000 / Math.max(W, H)),
+    const k = snapScale(W, H),
       c = document.createElement('canvas');
     c.width = Math.round(W * k);
     c.height = Math.round(H * k);

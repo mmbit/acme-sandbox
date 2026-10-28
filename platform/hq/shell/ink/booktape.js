@@ -13,6 +13,7 @@
 import { refused } from '../data.js';
 import { stylesheet } from '../../util.js';
 import { sfx } from '../audio.js';
+import { pasteForCall } from '../calldrop.js';
 import { keepPicture } from './notebookdata.js';
 import { changed, said, shut } from './booksave.js';
 import { grownTo, pageBox, scrapBoxOf } from './bookrow.js';
@@ -61,9 +62,10 @@ const theirs = e => {
   const target = e.composedPath()[0];
   return target instanceof Element && !!target.closest('input, textarea, [contenteditable], review-mode');
 };
-// Cmd/Ctrl+V with the book open: what the clipboard holds, on the page in view
+// Cmd/Ctrl+V with the book open: what the clipboard holds, on the page in view. One while the board is in a call's
+// window is the call's (calldrop.js).
 function pasted(tape, e) {
-  if (!open() || theirs(e) || e.defaultPrevented) return;
+  if (!open() || theirs(e) || e.defaultPrevented || pasteForCall()) return;
   const came = brought.whatCame(brought.carried(e.clipboardData));
   if (!came) return;
   e.preventDefault();

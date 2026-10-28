@@ -1,10 +1,12 @@
 // The tips book: the book's hidden things (symbols, gestures, answers, controls), in a small black book of their own
 // that the Tips button among the book's controls opens. Nothing pops up by itself and there's nothing to dismiss: the
-// board opens it when it wants, and a tap anywhere outside it (the Tips button too) or Escape puts it away. It opens on
-// its cover, the book's name with its flowing line under it, which swings open onto the contents; a page a tip, each
-// with a little scene that plays it (booktipslist.js). Pages turn by a swipe, a tap on the page's outer half, the
-// arrows or the arrow keys, and a contents line goes straight to its tip. Every turn and swing can be overtaken at
-// once: nothing waits for an animation. Reduced motion: a crossfade, and each scene still.
+// board opens it when it wants, and a tap anywhere outside it (the Tips button too) or Escape puts it away. It opens
+// flat in the middle of the screen, open at its first tip: the contents on the left page, every tip by its part, and
+// the tip chosen on the right, with a little scene that plays it (booktipslist.js). A contents line goes straight to
+// its tip; the arrows, the arrow keys or a swipe go to the next or the one before. No page turns: the right page
+// changes at once, its tip fading in, so nothing ever waits for an animation. On a phone the two pages take turns: the
+// contents first, a tip on its own page, and Contents back. Reduced motion: each scene still. (the open book, no cover
+// or turns)
 import { esc, stylesheet } from '../util.js';
 import { names } from './brand.js';
 import { button, island, lineIcon, setPressed } from './ink/bookui.js';
@@ -15,19 +17,15 @@ import { LOOP_S, STILL } from './booktipscene.js';
 const ICON = lineIcon(
   '<path d="M12 6.5C10 5 7 4.5 3.5 5v13c3.5-.5 6.5 0 8.5 1.5 2-1.5 5-2 8.5-1.5V5c-3.5-.5-6.5 0-8.5 1.5z"/><path d="M12 6.5v13"/>',
 );
-// The cover's swing and a page's turn, quick (the book's own flip is about this). The cover shows COVER_MS first: long
-// enough to see whose book it is, never in the way (it takes no input).
-const COVER_MS = 260,
-  SWING_MS = 420,
-  TURN_MS = 300,
-  FADE_MS = 140,
+// The book coming up from the button and put away, and a tip fading in on its page: quick, and never in the way
+const FADE_MS = 120,
   RISE_MS = 200,
   PUT_AWAY_MS = 180,
   EASE = 'cubic-bezier(.3,.7,.25,1)';
 // a swipe: this far across, more across than down
 const SWIPE_PX = 36;
 
-let control, root, leaves, at; // at: the leaf shown (0: the contents)
+let control, root, leaves, at; // at: the tip shown (0: the first)
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 // The Tips button in the book's island, under the pin
@@ -42,19 +40,27 @@ function open() {
   root = document.createElement('div');
   root.className = 'tb';
   root.innerHTML = `<div class="tb-book" role="dialog" aria-modal="true" aria-label="Tips">
-      <div class="tb-leaves">${contents()}${TIPS.map(leaf).join('')}</div>
-      <div class="tb-cover" aria-hidden="true">${COVER}</div>
-      <div class="tb-turns"><button type="button" class="tb-back" aria-label="Previous tip">‹</button>
-        <span class="tb-count"></span><button type="button" class="tb-on" aria-label="Next tip">›</button></div>
+      ${contents()}
+      <div class="tb-page tb-tip">
+        <button type="button" class="tb-home">‹ Contents</button>
+        <div class="tb-leaves">${TIPS.map(leaf).join('')}</div>
+        <div class="tb-turns"><button type="button" class="tb-back" aria-label="Previous tip">‹</button>
+          <span class="tb-count"></span><button type="button" class="tb-on" aria-label="Next tip">›</button></div>
+      </div>
     </div>`;
   document.getElementById('book').append(root);
   leaves = [...root.querySelectorAll('.tb-leaf')];
-  at = 0;
   show(0);
   setPressed(control, true);
   wire();
-  swing();
-  root.querySelector('.tb-on').focus({ preventScroll: true });
+  const book = root.querySelector('.tb-book');
+  if (still()) book.animate({ opacity: [0, 1] }, FADE_MS);
+  else
+    book.animate(
+      { opacity: [0, 1], transform: ['translateY(16px) scale(.94)', 'none'] },
+      { duration: RISE_MS, easing: EASE },
+    );
+  root.querySelector('.tb-contents [data-to]').focus({ preventScroll: true });
 }
 function close() {
   if (!root) return;
@@ -75,44 +81,38 @@ function close() {
   control.focus({ preventScroll: true });
 }
 
-// ---- the leaves
+// ---- the pages
 
-// The contents: the four parts, each tip a line that turns to it
+// The left page, the contents: the book's name, then the four parts, each tip a line that opens it on the right
 const contents = () =>
-  `<section class="tb-leaf tb-contents"><h2 class="tb-logo-small">${LOGO}<span>Tips</span></h2>${PARTS.map(
+  `<nav class="tb-page tb-contents" aria-label="Contents"><h2 class="tb-logo-small">${LOGO}<span>Tips</span></h2>${PARTS.map(
     part =>
-      `<h3>${esc(part)}</h3><ol>${TIPS.map((t, i) => (t.part === part ? `<li><button type="button" data-to="${i + 1}">${esc(t.title)}</button></li>` : '')).join('')}</ol>`,
-  ).join('')}</section>`;
+      `<h3>${esc(part)}</h3><ol>${TIPS.map((t, i) => (t.part === part ? `<li><button type="button" data-to="${i}">${esc(t.title)}</button></li>` : '')).join('')}</ol>`,
+  ).join('')}</nav>`;
 const leaf = t =>
-  `<section class="tb-leaf"><p class="tb-part">${esc(t.part)}</p>${t.scene}<h3>${esc(t.title)}</h3><p class="tb-words">${esc(t.words)}</p></section>`;
+  `<section class="tb-leaf" hidden><p class="tb-part">${esc(t.part)}</p>${t.scene}<h3>${esc(t.title)}</h3><p class="tb-words">${esc(t.words)}</p></section>`;
 
-// The book's name (brand.yaml's names: book), the flowing line through its foot. A book without one has Tips for its
-// name on the cover, and no name over its contents.
+// The book's name (brand.yaml's names: book) over the contents, the flowing line through its foot. A book without one
+// has only Tips there.
 const NAME = names.book;
-const logo = word =>
-  `<svg class="tb-logo" viewBox="0 0 300 150" role="img" aria-label="${esc(word)}"><text x="150" y="98" text-anchor="middle">${esc(word)}</text>
-  <path d="M40 112C70 86 104 136 150 106S226 80 262 114" /></svg>`;
-const LOGO = NAME ? logo(NAME) : '';
-const COVER = `<div class="tb-cover-face">${NAME ? `${LOGO}<p>Tips</p>` : logo('Tips')}</div><div class="tb-cover-back"></div>`;
+const LOGO = NAME
+  ? `<svg class="tb-logo" viewBox="0 0 300 150" role="img" aria-label="${esc(NAME)}"><text x="150" y="98" text-anchor="middle">${esc(NAME)}</text>
+  <path d="M40 112C70 86 104 136 150 106S226 80 262 114" /></svg>`
+  : '';
 
-// A leaf shown, the others put by: those before it turned over (to the left), those after under it
+// A tip on the right page, its line in the contents marked, the others hidden
 function show(n) {
   at = n;
-  stack();
-  root.querySelector('.tb-count').textContent = n ? `${n} / ${TIPS.length}` : 'Contents';
+  root.querySelector('.tb-count').textContent = `${n + 1} / ${TIPS.length}`;
   root.querySelector('.tb-back').disabled = n === 0;
   root.querySelector('.tb-on').disabled = n === leaves.length - 1;
-  leaves.forEach((el, i) => play(el, i === n));
-}
-// The leaves turned over or under, as at says
-function stack() {
+  root.querySelectorAll('.tb-contents [data-to]').forEach(b => b.toggleAttribute('aria-current', +b.dataset.to === n));
   leaves.forEach((el, i) => {
-    el.classList.toggle('tb-over', i < at);
-    el.toggleAttribute('inert', i !== at);
-    el.style.zIndex = String(i < at ? i : leaves.length - i);
+    el.hidden = i !== n;
+    play(el, i === n);
   });
 }
-// A leaf's scene from its start, or held while its leaf is put by (reduced motion: still, done)
+// A tip's scene from its start, or held while its tip is hidden (reduced motion: still, done)
 function play(el, on) {
   const svg = el.querySelector('svg.tb-scene');
   if (!svg) return;
@@ -124,95 +124,70 @@ function play(el, on) {
   svg.unpauseAnimations();
 }
 
-// To another leaf: the one leaving turns over the spine (forward) or the one coming back turns down onto the page
+// To another tip, at once: the one going hides, the one coming fades in (a quick click overtakes the fade)
 function turn(to) {
-  if (!root || to < 0 || to >= leaves.length || to === at) return;
-  // (an overtaken turn's finish must not restack under this one)
-  leaves.forEach(el =>
-    el.getAnimations().forEach(a => {
-      a.onfinish = null;
-      a.finish();
-    }),
-  );
-  const from = at;
+  if (!root || to < 0 || to >= leaves.length) return;
+  reading(true);
+  if (to === at) return;
+  leaves[at].getAnimations().forEach(a => a.cancel());
   show(to);
-  if (still()) return void leaves[to].animate({ opacity: [0, 1] }, FADE_MS);
-  // (one leaf moves however far it goes: the one nearest the spine of the two)
-  const moving = to > from ? leaves[from] : leaves[to],
-    forward = to > from;
-  moving.style.zIndex = String(leaves.length + 1);
-  moving.animate(
-    {
-      transform: forward ? ['rotateY(0)', 'rotateY(-180deg)'] : ['rotateY(-180deg)', 'rotateY(0)'],
-      filter: ['brightness(1)', 'brightness(.88)', 'brightness(1)'],
-    },
-    { duration: TURN_MS, easing: EASE },
-  ).onfinish = () => root && stack();
+  leaves[to].animate({ opacity: [0, 1] }, FADE_MS);
+  leaves[to].scrollTop = 0;
 }
+// (a phone's book: the tip's page instead of the contents, or the contents back)
+const reading = on => root.classList.toggle('tb-reading', on);
 
-// The cover swinging open about the book's left edge, the book coming up from the button
-function swing() {
-  const cover = root.querySelector('.tb-cover'),
-    book = root.querySelector('.tb-book');
-  if (still()) {
-    cover.classList.add('tb-open');
-    return book.animate({ opacity: [0, 1] }, FADE_MS);
-  }
-  book.animate(
-    { opacity: [0, 1], transform: ['translateY(16px) scale(.9)', 'none'] },
-    { duration: RISE_MS, easing: EASE },
-  );
-  cover.animate(
-    { transform: ['rotateY(0)', 'rotateY(-180deg)'] },
-    { duration: SWING_MS, delay: COVER_MS, easing: EASE, fill: 'backwards' },
-  ).onfinish = () => cover.classList.add('tb-open');
-}
-
-// ---- input: never held up by a turn under way
+// ---- input: never held up by a fade under way
 
 function wire() {
-  const book = root.querySelector('.tb-book');
+  const page = root.querySelector('.tb-tip');
   // (a click, not a press: a tap outside that lands on the Tips button under it only puts the book away)
   root.addEventListener('click', e => e.target === root && close());
   root.querySelector('.tb-back').addEventListener('click', () => turn(at - 1));
   root.querySelector('.tb-on').addEventListener('click', () => turn(at + 1));
+  root.querySelector('.tb-home').addEventListener('click', home);
   root.querySelector('.tb-contents').addEventListener('click', e => {
     const to = e.target.closest('[data-to]');
     if (to) turn(+to.dataset.to);
   });
-  // a swipe across turns. A tap on a tip's outer half turns on, its inner half back
+  // a swipe across the tip's page goes on or back. A tap on its outer half goes on, its inner half back
   let down = null;
-  book.addEventListener('pointerdown', e => {
+  page.addEventListener('pointerdown', e => {
     down = e.target.closest('button') ? null : { x: e.clientX, y: e.clientY };
     // (a swipe ending outside the book is still this book's: its release is no tap on the backdrop)
-    if (down) book.setPointerCapture(e.pointerId);
+    if (down) page.setPointerCapture(e.pointerId);
   });
-  book.addEventListener('pointerup', e => {
+  page.addEventListener('pointerup', e => {
     if (!down) return;
     const dx = e.clientX - down.x,
       dy = e.clientY - down.y;
     down = null;
     if (Math.abs(dx) > SWIPE_PX && Math.abs(dx) > Math.abs(dy)) return turn(at + (dx < 0 ? 1 : -1));
-    if (Math.hypot(dx, dy) > SWIPE_PX || !at) return;
-    const box = book.getBoundingClientRect();
+    if (Math.hypot(dx, dy) > SWIPE_PX) return;
+    const box = page.getBoundingClientRect();
     turn(at + (e.clientX > box.left + box.width / 2 ? 1 : -1));
   });
-  book.addEventListener('pointercancel', () => (down = null));
+  page.addEventListener('pointercancel', () => (down = null));
   addEventListener('keydown', keys, true);
+}
+// Back to the contents: a phone's book shows them again, and the tip's line takes the focus
+function home() {
+  reading(false);
+  root.querySelector(`.tb-contents [data-to="${at}"]`).focus({ preventScroll: false });
 }
 function keys(e) {
   if (e.key === 'Escape') close();
   else if (e.key === 'ArrowRight' || e.key === 'PageDown') turn(at + 1);
   else if (e.key === 'ArrowLeft' || e.key === 'PageUp') turn(at - 1);
-  else if (e.key === 'Home') turn(0);
+  else if (e.key === 'Home') home();
   else if (e.key === 'Tab') round(e.shiftKey ? -1 : 1);
   else return;
   e.preventDefault();
   e.stopPropagation();
 }
-// Tab and Shift+Tab go round the book's own live controls (a modal: never onto the Notebook behind it)
+// Tab and Shift+Tab go round the book's own live controls, those showing (a modal: never onto the Notebook behind it)
 function round(by) {
-  const stops = [...root.querySelectorAll('button:enabled')].filter(el => !el.closest('[inert]')),
+  const stops = [...root.querySelectorAll('button:enabled')].filter(el => el.offsetParent),
     i = stops.indexOf(document.activeElement);
   stops.at(i < 0 ? Math.min(by, 0) : (i + by) % stops.length).focus({ preventScroll: true });
 }

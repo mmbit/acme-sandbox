@@ -21,7 +21,7 @@ export function bodyStories(c) {
       landing(browser, c),
     "the book's body: the cover's edge let go stays there, HQ a phone's width beside it; it never closes the book":
       browser => letGo(browser, c),
-    "the book's body: the table where the book moves off it is a quiet checkerboard, not a flat fill": browser =>
+    "the book's body: the table where the book moves off it is a classic checkerboard, not a flat fill": browser =>
       table(browser, c),
     "the book's body: the book opens straight onto its page, no cover, and HQ fades into its room as it lands":
       browser => opening(browser, c),
@@ -165,27 +165,7 @@ async function opening(browser, c) {
   const { page, errors, done } = await atMini(browser, c);
   try {
     await putAway(page, c);
-    // every frame from the tap: where the book's edge is, whether it's laid out open, and HQ's page's room and opacity
-    const seen = page.evaluate(
-      () =>
-        new Promise(resolve => {
-          const start = performance.now(),
-            frames = [],
-            edge = document.querySelector('#book .bk-edge'),
-            frame = () => {
-              frames.push({
-                t: Math.round(performance.now() - start),
-                edge: Math.round(edge.getBoundingClientRect().left),
-                open: document.documentElement.dataset.book === 'open',
-                hq: Math.round(document.body.getBoundingClientRect().width),
-                shown: Number(getComputedStyle(document.body).opacity),
-              });
-              if (performance.now() - start < 2000) requestAnimationFrame(frame);
-              else resolve(frames);
-            };
-          requestAnimationFrame(frame);
-        }),
-    );
+    const seen = framesFrom(page);
     await page.locator('#book .bk-lip').click();
     const frames = await seen,
       coming = frames.filter(f => f.edge < MINI.width && !f.open),
@@ -193,16 +173,18 @@ async function opening(browser, c) {
       narrowed = frames.findIndex(f => f.hq < MINI.width);
     assert.ok(coming.length >= 2, `the book coming in: ${JSON.stringify(frames.slice(0, 12))}`);
     assert.equal(await page.locator('#book .bk-cover').count(), 0, 'no cover: the book opens straight onto its page');
-    // HQ keeps its whole width till the book has landed, then fades out, takes its new room and fades back in, quickly
+    // HQ keeps its whole width till the book has landed, takes its new room while it's gone, then fades back in, slowly
+    // enough to be seen (the board's call 148)
     assert.ok(landed >= 0 && narrowed >= landed, `HQ narrowed at frame ${narrowed}, the book landed at ${landed}`);
+    assert.ok(frames[narrowed].shown < 0.05, `HQ narrowed while showing: ${JSON.stringify(frames[narrowed])}`);
     assert.ok(
       frames.slice(landed).some(f => f.shown < 0.7),
       `HQ's page didn't fade: ${JSON.stringify(frames.slice(landed, landed + 12))}`,
     );
-    // (well under a second; headless frames under a busy machine come late)
+    // (within a couple of seconds; headless frames under a busy machine come late)
     const back = frames.slice(narrowed).find(f => f.shown > 0.9);
     assert.ok(
-      back && back.t - frames[landed].t < 1200,
+      back && back.t - frames[landed].t < 2500,
       `HQ's page back in at ${back?.t}, the book landed at ${frames[landed].t}: ${JSON.stringify(frames.slice(landed))}`,
     );
     noErrors(errors);
@@ -210,6 +192,29 @@ async function opening(browser, c) {
     await done();
   }
 }
+
+// Every frame for 4 s from now: where the book's edge is, whether it's laid out open, and HQ's page's room and opacity
+const framesFrom = page =>
+  page.evaluate(
+    () =>
+      new Promise(resolve => {
+        const start = performance.now(),
+          frames = [],
+          edge = document.querySelector('#book .bk-edge'),
+          frame = () => {
+            frames.push({
+              t: Math.round(performance.now() - start),
+              edge: Math.round(edge.getBoundingClientRect().left),
+              open: document.documentElement.dataset.book === 'open',
+              hq: Math.round(document.body.getBoundingClientRect().width),
+              shown: Number(getComputedStyle(document.body).opacity),
+            });
+            if (performance.now() - start < 4000) requestAnimationFrame(frame);
+            else resolve(frames);
+          };
+        requestAnimationFrame(frame);
+      }),
+  );
 
 async function phone(browser, c) {
   const PHONE = { width: 390, height: 844 };
@@ -300,8 +305,8 @@ const edgeX = async page => {
   return r.x + r.width / 2;
 };
 const hqWidth = page => page.evaluate(() => document.body.getBoundingClientRect().width);
-const bookWidth = page =>
-  page.evaluate(() => Math.round(document.querySelector('#book .bk-leaf').getBoundingClientRect().width));
+// (its laid width, as bookopen.mjs reads it: mid-swing its box on the screen is the turned board's)
+const bookWidth = page => page.evaluate(() => document.querySelector('#book .bk-leaf').offsetWidth);
 // The cover's edge dragged to x (its left edge), held there a moment and let go
 async function dragEdge(page, x) {
   const from = await edgeX(page);

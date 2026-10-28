@@ -27,7 +27,8 @@
 // Search (bookfind.mjs): a word said while drawing yesterday found as it's written, an answer by its words, and the
 // find opening its page at the note, its number lit. On a desktop, the caret in
 // the field, Search put away with the book and back with it.
-// The tips book (booktips.mjs): the Tips control opens it on its cover, every tip a page, turned at once, put away.
+// The tips book (booktips.mjs): the Tips control opens it flat in the middle, the contents beside the tip, every
+// tip changed at once, put away.
 // The pin (bookpin.mjs): away as HQ loads on a desktop, an iPad and a phone; summoned by opening the book or the book's
 // pin control (on a phone, the control folds the book onto HQ with the pin), away again folded or with the control; an
 // artifact's pin as it was; a note's sheet and review mode's menu naming one owner. Carried and let go, it stays
@@ -41,6 +42,11 @@
 // picture dragged in from beside, taped where it's let go. (Wire: job #19263)
 // The drawing tools (bookdraw.mjs): erased at two sizes, shapes filled and outlined, an arrow, ink and a picture
 // selected, moved, cut, pasted and deleted, Undo and Redo through all of it, with a mouse and the Pencil.
+// Ink answers any note (bookanswers.mjs): the agent's face and dots, then its answer written in by a pen beside the note,
+// never over the board's ink; a symbol in its reply area reaching the agent; a drawing, a form and a question; the
+// overview's open list; versions on a page of their own; a call's page.
+// Circle a version to pick it (bookpicks.mjs): a ring round one of a note's versions, with the Pencil, a finger and a
+// mouse, goes as a reply on that version and its page stamps the pick; a tick moves it; a call's page the same.
 import assert from 'node:assert/strict';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { crc32, deflateSync } from 'node:zlib';
@@ -68,6 +74,8 @@ import { chromeStories } from './bookchrome.mjs';
 import { circleStories } from './bookcircle.mjs';
 import { liftStories } from './booklift.mjs';
 import { penStories } from './bookpen.mjs';
+import { answerStories } from './bookanswers.mjs'; // (Ink answers any note)
+import { pickStories } from './bookpicks.mjs'; // (circle a version to pick it)
 import { pasteStories } from './bookpaste.mjs';
 import { stripStories } from './bookstrip.mjs';
 import { webkitStories } from './bookwebkit.mjs';
@@ -254,7 +262,7 @@ function sheetStore(path, body, q) {
 }
 function store(path, body, q) {
   if (path === '/api/book') return { day: '2026-10-26', today: '2026-10-26', days: [], pages };
-  // (a live call's notes page, made as it's picked up: in today's book, a page of the call's own notebook.)
+  // (a live call's notes page, made as it's picked up: in today's book, a page of My Notebook.)
   if (path === '/api/notebooks/call') {
     let page = pages.find(p => p.kind === 'call' && p.call === body.call && p.notebook);
     if (!page)
@@ -264,7 +272,7 @@ function store(path, body, q) {
           day: '2026-10-26',
           kind: 'call',
           call: body.call,
-          notebook: 900,
+          notebook: 1,
           label: '',
           x: 0,
           y: 0,
@@ -597,6 +605,39 @@ function STORIES() {
     ...spaceStories({ hqIn, base, store, pages, notebook, shot, settled, noErrorsIn, settle: SETTLE_MS }),
     // (the Pencil's taps, Select off the screen's edge, Copy and Paste, boxes of words.)
     ...penStories({ hqIn, base, store, pages, notebook, shot, settled }),
+    // (Ink answers any note: an answer written in beside a note, its symbols, a drawing, a form, a question, versions,
+    // a call's page.)
+    ...answerStories({
+      hqIn,
+      base,
+      store,
+      pages,
+      notebook,
+      posts,
+      org,
+      shot,
+      settled,
+      settle: SETTLE_MS,
+      MINI,
+      PHONE,
+      DESKTOP,
+    }),
+    // (circle a version to pick it, on three devices and a call's page.)
+    ...pickStories({
+      hqIn,
+      base,
+      store,
+      pages,
+      notebook,
+      posts,
+      org,
+      shot,
+      settled,
+      settle: SETTLE_MS,
+      MINI,
+      PHONE,
+      DESKTOP,
+    }),
     // (moving about the book's pages with a mouse: the overview, the zoom, the pan, New page, the heading.)
     ...deskStories({ hq, storedPages, shot, settle: SETTLE_MS, hqIn, base, store, pages, settled }),
     // (the book as an object: its shadow, its floating controls, its spine let go, its cover and name, the pairing
@@ -866,7 +907,7 @@ function STORIES() {
       ),
     'the pin away as HQ loads on a desktop and a phone, summoned and put away; an artifact keeps its own': browser =>
       pinScreensStory({ browser, hqIn, base, settled, shot, noErrorsIn, reviewJs }),
-    'the Tips control opens the tips book on its cover, every tip a page with its scene, turned at once; put away by Escape or a tap outside':
+    'the Tips control opens the tips book open flat, the contents beside every tip with its scene, changed at once; put away by Escape or a tap outside':
       browser => tipsStory({ browser, hqIn, base, settled, shot, noErrorsIn }),
     // (a circle on HQ, on a call or not, and the pen's tap.)
     ...circleStories({
@@ -1730,7 +1771,8 @@ const noErrors = () =>
     [],
   );
 
-// --stories <words>: only the book's stories whose names hold those words (or any of words|words), in Chromium, nothing else (a check's share of the worker's memory holds one part at a time).
+// --stories <words>: only the book's stories whose names hold those words (or any of words|words), in Chromium (WebKit
+// with --webkit), nothing else (a check's share of the worker's memory holds one part at a time).
 if (only) {
   await context.close();
   const failed = await bookStories(browser, inWebKit ? 'webkit' : 'chromium');

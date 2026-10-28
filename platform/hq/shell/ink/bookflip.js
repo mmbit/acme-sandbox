@@ -1,17 +1,23 @@
 // A leaf of the book turning: the one quick page-turn every change of page uses (a page to the next, to and from the
-// overview), so they all feel the same. turn(paper, { dir, midway }): forward (dir 1)
-// the page shown lifts at its outer edge and turns over towards the spine, the new page already under it; back (dir -1)
+// overview), so they all feel the same; out to the Shelf the book draws back instead (zoomOut). turn(paper, { dir,
+// midway }): forward (dir 1) the page shown lifts at its outer edge and turns over towards the spine, the new page
+// already under it; back (dir -1)
 // the page before swings back from the spine onto the page shown: the same turn played backwards, frame for frame.
 // midway() swaps what's under the leaf while the leaf hides it (it may return a promise). The leaf is a picture of a page
 // (its parts copied, its canvases' pixels too), so nothing on the page flashes or jumps. Transforms and opacity only:
-// the compositor's. Reduced motion: the page shown fades into the new one. (the
-// turn the same both ways: job #19861)
+// the compositor's. Reduced motion: the page shown fades into the new one. Either way with the faintest swish of paper
+// (the board's call 149). (the turn the same both ways: job #19861)
+import { foley } from '../audio.js';
 
 // A turn: quick, the leaf lifting at first and gone over the spine as it speeds up; played back, it sweeps in and
 // settles.
 export const TURN = { ms: 300, easing: 'cubic-bezier(0.42, 0.05, 0.72, 0.62)' };
 // Reduced motion's cross-fade
 const FADE_MS = 140;
+// The turn's sound: a breath of air off the leaf as long as the turn, well under the book's thud
+const SWISH = { dur: TURN.ms / 1000, material: 'paper', size: 0.8 };
+// The draw back to the Shelf: as quick as a turn, eased out; the view left shrinks to away, the Shelf settles from near
+const ZOOM = { ms: 280, easing: 'cubic-bezier(.3,.7,.25,1)', away: 0.84, near: 1.06 };
 
 const running = new WeakMap(); // (el → the turn under way, finished at once if another starts)
 
@@ -32,6 +38,7 @@ export async function turn(el, { dir = 1, midway = () => {} } = {}) {
   try {
     const shown = add(picture(el));
     await midway();
+    foley('slide', SWISH, { vol: 0.25 });
     if (matchMedia('(prefers-reduced-motion: reduce)').matches)
       anims.push(shown.animate([{ opacity: 1 }, { opacity: 0 }], { duration: FADE_MS, fill: 'forwards' }));
     else if (dir >= 0) {
@@ -140,3 +147,33 @@ function pair(a, b, scrolled) {
   for (let i = 0; i < ka.length && i < kb.length; i++) pair(ka[i], kb[i], scrolled);
 }
 const frame = () => new Promise(r => requestAnimationFrame(() => r()));
+
+// The book drawing back to the Shelf: the view shown shrinks away as coming (the Shelf, swapped in under it by
+// midway()) settles from a little nearer, a camera stepping back rather than a leaf turning. Reduced motion: the
+// cross-fade alone.
+export async function zoomOut(el, { coming, midway }) {
+  running.get(el)?.finish();
+  if (!el.isConnected || !el.clientWidth) {
+    await midway();
+    return;
+  }
+  const anims = [],
+    done = { finish: () => anims.forEach(a => a.finish()) };
+  running.set(el, done);
+  const shown = picture(el);
+  el.append(shown);
+  try {
+    await midway();
+    const still = matchMedia('(prefers-reduced-motion: reduce)').matches,
+      opts = { duration: ZOOM.ms, easing: ZOOM.easing, fill: 'both' };
+    anims.push(
+      shown.animate([{ opacity: 1 }, { opacity: 0, transform: still ? 'none' : `scale(${ZOOM.away})` }], opts),
+    );
+    if (!still) anims.push(coming.animate([{ transform: `scale(${ZOOM.near})` }, { transform: 'none' }], opts));
+    await Promise.all(anims.map(a => a.finished.catch(() => {})));
+  } finally {
+    shown.remove();
+    anims.forEach(a => a.cancel());
+    if (running.get(el) === done) running.delete(el);
+  }
+}

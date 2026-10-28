@@ -23,7 +23,8 @@ import {
   turnEnded,
   turnTakenBack,
 } from './callscreen.js';
-import { startPictures, picturesLive, pictureState, stopPictures } from './callpictures.js';
+import { startPictures, picturesLive, pictureState, showPictures, stopPictures } from './callpictures.js';
+import { startDrop, stopDrop } from './calldrop.js';
 import { FROM_LINE as DRAWING, reconnected, startDrawing, stopDrawing } from './ink/calldraw.js'; // (Ink's folder)
 import { FROM_LINE as DRIVING, stopDriving, wiped } from './calldrive.js';
 import { ceoName, openIntercom, openComputer, intercomOpen, notesComing, say, tell, watchCall } from './desk.js';
@@ -34,47 +35,45 @@ export const inCall = () => !!call;
 // The call open over HQ, its screen in front: Escape makes it small (desk.js)
 export const callInFront = () => !!call && !call.small;
 export const minimiseCall = () => call && minimise(call);
+// Whom the call on is with (its name), or null with none
+export const callName = () => call?.name ?? null;
 
 // Call someone: the call opens over whatever is on screen (their panel, a card, Reviews, the intercom), which is there
 // again when it ends. request: the card it's about. onIntercom: started from the intercom, which shows why it ended, if
 // not by hanging up.
-// walk: from a card's Walk me through it (calldraw.js). page: a page of the Notebook in front of both, shared by its
-// corner (bookshare.js). (request and the rest named)
+// walk: from a card's Walk me through it (calldraw.js). pictures: Files (or promises of them) the agent is shown once
+// the line picks up, a page of the Notebook shared by its corner (bookshare.js); with a call already on, they go into
+// that one. page: that page's id, brought to the call's notes page as its first scrap (calldraw.js). (request and the rest named; pictures)
 export async function callAgent(
   agent = world.company.ceo,
   name = ceoName(),
-  { request = 0, onIntercom = false, walk = false, page = 0 } = {},
+  { request = 0, onIntercom = false, walk = false, pictures = [], page = 0 } = {},
 ) {
-  if (call) return expand(call);
-  // (brought: the page in front of both, the call's notes page's first scrap: calldraw.js.)
+  if (call) {
+    expand(call);
+    return showPictures(call, pictures);
+  }
   const c = (call = { agent, name, request, onIntercom, walk, brought: page, voiced: [], kept: [], keptFrom: 0 });
   c.hangUp = () => endCall();
-  c.audio = new CallAudio({
-    worklet: 'shell/mic-worklet.js',
-    lead: 0.05,
-    send: frame => sendFrame(c, frame),
-    lost: err => endCall(`The microphone stopped. ${microphoneFix(err)}`),
-    warn: why => showSoundNote(soundNote(why)),
-    tick: () => {
-      onAir(c);
-      switchOffOnTone(c);
-      lagging(c);
-    },
-  });
+  c.audio = audioOf(c);
   openLayer(c);
   hush(true, 'call');
   if (onIntercom) say(''); // (the last call's "the line dropped" goes)
   // (the board interrupts by speaking: the line clears the voice, FROM_LINE.clear.)
   $('#call-end').onclick = () => endCall();
   startPictures(c);
+  showPictures(c, pictures);
+  startDrop(c);
   callSay('Starting the microphone…');
   c.audio.keepAwake(); // (first, still in the tap: Safari grants the first lock only seconds after one)
+  // (it rings as the microphone starts, in the call's sound, which start() puts up first, in the tap.)
+  const started = c.audio.start();
+  ring(c);
   try {
-    await c.audio.start();
+    await started;
   } catch {
     return endCall(`The microphone didn’t start. Check ${names.hq}’s microphone permission.`);
   }
-  if (call === c) ring(c);
   const l = await loadLanguage(world.dev).catch(() => null); // the board's language, which the line speaks and hears
   if (call !== c) return;
   if (!l) return endCall('The language can’t be read right now. Try again in a moment.');
@@ -83,8 +82,20 @@ export async function callAgent(
   c.ring = setTimeout(() => {
     if (call === c && !c.live) endCall(`${name} didn’t pick up. Try again in a moment.`);
   }, 30000);
-  // (walk; page)
-  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}), ...(page ? { page } : {}) });
+  // (walk)
+  connect(c, { agent, lang: l.lang, request, ...(walk && request ? { walk } : {}) });
+}
+
+// A call's microphone and voice: its frames sent on the line, a microphone lost ends it, and each tick keeps its screen
+function audioOf(c) {
+  return new CallAudio({
+    worklet: 'shell/mic-worklet.js',
+    lead: 0.05,
+    send: frame => sendFrame(c, frame),
+    lost: err => endCall(`The microphone stopped. ${microphoneFix(err)}`),
+    warn: why => showSoundNote(soundNote(why)),
+    tick: () => (onAir(c), switchOffOnTone(c), lagging(c)),
+  });
 }
 
 // It rings until the line picks up, as a phone does, and the handset clacks then (FROM_LINE.call): in the call's own
@@ -365,6 +376,7 @@ function endCall(why) {
   c.ws?.close();
   c.voiced = [];
   stopPictures(c);
+  stopDrop(c);
   stopDrawing(c);
   stopDriving();
   c.audio.close();

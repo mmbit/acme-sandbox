@@ -42,15 +42,23 @@ async function pulledOpen(browser, c) {
     assert.ok(early.angle > held.angle + 0.05, `no lag: ${early.angle.toFixed(2)} then ${held.angle.toFixed(2)}`);
     // (never stretched: the board's laid out at the width it opens at, turned, its tab at its outer edge)
     assert.equal(held.width, open.width, 'the book stretched while lifted');
-    assert.ok(Math.abs(held.tabRight - held.edgeLeft) < 6, `the tab at ${held.tabRight}, the edge at ${held.edgeLeft}`);
+    // (held, the tab lifts up, never out: no gap between it and the cover, the board's call 149)
+    assert.ok(
+      Math.abs(held.tabRight - held.edgeLeft) <= 1,
+      `the tab at ${held.tabRight}, the edge at ${held.edgeLeft}`,
+    );
     assert.ok(held.hq.opacity < 0.95 && held.hq.opacity > 0, `HQ's page dissolving: ${JSON.stringify(held.hq)}`);
     // lowered past halfway and let go still: gravity takes it, one tick as it lands, HQ's page back, sharp, in its room
     await page.mouse.move(720, tab.y, { steps: 4 });
     await page.waitForTimeout(500);
     assert.ok((await seen(page)).angle < 1.05, 'lowered past halfway');
-    await page.mouse.up();
-    await c.settled(page, 'open');
-    await page.waitForTimeout(600);
+    await letGoShadowGrowing(page, c, held);
+    // (HQ's page settles in its room while it's gone, then comes back in slowly: the board's call 148)
+    await page.waitForFunction(
+      () => Number(document.body.style.opacity || 1) === 1 && !document.body.style.filter,
+      null,
+      { timeout: 15_000 },
+    );
     const landed = await seen(page);
     assert.equal(landed.mode, 'open');
     assert.equal(landed.angle, 0);
@@ -159,6 +167,21 @@ async function onAPhone(browser, c) {
 
 // ---- helpers
 
+// Let go lowered: it lands open, its own shadow on HQ's page beside it growing in with its drop, never popping in as
+// it lands (the board's call 152)
+async function letGoShadowGrowing(page, c, held) {
+  assert.ok(held.shadow < 0.1, `the book's own shadow beside it while it's high: ${held.shadow}`);
+  await shadowWatched(page);
+  await page.mouse.up();
+  await c.settled(page, 'open');
+  const drop = await page.evaluate(() => window.__shadows);
+  assert.ok(
+    drop.some(s => s > 0.05 && s < 0.95),
+    `the shadow beside the book popped in: ${drop.map(s => s.toFixed(2)).join(' ')}`,
+  );
+  assert.equal((await seen(page)).shadow, 1, "the book's own shadow beside it at rest");
+}
+
 // What the board sees: the book's mode, the board's angle round the spine (rad, from its transform), the paper's laid
 // width, the cover's edge's and the tab's boxes on the screen, HQ's page's width and how dissolved it is
 const seen = page =>
@@ -177,7 +200,22 @@ const seen = page =>
       tabRight: Math.round(tab.right),
       page: Math.round(document.body.getBoundingClientRect().width),
       hq: { opacity: Number(look.opacity || 1), filter: look.filter, visibility: look.visibility },
+      shadow: (s => (s.visibility === 'visible' ? Number(s.opacity) : 0))(getComputedStyle(edge, '::before')),
     };
+  });
+// The book's own shadow on HQ's page beside it (how strong it is) on every frame while it swings, into __shadows
+const shadowWatched = page =>
+  page.evaluate(() => {
+    const edge = document.querySelector('#book .bk-edge'),
+      book = document.getElementById('book');
+    window.__shadows = [];
+    const frame = () => {
+      if (!book.classList.contains('bk-swinging')) return;
+      const s = getComputedStyle(edge, '::before');
+      window.__shadows.push(s.visibility === 'visible' ? Number(s.opacity) : 0);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
   });
 // The tab's middle
 const tabAt = page =>

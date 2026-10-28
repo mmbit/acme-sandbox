@@ -13,6 +13,9 @@ import { names } from './brand.js';
 export function onEvent(ev) {
   // (the book changed on the store, an answer clipped onto a note: the book reads its sheets again, bookrail.js; one
   // typed onto a page names it, which the book reads again if it's open, bookpages.js)
+  // (news on a note on a live call, its verdict or a version: the call's line reads it again, ink/calldraw.js.)
+  if (ev.type === 'book' && ev.call && ev.note)
+    return void document.dispatchEvent(new CustomEvent('call:noted', { detail: { call: ev.call, note: ev.note } }));
   // (a notebook's page changed, by this screen or another of the board's: every screen showing it reads it again,
   // bookpages.js.)
   if (ev.type === 'book' && ev.text === 'notebook')

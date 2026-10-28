@@ -10,9 +10,10 @@ import { nameOf } from './bookhead.js';
 import { shut } from './booksave.js';
 
 const ICONS = {
-  // (the notebook's pages laid out: four leaves in a grid)
+  // (the notebook's pages laid out: four leaves in a grid, as far apart top to bottom as side to side: the board's call
+  // 149)
   overview: lineIcon(
-    '<rect x="4" y="3.5" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="3.5" width="6.5" height="7.5" rx="1.2"/><rect x="4" y="13" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="13" width="6.5" height="7.5" rx="1.2"/>',
+    '<rect x="4" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="3" width="6.5" height="7.5" rx="1.2"/><rect x="4" y="13.5" width="6.5" height="7.5" rx="1.2"/><rect x="13.5" y="13.5" width="6.5" height="7.5" rx="1.2"/>',
   ),
   before: lineIcon('<path d="M14.5 6l-6 6 6 6"/>'),
   after: lineIcon('<path d="M9.5 6l6 6-6 6"/>'),

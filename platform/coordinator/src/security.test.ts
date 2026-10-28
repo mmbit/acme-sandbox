@@ -409,6 +409,8 @@ test('Voice line: VOICE_TOKEN only on /api/voice/*, and a call token assigns and
   assert.equal((await agent('overseer', t)).status, 200);
   // (closing a card that is not the call agent's is HQ's own refusal)
   assert.equal((await agent('request-close', t, { id: 1 })).status, 404);
+  // (its answer on a note the board drew on the call: the route is open to it, and no such note here.)
+  assert.equal((await agent('call-answer', t, { note: 1, words: 'Yes' })).status, 404);
   // a promise on its own call's list, nothing else: not another call's item or job
   const kit = await callToken('kit');
   const kitsItem = (await agent('item', kit, { kind: 'promise', owner: 'kit', goal: 'g', what: 'Coming-soon page', quote: 'Build it' })).body.id;

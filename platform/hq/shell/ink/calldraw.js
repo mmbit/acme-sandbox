@@ -4,6 +4,8 @@
 //   - Each note the Pencil puts on the call's page (shared/review/callnotes.js, told through the document's call:*
 //     events) goes to the line as it lifts ({ type: 'note', id }), sent again on a new connection until the line has
 //     it. The line fetches it from the book and gives the agent its snip and its words.
+//   - News on one of them (the book's verdict on it, a try's version landed: a 'book' event naming the call and the
+//     note) goes to the line too ({ type: 'noted', id }), which reads the note again.
 //   - The agent asks to see something by name: a card with Show and Not now, no countdown, blocking nothing, until it's
 //     tapped. Show starts the watch-along as Show my screen does.
 //   - The agent's ink comes down the call's own socket ({ type: 'ink', at }): a ring where it aimed on its picture of the
@@ -57,13 +59,20 @@ export function startDrawing(c) {
     c.penDown = down;
     c.ws.send(JSON.stringify({ type: 'pen', down }));
   };
+  // (news on one of this call's notes: its verdict, a version landed.)
+  const onNoted = e => {
+    if (e.detail?.call === c.call && !c.over && c.ws?.readyState === 1)
+      c.ws.send(JSON.stringify({ type: 'noted', id: e.detail.note }));
+  };
   const pen = ['pointerdown', 'pointerup', 'pointercancel'];
   document.addEventListener('pencil:note', onNote);
+  document.addEventListener('call:noted', onNoted);
   addEventListener('pointerdown', onPen, true);
   for (const type of pen) addEventListener(type, penMoved, true);
   notesPage(c);
   c.drawing = () => {
     document.removeEventListener('pencil:note', onNote);
+    document.removeEventListener('call:noted', onNoted);
     removeEventListener('pointerdown', onPen, true);
     for (const type of pen) removeEventListener(type, penMoved, true);
   };
@@ -156,8 +165,8 @@ export async function stopDrawing(c) {
   if (c.notesPage || !(c.walk || c.page)) return;
   pageEnded(c);
 }
-// The call's page as the call ends, when it wasn't opened as the notes page: let be if a notebook has it since (the
-// call's own, made its notes page by the agent's first scrap, or My Notebook: the store's); a walk-through's kept, with
+// The call's page as the call ends, when it wasn't opened as the notes page: let be if My Notebook has it since (made
+// the notes page by the agent's first scrap, or carried there: the store's); a walk-through's kept, with
 // the card, if the board wrote on it (a note of its own, the book's ink or a picture), else thrown away; any other's,
 // the card. Left as it is if the book can't say: the sweep takes an empty one.
 async function pageEnded(c) {

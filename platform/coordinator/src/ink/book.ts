@@ -390,7 +390,7 @@ const wentOn = (page: number) =>
       "select 1 from book_notes n join book_sheets s on s.id = n.sheet where n.page = ? and s.status = 'sent' limit 1",
     )
     .get(page);
-// (notebook: the one that has the page, if any: its call's notes or My Notebook.)
+// (notebook: the one that has the page, if any: My Notebook, once it's the call's notes page.)
 function callOf(page: number, call: number | null) {
   const found = db.prepare('select reply, agent, ts from calls where id = ?').get(call) as
     { reply: string | null; agent: string; ts: string } | undefined;

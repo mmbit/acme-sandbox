@@ -1,8 +1,9 @@
 // book-check.mjs's stories of the book's chrome on an iPad mini (shell/ink/bookui.js, bookcontrols.js, bookzoom.js,
 // booksearch.js, bookhead.js, bookpages.js; Ink's folder): the column holds the
-// faces, the tools and Undo and Redo, and nothing else; nothing of the book sits under Safari's blurred strip at the
-// top; the page arrows clear the column at any width; the overview opens from the foot, with Search and the phone in
-// it, only its own button left in the foot, a page that went stamped and the Shelf a tap away; and the pages keep one
+// faces, the tools, Undo and Redo and the book's own controls, and nothing else; nothing of the book sits under Safari's blurred strip at the
+// top; the page arrows clear the column at any width; the overview opens from the foot, with Search in it, the phone
+// with the book's controls and nothing to draw with, only its own button left in the foot, a page that went stamped and
+// the Shelf a tap away, its Search saying what it searches there; and the pages keep one
 // name each from the moment they show, a call's saying who it was with and when, with no blank page the board didn't
 // make. Each asserts what the board sees: the buttons' names, boxes, the controls' words.
 import assert from 'node:assert/strict';
@@ -11,19 +12,20 @@ import { errorsOf, openPage, until } from '../../shared/browser/browser.mjs';
 const MINI = { width: 1133, height: 744 };
 // a home-screen app's blurred strip at the top (style.css's standalone --sat: 48 px under the status bar)
 const SAT_PX = 72;
-// what the column may hold: the faces ("For Juno", an invited person's book), then the tools, then Undo and Redo
+// what the column may hold: the tools, then Undo and Redo with the book's own controls
 // (no faces: the sheets went with pages sent whole.)
 const TOOLS = ['Select', 'Pen', 'Highlighter', 'Eraser', /^Shapes/, 'Type', 'Move the page', 'Colour and width'],
-  // (and the strip's zoom and cog, bookstrip.js, and the pin among the book's controls, pinsummon.js.)
-  CONTROLS = ['Undo', 'Redo', 'Zoom out', 'Zoom in', 'Preferences on this device', 'Pin a note on HQ'];
+  // (and the strip's zoom and cog, bookstrip.js, the pin among the book's controls, pinsummon.js, and Tips under it,
+  // booktips.js)
+  CONTROLS = ['Undo', 'Redo', 'Zoom out', 'Zoom in', 'Preferences on this device', 'Pin a note on HQ', 'Tips'];
 
 // c: book-check.mjs's helpers: { base, hqIn(browser, viewport), settled(page, mode), shot, settle }
 export function chromeStories(c) {
   return {
     "the book's column: only the tools and Undo and Redo; nothing under Safari's top strip; the foot clear of it at any width":
       browser => column(browser, c),
-    'the overview from the foot: Search and the phone in it, the foot only its own button, pressed': browser =>
-      overview(browser, c),
+    "the overview from the foot: Search in it, no tools, the foot only its own button, pressed; the Shelf's Search naming your notebooks":
+      browser => overview(browser, c),
     "the pages' names stay put: a titled page's, an untitled one's from its first moment, written on or not": browser =>
       names(browser, c),
   };
@@ -86,10 +88,9 @@ async function overview(browser, c) {
       .getByRole('button')
       .evaluateAll(all => all.filter(b => b.getBoundingClientRect().width).map(b => b.getAttribute('aria-label')));
     assert.deepEqual(shown, [await over.getAttribute('aria-label')], `the foot shows only the overview: ${shown}`);
-    // Search and the phone in its head
-    const field = far.getByRole('searchbox', { name: 'Search the book' });
-    assert.ok(await field.isVisible(), 'Search in the overview');
-    assert.ok(await far.getByRole('button', { name: 'Draw from your phone' }).isVisible(), 'the phone in the overview');
+    // Search in its head, nothing to draw with
+    assert.ok(await far.getByRole('searchbox', { name: 'Search the book' }).isVisible(), 'Search in the overview');
+    await nothingToDraw(page, 'in the overview');
     await clearOfTheStrip(page, 'in the overview');
     await c.shot('chrome-overview', page);
     // the notebook's pages: Cover ideas, sent yesterday, stamped
@@ -102,8 +103,9 @@ async function overview(browser, c) {
     await far.getByRole('button', { name: /^The Shelf/ }).click();
     await page.waitForTimeout(c.settle);
     assert.match(await far.locator('.bk-book .bk-tile-open').first().getAttribute('aria-label'), /^My Notebook, /);
+    await nothingToDraw(page, 'on the Shelf');
     await c.shot('chrome-shelf', page);
-    await field.fill('warmer');
+    await far.getByRole('searchbox', { name: 'Search your notebooks' }).fill('warmer');
     const find = far.locator('.bk-found button').first();
     await find.waitFor({ timeout: 3000 });
     await c.shot('chrome-search', page);
@@ -118,8 +120,7 @@ async function overview(browser, c) {
   }
 }
 
-// (My Notebook: a page sent yesterday with its title, and today's untitled one;
-// a call's page is a call notebook's, #20753)
+// (My Notebook: a page sent yesterday with its title, and today's untitled one)
 function namedNotebook() {
   const day = 86_400_000,
     at = ms => new Date(ms).toISOString();
@@ -193,6 +194,20 @@ async function onMini(browser, c) {
 }
 const button = (page, name, exact = false) => page.locator('#book').getByRole('button', { name, exact });
 // The names of the buttons in the column's islands that show
+// The overview or the Shelf: the phone with the book's controls, and no tools, Undo, Redo or dog-ear, with nothing to
+// draw on
+async function nothingToDraw(page, where) {
+  const names = await columnNames(page);
+  assert.ok(names.includes('Draw from your phone'), `the phone with the controls ${where}: ${names}`);
+  const inHead = page.locator('#book .bk-far-head').getByRole('button', { name: 'Draw from your phone' });
+  assert.equal(await inHead.count(), 0, `no phone in Search ${where}`);
+  assert.deepEqual(
+    names.filter(name => TOOLS.some(t => (t.test ? t.test(name) : t === name)) || /^(Undo|Redo)$/.test(name)),
+    [],
+    `no tools, Undo or Redo ${where}`,
+  );
+  assert.ok(!(await page.locator('#book .bk-dogear').isVisible()), `no dog-ear ${where}`);
+}
 const columnNames = page =>
   page
     .locator('#book [role=toolbar][aria-orientation=vertical] button')

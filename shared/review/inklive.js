@@ -65,10 +65,11 @@ export const samples = e => {
 // Where the pen is about to be: the browser's predicted points (getPredictedEvents, in Chromium and in Safari where
 // it has them), drawn as a tail from the line's end through the pen's last sample to them, with the end's pressure.
 // It's drawn only until the next event (show), never kept in the stroke; with no predicted points there's none.
+// Only a pen's: a mouse's or a finger's are guessed from a jerkier hand, and overshoot in odd directions past it
 export function ahead(line, e) {
   const next = e.getPredictedEvents?.(),
     end = line.stroke.points.at(-1);
-  if (line.rect || !next?.length) return null;
+  if (line.rect || line.kind !== 'pen' || !next?.length) return null;
   return [end, ...[samples(e).at(-1), ...next].map(s => [s.clientX - line.left, s.clientY - line.top, end[2]])];
 }
 // A tail the pen leaves standing, where it stopped, goes after about three frames, or it would stand past the line's

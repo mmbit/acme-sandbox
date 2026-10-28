@@ -142,6 +142,16 @@ test("the check's prompt carries the company's own words for it (org.yaml's foll
     /Flagged and acted on this hour, never\s+on track:\n\s+- A pause still on with what it waited for met, or a job it waits for ended/,
   );
   assert.match(prompt(), /A result the board asked for first [^]* promised and not in its hands/);
+  // Causes fixed by judgment: no band-aid rules, a flag is not a fix, the maths HQ's and a slip the CEO's, tools may hand
+  // back guidance, and chaining deliverables is the CEO's discipline (board, call 152).
+  assert.match(
+    prompt(),
+    /A rule coded for the one thing that\s+went wrong is usually the wrong fix for the wrong problem/,
+  );
+  assert.match(prompt(), /A flag is not a fix: when something is flagged, ask why/);
+  assert.match(prompt(), /The maths is HQ's algorithm[^]*a slip is your judgment/);
+  assert.match(prompt(), /a tool can hand them back: a line of\s+guidance in its output/);
+  assert.match(prompt(), /Chaining deliverables is your discipline, judged each time, not a rule HQ keeps/);
   try {
     writeFileSync(
       orgFile,
@@ -209,6 +219,43 @@ test("seats at their limits give an unstarted check time to start once one is ba
   followThroughSweep(t0);
   followThroughSweep(t0 + START_MS);
   assert.match(alarm(), /hasn't started 15 min after it was queued/);
+});
+
+test('a check paused for capacity keeps its session and can record its verdict when a seat returns', async context => {
+  context.mock.timers.enable({ apis: ['Date'], now: t0 });
+  for (const state of ['draining', 'sleeping']) {
+    reset();
+    context.mock.timers.setTime(t0);
+    agreed();
+    followThroughSweep();
+    const check = await startCheck();
+    const back = t0 + 3 * HOUR;
+    context.mock.timers.setTime(t0 + 2 * MIN);
+    h.jobs.setSeat(check.seat, 'claude', state, back);
+    await h.finish(check, { status: 'limited', resetAt: back, session: 'paused-check' });
+    for (const at of [t0 + FINISH_MS + MIN, back - MIN]) {
+      context.mock.timers.setTime(at);
+      followThroughSweep();
+      assert.equal(h.job(check.id).status, 'queued');
+      assert.equal(alarm(), null);
+      assert.deepEqual(told(), []);
+      assert.equal(checks().length, 1);
+    }
+    context.mock.timers.setTime(back);
+    h.jobs.setSeat(check.seat, 'claude', 'ready', 0, undefined, { util: 0 });
+    followThroughSweep();
+    assert.equal(h.job(check.id).status, 'queued', 'capacity returning must not expire the waiting check');
+    const resumed = await h.claim('claude', { seat: check.seat });
+    assert.equal(resumed?.id, check.id);
+    assert.equal(resumed?.session, 'paused-check');
+    followThroughSweep();
+    assert.equal((await h.heartbeat(resumed!)).body.stop, undefined);
+    assert.equal((await h.agent('followthrough', resumed!.token)).status, 200);
+    assert.equal((await h.agent('followthrough-verdict', resumed!.token, { verdict: 'ok', said: '' })).status, 200);
+    assert.equal(checks()[0].verdict, 'ok');
+    assert.equal(alarm(), null);
+    await h.finish(resumed!);
+  }
 });
 
 test('persistent failures reach the desk phone once even while the repair job stays queued or running', () => {
@@ -346,6 +393,7 @@ test('a check that runs on past its time is stopped, so the next one can start',
   agreed();
   followThroughSweep(Date.now());
   const check = await startCheck();
+  h.jobs.setSeat(check.seat, 'claude', 'draining', Date.now() + 3 * HOUR);
   followThroughSweep(Date.now() + FINISH_MS);
   assert.match(alarm(), /has run 45 min without a verdict/);
   const heartbeat = await h.heartbeat(check);
@@ -361,6 +409,7 @@ test('an expired check queued by a limit or interruption releases the next hourl
     followThroughSweep(t);
     const check = await startCheck();
     followThroughSweep(t + FINISH_MS + MIN); // recovery must still run after the alarm was raised
+    h.jobs.setSeat(check.seat, 'claude', 'draining', t + 6 * HOUR); // (seats out: the stop still pending must not restart its clock)
     await h.finish(check, { status, resetAt: t + 6 * HOUR });
     followThroughSweep(t + FINISH_MS + 2 * MIN);
     assert.equal(h.job(check.id).status, 'failed');

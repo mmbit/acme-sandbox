@@ -200,7 +200,8 @@ function draw(t) {
 }
 
 // A picture for the panels and the colour to frame it in: an agent standing, in their shirt's colour, or a mascot
-// sitting ({ kind: 'agent' | 'mascot', id }); null for a mascot of a kind the brownstone doesn't draw
+// sitting ({ kind: 'agent' | 'mascot', id }); null for a mascot of a kind the brownstone doesn't draw, or an agent
+// who isn't in the building (one who has left: their call or card shows their initial)
 function portrait({ kind, id }) {
   const c = canvas(CW, CH), g = c.getContext('2d');
   if (kind === 'mascot') {
@@ -209,6 +210,7 @@ function portrait({ kind, id }) {
     g.drawImage(frame('sit', false), 0, CH - 14); return { img: c, accent: '#ffd966' };
   }
   const A = S.people.get(id);
+  if (!A) return null;
   g.drawImage(spriteFrame(A.id, A.look, 'stand', true, false), 0, 0);
   return { img: c, accent: A.look.shirt };
 }

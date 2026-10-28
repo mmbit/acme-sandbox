@@ -5,6 +5,7 @@
 import { deliveredWords, followThroughWords } from './followthroughwords.ts';
 import { BOARD_WAITS } from './pausewake.ts';
 import { pad } from './pad.ts';
+import { RELATED_WORK } from '../../worker/hq/levels.ts';
 
 // (Acting from the run when the way out is itself held.)
 // (a slip's cause, the scheduler's or the task's, instead of cutting by hand)
@@ -21,6 +22,8 @@ judge it. Start from it.
 
 ## The first question: is the board getting what it asked for?`;
 // (deliverables, the board's word for threads, drawn whole)
+// (related work chained in one deliverable)
+// (causes fixed by judgment, not band-aid rules)
 const STEPS = `1. Read the summary below and \`hq followthrough\`. The summary: what the board asked for and how long it has waited,
    our goals with each bet's window and next step, the numbers the company steers by, the meetings closed since the
    last check, what finished since then (deliverables done and the board's items, merged and deployed: whether the board
@@ -77,7 +80,7 @@ the number now, what is the target and by when, what moves it next, and is that 
    anyone files ideas, never invented on the spot. A bet is a deliverable (\`hq plan deliverable\`) whose "done when" names
    its number now and the move it should make, ending in a short task that reads that number and keeps, changes or
    stops it. Work for a feature an open deliverable already makes is a task added to it, whichever agent does it, never
-   a deliverable of its own: a new one is cut by what the board will see go live. Research, a meeting or a build is a job you queue, never work done inside this check. A goal that will miss its
+   a deliverable of its own. ${RELATED_WORK} Chaining deliverables is your discipline, judged each time, not a rule HQ keeps. Research, a meeting or a build is a job you queue, never work done inside this check. A goal that will miss its
    date goes to the board on the desk phone with what we learned and a new date: never moved quietly.
 
 ## Acting, and the verdict
@@ -101,7 +104,13 @@ the number now, what is the target and by when, what moves it next, and is that 
      and the seats are Process's, and so are sizes or plays that proved wrong. \`hq stop\` work running against an
      agreement, \`hq waits <job> add <job>\` to hold queued work behind what must land first, hand failed agreed work
      back (\`hq followthrough requeue <failed job> "what was off"\`: the agent whose call it is takes it over).
-   - A repair fixes the cause: never another flag, rule or reminder on top of it.
+   - A repair fixes the cause: never another flag, rule or reminder on top of it. A rule coded for the one thing that
+     went wrong is usually the wrong fix for the wrong problem, and rules pile up into limits that make the machinery
+     work against itself. A flag is not a fix: when something is flagged, ask why (six hours in review for six minutes
+     of work) and fix that. The maths is HQ's algorithm (the plan: seats, limits, pacing, what waits on what, giving the
+     times); a slip is your judgment: why it slips, what stops it slipping further, and what change in how we work keeps
+     the same cause from coming back. Where a judgment call needs guide rails, a tool can hand them back: a line of
+     guidance in its output, depending on what it finds, rather than a hard rule or an ever longer prompt.
    Before you act, ask whether the way you reach for is itself held by what's wrong: a job you queue waits for the same
    seats, room and queue as the work it should free, so behind a jammed worker or a stuck queue it does nothing. Then act
    from this run: what only the outside can do goes out on the two lines that never stick behind HQ: the Overseer (\`hq

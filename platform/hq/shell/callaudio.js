@@ -93,12 +93,18 @@ export class CallAudio {
       if (ctx.state === 'interrupted') this.interrupted++;
       if (ctx.state !== 'running') this.follow(); // (iOS took the audio away)
     };
+    // (the call's sound starts first, in the tap: what the page plays into it is heard while the microphone starts, which
+    // a Bluetooth car kit can take seconds over: HQ's ring.)
+    this.startSpeaker(ctx);
+    this.speak();
     const stream = await navigator.mediaDevices.getUserMedia(MICROPHONE);
     if (this.closed) return stream.getTracks().forEach(t => t.stop());
     this.stream = stream;
     await ctx.audioWorklet.addModule(this.worklet);
     if (this.closed) return;
-    this.startSpeaker(ctx);
+    // (and plays again now the microphone is on, as it started once only after it: Safari's echo canceller takes out
+    // the stream it plays while the microphone is on)
+    this.speaker.pause();
     this.speak();
     this.watch = setInterval(() => {
       this.follow();
@@ -151,10 +157,11 @@ export class CallAudio {
 
   // (an AbortError is a pause of ours, follow()'s when the context stops before play() starts: it plays again once the
   // clock moves; anything else means the browser won't play the stream, and the voice goes straight out after all:
-  // heard, echo and all, rather than silent)
+  // heard, echo and all, rather than silent. Before the microphone is on, a refusal is the autoplay rule outside a tap:
+  // it plays once the microphone is)
   speak() {
     this.speaker.play().catch(e => {
-      if (this.closed || e?.name === 'AbortError') return;
+      if (this.closed || e?.name === 'AbortError' || !this.stream) return;
       this.voice.disconnect(this.out);
       this.voice.connect(this.ctx.destination);
       this.direct = true;

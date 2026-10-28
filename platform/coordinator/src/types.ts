@@ -6,6 +6,7 @@ import { extname } from 'node:path';
 export const TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
   '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif',
+  '.woff2': 'font/woff2',
   '.mp4': 'video/mp4', '.m4a': 'audio/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.webm': 'video/webm', '.webmanifest': 'application/manifest+json',
 };
 export function typeOf(path: string): string | undefined {

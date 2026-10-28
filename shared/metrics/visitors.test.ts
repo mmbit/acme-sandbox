@@ -135,6 +135,26 @@ test("a stop saves the day's list and ends the process, in an app that counts wi
   assert.equal(Object.keys(JSON.parse(readFileSync(join(dir, 'visitors.json'), 'utf8')).seen).length, 1);
 });
 
+test("a list the volume can't take is said in the log and kept in memory: the app and its stop go on", () => {
+  const dir = join(mkdtempSync(join(tmpdir(), 'metrics-visitors-unwritable-')), 'gone');
+  const r = run(
+    { DATA_DIR: dir, METRICS_MODE: 'live', METRICS_VISITORS: '1' },
+    `const at = { headers: { 'x-forwarded-for': '192.0.2.1', 'user-agent': 'Mozilla/5.0' } };
+    console.log(JSON.stringify([metrics.visit(at), metrics.visit(at)]));
+    process.kill(process.pid, 'SIGTERM');
+    setTimeout(() => console.log('still running'), 10_000);`,
+  );
+  assert.equal(r.signal, 'SIGTERM', r.stderr);
+  assert.equal(
+    r.stdout.trim(),
+    JSON.stringify([
+      { visitor: true, visit: true },
+      { visitor: false, visit: false },
+    ]),
+  );
+  assert.match(r.stderr, /visitors: the day list not saved: ENOENT/);
+});
+
 test("a day's list at its most counts no one new and says so once; a damaged file is an error, not an empty day", () => {
   const file = join(DATA, 'full.json');
   const seen = visitors({ file, day });

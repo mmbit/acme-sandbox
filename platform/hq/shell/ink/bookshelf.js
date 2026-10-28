@@ -25,6 +25,7 @@ import { gridOf, moved, shelfOrder } from './bookshelfgrid.js';
 import { ICONS, bookTile, pageTile } from './bookshelftiles.js';
 import { cancel, drags, flip } from './bookshelfdrag.js';
 import { stamp } from './bookpaper.js';
+import { mountOpen } from './bookshelfopen.js';
 
 // the grids' cells: at least this wide, this far apart, at most this many across; a page's picture this tall to its
 // width, a cover this tall to its width (bookshelf.css's aspect-ratio)
@@ -71,6 +72,7 @@ export function mountScreens(far, { dev, current, page, saved, open, shelf, note
   };
   far.querySelector('.bk-far-head').prepend(island('overview'));
   mountTold(s);
+  mountOpen(far.querySelector('.bk-far-head'), { open }); // (the open forms and questions)
   far.addEventListener('click', e => clicked(s, e));
   far.addEventListener('keydown', e => keyed(s, e));
   drags(s, (from, to) => reorder(s, from, to));

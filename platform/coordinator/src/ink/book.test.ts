@@ -56,6 +56,31 @@ const picture = async (url: string) => {
     .raw()
     .toBuffer({ resolveWithObject: true });
 };
+// The book's judge's call on these words answered with reply, any judged before it with none, and the quick run an
+// answer started (bookjudge.ts)
+const sleep = (ms: number) => new Promise(res => setTimeout(res, ms));
+async function judgeSays(words: string, reply: 'none' | 'answer' | 'try') {
+  for (let i = 0; i < 100; i++) {
+    const c = (await h.worker('reads/claim')).body;
+    if (!c.reading || !JSON.parse(c.schema).properties.reply) {
+      await sleep(20);
+      continue;
+    }
+    const mine = c.content.at(-1).text.includes(JSON.stringify(words));
+    const structured_output = { reply: mine ? reply : 'none', why: 'test' };
+    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
+    if (mine) return;
+  }
+  throw new Error(`${words}: not judged`);
+}
+async function askedOf(note: number) {
+  for (let i = 0; i < 100; i++) {
+    const r = h.db.prepare('select asked from book_notes where id = ?').get(note) as { asked: number | null };
+    if (r?.asked) return r.asked;
+    await sleep(20);
+  }
+  return null;
+}
 const pixel = (p: { data: Buffer; info: OutputInfo }, x: number, y: number) => [
   ...p.data.subarray((y * p.info.width + x) * p.info.channels, (y * p.info.width + x) * p.info.channels + 3),
 ];
@@ -285,7 +310,7 @@ test("a note joins its page owner's sheet, numbered; a free page's joins nobody'
     ],
   );
   assert.equal(one.note.anchor.url, `${ORIGIN}/?open=projects#t=…`, "the fragment's values left out");
-  assert.equal(one.asked, null);
+  assert.equal(one.asked, undefined, "nothing asks in the board's request: the judge reads the note after");
   const free = await newPage({ kind: 'free' });
   assert.equal((await addNote({ page: free.id })).body.sheet.owner, null);
 
@@ -380,6 +405,8 @@ test("send, then undo within ten seconds: nothing goes; send and let it go: one 
   // a page nobody owns: the CEO's routing check, as review notes are
   const free = await newPage({ kind: 'free' });
   const nobodys = await addNote({ page: free.id, words: 'Who does the gift card?', said: 'written' });
+  await judgeSays('Who does the gift card?', 'answer');
+  const nobodysRun = await askedOf(nobodys.body.note.id);
   const loose = (await addNote({ page: free.id, words: 'A gift card for the shop', said: 'written' })).body.sheet;
   await h.board('/api/book/send', { id: loose.id });
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS);
@@ -393,7 +420,7 @@ test("send, then undo within ten seconds: nothing goes; send and let it go: one 
     (h.db.prepare('select count(*) n from note_routes where job = ?').get(check) as any).n,
     loose.notes.length + 1,
   );
-  assert.ok(nobodys.body.asked, 'its question asked at once, apart from the sheet');
+  assert.ok(nobodysRun, 'its question asked at once, apart from the sheet');
 });
 
 // Rule zero (the board's, 2026-10-27): a mark's lines live only in its note's snip.
@@ -495,13 +522,15 @@ test('an answer clips onto its note, a tick closes it, and writing under it is a
   assert.equal(reply.sheet.owner, 'kit');
   assert.equal(reply.note.answers, slip.id);
   assert.deepEqual(reply.note.anchor.el, anchor().el, 'anchored where the note was');
-  assert.ok(reply.asked, 'a question, asked now');
+  await judgeSays('And the week before?', 'answer');
+  assert.ok(await askedOf(reply.note.id), 'a question, asked now');
 });
 
-test('a "?" note starts its owner\'s quick run, not a queued job; its answer is a slip, and the intercom never hears it', async () => {
+test("a note the judge answers starts its owner's quick run, not a queued job; its answer is a slip, and the intercom never hears it", async () => {
   const page = await newPage({ kind: 'sheet', owner: 'wren', url: '/?open=studio' });
   const asked = (await addNote({ page: page.id, words: 'Is this the new font？', said: 'spoken' })).body;
-  const run = h.db.prepare('select * from jobs where id = ?').get(asked.asked) as any;
+  await judgeSays('Is this the new font？', 'answer');
+  const run = h.db.prepare('select * from jobs where id = ?').get(await askedOf(asked.note.id)) as any;
   assert.deepEqual([run.agent, run.kind, run.status], ['wren', 'chat', 'queued']);
   assert.match(run.prompt, /Is this the new font？/);
   assert.match(run.prompt, /your final message is the answer/);
@@ -515,15 +544,16 @@ test('a "?" note starts its owner\'s quick run, not a queued job; its answer is 
   );
   assert.equal(note.status, 'open', 'still on the sheet, to send with the rest');
   assert.ok(!h.db.prepare("select 1 from chat where text like '%Fraunces%'").get(), 'nothing on the intercom');
-  // words corrected to a question ask then; one already asking doesn't ask again
+  // words corrected are judged again, and may ask then; the same words aren't judged twice
   const plain = (await addNote({ page: page.id, words: 'The font' })).body;
-  assert.ok(
-    (await h.board('/api/book/note/edit', { id: plain.note.id, words: 'The font?', said: 'typed' })).body.asked,
-  );
-  assert.equal(
-    (await h.board('/api/book/note/edit', { id: plain.note.id, words: 'The new font?', said: 'typed' })).body.asked,
-    null,
-  );
+  await judgeSays('The font', 'none');
+  assert.equal(await askedOf(plain.note.id), null);
+  await h.board('/api/book/note/edit', { id: plain.note.id, words: 'The font?', said: 'typed' });
+  await judgeSays('The font?', 'answer');
+  assert.ok(await askedOf(plain.note.id));
+  await h.board('/api/book/note/edit', { id: plain.note.id, words: 'The font?', said: 'typed' });
+  await sleep(50);
+  assert.deepEqual((await h.worker('reads/claim')).body, {}, 'the same words: nothing judged');
 });
 
 test('old sketches fold in as free pages under their numbers, ink, scraps and waiting kept; hq sketch and a call read them', async () => {
@@ -593,7 +623,8 @@ test('old sketches fold in as free pages under their numbers, ink, scraps and wa
 test("a question corrected before the send goes as it reads now; a page with notes on an open sheet isn't deleted", async () => {
   const page = await newPage({ kind: 'sheet', owner: 'dex', url: '/?open=ops' });
   const asked = (await addNote({ page: page.id, words: 'Should the header be blue?' })).body;
-  assert.ok(asked.asked, 'asked now: its review row is made');
+  await judgeSays('Should the header be blue?', 'answer');
+  assert.ok(await askedOf(asked.note.id), 'asked now: its review row is made');
   assert.equal((await h.board('/api/book/page/delete', { id: page.id })).status, 409);
   await h.board('/api/book/note/edit', { id: asked.note.id, words: 'Keep the header green', said: 'typed' });
   await h.board('/api/book/send', { id: asked.sheet.id });
@@ -628,6 +659,8 @@ test('words read late replace only the words they were read for: the board typed
 test("a question on a Codex agent's page is a quick run on Claude as that agent, taken by the chat slot's claim", async () => {
   const page = await newPage({ kind: 'sheet', owner: 'nib', url: '/?open=reviews' });
   const asked = (await addNote({ page: page.id, words: 'Which round is this?' })).body;
+  await judgeSays('Which round is this?', 'answer');
+  asked.asked = await askedOf(asked.note.id);
   const run = h.db.prepare('select agent, kind, engine from jobs where id = ?').get(asked.asked) as any;
   assert.deepEqual([run.agent, run.kind, run.engine], ['nib', 'chat', 'claude']);
   // (the earlier tests' questions, still waiting, go first: ended unanswered)

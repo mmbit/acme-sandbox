@@ -1,20 +1,13 @@
 // Where a mark lifted off HQ's page lands in the book (review mode's lift.js asks with 'pencil:landing'): open, on the
-// page its note went on, turned to first, where the note's snip will show; folded, in its handle, which then shows the
+// page its note went on, turned to first, where the note's scrap will show; folded, in its handle, which then shows the
 // snip for a moment (book:landed). With a soft paper sound as it goes. A Notebook scrap (ask.group: its id the group's)
 // lands on its page, where its photo shows; one saved with no mark to fly ('book:scrap' { id, page }, an artifact's
 // Save) is turned to.
+import { snapScale } from '/__review/snapshot.js';
 import { foley } from '../audio.js';
 import { pageOf, showGroup } from './bookgroupshow.js';
 import { STACK, nextScrap } from './bookgroupbox.js';
 
-// The sheets' notes as their list laid them out (px on the page, till the pin flow lands a scrap instead.): the list's padding at its top and left, a note's
-// number column with its gap, the cutting's white border, and the room under a note
-const LIST_TOP = 58,
-  LIST_LEFT = 12,
-  LIST_RIGHT = 22,
-  NUMBER = 40,
-  CUT = 4,
-  NOTE_GAP = 20;
 // A snip as review mode cuts it (marks.js): the ink with this much room round it, at least this big
 const MARGIN = 24,
   SNIP_MIN = { w: 240, h: 150 };
@@ -43,8 +36,7 @@ export function mountLanding({ pages, lip, paper, layout }) {
     // (a page of the day shows at once, under its turning leaf: bookflip.js swaps it in before the leaf moves)
     if (ask.page && pages.page()?.id !== ask.page) pages.show(ask.page);
     const shown = pages.page()?.id === ask.page;
-    ask.land = onPaper(desk, ask.from, shown);
-    ask.aim = () => onSnip(desk, ask);
+    ask.land = underGroups(desk, pages, ask.page, ask.from);
     if (!shown && ask.page) turnWhenRead(pages, layout, ask.page);
   });
   document.addEventListener('book:scrap', e => {
@@ -64,18 +56,25 @@ function landGroup(desk, pages, ask) {
   const { id, from } = ask,
     page = ask.page ?? pages.page()?.id ?? null;
   if (id && page) showGroup(pages, { page, id });
+  ask.land = underGroups(desk, pages, page, from);
+  ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
+}
+// Where the ink lands under a page's groups, where the store stacks its next scrap (a note written the old way is
+// carried there much the same, notebookcarry.ts), the snip's picture as wide as review mode cut it (at most STACK.w),
+// kept in the paper's visible part; on a page not shown, where it would go on the paper
+function underGroups(desk, pages, page, from) {
   const onPage = page && pages.page()?.id === page ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
     d = desk.getBoundingClientRect(),
     snip = snipOf(from);
   const foot = nextScrap([...(pageOf(page)?.groups.values() ?? [])]),
     origin = onPage?.getBoundingClientRect() ?? { left: d.left, top: d.top },
     k = onPage ? scaleOf(onPage) : 1,
-    w = Math.min(STACK.w, snip.w) * k;
-  ask.land = within(
+    // (the snip's picture is cut at the screenshot's pixels per px.)
+    w = Math.min(STACK.w, snip.w * snapScale(innerWidth, innerHeight)) * k;
+  return within(
     inkIn({ x: origin.left + foot.x * k, y: origin.top + foot.y * k, w, h: (w * snip.h) / snip.w }, from),
     d,
   );
-  ask.aim = () => (id ? onPhoto(desk, pages, { id, page, from }) : null);
 }
 // Where the ink is on a scrap's photo once its page shows with the scrap read (the photo's one of the page's pictures,
 // in its group: bookpage.js draws it)
@@ -117,62 +116,9 @@ function inHandle(lip, from) {
   return { x: b.left - w / 2, y: b.top + b.height / 2 - h / 2, w, h, handle: true };
 }
 
-// Where the note's ink will show on the paper: its snip goes last in the page's open sheet, under its notes (or at the
-// list's top when it has none), the ink inside it where it was in the snip. On a page not laid out yet (a new one,
-// being read), where a page's first note goes. Kept in the paper's visible part.
-function onPaper(desk, from, shown) {
-  const page = shown ? desk.querySelector('.bk-world .bk-page:not([hidden])') : null,
-    slot = page?.querySelector('[data-slot=notes]'),
-    sb = (slot ?? desk).getBoundingClientRect(),
-    k = slot?.offsetWidth ? sb.width / slot.offsetWidth : 1,
-    list = slot?.querySelector('.bs-list'),
-    open = [...(list?.querySelectorAll('.bs-group:not([data-sent])') ?? [])].at(-1),
-    last = [...((open ?? list)?.querySelectorAll('.bs-note') ?? [])].at(-1),
-    // (the note before's words column, which the new one's snip fills as far as it can)
-    body = last?.querySelector('.bs-body')?.getBoundingClientRect(),
-    top = last ? last.getBoundingClientRect().bottom + NOTE_GAP * k : sb.top + LIST_TOP * k,
-    left = (body?.left ?? sb.left + (LIST_LEFT + NUMBER) * k) + CUT * k;
-  const column = body
-    ? body.width - 2 * CUT * k
-    : ((list?.offsetWidth ?? slot?.offsetWidth ?? sb.width / k) - LIST_LEFT - LIST_RIGHT - NUMBER - 2 * CUT) * k;
-  const snip = snipOf(from),
-    f = Math.min(k, column / snip.w),
-    land = {
-      x: left + (from.x - snip.x) * f,
-      y: top + CUT * k + (from.y - snip.y) * f,
-      w: from.w * f,
-      h: from.h * f,
-    };
-  return within(land, desk.getBoundingClientRect());
-}
-// Where the ink is on the note's snip once the book has drawn it (and its picture has loaded): turned as the snip is
-function onSnip(desk, { id, from }) {
-  const note = desk.querySelector(`.bk-world .bk-page:not([hidden]) .bs-note[data-id="${Number(id)}"]`),
-    img = note?.querySelector('img.bs-snip'),
-    slot = note?.closest('[data-slot=notes]');
-  if (!img?.naturalWidth || !slot?.offsetWidth) return null;
-  // (its box as laid out, round the middle of its turned one)
-  const b = img.getBoundingClientRect(),
-    k = slot.getBoundingClientRect().width / slot.offsetWidth,
-    w = img.offsetWidth * k,
-    h = img.offsetHeight * k,
-    left = b.left + b.width / 2 - w / 2,
-    top = b.top + b.height / 2 - h / 2,
-    snip = snipOf(from);
-  const land = {
-    x: left + ((from.x - snip.x) / snip.w) * w,
-    y: top + ((from.y - snip.y) / snip.h) * h,
-    w: (from.w / snip.w) * w,
-    h: (from.h / snip.h) * h,
-  };
-  return {
-    ...within(land, desk.getBoundingClientRect()),
-    turn: parseFloat(note.style.getPropertyValue('--tilt')) || 0,
-  };
-}
 // The snip review mode cut round the ink: its box on HQ's page
 function snipOf(from) {
-  const W = document.body.clientWidth,
+  const W = innerWidth,
     H = innerHeight,
     w = Math.min(W, Math.max(SNIP_MIN.w, from.w + 2 * MARGIN)),
     h = Math.min(H, Math.max(SNIP_MIN.h, from.h + 2 * MARGIN));

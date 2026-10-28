@@ -9,26 +9,18 @@
 //     are the agents' desk-phone cards about that note or its replies' (hq ask --note: bookasks.ts). (asks)
 //   - Delete keeps it aside SWEEP_MS for Undo (restore).
 import { existsSync, rmSync } from 'node:fs';
-import { keepPicture, ours, pictureUrl } from './notebookpictures.ts';
-import { boxOf, emptyGroup, hasAny, joined, picks, shifted, typedBoxes, type Parts } from './notebookparts.ts';
-import { db, inOneStep } from './db.ts';
+import { ours, pictureUrl } from './notebookpictures.ts';
+import { boxOf, emptyGroup, hasAny, joined, picks, shifted, type Parts } from './notebookparts.ts';
+import { db, inOneStep, lacks } from './db.ts'; // (lacks)
 import { findAgent } from './jobs.ts';
-import { pictureSize } from '../../../shared/pictures/size.ts';
 import { BOARD } from './ink/book.ts';
-import {
-  anchorOf,
-  dataUrlPicture,
-  inkOf,
-  isRefused,
-  textsOf,
-  wordsOf,
-  type Anchor,
-  type Refused,
-} from './pagechecks.ts';
-import { DIR, SWEEP_MS, tooBig, scrapsOf, type Scrap } from './pagescraps.ts';
-import { slipsOf, listedOnce } from './ink/bookslips.ts';
-import { asksOn } from './ink/bookasks.ts';
-import { changed, currentPage, mine, notebookRow, pageRow, shut, type NotebookPage } from './notebook.ts';
+import { inkOf, isRefused, textsOf, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
+import { DIR, SWEEP_MS, scrapsOf } from './pagescraps.ts';
+import { listedOnce } from './ink/bookslips.ts';
+import { answersOf, triesOf } from './ink/groupanswers.ts';
+import { changed, currentPage, pageRow, shut, type NotebookPage } from './notebook.ts';
+import { judgeEdited, judgeLater } from './ink/bookjudge.ts';
+import { spotsClear } from './ink/answerplace.ts';
 
 // parent: a reply's group. answers: the slip a reply is under. owner: the agent a scrap was cut from the work of (the
 // page's data-owner), who gets it when its page is sent; null, the routing check decides. note: the note it went as.
@@ -37,8 +29,11 @@ db.exec(`create table if not exists notebook_groups (id integer primary key auto
   parent integer, answers integer, kind text not null, by text not null, ink text not null default '[]',
   texts text not null default '[]', pictures text not null default '[]', anchor text, words text not null default '',
   said text, owner text, status text not null default 'open', note integer, created text not null, updated text not null,
-  deleted integer);
+  deleted integer, asked integer, asked_spot text, expect integer);
   create index if not exists notebook_groups_page on notebook_groups (page)`);
+// (the answers' columns, as Group has them; tried: the try run making its versions, booktry.ts)
+for (const column of ['asked integer', 'asked_spot text', 'expect integer', 'tried integer'])
+  if (lacks('notebook_groups', column.split(' ')[0])) db.exec(`alter table notebook_groups add column ${column}`);
 
 export type Group = {
   id: number;
@@ -59,9 +54,10 @@ export type Group = {
   created: string;
   updated: string;
   deleted: number | null;
+  asked: number | null; // (the run answering it, bookanswer.ts.)
+  asked_spot: string | null; // (where its answer lies: JSON {dx, dy, w, h})
+  expect: number | null; // (how many versions its try run makes: hq answer --expect)
 };
-// Where a scrap lands on its page: under what's there, this far apart
-const STACK = { x: 40, gap: 32, w: 360, top: 80 }; // (top: under the page's heading)
 
 // ---------------------------------------------------------------- a page whole
 // GET /api/notebooks/pages/groups?page=: the page and its groups, each with its children
@@ -76,6 +72,7 @@ export function listGroups(b: any, who = BOARD) {
   return {
     page: p.id,
     groups: rows.filter(g => g.parent === null).map(g => groupOf(g, replies, listed)),
+    ...triesOf(p, shown, listed), // (a try's versions page: what it tries.)
   };
 }
 
@@ -87,49 +84,10 @@ export function createGroup(b: any, who = BOARD) {
   const parts = elementsOf(b, who, emptyGroup);
   if (isRefused(parts)) return parts;
   if (!hasAny(parts)) return [400, 'a group holds something: ink, words or a picture', 'noteEmpty'] as Refused;
-  return shown(insertGroup(p, 'drawing', who, parts, {}));
-}
-// POST /api/notebooks/groups/scrap { anchor, words?, said?, snip, owner?, notebook? }: a scrap onto the current page of
-// a notebook (My Notebook by default), stacked under what's on it: the snip (a PNG or JPEG data URL) its picture
-export function createScrap(b: any, who = BOARD) {
-  const nb = b?.notebook === undefined ? mine(who) : notebookRow(Number(b.notebook), who);
-  if (!nb) return 404;
-  const anchor = anchorOf(b.anchor);
-  if (isRefused(anchor)) return anchor;
-  const said = wordsOf(b.words, b.said);
-  if (isRefused(said)) return said;
-  if (b.owner != null && !(typeof b.owner === 'string' && findAgent(b.owner)))
-    return [400, 'owner is the agent whose work the scrap was cut from, or null'] as Refused;
-  // (no snip, review mode's general note: its words typed, stacked as a scrap.)
-  if (b.snip == null) {
-    if (!said.words) return [400, 'a note with no picture holds words', 'noteEmpty'] as Refused;
-    const texts = textsOf(typedBoxes(said.words, { x: STACK.x, w: STACK.w, color: NOTE_INK }))!;
-    if (isRefused(texts)) return texts;
-    const p = pageRow(currentPage(nb.id), who)!;
-    const parts = shifted({ ...emptyGroup, texts }, 0, stackFoot(p.id));
-    return shown(insertGroup(p, 'drawing', who, parts, { anchor, owner: b.owner ?? null, said: said.said }));
-  }
-  const snip = dataUrlPicture(b.snip);
-  if (isRefused(snip)) return snip;
-  const big = tooBig(snip.clean);
-  if (big) return big;
-  const p = pageRow(currentPage(nb.id), who)!,
-    file = keepPicture(p.id, snip),
-    size = pictureSize(snip.clean)!;
-  const w = Math.min(STACK.w, size.width),
-    picture: Scrap = {
-      file,
-      x: STACK.x,
-      y: stackFoot(p.id),
-      w,
-      h: Math.round((size.height * w) / size.width),
-      tilt: 0,
-    };
-  const parts = { ...emptyGroup, pictures: [picture] };
-  const g = insertGroup(p, 'scrap', who, parts, { anchor, words: said.words, said: said.said, owner: b.owner ?? null });
+  const g = insertGroup(p, 'drawing', who, parts, {});
+  if (who === BOARD && parts.texts.length) judgeLater({ grp: g.id }); // (bookjudge.ts)
   return shown(g);
 }
-const NOTE_INK = '#1d1a2f'; // (a typed note's ink: the post-it's, shared/review/postit.js)
 // POST /api/notebooks/groups/edit { id, since, ink?, texts?, pictures?, words?, said? }: an open group's elements
 // changed (drawn on, moved on its page, its post-it typed again). since: its updated as the screen last read it; one
 // changed since on another screen is refused, to read again.
@@ -144,6 +102,7 @@ export function editGroup(b: any, who = BOARD) {
   if (isRefused(said)) return said;
   if (!hasAny(parts) && g.kind !== 'scrap') return [400, 'an empty group is deleted instead', 'noteDelete'] as Refused;
   write(g.id, parts, { words: said.words, said: said.said });
+  if (who === BOARD) judgeEdited(g, said.words, parts.texts); // (bookjudge.ts)
   return shown(row(g.id)!);
 }
 // POST /api/notebooks/groups/move { id, page, dx?, dy? }: an open group onto another open page of the same person's,
@@ -161,6 +120,7 @@ export function moveGroup(b: any, who = BOARD) {
     write(g.id, shifted(partsOf(g), dx, dy), {});
     db.prepare('update notebook_groups set page = ? where id = ? or parent = ?').run(to.id, g.id, g.id);
     changed(to.notebook, from);
+    spotsClear(to.id);
   });
   changed(to.notebook, to.id);
   return shown(row(g.id)!);
@@ -192,6 +152,7 @@ export function restoreGroup(b: any, who = BOARD) {
     g.id,
     g.deleted,
   );
+  spotsClear(page);
   changed(p.notebook, page);
   return shown(row(g.id)!);
 }
@@ -291,6 +252,7 @@ export function insertGroup(
         ...[now, now],
       ).lastInsertRowid,
   );
+  spotsClear(p.id); // (an answer's spot it covers moves: answerplace.ts)
   changed(p.notebook, p.id);
   return row(id)!;
 }
@@ -303,6 +265,7 @@ function write(id: number, parts: Parts, more: { words?: string; said?: string |
     ...[more.words ?? g.words, more.said === undefined ? g.said : more.said, new Date().toISOString(), id],
   );
   const p = pageRow(g.page, null)!;
+  spotsClear(p.id);
   changed(p.notebook, p.id);
 }
 export const partsOf = (g: Group): Parts => ({
@@ -310,15 +273,6 @@ export const partsOf = (g: Group): Parts => ({
   texts: JSON.parse(g.texts),
   pictures: JSON.parse(g.pictures),
 });
-// The foot of what's on a page, where the next scrap goes (a call's notes page's too)
-export function stackFoot(page: number) {
-  const groups = db.prepare('select * from notebook_groups where page = ? and deleted is null').all(page) as Group[];
-  const feet = groups
-    .map(g => boxOf(partsOf(g)))
-    .filter(b => b !== null)
-    .map(b => b.y + b.h);
-  return feet.length ? Math.round(Math.max(...feet) + STACK.gap) : STACK.top;
-}
 export function openPage(id: number, who: string): NotebookPage | Refused {
   const p = pageRow(id, who);
   if (!p) return [404, 'no such page', 'unavailable'];
@@ -360,25 +314,23 @@ export const groupsBox = (page: number) => boxOf(drawnGroups(page));
 export const row = (id: number) =>
   (Number.isInteger(id) && id > 0 ? db.prepare('select * from notebook_groups where id = ?').get(id) : undefined) as
     Group | undefined;
-// What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came) and its
-// asks
-const shown = (g: Group) =>
+// What HQ reads of a group: its elements, its box, its children (answers and replies, in the order they came), asks
+export const shown = (g: Group) =>
   groupOf(g, db.prepare('select * from notebook_groups where parent = ? and deleted is null').all(g.id) as Group[]);
 function groupOf(g: Group, replies: Group[], listed = listedOnce()) {
   const parts = partsOf(g),
     mineReplies = replies.filter(r => r.parent === g.id);
-  const notes = [g, ...mineReplies].flatMap(x => (x.note ? [x.note] : []));
-  const answers = notes.flatMap(n => slipsOf(n, listed));
+  const { answers, ...about } = answersOf(g, mineReplies, listed); // (waiting, tries_page, asks)
   return {
     ...element(g, parts),
     anchor: g.anchor ? (JSON.parse(g.anchor) as Anchor) : null,
     owner: g.owner,
     owner_name: g.owner ? (findAgent(g.owner)?.name ?? g.owner) : null,
+    ...about,
     children: [
       ...answers.map(a => ({ kind: 'answer' as const, ...a })),
       ...mineReplies.map(r => ({ ...element(r, partsOf(r)), kind: 'reply' as const, answers: r.answers })),
     ].sort((a, b) => a.created.localeCompare(b.created)),
-    asks: notes.flatMap(asksOn),
   };
 }
 const element = (g: Group, parts: Parts) => ({

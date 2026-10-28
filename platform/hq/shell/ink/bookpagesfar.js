@@ -1,7 +1,7 @@
 // The book's pages' overview mounted on them (bookzoom.js, its screens bookshelf.js): the notebook the book shows, the
 // page it shows, what's drawn saved before the grid reads the store, and a page tapped in the grid opened.
 import { mountZoom } from './bookzoom.js';
-import { turn } from './bookflip.js';
+import { turn, zoomOut } from './bookflip.js';
 import { saved } from './booksave.js';
 import { viewOf } from './bookview.js';
 
@@ -20,5 +20,17 @@ export const mountFar = (book, paper, { goTo, openNotebook }) =>
         ? goTo(book, { page: page.id })
         : openNotebook(book, id, { page: page.id }),
     turn: (dir, midway) => turn(paper, { dir, midway }),
-    changed: () => book.controls?.update(),
+    zoomOut: (coming, midway) => zoomOut(paper, { coming, midway }),
+    changed: level => farAt(paper, level, book),
   });
+
+// The overview opened, stepped or closed: the book marked with its level (data-far: 'pages' or 'shelf', none on a
+// page) for what puts itself away there (bookui.css), and told as book:far (Search's words, booksearch.js).
+function farAt(paper, level, book) {
+  const far = level === 'page' ? null : level,
+    host = paper.closest('#book');
+  if (far) host.dataset.far = far;
+  else delete host.dataset.far;
+  book.controls?.update();
+  document.dispatchEvent(new CustomEvent('book:far', { detail: { level } }));
+}

@@ -22,6 +22,7 @@ const { ORIGIN, PREVIEW } = await import('../config.ts');
 const { onPublish } = await import('../events.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
+const { answerNow } = await import('./bookanswer.ts');
 const DIR = `${h.dataDir}/book`;
 
 // Every slip's 'book' event, with when it came (performance.now()) (a sheet delivered is one too: book.test.ts.
@@ -177,11 +178,13 @@ test("a free page sent to the CEO goes through the CEO's routing: handed on with
   await h.finish(other);
 });
 
-test('a "?" note is answered within seconds: its quick run goes before older queued work, and its slip is a book event', async () => {
+// (the judge's verdict starts it, bookanswer.ts answerNow)
+test('a note judged to call for an answer is answered within seconds: its quick run goes before older queued work, and its slip is a book event', async () => {
   const older = h.queue({ agent: 'wren', engine: 'claude', queuedBy: 'juno' });
   const page = await newPage({ kind: 'sheet', owner: 'wren', url: '/?open=studio' });
   const start = performance.now();
-  const asked = (await addNote({ page: page.id, words: 'Is this the new font?' })).body.asked;
+  const added = (await addNote({ page: page.id, words: 'Is this the new font?' })).body;
+  const asked = answerNow({ note: added.note.id }, { id: 1, why: 'a plain question' });
   // the worker's chat slot takes the question, though wren's other work was queued first
   const run = (await h.claim('claude', { kind: 'chat' }))!;
   assert.equal(run.id, asked);
@@ -233,7 +236,27 @@ test("an answer is the note answered as hq note's is: one line of what shows, cu
 });
 
 // (the board on call #239: a question typed in a box on the call's page got no answer.)
-test('a "?" typed in a box on a page asks too, a call\'s page as any: the answer is typed under it, in the agent\'s ink', async () => {
+// The book's judge's call on these words answered with reply, any judged before it (earlier tests' notes) with none
+// (bookjudge.ts)
+async function judgeSays(words: string, reply: 'none' | 'answer' | 'try') {
+  for (let i = 0; i < 100; i++) {
+    const c = (await h.worker('reads/claim')).body;
+    if (!c.reading || !JSON.parse(c.schema).properties.reply) {
+      await new Promise(res => setTimeout(res, 20));
+      continue;
+    }
+    const mine = (c.content.at(-1).text as string).includes(JSON.stringify(words));
+    const structured_output = { reply: mine ? reply : 'none', why: 'test' };
+    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
+    if (mine) return c;
+  }
+  throw new Error(`${words}: not judged`);
+}
+const until = async (ok: () => boolean) => {
+  for (let i = 0; i < 100 && !ok(); i++) await new Promise(res => setTimeout(res, 20));
+};
+
+test("words typed in a box on a page are judged, a call's page as any: an answer is typed under it, in the agent's ink", async () => {
   const { inkOf } = await import('../../../hq/shell/ink/agentink.js');
   const typedEvents: Record<string, unknown>[] = [];
   const stop = onPublish(e => void (e.type === 'book' && e.text === 'page' && typedEvents.push({ ...e })));
@@ -247,10 +270,14 @@ test('a "?" typed in a box on a page asks too, a call\'s page as any: the answer
     assert.equal(r.status, 200, JSON.stringify(r.body));
   };
   const before = quickRuns();
-  await save([{ ...question, text: 'What time is it' }]);
-  assert.equal(quickRuns(), before, 'no question mark, no question');
+  await save([{ ...question, text: 'Check the time later' }]);
+  await judgeSays('Check the time later', 'none');
+  assert.equal(quickRuns(), before, "the judge's none: nothing asks");
   await save([question]);
-  assert.equal(quickRuns(), before + 1, 'the question mark typed: it asks');
+  const judged = await judgeSays('What time is it?', 'answer');
+  assert.match(judged.content.at(-1).text, /What time is it\?/);
+  await until(() => quickRuns() === before + 1);
+  assert.equal(quickRuns(), before + 1, "the judge's answer: it asks");
   const asked = db.prepare('select job from book_typed_asks where page = ?').get(page.id) as { job: number };
   const run = await h.claimJob(asked.job);
   assert.equal(run.agent, 'juno', "the call's agent answers");
@@ -283,7 +310,10 @@ test('a "?" typed in a box on a page asks too, a call\'s page as any: the answer
     [free, 'juno'],
   ] as const) {
     await h.board('/api/book/page/save', { id: p.id, ink: [], scraps: [], texts: [question] });
-    const asked = db.prepare('select job from book_typed_asks where page = ?').get(p.id) as { job: number };
+    await judgeSays('What time is it?', 'answer');
+    const typed = () => db.prepare('select job from book_typed_asks where page = ?').get(p.id) as { job: number };
+    await until(() => !!typed());
+    const asked = typed();
     assert.equal((db.prepare('select agent from jobs where id = ?').get(asked.job) as { agent: string }).agent, agent);
   }
   stop?.();

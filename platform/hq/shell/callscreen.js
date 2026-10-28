@@ -19,10 +19,11 @@ const $ = s => document.querySelector(s);
 const PICTURE = icon('picture');
 const MINIMISE = icon('minimise');
 const EYE = icon('eye');
-// the screen's one share control, in the call's words
-const SHOW = 'Show my screen',
-  STOP = 'Stop showing',
-  UNSHOWN = 'Your screen couldn’t be shown. Try Show my screen again.',
+const HANG_UP = icon('hangup');
+// the screen's one share control, in the call's words: [its words, and the short ones a phone shows (style.css)]
+const SHOW = ['Show my screen', 'Share'],
+  STOP = ['Stop showing', 'Stop'],
+  UNSHOWN = 'Your screen couldn’t be shown. Try again.',
   UNSEEN = name => `Your screen isn’t reaching ${name} right now.`;
 // How near the transcript's end counts as reading the newest line (the board scrolled up past it: it stays put)
 const FOLLOW_PX = 24;
@@ -44,8 +45,8 @@ export function openLayer(c) {
       <ol class="lines" id="call-lines" aria-label="What you’ve both said" data-empty="What you and ${esc(c.name)} say shows here."></ol>
       <!-- pictures on a call: the strip and the attach button -->
       <ul class="pics" id="call-pics" aria-label="Pictures you showed" aria-live="polite" hidden></ul>
-      <!-- the board interrupts by speaking: Show my screen has the bottom row's middle -->
-      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW}</span></button><button class="hangup" id="call-end">Hang up</button></div>
+      <!-- the board interrupts by speaking: Show my screen has the bottom row's middle, Hang up its symbol on a phone -->
+      <div class="row"><button class="mic attach" id="call-attach" title="Show a picture" aria-label="Show a picture">${PICTURE}</button><input type="file" id="call-file" accept="image/*" multiple hidden><button id="call-screenshare" aria-pressed="false" disabled>${EYE}<span>${SHOW[0]}</span><span class="short">${SHOW[1]}</span></button><button class="hangup" id="call-end" aria-label="Hang up">${HANG_UP}<span>Hang up</span></button></div>
     </div></div>
   </div>`;
   document.querySelector('#call-layer')?.remove(); // (the last call's, still switching off: closeLayer)
@@ -298,7 +299,8 @@ export function shareKey(c) {
   const on = shown(c);
   key.disabled = !c.call || !!c.watchStarting || c.over;
   key.setAttribute('aria-pressed', String(on));
-  key.lastElementChild.textContent = on ? STOP : SHOW;
+  const [words, short] = key.querySelectorAll('span');
+  [words.textContent, short.textContent] = on ? STOP : SHOW;
 }
 // The board asked to show its screen and it didn't start: said on the call screen until the next try
 function unshown(c, words) {

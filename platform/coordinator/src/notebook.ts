@@ -16,16 +16,24 @@ import { groupsBox } from './notebookgroups.ts';
 import { DIR } from './pagescraps.ts';
 import { rmSync } from 'node:fs';
 
-// kind: 'mine' (a person's own, where pins and their notes go), 'call' (a call's notes), 'round' (a guest review round)
-// or 'invited' (one the board made for someone it invited). name: what the shelf shows.
+// kind: 'mine' (a person's own, where pins and their notes go, and a call's notes page: ink/callnotes.ts), 'round' (a
+// guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows. (no 'call' kind)
 db.exec(`create table if not exists notebooks (id integer primary key autoincrement, who text not null, kind text not null,
   name text not null default '', archived integer not null default 0, created text not null, updated text not null);
   create index if not exists notebooks_who on notebooks (who)`);
-for (const column of ['notebook integer', 'pos real', 'send_at integer', 'fresh integer'])
+// (tries, tries_note: the group or old book note a versions page is for, ink/booktry.ts.)
+for (const column of [
+  'notebook integer',
+  'pos real',
+  'send_at integer',
+  'fresh integer',
+  'tries integer',
+  'tries_note integer',
+])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
 db.exec('create index if not exists book_pages_notebook on book_pages (notebook, pos)');
 
-export const KINDS = ['mine', 'call', 'round', 'invited'] as const;
+export const KINDS = ['mine', 'round', 'invited'] as const;
 export type Notebook = {
   id: number;
   who: string;
@@ -35,8 +43,15 @@ export type Notebook = {
   created: string;
   updated: string;
 };
-export type NotebookPage = Page & { notebook: number; pos: number; send_at: number | null; fresh: number | null };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh`;
+export type NotebookPage = Page & {
+  notebook: number;
+  pos: number;
+  send_at: number | null;
+  fresh: number | null;
+  tries: number | null;
+  tries_note: number | null;
+};
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -93,8 +108,7 @@ export function listPages(b: any, who = BOARD) {
   const n = notebookRow(Number(b?.notebook), who);
   if (!n) return 404;
   if (n.kind === 'mine') mine(who);
-  // (a call's notebook has its one page, made with the call: callnotes.ts.)
-  if (n.kind !== 'call') currentPage(n.id);
+  currentPage(n.id);
   const pages = pagesOf(n.id);
   return {
     notebook: notebookOf(n),
@@ -142,11 +156,12 @@ export function titlePage(b: any, who = BOARD) {
   return pageOf(pageRow(p.id, who)!);
 }
 
-// The page new groups land on: the newest page of the notebook neither sent nor archived, made if there's none
+// The page new groups land on: the newest page of the notebook neither sent nor archived, made if there's none (never
+// a try's versions page)
 export function currentPage(notebook: number) {
   const open = db
     .prepare(
-      'select id from book_pages where notebook = ? and archived = 0 and send_at is null order by created desc, id desc',
+      'select id from book_pages where notebook = ? and archived = 0 and send_at is null and tries is null order by created desc, id desc',
     )
     .get(notebook) as { id: number } | undefined;
   return open?.id ?? newPage(notebook);
@@ -201,6 +216,10 @@ export const pageRow = (id: number, who: string | null) =>
         )
         .get(id, who)
     : undefined) as NotebookPage | undefined;
+// The versions page of an old book's note's try (a call's note: ink/booktry.ts), if it has one.
+export const triesPageOfNote = (note: number) =>
+  db.prepare(`select ${PAGE_COLUMNS} from book_pages where tries_note = ? and notebook is not null`).get(note) as
+    NotebookPage | undefined;
 const pagesOf = (notebook: number) =>
   db
     .prepare(`select ${PAGE_COLUMNS} from book_pages where notebook = ? order by pos, id`)
@@ -251,5 +270,6 @@ export function pageOf(p: NotebookPage) {
     h: p.h,
     groups: n,
     picture: `/api/book/picture?id=${p.id}&v=${encodeURIComponent(p.updated)}`,
+    tries: p.tries, // a try's versions page: the group it's for (ink/booktry.ts).
   };
 }

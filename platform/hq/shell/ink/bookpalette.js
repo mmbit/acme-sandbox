@@ -30,13 +30,13 @@ const WIDTHS = { pen: [2.5, 5, 9], highlighter: [11, 18, 28] },
 // The pen's smoothing: how far each point goes towards the pointer (ink.js's follow): steady, or as the hand went
 const SMOOTH = { on: 0.42, off: 0.75 };
 
+// (the line's attributes on a group, as bookui.js's lineIcon: HQ's own style fills every svg, and that beats an
+// attribute on the svg itself.)
 const svg = body =>
-  `<svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`;
+  `<svg viewBox="0 0 20 20" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">${body}</g></svg>`;
 const ICONS = {
-  // (the usual Select: a dashed box, open at its corner for the pointer over it.)
-  select: svg(
-    '<path d="M13.2 7.6V4.6a1.1 1.1 0 0 0-1.1-1.1H4.6a1.1 1.1 0 0 0-1.1 1.1v7.5a1.1 1.1 0 0 0 1.1 1.1h3" stroke-dasharray="1.9 1.7"/><path d="M9.6 9.1v8.3l2.1-2 1.5 3.2 1.6-.75-1.5-3.15 2.9-.25z" fill="currentColor" stroke-width="1.1"/>',
-  ),
+  // Select: a dashed box, its dashes meeting at the corners; Move the page: the four-way arrow
+  select: svg('<path d="M4 4h12v12H4z" stroke-dasharray="2.6 3.4" stroke-dashoffset="1.3"/>'),
   pen: svg('<path d="M4.2 15.8l.9-3.6 8.6-8.6a2 2 0 0 1 2.8 2.8l-8.6 8.6z"/><path d="M12.3 5l2.7 2.7"/>'),
   highlighter: svg(
     '<path d="M6.6 13.6l7.6-9.4 3 2.4-7.6 9.4z"/><path d="M6.6 13.6l-1.5 2.4 3.1.2 1.4-1.8"/><path d="M3 18.2h9" stroke-width="2.2" opacity=".45"/>',
@@ -50,7 +50,7 @@ const ICONS = {
   arrow: svg('<path d="M4.5 15.5l11-11"/><path d="M9.2 4.5h6.3v6.3"/>'),
   text: svg('<path d="M4.5 5.5V4h11v1.5"/><path d="M10 4v12"/><path d="M7.5 16h5"/>'),
   hand: svg(
-    '<path d="M7 10.5V5.2a1.2 1.2 0 0 1 2.4 0V9.5"/><path d="M9.4 9V3.9a1.2 1.2 0 0 1 2.4 0V9"/><path d="M11.8 9V5a1.2 1.2 0 0 1 2.4 0v6.3c0 3.4-2 5.7-5 5.7h-.4c-1.9 0-3.1-.8-4.2-2.4l-2-3a1.2 1.2 0 0 1 1.9-1.4L7 12.5"/>',
+    '<path d="M10 2.8v14.4M2.8 10h14.4"/><path d="M7.8 5L10 2.8 12.2 5M7.8 15l2.2 2.2 2.2-2.2M5 7.8L2.8 10 5 12.2M15 7.8l2.2 2.2-2.2 2.2"/>',
   ),
   outline: svg('<rect x="4" y="4" width="12" height="12" rx="2"/>'),
   filled: svg('<rect x="4" y="4" width="12" height="12" rx="2" fill="currentColor"/>'),

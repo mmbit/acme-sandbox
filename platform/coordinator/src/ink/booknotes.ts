@@ -5,7 +5,8 @@
 // as the page shows it. Nothing on a sheet reaches anyone until the board sends it:
 //   - Send takes effect SEND_MS later; Undo before then takes it back. Then the sheet goes to its owner as one task
 //     (booksheets.ts).
-//   - A note whose words end in a question mark asks now, and answers clip onto notes as slips (bookslips.ts).
+//   - The board's own note is judged (bookjudge.ts), which may start a reply now; answers clip onto notes as slips
+//     (bookslips.ts).
 import { randomBytes } from 'node:crypto';
 import { existsSync, rmSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -13,9 +14,10 @@ import { db, inOneStep, once } from '../db.ts';
 import { findAgent } from '../jobs.ts';
 import { keepFile } from '../uploads.ts';
 import { BOARD, row as pageRow } from './book.ts';
-import { anchorOf, asks, dataUrlPicture, isRefused, wordsOf, type Anchor, type Refused } from '../pagechecks.ts';
+import { anchorOf, dataUrlPicture, isRefused, wordsOf, type Anchor, type Refused } from '../pagechecks.ts';
 import { DIR, SWEEP_MS, notFound, serveFile } from '../pagescraps.ts';
-import { ask, listedOnce, slipsOf, type Listed } from './bookslips.ts'; // (listedOnce)
+import { listedOnce, slipsOf, type Listed } from './bookslips.ts'; // (listedOnce)
+import { judgeLater } from './bookjudge.ts';
 import { guestOf } from './sketchpeople.ts';
 import { linksOf, setLink, unlink } from './booklinks.ts';
 import { onCall } from './bookcalls.ts';
@@ -67,14 +69,14 @@ once('2026-10-27-book-notes-inkless', forgetLines);
 
 // ---------------------------------------------------------------- notes (the board's, HQ session)
 // POST /api/book/note { page, anchor, words?, said?, snip?, to?, by? }: a note on a page of the book, on its owner's
-// open sheet (to: another agent's, or null for the pages nobody owns' sheet). asking: whether its words may ask now
-// (the board's own, in HQ). { note, sheet, asked }: asked, its question's quick run.
+// open sheet (to: another agent's, or null for the pages nobody owns' sheet). asking: whether it's judged (bookjudge.ts:
+// the board's own, in HQ), once the request has answered. { note, sheet }.
 // A call's page's notes go on the call's own sheet, never sent; the agent's ink is never a note (bookcalls.ts). The
-// board's question there asks now as anywhere, the call's agent answering it on the page as well as on the line (the
+// board's note there is judged as anywhere, the call's agent answering it on the page as well as on the line (the
 // board on call #239: being on a call changes nothing about how the book works.)
 // (answers: the slip it's a reply under, replyTo's. by: who wrote it, the book's own person unless an invited guest's
-// note joins the board's sheet: 'guest:<grant>' (feedback.ts, a share's note). Only the board's own words ask now: a
-// guest's question waits for the board's plane like the rest.)
+// note joins the board's sheet: 'guest:<grant>' (feedback.ts, a share's note). Only the board's own notes are judged: a
+// guest's waits for the board's plane like the rest.)
 export function addNote(b: any, who = BOARD, asking = true, answers: number | null = null, by = who) {
   const page = pageRow(Number(b?.page), who);
   if (!page) return 404;
@@ -94,8 +96,8 @@ export function addNote(b: any, who = BOARD, asking = true, answers: number | nu
   const sheet = call ? sheetRow(call.sheet, who)! : openSheet(who, owner);
   if (count(sheet.id) >= MAX_NOTES) return [413, `a sheet holds ${MAX_NOTES} notes: send it first`] as Refused;
   const id = insertNote(sheet.id, page.id, by, anchor, said, snip, answers);
-  const asked = asking && by === BOARD && asks(said.words) ? ask(id) : null; // (call: job #19916)
-  return { note: shown(note(id)!), sheet: sheetOf(sheet.id), asked };
+  if (asking && by === BOARD) judgeLater({ note: id });
+  return { note: shown(note(id)!), sheet: sheetOf(sheet.id) };
 }
 export function insertNote(
   sheet: number,
@@ -128,8 +130,8 @@ function keepSnip(id: number, snip: { type: string; clean: Buffer }) {
   keepFile(`${DIR}/${file}`, snip.clean);
   db.prepare('update book_notes set snip = ? where id = ?').run(file, id);
 }
-// POST /api/book/note/edit { id, words?, said?, was? }: an open note's words corrected (a word written over). Words that
-// newly end in a question mark ask now, a call's too (job #19916). was: the words they replace, refused when the note has
+// POST /api/book/note/edit { id, words?, said?, was? }: an open note's words corrected (a word written over). New words
+// are judged again, a call's too (bookjudge.ts). was: the words they replace, refused when the note has
 // others by now (handwriting read late leaves the board's typed words.)
 export function editNote(b: any, who = BOARD) {
   const n = openNote(Number(b?.id), who);
@@ -144,9 +146,9 @@ export function editNote(b: any, who = BOARD) {
     new Date().toISOString(),
     n.id,
   );
-  // (a guest's note never asks, corrected or not, nor a call's agent's ink)
-  const asked = n.by === BOARD && asks(said.words) && !asks(n.words) ? ask(n.id) : null;
-  return { note: shown(note(n.id)!), asked };
+  // (a guest's note isn't judged, corrected or not, nor a call's agent's ink)
+  if (n.by === BOARD && said.words !== n.words) judgeLater({ note: n.id });
+  return { note: shown(note(n.id)!) };
 }
 // POST /api/book/note/move { id, to }: an open note onto another owner's sheet (to: an agent, or null for nobody),
 // last there. A call's note stays on its call's page's sheet.

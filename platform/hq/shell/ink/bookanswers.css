@@ -1,0 +1,271 @@
+/* The agents' answers on a notebook page (bookanswers*.js): written on the paper in the agent's ink, in a hand, with a
+   hand-drawn bulb and the agent's face; a light ruled strip under each for the board's reply; a drawing, a picture
+   taped in, a form; an answer still coming as a face and pencil dots; a note's versions as frames on a page of their
+   own. The hand is a setting (--bk-hand): an OFL face shipped here, then the system's own hands.
+ */
+
+@font-face {
+  font-family: 'Ink hand';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('fonts/caveat-latin.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC,
+    U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Ink hand';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('fonts/caveat-latin-ext.woff2') format('woff2');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C4, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+#book {
+  --bk-hand: 'Ink hand', 'Segoe Print', 'Bradley Hand', 'Comic Neue', cursive;
+  --bk-graphite: rgba(60, 54, 70, 0.55);
+  --bk-rule: rgba(42, 35, 82, 0.13);
+}
+
+/* the layer: the page's own px, over its ink; only what takes a hand catches it */
+#book .bk-answers {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* ---- an answer */
+#book .bk-answer {
+  position: absolute;
+  box-sizing: border-box;
+  padding: 2px 4px 0;
+  color: var(--ink);
+  font-family: var(--bk-hand);
+}
+#book .bk-answer-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  font: 600 13px/1 var(--bk-font);
+  letter-spacing: 0.01em;
+}
+#book .bk-answer-bulb {
+  display: flex;
+  flex: none;
+}
+#book .bk-answer-bulb svg {
+  width: 19px;
+  height: 22px;
+  overflow: visible;
+  fill: none;
+  stroke: var(--bk-ink, #2a2352);
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+#book .bk-answer-bulb .bk-bulb-glow {
+  fill: var(--bk-lamp, #ffd966);
+  fill-opacity: 0.55;
+  stroke: none;
+}
+#book .bk-answer-bulb .bk-bulb-sketch {
+  stroke-width: 0.7;
+  stroke-opacity: 0.5;
+}
+#book .bk-answer-bulb .bk-bulb-wire {
+  stroke-width: 1;
+}
+#book .bk-answer-face {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--ink) 14%, #fff) center / cover no-repeat;
+  box-shadow:
+    0 0 0 1.5px #fff,
+    0 0 0 2.5px color-mix(in srgb, var(--ink) 35%, transparent);
+  color: var(--ink);
+  font: 700 11px/1 var(--bk-font);
+  font-style: normal;
+}
+#book .bk-answer-name {
+  color: var(--ink);
+}
+#book .bk-answer-words {
+  position: relative;
+  margin: 2px 0 0;
+  font-size: 23px;
+  line-height: 26px;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+#book .bk-answer-words .bk-rest {
+  visibility: hidden;
+}
+#book .bk-caret {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: baseline;
+}
+#book .bk-answer-pen {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 18px;
+  height: 26px;
+  overflow: visible;
+  pointer-events: none;
+  filter: drop-shadow(1px 2px 1.5px rgba(29, 26, 47, 0.25));
+}
+#book .bk-nib {
+  fill: #2b2533;
+}
+#book .bk-nib-slit {
+  stroke: #d8cfb8;
+  stroke-width: 0.7;
+}
+#book .bk-nib-hole {
+  fill: #d8cfb8;
+}
+#book .bk-answer-fade {
+  animation: bk-answer-fade 0.24s ease-out both;
+}
+@keyframes bk-answer-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+/* a drawing: its strokes from the answer's top-left, the room under the words reaching down to their foot */
+#book .bk-answer-ink {
+  position: absolute;
+  left: 0;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* closed with a tick: it steps back a little */
+#book .bk-answer[data-ticked] {
+  opacity: 0.72;
+}
+
+/* a picture, taped in, a touch askew */
+#book .bk-answer-picture {
+  position: relative;
+  margin: 10px 6px 4px;
+  padding: 5px;
+  background: #fff;
+  box-shadow:
+    0 1px 2px rgba(29, 26, 47, 0.18),
+    0 6px 14px -8px rgba(29, 26, 47, 0.35);
+  rotate: -0.8deg;
+}
+#book .bk-answer-picture img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+#book .bk-answer-picture::before {
+  content: '';
+  position: absolute;
+  top: -9px;
+  left: calc(50% - 34px);
+  width: 68px;
+  height: 18px;
+  background: rgba(222, 210, 178, 0.82);
+  rotate: 2deg;
+  mix-blend-mode: multiply;
+}
+
+/* a question the agent asks: a soft wash of its ink behind it */
+#book .bk-answer[data-style='question'] {
+  padding: 6px 10px 2px;
+  border-radius: 3px 14px 4px 12px;
+  background: color-mix(in srgb, var(--ink) 9%, transparent);
+}
+
+/* the strip under an answer the board writes its reply on: two faint rules, a pencilled word till it's used */
+#book .bk-answer-reply {
+  position: relative;
+  min-height: 50px;
+  margin: 6px 0 0;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+  background: repeating-linear-gradient(to bottom, transparent 0 23px, var(--bk-rule) 23px 24px);
+}
+#book .bk-answer-reply::after {
+  content: 'reply';
+  position: absolute;
+  right: 2px;
+  bottom: 3px;
+  font: 15px/1 var(--bk-hand);
+  color: var(--bk-graphite);
+  opacity: 0.6;
+}
+#book .bk-answer-reply[data-sending]::after {
+  content: 'sending…';
+}
+#book .bk-answer-reply[data-refused]::after {
+  content: attr(data-refused);
+  color: #b0412f;
+}
+#book .bk-reply-ink {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 1px;
+  height: 1px;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* ---- an answer still coming: the agent's face and three pencil dots, one after another */
+#book .bk-answer-waiting {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  --dot: 0.9s;
+}
+#book .bk-answer-dots {
+  width: 46px;
+  height: 14px;
+  overflow: visible;
+  fill: var(--bk-graphite);
+}
+#book .bk-answer-dots path {
+  animation: bk-answer-dot calc(var(--dot) * 2) ease-in-out infinite;
+}
+#book .bk-answer-dots path:nth-child(2) {
+  animation-delay: calc(var(--dot) / 3);
+}
+#book .bk-answer-dots path:nth-child(3) {
+  animation-delay: calc(var(--dot) * 2 / 3);
+}
+@keyframes bk-answer-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  35% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-answer-dots path {
+    animation: none;
+  }
+}

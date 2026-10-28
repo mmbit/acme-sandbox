@@ -2,7 +2,8 @@
 // Pencil (Apple's Scribble turns handwriting in a field into type, nothing of ours) or a keyboard. What the book holds
 // is found as it's written: handwriting read into type, words said while drawing, a scrap's typed words and the
 // agents' answers under them, listed under the line. A find tapped opens its page in the book (bookpages.js find). The
-// store's route is booksearch.ts (played in dev mode by notebookplay.js), the matching booksearchwords.js.
+// store's route is booksearch.ts (played in dev mode by notebookplay.js), the matching booksearchwords.js. It finds in
+// every notebook of the board's own, so on the Shelf its line says so.
 import { esc, titleCase } from '../../util.js';
 import * as world from '../../world/world.js';
 import { ask as fromStore } from './notebookdata.js';
@@ -35,6 +36,7 @@ export function mountSearch(host, { dev, find }) {
       timer: 0,
       found: [],
     };
+  document.addEventListener('book:far', e => named(s, e.detail.level));
   s.field.addEventListener('input', () => {
     clearTimeout(s.timer);
     s.timer = setTimeout(() => ask(s), ASK_MS);
@@ -56,6 +58,13 @@ export function mountSearch(host, { dev, find }) {
     find({ day: f.day, page: f.page, note: f.note });
   });
   told(s);
+}
+
+// The line's words for where the overview is: the Shelf, or inside a book
+function named(s, level) {
+  const words = level === 'shelf' ? 'Search your notebooks' : 'Search the book';
+  s.field.placeholder = words;
+  s.field.setAttribute('aria-label', words);
 }
 
 // The store asked for the words in the field now; only the latest question's finds are shown

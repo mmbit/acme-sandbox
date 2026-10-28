@@ -1,9 +1,6 @@
-// Answers on the book's notes (booknotes.ts has the notes and sheets):
-//   - A note whose words end in a question mark asks now: its owner answers it within seconds in a quick run (chat.ts),
-//     outside the queue, and the answer is clipped onto the note as a slip. Only a note the board wrote in HQ asks: one
-//     a product page's own code could have posted proves nothing until the board's send (feedback.ts).
-//   - Words the board types in a box on a page that end in a question mark ask the same way, and the answer is typed onto
-//     the page under them (booktyped.ts.).
+// Answers on the book's notes (booknotes.ts has the notes and sheets) and on the notebook's groups:
+//   - A note the judge says calls for an answer (bookjudge.ts) gets one within seconds from its owner's quick run
+//     (bookanswer.ts answerNow), clipped on as a slip, wherever it was written (//     the judge, not a question mark).
 //   - A slip: an agent's answer on a note (hq answer), with a picture or a preview's link if it has one. A tick closes
 //     it; anything written under it is a reply, a new note on the owner's sheet, anchored where the note was.
 //   - A slip can name an artifact (hq answer --artifact): what it made that runs, shown on the slip as artifacts.ts lists
@@ -14,38 +11,54 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-// (inOneStep)
-import { db, inOneStep, lacks, once, redacted } from '../db.ts'; // (lacks, once)
+import { db, lacks, once, redacted, redactedJson } from '../db.ts'; // (lacks, once)
 import { publish } from '../events.ts';
 import { ceo } from '../company.ts';
-import { findAgent, jobAgent, notePage, type Reader } from '../jobs.ts';
-import * as feedback from '../feedback.ts';
-import { onQuickRun, quickRun } from '../chat.ts';
+import { findAgent, jobAgent, notePage } from '../jobs.ts';
 import { keepFile } from '../uploads.ts';
 import { BOARD } from './book.ts';
-import { addNote, note, sheetRow, shown, type Note } from './booknotes.ts';
-import { keep } from './booksheets.ts';
-import { dataUrlPicture, isRefused, type Refused } from '../pagechecks.ts';
+import { addNote, note, sheetRow, shown } from './booknotes.ts';
+import { type Refused } from '../pagechecks.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import * as artifacts from '../artifacts.ts';
 
-const SLIP_MAX = 4000,
+export const SLIP_MAX = 4000,
   LINK_MAX = 500;
 // (job: the run that answered. ticked: when the board ticked it. artifact: the id of what it made that runs, as
-// artifacts.ts lists it; now, now_at: the note's place cut again from the live page, its file and when.)
-db.exec(`create table if not exists book_slips (id integer primary key autoincrement, note integer not null, by text not null,
+// artifacts.ts lists it; now, now_at: the note's place cut again from the live page, its file and when.): an answer on a notebook group (grp, sent or not: note null while it isn't), its
+// style ('text' | 'drawing' | 'form' | 'question' | 'version'), a version's two-word name and kept patch file, its ink
+// (JSON ink.js strokes from its own top-left), a form (JSON questions.js questions) and the board's answers to it, its
+// spot (JSON {dx, dy, w, h} from its group's box, answerspot.ts) and when the board picked it (a version). bookanswer.ts.
+const SLIPS = `create table if not exists book_slips (id integer primary key autoincrement, note integer, by text not null,
   job integer, text text not null, picture text, link text, created text not null, ticked text, artifact text, now text,
-  now_at text);
-  create index if not exists book_slips_note on book_slips (note)`);
+  now_at text, grp integer, style text, version text, patch text, ink text, form text, form_answer text, spot text,
+  picked text)`;
+db.exec(`${SLIPS}; create index if not exists book_slips_note on book_slips (note)`);
 once('2026-10-26-book-slips-previews', () => {
   for (const column of ['artifact', 'now', 'now_at'])
     if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
 });
-redacted('book_slips', 'text', 'link');
+// (an older database's: its note no longer required, the table made again with every row, and the answers' columns)
+once('2026-10-28-book-slips-answers', () => {
+  const columns = db.prepare('pragma table_info(book_slips)').all() as { name: string; notnull: number }[];
+  if (columns.find(c => c.name === 'note')?.notnull) {
+    const kept = columns.map(c => c.name).join(', ');
+    db.exec(`alter table book_slips rename to book_slips_was; ${SLIPS};
+      insert into book_slips (${kept}) select ${kept} from book_slips_was; drop table book_slips_was;
+      create index if not exists book_slips_note on book_slips (note)`);
+  }
+  for (const column of ['grp integer', 'style text', 'version text', 'patch text', 'ink text', 'form text'])
+    if (lacks('book_slips', column.split(' ')[0])) db.exec(`alter table book_slips add column ${column}`);
+  for (const column of ['form_answer', 'spot', 'picked'])
+    if (lacks('book_slips', column)) db.exec(`alter table book_slips add column ${column} text`);
+});
+db.exec('create index if not exists book_slips_grp on book_slips (grp)');
+redacted('book_slips', 'text', 'link', 'version');
+redactedJson('book_slips', 'form', 'form_answer');
 
-type Slip = {
+export type Slip = {
   id: number;
-  note: number;
+  note: number | null;
   by: string;
   job: number | null;
   text: string;
@@ -56,89 +69,56 @@ type Slip = {
   artifact: string | null;
   now: string | null;
   now_at: string | null;
+  grp: number | null;
+  style: string | null;
+  version: string | null;
+  patch: string | null;
+  ink: string | null;
+  form: string | null;
+  form_answer: string | null;
+  spot: string | null;
+  picked: string | null;
 };
 // An artifact's id as artifacts.ts makes them: an app's slug, top/path for an artifact.yaml, a company artifact's open
 // (an address, hence the colon).
-const ARTIFACT = /^[A-Za-z0-9._/:-]{1,200}$/;
+export const ARTIFACT = /^[A-Za-z0-9._/:-]{1,200}$/;
 
-// ---------------------------------------------------------------- a question now
-// The owner's quick run (chat.ts): the note and how to see its snip; its final message is the slip.
-const QUESTION = 'book-question';
-export function ask(id: number) {
-  const n = note(id)!,
-    s = sheetRow(n.sheet, null)!,
-    agent = s.owner ?? ceo();
-  const kept = keep(n, null);
-  const job = quickRun(agent, 'A question on a page in the board’s book', questionBrief(kept.text), QUESTION);
-  feedback.fromBook(kept.from, job);
-  db.prepare('update book_notes set asked = ? where id = ?').run(job, n.id);
-  return job;
-}
-// ("If only the board can decide it, ask with hq ask ... --note")
-const questionBrief = (text: string) => `The board wrote a question on a page in HQ, in its book, for you. Answer it \
-now: your final message is the answer, exactly as the board reads it, clipped onto its note. Plain words, the answer \
-first, about 60 words. \`hq note <id>\` saves the note's snip (the page around its mark) if the words don't say \
-enough. If it needs work rather than an answer, say what you'd do: the board sends it with its sheet. Don't queue \
-work or change files. If only the board can decide it, ask with \`hq ask ... --note <id>\` (a card clipped under the \
-note in its book, and on its desk phone) and say so in your answer: an answer that ends in a question asks nothing.
-
-${text}`;
-// Its answer, clipped on (a run that failed leaves the note as it was: the board asks again)
-onQuickRun(QUESTION, (job, status, result) => {
-  const n = db.prepare('select * from book_notes where asked = ?').get(job) as Note | undefined;
-  if (!n || status !== 'done' || !result) return;
-  addSlip(n.id, jobAgent(job) ?? ceo(), job, result);
-});
+// (a question now: the judge's quick run, bookanswer.ts answerNow)
 
 // ---------------------------------------------------------------- slips
-// POST /api/agent/answer { note, text, picture?, link?, artifact? } (hq answer): an agent's answer clipped onto a note
-// the board sent it (note: its number in the job's brief, a sent note's on HQ). The agent whose job holds the note
-// answers it. It's the note answered too (feedback.ts markAnswered's), unless the job marked it fixed or answered: a job
-// that ends without marking it doesn't send it back to routing. (artifact, answered)
-export function answer(b: any, me: Reader) {
-  const n = db.prepare('select * from book_notes where review = ?').get(Number(b?.note)) as Note | undefined;
-  const holder =
-    n && (db.prepare('select job from review_notes where id = ?').get(n.review) as { job: number | null }).job;
-  if (!n || !holder || jobAgent(holder) !== me.agent)
-    return [404, `note ${b?.note} isn't one of the board's book notes sent to you`] as Refused;
-  const text = typeof b.text === 'string' ? b.text.trim() : '';
-  if (!text || text.length > SLIP_MAX) return [400, `an answer is text, at most ${SLIP_MAX} characters`] as Refused;
-  const link = b.link == null ? null : String(b.link);
-  if (link !== null && !(/^https:\/\/[^\s]+$/.test(link) && link.length <= LINK_MAX))
-    return [400, 'a link is an https address'] as Refused;
-  const picture = b.picture == null ? null : dataUrlPicture(b.picture);
-  if (isRefused(picture)) return picture;
-  const artifact = b.artifact ?? null;
-  if (
-    artifact !== null &&
-    !(typeof artifact === 'string' && ARTIFACT.test(artifact) && !artifact.split('/').includes('..'))
-  )
-    return [400, "an artifact is its id, as HQ's artifacts list it: an app's slug, or a path"] as Refused;
-  // (the slip and the note answered in one step)
-  return inOneStep(() => {
-    const slip = addSlip(n.id, me.agent, me.id || null, text, { picture, link, artifact });
-    feedback.answeredInBook(n.review!, text);
-    return { slip };
-  });
-}
-// (more: an answer's picture, link and artifact.)
-type More = { picture?: { type: string; clean: Buffer } | null; link?: string | null; artifact?: string | null };
-function addSlip(noteId: number, by: string, job: number | null, text: string, more: More = {}) {
+// POST /api/agent/answer (hq answer): bookanswer.ts answer (moved there, with an
+// answer on a group, its ink, form, versions and who may answer)
+// (more: an answer's picture, link and artifact, and the rest of an answer's,
+// bookanswer.ts: its group, style, version, patch file, ink, form and spot as stored, JSON as JSON text)
+type Stored = 'grp' | 'style' | 'version' | 'patch' | 'ink' | 'form' | 'spot';
+export type More = {
+  picture?: { type: string; clean: Buffer } | null;
+  link?: string | null;
+  artifact?: string | null;
+} & Partial<Record<Stored, string | number | null>>;
+const STORED: Stored[] = ['grp', 'style', 'version', 'patch', 'ink', 'form', 'spot'];
+export function addSlip(noteId: number | null, by: string, job: number | null, text: string, more: More = {}) {
   const id = Number(
     db
-      .prepare('insert into book_slips (note, by, job, text, link, artifact, created) values (?, ?, ?, ?, ?, ?, ?)')
-      .run(noteId, by, job, text, more.link ?? null, more.artifact ?? null, new Date().toISOString()).lastInsertRowid,
+      .prepare(
+        `insert into book_slips (note, by, job, text, link, artifact, created, ${STORED.join(', ')})
+        values (?, ?, ?, ?, ?, ?, ?, ${STORED.map(() => '?').join(', ')})`,
+      )
+      .run(
+        ...[noteId, by, job, text, more.link ?? null, more.artifact ?? null, new Date().toISOString()],
+        ...STORED.map(k => more[k] ?? null),
+      ).lastInsertRowid,
   );
   if (more.picture) {
     db.prepare('update book_slips set picture = ? where id = ?').run(keepPicture(`slip${id}`, more.picture), id);
   }
   publish({ type: 'log', agent: by, text: `An answer clipped onto a note in the board's book` });
   // (the page its note's group is on, read again)
-  publish({ type: 'book', agent: by, text: 'slip', ...notePage(noteId) });
+  publish({ type: 'book', agent: by, text: 'slip', ...(noteId === null ? {} : notePage(noteId)) });
   return slipOf(db.prepare('select * from book_slips where id = ?').get(id) as Slip);
 }
 // A slip's picture kept as a file in the book's folder: its name.
-function keepPicture(name: string, picture: { type: string; clean: Buffer }) {
+export function keepPicture(name: string, picture: { type: string; clean: Buffer }) {
   const file = `${name}-${randomBytes(4).toString('hex')}.${picture.type === 'image/png' ? 'png' : 'jpg'}`;
   keepFile(`${DIR}/${file}`, picture.clean);
   return file;
@@ -146,7 +126,7 @@ function keepPicture(name: string, picture: { type: string; clean: Buffer }) {
 // POST /api/book/slip/tick { id, ticked }: a tick closes the slip's note (false: open again)
 export function tick(b: any, who = BOARD) {
   const slip = slipRow(Number(b?.id), who);
-  if (!slip) return 404;
+  if (!slip || slip.note === null) return 404; // (a group's, bookanswer.ts tick)
   if (typeof b.ticked !== 'boolean') return [400, 'ticked is true or false'] as Refused;
   db.prepare('update book_slips set ticked = ? where id = ?').run(b.ticked ? new Date().toISOString() : null, slip.id);
   const open = db.prepare('select 1 from book_slips where note = ? and ticked is null').get(slip.note);
@@ -161,7 +141,7 @@ export function tick(b: any, who = BOARD) {
 // where the note was (a question asks now)
 export function replyTo(b: any, who = BOARD) {
   const slip = slipRow(Number(b?.id), who);
-  if (!slip) return 404;
+  if (!slip || slip.note === null) return 404;
   const n = note(slip.note)!,
     owner = sheetRow(n.sheet, null)!.owner;
   if (typeof b.words !== 'string' || !b.words.trim()) return [400, 'a reply has words'] as Refused;
@@ -195,12 +175,22 @@ export const listedOnce = (): Listed => {
   let listed: artifacts.Artifact[] | undefined;
   return () => (listed ??= artifacts.list());
 };
-const slipRow = (id: number, who: string) => {
+// (an answer on a group is the group's page's person's; a wiped note's is
+// nobody's until its Undo brings the note back)
+export const slipRow = (id: number, who: string) => {
   const slip = db.prepare('select * from book_slips where id = ?').get(id) as Slip | undefined;
-  return slip && sheetRow(note(slip.note)!.sheet, who) ? slip : undefined;
+  if (!slip) return undefined;
+  if (slip.note !== null) {
+    const n = note(slip.note);
+    return n && sheetRow(n.sheet, who) ? slip : undefined;
+  }
+  const mine = db
+    .prepare('select 1 from notebook_groups g join book_pages p on p.id = g.page where g.id = ? and p.who = ?')
+    .get(slip.grp, who);
+  return mine ? slip : undefined;
 };
-// (preview, now, now_at)
-const slipOf = (s: Slip, listed = listedOnce()) => ({
+// (preview, now, now_at; grp to picked, an answer's in a notebook)
+export const slipOf = (s: Slip, listed = listedOnce()) => ({
   id: s.id,
   note: s.note,
   by: s.by,
@@ -213,10 +203,51 @@ const slipOf = (s: Slip, listed = listedOnce()) => ({
   now_at: s.now ? s.now_at : null,
   created: s.created,
   ticked: s.ticked,
+  grp: s.grp,
+  face: null,
+  style: s.style ?? 'text',
+  ink: s.ink ? JSON.parse(s.ink) : null,
+  form: s.form ? JSON.parse(s.form) : null,
+  form_answer: s.form_answer ? JSON.parse(s.form_answer) : null,
+  version: s.version,
+  patch: !!s.patch,
+  spot: s.spot ? JSON.parse(s.spot) : null,
+  picked: s.picked,
 });
 // The artifact a slip names, as HQ shows it: its running preview (open) and cover (picture, HQ's address), or pending
 // while it isn't listed yet (the work that answered is still in review, or not running).
 function previewOf(id: string, listed: artifacts.Artifact[]) {
   const a = listed.find(x => x.id === id);
   return a ? { name: a.name, open: a.open, picture: a.picture } : { pending: true as const };
+}
+
+// ---------------------------------------------------------------- a notebook group's answers
+// The answers on groups by their grp (sent or not), and a group's answer still
+// coming: its quick run's (notebook_groups.asked, bookanswer.ts) at the spot it will take, while it goes and hasn't
+// answered; a try's (tried, booktry.ts) while it goes, its versions' count once the run says (expect).
+export const answersOnGroups = (ids: number[], listed = listedOnce()) =>
+  ids.length
+    ? (
+        db
+          .prepare(`select * from book_slips where grp in (${ids.map(() => '?').join(', ')}) order by id`)
+          .all(...ids) as Slip[]
+      ).map(s => slipOf(s, listed))
+    : [];
+const going = (job: number | null | undefined) =>
+  !!job && !!db.prepare("select 1 from jobs where id = ? and status in ('queued', 'running')").get(job);
+const byOf = (job: number) => {
+  const by = jobAgent(job) ?? ceo();
+  return { by, name: findAgent(by)?.name ?? by };
+};
+export function waitingOf(g: {
+  asked?: number | null;
+  asked_spot?: string | null;
+  tried?: number | null;
+  expect?: number | null;
+}) {
+  if (g.asked && going(g.asked) && !db.prepare('select 1 from book_slips where job = ?').get(g.asked))
+    return { ...byOf(g.asked), spot: g.asked_spot ? JSON.parse(g.asked_spot) : null, style: 'text' as const };
+  if (g.tried && going(g.tried))
+    return { ...byOf(g.tried), spot: null, style: 'versions' as const, ...(g.expect ? { count: g.expect } : {}) };
+  return null;
 }

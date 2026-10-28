@@ -30,6 +30,8 @@ import * as rounds from './reviewrounds.ts';
 import { findThread, ownerOf } from './projects.ts';
 import * as followups from './followups.ts';
 import * as waiting from './reviewpushes.ts';
+import * as boardmerges from './boardmerges.ts';
+import * as mergeorder from './mergeorder.ts';
 
 // A pull request merged: marked so, the threads whose work it held (threadends.ts merged), and what its reviews left
 // into the project's follow-ups, and the visual hold it was still in, when it landed another way (visualapproval.closed).
@@ -421,10 +423,7 @@ function mergeChecked(
 function checksMerge(before: ReturnType<typeof ruling>, links: string[]) {
   if (!before || links.length || waiting.passLeft(before.id)) return false;
   if (before.decision === 'merge') return true;
-  if (before.decision !== 'board') return false;
-  const card = db.prepare("select answer from requests where job = ? and kind = 'review' and status = 'answered' order by id desc limit 1")
-    .get(before.id) as { answer: string } | undefined;
-  return !!card && boardAnswer(card.answer) === 'merge';
+  return before.decision === 'board' && !!boardmerges.answeredMerge(before.id);
 }
 
 // Starting the company over is the board's alone: the server ignores a reset a pull request brings (infra/reset.py).
@@ -1030,6 +1029,7 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
     return true;
   };
   if (waitingForVisual()) return visualWait;
+  if (waitingForMerge(pr)) return { ok: false, moved: false, superseded: true, why: 'waiting for an earlier merge' };
   if (!pr.sha) { stuck(pr.number, 'no reviewed commit is recorded, so it is not merged'); return { ok: false, moved: true, why: 'no sha' }; }
   const ruledOut = { ok: false, moved: false, superseded: true, why: "the board's word its ruling went by changed" };
   if (voided()) return ruledOut;
@@ -1083,12 +1083,27 @@ async function merge(pr: Pr, title: string, voided = () => false): Promise<Merge
     if (movedOn()) return superseded;
     if (voided()) return ruledOut;
     if (waitingForVisual()) return visualWait;
+    if (waitingForMerge(pr)) return { ok: false, moved: false, superseded: true, why: 'waiting for an earlier merge' };
     m = await mergePullRequest(pr.number, title, pr.sha);
   }
   if (m.moved) stuck(pr.number, `the branch changed after the panel reviewed ${pr.sha.slice(0, 7)}, so it is not merged (${m.why})`);
   // the commit HQ's merge made, the only one on main a carry's checks leave to the review (carries.ts)
   if (m.ok && m.commit) db.prepare('update prs set merged_as = ? where number = ?').run(m.commit, pr.number);
   return m;
+}
+function waitingForMerge(pr: Pr) {
+  const before = mergePredecessor(pr);
+  if (!before) return false;
+  hold(pr.number, `waiting for earlier ruled PR #${before} to merge its shared files`);
+  return true;
+}
+function mergePredecessor(pr: Pick<Pr, 'number' | 'branch' | 'files'>) {
+  if (expedites(pr.branch)) return undefined;
+  return mergeorder.predecessor(pr, job => {
+    const judged = ruling(job.pr, job.round, job.sha);
+    if (judged?.id !== job.id || changedFor(job.id).length) return undefined;
+    return waiting.passLeft(job.id) ? 'changes' : judged.decision;
+  });
 }
 // `superseded`: a push started a new round while it waited, which the old ruling no longer decides, or the ruling was set
 // aside (`voided`). `commit`: the merge commit GitHub made of the reviewed head.
@@ -1329,6 +1344,7 @@ const deciding = new Set<number>();
 // acting on it again would only queue the same job again. that one is looked up on
 // GitHub first (standing()): merged or closed there, it's recorded so instead.
 export async function actOnRulings() {
+  await retryBoardMerges();
   for (const job of reviewtriage.pending()) await reviewFinished(job);
   for (const n of waiting.all()) if (!deciding.has(n)) replayWaiting(n);   // (a restart between a ruling and its push)
   // (the open ones by db.ts prs_open, not every pull request's row. Its `status in` term repeats the index's own where
@@ -1365,6 +1381,19 @@ export async function actOnRulings() {
   }
 }
 
+// A board-authorized merge can wait for another pull request, just as it can wait for visual approval.
+async function retryBoardMerges() {
+  const waiting = db.prepare("select number from prs where status = 'board'").all() as { number: number }[];
+  for (const pr of waiting) {
+    if (deciding.has(pr.number)) continue;
+    const request = db.prepare("select status, answer from requests where kind = 'review' and pr = ? order by id desc limit 1")
+      .get(pr.number) as { status: string; answer: string } | undefined;
+    if (request?.status !== 'answered' || boardmerges.answerAction(request.answer) !== 'merge') continue;
+    try { await boardDecided(pr.number, request.answer); }
+    catch (err) { console.error(`Could not resume PR #${pr.number}'s board-authorized merge:`, err); }
+  }
+}
+
 // The sweep's action and the author work that must finish before it can act.
 export function sweepAction(
   pr: Pick<Pr, 'number' | 'branch' | 'author' | 'round' | 'status' | 'sha' | 'since' | 'files' | 'links'>,
@@ -1373,6 +1402,7 @@ export function sweepAction(
   if (pr.status !== 'open' || !pr.sha) return undefined;
   // A ruling delivered to the owner's inbox waits for the owner, even on a pull request that's now only records.
   const saved = sweepRuling(pr);
+  if (saved?.decision === 'merge' && !misjudged(saved.job) && !changedFor(saved.job.id).length && mergePredecessor(pr)) return undefined;
   if (!beforeVisualDecision && saved?.decision === 'merge' && !misjudged(saved.job) && visualapproval.waitReason(pr.number)) return undefined;
   if (saved && reviewinbox.get(pr.number)?.ruling === saved.job.id) {
     // (one whose entries aren't findings, delivered before misjudged refused it, goes back to its consolidator:
@@ -2059,40 +2089,50 @@ const archive = (author: string) => `company/people/archive/${author}.md`;
 // The board answered a "Your call: <the work>" request: merge, close, or send it back with feedback. Only a pull
 // request that the consolidator actually sent to the board (and nobody decided since) is acted on.
 export async function boardDecided(n: number, answer: string) {
-  const pr = db.prepare("select * from prs where number = ? and status = 'board'").get(n) as Pr | undefined;
-  if (!pr) return publish({ type: 'log', agent: ceo(), text: `The board answered on PR #${n}, which isn't waiting for a board call: nothing done` });
-  const action = boardAnswer(answer);
-  if (action === 'merge') {
-    if (waiting.waits(n)) {
-      waiting.leavePass(ruling(n, pr.round, pr.sha)!.id);
-      db.prepare("update prs set status = 'open' where number = ?").run(n);
-      replayWaiting(n);
-      return;
+  if (deciding.has(n)) return;
+  deciding.add(n);
+  try {
+    const pr = db.prepare("select * from prs where number = ? and status = 'board'").get(n) as Pr | undefined;
+    if (!pr) return publish({ type: 'log', agent: ceo(), text: `The board answered on PR #${n}, which isn't waiting for a board call: nothing done` });
+    const action = boardmerges.answerAction(answer);
+    if (action === 'merge') {
+      const authorized = boardmerges.authorization(n);
+      if (!authorized || ruling(n, authorized.round, authorized.sha)?.id !== authorized.id) return;
+      const invalidated = () => boardRuledAgain(authorized);
+      if (invalidated()) return;
+      if (waiting.waits(n)) {
+        waiting.leavePass(ruling(n, pr.round, pr.sha)!.id);
+        db.prepare("update prs set status = 'open' where number = ?").run(n);
+        replayWaiting(n);
+        return;
+      }
+      const m = await merge(pr, `Merge PR #${n} (board decision)`, invalidated);
+      if (m.closed) return close(n, 'it was closed on GitHub before its merge');
+      if (m.superseded || m.moved) return;
+      if (!m.ok) {
+        db.prepare("update prs set status = 'open' where number = ?").run(n);
+        return bringUpToDate(pr, m);
+      }
+      pullRequestMerged(n);
+      publish({ type: 'log', agent: ceo(), text: `The board merged PR #${n}` });
+    } else if (action === 'close') {
+      waiting.drop(n);
+      await close(n, 'the board closed it on its card');
+    } else {
+      waiting.drop(n);
+      returnFeedback(pr, "The board's notes",
+        `The board looked at your pull request #${n} (branch ${pr.branch}) and says:\n\n${answer}\n\nUpdate the branch accordingly; the panel reviews again when you're done.`);
     }
-    const m = await merge(pr, `Merge PR #${n} (board decision)`);
-    if (m.closed) return close(n, 'it was closed on GitHub before its merge');
-    if (m.superseded || m.moved) return;
-    if (!m.ok) {
-      db.prepare("update prs set status = 'open' where number = ?").run(n);
-      return bringUpToDate(pr, m);
-    }
-    pullRequestMerged(n);
-    publish({ type: 'log', agent: ceo(), text: `The board merged PR #${n}` });
-  } else if (action === 'close') {
-    waiting.drop(n);
-    await close(n, 'the board closed it on its card');
-  } else {
-    waiting.drop(n);
-    returnFeedback(pr, "The board's notes",
-      `The board looked at your pull request #${n} (branch ${pr.branch}) and says:\n\n${answer}\n\nUpdate the branch accordingly; the panel reviews again when you're done.`);
-  }
+  } finally { deciding.delete(n); }
 }
 
-function boardAnswer(answer: string) {
-  const action = answer.trim();
-  if (/^merge\b/i.test(action)) return 'merge';
-  if (/^close\b/i.test(action)) return 'close';
-  return 'feedback';
+function boardRuledAgain(authorized: { request: number; id: number; pr: number; round: number }) {
+  const moved = changedFor(authorized.id);
+  if (!moved.length) return false;
+  db.prepare("update requests set status = 'done' where id = ?").run(authorized.request);
+  db.prepare("update prs set status = 'open' where number = ?").run(authorized.pr);
+  ruleAgain(authorized, 'board', moved);
+  return true;
 }
 
 // Return board feedback to the author and retire the ruling before the next push.

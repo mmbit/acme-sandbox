@@ -10,10 +10,11 @@ import { ownerOf } from './projects.ts';
 import { escapeHtml } from '../../../shared/html/escape.ts';
 import { play, standing, type Forecast, type Standing } from './forecast.ts';
 import { seats, type Meeting } from './meetings.ts';
+import { RELATED_WORK } from '../../worker/hq/levels.ts';
 
 // The chair's part of its seat's briefing (the post's headline and shape at the close)
 const HEADLINE = 8;
-// ("Is it split for speed?")
+// ("Is related work together, in turn?")
 export const CHAIR = `You chair this meeting: you keep the whole in shape, and only you close it.
 - Keep it moving towards what it was set for. Watch the clock and the progress: \`hq meeting listen\` shows you how long
   it has run and how many lines have been said since the last plan change made in it. When it stops getting anywhere
@@ -26,9 +27,7 @@ export const CHAIR = `You chair this meeting: you keep the whole in shape, and o
 - Then review the whole: is it headed in the right direction and in line with our strategy, is the scope right, are the
   deliverables real deliverables (one pull request, done in hours) and the projects real projects (a finished product), do the
   owners' conventions match? Stop sprawl: needless substructures, deliverables nobody needs, over-engineering, each owner
-  with its own conventions. Is it split for speed? Parts that don't need each other go in deliverables of their own, so they
-  run side by side; steps that build on each other go in one deliverable, where its agents take turns on one branch and one
-  review reads them at the end; a wait for another deliverable's merge only where the work truly needs it merged. Send
+  with its own conventions. Is related work together, in turn? ${RELATED_WORK} Send
   what needs changing back with \`hq meeting reopen <agent>... "what to change"\`: their
   hand-ins reopen, and the tally runs again once they hand in again.
 - Close it with \`hq meeting close\` once the review is done (with \`--stalled\` when it has stalled before everyone

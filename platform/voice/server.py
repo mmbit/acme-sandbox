@@ -33,7 +33,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
 from aloud import DAYS, aloud, number, respelt
-from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line
+from drawing import ASK_WORDS, INK_SECONDS, INK_WORDS, Drawing, note_said, notes_lost, one_line, verdict_said
 from driving import DRIVE_WORDS, OPEN_WORDS, Driving
 from callnotes import SCRAP_WORDS, TITLE_WORDS_SAID, CallNotes
 from echo import Echo
@@ -396,7 +396,13 @@ def fetch_note(hq, note_id, call):
     picture = got.get('picture') if isinstance(got, dict) else None
     if not isinstance(got, dict) or type(got.get('n')) is not int or got['n'] < 1 or picture is not None and not takes(picture):
         return None
-    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url'))},
+    # (verdict, versions: what the book's judge made of it, the versions its try landed.)
+    verdict = got.get('verdict') if isinstance(got.get('verdict'), dict) else None
+    versions = [one_line(v) for v in got.get('versions') or [] if isinstance(v, str)]
+    picked = one_line(got['picked']) if isinstance(got.get('picked'), str) else None
+    return {'id': f"note {got['n']}", 'note': {'n': got['n'], 'words': one_line(got.get('words')), 'url': one_line(got.get('url')),
+                                              'verdict': verdict and {'reply': one_line(verdict.get('reply')), 'why': one_line(verdict.get('why'))},
+                                              'versions': versions, 'picked': picked},
             'type': picture and picture['type'], 'data': picture and picture['data']}
 
 
@@ -1152,6 +1158,7 @@ class Call:
         self.writing = threading.Lock()  # a transcript write, from its check of ended to its last byte (end() runs in a thread)
         self.pictures = []    # pictures the board shared that haven't gone to the agent yet, in the order it shared them
         self.known = set()    # the number of every picture HQ sent: HQ sends one again until it hears back (show)
+        self.news = {}        # each note's verdict line the agent has heard (noted)
         self.picture_bytes = 0  # what the session has seen and what waits for it, as base64 (SESSION_BYTES)
         # the pictures the session has seen (shared ones and notes), by their numbers: a compacted session is sent them
         # again (compact), a restarted one has none of them
@@ -1798,9 +1805,28 @@ class Call:
             if fetched['data'] and self.picture_bytes - self.screen['bytes'] + len(fetched['data']) > self.limits.session_bytes:
                 fetched.update(type=None, data=None, note={**fetched['note'], 'full': True})
             entry.update(fetched)
+            self.news[note_id] = verdict_said(fetched['note'])
             self.picture_bytes += len(entry['data'] or '')
             await self.tell_note(note_id, 'received')
         if not self.ended and self.ready():
+            self.nudge()
+
+    async def note_news(self, note_id):
+        """Something changed on a note the line has (its verdict made, a version landed: HQ's 'noted'): read again, the
+        agent hears the new part once, with no picture, as a note's line."""
+        if ('note', note_id) not in self.known or self.ended:
+            return
+        try:
+            fetched = await asyncio.to_thread(fetch_note, self.wiring.hq, note_id, self.brain.call)
+        except Exception as err:
+            print(f'call: {self.agent} could not read note {note_id} again: {err}', flush=True)
+            return
+        said = fetched and verdict_said(fetched['note'])
+        if self.ended or not said or self.news.get(note_id) == said:
+            return
+        self.news[note_id] = said
+        self.pictures.append({**fetched, 'type': None, 'data': None, 'note': {**fetched['note'], 'news': True}})
+        if self.ready():
             self.nudge()
 
     async def tell_note(self, note_id, state, why=None):
@@ -2073,7 +2099,8 @@ class Call:
             numbers = ', '.join(f"#{picture['id']}" for picture in shared)
             self.write(f"Board: (shared {'picture' if len(shared) == 1 else 'pictures'} {numbers} on screen)")
         for note in notes:
-            self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
+            if not note['note'].get('news'):
+                self.write(f"Board: (drew note {note['note']['n']} on {note['note']['url']})")
         turn = self.last = {'text': text, 'n': len(self.lines), 'heard': None, 'back': False, 'sounds': 0, 'at': at}
         spoke, asked, worded_at = self.spoke, self.wiring.monotonic(), None  # (the reply's timing line: timed())
         # (what's written down and what the agent reads; taken back, it's as heard)
@@ -2643,6 +2670,8 @@ async def app_call(ws, make_call=Call, wiring=Wiring()):
             # (note, asked, inked)
             elif kind == 'note' and isinstance(e.get('id'), int):  # (a note's place among the pictures, as theirs)
                 asyncio.create_task(call.note(e['id']))
+            elif kind == 'noted' and isinstance(e.get('id'), int):
+                asyncio.create_task(call.note_news(e['id']))
             elif kind == 'asked' and isinstance(e.get('id'), int):
                 call.drawing.asked(e['id'], e.get('answer'))
             elif kind == 'inked' and isinstance(e.get('id'), int):

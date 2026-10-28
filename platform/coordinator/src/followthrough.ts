@@ -201,7 +201,7 @@ function problemOf(check: Check, t: number): Problem | null {
       ? null
       : { kind: 'not started', line: `${named} hasn't started ${minutes(check.created)} min after it was queued` };
   if (job?.status === 'running' || job?.status === 'queued') {
-    const since = job.started ?? check.created;
+    const since = job.started && job.started > check.created ? job.started : check.created;
     return t - Date.parse(since) < FINISH_MS
       ? null
       : { kind: 'overran', line: `${named} has run ${minutes(since)} min without a verdict` };
@@ -209,12 +209,13 @@ function problemOf(check: Check, t: number): Problem | null {
   return { kind: 'no verdict', line: `${named} ended (${job?.status ?? 'gone'}) without a verdict` };
 }
 
-// An unstarted check's time to start counts from now: work is paused, or its seats are out.
+// A queued check's clock starts again while work is paused or its seats are out, including one paused mid-session; one
+// already told to stop keeps its clock, so its overrun still expires it.
 const restartClock = (t: number) =>
   db
     .prepare(
       `update followthrough_checks set created = ? where verdict is null
-      and job in (select id from jobs where status = 'queued' and started is null)`,
+      and job in (select id from jobs where status = 'queued' and stopping is null)`,
     )
     .run(new Date(t).toISOString());
 

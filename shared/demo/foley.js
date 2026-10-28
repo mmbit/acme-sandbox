@@ -354,6 +354,19 @@ function crunch(c, p) { // crunch: brittle cracks (denser at the bite) over a pr
   return { o, hit: 0 };
 }
 
+// paper torn: fibres parting, a dense run of tiny even cracks over the rip's
+// soft hiss, thickest as it gets going and thinning as it ends; nothing under 1 kHz, so it never reads as a crunch's
+// bite. (sparser, louder cracks juddered at 40 to 58: a texture's bars hold it)
+function tear(c, p) {
+  const d = p.dur ?? 0.25, s = p.size ?? 1, o = bus(c, d + 0.05), at = x => Math.pow(Math.sin(Math.PI * Math.min(1, x * 1.15)), 0.6);
+  for (let k = 0, G = Math.round(d * 2400); k < G; k++) {
+    const t = d * c.r(), a = c.rnd(0.3, 1) * at(t / d), dec = c.rnd(0.0003, 0.001);
+    o.add(noiseEnv(c, dec * 5, 'bp', c.rnd(1600, 5200) / s, 0.4, (x, tt) => a * Math.exp(-tt / dec)), t, 1, c.rnd(-0.25, 0.25));
+  }
+  o.add(noiseEnv(c, d, 'hp', 1400 / s, 0.1, x => 0.3 * at(x)));
+  return { o, hit: 0 };
+}
+
 const TOOLS = { // pencil on paper, and friends: band (Hz), resonance, tooth, stick-slip clicks, table rumble, felt squeak
   pencil: { f: 3800, q: 0.3, grain: 0.5, clicks: 0.5, low: 0.07, squeak: 0 }, // (grain 0.8 juddered)
   crayon: { f: 2200, q: 0.35, grain: 0.6, clicks: 0.4, low: 0.12, squeak: 0 },
@@ -549,6 +562,7 @@ export const SOUNDS = {
   clack: { fn: clack, p: { hold: 0.085 }, tuned: true, level: 0.72, about: 'soft mechanical key, click-clack; hold (s between down and up, 0 = only down), material' },
   switch: { fn: switchClick, p: {}, tuned: true, level: 0.7, about: 'a crisp tactile switch, one bright dry click; hold (s to a lighter click letting go, 0 = none)' },
   bubble: { fn: bubble, p: { bubbles: 1 }, tuned: true, level: 0.69, about: 'bubble pop, a round rising bloop; bubbles > 1 for a cluster over dur, rise, ring' },
+  tear: { fn: tear, p: { dur: 0.25 }, level: 0.6, about: 'paper torn: a page torn out, a ticket torn off; dur, size (bigger = lower, a thicker sheet)' },
   pour: { fn: pour, p: { dur: 1.8, fill: 0.85 }, level: 0.34, about: 'pour and fill, the pitch climbing as it fills; dur, fill 0..0.95; hit = full' },
   crunch: { fn: crunch, p: { dur: 0.3, dry: 0.7 }, level: 0.84, about: 'crunch (paper ball, leaves, a biscuit); dry 0..1 (brittle), dur' },
   tink: { fn: hit, p: { material: 'glass', size: 0.8 }, tuned: true, level: 0.34, about: 'glass tink; any hit param, note to tune it (E6)' },

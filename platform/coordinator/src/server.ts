@@ -117,7 +117,10 @@ import * as notebookguests from './notebookguests.ts';
 import * as notebookguestroom from './notebookguestroom.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
+import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
 import * as notebooksend from './notebooksend.ts';   // and a page sent in, a reply under an answer
+import * as bookanswer from './ink/bookanswer.ts';   // the agents' answers there
+import * as callanswer from './ink/callanswer.ts';   // and a call's agent's on its call's notes
 import * as notebookpictures from './notebookpictures.ts';   // and a group's pictures
 import * as callnotes from './ink/callnotes.ts';   // and a call's notes page
 import * as pair from './pair.ts';   // two of the board's devices paired for a session
@@ -142,6 +145,7 @@ import * as accuracy from './accuracy.ts';
 import * as meetinggist from './meetinggist.ts';
 import * as plainnames from './plainnames.ts';
 import * as handwriting from './handwriting.ts';
+import * as smallmodel from './smallmodel.ts';
 import { boardJob, boardJobs } from './boardnames.ts'; // (the jobs the board reads, by its names)
 import * as sizes from './sizes.ts';
 import * as moves from './moves.ts';
@@ -488,6 +492,10 @@ const api: Record<string, BoardRoute> = {
   'POST /api/notebooks/groups/restore': (q, s, b) => refusal(notebookgroups.restoreGroup(b)),
   'POST /api/notebooks/groups/join': (q, s, b) => refusal(notebookgroups.joinGroups(b)),
   'POST /api/notebooks/groups/split': (q, s, b) => refusal(notebookgroups.splitGroup(b)),
+  // the agents' answers: a form answered, an answer ticked (a version picked), and what waits on the board (bookanswer.ts;
+  'POST /api/notebooks/answers/form': (q, s, b) => refusal(bookanswer.answerForm(b)),
+  'POST /api/notebooks/answers/tick': (q, s, b) => refusal(bookanswer.tickAnswer(b)),
+  'GET /api/notebooks/open': () => bookanswer.openList(),
   // (the live call's notes page, opened as the call starts. callnotes.ts)
   'POST /api/notebooks/call': async (q, s, b) => refusal(await callnotes.openFor(b)),
   'POST /api/preview/link': (q, s, b) => preview.link(String(b.url ?? '')),
@@ -506,6 +514,7 @@ const api: Record<string, BoardRoute> = {
   'GET /api/language': () => language.language(),
   'POST /api/language': (q, s, b) => refusal(language.setLanguage(b?.lang)),
   'GET /api/requests': () => tips.onPhone(jobs.listRequests().map(guests.card).map(outbox.card).map(callcard.card).map(bookasks.card)),   // (callcard; tips; bookasks)
+  'GET /api/requests/archive/index': () => jobs.listArchiveIndex(),
   'GET /api/requests/archive': q => { const a = jobs.listArchive(Number(new URL(q.url ?? '/', 'http://x').searchParams.get('before')) || undefined);
     return { ...a, cards: a.cards.map(guests.card).map(outbox.card).map(callcard.card) }; },
   // Cards for later (later.ts): the ones off the desk phone until a day, and the board's snooze on a card (day:
@@ -640,10 +649,10 @@ const worker: Record<string, (b: any) => unknown> = {
   // the names the board reads, put plainly by the same: the next names due, and the model's answer (plainnames.ts.)
   'POST /api/worker/names/claim': () => plainnames.claim() ?? {},
   'POST /api/worker/names/answer': b => plainnames.answer(b ?? {}),
-  // the board's handwriting read into type, by the same: the next ink to read and the model's
-  // answer (handwriting.ts.)
-  'POST /api/worker/reads/claim': () => handwriting.claim() ?? {},
-  'POST /api/worker/reads/answer': b => handwriting.answer(b ?? {}),
+  // the small model's short calls, by the same: the next to make (the board's handwriting read into type, the book's
+  // judge) and the model's answer (smallmodel.ts)
+  'POST /api/worker/reads/claim': () => smallmodel.claim() ?? {},
+  'POST /api/worker/reads/answer': b => smallmodel.answer(b ?? {}),
   // a push's tests, kept by the code they tested: the claim before they run, and their result (testresults.ts)
   'POST /api/worker/tests/claim': b => testresults.claimTests(b),
   'POST /api/worker/tests/done': b => testresults.doneTests(b),
@@ -1453,11 +1462,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
   'GET /api/agent/studio/record': async () => refusal(await studio.answer(() => studio.record())),
   // (pictures.ts)
   'GET /api/agent/picture': (b, me) => refusal(pictures.forWorker(Number(b.id), me)),
-  // hq sketches [--archived], hq sketch <id>: the book's pages, for any job, a call's as its call (bookreads.ts); hq answer: an answer clipped onto
-  // a note the board sent (bookslips.ts).
+  // hq sketches [--archived], hq sketch <id>: the book's pages, for any job, a call's as its call (bookreads.ts); hq answer:
+  // an answer clipped onto a note the board sent or a group of its notebook (bookanswer.ts).
   'GET /api/agent/sketches': (b, me) => bookreads.listForAgent(b.archived === '1', me),
   'GET /api/agent/sketch': async (b, me) => refusal(await bookreads.getForAgent(Number(b.id), me)),
-  'POST /api/agent/answer': (b, me) => refusal(bookslips.answer(b, me)),
+  'POST /api/agent/answer': (b, me) => refusal(bookanswer.answer(b, me)), // (bookanswer.ts)
+  // the call's answer_note tool (hq answer-note): its agent's answer on a note the board drew on the call (callanswer.ts;
+  'POST /api/agent/call-answer': (b, me) => refusal(callanswer.answerOnCall(b, me)),
   // hq say: a message to a colleague (org.yaml or alumni), stored, and queued for its running Claude job or made a job
   // (messages.ts); hq inbox --hook (the worker's hook) takes this job's own, then acknowledges the ones it printed (only
   // that marks them delivered); hq sent says what became of yours.
@@ -1622,6 +1633,7 @@ const CALL_ROUTES = new Set(['POST /api/agent/job', 'POST /api/agent/item', 'GET
   'GET /api/agent/seat-warnings', 'POST /api/agent/seat-warnings',
   'GET /api/agent/numbers', 'GET /api/agent/when', 'GET /api/agent/estimate', 'GET /api/agent/outlooks', 'GET /api/agent/now', 'GET /api/agent/estimate/accuracy', 'POST /api/agent/extend', 'POST /api/agent/message',
   'POST /api/agent/expedite',
+  'POST /api/agent/call-answer',
   ...MANAGE_ROUTES, ...CALL_READS]);
 // The company's own agent routes (kits.ts): answered like the platform's, never on a call
 for (const [k, r] of kits.agentRoutes(new Set(Object.keys(agentApi)))) agentApi[k] = async (b, me) => refusal(await r(b, me));
@@ -1845,7 +1857,7 @@ const board: RouteTable = {
   'GET /api/notebooks/guests/slip/now': ({ req, res }) => notebookguestroom.serveBoardPicture(req, res),
   'POST /api/notebooks/groups/create': boardJson((q, s, b) => refusal(notebookgroups.createGroup(b)), SAVE_MAX),
   'POST /api/notebooks/groups/edit': boardJson((q, s, b) => refusal(notebookgroups.editGroup(b)), SAVE_MAX),
-  'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(notebookgroups.createScrap(b)), NOTE_MAX),
+  'POST /api/notebooks/groups/scrap': boardJson((q, s, b) => refusal(createScrap(b)), NOTE_MAX),
   'POST /api/notebooks/groups/reply': boardJson(async (q, s, b) => refusal(await notebooksend.replyTo(b)), NOTE_MAX),
   'POST /api/notebooks/pictures': ({ req, res }) => notebookpictures.uploadPicture(req, res),
   'GET /api/notebooks/pictures': ({ req, res }) => notebookpictures.servePicture(req, res),

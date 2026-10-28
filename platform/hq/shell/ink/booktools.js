@@ -92,7 +92,7 @@ function toolsOf(st) {
     },
   };
 }
-// A grab cursor over a picture a press would move (a post-it's and a box's are their own css)
+// A grab cursor over a picture a press would move (a box of words' is its own css)
 function hovering(st) {
   const desk = st.book.desk;
   desk.addEventListener('pointermove', e => {
@@ -107,8 +107,8 @@ function hovering(st) {
 
 // ---- a press on the paper
 
-// True when the press is taken here: a field's or a control's (nothing draws), a box of typed words, a post-it (the
-// grip's), a picture (moved), or a new box of words (the text tool, or a double click on bare paper)
+// True when the press is taken here: a field's or a control's (nothing draws), a box of typed words, a picture
+// (moved), or a new box of words (the text tool, or a double click on bare paper)
 function press(st, e) {
   const { book } = st,
     mouse = e.pointerType === 'mouse' && e.button === 0,

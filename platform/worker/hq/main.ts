@@ -25,6 +25,7 @@ import { phone } from './phone.ts';
 import { plan } from './plan.ts';
 import { picture } from './pictures.ts';
 import { answer, sketch, sketches } from './book.ts';
+import { answerNote } from './callanswer.ts';
 import { preview } from './preview.ts';
 import * as proposals from './proposals.ts';
 import { decision } from './pauses.ts';
@@ -78,6 +79,7 @@ const COMMANDS: Record<string, Command> = {
   sketches,
   sketch,
   answer,
+  'answer-note': answerNote,
   studio,
   'seat-warning': seatWarning,
   wait: cards.wait,

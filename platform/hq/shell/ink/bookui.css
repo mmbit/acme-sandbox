@@ -186,7 +186,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 260px;
+  /* (as wide as its words up to its max, then wrapped) */
+  width: max-content;
+  max-width: min(260px, calc(100vw - 8px));
+  box-sizing: border-box;
   padding: 6px 10px;
   border-radius: 7px;
   background: var(--bk-ink, #2a2352);
@@ -194,13 +197,13 @@
   font: 600 13px/1.25 var(--bk-font, system-ui, sans-serif);
   box-shadow: 0 4px 14px -2px rgba(15, 10, 30, 0.35);
   pointer-events: none;
-  white-space: nowrap;
   animation: bk-tip-in 0.12s ease-out;
 }
 .bk-tip[hidden] {
   display: none;
 }
 .bk-tip kbd {
+  white-space: nowrap;
   font: inherit;
   font-weight: 400;
   opacity: 0.62;
@@ -243,6 +246,14 @@
   pointer-events: auto;
 }
 .bk-island:empty {
+  display: none;
+}
+/* the overview and the Shelf (data-far, bookpagesfar.js): nothing there to draw on, undo or share by its corner, so
+   the tools, Undo and Redo and the page's dog-ear put away */
+#book[data-far] .bk-island[data-island='tools'],
+#book[data-far] .bk-undo,
+#book[data-far] .bk-redo,
+#book[data-far] .bk-dogear {
   display: none;
 }
 /* a thin rule between groups within an island */

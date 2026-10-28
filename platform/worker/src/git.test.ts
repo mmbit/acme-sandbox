@@ -910,3 +910,36 @@ test("a commit main took outside a pull request is tested against main before it
   assert.equal(flow.testedCode(direct, 'parent').base, before);
   assert.equal(flow.testedCode(carry).base, carry, "(its merge base with main: the commit itself, so nothing to test)");
 });
+
+test('a re-sync push includes main that landed after the session started, even beyond the mirror', async () => {
+  flow.fetchMirror();
+  const dir = newJob(1288501, 'resync.txt', 'the agreed work\n');
+  writeFileSync(`${tmp}/seed/landed.txt`, 'landed during the session\n');
+  git('-C', `${tmp}/seed`, 'add', '-A');
+  git('-C', `${tmp}/seed`, 'commit', '-qm', 'another PR lands');
+  git('-C', `${tmp}/seed`, 'push', '-q', 'origin', 'HEAD:main');
+  const main = remoteRef('main')!;
+  const pushed = await job.pushUpdated(dir, 'job/1288501');
+  git('--git-dir', github, 'merge-base', '--is-ancestor', main, pushed.sha);
+  assert.equal(git('--git-dir', github, 'show', `${pushed.sha}:resync.txt`), 'the agreed work');
+  assert.equal(git('--git-dir', github, 'show', `${pushed.sha}:landed.txt`), 'landed during the session');
+});
+
+test('a new conflict at re-sync push stops before publishing and leaves the merge for the author', async () => {
+  flow.fetchMirror();
+  const dir = newJob(1288502, 'landed.txt', 'the agreed edit\n');
+  const before = await job.push(dir, 'job/1288502');
+  writeFileSync(`${tmp}/seed/landed.txt`, 'a later conflicting edit\n');
+  git('-C', `${tmp}/seed`, 'add', '-A');
+  git('-C', `${tmp}/seed`, 'commit', '-qm', 'another PR conflicts');
+  git('-C', `${tmp}/seed`, 'push', '-q', 'origin', 'HEAD:main');
+  await assert.rejects(() => job.pushUpdated(dir, 'job/1288502'), /landed\.txt/);
+  assert.equal(remoteRef('job/1288502'), before.sha, 'no conflicting push can open a merge check');
+  assert.ok(existsSync(`${dir}/.git/MERGE_HEAD`));
+  assert.equal(job.ag(dir, 'diff', '--name-only', '--diff-filter=U'), 'landed.txt');
+  writeFileSync(`${dir}/landed.txt`, 'both edits resolved\n');
+  job.ag(dir, 'add', '-A');
+  job.ag(dir, 'commit', '-qm', 'resolve both edits');
+  const pushed = await job.pushUpdated(dir, 'job/1288502');
+  git('--git-dir', github, 'merge-base', '--is-ancestor', remoteRef('main')!, pushed.sha);
+});

@@ -1,7 +1,7 @@
 // The book's controls, one style for all of them (bookui.css): a button with its icon or its word and the book's own
 // tooltip, and the small islands the controls float on over the paper's right edge (Undo and Redo), the row at its
-// foot, and the overview's own tools (Search, the phone). Every part of the book makes its controls here, so they look
-// and answer alike. (the column cut to faces, tools and Undo: job #19861; the faces gone: job #20780)
+// foot, and the overview's own tools (Search). Every part of the book makes its controls here, so they look and answer
+// alike. (the column cut to faces, tools and Undo: job #19861; the faces gone: job #20780)
 import { esc } from '../../util.js';
 
 // The islands, top to bottom over the paper's right edge, the tool strip down its left (bookstrip.js), the pages' row

@@ -22,7 +22,7 @@ import * as feedback from '../feedback.ts';
 import { BOARD, sheetPageFor } from './book.ts';
 import { addNote } from './booknotes.ts';
 import { WORDS_MAX, isRefused } from '../pagechecks.ts';
-import { createScrap } from '../notebookgroups.ts';
+import { createScrap } from '../notebookscraps.ts';
 
 // The words' most: the book's, the cut's mark ("… (cut here)") included
 const WORDS_CUT = WORDS_MAX - 20;
@@ -101,7 +101,7 @@ function onSheet(slug: string, page: string, b: Scrapped, sheetPage: number, by:
   return { ok: true, id: noted.note.id, n: noted.note.n, owner, name };
 }
 
-// The board's note as a scrap (notebookgroups.ts createScrap), heard by the owner's log as a sheet's note was
+// The board's note as a scrap (notebookscraps.ts createScrap), heard by the owner's log as a sheet's note was
 function scrapped(slug: string, page: string, b: Scrapped): feedback.Refusal | Scrap {
   // (its lines only in its snip, never on its anchor: rule zero, the board's, 2026-10-27)
   const anchor = { ...(b.anchor as object), ink: [] };

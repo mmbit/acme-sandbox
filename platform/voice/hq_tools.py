@@ -377,6 +377,19 @@ TOOLS += [
          'sketch': {'type': 'string', 'minLength': 1, 'maxLength': 200,
                     'description': "its number, '12', or a few words of its label"}}}},
 ]
+# A text answer on a note the board drew on this call (Ink answers): the call's agent writes it itself, having heard the
+# conversation (the coordinator's ink/callanswer.ts, hq answer-note).
+ANSWER_MOST = 4000  # (the coordinator's SLIP_MAX, bookslips.ts)
+TOOLS += [
+    {'name': 'answer_note', 'description': "Write your answer on one of the board's notes on this call's page, in its "
+     "book, beside the note, when the line says the note asks for an answer (or the board asks you to write it down). "
+     'Plain words, the answer first, about 60 words: the board reads it later too. Say it aloud as well if it helps the '
+     'conversation. A note that asks you to do work is a job, not an answer.',
+     'inputSchema': {'type': 'object', 'required': ['note', 'words'], 'additionalProperties': False, 'properties': {
+         'note': {'type': 'integer', 'minimum': 1, 'description': "the note's number on the call's page (note 2: 2)"},
+         'words': {'type': 'string', 'minLength': 1, 'maxLength': ANSWER_MOST,
+                   'description': f'your answer, as the board reads it, at most {ANSWER_MOST} characters'}}}},
+]
 # The board drawing on its call: the agent asks to see the board's screen, and
 # rings something on the board's screen in its own ink, through the line too (drawing.py: HQ shows the ask and draws the
 # ring, and the line keeps what waits for HQ's answer).
@@ -696,6 +709,14 @@ def hq(waits, name, a):
         return answered(run(waits, ['expedite', str(n)], ''), 'Nothing expedited', 'it may or may not be expedited', by='hq expedite')
     if name == 'hang_up':
         return True, HANG_UP_ANSWER
+    if name == 'answer_note':
+        n, words = a.get('note'), a.get('words')
+        if type(n) is not int or n < 1:
+            return False, "note is the note's number on the call's page, like 2"
+        if not isinstance(words, str) or not words.strip() or len(words) > ANSWER_MOST:
+            return False, f'words is your answer, at most {ANSWER_MOST} characters'
+        return answered(run(waits, ['answer-note', str(n), '-'], words), 'Nothing written', 'it may or may not be written',
+                        by='hq answer-note')
     if name == 'reach':
         return reach(waits, a)
     if name == 'manage':

@@ -17,8 +17,9 @@ export const MAX_POINTS = 120_000;
 export const PAGE = { min: 100, max: 4000 };
 // (GROWN_MAX exported for the answers the store types onto a page: booktyped.ts.)
 export const GROWN_MAX = 20_000;
-const SIZE = { min: 0.5, max: 200 },
-  LABEL_MAX = 80;
+const SIZE = { min: 0.5, max: 200 };
+// (exported for a try's versions page title: ink/booktry.ts.)
+export const LABEL_MAX = 80;
 // Words typed on a page (the book's text tool): at most TEXTS_MAX boxes a page, each at most TEXT_MAX characters.
 export const TEXTS_MAX = 200,
   TEXT_MAX = 2000;
@@ -196,5 +197,3 @@ export function wordsOf(v: unknown, said: unknown): { words: string; said: strin
   if (!SAID.includes(said as (typeof SAID)[number])) return [400, `said is how the words came: ${SAID.join(', ')}`];
   return { words, said: words ? (said as string) : null };
 }
-// Whether a note asks now: its words end in a question mark (any script's: ？ too)
-export const asks = (words: string) => /[?？]\s*$/.test(words);

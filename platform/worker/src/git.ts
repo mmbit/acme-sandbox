@@ -611,6 +611,24 @@ export function gitFlow(o: {
       return { sha, files, links, frontmatter, knowledge, pushedSince, lines, settings };
     }
 
+    // A re-sync takes main as it pushes, including commits that landed during the session. A new conflict fails the
+    // run before any push or review. The clone keeps the merge in progress for the author's retry.
+    async function pushUpdated(dir: string, branch: string) {
+      fetchMirror();
+      ag(dir, 'fetch', '-q', 'origin', `+refs/heads/${base}:refs/remotes/origin/${base}`);
+      try {
+        ag(dir, 'merge', '-q', '--no-edit', '-m', `Bring up to date with ${base}`, `origin/${base}`);
+      } catch (err) {
+        const conflicts = ag(dir, 'diff', '--name-only', '--diff-filter=U', '-z').split('\0').filter(Boolean);
+        if (!conflicts.length) throw err;
+        throw new Error(
+          `Main changed during the run and conflicts in ${conflicts.join(', ')}. Resolve the merge before pushing`,
+          { cause: err },
+        );
+      }
+      return push(dir, branch);
+    }
+
     // A thread task's own profile and archive lines, as the commit its clone built on `ref` (threads.ts splitProfile, or
     // rebuildProfile for the branch's repair), pushed to profile/<the task's id>. Root checks the commit itself in the
     // mirror: one commit on main's head, changing only `paths`, as plain files. A run of the same task again builds it
@@ -901,6 +919,7 @@ export function gitFlow(o: {
       settle, // (settle, checkout)
       checkout,
       push,
+      pushUpdated,
       pushProfile,
       withdrawProfile,
       touchUp,

@@ -16,6 +16,16 @@ The Sketchbook is one part of Ink, and in code it is the book: one per person, a
 - `bookasks.ts` puts the desk phone's cards about a note or a page in the book too.
 - `bookreview.ts` brings review mode's notes on a preview into the book, `bookguests.ts` an invited person's.
 - `bookcalls.ts` is a call's page, `booksearch.ts` the book's Search.
+- Answers to any note: `bookjudge.ts` is the one judge of every note the board
+  makes (a small model through `../smallmodel.ts`'s queue: none, an answer, or a try; no rule on the words' shape), with
+  its verdicts and their why kept. `bookanswer.ts` answers: the owner's quick run, `hq answer` (words, a drawing, a
+  picture, a form, a question, versions), forms answered, ticks and the open list; `answerspot.ts` places an answer in
+  free paper by its group, never over the board's own. `groupanswers.ts` is what a group's children carry.
+  `booktry.ts` starts a try run (versions of what a note asks to see, on a page of their own), `callanswer.ts` lets a
+  call's agent write its answer on a note the board drew on the call.
+- Circle a version to pick it: `bookpick.ts`. A ring or a tick on a version goes
+  as a reply on it, drawn over the version's frame in its picture; the judge's verdict 'pick' picks it (one per try),
+  the try run and a call hear which, and the note the tried group goes as carries the frame and the patch.
 - `callnotes.ts` is a call's notes page in the Notebook: the agent's scraps (one per change, each its own crop), its
   notes and title, sent and archived as the call ends; read as its call is, so a customer call's stays with the jobs
   that may read that call.

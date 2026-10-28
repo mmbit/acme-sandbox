@@ -42,7 +42,7 @@ test('a page moved forward and back in the list', () => {
 test('the Shelf: My Notebook first, then the newest first', () => {
   const shelf = shelfOrder([
     { id: 2, name: 'Round', kind: 'round', updated: '2026-10-26T09:00:00Z' },
-    { id: 3, name: 'Call notes', kind: 'call', updated: '2026-10-27T09:00:00Z' },
+    { id: 3, name: 'Review', kind: 'round', updated: '2026-10-27T09:00:00Z' },
     { id: 1, name: 'My Notebook', kind: 'mine', updated: '2026-10-01T09:00:00Z' },
     { id: 4, name: 'Anna', kind: 'invited', updated: '2026-10-26T09:00:00Z' },
   ]);

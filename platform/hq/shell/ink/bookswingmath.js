@@ -107,9 +107,10 @@ export function dissolveAt(a, laidOpen) {
   t = t * t * (3 - 2 * t);
   return laidOpen ? 1 - t : t;
 }
-// The dissolve a frame later: on at once as the board lowers, easing back (70 ms) as the page comes back
-export function dissolveStep(now, target, dt) {
-  const next = target >= now ? target : now + (target - now) * (1 - Math.exp(-dt / 0.07));
+// The dissolve a frame later: on at once as the board lowers, easing back (over tau s, 70 ms unless said) as the page
+// comes back
+export function dissolveStep(now, target, dt, tau = 0.07) {
+  const next = target >= now ? target : now + (target - now) * (1 - Math.exp(-dt / tau));
   return next < 0.004 && target === 0 ? 0 : next;
 }
 // What the dissolve draws: blur (px, capped at 10, in half-pixel steps so the filter changes rarely) and opacity

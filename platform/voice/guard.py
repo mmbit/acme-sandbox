@@ -5,8 +5,9 @@ from pathlib import Path
 HQ_TOOLS = [sys.executable, str(Path(__file__).with_name('hq_tools.py'))]
 # (when: eta)
 # (git, report; ask_to_see, draw; drive, open_work; the pins' removal)
+# (answer_note)
 # (scrap and title_page: the call's notes page, callnotes.py.)
-CALL_TOOLS = ['add', 'ask_to_see', 'call', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job',
+CALL_TOOLS = ['add', 'answer_note', 'ask_to_see', 'call', 'draw', 'drive', 'estimate', 'eta', 'expedite', 'git', 'hang_up', 'history', 'intercom', 'job',
               'manage', 'open_work', 'promise', 'reach', 'replace', 'report', 'scrap', 'screen', 'search', 'sketch', 'title_page',
               'waiting', 'when']
 PARTNER_TOOLS = ['hang_up', 'no_transcript', 'note', 'screen']

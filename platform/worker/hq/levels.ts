@@ -6,6 +6,17 @@
 // Nothing imported but Node's: the coordinator reads it from here too.
 import { readFileSync } from 'node:fs';
 
+// How related work is drawn, the planner's judgment and never a count or a refusal (board, call 152): the levels' deliverable line, the CEO's hourly check and a meeting's review of the plans
+export const RELATED_WORK =
+  'Related work is one deliverable, its tasks in turn with one review at its end: a somewhat bigger deliverable is ' +
+  'better than splitting it, and nobody works out first what each piece touches: when in doubt, it is one. A ' +
+  'feature whose pieces go live separately is a chain, each deliverable needing the one before, so one merges at a ' +
+  'time, never drawn to run side by side. A later piece is drawn needing the one before (hq plan deliverable ' +
+  '--needs) before any of its tasks is queued: a queued task can start at once. The limit is seats, not agents: ' +
+  'work side by side only spends the seats sooner, and the conflicts between its pieces lose more time than it ' +
+  "gains. A small ask that isn't part of the feature never rides on its deliverable because the same agent has " +
+  'both: it goes in the deliverable it belongs to, or one of its own.';
+
 export const LEVELS = {
   product: 'A product is what the company makes (a business in projects.yaml): it holds projects.',
   project:
@@ -17,8 +28,9 @@ export const LEVELS = {
     'A deliverable takes its project to its "done when": a piece of work the board will see go live, adding one part ' +
     'to its project or improving one. Its tasks run in turn on one branch, any agent taking a turn, and it gets one ' +
     'review at its end. Deliverables are cut by what goes live, never one per note or call item: new work that ' +
-    'belongs to an open deliverable is added to it before a new one is drawn, and one that grows past what a single ' +
-    'review reads well is cut where a piece can go live on its own. Its name and "done when" are plain, short and ' +
+    'belongs to an open deliverable is added to it before a new one is drawn. ' +
+    RELATED_WORK +
+    ' Its name and "done when" are plain, short and ' +
     'concrete, saying what gets made ("Pick the shop\'s payment provider", "Sign-up emails in three languages", not ' +
     '"Payments, settled" or "Emails that land"). A card for the board is one step inside the deliverable that makes ' +
     'the thing, never a deliverable of its own, and a deliverable of one task belongs in the one it serves. It ends ' +

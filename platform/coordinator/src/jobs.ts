@@ -223,7 +223,7 @@ type NewJob = {
   title: string;
   prompt: string;
   engine?: string;
-  kind?: 'work' | 'review' | 'consolidate' | 'chat' | 'meeting';
+  kind?: 'work' | 'review' | 'consolidate' | 'chat' | 'meeting' | 'try'; // try: ink/booktry.ts
   pr?: number;
   round?: number;
   branch?: string;
@@ -2980,6 +2980,16 @@ const grants = (r: { kind: string; approves: string | null; secrets: string | nu
 // A page at a time, so every card stays reachable: { cards, more, total }; before = the last card shown, for the next page.
 const ARCHIVED = "status != 'open' and kind != 'login'",
   ARCHIVE_PAGE = 50;
+// The finder ranks these small rows locally. Full cards and their attachments load only when opened.
+export function listArchiveIndex() {
+  return db
+    .prepare(
+      `select id, title, agent, created, answered from requests where ${ARCHIVED}
+      order by coalesce(answered, created) desc, id desc`,
+    )
+    .all();
+}
+
 export function listArchive(before?: number) {
   const at = before
     ? (db
