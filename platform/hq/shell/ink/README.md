@@ -15,6 +15,13 @@ Sketchbook app and an invited person's on the guest desk (`sketch*`).
   `bookrail.js` Undo and Redo, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
+- `bookanswers*.js` draw the agents' answers on a notebook page: the bulb and the face, the words written in by a small
+  pen in a hand (`fonts/`, Caveat under the OFL: `fonts/OFL.txt`; `--bk-hand` sets another), drawings, pictures, forms,
+  the strip the board writes its reply on, and a note's versions. `bookshelfopen.js` lists the open forms and questions
+  in the overview.
+- On a versions page the board's pen writes anywhere on the frames (a finger only on a version): once it rests, what it
+  wrote goes as a reply on the version it's on (`bookanswerpace.js` `frameUnder`: where, never what shape), and a pick
+  gets its stamp.
 - `sketch*.js` hold the Sketchbook app's shelf and pages (`sketchbook.js` in HQ, `sketchguest.js` on the guest desk).
 - `calldraw.js` is the Pencil on a call, with the call's agent on the same page, and the call's notes page opened as
   it's picked up.

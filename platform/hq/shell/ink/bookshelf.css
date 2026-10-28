@@ -1,6 +1,6 @@
 /* The overview (bookzoom.js, bookshelf.js), laid on the book's paper: a notebook's pages as a grid of small pictures,
    and the Shelf of black hardcovers with the Archive beside it. Its head stays at its top as the grid scrolls under it:
-   Search and the phone (bookui.js's overview island, booksearch.css), then the way about. */
+   Search (bookui.js's overview island, booksearch.css), then the way about. */
 #book .bk-far {
   position: absolute;
   inset: 0;
@@ -13,7 +13,7 @@
      bookstrip.js's --bk-strip. The strip) */
   --bk-far-right: calc(var(--bk-stack, 56px) + 24px);
   --bk-far-left: calc(var(--bk-strip, 0px) + 28px);
-  padding: calc(18px + var(--sat, 0px)) var(--bk-far-right) 88px var(--bk-far-left); /* (below Safari's strip) */
+  padding: 18px var(--bk-far-right) 88px var(--bk-far-left);
   background-color: var(--bk-paper2);
   background-image: var(--bk-dots);
   background-size: 11px 11px;
@@ -26,13 +26,13 @@
 }
 #book .bk-far-head {
   position: sticky;
-  top: calc(-18px - var(--sat, 0px)); /* (from the far's very top: a sticky's top counts from inside its padding) */
+  top: -18px; /* (from the far's very top: a sticky's top counts from inside its padding) */
   z-index: 2;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  margin: calc(-18px - var(--sat, 0px)) calc(-1 * var(--bk-far-right)) 0 calc(-1 * var(--bk-far-left));
-  padding: calc(18px + var(--sat, 0px)) var(--bk-far-right) 12px var(--bk-far-left);
+  margin: -18px calc(-1 * var(--bk-far-right)) 0 calc(-1 * var(--bk-far-left));
+  padding: 18px var(--bk-far-right) 12px var(--bk-far-left);
   background: linear-gradient(var(--bk-paper2) 82%, transparent);
 }
 #book .bk-far-head .bk-island {

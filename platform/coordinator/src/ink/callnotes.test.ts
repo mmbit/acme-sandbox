@@ -72,13 +72,14 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
   const opened = await h.board('/api/notebooks/call', { call });
   assert.equal(opened.status, 200, JSON.stringify(opened.body));
   const page = opened.body.page.id as number;
+  // (an ordinary page of My Notebook, titled for the call)
   const shelf = (await h.board('/api/notebooks')).body.shelf as any[];
   const notebook = shelf.find(n => n.id === opened.body.notebook);
-  assert.equal(notebook.kind, 'call');
-  assert.match(notebook.name, /^Call with Juno, /);
+  assert.equal(notebook.kind, 'mine');
+  assert.match(pageNow(page).label, /^Call with Juno, /);
   assert.equal((await h.board('/api/notebooks/call', { call })).body.page.id, page, 'the same page, asked again');
-  // (a call's notebook takes no current page of its own: its one page is the call's)
-  assert.equal((await h.board(`/api/notebooks/pages?notebook=${notebook.id}`)).body.pages.length, 1);
+  const listed = (await h.board(`/api/notebooks/pages?notebook=${notebook.id}`)).body.pages as any[];
+  assert.equal(listed.at(-1).id, page, 'the newest page of My Notebook');
 
   // The board draws three changes in one mark, saying them: the note goes on the call's page, for the line
   const drawn = await h.board('/api/book/note', {
@@ -177,7 +178,7 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
     page,
   );
 
-  // The call ends: the page goes in, each scrap a note on its way to an agent, and it and its notebook go to the archive
+  // The call ends: the page goes in, each scrap a note on its way to an agent, and it goes to My Notebook's archive
   await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller, move it here, and drop this.'], token });
   await until(() => pageNow(page).send_at !== null && pageNow(page).archived === 1, 'the page was sent and archived');
   const after = await groups(page);
@@ -189,15 +190,14 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
       ['scrap', 'juno', 'sent', true],
       ['drawing', 'juno', 'sent', false],
       ['drawing', 'board', 'sent', true],
+      ['drawing', 'board', 'sent', true],
     ],
     "the agent's own typed note goes back to nobody; the board's lines go",
   );
-  assert.equal(after[0].ink.length, 1, 'the line that started on the first scrap joined it');
-  assert.equal(pageNow(page).fresh === null || !pageNow(pageNow(page).fresh), true, 'no fresh page in a call notebook');
-  const { archive } = (await h.board('/api/notebooks')).body;
+  const { shelf: afterShelf } = (await h.board('/api/notebooks')).body;
   assert.ok(
-    archive.some((n: any) => n.id === notebook.id),
-    'the call notebook is in the archive',
+    afterShelf.some((n: any) => n.id === notebook.id),
+    'My Notebook stays on the shelf',
   );
   assert.equal(
     (await h.voice('scrap', { call, from: 'note 1', region: { x: 0, y: 0, width: 1, height: 1 }, words: 'late' }))
@@ -206,18 +206,16 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
   );
 });
 
-test('a call with nothing on its page leaves no page and no notebook', async () => {
+test('a call with nothing on its page leaves no page', async () => {
   const { call, token } = await h.liveCall('juno');
   const opened = (await h.board('/api/notebooks/call', { call })).body;
   await h.voice('call-end', { agent: 'juno', lines: ['Board: Just checking in.'], token });
   await until(() => !pageNow(opened.page.id), 'the blank page went');
-  assert.equal(db.prepare('select 1 from notebooks where id = ?').get(opened.notebook), undefined);
+  assert.ok(db.prepare('select 1 from notebooks where id = ?').get(opened.notebook), 'My Notebook stays');
 });
 
 test('what the agent records on a call with no notes page (a phone call) makes none', async () => {
   const { call, token } = await h.liveCall('juno');
-  const notebooks = () => (db.prepare("select count(*) n from notebooks where kind = 'call'").get() as any).n;
-  const before = notebooks();
   const item = ledger.add(
     call,
     { kind: 'task', owner: 'juno', what: 'Make the price smaller', goal: 'A calmer shop', quote: 'make it smaller' },
@@ -226,7 +224,7 @@ test('what the agent records on a call with no notes page (a phone call) makes n
   assert.equal(typeof item, 'object', JSON.stringify(item));
   assert.equal(db.prepare("select 1 from book_pages where kind = 'call' and call = ?").get(call), undefined);
   await h.voice('call-end', { agent: 'juno', lines: ['Board: Make the price smaller.'], token });
-  assert.equal(notebooks(), before, 'no notes notebook, live or archived');
+  assert.equal(db.prepare("select 1 from book_pages where kind = 'call' and call = ?").get(call), undefined);
 });
 
 // A live call whose page has the agent's first scrap, cut from the board's note 1
@@ -399,29 +397,9 @@ test("a page brought to the call by its folded corner is the call page's first s
   assert.equal((await h.board('/api/notebooks/call', { call: call + 99 })).status, 404, 'no such live call');
 });
 
-test("a call page the shelf carried into My Notebook moves to the call's own notebook; My Notebook stays", async () => {
+test("a call page the shelf carried into My Notebook is the call's notes page there", async () => {
   const myNotebook = () => (db.prepare("select id, archived from notebooks where kind = 'mine'").get() as any) ?? {};
   // The board's first mark comes before the notes page is made, and the shelf carries that page into My Notebook
-  const first = await h.liveCall('juno');
-  const early = (await h.board('/api/book/page/new', { kind: 'call', call: first.call, w: 1024, h: 768 })).body;
-  // (the book lists which notebook has a call's page, so HQ asks nothing of one at hang-up: calldraw.js)
-  const listed = async () => (await h.board('/api/book')).body.pages.find((p: any) => p.id === early.id).notebook;
-  assert.equal(await listed(), null);
-  await h.board('/api/notebooks');
-  assert.equal(pageNow(early.id).notebook, myNotebook().id);
-  assert.equal(await listed(), myNotebook().id);
-  assert.notEqual(
-    (await h.board('/api/book/page/new', { kind: 'call', call: first.call, w: 1024, h: 768 })).body.id,
-    early.id,
-    "a page in My Notebook isn't the call's open notes page",
-  );
-  // hung up with nothing asked of the page: My Notebook keeps it and stays on the shelf
-  await h.voice('call-end', { agent: 'juno', lines: ['Board: Just checking in.'], token: first.token });
-  await until(() => db.prepare("select 1 from calls where id = ? and status != 'live'").get(first.call), 'ended');
-  assert.deepEqual([pageNow(early.id).notebook, pageNow(early.id).archived], [myNotebook().id, 0]);
-  assert.equal(myNotebook().archived, 0);
-
-  // Asked for, the carried page moves into the call's own notebook with what's drawn on it
   const { call, token } = await h.liveCall('juno');
   const page = (await h.board('/api/book/page/new', { kind: 'call', call, w: 1024, h: 768 })).body;
   const line = {
@@ -437,14 +415,14 @@ test("a call page the shelf carried into My Notebook moves to the call's own not
   assert.equal(pageNow(page.id).notebook, myNotebook().id);
   const drawn = (await groups(page.id)).length;
   assert.ok(drawn > 0, 'carried as groups');
+  // (the book lists which notebook has a call's page, so HQ asks nothing of one at hang-up: calldraw.js)
+  assert.equal((await h.board('/api/book')).body.pages.find((p: any) => p.id === page.id).notebook, myNotebook().id);
   const opened = (await h.board('/api/notebooks/call', { call })).body;
-  assert.equal(opened.page.id, page.id);
-  assert.notEqual(opened.notebook, myNotebook().id);
-  assert.equal(pageNow(page.id).notebook, opened.notebook);
-  assert.equal((await groups(page.id)).length, drawn, 'its groups went with it');
+  assert.deepEqual([opened.page.id, opened.notebook], [page.id, myNotebook().id]);
+  assert.equal((await groups(page.id)).length, drawn, 'its groups as they were');
   await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
   await until(() => pageNow(page.id)?.archived === 1, 'the page was archived');
-  assert.equal((db.prepare('select archived from notebooks where id = ?').get(opened.notebook) as any).archived, 1);
+  assert.equal((await groups(page.id)).length, drawn, 'carried once');
   assert.equal(myNotebook().archived, 0, 'My Notebook stays on the shelf');
 });
 

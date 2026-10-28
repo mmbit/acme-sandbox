@@ -20,6 +20,7 @@ export function startPictures(c) {
   c.queued = [];
   c.unanswered = [];
   c.urls = [];
+  c.waiting = []; // (showPictures' before the line picked up)
   c.uploads = new AbortController(); // (hanging up stops the uploads on their way)
   const strip = $('#call-pics');
   strip.innerHTML = '';
@@ -39,6 +40,13 @@ export function picturesLive(c) {
   $('#call-attach').disabled = false;
   for (const id of c.unanswered) c.ws.send(JSON.stringify({ type: 'picture', id }));
   sendPictures(c);
+  for (const file of c.waiting.splice(0)) sharePicture(c, file);
+}
+// Pictures from elsewhere in HQ (a notebook page, a picture dropped on the call's window: calldrop.js), each a File or
+// a promise of one: shared as an attached one is, once the line has picked up
+export function showPictures(c, files) {
+  if (c.call) files.forEach(file => sharePicture(c, file));
+  else c.waiting.push(...files);
 }
 // the uploaded pictures at the front of the queue go to the line, while it has the call on this connection
 function sendPictures(c) {
@@ -73,7 +81,7 @@ async function sharePicture(c, file) {
   strip.append(li);
   strip.scrollLeft = strip.scrollWidth;
   try {
-    const blob = await shrink(file),
+    const blob = await shrink(await file),
       url = URL.createObjectURL(blob);
     c.urls.push(url);
     li.querySelector('.thumb').innerHTML = `<img src="${url}" alt="">`;

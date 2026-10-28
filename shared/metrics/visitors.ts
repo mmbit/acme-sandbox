@@ -87,10 +87,17 @@ export function forget(file: string) {
   for (const f of [file, `${file}.new`]) rmSync(f, { force: true });
 }
 
-// The day's list in its file, replaced whole
+// The day's list in its file, replaced whole. A write that fails (the server's disk full while a deploy builds) costs
+// the app nothing: thrown from the save's timer it would end the app, and from a stop it would end it before
+// metrics.setup()'s last push. The list lives on in memory and the next save tries again; the log says why (its code:
+// the file's path holds nothing of a visitor's).
 function write(file: string, list: DayList) {
-  writeFileSync(`${file}.new`, JSON.stringify({ ...list, seen: Object.fromEntries(list.seen) }), { mode: 0o600 });
-  renameSync(`${file}.new`, file);
+  try {
+    writeFileSync(`${file}.new`, JSON.stringify({ ...list, seen: Object.fromEntries(list.seen) }), { mode: 0o600 });
+    renameSync(`${file}.new`, file);
+  } catch (e) {
+    console.error('visitors: the day list not saved:', (e as NodeJS.ErrnoException).code ?? (e as Error).name);
+  }
 }
 
 const fresh = (day: string): DayList => ({ day, salt: randomBytes(32).toString('hex'), seen: new Map() });

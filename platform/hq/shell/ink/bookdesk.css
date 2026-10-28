@@ -2,8 +2,6 @@
    (bookview.js sets the dots' size and place), its heading written at its top-left; and the
    controls for moving about (bookcontrols.js). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
 
-/* (the paper starts under Safari's blurred strip at the top, style.css's --sat: plain paper above it, so nothing on a
-   page, its heading first, is ever under the blur.) */
 #book .bk-pages {
   position: absolute;
   inset: 0;
@@ -13,7 +11,7 @@
    held or the hand tool move it (bookpan.js). */
 #book .bk-desk {
   position: absolute;
-  inset: var(--sat, 0px) 0 0;
+  inset: 0;
   overflow: hidden;
   background-color: var(--bk-paper);
   background-image: var(--bk-dots);

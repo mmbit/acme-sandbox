@@ -3,8 +3,10 @@
 // alone (perspective and a turn round the spine; the edge, leaf and pull tab book.js lays out). While it's lifted it
 // reads closer, its page face shades, the page block's edge shows at its outer edge, and it casts a soft shadow on HQ's
 // page that tightens as it nears the surface. HQ's page dissolves (blurred and faded) as the board lowers, gone by the
-// time it lands, and comes back in, sharp, in its new room; closing the same in reverse. The landing thuds: a sound,
-// a 1 to 2 px nudge of the page, a haptic tick where there is one.
+// time it lands, settles into its new room while it's gone, and only then fades back in, sharp and slowly; closing the
+// same in reverse. (settled first, slower: the board's call 148) The landing thuds: a sound,
+// a 1 to 2 px nudge of the page, a haptic tick where there is one. Shutting, it closes with a gentler sound than the
+// landing's (the board's call 149).
 // The pull tab's gestures are here: pulled while shut (or mid-swing), it lifts the board, which follows the finger
 // with a slight lag; let go, gravity or the close takes it (letGo). Held on after it lands, the book stays put for
 // HOLD ms, then the same drag resizes it, the edge catching up with the finger once. Open, pulled left first, it
@@ -38,6 +40,12 @@ const NUDGE = -1.4;
 // HQ's page blurs as it dissolves only where frames keep up: the swing's median frame slower than this (s) turns the
 // blur off on this device, for good (a plain fade instead): the prototype's "measure, then fall back"
 const SLOW_FRAME = 1 / 45;
+// The book's own shadow on HQ's page grows in over the last this much of its drop (px of height over the page)
+const REST = 240;
+// Landed or shut, HQ's page stays gone while it lays itself out in its new room: two frames, then whatever its own
+// transitions and animations do about it, at most this long (ms); then it comes back in over about three of these (s)
+const SETTLE_MAX = 450,
+  BACK_IN = 0.35;
 
 const still = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
 
@@ -48,6 +56,7 @@ let geo = null; // the board laid out: { x: the cover's edge's left, width: the 
 let shift = 0; // how far a resize after the landing has moved the cover's edge from geo.x (px, - left)
 let laidOpen = false; // HQ's page laid out beside the open book (not the whole screen)
 let dis = 0; // HQ's page's dissolve, 0 clear to 1 gone
+let settling = 0; // HQ's page laying itself out in its new room, kept gone meanwhile: the settle's number, 0 none
 let drawnLook = null; // what the dissolve drew last
 let hand = null; // the pull tab held: { d, ..., resize }
 let thudded = true,
@@ -103,6 +112,7 @@ export function cancel() {
   cancelAnimationFrame(raf);
   raf = 0;
   dis = 0;
+  settling = 0;
   look(0);
   rest();
 }
@@ -113,6 +123,7 @@ function begin(a, w) {
   shift = 0;
   laidOpen = host.laidOpen();
   host.lay(geo);
+  settling = 0;
   body = { a, w };
   thudded = a > 0.05 ? false : true;
   frames = [];
@@ -128,6 +139,7 @@ function rest() {
   cast.style.visibility = 'hidden';
   shade.style.opacity = 0;
   block.style.transform = '';
+  root.style.removeProperty('--bk-rest');
 }
 
 function run() {
@@ -136,7 +148,10 @@ function run() {
   raf = requestAnimationFrame(frame);
 }
 function frame(t) {
-  const dt = Math.min(SWING.frame, (t - last) / 1000);
+  // (the swing steps at most SWING.frame a frame, for its physics; HQ's page coming back in at rest keeps the clock's
+  // time, however few frames the device draws)
+  const real = (t - last) / 1000,
+    dt = Math.min(SWING.frame, real);
   last = t;
   if (mode) {
     if (dis > 0 && dis < 1) frames.push(dt);
@@ -154,7 +169,7 @@ function frame(t) {
     } else if (mode === 'shut' && body.a >= UPRIGHT) closed();
   }
   if (mode) draw();
-  dissolve(dt);
+  dissolve(mode ? dt : Math.min(real, 0.25));
   raf = mode || dis > 0 ? requestAnimationFrame(frame) : 0;
 }
 // The board's width from its outer edge to the spine (px)
@@ -169,15 +184,34 @@ function landed() {
   rest();
   host.landed(dx);
   laidOpen = host.laidOpen();
+  settleIn();
 }
 function closed() {
   mode = null;
+  // (the cover meeting the pages: the landing's card, smaller and softer, 5 to 8 dB under its thud)
+  foley('hit', { material: 'card', size: 1.8, force: 0.3 }, { vol: 0.3 });
   body = { a: UPRIGHT, w: 0 };
   slow();
   rest();
   host.shut();
   laidOpen = false;
+  settleIn();
 }
+// HQ's page kept gone till it has laid itself out in its new room (book.js has given it the room): then the swing's
+// frames bring it back in
+async function settleIn() {
+  const mine = (settling = performance.now());
+  await framesOut(2);
+  const moving = document
+    .getAnimations()
+    .filter(a => a.playState === 'running' && isFinite(a.effect?.getComputedTiming().endTime))
+    .filter(a => a.effect.target instanceof Element && document.body.contains(a.effect.target));
+  await Promise.race([Promise.all(moving.map(a => a.finished.catch(() => {}))), wait(SETTLE_MAX)]);
+  await framesOut(1);
+  if (settling === mine) settling = 0;
+}
+const framesOut = n => new Promise(done => (n ? requestAnimationFrame(() => framesOut(n - 1).then(done)) : done()));
+const wait = ms => new Promise(done => setTimeout(done, ms));
 // (the swing's frames too slow for the blur on this device: a plain fade from now on)
 function slow() {
   if (frames.length < 12 || !store.get('book.blur', true)) return;
@@ -216,13 +250,17 @@ function draw() {
   cast.style.transform = `translate3d(${sl.toFixed(1)}px, ${(z * 0.03).toFixed(1)}px, 0) scaleX(${(Math.max(0, x) / (innerWidth - geo.x)).toFixed(4)})`;
   cast.firstChild.style.opacity = (dark * lift).toFixed(3);
   cast.lastChild.style.opacity = (dark * (1 - lift)).toFixed(3);
+  // (the book's own shadow on the page beside it grows in over the last REST px of its drop, as the cast draws in
+  // under it, and goes as it lifts: never popping in as it lands. The board's call 152)
+  root.style.setProperty('--bk-rest', ((1 - Math.min(1, z / REST)) ** 2).toFixed(3));
 }
 
 // HQ's page dissolving as the board lowers and back in, sharp, in its new room (never where the book lies over it)
 function dissolve(dt) {
   if (still()) return look((dis = 0));
-  const target = geo?.over ? 0 : dissolveAt(body.a, laidOpen);
-  dis = dissolveStep(dis, target, dt);
+  const target = geo?.over ? 0 : settling ? dis : dissolveAt(body.a, laidOpen);
+  // (coming back in at rest, slowly enough to be seen; under the finger, as quick as the board moves)
+  dis = dissolveStep(dis, target, dt, mode ? undefined : BACK_IN);
   look(dis);
 }
 function look(d) {
@@ -233,13 +271,15 @@ function look(d) {
   drawnLook = now;
   ground(d > 0);
   page.filter = d && store.get('book.blur', true) && blur ? `blur(${blur}px)` : '';
+  // (the table's checkerboard where the book lay, blurred as the page is)
+  parts.table.style.setProperty('--bk-blur', `${page.filter ? blur : 0}px`);
   page.opacity = d ? opacity.toFixed(3) : '';
   // (wholly gone, it isn't painted at all)
   page.visibility = d >= 0.999 ? 'hidden' : '';
 }
 
 // While it dissolves, HQ's page fades into its own colours (<html> wears the page's background), never into the dark
-// ground behind it or the table's (hidden meanwhile): a dissolve, not a dimming
+// ground behind it: a dissolve, not a dimming. (The table stays: its checkerboard is what the lifted book shows.)
 let grounded = false;
 function ground(on) {
   if (on === grounded) return;
@@ -248,7 +288,6 @@ function ground(on) {
     page = getComputedStyle(document.body);
   html.backgroundColor = on ? page.backgroundColor : '';
   html.backgroundImage = on ? page.backgroundImage : '';
-  parts.table.style.visibility = on ? 'hidden' : '';
 }
 
 // The landing: a soft thud as hard as it landed, HQ's page nudged a pixel or two, a haptic tick where there is one

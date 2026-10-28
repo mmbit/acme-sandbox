@@ -20,13 +20,15 @@
 // stopped audio clock asks for a tap if it cannot wake itself.
 // A new call clears the last one's status, hanging up adds no line, and the ON AIR sign lights while the board or the
 // agent speaks, never for the line's tick. A line that doesn't go through shows as an error until the board types again.
-// It rings until the line picks up, and the agent's handset clacks then, both in the call's own sound. The agent's little
-// screen is dark while it rings, and switches on at pickup and off at either side's hang-up.
+// It rings from the tap, while the microphone starts, until the line picks up, and the agent's handset clacks then, both
+// in the call's own sound. The agent's little screen is dark while it rings, and switches on at pickup and off at either
+// side's hang-up. On a 320 px phone its three keys share one row, in every look.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { serve } from './serve.mjs';
 import { playwright, openPage } from '../../shared/browser/browser.mjs';
+import { lookNames } from './looks.mjs';
 
 const { chromium, webkit } = playwright();
 const frames = JSON.parse(readFileSync(process.argv[2], 'utf8')); // [[seconds after the reply started, base64 PCM16, sentence]]
@@ -406,10 +408,10 @@ async function callScreen() {
 }
 await callScreen();
 
-// It rings while the line picks up, as a phone does: the ringing tone (425 Hz) once the microphone is on, again five
-// seconds on, cut the moment the line picks up, and the handset's clack then (a sample of HQ's sound kit). A line
-// picked up again after the connection drops rings and clacks no more, nor does a call the line never picks up after
-// its hang-up. The ring and the clack play in the call's own sound, where its voice plays (the context with the stream
+// It rings while the line picks up, as a phone does: the ringing tone (425 Hz) from the tap, before a microphone slow to
+// start (a Bluetooth car kit's) is on, again five seconds on, cut the moment the line picks up, and the handset's clack
+// then (a sample of HQ's sound kit). A line picked up again after the connection drops rings and clacks no more, nor
+// does a call the line never picks up after its hang-up, or whose microphone doesn't start. The ring and the clack play in the call's own sound, where its voice plays (the context with the stream
 // the <audio> element plays): an iPhone hears nothing of HQ's own Web Audio while the microphone is on.
 async function ringing() {
   const { context, page, errors } = await callPage();
@@ -425,6 +427,16 @@ async function ringing() {
     AudioParam.prototype.setValueAtTime = function (v, ...a) { if (v === 425) window.sounds.push(['ring', performance.now(), onCall(this)]); return set.call(this, v, ...a); };
     AudioParam.prototype.setTargetAtTime = function (v, t, k) { if (v === 0 && k === 0.005) window.sounds.push(['cut', performance.now(), onCall(this)]); return fade.call(this, v, t, k); };
     AudioBufferSourceNode.prototype.start = function (...a) { if (this.buffer?.numberOfChannels === 2 && this.buffer.duration < 0.5) window.sounds.push(['kit', performance.now(), calls.has(this.context)]); return start.apply(this, a); };
+    // (the first call's microphone takes 3 s to start, as a Bluetooth car kit's can.)
+    window.micWait = 3000;
+    const microphone = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    navigator.mediaDevices.getUserMedia = async (...a) => {
+      window.micAsked = performance.now();
+      await new Promise(r => setTimeout(r, window.micWait));
+      window.micOn = performance.now();
+      if (window.micRefused) throw new DOMException('Permission denied', 'NotAllowedError');
+      return microphone(...a);
+    };
   });
   let line = null;
   await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"(agent|resume)"/.test(m)) line = ws; }));
@@ -434,11 +446,11 @@ async function ringing() {
   const tapped = await now();
   await page.click('#call');
   while (!line) await page.waitForTimeout(50);
-  // (the line takes its time: a second ring, five seconds after the first, which waits for the microphone)
+  // (the line takes its time: a second ring, five seconds after the first)
   let rang;
   while (!(rang = (await after(tapped)).find(([what]) => what === 'ring'))) await page.waitForTimeout(50);
   await page.waitForTimeout(tapped + rang[1] + 5500 - (await now()));
-  const picked = await now();
+  const picked = await now(), [micAsked, micOn] = (await page.evaluate(() => [window.micAsked, window.micOn])).map(t => t - tapped);
   line.send(JSON.stringify({ type: 'call', id: 'line', call: 11 })); line.send(JSON.stringify({ type: 'state', state: 'listening' }));
   await page.waitForTimeout(5500);
   const before = (await after(tapped)).filter(([, at]) => at < picked - tapped), since = await after(picked);
@@ -451,6 +463,7 @@ async function ringing() {
   const again = await after(dropped);
   await page.click('#call-end');
   // a call the line never picks up: hanging up cuts its ring too
+  await page.evaluate(() => (window.micWait = 0));
   line = null;
   const second = await now();
   await page.click('#call');
@@ -459,18 +472,31 @@ async function ringing() {
   await page.click('#call-end');
   await page.waitForTimeout(5500);
   const unanswered = (await after(second)).filter(([what]) => what !== 'kit');
+  // a microphone that doesn't start: the call ends, and its ring is cut
+  await page.evaluate(() => Object.assign(window, { micWait: 1000, micRefused: true }));
+  const third = await now();
+  await page.click('#call');
+  await page.waitForTimeout(2500);
+  const refused = (await after(third)).filter(([what]) => what !== 'kit'), ended = await page.isHidden('#call-screen');
   await context.close();
   assert.deepEqual(errors, []);
   const rings = before.filter(([what]) => what === 'ring').map(([, at]) => at);
-  assert.ok(rings.length === 2 && rings[0] < 2500 && Math.abs(rings[1] - rings[0] - 5000) < 300, `it doesn't ring once the microphone is on, every 5 s: ${JSON.stringify(before)}`);
-  assert.ok(since.some(([what, at]) => what === 'cut' && at < 100), `the ring isn't cut as the line picks up: ${JSON.stringify(since)}`);
-  assert.ok(since.some(([what, at, onCall]) => what === 'kit' && at < 500 && onCall), `no clack in the call's sound as the line picks up: ${JSON.stringify(since)}`);
+  // (a loaded machine's timers run late, 5.6 s for 5 at a load of 12: never early.)
+  assert.ok(rings.length === 2 && rings[1] - rings[0] > 4700 && rings[1] - rings[0] < 7000, `it doesn't ring every 5 s: ${JSON.stringify(before)}`);
+  assert.ok(Math.abs(rings[0] - micAsked) < 300 && rings[0] < micOn, `it doesn't ring as the microphone starts (asked ${Math.round(micAsked)} ms, on ${Math.round(micOn)}): ${JSON.stringify(before)}`);
+  // (the cut and the clack both answer the pickup, which a loaded machine delivers late: the cut is timed from the clack.
+  const cut = since.find(([what]) => what === 'cut'), clack = since.find(([what, , onCall]) => what === 'kit' && onCall);
+  assert.ok(clack && clack[1] < 1500, `no clack in the call's sound as the line picks up: ${JSON.stringify(since)}`);
+  assert.ok(cut && Math.abs(clack[1] - cut[1]) < 100, `the ring isn't cut as the line picks up: ${JSON.stringify(since)}`);
   const offCall = [...before, ...since, ...unanswered].filter(([what, , onCall]) => what !== 'kit' && !onCall);
   assert.deepEqual(offCall, [], 'the ring plays on HQ\'s own sound, not the call\'s (an iPhone never hears it)');
-  assert.ok(!since.some(([what]) => what === 'ring'), `it rings on after the pickup: ${JSON.stringify(since)}`);
+  assert.ok(!since.some(([what, at]) => what === 'ring' && at > cut[1]), `it rings on after the pickup: ${JSON.stringify(since)}`);
   assert.deepEqual(again, [], 'picked up again after a drop, it rings or clacks');
-  assert.ok(unanswered[0]?.[0] === 'ring' && unanswered.some(([what]) => what === 'cut') && unanswered.filter(([what]) => what === 'ring').length === 1, `hanging up before the pickup doesn't cut the ring: ${JSON.stringify(unanswered)}`);
-  console.log(`ok: it rings once the microphone is on (${rings.join(', ')} ms), is cut as the line picks up, and the handset clacks then`);
+  // (rung, cut, and no ring after the cut)
+  const cutOff = sounds => sounds[0]?.[0] === 'ring' && sounds.at(-1)?.[0] === 'cut' && sounds.filter(([what]) => what === 'cut').length === 1;
+  assert.ok(cutOff(unanswered), `hanging up before the pickup doesn't cut the ring: ${JSON.stringify(unanswered)}`);
+  assert.ok(ended && cutOff(refused) && refused.at(-1)[1] >= 1000, `a microphone that doesn't start doesn't end the call and cut its ring: ${JSON.stringify(refused)}`);
+  console.log(`ok: it rings as the microphone starts (${rings.join(', ')} ms; asked at ${Math.round(micAsked)}, on at ${Math.round(micOn)}), is cut as the line picks up or the microphone fails, and the handset clacks then`);
 }
 await ringing();
 
@@ -565,7 +591,7 @@ async function shareScreen() {
     pickUp = () => { ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' })); };
   }));
   const eye = () => page.evaluate(() => { const e = document.querySelector('.callbubble .cb-eye'); return !!e && !e.hidden; });
-  const key = () => page.$$eval('#call-screenshare', ([b]) => b && [b.textContent.trim(), b.getAttribute('aria-pressed'), b.disabled]);
+  const key = () => page.$$eval('#call-screenshare', ([b]) => b && [b.innerText.trim(), b.getAttribute('aria-pressed'), b.disabled]); // (its words as shown: a phone's are short)
   const unshown = () => page.$eval('#call-unshown', n => !n.hidden && n.textContent.trim());
   const open = async () => { await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(400); };
   const seen = {};
@@ -599,13 +625,40 @@ async function shareScreen() {
   assert.deepEqual(errors, []);
   assert.deepEqual(seen.ringing, ['Show my screen', 'false', true], `before pick-up the key waits: ${JSON.stringify(seen)}`);
   assert.deepEqual(seen.ready, ['Show my screen', 'false', false], JSON.stringify(seen));
-  assert.deepEqual(seen.failed, [1, ['Show my screen', 'false', false], 'Your screen couldn’t be shown. Try Show my screen again.'], `a failed start wasn't said: ${JSON.stringify(seen)}`);
+  assert.deepEqual(seen.failed, [1, ['Show my screen', 'false', false], 'Your screen couldn’t be shown. Try again.'], `a failed start wasn't said: ${JSON.stringify(seen)}`);
   assert.deepEqual(seen.shown, [2, ['Stop showing', 'true', false], false], `Show my screen didn't start the watch-along: ${JSON.stringify(seen)}`);
   assert.equal(seen.watched, true, 'the bubble shows no eye while the screen is shown');
   assert.deepEqual([seen.stopped, seen.stoppedEye], [[2, ['Show my screen', 'false', false]], false], `Stop showing didn't stop it: ${JSON.stringify(seen)}`);
   console.log('ok: minimising shares nothing; Show my screen starts the watch-along (the eye shows), Stop showing pauses it');
 }
 await shareScreen();
+
+// On a 320 px phone the call's three keys share one row in every look: the picture, Share and Hang up as its symbol, still
+// named Hang up; the transcript keeps its whole height.
+async function keysOnOneRow() {
+  for (const look of lookNames()) {
+    const { context, page, errors } = await callPage({ width: 320, height: 640 });
+    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
+      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+    }));
+    await page.goto(`${base}/?intro=0&renderer=${look}&open=intercom`);
+    await page.click('#call');
+    await page.waitForFunction(() => !document.querySelector('#call-screenshare').disabled);
+    await page.evaluate(() => document.fonts.ready);
+    const seen = await page.evaluate(() => ({
+      keys: [...document.querySelectorAll('#call-screen .row > button')].map(b => [b.getAttribute('aria-label') ?? b.innerText.trim(), b.getBoundingClientRect().top, b.offsetHeight]),
+      lines: document.querySelector('#call-lines').offsetHeight,
+    }));
+    await context.close();
+    assert.deepEqual(errors, []);
+    assert.deepEqual(seen.keys.map(k => k[0]), ['Show a picture', 'Share', 'Hang up'], `${look}: ${JSON.stringify(seen)}`);
+    assert.ok(seen.keys.every(k => Math.abs(k[1] - seen.keys[0][1]) < 4 && k[2] < 60), `${look}: the call's keys don't share one row: ${JSON.stringify(seen)}`);
+    assert.ok(seen.lines >= 160, `${look}: the transcript gave up height: ${JSON.stringify(seen)}`);
+  }
+  console.log('ok: on a 320 px phone the call\'s keys share one row in every look, Hang up as its symbol');
+}
+await keysOnOneRow();
 
 // Show on the agent's ask to see, with the call small: a start that fails keeps
 // the card, saying so, and the line hears nothing; Show again starts it, and only then does the line hear Show.
@@ -678,6 +731,8 @@ async function transcriptAndBubble() {
   const figure = page => page.evaluate(async () => {
     const fig = document.querySelector('#call-screen canvas'), box = document.querySelector('#call-lines');
     const at = [];
+    // (once its screen has switched on, which a loaded machine plays slowly: its bob goes on.)
+    await Promise.all(document.querySelector('#call-face').getAnimations({ subtree: true }).filter(a => a.effect.getTiming().iterations !== Infinity).map(a => a.finished));
     // (in its screen: the call's screen itself may move as a note under it comes and goes)
     for (let i = 0; i < 10; i++) { at.push((fig.getBoundingClientRect().top - fig.parentElement.parentElement.getBoundingClientRect().top).toFixed(1)); await new Promise(r => setTimeout(r, 40)); }
     const f = fig.getBoundingClientRect();
@@ -792,6 +847,33 @@ async function transcriptAndBubble() {
 }
 await transcriptAndBubble();
 
+// A call from a card of an agent who has left the org, in Brownstone and in Holo: the call's screen shows their initial
+// where the figure would be, and the call gets past Connecting…
+async function departed() {
+  for (const renderer of ['brownstone', 'holo']) {
+    const { context, page, errors } = await callPage();
+    const card = { id: 11, created: new Date().toISOString(), agent: 'zeno', kind: 'notice', title: 'Handing over', body: 'My last notes.', urgency: 'whenever' };
+    await context.route(`${base}/api/requests`, r => r.fulfill({ json: [card] }));
+    let line = null;
+    await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => {
+      if (typeof m !== 'string' || !JSON.parse(m).agent) return; // (the microphone)
+      line = ws;
+      ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
+    }));
+    await page.goto(`${base}/?intro=0&open=phone&renderer=${renderer}`);
+    await page.click('#call-about');
+    for (let i = 0; !line && i < 100; i++) await page.waitForTimeout(50); // (a throw before it dials: no line)
+    await page.waitForTimeout(300);
+    const seen = await page.evaluate(() => ({ initial: document.querySelector('#call-face .cb-initial')?.textContent, state: document.querySelector('#call-state')?.textContent }));
+    await context.close();
+    assert.deepEqual(errors, [], renderer);
+    assert.equal(seen.initial, 'Z', `${renderer}: the call from an agent who has left doesn't show their initial: ${JSON.stringify(seen)}`);
+    assert.notEqual(seen.state, 'Connecting…', `${renderer}: the call from an agent who has left stays on Connecting…`);
+  }
+  console.log('ok: a call from a card of an agent who has left shows their initial and connects, in Brownstone and Holo');
+}
+await departed();
+
 // A share that reaches nobody says so: while the server answers the page's batches with seen
 // false, the bubble shows no eye and the call screen says the screen isn't reaching the agent (the key still stops it);
 // paused by the board's choice the words go, even as a false lands meanwhile, and shown again it's as last said; once
@@ -829,7 +911,7 @@ async function unseenScreen() {
   }));
   const state = () => page.evaluate(() => {
     const eye = document.querySelector('.callbubble .cb-eye'), note = document.querySelector('#call-unshown');
-    return { eye: !!eye && !eye.hidden, note: !note.hidden && note.textContent.trim(), key: document.querySelector('#call-screenshare').textContent.trim() };
+    return { eye: !!eye && !eye.hidden, note: !note.hidden && note.textContent.trim(), key: document.querySelector('#call-screenshare span').textContent.trim() };
   });
   await page.goto(`${base}/?intro=0&open=intercom`);
   await page.click('#call');
@@ -975,6 +1057,8 @@ async function callPage(viewport = { width: 420, height: 912 }) {
     if (path === '/api/org') return r.fulfill({ response: await r.fetch({ url: `${base}/mock/org.json` }) });
     if (path === '/api/gazette') return r.fulfill({ json: [] });
     if (path === '/api/language') return r.fulfill({ json: { lang: 'en' } }); // (a call reads it before it dials)
+    // (the call's notes page, asked for at pickup: refused, its card covers the call's keys.)
+    if (path === '/api/notebooks/call') return r.fulfill({ json: { page: { id: 1 } } });
     return r.fulfill({ status: 404, body: '' });
   });
   return opened;

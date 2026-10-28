@@ -144,11 +144,7 @@ async function pairCard(browser, c) {
     // (no coordinator in dev mode: a code of the store's shape, and its stream kept open)
     await page.route(/\/api\/pair$/, r => r.fulfill({ json: { pair: 'p1', key: 'k', side: 'a', code: '915183' } }));
     await page.route(/\/api\/pair\/live/, () => {});
-    // (the phone in the overview)
-    await page
-      .locator('#book')
-      .getByRole('button', { name: /^The overview/ })
-      .click();
+    // (the phone with the book's controls)
     await page.locator('#book').getByRole('button', { name: 'Draw from your phone' }).click();
     await whole(page, 'at its open width');
     await c.shot('book-frame-pair', page);

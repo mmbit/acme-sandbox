@@ -19,6 +19,7 @@ import { linksOf, setLink, withLinks } from './booklinks.ts';
 import { outsideBrief, outsidersOn } from './bookguests.ts'; // (invited people's notes on the board's sheet)
 import { listedOnce } from './bookslips.ts';
 import * as writing from './bookwriting.ts';
+import { withPicks } from './bookpick.ts';
 
 // GET /api/book/sheets: the open sheets (and those in their seconds to undo), then the latest SENT_LISTED sent, each
 // with its notes and their slips (the artifacts their slips name listed once for them all)
@@ -153,7 +154,8 @@ function deliver(id: number, wrote: writing.Writing[]) {
 // its job. (the CEO's)
 // (wrote: the board's writing beside the notes on the sheet, quoted under each.)
 function jobFor(s: Sheet, notes: Note[], kept: ReturnType<typeof keep>[], wrote: writing.Writing[]) {
-  const texts = writing.withWriting(notes, withLinks(notes, kept), wrote);
+  // (and the version the board picked on a note, with its patch: bookpick.ts.)
+  const texts = writing.withWriting(notes, withPicks(notes, withLinks(notes, kept)), wrote);
   const outsiders = outsidersOn(notes); // (invited people's notes on it, outside text: bookguests.ts)
   if (s.owner && s.owner !== ceo())
     try {

@@ -5,7 +5,7 @@
 // place that didn't answer (Mail's list, the search by meaning) says so in every look, never "Nothing found". A machine's
 // name opens its page in Settings, a look's name Settings › Look, and Settings is found when its seats don't load. A
 // card answered a week ago waits behind "n more" while a fresh one shows, and shows when nothing fresher matches. A card
-// waiting a week is never behind.
+// waiting a week is never behind. An answered card beyond the first 50 is found and opens.
 //   node platform/hq/finder-check.mjs        (HQ in dev mode, on its mock data)
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -35,8 +35,9 @@ const requests = JSON.parse(await readFile(`${ROOT}/platform/hq/mock/requests.js
 );
 const [first, ...archive] = JSON.parse(await readFile(`${ROOT}/platform/hq/mock/archive.json`, 'utf8'));
 const answered = [
-  { ...first, title: 'Zephyr: the old card', created: ago(8 * 24 * HOUR), answered: ago(8 * 24 * HOUR) },
+  ...Array.from({ length: 60 }, (_, i) => ({ ...first, id: 1000 + i, title: `Filed card ${i}`, answered: ago(HOUR) })),
   ...archive,
+  { ...first, title: 'Zephyr: the old card', created: ago(8 * 24 * HOUR), answered: ago(8 * 24 * HOUR) },
 ];
 const browser = await playwright().chromium.launch();
 const server = await serve(undefined, 0, {
@@ -156,6 +157,7 @@ try {
   await page.keyboard.press('/');
   await page.keyboard.type('zephyr');
   await until(page, '#finder-list', /Zephyr: the fresh card/);
+  await until(page, '#finder .finder-more[data-only="cards"]', /1 more/, 5000);
   const fresher = ['Zephyr: the waiting card', 'Zephyr: the fresh card'];
   assert.deepEqual(await group(page, 'cards'), { rows: fresher, more: '1 more in' });
   await page.click('#finder .finder-more[data-only="cards"]');
@@ -168,6 +170,16 @@ try {
   assert.deepEqual(await group(page, 'cards'), { rows: ['Zephyr: the old card'], more: null });
   await page.keyboard.press('Escape');
 
+  // A whole old title or code ranks first and opens the card beyond the first page.
+  for (const query of ['Zephyr: the old card', `#${first.id}`, String(first.id)]) {
+    await page.keyboard.press('/');
+    await page.fill('#finder input', query);
+    await until(page, '#finder-row-0', /Zephyr: the old card/);
+    await page.keyboard.press('Enter');
+    await until(page, '#phone-screen article.past h3', /Zephyr: the old card/);
+    await page.keyboard.press('Escape');
+  }
+
   // In a field that has the keys, / is a character
   await page.evaluate(() => import('/shell/desk.js').then(m => m.openIntercom()));
   await page.focus('#tool textarea');
@@ -177,7 +189,7 @@ try {
   // A place that didn't answer: its line, never "Nothing found" for it; an empty field is no failed search. (In dev mode
   // the search by meaning reads mock/meaning.json, the stand-in for /api/search/meaning.)
   await context.route(/\/mock\/(mail|meaning)\.json$/, route => route.fulfill({ status: 503, body: '' }));
-  for (const look of looks) {
+  for (const look of lookNames()) {
     await openHq(page, look);
     await page.keyboard.press('/');
     await until(page, '#finder [role=option]');

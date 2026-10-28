@@ -1134,6 +1134,25 @@ How a meeting goes:
 - Nobody reads it live. Its transcript is kept (\`hq meeting <id>\`, \`hq search\`).`;
 };
 
+// A try run (the coordinator's ink/booktry.ts): its owner makes versions of what a board's note asks to see, shot in its
+// scratch clone and clipped onto the note with hq answer. Nothing in the clone is kept, committed or pushed.
+const tryBriefing = (job: Job) => {
+  const a = job.agentInfo ?? { name: job.agent, role: 'agent', department: '' };
+  return `You are ${a.name}, ${a.role} at ${company(job).name}, an AI-run company (department: ${a.department}).
+Before anything else read company/CHARTER.md and your profile company/people/${job.agent}.md. Before you shoot anything,
+read shared/craft/'s note on it (its README lists them). AGENTS.md has the few things every agent here knows.
+
+Your job #${job.id}: ${job.title}
+
+${job.prompt}
+
+How a try goes:
+- This is a scratch copy of the repository: change anything in it to make a version, but never commit, push or open a
+  pull request. It's thrown away when you end; what you made lives in the board's book, clipped on with hq answer.
+- \`hq status "..."\` shows what you're doing. Team members (helpers) are welcome, one version each.
+- Nobody reads it live. Be quick: the board is watching the frames fill in.`;
+};
+
 // A company file the briefing names, from the job's clone: the company's own, else the foundation's default in template/
 // (a company that hasn't copied it in yet), else null.
 const companyFile = (dir: string, path: string) => existsSync(`${dir}/${path}`) ? path : existsSync(`${dir}/template/${path}`) ? `template/${path}` : null;
@@ -1601,6 +1620,7 @@ const AUTO_MODE = { environment: ['$defaults',
 async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent, launches: Launched[], adopted: RunRecord | undefined, tooling: ReturnType<typeof measurement>): Promise<Record<string, unknown>> {
   const reviewing = job.kind === 'review' || job.kind === 'consolidate';
   const meeting = job.kind === 'meeting';
+  const trying = job.kind === 'try';
   const branch = job.branch ?? `job/${job.id}`;
   if (!reviewing && !workRunsOn(branch, job.pr)) throw new Error(`Refused branch ${branch}: work jobs only run on job/<n>, or a profile pull request's fix on its profile/<n>`);   // (workRunsOn)
   const { dir, home } = jobDirs(WORK, job.id);
@@ -1703,12 +1723,12 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     await prepareHome(seat, job, me, reviewing);
     const gatesRoots = { checkout: dir, readable: [`${WORK}/mirror.git`] };   // what a work job's gates may touch (completion.ts)
     // (a Codex work run hears HQ's word on memory after each tool call: inbox.ts)
-    if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, { messages: job.kind === 'work' && 'steps', ...gatesRoots }) }));
+    if (cli === 'codex') runAs(me, 'sh', ['-c', 'cat > "$1"', 'sh', `${home}/.codex/hooks.json`], JSON.stringify({ hooks: completionHooks(job.kind, { messages: (job.kind === 'work' || trying) && 'steps', ...gatesRoots }) }));
     // a resumed session (the intercom's every turn, work back from the board) gets what's in flight now, after its note,
     // and what a stop of the worker's container cut (the coordinator's cut).
     let prompt = ownSession ? (job.note ?? 'Continue where you left off.') + (job.cut ? `\n\n${job.cut}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
       : carried ? `${carriedNote(job, dir)}\n\n${inThreadLines(job, conflicts)}${job.prompt}` + (job.note ? `\n\n${job.note}` : '') + (job.inFlight ? `\n\n${job.inFlight}` : '')
-      : (reviewing ? reviewBriefing(job) : meeting ? meetingBriefing(job) : briefing(job, dir, conflicts)) + (switched && !reviewing && !fresh ? `\n\n${SWITCHED}${job.cut ? `\n\n${job.cut}` : ''}` : '') + (job.note ? `\n\n${job.note}` : '');
+      : (reviewing ? reviewBriefing(job) : meeting ? meetingBriefing(job) : trying ? tryBriefing(job) : briefing(job, dir, conflicts)) + (switched && !reviewing && !fresh ? `\n\n${SWITCHED}${job.cut ? `\n\n${job.cut}` : ''}` : '') + (job.note ? `\n\n${job.note}` : '');
     prompt += `\n\n${job.company.stylePrompt}`;
     const args = other ? other.run({ home, model, effort: effort ?? undefined, session, reviewing })
       : cli === 'codex'
@@ -1773,7 +1793,7 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
   // reading). A day's lines come from main's history (the coordinator's commitlines.ts). A reviewer or a meeting's seat changes nothing to count.
   let lines: { add: number; del: number } | undefined, start: { add: number; del: number } | undefined, reading = false, unread = false;
   const countLines = async () => {
-    if (ownershipSignal()?.aborted || reviewing || meeting || reading) return;
+    if (ownershipSignal()?.aborted || reviewing || meeting || trying || reading) return;
     reading = true;
     try {
       const n = await branchLines(me, dir, BASE), was = lines;
@@ -2087,8 +2107,9 @@ async function runJobIn(seat: Seat, job: Job, slot: string, me: Me, spent: Spent
     const touchup = code === 0 ? await touchUp(g, dir, job, verdictText) : undefined;
     return { status: code === 0 ? 'done' : 'failed', session, output: whole(redactJson(verdictText), 200_000), result: code === 0 ? result : failure(result, `${how.cli} ${errors}`), touchup };
   }
-  // A meeting's seat leaves its outcome in its agent's plans, so nothing in its clone is committed or pushed.
-  if (meeting) return code !== 0 && !stopWhy ? { status: 'failed', session, result: failure(result, `${how.cli} ${errors}`) } : { status: 'done', session, result };
+  // A meeting's seat leaves its outcome in its agent's plans, so nothing in its clone is committed or pushed; nor a try
+  // run's, whose versions are in the book.
+  if (meeting || trying) return code !== 0 && !stopWhy ? { status: 'failed', session, result: failure(result, `${how.cli} ${errors}`) } : { status: 'done', session, result };
 
   if (stopWhy) return await stopWork(g, dir, branch, job, session, stopWhy, result);
   const parked = readAs(me, `${hqDir}/request.json`);
@@ -2127,14 +2148,14 @@ const failed = (code: number) => (report: string, why: string) =>
 // own profile lines to main first, and every finish after says so (profileToMain).
 type Pushed = { pushed?: { sha: string; files: string[]; links: string[]; frontmatter: { path: string; text: string | null }[]; knowledge: { docs: { path: string; text: string }[]; files: string[] };
   pushedSince?: { sha: string; files: string[] }; lines: Record<string, [number, number][]>; settings: { path: string; before: string | null; after: string | null }[] }; profile?: Profile; withdrawn?: boolean };   // (settings; lines)
-async function pushRun(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, job: Job, to: Pushed) {
+async function pushRun(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, job: Job, to: Pushed, landing = false) {
   commitWork(g, dir, job);
   if (job.inThread) to.profile = await profileToMain(g, dir, branch, job);
   if (PROFILE_BRANCH.test(branch)) {
     to.pushed = await profileRepair(g, dir, branch, job);
     to.withdrawn = !to.pushed;
   }
-  else to.pushed = await pushWork(g, dir, branch);
+  else to.pushed = await pushWork(g, dir, branch, landing && job.stage === 'fix');
 }
 
 // A run that ended well lands: its work pushed (pushRun), its pull request opened (its body the session's last message,
@@ -2150,7 +2171,7 @@ async function land(o: Landing & { g: ReturnType<typeof flow.forAgent>; dir: str
     log(`job #${job.id}: ${why}, so it goes back in the queue to land`);
     return { status: 'snagged', session, branch, profile: to.profile, result: o.failure(result, why), landing: { summary, result } };
   };
-  try { await pushRun(g, dir, branch, job, to); }
+  try { await pushRun(g, dir, branch, job, to, true); }
   catch (err) {
     const why = `the push failed: ${String((err as Error).message ?? err)}`;
     return err instanceof PushUnreachedError ? snagged(why) : { status: 'failed', session, branch, profile: to.profile, result: o.failure(result, why) };
@@ -2203,12 +2224,13 @@ function commitWork(g: ReturnType<typeof flow.forAgent>, dir: string, job: Job) 
   if (ag(dir, 'status', '--porcelain') !== '')
     ag(dir, '-c', `user.name=${author.name}`, '-c', `user.email=${author.email}`, 'commit', '-q', '-m', `${nameOf(job)}: ${job.title} (job #${job.id})`);
 }
-async function pushWork(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string) {
+async function pushWork(g: ReturnType<typeof flow.forAgent>, dir: string, branch: string, resync: boolean) {
   const files = g.ag(dir, 'diff', '--name-only', `origin/${BASE}...HEAD`);
   const remote = `refs/remotes/origin/${branch}`;
   const onOrigin = g.ag(dir, 'for-each-ref', '--format=%(refname)', remote);
   const updated = onOrigin && g.ag(dir, 'diff', '--name-only', remote, 'HEAD');
-  return files || updated ? g.push(dir, branch) : undefined;
+  if (!files && !updated) return undefined;
+  return resync ? g.pushUpdated(dir, branch) : g.push(dir, branch);
 }
 const nameOf = (job: Job) => job.agentInfo?.name ?? job.agent;
 const authorOf = (job: Job) => ({ name: `${nameOf(job)} (${company(job).name})`, email: `${job.agent}@${company(job).agentEmailDomain}` });

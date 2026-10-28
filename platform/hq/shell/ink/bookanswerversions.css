@@ -1,0 +1,182 @@
+/* A note's versions (bookanswerversions.js): the tab on the note that turns to their page, and that page's frames,
+   the note as it was first, an empty frame for each still being made. */
+
+/* ---- versions: the tab on the note, the page of frames */
+#book .bk-versions-tab {
+  all: unset;
+  position: absolute;
+  padding: 3px 10px 3px 9px;
+  border-radius: 3px 10px 10px 3px;
+  background: #fffaf0;
+  box-shadow:
+    0 0 0 1px var(--bk-rule),
+    0 2px 5px -2px rgba(29, 26, 47, 0.3);
+  color: var(--bk-ink, #2a2352);
+  font: 600 13px/1.3 var(--bk-font);
+  white-space: nowrap;
+  cursor: pointer;
+  pointer-events: auto;
+}
+#book .bk-versions-tab:focus-visible {
+  outline: 2px solid var(--bk-ink, #2a2352);
+}
+#book .bk-versions {
+  position: absolute;
+  color: var(--bk-ink, #2a2352);
+}
+#book .bk-versions-frames {
+  position: relative;
+}
+/* the board's pen on the frames, and a little round them, so a ring that starts outside one is the frames' too: what it
+   writes goes to the version it's on */
+#book .bk-versions-frames {
+  pointer-events: auto;
+  touch-action: none;
+  cursor: crosshair;
+}
+#book .bk-versions-frames::before {
+  content: '';
+  position: absolute;
+  inset: -28px;
+}
+#book .bk-version {
+  position: absolute;
+  margin: 0;
+}
+#book .bk-version-paper {
+  position: relative;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #fff;
+  box-shadow:
+    0 0 0 1px rgba(42, 35, 82, 0.12),
+    0 8px 18px -10px rgba(29, 26, 47, 0.45);
+}
+#book .bk-version-paper img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: top;
+}
+#book .bk-version figcaption {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 2px 0;
+  font: 500 14px/1.2 var(--bk-font);
+}
+#book .bk-version[data-picked] .bk-version-paper {
+  box-shadow:
+    0 0 0 2px var(--ink),
+    0 8px 18px -10px rgba(29, 26, 47, 0.45);
+}
+/* the pick: a rubber stamp pressed on the frame's lower corner, a little crooked, its ink sunk into the picture, as a
+   sent page's (bookshelf.css .bk-stamp); it lands with a quick press when the board's ring is read as a pick
+ */
+#book .bk-version-stamp {
+  position: absolute;
+  right: 7%;
+  bottom: 10%;
+  width: 62%;
+  max-width: 168px;
+  transform: rotate(-9deg);
+  color: var(--bk-stamp, #c2362f);
+  opacity: 0.9;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+#book .bk-version-stamp rect {
+  fill: none;
+  stroke: currentColor;
+}
+#book .bk-version-stamp rect:first-child {
+  stroke-width: 3.2;
+}
+#book .bk-version-stamp rect + rect {
+  stroke-width: 1.3;
+}
+#book .bk-version-stamp text {
+  fill: currentColor;
+  font: 800 19px/1 var(--bk-font);
+  letter-spacing: 0.12em;
+}
+#book .bk-version-stamped .bk-version-stamp {
+  animation: bk-version-stamped 0.22s cubic-bezier(0.3, 1.4, 0.5, 1) both;
+}
+@keyframes bk-version-stamped {
+  from {
+    opacity: 0;
+    transform: rotate(-9deg) scale(1.4);
+  }
+}
+@keyframes bk-version-stamped-fade {
+  from {
+    opacity: 0;
+  }
+}
+#book .bk-version-snip .bk-version-paper {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  padding: 12px;
+  background: #f1eadb;
+}
+#book .bk-version-snip svg {
+  max-width: 100%;
+  max-height: 60%;
+  overflow: visible;
+}
+#book .bk-snip-words {
+  font: 400 24px/1.1 var(--bk-hand);
+  text-align: center;
+}
+#book .bk-version-snip figcaption {
+  color: var(--bk-graphite);
+}
+#book .bk-version[data-empty] .bk-version-paper {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  background: transparent;
+  box-shadow: none;
+  border: 1.5px dashed rgba(60, 54, 70, 0.35);
+  font: 400 20px/1.1 var(--bk-hand);
+  color: var(--bk-graphite);
+}
+#book .bk-version-squiggle {
+  width: 84px;
+  fill: none;
+  stroke: rgba(60, 54, 70, 0.45);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-dasharray: 150;
+  animation: bk-version-squiggle 1.8s ease-in-out infinite alternate;
+}
+@keyframes bk-version-squiggle {
+  from {
+    stroke-dashoffset: 150;
+  }
+}
+#book .bk-version-landed .bk-version-paper {
+  animation: bk-version-land 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
+}
+@keyframes bk-version-land {
+  from {
+    opacity: 0;
+    scale: 0.94;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  #book .bk-version-squiggle,
+  #book .bk-version-landed .bk-version-paper {
+    animation: none;
+  }
+  #book .bk-version-stamped .bk-version-stamp {
+    animation: bk-version-stamped-fade 0.2s ease-out both;
+  }
+}

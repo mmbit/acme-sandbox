@@ -3503,6 +3503,7 @@ class BoardDrawing(Juno):
     async def asyncSetUp(self):
         await super().asyncSetUp()
         self.fetched, self.screen_on = [], False
+        self.judged = {}  # a note's verdict and versions, by its id
 
     def coordinator(self, method, path, body=None):
         if path == 'screen-turn':
@@ -3514,7 +3515,7 @@ class BoardDrawing(Juno):
         if path != f'note?id={note_id}&call=7' or note_id not in NOTES:
             raise HTTPError(f'http://hq/api/voice/{path}', 404, 'Not Found', {}, None)
         n, words, picture = NOTES[note_id]
-        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture}
+        return {'n': n, 'words': words, 'url': TEACUPS, 'picture': picture, **self.judged.get(note_id, {})}
 
     def told(self, kind):
         return [{k: v for k, v in e.items() if k != 'type'} for e in self.events if e['type'] == kind]
@@ -3549,6 +3550,34 @@ class BoardDrawing(Juno):
         recap = await self.call.lose_pictures([])  # (a restarted session: the recap names it, HQ hears nothing)
         self.assertIn("You can't see the board's note 2 any more", recap)
         self.assertEqual(len(self.events), len([e for e in self.events if e['type'] != 'note']) + 1)
+
+    async def test_a_notes_verdict_comes_with_it_or_later_once_and_versions_as_they_land(self):
+        self.judged[41] = {'verdict': {'reply': 'answer', 'why': 'a question'}, 'versions': []}
+        await self.call.note(41)
+        await self.turn('Is that right?')
+        self.assertIn('my ink on it.) (The board\'s note asks for an answer: write it on the page with answer_note',
+                      self.brain.asked[0])
+        await self.call.note_news(41)  # (nothing new: nothing said)
+        self.judged[42] = {'verdict': None, 'versions': []}
+        await self.call.note(42)
+        await self.turn('Hm.')
+        self.judged[42] = {'verdict': {'reply': 'try', 'why': 'see it made'}, 'versions': ['Bold card']}
+        await self.call.note_news(42)
+        await self.call.note_news(42)
+        await self.call.note_news(77)  # (a note the line never had: let be)
+        await self.quiet_turn()
+        self.assertEqual(self.brain.asked[2], "(News on note 3, on HQ's page /projects/teacups.) (The board's note asks to "
+                         "see it made: a try run is making a few versions for real, on a page right after this call's, "
+                         "which the sketch tool shows by the word 'tries'. Landed so far: “Bold card”.)")
+        self.assertEqual(len(self.brain.asked), 3)
+        self.assertEqual([line for line in self.call.lines if 'note 3' in line], ['Board: (drew note 3 on /projects/teacups)'])
+        # (the board rings a version on its page: the agent hears which.)
+        self.judged[42] = {'verdict': {'reply': 'try', 'why': 'see it made'}, 'versions': ['Bold card', 'Quiet card'],
+                           'picked': 'Quiet card'}
+        await self.call.note_news(42)
+        await self.quiet_turn()
+        self.assertTrue(self.brain.asked[3].endswith("Landed so far: “Bold card”, “Quiet card”. The board picked “Quiet "
+                                                     "card”: that's the one to build.)"), self.brain.asked[3])
 
     async def test_notes_drawn_while_the_line_is_quiet_go_in_a_turn_of_their_own_in_their_order(self):
         await self.call.note(42)  # (no picture: its words alone, here none)

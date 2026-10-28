@@ -1,0 +1,48 @@
+/* The overview's open list (bookshelfopen.js): the forms and questions waiting for the board, in its head.
+ */
+
+/* ---- the overview's open list */
+#book .bk-open {
+  flex-basis: 100%;
+  margin: 4px 0 6px;
+  font: 13px/1.35 var(--bk-font);
+  color: var(--bk-ink, #2a2352);
+}
+#book .bk-open-head {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+#book .bk-open ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+#book .bk-open-item {
+  all: unset;
+  display: block;
+  max-width: 280px;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--ink) 9%, #fff);
+  box-shadow: inset 3px 0 0 var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+#book .bk-open-item b {
+  color: var(--ink);
+}
+#book .bk-open-kind {
+  opacity: 0.7;
+}
+#book .bk-open-item:focus-visible {
+  outline: 2px solid var(--bk-ink, #2a2352);
+}

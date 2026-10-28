@@ -60,6 +60,7 @@ const USAGE = `usage: hq plan <project> [--json], hq plan deliverable <project> 
 hq plan done <deliverable>, hq plan rename <deliverable> "name" ["done when"] [--slug <slug>], or hq plan title <job> "title"`;
 
 // (help reads the company's levels when it's shown)
+// (a feature's pieces chained with need)
 export const plan = {
   get help() {
     const own = companyLevels();
@@ -74,7 +75,9 @@ export const plan = {
                                                      hq job --deliverable <project>/<slug> --code WORD. hq plan thread,
                                                      the old name, still works
    hq plan need <deliverable> <deliverable>          the first deliverable starts once the second is done and merged (a
-   hq plan unneed <deliverable> <deliverable>        loop is refused, at any depth); unneed takes it back
+   hq plan unneed <deliverable> <deliverable>        loop is refused, at any depth): how a feature's pieces that go
+                                                     live separately are chained, one merging at a time; unneed takes
+                                                     it back
    hq plan move <job> <place>                        a task to its place among its deliverable's tasks still to start
                                                      (1: next)
    hq plan drop <job> "why"                          a task that never started leaves the plan (cancelled, why on its feed)
@@ -109,7 +112,7 @@ function marksHelp({ split, ahead }: Levels) {
     split.thread_ms !== null && `a deliverable whose tasks to do add up past ${duration(split.thread_ms / 60_000)}`,
   ].filter(Boolean);
   return [
-    ...(sizes.length ? [`It marks ${sizes.join(' and ')}, to split.`] : []),
+    ...(sizes.length ? [`It marks ${sizes.join(' and ')}, to judge a split.`] : []),
     ...(ahead ? [`When nothing is planned beyond the project in its product, it says so: ${ahead}`] : []),
   ];
 }
@@ -163,7 +166,7 @@ function threadLines(t: Thread, split: Plan['split']) {
 }
 const SPLIT_TASK = 'split it into its steps (hq plan drop, then hq job --deliverable for each).';
 const SPLIT_THREAD = (thread: string) =>
-  `draw its later part as a deliverable of its own (hq plan deliverable with --needs ${text(thread)}) and move its tasks there (hq job move).`;
+  `a somewhat bigger deliverable is fine: only a later part that goes live on its own is drawn as a deliverable of its own (hq plan deliverable with --needs ${text(thread)}), its tasks moved there (hq job move).`;
 
 async function drawThread(given: string[]) {
   const needs: string[] = [];

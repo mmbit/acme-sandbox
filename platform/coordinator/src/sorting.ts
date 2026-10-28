@@ -161,7 +161,7 @@ export function accept(
 
 // The owner's planning job's prompt (planning.ts; its words, deliverables drawn whole), the one sort step per owner and project (null: no project's), which
 // reads that project's inbox when it starts (proposals.ts list). It ends with the
-// levels each name shows, in the company's lines (levels.ts), and how its plans look ahead.
+// levels each name shows, in the company's lines (levels.ts, related work chained in one deliverable), and how its plans look ahead.
 // (HQ's own to sort)
 // Needed colleague answers.
 export const planning = (
@@ -196,13 +196,15 @@ export const planning = (
      \`hq inbox accept <id> --deliverable <project>/<slug>\` (its "done when" grows with \`hq plan rename\` if it must),
      then \`hq plan move\` it to its place among the deliverable's tasks if it isn't last. Several agents take turns
      in one deliverable, on one branch, reviewed once at its end;
-   - a feature no open deliverable makes: a deliverable of its own, cut by what the board will see go live (never one
-     per note or proposal), \`hq inbox accept <id> --deliverable new:<project> "name" "done when"\`, with what it
-     needs first (\`hq plan need <deliverable> <deliverable>\`);
+   - a feature no open deliverable makes: a deliverable of its own (never one per note or proposal), \`hq inbox accept
+     <id> --deliverable new:<project> "name" "done when"\`; a later piece of a feature is drawn first, needing the
+     deliverable before it (\`hq plan deliverable <project> "name" "done when" --needs <project>/<slug>\`), then
+     accepted into it (\`--deliverable <project>/<slug>\`), since a queued task can start at once;
    - another owner's project: drop it saying whose it is, so its proposer proposes it there;
    - not worth doing now: \`hq inbox drop <id> "why"\` (its proposer reads why).
 4. Read \`hq plan <project>\` again for each deliverable you added to: split a task it marks to split into its steps,
-   and draw the later part of a deliverable it marks as a deliverable of its own, cut where a piece can go live alone.
+   and a deliverable it marks stays whole unless its later part goes live on its own: then that part is drawn as a
+   deliverable of its own needing it.
 5. Before you end, read \`hq inbox\` again: what arrived while you worked waits there too. End when nothing waits for
    you. Change only the plans these inbox items require. Write no code.
 

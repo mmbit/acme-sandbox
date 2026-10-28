@@ -86,3 +86,20 @@ test('more than a page of cards: every one is reached, once, in order, a page at
   assert.deepEqual(all.map(key), all.map(key).sort().reverse());
   assert.deepEqual(await page(ids.at(-1)! + 10_000), { cards: [], more: false, total: 0 }, "a card that isn't in the archive is no place to start from");
 });
+
+test('the finder gets every archived card in archive order without loading their contents', async () => {
+  const first = await page(), all = await archive();
+  const response = await board('/api/requests/archive/index');
+  assert.equal(response.status, 200);
+  const index = response.body as any[];
+  assert.ok(index.length > 50);
+  assert.deepEqual(index.map(r => r.id), all.map(r => r.id));
+  const oldest = all.at(-1);
+  assert.ok(!first.cards.some(r => r.id === oldest.id));
+  assert.deepEqual(index.at(-1), {
+    id: oldest.id, title: oldest.title, agent: oldest.agent,
+    created: oldest.created, answered: oldest.answered,
+  });
+  assert.ok(index.every(r => Object.keys(r).sort().join(',') === 'agent,answered,created,id,title'));
+  assert.equal((await fetch(`${h.base}/api/requests/archive/index`)).status, 401);
+});

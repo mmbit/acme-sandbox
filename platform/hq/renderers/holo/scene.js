@@ -197,7 +197,10 @@ const where = ({ kind, id }) => kind === 'mascot' && S.mascots.some(c => c.data.
 const hex = c => '#' + c.map(v => Math.round(Math.min(1, v) * 255).toString(16).padStart(2, '0')).join('');
 function portrait({ kind, id }) {
   if (kind === 'mascot') { const img = picture(MASCOT, world.mascots.find(m => m.id === id)?.kind); return img && { img, accent: hex(MASCOT) }; }
-  const P = S.people.get(id), col = agentColour(P);
+  // null for an agent who isn't in the building (one who has left: their call or card shows their initial)
+  const P = S.people.get(id);
+  if (!P) return null;
+  const col = agentColour(P);
   const look = makeLook(world.agents.get(id)?.data ?? { id });
   return { img: picture(col, 'agent', spriteFrame(id, look, 'stand', true, false)), accent: hex(col) };
 }

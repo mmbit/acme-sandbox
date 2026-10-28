@@ -155,6 +155,18 @@ export function notice(to: string, text: string, job: number, held: number) {
     .run(new Date().toISOString(), to, redact(text)!, job, held);
 }
 
+// A line from HQ for one running job of the agent's (a try run's, ink/booktry.ts: the board wrote again on the note it
+// tries), handed to the session at its next step like any message, and a job of its own if the run ends unread
+// (jobEnded). A run that holds a customer's details (a try on a call about them) sends them on with the line, so whichever
+// job reads it holds them too.
+export function forRun(to: string, text: string, job: number) {
+  const customers = holdsCustomerData(job);
+  const { lastInsertRowid } = db
+    .prepare(`insert into messages (created, sender, recipient, text, job, customers) values (?, 'hq', ?, ?, ?, ?)`)
+    .run(new Date().toISOString(), to, redact(text)!, job, customers ? 1 : 0);
+  return Number(lastInsertRowid);
+}
+
 // Whom an answer goes to: the sender's job's agent (a team member lives in its lead's session, which hq say can reach).
 const lead = (m: Message) => (m.sender_job ? (db.prepare('select agent from jobs where id = ?').get(m.sender_job) as { agent: string } | undefined)?.agent : undefined) ?? m.sender;
 

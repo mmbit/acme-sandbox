@@ -1,6 +1,7 @@
-// A call's notes page in the Notebook: a normal page, in a notebook of its own
-// (kind 'call', "Call with Juno, 00:34"), open while the call is live. The board and the call's agent both add to it,
-// and the board scribbles on the agent's notes as on any group.
+// A call's notes page: an ordinary page of the board's My Notebook, made for the call as it's picked up and titled for
+// it ("Call with Juno, 15:34"), open while the call is live. The board writes on it as on any page; the call's agent
+// adds to it, through the notebook's own scraps (notebookscraps.ts). (was a
+// notebook of its own per call)
 //   - The agent's scraps: on its turn the agent turns what the board said and drew into one scrap per change, each its
 //     own focused crop (the voice line's scrap tool, POST /api/voice/scrap): a part of one of the board's notes on this
 //     call (bookcalls.ts), or of the board's screen at a moment of the watch-along. Each lands as it's made, a 'book'
@@ -9,10 +10,10 @@
 //   - Its title: a few words the agent gives once the call's subject is clear (POST /api/voice/title), a title, not a
 //     summary.
 //   - A page brought to the call by its folded corner (bookshare.js) is its first scrap, in front of both.
-//   - The call ended: the board's own lines on the page become groups (one that starts on a group joins it), as do its
-//     typed words, taped pictures and the notes no scrap was cut from (notebookcarry.ts), the page is sent as any page
-//     is (notebooksend.ts: each group to its agent), and once it's sent the page and its notebook go to the archive.
-//     A page with nothing on it goes, its notebook with it.
+//   - The call ended: what the board wrote the old book's way on the page (a mark before the page was the notes page)
+//     and the notes no scrap was cut from become groups (notebookcarry.ts), the page is sent as any page is
+//     (notebooksend.ts: each group to its agent), and once it's sent it goes to My Notebook's archive. A page with
+//     nothing on it goes.
 // The call engine (the watch-along, the line's driving and drawing) knows nothing of this page: Ink reads the engine
 // here, through its routes, and the engine never reads Ink.
 import { existsSync, readFileSync } from 'node:fs';
@@ -22,24 +23,17 @@ import { companyTime } from '../company.ts';
 import { findAgent } from '../jobs.ts';
 import { DIR } from '../pagescraps.ts';
 import * as watchalong from '../watchalong.ts';
-import { BOARD, COLUMNS, drawnOf, row, summary, type Page } from './book.ts';
+import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
-import { linesOf } from './bookwriting.ts';
 import { changed, makeNotebook, newPage, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
-import { insertGroup, partsOf, stackFoot, type Group } from '../notebookgroups.ts';
-import { boxOf } from '../notebookparts.ts';
-import { keepPicture } from '../notebookpictures.ts';
+import { stackPicture, stackWords } from '../notebookscraps.ts';
 import { RESEND, sendPage } from '../notebooksend.ts';
 import { carryParts } from '../notebookcarry.ts';
 import type { Note } from './booknotes.ts';
 import { onCallPage } from '../ledger.ts';
-import { isRefused, labelOf, type Anchor, type Refused, type Stroke } from '../pagechecks.ts';
+import { isRefused, labelOf, type Anchor, type Refused } from '../pagechecks.ts';
 import { pictureSize } from '../../../../shared/pictures/size.ts';
 
-// Where the page's groups stand: a column this far in, this wide
-const COLUMN = { x: 40, w: 360 };
-// An agent's typed note, in the book's ink for type
-const TYPE = '#2f2a24';
 // The most of its words a scrap carries (its post-it's)
 const WORDS_MOST = 280;
 
@@ -50,33 +44,34 @@ type Live = { id: number; agent: string; ts: string };
 const liveCall = (call: number) =>
   db.prepare("select id, agent, ts from calls where id = ? and status = 'live'").get(call) as Live | undefined;
 
-// The call's notes page, made the first time it's asked for while the call is live: a page of the call's own
-// notebook. A call page the book made for the board's first mark before this one (book.ts, kind 'call') becomes it,
-// moved out of My Notebook if the shelf has carried it there (its groups go with it).
+// The call's notes page, made the first time it's asked for while the call is live: a new page of My Notebook. A call
+// page the book made for the board's first mark before this one (book.ts, kind 'call') becomes it.
 export function pageFor(call: number): NotebookPage | null {
   const found = db
     .prepare(
-      `select p.id, p.notebook, n.kind from book_pages p left join notebooks n on n.id = p.notebook
-        where p.kind = 'call' and p.call = ? and p.who = ? and p.archived = 0
-        and (p.send_at is null or p.notebook is null) order by p.id desc limit 1`,
+      `select id, notebook from book_pages where kind = 'call' and call = ? and who = ? and archived = 0
+        and send_at is null order by id desc limit 1`,
     )
-    .get(call, BOARD) as { id: number; notebook: number | null; kind: string | null } | undefined;
-  if (found?.kind === 'call') return pageRow(found.id, BOARD)!;
+    .get(call, BOARD) as { id: number; notebook: number | null } | undefined;
+  if (found?.notebook) return pageRow(found.id, BOARD)!;
   const c = liveCall(call);
   if (!c) return null;
   return inOneStep(() => {
-    const notebook = makeNotebook(
-      BOARD,
-      'call',
-      `Call with ${findAgent(c.agent)?.name ?? c.agent}, ${companyTime(Date.parse(c.ts))}`,
-    );
+    // (My Notebook's id alone: its mine() would carry the book's page in as an old one, its call's notes as sent)
+    const notebook =
+      (db.prepare("select id from notebooks where who = ? and kind = 'mine'").get(BOARD) as { id: number } | undefined)
+        ?.id ?? makeNotebook(BOARD, 'mine', 'My Notebook');
     const id = found?.id ?? newPage(notebook);
-    db.prepare("update book_pages set kind = 'call', call = ?, notebook = ?, pos = 0 where id = ?").run(
+    const { last } = db.prepare('select max(pos) last from book_pages where notebook = ?').get(notebook) as {
+      last: number | null;
+    };
+    db.prepare("update book_pages set kind = 'call', call = ?, notebook = ?, pos = ?, label = ? where id = ?").run(
       call,
       notebook,
+      found ? (last ?? -1) + 1 : pageRow(id, BOARD)!.pos,
+      `Call with ${findAgent(c.agent)?.name ?? c.agent}, ${companyTime(Date.parse(c.ts))}`,
       id,
     );
-    if (found?.notebook) changed(found.notebook, null);
     changed(notebook, id);
     return pageRow(id, BOARD)!;
   });
@@ -94,7 +89,7 @@ function openPage(call: number) {
   const open = db
     .prepare(
       `select id from book_pages where kind = 'call' and call = ? and who = ? and archived = 0 and send_at is null
-        and notebook in (select id from notebooks where kind = 'call')`,
+        and notebook is not null`,
     )
     .get(call, BOARD) as { id: number } | undefined;
   return open?.id;
@@ -206,29 +201,12 @@ export async function cropped(picture: Buffer, r: Region) {
   return sharp(picture).extract({ left, top, width: w, height: h }).png().toBuffer();
 }
 // A scrap under what's on the page
-async function place(
+const place = (
   p: NotebookPage,
   by: string,
   picture: { type: string; clean: Buffer },
   more: { words: string; anchor: Anchor; owner: string | null },
-) {
-  const { width, height } = pictureSize(picture.clean)!;
-  const w = Math.min(COLUMN.w, width),
-    file = keepPicture(p.id, picture);
-  const placed = { file, x: COLUMN.x, y: stackFoot(p.id), w, h: Math.round((height * w) / width), tilt: 0 };
-  return insertGroup(
-    p,
-    'scrap',
-    by,
-    { ink: [], texts: [], pictures: [placed] },
-    {
-      anchor: more.anchor,
-      words: more.words,
-      said: more.words ? 'typed' : null,
-      owner: more.owner,
-    },
-  );
-}
+) => stackPicture(p, by, picture, { ...more, said: more.words ? 'typed' : null });
 
 // POST /api/voice/title { call, title }: the page's title, a few words for what the call is about
 export function title(b: any) {
@@ -254,33 +232,27 @@ export function noted(call: number, item: { kind: string; owner: string; what: s
   const p = pageRow(open, BOARD)!;
   const owner = findAgent(item.owner)?.name ?? (item.owner === 'board' ? 'you' : item.owner);
   const text = `${item.kind[0].toUpperCase()}${item.kind.slice(1)} for ${owner}: ${item.what}`;
-  insertGroup(
-    p,
-    'drawing',
-    c.agent,
-    { ink: [], texts: [{ x: COLUMN.x, y: stackFoot(p.id), w: COLUMN.w, text, color: TYPE }], pictures: [] },
-    {},
-  );
+  stackWords(p, c.agent, text, {});
 }
 
-// The call has ended (call.ts handOver, ledger.ts sweep): its page sent and archived with its notebook, or gone if
-// nothing is on it
+// The call has ended (call.ts handOver, ledger.ts sweep): its page sent and archived, or gone if nothing is on it
 export async function ended(call: number) {
   const p = db
     .prepare(
       `select ${COLUMNS}, notebook from book_pages where kind = 'call' and call = ? and archived = 0 and send_at is null
-        and notebook in (select id from notebooks where kind = 'call') order by id desc`,
+        and notebook is not null order by id desc`,
     )
     .get(call) as (Page & { notebook: number }) | undefined;
   if (!p || pageRow(p.id, BOARD)!.send_at !== null) return;
-  carryLines(p);
-  // (its typed words, taped pictures and the board's notes no scrap was cut from: nothing it drew is lost)
+  // (what the book wrote on it the old way, and the board's notes no scrap was cut from or the shelf carried: nothing
+  // it drew is lost)
   const uncut = db
     .prepare(
       `select * from book_notes where page = ? and by = ? and id not in (select c.note from call_scraps c
-        join notebook_groups g on g.id = c.scrap where g.deleted is null) order by id`,
+        join notebook_groups g on g.id = c.scrap where g.deleted is null)
+        and id not in (select note from notebook_groups where page = ? and note is not null) order by id`,
     )
-    .all(p.id, p.who) as Note[];
+    .all(p.id, p.who, p.id) as Note[];
   carryParts(p, uncut);
   // (the call's sheet is never sent, so the Notebook's carry takes its notes as gone: they go with the page, each to the
   // routing check)
@@ -295,23 +267,13 @@ export async function ended(call: number) {
   ).run(p.id, p.who);
   if (!hasGroups(p.id)) {
     db.prepare('delete from book_pages where id = ?').run(p.id);
-    db.prepare(
-      "delete from notebooks where id = ? and kind = 'call' and not exists (select 1 from book_pages where notebook = ?)",
-    ).run(p.notebook, p.notebook);
     return changed(p.notebook, null);
   }
   const open = db
     .prepare("select 1 from notebook_groups where page = ? and parent is null and deleted is null and status = 'open'")
     .get(p.id);
   if (open) await send(call, p.id);
-  // (the fresh page a send makes: a call's notebook takes no more)
-  const fresh = pageRow(p.id, BOARD)!.fresh;
-  if (fresh)
-    db.prepare(
-      "delete from book_pages where id = ? and label = '' and not exists (select 1 from notebook_groups where page = ?)",
-    ).run(fresh, fresh);
   db.prepare('update book_pages set archived = 1 where id = ?').run(p.id);
-  db.prepare('update notebooks set archived = 1 where id = ?').run(p.notebook);
   changed(p.notebook, p.id);
 }
 // The call's page sent, again while the board changes it in the Notebook as it goes; any other refusal leaves it open on
@@ -323,36 +285,6 @@ async function send(call: number, page: number) {
     throw new Error(
       `Call #${call}: its notes page #${page} wasn't sent (${JSON.stringify(sent)}); it stays open on the shelf`,
     );
-}
-// The board's own lines on the page (the book's ink, written before its screens draw groups) as groups: a line that
-// starts on a group joins it, the rest join as lines of writing do
-function carryLines(p: Page) {
-  const own = JSON.parse(drawnOf(p.id).ink) as Stroke[];
-  if (!own.length) return;
-  const groups = db
-    .prepare("select * from notebook_groups where page = ? and parent is null and deleted is null and status = 'open'")
-    .all(p.id) as Group[];
-  const boxes = groups.map(g => ({ g, box: boxOf(partsOf(g)) }));
-  const loose: Stroke[] = [];
-  inOneStep(() => {
-    for (const s of own) {
-      const [x, y] = s.points[0];
-      const on = boxes.find(({ box }) => box && x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h);
-      if (!on) loose.push(s);
-      else {
-        const ink = [...JSON.parse(on.g.ink), s];
-        on.g.ink = JSON.stringify(ink);
-        db.prepare('update notebook_groups set ink = ?, updated = ? where id = ?').run(
-          on.g.ink,
-          new Date().toISOString(),
-          on.g.id,
-        );
-      }
-    }
-    for (const line of linesOf(loose))
-      insertGroup(p as NotebookPage, 'drawing', p.who, { ink: line, texts: [], pictures: [] }, {});
-    db.prepare("update book_pages set ink = '[]', strokes = 0 where id = ?").run(p.id);
-  });
 }
 const hasGroups = (page: number) =>
   !!db.prepare('select 1 from notebook_groups where page = ? and parent is null and deleted is null limit 1').get(page);

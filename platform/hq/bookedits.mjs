@@ -25,6 +25,8 @@ export function editStories(c) {
       browser => scrapTyped(browser, c),
     "a gap closed while its writing is read: what waits on it has the words, and a reset's drop puts none in":
       browser => gapClosed(browser, c),
+    'a gap closed as its pen writes: the close waits for every reading, and a line lifted after it is never read':
+      browser => lateLine(browser, c),
   };
 }
 
@@ -141,6 +143,56 @@ async function gapClosed(browser, c) {
     });
     assert.equal(got.closed, 'Order the mugs teal', 'closed again, the gap is waited on till its words are in');
     assert.equal(got.dropped, 'Order the mugs teal', "a dropped gap's reading puts nothing in");
+    c.noErrorsIn(errors);
+  } finally {
+    await done();
+  }
+}
+
+// The words written after a post-it's Send stay out of it: a gap closed while its first line is read and a second
+// waits, with a third pressed before the close and lifted after it (the finger's, which the pad writes as the pen's:
+// the field is on HQ's page, where review mode takes the pen).
+async function lateLine(browser, c) {
+  const { page, errors, done } = await onDesk(browser, c);
+  try {
+    const got = await page.evaluate(async () => {
+      const { openGap } = await import('/__review/penwords.js');
+      const field = Object.assign(document.createElement('textarea'), { value: 'Order the mugs' });
+      Object.assign(field.style, { position: 'fixed', left: '200px', top: '200px', width: '300px', zIndex: 99 });
+      document.body.append(field);
+      const r = field.getBoundingClientRect(),
+        at = dx => ({ clientX: r.left + 20 + dx, clientY: r.top + 10, pressure: 0.5 }),
+        reads = [],
+        words = ['teal', 'big', 'late'];
+      const gap = openGap(field, field.value.length, {
+        text: () => field.value,
+        put: text => (field.value = text),
+        read: lines => (
+          reads.push(lines.length),
+          new Promise(read => setTimeout(() => read(words[reads.length - 1]), 300))
+        ),
+        lines: [[Object.values(at(0)), Object.values(at(20))]],
+      });
+      await new Promise(rest => setTimeout(rest, 1300)); // (past the pen's rest: the first reading under way)
+      const pad = [...document.body.children].find(el => el.style.touchAction === 'none'),
+        touch = (type, pointerId, dx) =>
+          pad.dispatchEvent(new PointerEvent(type, { pointerId, pointerType: 'touch', isPrimary: true, ...at(dx) }));
+      touch('pointerdown', 7, 40);
+      touch('pointermove', 7, 60);
+      touch('pointerup', 7, 60);
+      touch('pointerdown', 8, 80);
+      touch('pointermove', 8, 100);
+      const closing = gap.close();
+      touch('pointerup', 8, 100);
+      await closing;
+      const closed = field.value; // (what the close itself waited for)
+      await new Promise(rest => setTimeout(rest, 1600)); // (past the pen's rest again: a late line would be read by now)
+      field.remove();
+      return { reads, closed, value: field.value };
+    });
+    assert.deepEqual(got.reads, [1, 1], 'the close waits for both readings, the line lifted after it never read');
+    assert.equal(got.closed, 'Order the mugs teal big', '...both readings in by the time the close returns');
+    assert.equal(got.value, 'Order the mugs teal big', "...the late line's words none");
     c.noErrorsIn(errors);
   } finally {
     await done();

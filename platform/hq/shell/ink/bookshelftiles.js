@@ -3,8 +3,8 @@
 import { DAYS, MONTHS, esc } from '../../util.js';
 import { lineIcon as svg } from './bookui.js';
 
-// what a notebook's label says it is, under its name (My Notebook says nothing)
-const KINDS = { call: 'Call notes', round: 'Review round', invited: 'Invited' };
+// what a notebook's label says it is, under its name (My Notebook says nothing; a call's notes are a page of it.
+const KINDS = { round: 'Review round', invited: 'Invited' };
 
 export const ICONS = {
   shelf: svg('<path d="M5 4v16M9.5 4v16"/><path d="M13.6 5.3l3.8-1 3.7 14.4-3.8 1z"/><path d="M3 20.2h18"/>'),

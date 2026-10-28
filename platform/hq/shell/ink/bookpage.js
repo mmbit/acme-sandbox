@@ -9,6 +9,7 @@ import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
 import { picture, esc } from '../../util.js';
 import { around, boxOf, pageBox, scrapBoxOf, tileSide, tilesIn } from './bookrow.js';
+import { mountAnswers } from './bookanswers.js';
 
 // what's kept drawn beyond what the paper shows, as a share of it on every side: enough to pan into without a gap
 const KEEP = 0.5;
@@ -30,13 +31,13 @@ export function pageView(page, head, held = false) {
   const colour = head.colour ? ` style="color:${esc(head.colour)}"` : '',
     date = `<span class="bk-date"><b class="bk-when"${colour}>${esc(head.day)}</b>${today}</span>`,
     title = head.title ? `<span class="bk-name">${esc(head.title)}</span>${stamp}${date}` : `${date}${stamp}`;
-  // (a sheet's notes, and a call's)
-  const notes = page.kind === 'sheet' || page.kind === 'call' ? '<div class="bk-notes" data-slot="notes"></div>' : '';
-  el.innerHTML = `<div class="bk-title"${head.title ? '' : ' data-bare'}>${title}</div>${notes}<p class="bk-refusal" role="status" hidden></p>`;
+  // (the agents' answers over the page, .bk-answers: bookanswers.js.)
+  el.innerHTML = `<div class="bk-title"${head.title ? '' : ' data-bare'}>${title}</div><div class="bk-answers" data-slot="answers"></div><p class="bk-refusal" role="status" hidden></p>`;
   const refusal = el.querySelector('.bk-refusal'),
     tiles = inkTiles(el, page, held);
   refusal.textContent = page.error;
   refusal.hidden = !page.error;
+  mountAnswers(el.querySelector('.bk-answers'), page);
   return {
     el,
     page,

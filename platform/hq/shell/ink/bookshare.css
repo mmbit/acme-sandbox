@@ -9,7 +9,7 @@
 #book .bk-dogear {
   all: unset;
   position: absolute;
-  top: var(--sat, 0px);
+  top: 0;
   right: 0;
   z-index: 6;
   width: var(--bk-ear);
@@ -114,18 +114,37 @@
   position: absolute;
   left: calc(50% - 32px);
   top: max(96px, 26%);
-  z-index: 7;
+  z-index: 8;
   display: flex;
   gap: 14px;
   padding: 10px;
   border-radius: 22px;
-  background: color-mix(in srgb, var(--bk-paper) 80%, transparent);
-  box-shadow: 0 10px 30px rgba(20, 14, 40, 0.18);
+  /* solid paper, edged like the page's own: it reads over the dimmed page */
+  background: var(--bk-paper);
+  box-shadow:
+    0 0 0 1px color-mix(in srgb, var(--bk-ink) 16%, transparent),
+    0 14px 36px rgba(20, 14, 40, 0.32);
   translate: -50% 0;
   animation: bk-share-in 0.16s ease-out;
 }
-#book .bk-share[hidden] {
+#book .bk-share[hidden],
+#book .bk-share-dim[hidden] {
   display: none;
+}
+/* the page under the targets, dimmed and softened as they show */
+#book .bk-share-dim {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  background: color-mix(in srgb, var(--bk-night) 30%, transparent);
+  -webkit-backdrop-filter: blur(2px);
+  backdrop-filter: blur(2px);
+  animation: bk-share-dim-in 0.2s ease-out;
+}
+@keyframes bk-share-dim-in {
+  from {
+    opacity: 0;
+  }
 }
 @keyframes bk-share-in {
   from {
@@ -198,7 +217,8 @@
   #book .bk-share button {
     transition: none;
   }
-  #book .bk-share {
+  #book .bk-share,
+  #book .bk-share-dim {
     animation: none;
   }
 }

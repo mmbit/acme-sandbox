@@ -3,7 +3,7 @@
 import { cap } from '../util.js';
 import * as world from '../world/world.js';
 import { names } from './brand.js';
-import { loadProjects, loadRequests, loadArchive, loadArtifacts, loadCalls, loadMail } from './data.js';
+import { loadProjects, loadRequests, loadArchiveIndex, loadArtifacts, loadCalls, loadMail } from './data.js';
 import {
   computerApps,
   openComputer,
@@ -98,7 +98,7 @@ async function work() {
   ];
 }
 async function cards() {
-  const [open, answered] = await Promise.all([loadRequests(world.dev), loadArchive(world.dev)]);
+  const [open, answered] = await Promise.all([loadRequests(world.dev), loadArchiveIndex(world.dev)]);
   if (!open) throw new Error(`the ${names.phone}'s cards didn't load`); // (loadRequests' null)
   const card = (r, sub, opens, at) => ({
     key: String(r.id),
@@ -110,7 +110,7 @@ async function cards() {
   });
   return [
     ...open.map(r => card(r, 'Waiting', openPhone)),
-    ...answered.cards.map(r => card(r, 'Answered', openAnswered, r.answered ?? r.created)),
+    ...answered.map(r => card(r, 'Answered', openAnswered, r.answered ?? r.created)),
   ];
 }
 async function artifacts() {

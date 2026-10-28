@@ -3,7 +3,8 @@
 // tapped opens its pages; zoomed in, it comes back to the page. Two fingers' pinch over the overview, a trackpad's
 // pinch (a wheel with Ctrl), Safari's gesture events and the view's controls (bookcontrols.js) step it; each step
 // turns a leaf of the book (bookflip.js), as a page change does. A pinch on the page itself never opens it (only its
-// button and the keys do: bookpages.js).
+// button and the keys do: bookpages.js). Out to the Shelf, the book draws back from it instead (bookflip.js zoomOut):
+// a leaf turns only into a book.
 // (the day and the week replaced by the notebook's pages and the Shelf)
 import { mountScreens } from './bookshelf.js';
 
@@ -19,14 +20,15 @@ const WHEEL_STEP = 50,
 // paper: the book's pages (bookpages.js's .bk-pages). dev: on mock data. notebook(): the notebook the book shows now
 // (its id, or a promise of it; null: none on the Shelf); page(): the page it shows (its id); saved(): what's drawn
 // saved in the store, a promise. open(page, notebook): that page shown, of that notebook (notebookdata.js's page).
-// turn(dir, midway): a leaf turned over the paper, midway() swapping what's under it (bookflip.js). changed(level): the
-// overview opened, stepped or closed.
-export function mountZoom(paper, { dev, notebook, page, saved, open, turn, changed }) {
+// turn(dir, midway): a leaf turned over the paper, midway() swapping what's under it (bookflip.js). zoomOut(coming,
+// midway): the same swap with the view shown drawing back as coming arrives. changed(level): the overview opened,
+// stepped or closed.
+export function mountZoom(paper, { dev, notebook, page, saved, open, turn, zoomOut, changed }) {
   const far = document.createElement('div');
   far.className = 'bk-far';
   far.hidden = true;
   paper.append(far);
-  const z = { far, open, turn, changed, level: 0, notebook: null, used: false };
+  const z = { far, open, turn, zoomOut, changed, level: 0, notebook: null, used: false };
   Object.assign(z, { touches: new Map(), wheel: 0, rest: 0 });
   z.screens = mountScreens(far, {
     dev,
@@ -137,13 +139,14 @@ function step(z, by) {
 
 // ---- the views
 
-// The overview at a level (the notebook's pages: that notebook's, the book's own (null) by default), a leaf turning to
-// it: back as it steps out, forward as it steps in
+// The overview at a level (the notebook's pages: that notebook's, the book's own (null) by default): out to the Shelf
+// the book draws back from it, and a leaf turns into a notebook's pages, back from the page and forward from the Shelf
 function go(z, level, id = null) {
   const from = z.level;
   z.level = level;
   z.notebook = id ?? z.notebook;
   z.changed(LEVELS[level]);
+  if (LEVELS[level] === 'shelf') return z.zoomOut(z.far, () => show(z));
   return z.turn(level > from ? -1 : 1, () => show(z));
 }
 function show(z) {

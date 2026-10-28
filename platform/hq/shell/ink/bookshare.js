@@ -1,9 +1,11 @@
-// Where a page goes by its folded corner (bookdogear.js): three targets over the paper, PDF, PNG and a call with the
-// CEO. They show as drop targets while the page is carried, or as a small menu (the corner pressed with a key, or
-// tapped). PDF and PNG hand the page's picture to the system's share sheet, or download it where there's none; the
-// call starts with the page in front of the CEO. Its look: bookshare.css.
+// Where a page goes by its folded corner (bookdogear.js): three targets over the paper, PDF, PNG and a call, the page
+// dimmed under them. They show as drop targets while the page is carried, or as a small menu (the corner pressed with a
+// key, or tapped). PDF and PNG hand the page's picture to the system's share sheet, or download it where there's none;
+// the call, named for the agent, rings the CEO with the page's picture, or with a call on shows it in that one. Its
+// look: bookshare.css. (dimmed, named)
 import * as world from '../../world/world.js';
 import { callAgent, ceoName } from '../desk.js';
+import { callName } from '../call.js';
 import { titleOf } from './bookhead.js';
 import { pagePicture } from './bookpaperdraw.js';
 import { saved } from './booksave.js';
@@ -21,13 +23,15 @@ export function mountTargets(el, { act, closed }) {
   row.setAttribute('role', 'menu');
   row.setAttribute('aria-label', 'Share this page');
   row.hidden = true;
+  // (the page dimmed under the targets, so they read)
+  const dim = Object.assign(document.createElement('div'), { className: 'bk-share-dim', hidden: true });
   row.innerHTML = TARGETS.map(
     ({ kind, icon }) =>
       `<button role="menuitem" data-share="${kind}" tabindex="-1">${icon}<span class="bk-share-word"></span></button>`,
   ).join('');
-  el.append(row);
+  el.append(dim, row);
   const items = [...row.children],
-    targets = { row, items, act, closed };
+    targets = { row, dim, items, act, closed };
   row.addEventListener('click', e => {
     const item = e.target.closest('[data-share]');
     if (item && row.dataset.mode === 'menu') take(targets, item);
@@ -47,7 +51,7 @@ export function mountTargets(el, { act, closed }) {
     shown: () => !row.hidden,
   };
 }
-// The targets as they read, the CEO's name read each time they show
+// The targets as they read, the call's name read each time they show: whom the call on is with, else the CEO
 const TARGETS = [
   { kind: 'pdf', word: () => 'PDF', icon: icon('M7 3h7l4 4v14H7z M14 3v4h4 M9.5 12h6 M9.5 15h6 M9.5 18h4') },
   {
@@ -57,7 +61,7 @@ const TARGETS = [
   },
   {
     kind: 'call',
-    word: () => `Call ${ceoName()}`,
+    word: () => callName() ?? ceoName(),
     icon: icon(
       'M6.2 3.8 9 3.4l1.6 4.2-2 1.4c.9 2.3 2.7 4.2 5 5.2l1.4-2 4.2 1.5-.3 2.9c-.2 1-1 1.6-2 1.6C10.6 18 5.6 13 5 6.1c0-1 .3-2 1.2-2.3z',
     ),
@@ -68,16 +72,16 @@ function icon(d) {
   return `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${d}"/></svg>`;
 }
 
-function show({ row, items }, mode) {
+function show({ row, dim, items }, mode) {
   items.forEach((item, i) => {
     item.querySelector('.bk-share-word').textContent = TARGETS[i].word();
     item.removeAttribute('data-over');
   });
   row.dataset.mode = mode;
-  row.hidden = false;
+  row.hidden = dim.hidden = false;
 }
-function hide({ row, items }) {
-  row.hidden = true;
+function hide({ row, dim, items }) {
+  row.hidden = dim.hidden = true;
   items.forEach(i => i.removeAttribute('data-over'));
 }
 function take(targets, item) {
@@ -169,10 +173,11 @@ export async function shared(file) {
   setTimeout(() => URL.revokeObjectURL(link.href), 60_000);
 }
 
-// A call with the CEO, the page in front of them (call.js: the line puts its picture before them). A page the store
-// doesn't have yet (a blank one, or its first save still going) can't go: that's said, and no call starts without it.
-export async function callAbout(page) {
+// The page on a call: its picture (picture, a promise of its PNG: filesOf's) shown in the call on, or a call with the CEO
+// started with it (call.js). A page the store doesn't have yet (a blank one, or its first save still going) can't go:
+// that's said, and no call starts without it.
+export async function callAbout(page, picture) {
   if (!page.id)
     throw new Error('The page isn’t saved yet, so it can’t go on a call: write on it, or try again in a moment.');
-  return callAgent(world.company.ceo, ceoName(), { page: page.id });
+  return callAgent(world.company.ceo, ceoName(), { pictures: [picture], page: page.id });
 }

@@ -167,7 +167,7 @@ export function log(since: string) {
     .all(since);
 }
 
-// (deliverables, the board's word for threads, drawn whole)
+// (deliverables, the board's word for threads, drawn whole; later pieces chained)
 function checkPrompt(job: number) {
   const routes = routable(job);
   const owners = routes
@@ -184,7 +184,9 @@ pages say whose that is.
 3. Each task: \`hq job <agent> "title" --code WORD --deliverable <project>/<slug> --notes <note ids>\`, a plain title and a \
 code that say what it does, in the open deliverable of the notes' project whose feature it serves: notes on one feature, \
 whoever's they are, are tasks in turn in one deliverable, never a deliverable per note. A new one (\`--deliverable \
-new:<project> "name" "done when"\`) only for a feature no open deliverable makes, cut by what the board will see go live. The notes go at the end of its brief, with their pictures; a brief file only for what they don't say. Or, \
+new:<project> "name" "done when"\`) only for a feature no open deliverable makes; one that builds on another is drawn first, \
+needing that one (\`hq plan deliverable <project> "name" "done when" --needs <project>/<slug>\`), then given its tasks (a \
+queued task can start at once): never drawn to run beside it. The notes go at the end of its brief, with their pictures; a brief file only for what they don't say. Or, \
 into a job in that area an agent queued that hasn't started: \`hq route '#<job>' <note ids>\` (into its brief). Never into \
 held work, nor a new task behind it or in a paused deliverable: the notes would wait with it. A note that came back says from \
 where and why: route it where work can start. The notes \

@@ -1,0 +1,88 @@
+/* A form an agent asks the board to fill in, under its answer (bookanswerreply.js): questions.js's fields in the
+   book's quiet type, the answers written in the hand. */
+
+/* a form: questions.js's fields, in the book's quiet type */
+#book .bk-answer-form {
+  margin: 8px 0 0;
+  font: 14px/1.35 var(--bk-font);
+  color: var(--bk-ink, #2a2352);
+  pointer-events: auto;
+}
+#book .bk-answer-q {
+  margin: 0 0 10px;
+}
+#book .bk-answer-qt {
+  display: block;
+  font-weight: 600;
+}
+#book .bk-answer-qd {
+  display: block;
+  opacity: 0.7;
+}
+#book .bk-answer-form .qa {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 5px;
+}
+#book .bk-answer-form .chip {
+  all: unset;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1.5px solid color-mix(in srgb, var(--ink) 45%, transparent);
+  cursor: pointer;
+}
+#book .bk-answer-form .chip.on {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+#book .bk-answer-form input {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 3px 2px;
+  border: 0;
+  border-bottom: 1.5px solid var(--bk-rule);
+  background: transparent;
+  font: 22px/1.1 var(--bk-hand);
+  color: var(--bk-ink, #2a2352);
+}
+#book .bk-answer-form input:focus {
+  outline: none;
+  border-bottom-color: var(--ink);
+}
+#book .bk-answer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 0;
+}
+#book .bk-answer-said {
+  font-size: 13px;
+  opacity: 0.75;
+}
+#book .bk-answer-send {
+  all: unset;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+#book .bk-answer-send:disabled {
+  opacity: 0.5;
+}
+#book .bk-answer-send:focus-visible,
+#book .bk-answer-form .chip:focus-visible {
+  outline: 2px solid var(--bk-ink, #2a2352);
+  outline-offset: 2px;
+}
+#book dl.bk-answer-form dt {
+  font-weight: 600;
+}
+#book dl.bk-answer-form dd {
+  margin: 0 0 6px;
+  font: 22px/1.1 var(--bk-hand);
+}

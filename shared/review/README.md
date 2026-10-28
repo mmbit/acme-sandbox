@@ -92,7 +92,9 @@ alone, so the imports form no circle.
   browser (at most `STILL` pixels off: soft-edge rounding; a line that moved changes hundreds).
 - **It keeps up with the pen:** where the browser predicts the pen's next points (`getPredictedEvents`), a tail is
   drawn from the line's end to them, until the next event wipes it (or about three frames after the pen stops). The
-  tail is never kept in the stroke: the line that goes dry is only where the pen went.
+  tail is never kept in the stroke: the line that goes dry is only where the pen went. `ink.test.js` checks the
+  pixels: the tail reaches the last predicted point and ends there, and after the next sample the screen is the line
+  alone.
 - **A pen starts it:** drawn across a page while review mode rests, a pen opens it right there, the line from where it
   touched, and the page doesn't scroll under it. A pen's tap stays the page's own. Once a pen has drawn on a note, only
   the pen draws (a palm resting on the screen doesn't); a finger still taps and scrolls.

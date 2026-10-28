@@ -18,13 +18,15 @@
 #book .bk-edge {
   background:
     radial-gradient(130% 60% at 0% 0%, rgba(255, 255, 255, 0.07), transparent 60%), var(--bk-grain), var(--bk-cloth);
+  /* (inside the leaf's border: the table's margin past the spine, book.css) */
+  background-clip: padding-box;
 }
 /* the cover's outer edge: the board's rounded edge, a hair of light along it */
 #book .bk-edge {
   border-radius: 7px 0 0 7px;
   box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.12);
 }
-/* the spine at the screen's right edge: the board rounding into the book's back */
+/* the spine, a margin from the screen's right edge: the board rounding into the book's back */
 #book .bk-leaf::after {
   content: '';
   position: absolute;

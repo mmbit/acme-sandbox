@@ -4,19 +4,14 @@
 // model decides what's writing: a ring, an arrow or a tick is none, whatever its strokes. The worker runs it on a Claude
 // seat, one short call with no tools and the picture on stdin (worker.ts readLoop), as it does the meetings' bubbles.
 // The picture is never stored: it lives in memory for the length of the board's request (a day's count is kept).
-import { randomUUID } from 'node:crypto';
 import { db } from './db.ts';
 import { companyDay } from './company.ts';
-import { redact } from './secrets.ts';
-import { MODEL, answerOf } from './smallmodel.ts';
+import { answerOf, smallCall } from './smallmodel.ts';
 import { WORDS_MAX, dataUrlPicture, isRefused, type Refused } from './pagechecks.ts';
 
 // The board's request waits WAIT_MS for the words (the post-it fills whenever they come, and a note already sent takes
-// them as an edit). A claimed call that hasn't answered within CALL_MS has died (oneLine kills the CLI at 90 s): due again,
-// TRIES calls in all.
-const WAIT_MS = 120_000,
-  CALL_MS = 95_000,
-  TRIES = 2;
+// them as an edit).
+const WAIT_MS = 120_000;
 // Each reading spends a little of a Claude seat's window, which the company's jobs live on: READS_A_DAY bounds what a
 // page left writing (or a client gone wrong) can take in a day, as the voice line bounds a call's pictures. A day's
 // reading at the board's pace is a few dozen.
@@ -46,17 +41,6 @@ lines joined with a space, and leave the drawn marks out. A word you can't make 
 If it's only marks, or nothing anyone wrote as words, writing is false and words is ''.`;
 
 export type Read = { writing: boolean; words: string };
-type Reading = {
-  id: string;
-  ink: { type: string; data: string };
-  claimed: number;
-  tries: number;
-  done: (r: Read | Refused) => void;
-};
-export type Claimed = { reading: string; model: string; content: unknown[]; schema: string };
-
-// (ids unique across restarts: a worker's call outlives the coordinator, and its answer must not meet a later reading's id)
-const readings: Reading[] = [];
 
 // POST /api/book/read { ink }: the words in the board's ink (a PNG or JPEG data URL), { writing, words }, once the model
 // has read it. 429 past the day's readings, 504 when no answer came in time, 502 when the model's answers were no use.
@@ -66,7 +50,8 @@ export async function read(b: any): Promise<Read | Refused> {
   return readPicture(pic);
 }
 // A picture of ink read, as the board's request reads it: the writing on a sheet page going with its notes reads this
-// way too (bookwriting.ts).
+// way too (bookwriting.ts). The call goes through the small model's queue (smallmodel.ts smallCall, the worker's
+// claim and answer).
 export async function readPicture(pic: { type: string; clean: Buffer }): Promise<Read | Refused> {
   const day = companyDay(Date.now());
   const { reads } = (db.prepare('select reads from handwriting_reads where day = ?').get(day) as { reads: number }) ?? {
@@ -77,54 +62,15 @@ export async function readPicture(pic: { type: string; clean: Buffer }): Promise
     'insert into handwriting_reads (day, reads) values (?, 1) on conflict (day) do update set reads = reads + 1',
   ).run(day);
   db.prepare('delete from handwriting_reads where day < ?').run(companyDay(Date.now() - 7 * 864e5));
-  return new Promise(resolve => {
-    const r: Reading = {
-      id: randomUUID(),
-      ink: { type: pic.type, data: pic.clean.toString('base64') },
-      claimed: 0,
-      tries: 0,
-      done: answer => {
-        clearTimeout(late);
-        readings.splice(readings.indexOf(r), 1);
-        resolve(answer);
-      },
-    };
-    const late = setTimeout(() => r.done([504, 'the handwriting reader gave no answer in time']), WAIT_MS);
-    readings.push(r);
-  });
-}
-
-// POST /api/worker/reads/claim: the next ink to read, with the model's prompt (the picture and the words) and the
-// answer's schema; null while there's none.
-export function claim(now = Date.now()): Claimed | null {
-  const r = readings.find(x => !x.claimed || (x.claimed <= now - CALL_MS && x.tries < TRIES));
-  if (!r) return null;
-  r.claimed = now;
-  r.tries++;
-  const image = { type: 'image', source: { type: 'base64', media_type: r.ink.type, data: r.ink.data } };
-  return {
-    reading: r.id,
-    model: MODEL,
+  const image = { type: 'image', source: { type: 'base64', media_type: pic.type, data: pic.clean.toString('base64') } };
+  return smallCall({
+    name: 'the handwriting reader',
     content: [image, { type: 'text', text: PROMPT }],
-    schema: JSON.stringify(SCHEMA),
-  };
-}
-
-// POST /api/worker/reads/answer: the model's reading, or the call's failure (due again while it has tries left)
-export function answer(given: { reading?: unknown; result?: unknown; error?: unknown }) {
-  const r = readings.find(x => x.id === given.reading);
-  if (!r) return { written: 0, why: 'no reading waits for it' };
-  const a = given.error === undefined ? readAnswer(given.result) : 'the call failed';
-  if (typeof a === 'string') {
-    console.error(
-      `Handwriting: reading ${r.id} failed: ${a}${given.error ? `: ${redact(String(given.error)).slice(-200)}` : ''}`,
-    );
-    if (r.tries < TRIES) r.claimed = 0;
-    else r.done([502, "the handwriting reader couldn't read it"]);
-    return { written: 0, why: a };
-  }
-  r.done(a);
-  return { written: 1 };
+    schema: SCHEMA,
+    check: readAnswer,
+    wait: WAIT_MS,
+    failed: "the handwriting reader couldn't read it",
+  });
 }
 
 function readAnswer(result: unknown): Read | string {

@@ -361,7 +361,7 @@ test("help and usages show the company's own lines for its levels, the sizes hq 
     execFile('bash', [HQ, ...args], { env: { ...env, HQ_REPO: repo } }, (_e, out, err) => resolve({ out, err })));
   const help = (await own([])).out.replace(/\n# +/g, ' ');
   for (const said of ['A project here is one milestone.', 'A thread here ends within hours.', 'A task is one agent\'s step',
-    'It marks a task to start sized past 1 h 30 min and a deliverable whose tasks to do add up past 6 h, to split.',
+    'It marks a task to start sized past 1 h 30 min and a deliverable whose tasks to do add up past 6 h, to judge a split.',
     'it says so: Plan the next milestone.'])
     assert.ok(help.includes(said), said);
   // (the company's line after the foundation's guide.)
@@ -380,8 +380,9 @@ test("hq plan says HQ's marks with the company's sizes, and its look ahead when 
   const marked = game.flatMap((line, i) => (/split it into its steps/.test(line) ? [game[i - 1], line] : []));
   assert.deepEqual(marked, ['  1. #2 bolt (2 h 30 min, queued): Step 2',
     '     Sized past 2 h: split it into its steps (hq plan drop, then hq job --deliverable for each).']);
-  assert.ok(game.includes('  Its tasks to do add up to 8 h 30 min, past 8 h: draw its later part as '
-    + 'a deliverable of its own (hq plan deliverable with --needs game/levels) and move its tasks there (hq job move).'));
+  assert.ok(game.includes('  Its tasks to do add up to 8 h 30 min, past 8 h: a somewhat bigger deliverable is fine: only a '
+    + 'later part that goes live on its own is drawn as a deliverable of its own (hq plan deliverable with --needs '
+    + 'game/levels), its tasks moved there (hq job move).'));
   const shop = (await run(['plan', 'shop'])).out;
   assert.doesNotMatch(shop, /nothing is planned beyond|split it|add up to/, 'a product with another project, nothing marked');
   assert.doesNotMatch((await run(['plan', 'till'])).out, /nothing is planned beyond/, 'a company that says nothing on looking ahead');
@@ -829,9 +830,9 @@ test('hq answer clips an answer onto a note, with a picture read from its file a
   // (--artifact: something new that runs, by its id in HQ's artifacts.)
   await hq('answer', '57', 'Made: the gift card page', '--artifact', 'tide/films/trailer');
   assert.deepEqual(last().body, { note: 57, text: 'Made: the gift card page', artifact: 'tide/films/trailer' });
-  await assert.rejects(hq('answer', '57', 'Yes', '--artifact'), /usage: hq answer <note>/);
-  await assert.rejects(hq('answer', '57'), /usage: hq answer <note>/);
-  await assert.rejects(hq('answer', '57', 'Yes', '--colour', 'red'), /usage: hq answer <note>/);
+  await assert.rejects(hq('answer', '57', 'Yes', '--artifact'), /usage: hq answer <note\|g<group>>/);
+  await assert.rejects(hq('answer', '57'), /usage: hq answer <note\|g<group>>/);
+  await assert.rejects(hq('answer', '57', 'Yes', '--colour', 'red'), /usage: hq answer <note\|g<group>>/);
   await assert.rejects(hq('answer', '57', 'Yes', '--picture', `${tmp}/none.png`), /can't read/);
   await assert.rejects(hq('answer', '404', 'Yes'));
   rmSync(`${tmp}/shot.png`);

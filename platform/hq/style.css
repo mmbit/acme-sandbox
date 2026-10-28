@@ -669,8 +669,8 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .call-face[data-state=thinking] .cf-figure > canvas { animation: cb-think 1.6s steps(4) infinite; }
 .intercom .call .call-face .state { position: absolute; z-index: 1; left: 10px; top: 8px; margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase;
   color: var(--scr); text-shadow: var(--scr-glow); }
-/* (its height less the share key's own line, where the key has one: --share-row.) */
-.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: calc(clamp(160px, calc(24dvh + 64px), 284px) - var(--share-row, 0px)); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
+/* (its whole height, the call's keys on one row on a phone too.) */
+.intercom .call .lines { display: flex; flex-direction: column; gap: 6px; height: clamp(160px, calc(24dvh + 64px), 284px); margin: 0 0 12px; padding: 8px; list-style: none; overflow-y: auto; overscroll-behavior: contain;
   text-align: left; background: #1d1f2e; border: var(--bw) solid var(--line); border-radius: var(--r); }
 .intercom .call .lines:empty::before { content: attr(data-empty); margin: auto; padding: 0 12px; font-size: 13px; color: #9a9eb4; text-align: center; }
 .intercom .call .lines li { max-width: 88%; padding: 5px 9px 6px; font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; border-radius: var(--r); animation: cs-line-in .2s steps(3) both; }
@@ -679,7 +679,7 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call .lines .board { align-self: flex-end; background: var(--gold); color: var(--on-accent); }
 @keyframes cs-line-in { from { opacity: 0; transform: translateY(6px); } }
 /* a phone on its side: the little screen smaller, so the keys stay in view */
-@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: calc(136px - var(--share-row, 0px)); } }
+@media (max-height: 560px) { .intercom .call .call-face { height: 104px; } .intercom .call .cf-figure > canvas { width: 28px; height: 56px; } .intercom .call .lines { height: 136px; } }
 .intercom .call .row { justify-content: center; gap: 12px; }
 .intercom .call .row button { min-height: 52px; padding: 0 22px; font-size: 18px; border: var(--bw) solid var(--line); box-shadow: var(--shadow); background: var(--paper); color: var(--ink); }
 .intercom .call .row button.hangup { background: var(--red); color: #fff; }
@@ -693,20 +693,21 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
 .intercom .call #call-screenshare:disabled { opacity: .55; }
 /* (in the bottom row between the picture key and Hang up, its words always on one line. The three keys at their full
    size need 399 px of row in Brownstone, the widest look there: a narrower call sets them as a phone does. Set so, they
-   need 333 px in Wire, the widest then: under it the share key takes a line of its own above the other two, and the
-   transcript gives that line back.) */
+   need 333 px in Wire, the widest then: under it, a phone's, Hang up is its symbol and the share key says Share or Stop,
+   all three on the one row down to a 320 px screen (216 px of row in Brownstone).) */
 #call-screen { container: call-keys / inline-size; }
 .intercom .call .row { flex-wrap: nowrap; } .intercom .call .row > button { flex: none; }
 .intercom .call #call-screenshare { padding: 0 14px; gap: 8px; white-space: nowrap; }
+.intercom .call .row .short, .intercom .call .row .hangup svg.icon { display: none; }
 @container call-keys (width < 399px) {
   .intercom .call .row { gap: 8px; } .intercom .call .row button { padding: 0 14px; font-size: 16px; }
   .intercom .call #call-screenshare { padding: 0 10px; gap: 6px; }
 }
 @container call-keys (width < 333px) {
-  .intercom .call .row { display: grid; grid-template-columns: repeat(2, auto); justify-content: center; }
-  .intercom .call #call-screenshare { grid-column: 1 / -1; justify-self: center; order: -1; }
-  .intercom .call .row .attach { justify-self: end; } .intercom .call .row .hangup { justify-self: start; } /* (together in the middle, under it) */
-  .intercom .call .lines { --share-row: 60px; } /* (the key's 52 px and the row's 8 px gap) */
+  .intercom .call #call-screenshare > span { display: none; } .intercom .call #call-screenshare > .short { display: inline; }
+  .intercom .call .row .hangup { display: grid; place-items: center; width: 52px; padding: 0; }
+  .intercom .call .row .hangup svg.icon { display: block; width: 24px; height: 24px; fill: currentColor; shape-rendering: var(--icons, auto); }
+  .intercom .call .row .hangup > span { display: none; }
 }
 .intercom .call .pics { display: flex; gap: 8px; margin: 0 0 14px; padding: 0 0 2px; list-style: none; overflow-x: auto; }
 .intercom .call .pics[hidden] { display: none; }
@@ -734,6 +735,10 @@ body.touring #zoom, body.touring #status, body.touring #hint, body.touring #toas
   --cb-accent: var(--gold); --cb-level: 0;
   transition: box-shadow .15s steps(2), scale .15s steps(2); will-change: transform; }
 .callbubble.held { cursor: grabbing; scale: 1.06; box-shadow: var(--shadow-xl); }
+/* a picture or a page over the call's window, to let go there (shell/calldrop.js): its screen or bubble lit, ringed in
+   the call's accent */
+#call-layer .device[data-drop], .callbubble[data-drop] { outline: 4px dashed var(--gold); outline-offset: 6px; box-shadow: 0 0 0 12px color-mix(in srgb, var(--gold) 30%, transparent), var(--shadow-xl); }
+.callbubble[data-drop] { outline-color: var(--cb-accent); scale: 1.12; }
 .callbubble .cb-face { position: relative; display: grid; place-items: end center; height: 84px; padding: 0; overflow: hidden; cursor: inherit; font: inherit;
   background: var(--scr-bg); border: var(--bw) solid var(--scr-frame); border-radius: var(--r); } /* (the bob says it speaks: no ring.) */
 .callbubble .cb-face > canvas { width: 36px; height: 72px; image-rendering: pixelated; transform-origin: 50% 100%; }

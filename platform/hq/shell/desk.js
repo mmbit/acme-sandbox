@@ -1224,14 +1224,21 @@ function wireCall(el, r) {
 // page at a time (Older cards loads the next, so every card stays reachable).
 const FILED = icon('filed');
 let past = null; // the archive while it's on the phone: { list (the pages so far), more, total, at: the card open (an index), or -1 for the list }
-// The phone at an answered card, from HQ's search: its first page of files holds it
+// The phone at an answered card from HQ's search, including cards beyond the first page.
 export async function openAnswered(id) { await openPhone(); await openPast(id); }
 async function openPast(card = null) {
   const el = $('#phone-screen'); if (!el) return;
-  const me = past = { list: null, more: false, total: 0, at: -1 };
+  const me = past = { card, list: null, more: false, total: 0, at: -1 };
   laterView = false;
   paintPastBtn(); el.innerHTML = '<p class="muted">Opening the files…</p>';
-  try { const p = await loadArchive(world.dev); Object.assign(me, { list: p.cards, more: p.more, total: p.total, at: p.cards.findIndex(r => r.id === card) }); } catch { me.list = null; }
+  try {
+    const p = await loadArchive(world.dev);
+    Object.assign(me, { list: p.cards, more: p.more, total: p.total, at: p.cards.findIndex(r => r.id === card) });
+    while (past === me && card != null && me.at < 0 && me.more) {
+      if (!(await olderPast())) throw new Error('The next archive page did not load');
+      me.at = me.list.findIndex(r => r.id === card);
+    }
+  } catch { me.list = null; }
   if (past === me) renderPast();
 }
 // the next page, after the last card loaded; false if it didn't come
@@ -1250,7 +1257,7 @@ const answerLine = r => r.status === 'done' ? `Taken off your ${names.phone}` : 
 function renderPast() {
   const el = $('#phone-screen'); if (!el || !past) return;
   const list = past.list;
-  if (!list) { el.innerHTML = `<div class="quiet problem">${stateSign('alert')}<b>The files didn’t open.</b><span>Could not reach the coordinator.</span><button class="past-link" data-again>Try again</button></div>`; el.querySelector('[data-again]').onclick = openPast; return; }
+  if (!list) { el.innerHTML = `<div class="quiet problem">${stateSign('alert')}<b>The files didn’t open.</b><span>Could not reach the coordinator.</span><button class="past-link" data-again>Try again</button></div>`; el.querySelector('[data-again]').onclick = () => openPast(past.card); return; }
   if (past.at >= 0 && list[past.at]) return renderPastCard(el, list, past.at);
   // (what a card has beyond its words; a held call's transcript)
   const has = r => [r.call?.transcript?.length && 'transcript', deckOf(r.body) && 'presentation', videos(r.body).length && `${videos(r.body).length} ${videos(r.body).length === 1 ? 'clip' : 'clips'}`,

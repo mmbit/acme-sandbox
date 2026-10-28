@@ -1,9 +1,9 @@
-// The Notebook beside HQ's page: a black hardcover open on the screen, its spine at the screen's right edge, its pages
-// on the cover with the black board showing round them; shut, it's past the screen's right edge with only its pull tab
-// showing there (over the page, which keeps its whole width); where HQ would be too narrow beside it (a phone), it lies
-// on top of the screen (the spread). HQ's page is <body>: it lays itself out in the room the book leaves (--book-room on
-// <html>, style.css), so the open book never covers it, and fades quickly into its new room as the book lands. The book
-// lives outside <body>, in #book.
+// The Notebook beside HQ's page: a black hardcover open on the screen, resting a margin in from its edges (book.css),
+// its spine by the screen's right edge, its pages on the cover with the black board showing round them; shut, it's past
+// the screen's right edge with only its pull tab showing there (over the page, which keeps its whole width); where HQ
+// would be too narrow beside it (a phone), it lies on top of the screen (the spread). HQ's page is <body>: it lays
+// itself out in the room the book leaves (--book-room on <html>, style.css), so the open book never covers it, and
+// fades quickly into its new room as the book lands. The book lives outside <body>, in #book.
 // The layout's maths is booklayout.js; the rail's Undo and Redo bookrail.js; the pages bookpages.js; its look booklook.css. One
 // object: its cover and paper under one shadow, its controls floating over its paper (bookui.js). Two controls, one
 // job each: the pull tab (bookhandle.js) opens and closes it, the cover's outer edge resizes it and never closes it. It
@@ -70,6 +70,8 @@ export async function initBook() {
   // (a note or page asked from elsewhere, the desk phone's Open in the book: the book lands on it as on a find, its day's
   // row turned to its note, the number lit.)
   document.addEventListener('book:find', e => pages.find(e.detail));
+  // (the table's ground once HQ wears its look, and again as it changes: stage.js)
+  document.addEventListener('stage:look', tones);
   // (a page made or thrown away outside the book, a call's: calldraw.js, markpage.js, which send book:paged: the
   // notebook's pages read again, at that page if it's new.)
   document.addEventListener('book:paged', e => pages.made(e.detail?.page));
@@ -260,6 +262,7 @@ function place(at, mode, act, fade = act) {
   placed = at;
   laid = { ...at, leaf: Math.max(width, reach(at)) };
   toRoom(Math.round(room), fade);
+  tones(); // (the table shows round the resting book)
   root.dataset.mode = mode;
   parts.table.style.width = `${Math.round(room)}px`;
   parts.edge.style.left = `${x}px`;
@@ -329,20 +332,16 @@ function stop() {
   placed = { ...placed, x: laid.x + dx };
   shift(dx);
 }
-// The table's two tones, a quiet checkerboard (book.css), from the look on HQ's page: its ground (<html>'s where the
-// page has none), and its ink or its paper, whichever stands apart from it. Read when the book starts to move, once per look.
+// The table's ground round the book (book.css), from the look on HQ's page: its ground (<html>'s where the page has
+// none). Read as the book is laid out or starts to move, and as a look is worn, once per look. (its checkerboard a classic one)
 let toned = null;
 function tones() {
   if (toned === look) return;
   toned = look;
-  const page = getComputedStyle(document.body),
-    ground = [page, getComputedStyle(document.documentElement)]
-      .map(box => box.backgroundColor)
-      .find(c => c !== 'rgba(0, 0, 0, 0)'),
-    [r, g, b] = ground.match(/[\d.]+/g).map(Number),
-    dark = 0.2126 * r + 0.7152 * g + 0.0722 * b < 128;
+  const ground = [document.body, document.documentElement]
+    .map(box => getComputedStyle(box).backgroundColor)
+    .find(c => c !== 'rgba(0, 0, 0, 0)');
   parts.table.style.setProperty('--bk-ground', ground);
-  parts.table.style.setProperty('--bk-check', page.getPropertyValue(dark ? '--paper' : '--ink').trim());
 }
 // The layout settled: placed, told to the page (data-book on <html>, and a book:layout event for whoever lays out by it,
 // act true when the board moved the book, not a new window size or HQ's start: the pin's summon, pinsummon.js)

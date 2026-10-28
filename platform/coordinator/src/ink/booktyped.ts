@@ -1,7 +1,6 @@
 // A question typed on a page of the board's book (the board on call #239: a
 // question typed on a call's page got no answer). Words the board types in a box on a page of its own book (book.ts
-// texts: typed, or written into the box by hand) that newly end in a question mark ask now, as a note's do
-// (bookslips.ts): the page's agent answers in a quick run (a sheet's or a guest's page its owner, a call's page the call's
+// texts: typed, or written into the box by hand) are judged when they're new, as a note's are (bookjudge.ts): a reply's verdict, answer or try, asks now and the page's agent answers in a quick run (a sheet's or a guest's page its owner, a call's page the call's
 // agent, any other the CEO), and the answer is typed onto the page under the question, in the agent's ink, where the
 // board sees it and the page's picture shows it. A box moved, or saved again as it was, asks nothing again; nor do the
 // words in an invited person's book.
@@ -14,7 +13,8 @@ import { onQuickRun, quickRun } from '../chat.ts';
 import * as book from './book.ts';
 import { BOARD, drawnOf, row as pageRow, type Page } from './book.ts';
 import { typedHeight } from './bookrender.ts';
-import { GROWN_MAX, TEXTS_MAX, TEXT_MAX, asks, isRefused, type Typed } from '../pagechecks.ts';
+import { GROWN_MAX, TEXTS_MAX, TEXT_MAX, isRefused, type Typed } from '../pagechecks.ts';
+import { judge } from './bookjudge.ts';
 import { DIR } from '../pagescraps.ts';
 import { redact } from '../secrets.ts';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
@@ -26,9 +26,10 @@ db.exec(
 );
 // The room between the question's last line and its answer, in page px
 const ANSWER_GAP = 8;
-// POST /api/book/page/save, the board's: book.ts savePage, then each box on a page of its own book whose words newly end
-// in a question mark asks (no box had the same words before: one moved or saved again as it was doesn't). Only the
-// board's own words ask, as only its own notes do (booknotes.ts addNote's asking).
+// POST /api/book/page/save, the board's: book.ts savePage, then each box on a page of its own book with new words is
+// judged once the request has answered (no box had the same words before: one moved or saved again as it was isn't).
+// Only the board's own words are, as only its own notes are (booknotes.ts addNote's asking). A box isn't a note, so
+// both replies ask here: an answer's quick run says what it would do when versions were called for.
 export function savePage(b: any, who: string) {
   const id = Number(b?.id),
     texts = (page: number) => JSON.parse(drawnOf(page).texts) as Typed[];
@@ -36,11 +37,12 @@ export function savePage(b: any, who: string) {
     had = mine && new Set(texts(id).map(t => t.text));
   const saved = book.savePage(b, who);
   if (!mine || !had || typeof saved === 'number' || isRefused(saved)) return saved;
-  const asked = new Set<string>();
+  const judged = new Set<string>();
   for (const t of texts(id))
-    if (asks(t.text) && !had.has(t.text) && !asked.has(t.text)) {
-      asked.add(t.text);
-      askTyped(mine, t);
+    if (t.text.trim() && !had.has(t.text) && !judged.has(t.text)) {
+      judged.add(t.text);
+      const ask = () => askTyped(mine, t);
+      setImmediate(() => void judge({ page: id, text: t.text }, { answer: ask, try: ask }));
     }
   return saved;
 }

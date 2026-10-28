@@ -29,7 +29,7 @@ export const code = {
 };
 
 export const job = {
-  // (the title's step alone)
+  // (the title's step alone; a feature's later piece chained)
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
@@ -71,7 +71,11 @@ export const job = {
                                                      --deliverable <project>/<slug>
                                                      sends it to another (hq deliverable list), --deliverable
                                                      new:<project> "name" "done when" draws one for it in the project's
-                                                     plan, as hq plan deliverable does (its owner or the CEO). --thread,
+                                                     plan, as hq plan deliverable does (its owner or the CEO): related
+                                                     work joins the open deliverable it belongs to, and a later piece of
+                                                     a feature is drawn first with hq plan deliverable --needs the one
+                                                     before it, then given its tasks (a queued task can start at once),
+                                                     never drawn to run beside it. --thread,
                                                      the old name, still works. With requireThread enabled in
                                                      company/projects.yaml, a job with no deliverable to inherit must
                                                      name one. --check: QA, audits, security and compliance reads, which

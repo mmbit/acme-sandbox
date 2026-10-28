@@ -10,9 +10,11 @@ import { render } from './ink/bookrender.ts';
 import { DIR } from './pagescraps.ts';
 import { SEND_MS, insertNote, note, sheetRow, type Note } from './ink/booknotes.ts';
 import { deliverDue } from './ink/booksheets.ts';
-import { changed, gone, newPage, pageOf, pageRow, shut } from './notebook.ts';
+import { changed, gone, newPage, pageOf, pageRow, shut, triesPageOfNote, type NotebookPage } from './notebook.ts';
 import { insertGroup, partsOf, putAside, row, type Group } from './notebookgroups.ts';
 import { boxOf } from './notebookparts.ts';
+import { judgeLater } from './ink/bookjudge.ts';
+import { frameOf, replySnip, sentSnip } from './ink/bookpick.ts';
 import { inkOf, isRefused, wordsOf, type Anchor, type Refused } from './pagechecks.ts';
 
 // Room round a group's picture, in page px
@@ -33,7 +35,8 @@ export async function sendPage(b: any, who = BOARD, stillOpen?: () => boolean) {
       .all(p.id) as Group[];
   const groups = sendable();
   if (!groups.length) return [409, 'nothing on this page to send', 'pageEmpty'] as Refused;
-  const snips = await Promise.all(groups.map(snipOf));
+  // (a tried group goes with the version the board picked beside it.)
+  const snips = await Promise.all(groups.map(async g => (await sentSnip(g)) ?? snipOf(g)));
   // (a group changed, gone or added while its pictures were drawn: sent as the board sees it now, so read again)
   const now = pageRow(p.id, who),
     after = sendable();
@@ -89,24 +92,41 @@ export function undoSend(b: any, who = BOARD) {
   });
   return pageOf(pageRow(p.id, who)!);
 }
-// POST /api/notebooks/groups/reply { answer, words?, said?, ink? }: the board's reply under an agent's answer (a slip):
-// a reply group under the answered group, gone to the agent who answered in SEND_MS (deleteReply takes it back)
+// POST /api/notebooks/groups/reply { answer, words?, said?, ink?, frame? }: the board's reply under an agent's answer (a
+// slip): a reply group under the answered group, gone to the agent who answered in SEND_MS (deleteReply takes it back).
+// On a version, frame is where HQ showed its picture, in the page's px: the reply's snip is the ink over it. stillOpen: a guest's invitation, checked before the reply goes
 export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
-  const slip = db.prepare('select id, note, by from book_slips where id = ?').get(Number(b?.answer)) as
-    { id: number; note: number; by: string } | undefined;
+  // (an answer on a group not sent yet is on its grp)
+  const slip = db.prepare('select id, note, grp, by from book_slips where id = ?').get(Number(b?.answer)) as
+    { id: number; note: number | null; grp: number | null; by: string } | undefined;
   const answered =
-    slip && (db.prepare('select * from notebook_groups where note = ?').get(slip.note) as Group | undefined);
-  const p = answered && pageRow(answered.page, who);
-  if (!slip || !answered || !p) return 404;
+    slip &&
+    ((slip.grp !== null ? row(slip.grp) : db.prepare('select * from notebook_groups where note = ?').get(slip.note)) as
+      Group | undefined);
+  // (a version of an old book's note, a call's, has no group: the reply is a note on its versions page, under the
+  // note's anchor; a note wiped, its versions kept for Undo, takes none.)
+  const tried = !answered && slip?.note ? note(slip.note) : undefined;
+  const p = answered ? pageRow(answered.page, who) : tried ? triesPageOfNote(tried.id) : undefined;
+  if (!slip || !p || p.who !== who) return 404;
   const said = wordsOf(b.words, b.said ?? 'written');
   if (isRefused(said)) return said;
   const ink = b.ink === undefined ? [] : inkOf(b.ink);
   if (isRefused(ink)) return ink;
   if (!said.words && !ink.length) return [400, 'a reply has words or ink', 'replyEmpty'] as Refused;
+  const closed = () => !!stillOpen && !stillOpen();
+  if (!answered) {
+    const snip = ink.length ? await replySnip(slip.id, frameOf(b.frame), ink) : null;
+    if (closed()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
+    const still = note(tried!.id); // (wiped while its snip was drawn)
+    if (!still) return 404;
+    return replyOnNote(p, slip, JSON.parse(still.anchor) as Anchor, said, snip, who);
+  }
   const top = answered.parent === null ? answered : row(answered.parent)!;
   const parts = { ink, texts: [], pictures: [] };
-  const snip = ink.length ? await snipOf({ ...top, ...partsJson(parts) }) : null;
-  if (stillOpen && !stillOpen()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
+  const snip = ink.length
+    ? ((await replySnip(slip.id, frameOf(b.frame), ink)) ?? (await snipOf({ ...top, ...partsJson(parts) })))
+    : null;
+  if (closed()) return [403, 'this invitation has closed', 'invitationEnded'] as Refused;
   const reply = inOneStep(() => {
     const g = insertGroup(p, 'reply', who, parts, {
       parent: top.id,
@@ -114,14 +134,42 @@ export async function replyTo(b: any, who = BOARD, stillOpen?: () => boolean) {
       words: said.words,
       said: said.said,
     });
-    const sheet = newSheet(who, slip.by, p.id),
-      id = insertNote(sheet, p.id, who, anchorOf(top), said, snip, slip.id);
+    const id = replyNote(p.id, anchorOf(top), slip, said, snip, who);
     db.prepare("update notebook_groups set status = 'sent', note = ? where id = ?").run(id, g.id);
-    db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(Date.now() + SEND_MS, sheet);
     return g;
   });
-  deliverLater();
+  if (who === BOARD) judgeLater({ grp: reply.id }); // (with the answer it replies to)
   return { id: reply.id, parent: top.id };
+}
+// A reply to an answer as a note on a sheet of its own, gone to the agent who answered in SEND_MS: its id (a form's answers go this way too, bookanswer.ts)
+export function replyNote(
+  page: number,
+  anchor: Anchor,
+  slip: { id: number; by: string },
+  said: { words: string; said: string | null },
+  snip: { type: string; clean: Buffer } | null,
+  who: string,
+) {
+  const sheet = newSheet(who, slip.by, page),
+    id = insertNote(sheet, page, who, anchor, said, snip, slip.id);
+  db.prepare("update book_sheets set status = 'sending', send_at = ? where id = ?").run(Date.now() + SEND_MS, sheet);
+  deliverLater();
+  return id;
+}
+// A reply on a version of an old book's note (a call's): a note on the versions page, under the note's own anchor, the
+// judge's to read as any reply (a ring picks it: bookpick.ts).
+function replyOnNote(
+  p: NotebookPage,
+  slip: { id: number; by: string },
+  anchor: Anchor,
+  said: { words: string; said: string | null },
+  snip: { type: string; clean: Buffer } | null,
+  who: string,
+) {
+  const id = replyNote(p.id, anchor, slip, said, snip, who);
+  changed(p.notebook, p.id);
+  if (who === BOARD) judgeLater({ note: id });
+  return { note: id };
 }
 // POST /api/notebooks/replies/delete { id }: a reply taken back in its seconds, its note and sheet gone, never sent;
 // kept aside as a deleted group is
@@ -159,7 +207,7 @@ function unsend(n: Note) {
   );
 }
 // Where a group's note is: a scrap where it was cut, a drawing its place on the notebook page
-function anchorOf(g: Group): Anchor {
+export function anchorOf(g: Group): Anchor {
   if (g.anchor) return JSON.parse(g.anchor) as Anchor;
   const box = boxOf(partsOf(g)) ?? { x: 0, y: 0, w: 0, h: 0 };
   return { v: 1, url: `/api/book/picture?id=${g.page}`, el: null, view: { ...box, dpr: 2 }, ink: [] };
@@ -176,8 +224,8 @@ const partsJson = (p: { ink: unknown[]; texts: unknown[]; pictures: unknown[] })
   pictures: JSON.stringify(p.pictures),
 });
 // The group drawn alone, with a little room round it: its note's snip, what the agent sees of it (null: a scrap whose
-// picture was split off is its words only)
-async function snipOf(g: Group) {
+// picture was split off is its words only). The book's judge sees it too.
+export async function snipOf(g: Group) {
   const parts = partsOf(g),
     box = boxOf(parts);
   if (!box) return null;

@@ -48,6 +48,7 @@ grain; bubbles follow the physics of a bubble's resonance. Listen to all of them
 | `squish` | wet ink squish with tiny bubbles | the press | `wet` 0..1, `dur` |
 | `ruffle` | cloth moving | the start | `material` cotton linen silk canvas, `dur`, `density` |
 | `crunch` | paper ball, leaves, a biscuit | the bite | `dry` 0..1 (brittle), `dur` |
+| `tear` | paper torn: a page torn out, a ticket torn off | the start | `dur` 0.25 s |
 | `pour` | pour and fill, the pitch climbing as it fills | full | `dur` 1.8, `fill` 0..0.95 |
 
 **Params every sound takes:** `size` (1 = as designed; 2 = twice as big, lower and longer), `pitch`

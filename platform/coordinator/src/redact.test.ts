@@ -221,3 +221,29 @@ test('a key with a quote at one end leaves review findings, triage selections, a
   assert.deepEqual((await board(`/api/book/notes?page=${page}`)).body.notes.at(-1).anchor,
     { ...anchor, el: { ...anchor.el, selector: `input[value='${masked}']` } }, 'book_notes.anchor');
 });
+
+// An answer's version name, form and the board's answers to it, and the judge's why and the words it judged: written
+// before the key's save, scrubbed when it's saved; written after, masked as they land.
+test("a key in an answer's version, form or form's answer, or in a verdict's why or words, leaves them", async () => {
+  const { db } = await import('./db.ts'), past = new DatabaseSync(`${h.dataDir}/hq.db`);   // (past: a writer past the triggers)
+  const key = 'Ex4mpleKey76' + 'k3'.repeat(8), name = 'PRINTAPI_LIVE_ANSWERS', masked = `[${name}]`;
+  const write = (to: DatabaseSync) => ({
+    slip: Number(to.prepare(`insert into book_slips (by, text, created, style, version, form, form_answer)
+      values ('wren', 'Here.', 't', 'version', ?, ?, ?)`).run(`Late ${key}`, JSON.stringify([{ title: `Use ${key}?` }]),
+      JSON.stringify([{ title: 'Which', answer: key }])).lastInsertRowid),
+    verdict: Number(to.prepare(`insert into ink_verdicts (grp, reply, why, words, created) values (1, 'answer', ?, ?, 't')`)
+      .run(`it names ${key}`, `is ${key} right?`).lastInsertRowid),
+  });
+  const read = ({ slip, verdict }: ReturnType<typeof write>) => ({
+    ...(db.prepare('select version, form, form_answer from book_slips where id = ?').get(slip) as object),
+    ...(db.prepare('select why, words from ink_verdicts where id = ?').get(verdict) as object),
+  });
+  const as = (k: string) => ({ version: `Late ${k}`, form: JSON.stringify([{ title: `Use ${k}?` }]),
+    form_answer: JSON.stringify([{ title: 'Which', answer: k }]), why: `it names ${k}`, words: `is ${k} right?` });
+  const before = write(past);
+  assert.deepEqual(read(before), as(key), "nothing knows it's a key yet");
+  await save(bolt, name, key);
+  assert.deepEqual(read(before), as(masked), "scrubbed when it's saved");
+  assert.deepEqual(read(write(db)), as(masked), 'through the triggers');
+  past.close();
+});

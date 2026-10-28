@@ -304,8 +304,8 @@ function resized(book) {
   const size = { w: book.desk.clientWidth, h: book.desk.clientHeight };
   if (!size.w || !size.h) return;
   book.size = size;
-  // (what a page's paper shows across at 100%.)
-  book.world.style.setProperty('--paper-w', `${Math.round(size.w)}px`);
+  book.world.style.setProperty('--paper-w', `${Math.round(size.w)}px`); // (what a page's paper shows across at 100%)
+  book.world.dispatchEvent(new Event('bk:paper')); // (a versions page lays its frames to it)
   if (book.waiting === undefined) return lay(book);
   const place = book.waiting;
   book.waiting = undefined;

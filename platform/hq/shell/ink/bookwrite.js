@@ -12,11 +12,11 @@ import { followPress } from './bookpress.js';
 export const INK = { color: '#2a2352', size: INKS[0].size };
 
 // The Pencil and a mouse write on the page once its ink is read, unless the press pans (bookpan.js) or the mouse's
-// tools take it (moving a picture or a post-it, a text box: booktools.js); a finger does too, unless this device's
-// preferences have it move the page once a pen is in use (book.input.fingerPans(): bookinput.js). A
-// text field on a page (a note's words) is the field's: the Pencil writes into it with Scribble. The Pencil on something on the page (a box of words, a post-it, a picture) waits: a quick tap there
-// is a click on it, never a dot of ink, and once it moves its line starts where it touched. On bare paper it inks at
-// once, so a dotted i keeps its dot.
+// tools take it (moving a picture, a text box: booktools.js); a finger does too, unless this device's preferences
+// have it move the page once a pen is in use (book.input.fingerPans(): bookinput.js). A text field on a page (a
+// reply's) is the field's: the Pencil writes into it with Scribble. The Pencil on something on the page (a box of
+// words, an answer's slip, a picture) waits: a quick tap there is a click on it, never a dot of ink, and once it
+// moves its line starts where it touched. On bare paper it inks at once, so a dotted i keeps its dot.
 export function drawable(book, e, table) {
   if (e === book.waited) {
     book.waited = null;

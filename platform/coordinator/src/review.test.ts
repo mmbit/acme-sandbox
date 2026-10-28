@@ -1621,7 +1621,7 @@ async function tell(to: { id: number; agent: string }, words: string) {
   return {
     item: sent.body.item as number,
     correct: async () => {
-      const corrected = await h.agent('item', follow.token, { replaces: sent.body.item,
+      const corrected = await h.agent('item', follow.token, { replaces: sent.body.item, goal: 'g',
         what: 'Only an insecure change blocks the site', quote: 'Board: only something insecure blocks the site now.' });
       assert.equal(corrected.status, 200, JSON.stringify(corrected.body));
       await followedUp(follow);
@@ -4330,4 +4330,161 @@ test('closing one shared visual change replaces its card with only the remaining
   await settled();
   assert.equal(github.pr(8294).merged, true);
   assert.equal(prs(8293).status, 'closed');
+});
+
+for (const laterDecision of ['merge', 'board'])
+  for (const passes of [true, false])
+    test(`a ruled windowed pull request keeps its place ahead of a later ${laterDecision} until its merge check ${passes ? 'passes' : 'finds changes'}`, async () => {
+      const first = (passes ? 1288502 : 1288512) + (laterDecision === 'board' ? 100 : 0),
+        later = first - 1,
+        apart = first + 1;
+      const files = ['platform/coordinator/src/precedence.ts'];
+      const thread = h.dueThread({ deadline: Date.now() - 3_600_000 });
+      const work = await h.start({ agent: 'bolt', branch: `review/${first}`, thread });
+      await submit(first, { files }, work);
+      github.pr(first).mergeable = false;
+      await decide(first, 'merge');
+      const [sync] = await claim(first, job => job.kind === 'work');
+      assert.equal(sync.stage, 'fix');
+
+      await submit(later, { files });
+      await decide(later, laterDecision);
+      if (laterDecision === 'board') await boardSays(later, 'merge');
+      assert.equal(github.pr(later).merged, false, 'the later pass waits while the earlier author resolves main');
+      assert.deepEqual(queued(later), [], 'waiting creates no extra author work or review');
+      await submit(apart, { files: ['platform/coordinator/src/independent.ts'] });
+      await decide(apart, 'merge');
+      assert.equal(github.pr(apart).merged, true, 'other files can land');
+
+      github.pr(first).mergeable = true;
+      await submit(first, { files }, sync);
+      assert.deepEqual(
+        queued(first).map(job => job.stage),
+        ['merge'],
+      );
+      await review.actOnRulings();
+      assert.equal(github.pr(later).merged, false, 'the earlier pass keeps its place while its new head is checked');
+      if (passes) await decide(first, 'merge');
+      else {
+        const [check] = await claim(first);
+        await end(check, {
+          output: JSON.stringify({
+            decision: 'changes',
+            blocking: [{ file: files[0], issue: 'Both sides still need to be reconciled' }],
+          }),
+        });
+      }
+      assert.equal(github.pr(first).merged, passes);
+      await review.actOnRulings();
+      assert.equal(
+        github.pr(later).merged,
+        true,
+        'the later pass resumes after the earlier merge or a new changes ruling',
+      );
+    });
+
+for (const when of ['before answer', 'held', 'retry'])
+  test(`a board merge whose guidance changes ${when} retires its answer and gets a fresh ruling`, async () => {
+    const n = 1280100 + ['before answer', 'held', 'retry'].indexOf(when);
+    const files = [`platform/coordinator/src/board-guidance-${n}.ts`];
+    const predecessor = n + 10;
+    if (when === 'held') {
+      const thread = h.dueThread({ deadline: Date.now() - 3_600_000 });
+      const work = await h.start({ agent: 'bolt', branch: `review/${predecessor}`, thread });
+      await submit(predecessor, { files }, work);
+      github.pr(predecessor).mergeable = false;
+      await decide(predecessor, 'merge');
+    }
+    await submit(n, { files });
+    for (const run of await claim(n, job => job.kind === 'review')) await end(run);
+    const [queuedRuling] = queued(n).filter(job => job.kind === 'consolidate');
+    const told = await tell(queuedRuling, 'Only something insecure blocks the site now.');
+    const [ruling] = await claim(n, job => job.kind === 'consolidate');
+    await end(ruling, verdict('board'));
+    if (when === 'before answer') await told.correct();
+    if (when === 'retry') {
+      github.refuse.push(BASE_MOVED);
+      let refused = false, withdrawn = false;
+      hold = async (method, k) => {
+        if (k !== n) return;
+        if (method === 'PUT') refused = true;
+        else if (refused && !withdrawn) { withdrawn = true; await told.withdraw(); }
+      };
+    }
+    await boardSays(n, 'merge');
+    if (when === 'held') {
+      assert.equal(github.pr(n).merged, false);
+      await told.withdraw();
+      await review.actOnRulings();
+    }
+    assert.equal(github.pr(n).merged, false, 'the saved answer never merges under changed guidance');
+    assert.equal(prs(n).status, 'open');
+    assert.ok(voided(ruling.id));
+    const [fresh] = await claim(n, job => job.kind === 'consolidate');
+    assert.ok(fresh, 'the same round gets a fresh ruling');
+    await end(fresh, verdict('board'));
+    await review.actOnRulings();
+    await review.heldDecided([{ number: n }]);
+    assert.equal(github.pr(n).merged, false, 'neither replay path reuses the old answer');
+    assert.equal(prs(n).status, 'board');
+    await boardSays(n, 'close');
+  });
+
+for (const tied of [false, true])
+  test(`a board merge keeps its place ahead of later windowed passes${tied ? ' with the same timestamp' : ''}`, async () => {
+    const first = tied ? 1280150 : 1280140, board = first + 1, later = first + 2;
+    const files = [`platform/coordinator/src/board-precedence-${first}.ts`];
+    const thread = h.dueThread({ deadline: Date.now() - 3_600_000 });
+    const work = await h.start({ agent: 'bolt', branch: `review/${first}`, thread });
+    await submit(first, { files }, work);
+    github.pr(first).mergeable = false;
+    await decide(first, 'merge');
+    const [sync] = await claim(first, job => job.kind === 'work');
+    await submit(board, { files });
+    await decide(board, 'board');
+    await boardSays(board, 'merge');
+    assert.equal(github.pr(board).merged, false, 'an earlier pass still holds the board answer');
+    const laterThread = h.dueThread({ deadline: Date.now() - 3_600_000 });
+    const laterWork = await h.start({ agent: 'bolt', branch: `review/${later}`, thread: laterThread });
+    await submit(later, { files }, laterWork);
+    github.pr(later).mergeable = false;
+    const passed = await decide(later, 'merge');
+    if (tied) {
+      const timestamp = new Date().toISOString();
+      db.prepare('update requests set answered = ? where pr = ?').run(timestamp, board);
+      db.prepare('update jobs set finished = ? where id = ?').run(timestamp, passed.id);
+    }
+    github.pr(first).mergeable = true;
+    await submit(first, { files }, sync);
+    await decide(first, 'merge');
+    await review.actOnRulings();
+    await settled();
+    assert.equal(github.pr(board).merged, true, 'later author work cannot overtake the saved board answer');
+    assert.equal(github.pr(later).merged, false);
+  });
+
+test('a board merge keeps its place while its author brings it up to date', async () => {
+  const board = 1282000, later = board + 1;
+  const files = [`platform/coordinator/src/board-resync-${board}.ts`];
+  const thread = h.dueThread({ deadline: Date.now() - 3_600_000 });
+  const work = await h.start({ agent: 'bolt', branch: `review/${board}`, thread });
+  await submit(board, { files }, work);
+  await decide(board, 'board');
+  github.pr(board).mergeable = false;
+  await boardSays(board, 'merge');
+  const [sync] = await claim(board, job => job.kind === 'work');
+  assert.equal(sync.stage, 'fix');
+
+  await submit(later, { files });
+  await decide(later, 'merge');
+  assert.equal(github.pr(later).merged, false, 'the later pass waits while the board-approved author resolves main');
+  github.pr(board).mergeable = true;
+  await submit(board, { files }, sync);
+  assert.deepEqual(queued(board).map(job => job.stage), ['merge']);
+  await review.actOnRulings();
+  assert.equal(github.pr(later).merged, false, 'the board answer keeps its place while its new head is checked');
+  await decide(board, 'merge');
+  assert.equal(github.pr(board).merged, true);
+  await review.actOnRulings();
+  assert.equal(github.pr(later).merged, true, 'the later pass resumes after the board-approved merge');
 });

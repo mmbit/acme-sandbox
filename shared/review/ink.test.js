@@ -4,12 +4,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as inkjs from './ink.js';
+import { HALO } from './inkshape.js';
 
 const K = 2; // device px to the CSS px, an iPad's
 const RED = { color: '#ff5a5f', size: 5 };
 const shapes = d => d.match(/M[^M]*/g) ?? [];
 
-// Just enough of a page for pen(): canvases that write down what's filled on them, and a surface to send events to
+// Just enough of a page for pen(): canvases that keep their pixels (a device px inked where a filled path covers its
+// centre, nonzero, with no soft edges) and write down what's filled on them, and a surface to send events to (their
+// pixels; their clipping)
 globalThis.devicePixelRatio = K;
 globalThis.scrollX = globalThis.scrollY = 0;
 globalThis.Path2D = class {
@@ -26,8 +29,12 @@ globalThis.document = { dispatchEvent() {}, createElement: () => canvas() };
 const box = () => ({ left: 0, top: 0, width: 400, height: 300 });
 function canvas() {
   const c = { style: {}, width: 0, height: 0, fills: [], getBoundingClientRect: box };
+  // (one byte a device px, blank again when the canvas changes size, as a real one is)
+  c.pixels = () => (c.px?.length === c.width * c.height ? c.px : (c.px = new Uint8Array(c.width * c.height)));
+  c.inked = (x, y) => c.pixels()[Math.floor(y) * c.width + Math.floor(x)] === 1;
   let m = { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
-  const saved = []; // (save and restore keep the transform)
+  const saved = [], // (save and restore keep the transform)
+    at = (x, y) => [m.a * x + m.c * y + m.e, m.b * x + m.d * y + m.f]; // (a point in device px)
   const g = {
     canvas: c,
     fillStyle: '#000',
@@ -38,27 +45,107 @@ function canvas() {
     beginPath() {},
     rect() {},
     clip() {},
-    clearRect() {},
+    clearRect(x, y, w, h) {
+      const px = c.pixels();
+      for (const [i] of within(c, ...at(x, y), ...at(x + w, y + h))) px[i] = 0;
+    },
     getTransform: () => ({ ...m }),
     setTransform(a, b, cc, d, e, f) {
       m = typeof a === 'object' ? { ...a } : { a, b, c: cc, d, e, f };
     },
-    // (a scratch canvas's fills land where it's copied, each copy a repaint of its box, in device px)
+    // (what's filled on a scratch canvas lands where it's copied, in device px, what falls off the canvas dropped)
     drawImage(from, sx, sy, w, h, x, y) {
-      const paint = { box: [x, y, x + w, y + h] };
-      c.fills.push(...from.fills.splice(0).map(f => ({ ...f, paint })));
+      c.fills.push(...from.fills.splice(0));
+      const px = c.pixels(),
+        src = from.pixels();
+      for (const [i, col, row] of within(c, x, y, x + w, y + h))
+        px[i] = src[(sy + row - y) * from.width + sx + col - x];
     },
     fill(p) {
       c.fills.push({ d: p.d, color: g.fillStyle, alpha: g.globalAlpha, op: g.globalCompositeOperation });
+      const px = c.pixels(),
+        turns = new Map(); // (a path's winding at each px it may cover: its rings' added up)
+      for (const ring of rings(p.d).map(r => r.map(([x, y]) => at(x, y)))) {
+        const xs = ring.map(q => q[0]),
+          ys = ring.map(q => q[1]);
+        for (const [i, col, row] of within(c, Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)))
+          turns.set(i, (turns.get(i) ?? 0) + winding(ring, col + 0.5, row + 0.5));
+      }
+      for (const [i, n] of turns) if (n) px[i] = 1;
     },
   };
   c.getContext = () => g;
   return c;
 }
-
+// The canvas's px whose centres are in a box of device px: each one's index, column and row
+function* within(c, x0, y0, x1, y1) {
+  const from = v => Math.max(0, Math.ceil(v - 0.5));
+  for (let y = from(y0); y < Math.min(c.height, Math.ceil(y1 - 0.5)); y++)
+    for (let x = from(x0); x < Math.min(c.width, Math.ceil(x1 - 0.5)); x++) yield [y * c.width + x, x, y];
+}
+// An SVG path as the closed rings it fills (M, L, A and Z, either case; arcs circular, as a disc's)
+function rings(d) {
+  const words = d.match(/[a-z]|-?[\d.]+(?:e-?\d+)?/gi),
+    pathRings = [],
+    num = () => Number(words.shift());
+  let ring = [],
+    x = 0,
+    y = 0,
+    cmd = '';
+  while (words.length) {
+    if (/[a-z]/i.test(words[0])) cmd = words.shift();
+    const rel = cmd === cmd.toLowerCase(),
+      to = () => [(rel ? x : 0) + num(), (rel ? y : 0) + num()];
+    const kind = cmd.toUpperCase();
+    if (kind === 'Z') [x, y] = ring[0];
+    else if (kind === 'M') {
+      pathRings.push((ring = [([x, y] = to())]));
+      cmd = rel ? 'l' : 'L';
+    } else if (kind === 'L') ring.push(([x, y] = to()));
+    else if (kind === 'A') {
+      const r = num(),
+        [, , large, sweep] = [num(), num(), num(), num()],
+        end = to();
+      ring.push(...arc([x, y], r, large, sweep, end));
+      [x, y] = end;
+    }
+  }
+  return pathRings;
+}
+// A circular arc's points, from a to b
+function arc([ax, ay], r, large, sweep, [bx, by]) {
+  const hx = (bx - ax) / 2,
+    hy = (by - ay) / 2,
+    half = Math.hypot(hx, hy),
+    rr = Math.max(r, half),
+    k = ((large === sweep ? -1 : 1) * Math.sqrt(rr * rr - half * half)) / (half || 1),
+    cx = ax + hx - k * hy,
+    cy = ay + hy + k * hx,
+    from = Math.atan2(ay - cy, ax - cx);
+  let turn = Math.atan2(by - cy, bx - cx) - from;
+  if (sweep && turn < 0) turn += 2 * Math.PI;
+  if (!sweep && turn > 0) turn -= 2 * Math.PI;
+  return Array.from({ length: 16 }, (_, i) => [
+    cx + rr * Math.cos(from + (turn * (i + 1)) / 16),
+    cy + rr * Math.sin(from + (turn * (i + 1)) / 16),
+  ]);
+}
+// How many times a ring winds around a point (nonzero: inside where it isn't 0)
+function winding(ring, x, y) {
+  let n = 0;
+  for (let i = 0; i < ring.length; i++) {
+    const [ax, ay] = ring[i],
+      [bx, by] = ring[(i + 1) % ring.length],
+      side = (bx - ax) * (y - ay) - (x - ax) * (by - ay);
+    if (ay <= y && by > y && side > 0) n++;
+    else if (ay > y && by <= y && side < 0) n--;
+  }
+  return n;
+}
 // A line drawn with pen() from these events (the first a pointerdown, the last a pointerup): the stroke it ended with,
-// and the shapes filled on the wet canvas and the under one as it was drawn
-function live(events, ink = RED, { halo = false } = {}) {
+// and the shapes filled on the wet canvas and the under one as it was drawn. each(): what's on screen after each event
+// ({ e, wet, under, stroke }, the line as far as it went)
+function live(events, ink = RED, { halo = false, each } = {}) {
   const on = {},
     surface = {
       getBoundingClientRect: box,
@@ -67,15 +154,18 @@ function live(events, ink = RED, { halo = false } = {}) {
     },
     wet = canvas(),
     under = canvas();
-  let stroke = null;
+  let stroke = null,
+    drawing = null;
+  document.dispatchEvent = ({ detail }) => (drawing = detail.stroke);
   inkjs.pen(surface, wet, { halo, under, ink: () => ink, end: s => (stroke = s) });
-  events.forEach((e, n) =>
+  events.forEach((e, n) => {
     on[n === 0 ? 'pointerdown' : n === events.length - 1 ? 'pointerup' : 'pointermove']({
       pointerId: 1,
       preventDefault() {},
       ...e,
-    }),
-  );
+    });
+    each?.({ e, wet, under, stroke: { ...drawing, points: [...drawing.points] } });
+  });
   return { stroke, wet: wet.fills, under: under.fills, underOpacity: under.style.opacity };
 }
 const union = fills => new Set(fills.flatMap(f => shapes(f.d)));
@@ -152,14 +242,6 @@ test('a move whose coalesced list is empty still draws its own point', () => {
   assert.ok(stroke.points.some(([x]) => Math.abs(x - move.clientX) < 30 && x > down.clientX + 30));
 });
 
-// A shape's extent in CSS px: a disc's from its left and radius, a band's from its corners
-function extent(d) {
-  const n = d.match(/-?[\d.]+/g).map(Number);
-  if (d.includes('a')) return [n[0], n[1] - n[2], n[0] + 2 * n[2], n[1] + n[2]];
-  const xs = n.filter((_, i) => i % 2 === 0),
-    ys = n.filter((_, i) => i % 2);
-  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
-}
 // Each move of the pen bringing the browser's predicted points: two more samples along the way it's going
 const PREDICTED = HANDS.pen.map((e, n, all) =>
   e.getCoalescedEvents
@@ -174,27 +256,67 @@ const PREDICTED = HANDS.pen.map((e, n, all) =>
     : e,
 );
 
-test('predicted points draw a tail ahead of the line that the next repaint wipes, never kept in the stroke', () => {
-  const plain = live(HANDS.pen, RED, { halo: true }),
-    { stroke, wet, under } = live(PREDICTED, RED, { halo: true });
+test('predicted points draw a tail that ends at the last of them, never kept in the stroke', () => {
+  const plain = live(HANDS.pen, RED, { halo: true });
+  let tails = 0;
+  const { stroke } = live(PREDICTED, RED, {
+    halo: true,
+    each: ({ e, wet, under }) => {
+      const end = e.getPredictedEvents?.().at(-1);
+      if (!end) return;
+      // (8 px on from it, the way it goes: past the widest ink and its white edge)
+      const dx = end.clientX - e.clientX,
+        dy = end.clientY - e.clientY,
+        on = 8 / Math.hypot(dx, dy),
+        past = [(end.clientX + dx * on) * K, (end.clientY + dy * on) * K];
+      for (const c of [wet, under]) {
+        assert.ok(c.inked(end.clientX * K, end.clientY * K), 'the tail reaches the last predicted point');
+        assert.ok(!c.inked(...past), 'and ends there');
+      }
+      tails++;
+    },
+  });
+  assert.ok(tails > 10);
   assert.deepEqual(stroke, plain.stroke);
-  for (const [fills, grow] of [
-    [wet, 0],
-    [under, 2],
-  ]) {
-    const kept = new Set(shapes(inkjs.outline(stroke, grow))),
-      paints = [...new Set(fills.map(f => f.paint))],
-      ahead = [...union(fills)].filter(d => !kept.has(d));
-    assert.ok(ahead.length > 0, 'a tail is drawn');
-    for (const d of ahead) {
-      const last = paints.findLastIndex(p => fills.some(f => f.paint === p && shapes(f.d).includes(d))),
-        [x0, y0, x1, y1] = extent(d).map(v => v * K);
-      const wiped = paints
-        .slice(last + 1)
-        .some(({ box }) => box[0] <= x0 && box[1] <= y0 && box[2] >= x1 && box[3] >= y1);
-      assert.ok(wiped, `the tail's ${d} is wiped`);
-    }
-    assert.deepEqual(new Set([...union(fills)].filter(d => kept.has(d))), kept);
+});
+
+// What draw() shows of a stroke (with its white edge grown by grow), on a canvas the surface's size
+function dry(stroke, grow = 0) {
+  const c = canvas();
+  [c.width, c.height] = [400 * K, 300 * K];
+  c.getContext().setTransform(K, 0, 0, K, 0, 0);
+  c.getContext().fill(new Path2D(inkjs.outline(stroke, grow)));
+  return c.pixels();
+}
+// How many px differ between two canvases
+const changes = (a, b) => a.reduce((n, v, i) => n + (v !== b[i]), 0);
+
+test('the next sample wipes the tail: the screen shows only the line, where the pen went', () => {
+  const [down, first, next] = HANDS.pen,
+    // (the browser guessing wrong: 30 px down, where the pen never goes)
+    off = { clientX: first.clientX, clientY: first.clientY + 30 },
+    seen = [];
+  live([down, { ...first, getPredictedEvents: () => [off] }, next, HANDS.pen.at(-1)], RED, {
+    halo: true,
+    each: ({ wet, under, stroke }) =>
+      seen.push({
+        tail: wet.inked(off.clientX * K, off.clientY * K) && under.inked(off.clientX * K, off.clientY * K),
+        wet: changes(wet.pixels(), dry(stroke)),
+        under: changes(under.pixels(), dry(stroke, HALO)),
+      }),
+  });
+  assert.ok(seen[1].tail, 'the tail is drawn');
+  assert.deepEqual(seen.slice(2), [
+    { tail: false, wet: 0, under: 0 },
+    { tail: false, wet: 0, under: 0 },
+  ]);
+});
+
+test("a mouse's or a finger's predicted points draw no tail: the line stays behind the pointer", () => {
+  for (const kind of ['mouse', 'touch']) {
+    const events = PREDICTED.map(e => ({ ...e, pointerType: kind }));
+    const plain = live(events.map(e => ({ ...e, getPredictedEvents: undefined })));
+    assert.deepEqual(live(events).wet, plain.wet, kind);
   }
 });
 

@@ -55,7 +55,7 @@ async function scrapsLand(browser, c, viewport, device) {
   }
 }
 // The network drops the notes page's ask twice. The board's mark makes the call's page, which the agent's first scrap
-// makes the notes page in the call's notebook (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
+// makes the notes page in My Notebook (the store's pageFor): hung up, HQ neither asks about it nor throws it away.
 async function notOpened(browser, c) {
   const context = await c.hqIn(browser, c.DESKTOP);
   const line = await playLine(context);
@@ -68,8 +68,8 @@ async function notOpened(browser, c) {
     asked.push(r.request().postDataJSON());
     return r.abort('failed');
   });
-  // (today's book as the store lists it at hang-up: the call's page, in the call's notebook)
-  const mark = { id: 9001, day: '2026-10-26', kind: 'call', call: 9, notebook: 901, strokes: 0, pictures: 0 };
+  // (today's book as the store lists it at hang-up: the call's page, in My Notebook)
+  const mark = { id: 9001, day: '2026-10-26', kind: 'call', call: 9, notebook: 1, strokes: 0, pictures: 0 };
   await page.route(`${c.base}/api/book`, r => {
     listed.push(Date.now());
     return r.fulfill({ json: { day: mark.day, today: mark.day, days: [], pages: [mark] } });

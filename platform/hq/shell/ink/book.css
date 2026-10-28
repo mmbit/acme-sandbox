@@ -11,8 +11,15 @@
   --bk-table: #3a3148;
   /* the cover's squares: how far its board shows past the paper at the head and the foot (the outer edge is .bk-edge),
      and the spine's width at the screen's right edge */
-  --bk-square: 10px;
+  --bk-square: 14px;
   --bk-back: 7px;
+  /* the page block's edges showing at the paper's outer edge (.bk-paper's leaves) */
+  --bk-leaves: 8px;
+  /* the book rests on the screen, never against its edges: this much of the table round it, at the head below Safari's
+     blurred strip (style.css's --sat, which HQ's own controls clear on every browser too), the foot and the spine's side
+     (the leaf's transparent border there: book.js lays the leaf out to the screen's edge). */
+  --bk-gap: 16px;
+  --bk-top: calc(var(--sat, 0px) + var(--bk-gap));
   --bk-font: 'Atkinson Hyperlegible', 'Atkinson', system-ui, -apple-system, 'Segoe UI', sans-serif;
   font: 16px/1.4 var(--bk-font);
   color: var(--bk-night);
@@ -23,23 +30,43 @@
 }
 #book > * {
   position: fixed;
-  top: 0;
-  height: var(--app-h, 100dvh);
+  top: var(--bk-top);
+  height: calc(var(--app-h, 100dvh) - var(--bk-top) - var(--bk-gap));
   box-sizing: border-box;
 }
-/* the table under the book, where the page has given up its room: what shows while the book moves off it, a quiet
-   checkerboard in the tones of HQ's look (--bk-ground, --bk-check: book.js), in HQ's shade at its edge. Gradients only,
-   painted once: the book moves over it. */
+@media (max-width: 600px) {
+  #book {
+    --bk-gap: 10px;
+  }
+}
+/* the table under the book, where the page has given up its room: in HQ's ground (--bk-ground: book.js), with the
+   book's shadow on it while it rests there. Where the book lies, a classic checkerboard, seen only as the book lifts off
+   it, slides narrower or shuts, blurred as HQ's page is meanwhile (--bk-blur: bookswing.js). Gradients only, painted
+   once: the book moves over it. (the board's call 148) */
 #book .bk-table {
   right: 0;
+  top: 0;
+  height: var(--app-h, 100dvh);
   background-color: var(--bk-ground, var(--bk-table));
-  background-image: repeating-conic-gradient(
-    color-mix(in srgb, var(--bk-check, #fff) 6%, transparent) 0 25%,
-    transparent 0 50%
-  );
-  background-size: 24px 24px;
   box-shadow: inset 12px 0 16px -12px rgba(0, 0, 0, 0.5);
   z-index: 40;
+}
+#book .bk-table::before,
+#book .bk-table::after {
+  content: '';
+  position: absolute;
+  inset: var(--bk-top) var(--bk-gap) var(--bk-gap) 0;
+}
+#book .bk-table::before {
+  background: repeating-conic-gradient(#d4d4d4 0 25%, #f4f4f4 0 50%) 0 0 / 32px 32px;
+  filter: blur(var(--bk-blur, 0px));
+}
+/* (the resting book's shadow: the cast's while it's lifted, growing in as it drops: --bk-rest, bookswing.js) */
+#book .bk-table::after {
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.45),
+    0 1px 3px rgba(0, 0, 0, 0.5);
+  opacity: var(--bk-rest, 1);
 }
 /* the book's leaf: the cover's board, its squares showing round the paper (booklook.css draws the board), the paper
    on it (bookpages.js fills .bk-paper) up to the spine, and the controls over the paper */
@@ -47,22 +74,29 @@
   z-index: 41;
   overflow: hidden;
   background-color: var(--bk-cloth);
+  /* (the table's margin past the spine: booklook.css paints the board inside it) */
+  border-right: var(--bk-gap) solid transparent;
 }
 /* (its own stacking: whatever lies on the paper, a turning leaf too, stays under the controls floating over it) */
 #book .bk-paper {
   position: absolute;
   z-index: 0;
-  inset: var(--bk-square) var(--bk-back) var(--bk-square) 0;
+  inset: var(--bk-square) var(--bk-back) var(--bk-square) var(--bk-leaves);
   overflow: hidden;
   background-color: var(--bk-paper);
   background-image: var(--bk-dots);
   background-size: 22px 22px;
-  /* the page block's edges at the head, foot and outer edge: a few leaves' paper under the top one */
+  /* the page block's edges at the head, foot and outer edge: the leaves under the top one, stepping out towards the
+     lower left as the light from the upper left shows them, a book's thickness of paper (the board's prototype's) */
   box-shadow:
     0 0 0 1px #e9dcc2,
-    -1px 1px 0 1px #d9cab0,
-    -2px 2px 0 1px #efe3cc,
-    -2px 3px 6px 1px rgba(0, 0, 0, 0.5);
+    -1px 1px 0 1px #d2c2a6,
+    -2px 2px 0 1px #f1e6d0,
+    -3px 3px 0 1px #d2c2a6,
+    -4px 4px 0 1px #ede1c9,
+    -5px 5px 0 1px #cbbb9f,
+    -6px 6px 0 1px #e6d9bf,
+    -6px 7px 8px 1px rgba(0, 0, 0, 0.55);
 }
 /* the gutter: the paper curving into the spine, under everything on it */
 #book .bk-leaf::before {
@@ -80,15 +114,15 @@
 #book .bk-rail {
   container: bk-rail / inline-size;
   position: absolute;
-  inset: var(--bk-square) var(--bk-back) var(--bk-square) 0;
+  inset: var(--bk-square) var(--bk-back) var(--bk-square) var(--bk-leaves);
   z-index: 8;
   pointer-events: none;
 }
-/* (clear of Safari's blurred strip at the top: style.css's --sat, as HQ's own controls are.) */
+/* (the book itself is clear of Safari's blurred strip at the top: --bk-top.) */
 #book .bk-islands {
   position: absolute;
   /* (below the page's turned-down corner, which shares it: bookshare.css.) */
-  top: calc(12px + var(--bk-ear, 0px) + var(--sat, 0px));
+  top: calc(12px + var(--bk-ear, 0px));
   right: 12px;
   bottom: max(12px, env(safe-area-inset-bottom));
   justify-content: flex-start;
@@ -158,6 +192,7 @@
     transparent
   );
   pointer-events: none;
+  opacity: var(--bk-rest, 1);
 }
 #book .bk-edge::after {
   content: '';
@@ -178,7 +213,7 @@
 #book .bk-lip {
   all: unset;
   position: fixed;
-  top: calc(var(--app-h, 100dvh) / 2);
+  top: calc(var(--bk-top) + (var(--app-h, 100dvh) - var(--bk-top) - var(--bk-gap)) / 2);
   width: 22px;
   height: 68px;
   translate: -100% -50%;
@@ -234,11 +269,12 @@
 /* ---- the swing (bookswing.js): the board opening and shutting round its spine. Its shadow on HQ's page, soft while
    it's high and tight near the surface (two layers blurred once, crossfaded and scaled: nothing re-blurred per frame);
    the page face's shade; the page block's edge at the outer edge, showing as the board lifts. The book's own shadow on
-   the page beside it is the cast's while it's lifted, and snaps back as it lands. */
+   the page beside it is the cast's while it's lifted, and grows back in with its drop, rather than popping in as it
+   lands (the board's call 152). */
 #book .bk-cast {
   right: 0;
-  top: 8px;
-  height: calc(var(--app-h, 100dvh) - 16px);
+  top: calc(var(--bk-top) + 8px);
+  height: calc(var(--app-h, 100dvh) - var(--bk-top) - var(--bk-gap) - 16px);
   z-index: 40;
   pointer-events: none;
   visibility: hidden;
@@ -269,36 +305,34 @@
   right: 0;
   top: var(--bk-square);
   bottom: var(--bk-square);
-  width: 10px;
+  width: 16px;
   transform: scaleX(0);
   transform-origin: 100% 50%;
-  background: repeating-linear-gradient(90deg, var(--bk-paper) 0 2px, #e2d6bd 2px 3px);
+  background: repeating-linear-gradient(90deg, var(--bk-paper) 0 2px, #cdbd9f 2px 3px);
   box-shadow:
     inset 0 1px 0 #d9cab0,
     inset 0 -1px 0 #d9cab0;
   pointer-events: none;
 }
-#book.bk-lifted .bk-edge::before {
-  visibility: hidden;
-}
 #book.bk-swinging :is(.bk-edge, .bk-leaf, .bk-lip, .bk-cast) {
   will-change: transform;
 }
-/* the pull tab lifts a little while it's held: up and out, its shadow deeper (by translate, never scale, which would
-   scale the swing's transform after it too) */
+/* the pull tab lifts a little while it's held: up, its shadow deeper (by translate, never scale, which would scale the
+   swing's transform after it too); never out, which opened a gap between it and the cover all through the swing (the
+   board's call 149) */
 #book .bk-lip {
   transition:
     translate 0.16s ease,
     box-shadow 0.16s ease;
 }
 #book .bk-lip.bk-gripped {
-  translate: calc(-100% - 2px) calc(-50% - 2px);
+  translate: -100% calc(-50% - 2px);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.25),
     -5px 8px 16px rgba(0, 0, 0, 0.45);
 }
 #book[data-mode='spread'] .bk-lip.bk-gripped {
-  translate: 2px calc(-50% - 2px);
+  translate: 0 calc(-50% - 2px);
 }
 /* (held still, it's lifted at once; after its rule, which it overrides) */
 @media (prefers-reduced-motion: reduce) {

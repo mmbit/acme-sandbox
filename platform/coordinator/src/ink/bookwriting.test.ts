@@ -43,6 +43,14 @@ const due = () => booksheets.deliverDue(Date.now() + booknotes.SEND_MS);
 async function claimed() {
   for (let i = 0; i < 100; i++) {
     const c = (await h.worker('reads/claim')).body;
+    // (the book's judge's calls for the notes, answered none: bookjudge.ts)
+    if (c.reading && JSON.parse(c.schema).properties.reply) {
+      await h.worker('reads/answer', {
+        reading: c.reading,
+        result: { is_error: false, structured_output: { reply: 'none', why: 'test' } },
+      });
+      continue;
+    }
     if (c.reading) {
       const png = Buffer.from(c.content[0].source.data, 'base64');
       return { reading: c.reading as string, width: (await sharp(png).metadata()).width! };

@@ -1,7 +1,7 @@
 // What the tips book (booktips.js) shows: the book's hidden things, one tip a page, in four parts. Each tip says what
 // the book does today, in a line or two, over a scene of it (booktipscene.js), and names the code it describes (from):
 // a change to that behaviour changes its tip here in the same pull request, a new hidden thing adds one, and a thing
-// taken out takes its tip with it. The tips book shows only what's built.
+// taken out takes its tip with it. The tips book shows only what's built. (every tip checked against the book:
 import { MOD } from './ink/bookui.js';
 import * as draw from './booktipscene.js';
 
@@ -70,7 +70,7 @@ export const TIPS = [
   {
     part: 'Writing',
     title: 'Paste a picture',
-    words: `Copy a picture anywhere and paste it in the book (${MOD}+V): it lands taped on the page you’re on.`,
+    words: `Copy a picture anywhere and paste it in the book (${MOD}+V), or drop a picture file on it: it lands taped on the page you’re on.`,
     from: 'platform/hq/shell/ink/booktape.js',
     scene: draw.scene(
       draw.bookPage(),
@@ -90,9 +90,28 @@ export const TIPS = [
     ),
   },
   {
+    part: 'Writing',
+    title: 'Say it as you mark',
+    words: 'Hold the Pencil still on HQ for a moment and talk: what you say goes into the book with your mark.',
+    from: 'shared/review/pentouch.js',
+    scene: draw.scene(
+      draw.hqPage(),
+      draw.bookEdge(),
+      draw.pen('M90 80l0 0', 0.06, 0.5),
+      ...[0, 1, 2].map(i =>
+        draw.during(
+          0.2 + i * 0.1,
+          1,
+          `<path class="tb-ink" d="M${106 + i * 8} ${74 - i * 2}a${8 + i * 6} ${8 + i * 6} 0 0 1 0 ${12 + i * 4}"/>`,
+        ),
+      ),
+      draw.during(0.62, 1, draw.note(184, 62, 50, 22)),
+    ),
+  },
+  {
     part: 'Gestures',
     title: 'Ring what you mean',
-    words: 'A ring round something on HQ marks just that thing, so your note knows what it’s about.',
+    words: 'With the Pencil, a ring round something on HQ marks just that thing, so your note knows what it’s about.',
     from: 'shared/review/gestures.js',
     scene: draw.scene(
       draw.hqPage(8, 10, 224, 130),
@@ -116,7 +135,7 @@ export const TIPS = [
   {
     part: 'Gestures',
     title: 'Move about the page',
-    words: `Two fingers pan and pinch to zoom. With a mouse: hold Space and drag, or scroll. ${MOD} and scroll zooms.`,
+    words: `A finger moves the page, two pinch to zoom. With a mouse: scroll, or hold Space and drag. ${MOD} and scroll zooms.`,
     from: 'platform/hq/shell/ink/bookpan.js',
     scene: draw.scene(
       draw.moved(
@@ -133,15 +152,14 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'See all your pages',
+    title: 'See every page',
     words:
-      'Pinch out past a page to see the notebook’s pages side by side. Pinch out again for the Shelf of notebooks. Tap one to open it.',
+      'The grid at the foot of the book shows all its pages: drag one to put it in order, tick its box to archive it. Pinch in once more for the Shelf of every notebook.',
     from: 'platform/hq/shell/ink/bookzoom.js, platform/hq/shell/ink/bookshelf.js',
     scene: draw.scene(
       draw.during(0, 0.42, draw.moved(0.1, 0.4, { scale: 0.3, cx: 120, cy: 75 }, draw.bookPage(20, 8, 200, 134))),
       draw.during(0.4, 1, [0, 1, 2].map(i => draw.bookPage(18 + i * 72, 44, 60, 40)).join('')),
-      draw.finger('M140 60l30-20', 0.1, 0.4),
-      draw.finger('M100 90l-30 20', 0.1, 0.4),
+      draw.tap(120, 140, 0.08),
     ),
   },
   {
@@ -165,27 +183,36 @@ export const TIPS = [
   },
   {
     part: 'Answers',
-    title: 'Answers hang under your writing',
+    title: 'Answer an answer',
     words:
-      'An agent’s answer hangs under the writing it answers. Tick its box to say it’s done. Write under it to reply.',
-    from: 'platform/hq/shell/ink/bookgroups.js',
+      'An agent’s answer is written in beside your note. Write a tick, a cross, a ? or a few words in the strip under it: it goes once your pen rests.',
+    from: 'platform/hq/shell/ink/bookanswerreply.js',
     scene: draw.scene(
       draw.bookPage(),
-      draw.ink('M44 40c10-14 30 10 44-4s20 8 30 0M48 56c14-6 40 4 60-2', 0, 0.01),
-      draw.moved(
-        0.08,
-        0.3,
-        { dy: 70 },
-        `<g transform="translate(0 -70)"><rect class="tb-slip" x="52" y="66" width="140" height="54" rx="2"/><path class="tb-clip" d="M62 60v14a4 4 0 0 0 8 0V62"/><path class="tb-typed-line" d="M64 84h80M64 96h60"/><rect class="tb-box" x="150" y="98" width="16" height="16" rx="2"/></g>`,
-      ),
-      draw.written('M150 106l7 8 14-18', 0.44, 0.58),
+      draw.note(36, 24, 120),
+      draw.during(0.08, 1, '<path class="tb-typed-line" d="M52 70h120M52 82h90"/>'),
+      draw.during(0.3, 1, '<path class="tb-rule" d="M52 108h140"/>'),
+      draw.written('M60 98l7 8 14-18', 0.44, 0.62),
+    ),
+  },
+  {
+    part: 'Answers',
+    title: 'Ring the version you want',
+    words:
+      'When an agent tries a few versions, ring or tick the one you like on its versions page: it’s stamped THIS ONE and the agent hears which.',
+    from: 'platform/hq/shell/ink/bookanswerpace.js',
+    scene: draw.scene(
+      draw.bookPage(),
+      ...[0, 1, 2].map(i => `<rect class="tb-photo" x="${34 + i * 60}" y="40" width="52" height="40" rx="2"/>`),
+      draw.written('M150 56c0-16 48-18 52 0s-6 30-30 30-30-12-22-28', 0.12, 0.5),
+      draw.during(0.6, 1, '<rect class="tb-picked" x="150" y="88" width="48" height="12" rx="2"/>'),
     ),
   },
   {
     part: 'Controls',
     title: 'Share a page by its corner',
     words:
-      'Drag the turned-down corner of a page onto PDF or PNG for a file of it, or onto Call to talk it over with the CEO. Tap the corner for the same three.',
+      'Drag the turned-down corner of a page onto PDF or PNG to keep or send it, or onto the agent’s name: it rings them with the page, or shows it on your call. Tap the corner for the same choices.',
     from: 'platform/hq/shell/ink/bookdogear.js, platform/hq/shell/ink/bookshare.js',
     scene: draw.scene(
       target(26, 'PDF'),
@@ -202,17 +229,29 @@ export const TIPS = [
           `${draw.bookPage(16, 8, 174, 134)}<path class="tb-ear" d="M174 8h16v16z"/>`,
         ),
       ),
-      draw.finger('M184 16c10 20 20 40 32 60', 0.1, 0.5),
+      draw.finger('M184 16c10 20 20 40 38 60', 0.1, 0.5),
+    ),
+  },
+  {
+    part: 'Controls',
+    title: 'Show it on a call',
+    words:
+      'On a call, drag a page by its corner, or a picture from your desktop, onto the agent’s call window. Click the call first and a paste goes to the call, not the book.',
+    from: 'platform/hq/shell/calldrop.js',
+    scene: draw.scene(
+      draw.hqPage(8, 10, 110, 130),
+      `<rect class="tb-slip" x="24" y="34" width="76" height="70" rx="4"/>${draw.face(62, 62, 14)}`,
       draw.during(
-        0.6,
-        0.84,
+        0,
+        0.62,
         draw.moved(
-          0.6,
-          0.84,
-          { dx: 14, dy: -2, scale: 0.4, cx: 208, cy: 76 },
-          '<path class="tb-plane" d="M190 70l28 6-28 8 6-8z"/>',
+          0.12,
+          0.55,
+          { dx: -120, dy: 30, scale: 0.3, cx: 190, cy: 40 },
+          `${draw.bookPage(130, 8, 104, 134)}<path class="tb-ear" d="M218 8h16v16z"/>`,
         ),
       ),
+      draw.finger('M226 16c-40 10-100 30-160 50', 0.12, 0.55),
     ),
   },
   {
@@ -230,14 +269,39 @@ export const TIPS = [
   },
   {
     part: 'Controls',
-    title: 'Fold the book away',
-    words: 'Tap the book’s tab to fold it away or bring it back, or drag its spine. Drag it left to spread it wide.',
-    from: 'platform/hq/shell/ink/book.js',
+    title: 'Open, close and resize',
+    words:
+      'Tap or pull the tab on the book’s edge to close it or bring it back. Drag the cover’s edge to make it wider: far enough and it lies over HQ.',
+    from: 'platform/hq/shell/ink/book.js, platform/hq/shell/ink/bookswing.js',
     scene: draw.scene(
       draw.hqPage(8, 10, 160, 130),
       draw.moved(0.18, 0.46, { dx: 60 }, draw.bookEdge(172, 6, 64, 138)),
       draw.during(0.46, 1, '<rect class="tb-tab" x="232" y="64" width="8" height="22" rx="2"/>'),
       draw.tap(186, 75, 0.14),
+    ),
+  },
+  {
+    part: 'Controls',
+    title: 'Keys for the tools',
+    words:
+      'With the pointer over the book: V selects, P is the pen, M the highlighter, E the eraser, S shapes, T type, H moves the page. 1 to 4 pick a colour, [ and ] the width.',
+    from: 'platform/hq/shell/ink/bookpalette.js',
+    scene: draw.scene(
+      draw.bookPage(20, 8, 200, 92),
+      ...['V', 'P', 'M', 'E', 'T'].map((k, i) => draw.key(30 + i * 38, 112, k, 0.1 + i * 0.12)),
+    ),
+  },
+  {
+    part: 'Controls',
+    title: 'Search your handwriting',
+    words:
+      'Search, at the top of the grid of pages, reads your handwriting and what you said as you wrote, across all your notebooks. Write in it with the Pencil, or type.',
+    from: 'platform/hq/shell/ink/booksearch.js',
+    scene: draw.scene(
+      '<rect class="tb-slip" x="20" y="14" width="200" height="28" rx="14"/>',
+      draw.written('M36 30c6-8 10 8 16 0s10 8 16 0 10 8 16 0', 0.08, 0.4),
+      draw.during(0.5, 1, [0, 1, 2].map(i => draw.bookPage(18 + i * 72, 60, 60, 40)).join('')),
+      draw.during(0.6, 1, '<rect class="tb-picked" x="96" y="74" width="40" height="10" rx="2"/>'),
     ),
   },
 ];

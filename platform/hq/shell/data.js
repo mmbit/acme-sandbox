@@ -71,6 +71,10 @@ export async function loadArchive(dev, before) {
   const all = await mockList('archive'), from = before ? all.findIndex(r => r.id === before) + 1 : 0;
   return { cards: all.slice(from, from + 3), more: all.length > from + 3, total: all.length };
 }
+export async function loadArchiveIndex(dev) {
+  if (!dev) return get('/api/requests/archive/index');
+  return (await mockList('archive')).map(({ id, title, agent, created, answered }) => ({ id, title, agent, created, answered }));
+}
 export const archivePhoto = (dev, id, field) => dev ? 'mock/review-shot.svg' : `/api/requests/photo?id=${Number(id)}&field=${Number(field)}`;
 // a one-time link that signs the board in on a preview address (single sign-on from HQ)
 export async function previewLink(dev, url) { return dev ? url : (await post('/api/preview/link', { url })).url; }

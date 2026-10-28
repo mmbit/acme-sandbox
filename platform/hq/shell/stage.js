@@ -69,6 +69,9 @@ export async function mount(name, intro = false) {
   }
   cv.replaceWith(next); cv = next; scene = fresh; timers = mine; look = name; dressed = entry.dressed;
   wearIcons(style, kit);
+  // (the look worn, its skin loaded and its agents placed: for what takes its tones from HQ's page, the book's table, and
+  // its faces, the answers' (bookanswers.js).)
+  document.dispatchEvent(new CustomEvent('stage:look', { detail: { look: name } }));
   audio.wear(sounds);
   resize(); scene.focus({ kind: 'home' }, { instant: true });
   bindControls();
@@ -173,5 +176,7 @@ function draw() {
   scene.draw(now);
   overlay.draw();
 }
+// A screenshot about to copy the stage's canvas: a frame drawn now, as a WebGL look's last one is gone once shown
+document.addEventListener('snapshot:draw', e => { if (e.target === cv && scene) scene.draw(now); }, true);
 // dev: one frame at time t, with the loop held
 export function frame(t) { step(0); now = t; draw(); }

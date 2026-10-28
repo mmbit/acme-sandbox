@@ -285,7 +285,7 @@ class HqTools(unittest.TestCase):
             out = self.call(('say', {'agent': 'bolt', 'text': 'the logs, please'}), env=env)
             self.assertFalse(Path(d, 'hq.log').exists())
         self.assertEqual([t['name'] for t in json.loads(r.stdout)['result']['tools']], ['job', 'promise', 'replace', 'expedite', 'add', 'reach', 'search', 'history', 'call', 'intercom', 'eta', 'estimate', 'when', 'report', 'git', 'manage', 'waiting', 'hang_up', 'screen', 'sketch',
-                                                                                'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page'])
+                                                                                'answer_note', 'ask_to_see', 'draw', 'open_work', 'drive', 'scrap', 'title_page'])
         self.assertTrue(out[1]['result']['isError'])
 
     def test_a_partner_call_has_exactly_its_tools_and_note_and_no_transcript_run_nothing(self):
@@ -1007,6 +1007,21 @@ class CallsList(unittest.TestCase):
         token, _ = self.start('kit')
         self.assertEqual(self.tools(token, 'kit', ('expedite', {'job': job})), [(True, 'Nothing expedited: only the CEO expedites a job: ask juno')])
         self.voice('call-end', {'agent': 'kit', 'lines': [], 'token': token})
+
+    def test_a_calls_agent_writes_its_answer_on_a_note_the_board_drew_on_the_call(self):
+        token, call = self.start('juno')
+        now = '2026-10-28T00:00:00.000Z'
+        self.db("insert into book_pages (day, kind, call, created, updated, w, h) values ('2026-10-28', 'call', ?, ?, ?, 800, 600)", call, now, now)
+        [(page,)] = self.db('select max(id) from book_pages')
+        self.db("insert into book_sheets (owner, status, created) values ('juno', 'call', ?)", now)
+        [(sheet,)] = self.db('select max(id) from book_sheets')
+        self.db("insert into book_notes (sheet, page, n, by, anchor, words, created, updated) values (?, ?, 1, 'board', ?, 'Is the price right?', ?, ?)",
+                sheet, page, json.dumps({'v': 1, 'url': '/', 'el': None, 'view': {'x': 0, 'y': 0, 'w': 800, 'h': 600, 'dpr': 1}, 'ink': []}), now, now)
+        out = self.tools(token, 'juno', ('answer_note', {'note': 1, 'words': 'Yes: it matches the shop.'}), ('answer_note', {'note': 9, 'words': 'x'}))
+        self.assertEqual(out[0], (False, "Your answer is written beside note 1 in the board's book."))
+        self.assertEqual(out[1], (True, "Nothing written: the board drew no note 9 on this call's page"))
+        self.assertEqual(self.db('select by, text, style from book_slips'), [('juno', 'Yes: it matches the shop.', 'text')])
+        self.voice('call-end', {'agent': 'juno', 'lines': [], 'token': token})
 
     def test_a_call_token_adds_to_no_other_call_and_reads_no_calls_items_nor_its_own_transcript(self):
         said = 'Board: the secret plan for the brand film.'

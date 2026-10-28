@@ -85,7 +85,7 @@ model; `examples` come after the foundation's, and `terms` (what the company's o
 saying) join the platform's, for that model alone. `ahead` is
 said by `hq plan` when a project is its product's only open one, and shown in its help.
 `split_minutes` are the sizes, in agent time, past which `hq plan` marks a task still to start (by the size the play
-counts) and a deliverable whose tasks to do add up past it, each with how to split it: a nudge, never a refusal. Each left
+counts) and a deliverable whose tasks to do add up past it, each with how to judge a split: a nudge, never a refusal. Each left
 out is the foundation's line alone, nothing said, or no mark. The marks come at the read, not when a task is queued: a new task
 has no size until the estimate tool's sweep and then the sizer reach it, a minute or more later. The owner's planning
 job reads its deliverables back the same way.
@@ -96,9 +96,10 @@ A deliverable is cut by what the board will see go live, never one per note, cal
 take turns in one (one branch, the gates, push tests, documents check and previews on each task's push, one review at
 its end, reading the branch merged with main). A call's follow-up, the board's notes, a sort of the inbox or the CEO's
 hourly check adds new work to the open deliverable whose feature it serves before it draws a new one; a new one is
-for a feature no open deliverable makes. A deliverable that grows past what one review reads well is cut where a piece
-can go live on its own: rounds grow with a review's size, though far slower than the size, and a blocking finding
-holds every piece in it. A company's own review numbers go in its `levels.json` `thread` line, which every drawing
+for a feature no open deliverable makes. Related work is one deliverable, and a feature whose pieces go live separately
+is a chain, each piece drawn needing the one before (`hq plan deliverable --needs`), so one merges at a time. That is
+the planner's judgment, in the words of `levels.ts` `RELATED_WORK` (the levels' deliverable line, the CEO's hourly
+check and a meeting's review): nothing counts or refuses deliverables running at once. A company's own review numbers go in its `levels.json` `thread` line, which every drawing
 prompt shows as guidance, never a cap. For an ETA, a deliverable's review is about one round when it's small (under about 200
 changed lines) and two to two and a half when it's big (past about 500).
 
