@@ -1,14 +1,16 @@
 // node --test src/ink/bookanswer.test.ts   (an agent's answers on the board's notebook: on a group not sent yet, the
-// dots while the quick run goes, a form answered, an ink reply, a tick and a pick, the open list)
+// dots while the quick run goes, a typed question judged and answered, a form answered, an ink reply, a tick and a
+// pick, the open list)
 import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import sharp from 'sharp';
-import { harness } from '../harness.ts';
+import { harness, until } from '../harness.ts';
 
 const h = await harness('bookanswer');
 const { agent, db } = h;
 const { answerNow } = await import('./bookanswer.ts');
-const { ANSWER } = await import('./answerspot.ts');
+const { ANSWER, NARROWER, answerHeight } = await import('./answerspot.ts');
+const { spotsNarrower } = await import('./answerplace.ts');
 const { ORIGIN } = await import('../config.ts');
 const booknotes = await import('./booknotes.ts');
 const booksheets = await import('./booksheets.ts');
@@ -86,6 +88,17 @@ test("an answer on a group not sent yet: the owner's face and dots at its spot w
   );
 });
 
+test('a quick run that ends without an answer says so where the answer would lie', async () => {
+  const { page, g, run } = await asked('Is this live yet?');
+  const spot = (await groupOn(page, g.id)).waiting.spot;
+  await h.finish(run, { status: 'failed' });
+  const after = await groupOn(page, g.id);
+  assert.deepEqual(after.children, [], 'no answer');
+  assert.deepEqual([after.waiting.reason, after.waiting.by], ["I couldn't answer that. Ask again.", run.agent]);
+  const at = (s: any) => [s.dx, s.dy, s.w];
+  assert.deepEqual(at(after.waiting.spot), at(spot), 'where the dots were');
+});
+
 test("answers never lie over the board's groups: one beside, the next one under it", async () => {
   const page = await currentPage();
   const g = await draw(page, 300, 3000);
@@ -146,6 +159,86 @@ test("a note the board writes later on an answer's wide spot (a narrower book dr
   const moved = at(after);
   assert.deepEqual([moved.x, moved.w, moved.h], [wide.x, wide.w, wide.h], 'as wide and tall, further down');
   assert.ok(!over(moved, later.box), `clear of the later note: ${JSON.stringify([moved, later.box])}`);
+});
+
+test('a spot saved before the controls grew is placed again once, its spot on every paper left of the controls', async () => {
+  const page = await currentPage();
+  const g = await draw(page, 140, 13000);
+  const run = await h.claimJob(answerNow({ grp: g.id }, { id: 1, why: 'x' })!);
+  await h.finish(run, { status: 'done', result: 'Yes: it went live this morning.' });
+  const [{ id }] = (await groupOn(page, g.id)).children;
+  // (as the old rules kept it: beside its group, and below it from page x 100 to 280, under a phone's controls)
+  const old = {
+    dx: g.box.w + 24,
+    dy: 0,
+    w: 400,
+    h: 136,
+    narrow: { dx: 100 - g.box.x, dy: g.box.h + 24, w: 180, h: 200 },
+  };
+  db.prepare('update book_slips set spot = ? where id = ?').run(JSON.stringify(old), id);
+  spotsNarrower();
+  const [{ spot }] = (await groupOn(page, g.id)).children;
+  assert.deepEqual([spot.dx, spot.dy, spot.w], [old.dx, old.dy, old.w], 'the wide spot where it was');
+  for (const w of NARROWER) {
+    let s = spot;
+    while (s.narrow && g.box.x + s.dx + s.w > w - ANSWER.rail) s = s.narrow;
+    assert.ok(g.box.x + s.dx + s.w <= w - ANSWER.rail, `on ${w} px paper: ${JSON.stringify(s)}`);
+  }
+});
+
+// A spot as the old rules kept it: beside its group, and below it from page x 100 to 280, under a phone's controls
+const oldSpot = (g: any, h: number) => ({
+  dx: g.box.w + 24,
+  dy: 0,
+  w: 400,
+  h,
+  narrow: { dx: 100 - g.box.x, dy: g.box.h + 24, w: 180, h: 200 },
+});
+// The spot a chain has on paper w wide: its first that ends left of the controls
+const spotOn = (g: any, spot: any, w: number) => {
+  let s = spot;
+  while (s.narrow && g.box.x + s.dx + s.w > w - ANSWER.rail) s = s.narrow;
+  return s;
+};
+
+test("a pictured answer's saved spot placed again as tall as its picture, read from its file, on a phone", async () => {
+  const { page, g, run } = await asked('Show me the phone screen');
+  const portrait = await sharp({ create: { width: 390, height: 844, channels: 3, background: '#88aacc' } })
+    .png()
+    .toBuffer();
+  const text = 'The phone screen, with the bar along its foot. '.repeat(40);
+  await agent('answer', run.token, {
+    grp: g.id,
+    text,
+    picture: `data:image/png;base64,${portrait.toString('base64')}`,
+  });
+  await h.finish(run);
+  const [{ id }] = (await groupOn(page, g.id)).children;
+  // (its wide spot measured by older text metrics: shorter than this text and picture now come to)
+  db.prepare('update book_slips set spot = ? where id = ?').run(JSON.stringify(oldSpot(g, 900)), id);
+  spotsNarrower();
+  const [{ spot }] = (await groupOn(page, g.id)).children;
+  for (const w of [342, 292]) {
+    const s = spotOn(g, spot, w);
+    assert.equal(s.h, answerHeight({ text, picture: { width: 390, height: 844 } }, s.w), `on ${w} px paper`);
+  }
+});
+
+test('a group deleted before its spot was placed again comes back by Undo with a spot left of the controls', async () => {
+  const page = await currentPage();
+  const g = await draw(page, 140, 14000);
+  const run = await h.claimJob(answerNow({ grp: g.id }, { id: 1, why: 'x' })!);
+  await h.finish(run, { status: 'done', result: 'Yes: it went live this morning.' });
+  const [{ id }] = (await groupOn(page, g.id)).children;
+  db.prepare('update book_slips set spot = ? where id = ?').run(JSON.stringify(oldSpot(g, 136)), id);
+  assert.equal((await h.board('/api/notebooks/groups/delete', { id: g.id })).status, 200);
+  spotsNarrower();
+  assert.equal((await h.board('/api/notebooks/groups/restore', { id: g.id })).status, 200);
+  const [{ spot }] = (await groupOn(page, g.id)).children;
+  for (const w of NARROWER) {
+    const s = spotOn(g, spot, w);
+    assert.ok(g.box.x + s.dx + s.w <= w - ANSWER.rail, `on ${w} px paper: ${JSON.stringify(s)}`);
+  }
 });
 
 test("an answer keeps its real height with its spot: a portrait picture's foot, and the next answer below it", async () => {
@@ -287,6 +380,13 @@ test('a tick closes an answer; a tick on a version picks it; only the run asked 
   assert.deepEqual([v.style, v.version, v.patch, v.spot], ['version', 'Warm paper', true, null]);
   const picked = (await h.board('/api/notebooks/answers/tick', { id: v.id, ticked: true })).body.answer;
   assert.ok(picked.picked && !picked.ticked, 'picked');
+  // a tick on another version moves the pick: one per try, and the run hears which
+  const w = (await agent('answer', tryRun.token, { grp: g.id, version: 'Cool slate', picture: png })).body.slip;
+  await h.board('/api/notebooks/answers/tick', { id: w.id, ticked: true });
+  const pickedNow = (await groupOn(page, g.id)).children.filter((c: any) => c.picked).map((c: any) => c.id);
+  assert.deepEqual(pickedNow, [w.id]);
+  const told = db.prepare('select text from messages where job = ?').all(tryRun.id) as { text: string }[];
+  assert.match(told.at(-1)!.text, /The board picked your version “Cool slate”/);
   await h.finish(tryRun);
   await h.finish(other);
 });
@@ -318,4 +418,101 @@ test('hq answer: a group by g<id>, a form and ink from files, --asks; a bad form
   const styles = (await groupOn(page, g.id)).children.map((c: any) => c.style);
   assert.deepEqual(styles, ['form', 'drawing', 'question']);
   await h.finish(run);
+});
+
+test("a failed answer says why until the thread moves on: the next ask's face, then its answer", async () => {
+  const { page, g, run } = await asked('Is the new page live?');
+  await h.finish(run, { status: 'done', result: 'Yes: it went live this morning.' });
+  const slip = (await groupOn(page, g.id)).children.find((c: any) => c.kind === 'answer');
+  const reply = async (words: string) => {
+    const r = (await h.board('/api/notebooks/groups/reply', { answer: slip.id, words })).body;
+    return answerNow({ grp: r.id }, { id: 1, why: 'a plain question' })!;
+  };
+  await h.finish(await h.claimJob(await reply('And the old one?')), { status: 'failed', result: 'x' });
+  assert.equal((await groupOn(page, g.id)).waiting.reason, "I couldn't answer that. Ask again.");
+  const again = await reply('Is the old one gone?');
+  assert.equal((await groupOn(page, g.id)).waiting.reason, 'Waiting for my turn to answer.', "the next ask's face");
+  const writing = await h.claimJob(again);
+  assert.deepEqual(
+    [(await groupOn(page, g.id)).waiting.reason, (await groupOn(page, g.id)).waiting.style],
+    [undefined, 'text'],
+    'its dots',
+  );
+  await h.finish(writing, { status: 'done', result: 'Yes: gone since noon.' });
+  assert.equal((await groupOn(page, g.id)).waiting, null, 'no failure left under the note');
+});
+
+test("a failed answer's visible reason keeps clear of later answers and the board's ink", async () => {
+  const page = (await h.board('/api/notebooks/pages/create', { notebook: await myNotebook() })).body.id;
+  const g = await draw(page, 40, 60);
+  const run = await h.claimJob(answerNow({ grp: g.id }, { id: 1, why: 'a plain question' })!);
+  await h.finish(run, { status: 'failed' });
+  const waiting = (await groupOn(page, g.id)).waiting;
+  assert.ok(waiting.reason);
+  const boxes = (root: any, spot: any) =>
+    [spot, ...(spot.narrow ? [spot.narrow] : [])].map(s => ({
+      x: root.x + s.dx,
+      y: root.y + s.dy,
+      w: s.w,
+      h: s.h,
+    }));
+  const other = await draw(page, 40, 60);
+  const next = await h.claimJob(answerNow({ grp: other.id }, { id: 1, why: 'another question' })!);
+  await h.finish(next, { result: 'Another answer.' });
+  const answer = (await groupOn(page, other.id)).children[0];
+  const reserved = boxes(g.box, (await groupOn(page, g.id)).waiting.spot);
+  assert.ok(!boxes(other.box, answer.spot).some(b => reserved.some(r => over(b, r))), 'no answer covers the reason');
+  const ink = await draw(page, reserved[0].x + 10, reserved[0].y + 10);
+  const after = (await groupOn(page, g.id)).waiting;
+  assert.equal(after.reason, waiting.reason);
+  assert.ok(!boxes(g.box, after.spot).some(b => over(b, ink.box)), 'the reason moves clear of later ink');
+});
+
+// A question typed on the current page and the judge's call on it, an answer (any other words it reads first, none:
+// bookjudge.ts), until the note shows a face
+async function typedQuestion(words: string) {
+  const page = await currentPage();
+  const made = (
+    await h.board('/api/notebooks/groups/create', {
+      page,
+      ink: [],
+      texts: [{ x: 40, y: 60, w: 300, text: words, color: '#2a2352' }],
+    })
+  ).body;
+  await until(async () => {
+    const c = (await h.worker('reads/claim')).body;
+    if (!c.reading || !JSON.parse(c.schema).properties.reply) return false;
+    const mine = c.content.at(-1).text.includes(JSON.stringify(words));
+    const structured_output = { reply: mine ? 'answer' : 'none', why: 'The board asks a plain question.' };
+    await h.worker('reads/answer', { reading: c.reading, result: { is_error: false, structured_output } });
+    return mine;
+  }, `the judge's reading of ${words}`);
+  const group = () => groupOn(page, made.id);
+  await until(async () => (await group()).waiting, 'its face');
+  return group;
+}
+
+test('a typed question says it waits for its turn, shows the dots once the worker takes it, then its answer', async () => {
+  const group = await typedQuestion('What time is it?');
+  assert.equal((await group()).waiting.reason, 'Waiting for my turn to answer.');
+  const run = (await h.claim('claude', { kind: 'chat' }))!;
+  assert.ok(run.quickReplyUntil > Date.now(), 'the worker is given the end of its turn');
+  assert.equal((await group()).waiting.reason, undefined, 'the dots');
+  await h.finish(run, { result: 'It is 16:35 in Amsterdam.' });
+  const answered = await group();
+  assert.equal(answered.waiting, null);
+  assert.equal(answered.children.at(-1).text, 'It is 16:35 in Amsterdam.');
+});
+
+test('an answer the worker stopped at the end of its turn says so, and is not tried again', async () => {
+  const group = await typedQuestion('How long is a quick answer?');
+  const run = (await h.claim('claude', { kind: 'chat' }))!;
+  await h.finish(run, { status: 'failed', overtime: true, result: 'Stopped at its quick-run deadline' });
+  const unanswered = await group();
+  assert.equal(
+    unanswered.waiting.reason,
+    "That took longer than a quick answer can, so I stopped. Send the page and I'll answer it as work.",
+  );
+  assert.equal(unanswered.children.length, 0);
+  assert.equal(await h.claim('claude', { kind: 'chat' }), null, 'not tried again');
 });

@@ -5,11 +5,11 @@
 // board sees it and the page's picture shows it. A box moved, or saved again as it was, asks nothing again; nor do the
 // words in an invited person's book.
 import { rmSync } from 'node:fs';
-import { db } from '../db.ts';
+import { db, lacks, once } from '../db.ts';
 import { publish } from '../events.ts';
 import { ceo } from '../company.ts';
 import { findAgent, jobAgent } from '../jobs.ts';
-import { onQuickRun, quickRun } from '../chat.ts';
+import { onQuickRun, quickRun, whyMissed } from '../quickruns.ts';
 import * as book from './book.ts';
 import { BOARD, drawnOf, row as pageRow, type Page } from './book.ts';
 import { typedHeight } from './bookrender.ts';
@@ -20,10 +20,14 @@ import { redact } from '../secrets.ts';
 import { inkOf } from '../../../hq/shell/ink/agentink.js';
 
 const TYPED = 'book-typed-question';
-// (box: the question's box as it was asked, where the answer goes if the box has gone or changed since)
+// (box: the question's box as it was asked, where the answer goes if the box has gone or changed since; typed: when its
+// answer was typed onto the page, what the status report counts as it landing, infra/report.sh)
 db.exec(
-  'create table if not exists book_typed_asks (job integer primary key, page integer not null, box text not null)',
+  'create table if not exists book_typed_asks (job integer primary key, page integer not null, box text not null, typed text)',
 );
+once('2026-10-28-book-typed-asks-typed', () => {
+  if (lacks('book_typed_asks', 'typed')) db.exec('alter table book_typed_asks add column typed text');
+});
 // The room between the question's last line and its answer, in page px
 const ANSWER_GAP = 8;
 // POST /api/book/page/save, the board's: book.ts savePage, then each box on a page of its own book with new words is
@@ -67,14 +71,21 @@ question leans on what's drawn there. If it needs work rather than an answer, sa
 change files or ask the board for it.
 
 The question: ${text}`;
-// Its answer, typed on (a run that failed leaves the page as it was: the board asks again)
-onQuickRun(TYPED, (job, status, result) => {
-  const asked = db.prepare('select page, box from book_typed_asks where job = ?').get(job) as
-    { page: number; box: string } | undefined;
-  if (!asked || status !== 'done' || !result) return;
-  typeAnswer(asked.page, JSON.parse(asked.box), jobAgent(job) ?? ceo(), result).catch(err =>
-    console.error(`The answer to a question typed on page ${asked.page} wasn't typed on:`, err),
-  );
+// Its answer, or why no answer came, typed under the question.
+onQuickRun(TYPED, {
+  heard: (job, status, result) => {
+    const asked = db.prepare('select page, box from book_typed_asks where job = ?').get(job) as
+      { page: number; box: string } | undefined;
+    if (!asked) return;
+    const answered = status === 'done' && !!result;
+    const text = answered ? result : whyMissed(job)!;
+    typeAnswer(asked.page, JSON.parse(asked.box), jobAgent(job) ?? ceo(), text)
+      .then(typed => {
+        if (typed && answered)
+          db.prepare('update book_typed_asks set typed = ? where job = ?').run(new Date().toISOString(), job);
+      })
+      .catch(err => console.error(`The answer to a question typed on page ${asked.page} wasn't typed on:`, err));
+  },
 });
 // Under the question's box as the page has it now (the same words), or as it was asked; as wide, in the agent's ink
 async function typeAnswer(page: number, asked: Typed, agent: string, result: string) {
@@ -87,7 +98,7 @@ async function typeAnswer(page: number, asked: Typed, agent: string, result: str
   const text = redact(result.replace(/\0/g, ''));
   if ([...text].length > TEXT_MAX) throw new Error(`the answer is over ${TEXT_MAX} characters`);
   const answer = { x: box.x, y: box.y + (await typedHeight(box)) + ANSWER_GAP, w: box.w, text, color: inkOf(agent) };
-  typeOnto(p.id, answer, answer.y + (await typedHeight(answer)) + ANSWER_GAP, agent);
+  return typeOnto(p.id, answer, answer.y + (await typedHeight(answer)) + ANSWER_GAP, agent);
 }
 
 // An agent's words typed onto a page of the board's book, last of its boxes, the page grown down to foot (page px) to

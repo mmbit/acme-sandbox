@@ -39,6 +39,8 @@ import { isAuthed } from './auth.ts';
 import * as owed from './owed.ts';
 import * as guests from './guests.ts';
 import * as shares from './shares.ts';
+import { invitedPeople } from './notebookguests.ts';
+import { syncReviewNotebook } from './notebookreviews.ts';
 import * as pricing from './pricing.ts';
 import { FRONT } from './approvals.ts';   // the front's door
 import { deployed } from './wakes.ts';
@@ -50,7 +52,8 @@ import * as sorting from './sorting.ts';
 import { productProject } from './made.ts';
 import * as watchalong from './watchalong.ts';   // (the recorder).
 import { DIR as BOOK_DIR } from './pagescraps.ts';   // a book note's snip (fromBook).
-import * as sketchPeople from './ink/sketchpeople.ts';   // invited people's own Sketchbooks. (Ink's folder)
+import { reviewMember } from './notebookguests.ts';
+import * as sketchPeople from './ink/sketchpeople.ts';   // invited people's identity and ink colour.
 
 const SHOTS = `${DATA_DIR}/review`;
 const MAX_SHOT = 1536 * 1024; // a viewport JPEG is ~100-600 KB; review.js steps down to fit
@@ -243,24 +246,28 @@ export async function product(req: IncomingMessage, res: ServerResponse) {
   if (path === '/__review/coach') return json(res, 200, coach(p, body));
   if (p.share && !noteOpens(p.share, p.host, body?.page)) return json(res, 403, { error: 'not a page this link opens' });
   if (p.share && !granted) return json(res, 409, { error: 'that note didn’t go through: write it again' });
-  const r = await saveNote(p.slug, p.host, body, p.base, granted ? intoBook(req, p.host, granted) : null);
+  const r = await saveNote(p.slug, p.host, body, p.base, granted ? intoBook(req, p.host, granted, p.share!) : null);
   return 'status' in r ? json(res, r.status, { error: r.error }) : json(res, 200, r);
 }
-// An invited outsider's note into the board's book (bookguests.ts): theirs as 'guest:<grant>', and whether it may still
+// An invited reviewer's note into their Notebook page: theirs as 'guest:<grant>', and whether it may still
 // go in at each step past an await (the body's, the snip's cut), as an attacker's would be checked: their session still
 // signed in on the share, and the grant still the one the request began with (the board can take it back meanwhile).
-type IntoBook = { by: string; open: () => Refusal | null };
-const intoBook = (req: IncomingMessage, host: string, g: sketchPeople.Grant): IntoBook => ({
-  by: sketchPeople.whoOf(g),
-  open: () => !shares.fromSession(cookie(req, 'ps'), host) ? { status: 403, error: 'the link has ended' }
-    : sketchPeople.grantOf(g.guest)?.id !== g.id ? { status: 409, error: 'that note didn’t go through: write it again' } : null,
-});
+type IntoBook = { by: string; page?: number; open: () => Refusal | null };
+const intoBook = (req: IncomingMessage, host: string, g: sketchPeople.Grant, share: shares.Session): IntoBook => {
+  const member = reviewMember(share.id, share.guest);
+  return {
+    by: sketchPeople.whoOf(g), page: member?.page,
+    open: () => !shares.fromSession(cookie(req, 'ps'), host) ? { status: 403, error: 'the link has ended' }
+      : sketchPeople.grantOf(g.guest)?.id !== g.id || !reviewMember(share.id, share.guest) ? { status: 409, error: 'that note didn’t go through: open your invitation again' } : null,
+  };
+};
 
-// guest: an outside reviewer's (a share's), heard in their own language: the board's language is the board's alone
-async function voice(slug: string, req: IncomingMessage, guest: boolean) {
+// guest: an outside reviewer's (a share's), heard in their own language: the board's language is the board's alone.
+// still: voice.ts transcribe's, asked past the body.
+export async function voice(slug: string, req: IncomingMessage, guest: boolean, still = () => true) {
   const v = startVoice(slug);
   if (!v) { req.resume(); return 429; }
-  try { return await transcribe(req, guest ? undefined : boardLanguage()); } finally { v.busy = false; }
+  try { return await transcribe(req, guest ? undefined : boardLanguage(), still); } finally { v.busy = false; }
 }
 
 // The one upgrade HQ takes (server.ts shouldUpgradeCallback): any other comes as an ordinary request, as Caddy's
@@ -395,11 +402,12 @@ const clock = (t: number) => {
 // The page a note is on, whole
 export const urlOf = (host: string, base: string, page: string) => `https://${host}${base}${page}`;
 // base: a shelf's. The board's note goes into its Notebook (bookreview.ts, loaded as it's needed: it reads the book's
-// store, which reads this file's sent notes); an outsider's (book: intoBook) too, for the owner, signed as theirs.
+// store, which reads this file's sent notes); an outsider's (book: intoBook) becomes a scrap on their own page in the
+// round notebook, signed as theirs.
 export async function saveNote(slug: string, host: string, b: any, base = '', book: IntoBook | null = null): Promise<Refusal | { ok: true; id: number }> {
   forgetOld();
   const { toBook } = await import('./ink/bookreview.ts');
-  return !book ? toBook(slug, host, base, b) : book.open() ?? toBook(slug, host, base, b, book.by, book.open);
+  return !book ? toBook(slug, host, base, b) : book.open() ?? toBook(slug, host, base, b, book.by, book.open, book.page);
 }
 // The screenshots and pictures of notes sent more than SHOT_DAYS ago go, as each new note comes
 const forgetOld = () => {
@@ -701,6 +709,7 @@ export function inviteToShare(b: any) {
   const s = open ?? shares.create(scope!, linkedFrom(scope!), days, kind);
   if (kind === 'tester' && cap !== null && !found && !open) shares.setCap(s.id, cap);
   shares.invite(s.id, who.name);
+  syncReviewNotebook(s);
   const what = { notes: 'to leave outside notes on', view: 'to view', tester: 'to try out, notes and one order,' }[shares.kindOf(s)];
   // (until, on the board's clock)
   publish({ type: 'log', agent: owed.ownerOf(s.about).agent, text: `The board invited ${who.name} ${what} ${s.about}, until ${companyTime(Date.parse(s.ends))}` });
@@ -730,6 +739,7 @@ export function setShareCap(b: any) {
 export function removeFromShare(b: any) {
   const s = shares.byId(Number(b?.id)), name = String(b?.name ?? '');
   if (!s || s.ended || !shares.remove(s.id, name)) return 404;
+  syncReviewNotebook(s);
   publish({ type: 'log', agent: owed.ownerOf(s.about).agent, text: `The board removed ${name} from the outside notes on ${s.about}` });
   return shareRow(shares.byId(s.id)!);
 }
@@ -738,6 +748,7 @@ export function removeFromShare(b: any) {
 export function endShare(b: any) {
   const id = Number(b?.id);
   if (!shares.end(id)) return 404;
+  syncReviewNotebook(shares.byId(id)!);
   return shareRow(shares.byId(id)!);
 }
 
@@ -748,8 +759,8 @@ export const listShares = () => shares.list().map(shareRow);
 // gave them, to invite again with their name alone (inviteToShare). And its title, {name, title}: a line of up to
 // TITLE letters, empty to clear it.
 const TITLE = 40;
-// (every invited person has a Sketchbook of their own, with no switch: sketchpeople.ts give.)
-export const listPeople = () => shares.recent().map(name => ({ name, title: guests.titleOf(name) }));
+// Notebook invitees remain known beyond the recent shares window.
+export const listPeople = () => [...new Set([...shares.recent(), ...invitedPeople()])].map(name => ({ name, title: guests.titleOf(name) }));
 export function setPersonTitle(b: any) {
   const name = String(b?.name ?? ''), title = line(b?.title, TITLE) || null;
   const stored = shares.sharedWith(name) ? guests.setTitle(name, title) : null;
@@ -770,7 +781,9 @@ function shareRow(s: shares.Share) {
 // into the board's book, never sent, go to the owner of what it shared as one job (leftOver). One that fails is tried
 // again at the next sweep, and holds up no other.
 export function endDue() {
+  const expired = shares.list().filter(share => !share.ended && Date.parse(share.ends) <= Date.now());
   shares.endExpired();
+  for (const share of expired) syncReviewNotebook(shares.byId(share.id)!);
   for (const { share } of db.prepare("select distinct share from review_notes where status = 'outside'").all() as { share: number }[]) {
     try { leftOver(share); } catch (err) { console.error(`Could not hand share #${share}'s unsent outside notes on:`, err); }
   }

@@ -24,7 +24,8 @@ const HANG_UP = icon('hangup');
 const SHOW = ['Show my screen', 'Share'],
   STOP = ['Stop showing', 'Stop'],
   UNSHOWN = 'Your screen couldn’t be shown. Try again.',
-  UNSEEN = name => `Your screen isn’t reaching ${name} right now.`;
+  // (the server opens the agent's view again with each batch the page sends: watchalong.ts addEvents)
+  UNSEEN = name => `Your screen isn’t reaching ${name}. HQ keeps trying by itself.`;
 // How near the transcript's end counts as reading the newest line (the board scrolled up past it: it stays put)
 const FOLLOW_PX = 24;
 // How long the layer waits for its little screen to switch off (style.css's cf-off, .4 s, and a margin)
@@ -79,13 +80,9 @@ export function closeLayer(c) {
 // the bubble's), leaning in while it thinks. The screen is dark while it rings, and its picture switches on like an old
 // TV's as the agent picks up, and off as the call ends (lit; style.css).
 function callFace(c, el) {
-  const portrait = scene.portrait?.({ kind: 'agent', id: c.agent }),
-    picture = el.querySelector('.cf-picture');
-  el.querySelector('.cf-figure').append(
-    portrait?.img ??
-      Object.assign(document.createElement('span'), { className: 'cb-initial', textContent: c.name[0] ?? '?' }),
-  );
-  if (portrait?.accent) el.parentElement.style.setProperty('--cb-accent', portrait.accent); // (its lines' too)
+  const picture = el.querySelector('.cf-picture');
+  el.querySelector('.cf-figure').append(faceOf(c));
+  if (c.portrait?.accent) el.parentElement.style.setProperty('--cb-accent', c.portrait.accent); // (its lines' too)
   return {
     voice(level, talking = level > 0.02) {
       // (only a change: the call's window is in the watch-along's recording, and each write is an event in it.
@@ -184,10 +181,7 @@ export function expand(c) {
 }
 
 function newBubble(c) {
-  const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
-  const face =
-    portrait?.img ??
-    Object.assign(document.createElement('span'), { className: 'cb-initial', textContent: c.name[0] ?? '?' });
+  const face = faceOf(c);
   const bubble = new CallBubble({
     words: {
       call: `Call with ${c.name}`,
@@ -206,9 +200,22 @@ function newBubble(c) {
     onOpen: () => expand(c),
     onSound: name => cue(name === 'settle' ? 'dock' : name),
   });
-  if (portrait?.accent) bubble.el.style.setProperty('--cb-accent', portrait.accent);
+  if (c.portrait?.accent) bubble.el.style.setProperty('--cb-accent', c.portrait.accent);
   bubble.watching(watchState(c));
   return bubble;
+}
+
+// The agent's face, on its little screen and in the bubble: the look's portrait of it as an image, made once a call, or
+// its initial. An image, not the scene's canvas: iPad Safari wipes a page's canvases when it's short of memory, and
+// decodes an image again.
+function faceOf(c) {
+  if (c.portrait === undefined) {
+    const portrait = scene.portrait?.({ kind: 'agent', id: c.agent });
+    c.portrait = portrait ? { src: portrait.img.toDataURL(), accent: portrait.accent } : null;
+  }
+  return c.portrait
+    ? Object.assign(new Image(), { src: c.portrait.src, alt: '', draggable: false, decoding: 'sync' })
+    : Object.assign(document.createElement('span'), { className: 'cb-initial', textContent: c.name[0] ?? '?' });
 }
 
 // ---- the watch-along: from the board's Show my screen on, HQ records itself for the call's agent and the call's

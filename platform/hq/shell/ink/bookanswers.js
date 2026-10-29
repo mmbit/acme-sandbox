@@ -8,12 +8,14 @@
 import { esc, stylesheet } from '../../util.js';
 import * as world from '../../world/world.js';
 import { inkOf } from './agentink.js';
-import { scene, look } from '../stage.js';
+import { portrait, faced } from './bookfaces.js';
 import { BULB, DOTS, inkBox, pathsOf } from './bookanswerart.js';
 import { writeWhenSeen } from './bookanswerwrite.js';
 import { fitReplies, formHtml, replyHtml, wireForm, wireReply } from './bookanswerreply.js';
 import { loadGroups, sendForm, sendReply } from './bookanswersdata.js';
 import { versionsTab, drawVersions, paperOf } from './bookanswerversions.js';
+import { scope, word } from './bookscope.js';
+import { words } from './notebookwords.js';
 
 for (const name of ['bookanswers', 'bookanswerform', 'bookanswerversions']) stylesheet(`shell/ink/${name}.css`);
 
@@ -109,15 +111,25 @@ function draw(layer, groups) {
 // ---- an answer
 
 // Where an answer lies on this screen: the store's spot, or where that runs under the controls floating at the paper's
-// right edge (one column or two: bookui.js --bk-stack) as this screen shows the page at 100%, its narrow spot, below its
-// group (placed for the narrowest paper: answerspot.ts). Never moved or narrowed here: only paper the store cleared.
+// right edge (one column or two: bookui.js --bk-stack) as this screen shows the page at 100%, the first of its narrow
+// spots that doesn't (each placed below its group for a narrower paper: answerspot.ts), or its narrowest. Never moved or
+// narrowed here: only paper the store cleared.
 function spotHere(g, spot, edge) {
-  if (!spot.narrow || edge === null) return spot;
-  return g.box.x + spot.dx + spot.w <= edge ? spot : spot.narrow;
+  if (edge === null) return spot;
+  let s = spot;
+  while (s.narrow && g.box.x + s.dx + s.w > edge) s = s.narrow;
+  return s;
 }
-// The x the answers keep left of on this screen (null: the paper has no size yet); again() draws them again as it sizes
+// The x the answers keep left of on this screen (null: the paper has no size yet); again() draws them again as it sizes,
+// and as the controls' width settles (bookui.js bk:stack)
 function edgeOf(layer, again) {
-  const paper = paperOf(layer, again);
+  const paper = paperOf(layer, again),
+    book = layer.slot.closest('#book');
+  if (book && !layer.hearsStack) {
+    layer.hearsStack = true;
+    const heard = () => (layer.slot.isConnected ? layer.again() : book.removeEventListener('bk:stack', heard));
+    book.addEventListener('bk:stack', heard);
+  }
   return paper && paper - (parseFloat(getComputedStyle(layer.slot).getPropertyValue('--bk-stack')) || 52) - 24;
 }
 const at = (g, spot) => `left:${g.box.x + spot.dx}px;top:${g.box.y + spot.dy}px;width:${spot.w}px`;
@@ -125,16 +137,22 @@ const at = (g, spot) => `left:${g.box.x + spot.dx}px;top:${g.box.y + spot.dy}px;
 function answerEl(layer, g, a, spot, replies) {
   const el = document.createElement('article');
   el.className = 'bk-answer';
-  Object.assign(el.dataset, { answer: a.id, style: a.style });
+  // (data-g: its group's, whose live move by Select carries it: bookselectlift.js)
+  Object.assign(el.dataset, { answer: a.id, style: a.style, g: g.id });
   el.toggleAttribute('data-ticked', !!a.ticked);
-  el.setAttribute('aria-label', `${a.name}${a.style === 'question' ? ' asks' : ' answers'}: ${a.text ?? ''}`);
+  // (to a guest the name says it's an AI's, in their language: charter rule 5)
+  const name = scope ? `${a.name} · ${words[document.documentElement.lang].aiAgent}` : a.name;
+  el.setAttribute(
+    'aria-label',
+    word(a.style === 'question' ? '{name} asks: {text}' : '{name} answers: {text}', { name, text: a.text ?? '' }),
+  );
   el.style.cssText = `${at(g, spot)};--ink:${inkOf(a.by)}`;
   const mine = replies.filter(r => r.answers === a.id);
   el.innerHTML = `<header class="bk-answer-head">${a.style === 'question' ? '' : BULB}${faceHtml(a)}<b class="bk-answer-name">${esc(
-    a.name,
-  )}${a.style === 'question' ? ' asks' : ''}</b></header>${wordsHtml(a.text)}${a.ink?.length ? inkHtml(a.ink) : ''}${
+    a.style === 'question' ? word('{name} asks', { name }) : name,
+  )}</b></header>${wordsHtml(a.text)}${a.ink?.length ? inkHtml(a.ink) : ''}${
     a.picture ? `<figure class="bk-answer-picture"><img src="${esc(a.picture)}" alt="" draggable="false"></figure>` : ''
-  }${a.style === 'form' && a.form ? formHtml(a) : ''}${replyHtml(mine, `Write your reply to ${a.name} here`)}`;
+  }${a.style === 'form' && a.form ? formHtml(a) : ''}${replyHtml(mine, word('Write your reply to {name} here', { name: a.name }))}`;
   const strip = el.querySelector('.bk-answer-reply'),
     origin = () => ({ x: el.offsetLeft + strip.offsetLeft, y: el.offsetTop + strip.offsetTop });
   wireStrip(layer, strip, a, origin);
@@ -150,19 +168,6 @@ function answerEl(layer, g, a, spot, replies) {
   return el;
 }
 
-// An agent's face as HQ's look draws them (a data URL), kept per look; none before the scene has placed them
-const portraits = new Map();
-function portrait(id) {
-  const key = `${look}:${id}`;
-  if (!portraits.has(key)) {
-    const drawn = world.agents.has(id) ? scene?.portrait?.({ kind: 'agent', id }) : null;
-    if (!drawn) return '';
-    portraits.set(key, drawn.img.toDataURL());
-  }
-  return portraits.get(key);
-}
-// What a face is drawn as, in a drawn answer's key: the look whose portrait it wears, or '' for the initial
-const faced = id => (portrait(id) ? look : '');
 // The agent's face as HQ's look draws them, or their initial in their ink
 export function faceHtml({ by, name }) {
   const picture = portrait(by);
@@ -199,17 +204,22 @@ function wireStrip(layer, strip, a, origin) {
 function waitingEl(g, spot) {
   const el = document.createElement('div');
   el.className = 'bk-answer-waiting';
-  el.dataset.group = g.id;
+  el.dataset.group = el.dataset.g = g.id;
   el.style.cssText = `${at(g, spot)};--ink:${inkOf(g.waiting.by)}`;
   el.setAttribute('role', 'status');
-  el.setAttribute('aria-label', `${g.waiting.name} is writing an answer`);
-  el.innerHTML = `${faceHtml(g.waiting)}${DOTS}`;
+  const reason = g.waiting.reason;
+  el.setAttribute(
+    'aria-label',
+    reason ? `${g.waiting.name}: ${reason}` : word('{name} is writing an answer', { name: g.waiting.name }),
+  );
+  el.innerHTML = `${faceHtml(g.waiting)}${reason ? `<span>${esc(reason)}</span>` : DOTS}`;
   return el;
 }
 function tabEl(layer, g, tab) {
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'bk-versions-tab';
+  el.dataset.g = g.id;
   el.style.cssText = `left:${g.box.x + g.box.w + 12}px;top:${g.box.y - 2}px`;
   el.textContent = `${tab.count} version${tab.count === 1 ? '' : 's'} →`;
   el.disabled = !g.tries_page;

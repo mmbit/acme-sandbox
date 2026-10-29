@@ -153,7 +153,8 @@ const born = (db.prepare("select name from sqlite_master where type = 'table' an
 // seats: each seat as the worker last reported it.
 // - util, week: windows used (0 to 1), with each reset time in resets and week_resets (ms).
 // - pace: 1 while its week runs ahead of its pace (only the board's word and work due before its reset can start).
-// - credits: 1 while it runs on credits past its limits (playseats.ts).
+// - credits: 1 while it may run on credits past its limits (the board's switch and its account's credits), not that it
+//   does: it runs on them only once a window is full (playseats.ts).
 //
 // requests: the cards on the desk phone.
 // - secrets: the keys a credential card asks for (a password field each).
@@ -248,7 +249,7 @@ db.exec(`
     about_keys integer not null default 0, instead_of integer, told text, voided text, cli text, thread text,
     is_check integer not null default 0, seq real, suspending text, step text,
     code text, landing text, engine_only text, judges text, off_worker integer not null default 0,
-    expedite integer not null default 0, carry text);
+    expedite integer not null default 0, carry text, light integer not null default 0, up text);
   create table if not exists seats (id text primary key, engine text not null, state text not null,
     until integer, note text, updated integer, util real, resets integer, week real, week_resets integer, pace integer,
     credits integer, cli text);
@@ -280,6 +281,8 @@ db.exec(`
 `);
 // A done job's routine and its calls, looked up by job for each done job (matching.ts pastJobs): on stale planner
 // statistics each lookup would otherwise read the whole table.
+// A scheduled job's kind by its title's slot (jobkinds.ts)
+db.exec('create index if not exists schedule_runs_slot on schedule_runs (slot)');
 db.exec(`create index if not exists schedule_runs_job on schedule_runs (job) where job is not null;
   create index if not exists calls_job on calls (job) where job is not null`);
 
@@ -457,7 +460,7 @@ db.exec('create index if not exists call_items_open on call_items (status, job)'
 // The open pull requests' branches, whose jobs carry a board item on until it merges (jobs.ts BOARD_CALL; the statuses
 // are jobs.ts OPEN_PRS): a few rows, not every pull request's
 db.exec("create index if not exists prs_open on prs (branch) where status in ('open', 'stuck', 'board')");
-redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending'); redactedJson('jobs', 'landing');
+redacted('jobs', 'title', 'prompt', 'note', 'result', 'output', 'cut', 'stopping', 'suspending'); redactedJson('jobs', 'landing', 'up'); // (up)
 redacted('requests', 'title', 'body', 'answer', 'topic'); redactedJson('requests', 'questions');
 redactedJson('calls', 'lines'); redacted('calls', 'reply'); redacted('chat', 'text'); redacted('call_items', 'what', 'quote', 'why', 'ref', 'said'); redacted('events', 'text'); // (lines)
 // untold: a running job owed the message that its item (call_items.id) was dropped or replaced, until it's sent (ledger.ts
@@ -549,9 +552,12 @@ db.exec(`create index if not exists jobs_named on jobs (id, title, thread, statu
 db.exec('create index if not exists jobs_room_for on jobs (room_for) where room_for is not null');
 // Token use per job run, for Finance's seat economics (usage.ts): numbers and model names only. `totals` is the engine's
 // running total for the session at that point, so the next run of the session can be stored as what it added.
+// opening, opening_written, turns, resumed, idle_ms: the run's up-front context and its resume (usage.ts recordUsage.). last_turn: when the session's model last replied on its main thread
+// (carryover.ts).
 db.exec(`create table if not exists usage (id integer primary key, job integer not null, ts text not null, engine text not null,
   seat text, session text, models text not null, input integer not null, cache_write integer not null, cache_read integer not null,
-  output integer not null, cost real, totals text not null)`);
+  output integer not null, cost real, totals text not null, opening integer, opening_written integer, turns integer,
+  resumed integer, idle_ms integer, last_turn text)`);
 // The status report's cost per job looks usage up by job (usage.ts reads by session: usage_session). The index keeps
 // that read short, so a report reader doesn't block HQ's writes past its 1.5 s lock wait
 db.exec('create index if not exists usage_job on usage (job)');
@@ -559,6 +565,8 @@ db.exec('create index if not exists usage_job on usage (job)');
 // window's rows, not the whole table.
 db.exec(`create index if not exists usage_seat on usage (seat, ts) where seat is not null;
   create index if not exists usage_engine on usage (engine, ts)`);
+// Numbers' Tokens dashboard reads the period's runs by time alone (tokens.ts)
+db.exec('create index if not exists usage_ts on usage (ts)');
 // A run's base is its session's latest report, whichever job made it (usage.ts recordUsage).
 db.exec('create index if not exists usage_session on usage (session) where session is not null');
 // The board's seats (seats.ts), kept here and changed in HQ's Settings › Seats: the worker runs jobs on these, each served by a
@@ -743,6 +751,17 @@ once('2026-10-20-jobs-code', () => lacks('jobs', 'code') && db.exec('alter table
 once('2026-10-21-jobs-landing', () => lacks('jobs', 'landing') && db.exec('alter table jobs add column landing text'));
 once('2026-10-27-jobs-carry', () => lacks('jobs', 'carry') && db.exec('alter table jobs add column carry text'));
 db.exec('create index if not exists jobs_carry on jobs (carry) where carry is not null');
+// A job its queuer put on a lighter model (jobs.light: hq job --model), and its hand-up to its agent's own model (jobs.up:
+// JSON, the lighter model and the run's note; jobs.ts handUp).
+once('2026-10-28-jobs-light', () => {
+  if (lacks('jobs', 'light')) db.exec('alter table jobs add column light integer not null default 0');
+  if (lacks('jobs', 'up')) db.exec('alter table jobs add column up text');
+});
+once('2026-10-28-usage-opening', () => {
+  for (const column of ['opening', 'opening_written', 'turns', 'resumed', 'idle_ms'])
+    if (lacks('usage', column)) db.exec(`alter table usage add column ${column} integer`);
+});
+once('2026-10-28-usage-last-turn', () => lacks('usage', 'last_turn') && db.exec('alter table usage add column last_turn text'));
 once('2026-10-27-prs-merged-as', () => lacks('prs', 'merged_as') && db.exec('alter table prs add column merged_as text'));
 db.exec('create index if not exists prs_merged_as on prs (merged_as) where merged_as is not null');
 once('2026-10-22-findings-routing', () => lacks('findings', 'cross_project') && db.exec('alter table findings add column cross_project integer not null default 0'));

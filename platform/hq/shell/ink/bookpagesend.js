@@ -4,12 +4,13 @@
 // sent is stamped at its head, its time once it's gone, and its own groups are read-only (booksave.js); its answers
 // and replies still come and go.
 import { esc } from '../../util.js';
-import { toast } from '../hud.js';
+import { toast } from '../toast.js';
 import { stamp } from './bookpaper.js';
 import { keep } from './bookedit.js';
 import { said, saved, shut } from './booksave.js';
 import { sendPage, undoSend } from './notebookdata.js';
 import { viewOf } from './bookview.js';
+import { scope, word } from './bookscope.js';
 
 // how long a send waits to go (notebooksend.ts SEND_MS), and a little after, to read the page once it's gone
 const SEND_MS = 10_000,
@@ -37,13 +38,13 @@ export async function sendShown(book, hooks) {
   keep(book.steps, s => s.page !== page);
   book.steps.push(step);
   went(book, page, answer);
-  toast('<b>Sent.</b> It goes in 10 seconds: tap to undo', () => {
+  toast(word('<b>Sent.</b> It goes in 10 seconds: tap to undo'), () => {
     if (book.steps.includes(step)) keep(book.steps, s => s !== step);
     step.undo();
   });
   setTimeout(() => hooks.pagesAgain().then(() => stamped(book, page)), SEND_MS + AFTER_MS);
   await hooks.pagesAgain();
-  const fresh = book.views.map(x => x.page).filter(p => !shut(p) && !p.archived);
+  const fresh = book.views.map(x => x.page).filter(p => !shut(p) && !p.archived && !p.tries && !p.tries_note);
   const to = fresh.sort((a, b) => b.created.localeCompare(a.created))[0];
   if (to) hooks.show(to.id);
 }
@@ -68,7 +69,7 @@ function went(book, page, answer) {
 export function stamped(book, page, fresh = false, el = book.views.find(x => x.page === page)?.el) {
   const node = el?.querySelector('[data-slot=stamp]');
   if (!node) return;
-  const words = page.sent ? `Sent ${timeOf(page.sent)}` : page.sending ? 'Sending' : '';
+  const words = page.sent ? word('Sent {time}', { time: timeOf(page.sent) }) : page.sending ? word('Sending') : '';
   if (!words) {
     node.textContent = '';
     return node.classList.remove('bk-stamped');
@@ -76,4 +77,9 @@ export function stamped(book, page, fresh = false, el = book.views.find(x => x.p
   if (fresh || node.textContent !== words) stamp(node, words);
 }
 const timeOf = at =>
-  new Date(at).toLocaleString(undefined, { weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  new Date(at).toLocaleString(scope ? document.documentElement.lang : undefined, {
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });

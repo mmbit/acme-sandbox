@@ -9,10 +9,9 @@
   overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
-  /* (its right clear of the controls floating over the paper: bookui.js's --bk-stack; its left of the tool strip,
-     bookstrip.js's --bk-strip. The strip) */
+  /* (its right clear of the controls floating over the paper, the tool strip's too: bookui.js's --bk-stack.) */
   --bk-far-right: calc(var(--bk-stack, 56px) + 24px);
-  --bk-far-left: calc(var(--bk-strip, 0px) + 28px);
+  --bk-far-left: 28px;
   padding: 18px var(--bk-far-right) 88px var(--bk-far-left);
   background-color: var(--bk-paper2);
   background-image: var(--bk-dots);

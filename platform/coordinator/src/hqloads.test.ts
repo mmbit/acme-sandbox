@@ -4,7 +4,6 @@
 // browser checks (platform/hq/*-check.mjs) run on the dev server, whose routes aren't these, and the push tests run
 // only test files: this is the one push test that loads the page (27 October: a module importing a name its target no
 // longer exported, and a redirect that sent a file still in place to a 404, each broke HQ past every check).
-import { existsSync } from 'node:fs';
 import { createServer, request } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { harness } from './harness.ts';
@@ -28,7 +27,7 @@ const h = await harness('hqloads', { env: { PORT: hq.split(':')[2] } });
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { lookNames } from '../../hq/looks.mjs';
-import { openPage, playwright } from '../../../shared/browser/browser.mjs';
+import { launched, openPage } from '../../../shared/browser/browser.mjs';
 
 const ASSEMBLED_MS = 20_000;
 type Asked = { url(): string; resourceType(): string };
@@ -66,19 +65,6 @@ for (const look of lookNames())
       await context.close();
     },
   );
-
-// Chromium started, or undefined where Playwright or its Chromium isn't installed: any other failure to start it fails
-// the test
-async function launched() {
-  let chromium;
-  try {
-    ({ chromium } = playwright());
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') return undefined;
-    throw error;
-  }
-  return existsSync(chromium.executablePath()) ? chromium.launch() : undefined;
-}
 
 // (in the page, whole: it's sent there) whether HQ's loading veil is gone: its words faded out or not on screen
 function unveiled() {

@@ -4,6 +4,7 @@
 // handwriting and put in, a step each time), a mouse's slice puts the keyboard's caret there.
 import { amendOf, openGap, strikeOut } from '/__review/penwords.js';
 import { readWords } from '/__review/written.js';
+import { notebookRequest } from './bookscope.js';
 import { said } from './booksave.js';
 
 // The words the pen edits on a page: boxes of words not being typed in, and a scrap's words (a field only while its
@@ -83,7 +84,7 @@ function sliced(book, owner, at, byHand) {
     keyboard: !byHand,
     text: () => el.value ?? el.textContent,
     put: owner.put,
-    read: readWords,
+    read: lines => readWords(lines, body => notebookRequest('/api/book/read', body)),
     failed: err =>
       owner.page &&
       said(book, owner.page, `Your handwriting wasn’t read: ${err?.status ? err.message : 'HQ couldn’t be reached'}.`),

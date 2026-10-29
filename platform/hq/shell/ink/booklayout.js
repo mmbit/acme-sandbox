@@ -15,7 +15,10 @@ const PAGE_SHARE = 620 / 1133;
 // Wider than BOOK.max by default, it takes a desktop's page for nothing (the concept's desktop column, with the rail's 48
 // now paper). A drag can make it as wide as leaves HQ's page PAGE_MIN.
 export const BOOK = { min: 320, max: 520 };
-// At half a split screen (about 560 pt) or less, or in portrait, the book starts folded and opens beside the page.
+// At half a split screen (about 560 pt) or less, or in portrait, the book starts folded. In portrait it opens as the
+// spread, as on a phone, until the board drags its cover's edge to a width beside the page: beside HQ's page at its
+// share it is too narrow to read an answer on (an iPad mini upright, 325 px: under 160 px of paper left of the
+// controls).
 const NARROW = 560;
 // From a laptop's width up, a screen is remembered apart from a tablet's landscape.
 const WIDE = 1280;
@@ -46,14 +49,16 @@ export function initial(shape) {
 // room: what the book's parts take from the screen's right edge, the width HQ's page gives up (none folded). In the
 // spread (a phone's, or wherever the open book leaves HQ too little) the book lies on top of the whole screen, its edge
 // at the left, and the page keeps its open width under it (shown again as it was, at once); where the open book would
-// leave no page (a phone) the spread covers HQ at its folded width, never a sliver. mode: the state's, or 'spread' where the open book would leave no page.
+// leave no page (a phone), or in portrait at no width the board gave it, the spread covers HQ at its folded width, never
+// a sliver. mode: the state's, or 'spread' where the open book would leave no page or lies over HQ in portrait.
 export function layout(w, h, state) {
   const shape = shapeOf(w, h),
     book = bookWidth(w, state.book),
-    openPage = w - EDGE - book;
+    openPage = w - EDGE - book,
+    over = openPage < PAGE_MIN || (shape === 'portrait' && state.book == null);
   if (state.mode === 'folded') return { shape, mode: 'folded', page: w, edge: 0, book: 0, room: 0 };
-  if (state.mode === 'spread' || openPage < PAGE_MIN) {
-    const page = openPage < PAGE_MIN ? w : openPage;
+  if (state.mode === 'spread' || over) {
+    const page = over ? w : openPage;
     return { shape, mode: 'spread', page, edge: EDGE, book: w - EDGE, room: w - page };
   }
   return { shape, mode: 'open', page: openPage, edge: EDGE, book, room: Math.min(w, EDGE + book) };

@@ -15,6 +15,7 @@ import { carryInto, uncarried } from './notebookcarry.ts';
 import { groupsBox } from './notebookgroups.ts';
 import { DIR } from './pagescraps.ts';
 import { rmSync } from 'node:fs';
+import { titleLater } from './notebooktitles.ts';
 
 // kind: 'mine' (a person's own, where pins and their notes go, and a call's notes page: ink/callnotes.ts), 'round' (a
 // guest review round) or 'invited' (one the board made for someone it invited). name: what the shelf shows.
@@ -29,6 +30,8 @@ for (const column of [
   'fresh integer',
   'tries integer',
   'tries_note integer',
+  "title_by text not null default ''",
+  "title_seen text not null default ''",
 ])
   if (lacks('book_pages', column.split(' ')[0])) db.exec(`alter table book_pages add column ${column}`);
 db.exec('create index if not exists book_pages_notebook on book_pages (notebook, pos)');
@@ -43,6 +46,8 @@ export type Notebook = {
   created: string;
   updated: string;
 };
+// Who set the title. An empty value means nobody has named the page.
+export type TitleBy = '' | 'board' | 'agent' | 'model';
 export type NotebookPage = Page & {
   notebook: number;
   pos: number;
@@ -50,8 +55,12 @@ export type NotebookPage = Page & {
   fresh: number | null;
   tries: number | null;
   tries_note: number | null;
+  // The board's title, including a deliberately empty one, takes precedence over agents and models.
+  title_by: TitleBy;
+  // SHA-256 of the ordered groups' ink, texts, pictures and words last checked by the title model. Empty until checked.
+  title_seen: string;
 };
-const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note`;
+const PAGE_COLUMNS = `${COLUMNS}, notebook, pos, send_at, fresh, tries, tries_note, title_by, title_seen`;
 // The size a new page starts at: it grows every way as it's drawn on
 const NEW_PAGE = { w: 1200, h: 1600 };
 
@@ -117,6 +126,7 @@ export function listPages(b: any, who = BOARD) {
   if (n.kind === 'mine') mine(who);
   currentPage(n.id);
   const pages = pagesOf(n.id);
+  for (const p of pages) titleLater(p.id);
   return {
     notebook: notebookOf(n),
     pages: pages.filter(p => !p.archived).map(pageOf),
@@ -158,7 +168,7 @@ export function titlePage(b: any, who = BOARD) {
     title = labelOf(b?.title);
   if (!p) return 404;
   if (isRefused(title)) return title;
-  db.prepare('update book_pages set label = ? where id = ?').run(title, p.id);
+  db.prepare("update book_pages set label = ?, title_by = 'board' where id = ?").run(title, p.id);
   changed(p.notebook, p.id);
   return pageOf(pageRow(p.id, who)!);
 }
@@ -166,12 +176,17 @@ export function titlePage(b: any, who = BOARD) {
 // The page new groups land on: the newest page of the notebook neither sent nor archived, made if there's none (never
 // a try's versions page)
 export function currentPage(notebook: number) {
+  return openPageOf(notebook) ?? newPage(notebook);
+}
+// The current page if the notebook has one (review mode's count reads it: ink/bookreview.ts)
+export function openPageOf(notebook: number) {
   const open = db
     .prepare(
-      'select id from book_pages where notebook = ? and archived = 0 and send_at is null and tries is null order by created desc, id desc',
+      `select id from book_pages where notebook = ? and archived = 0 and send_at is null and tries is null
+        and tries_note is null order by created desc, id desc`,
     )
     .get(notebook) as { id: number } | undefined;
-  return open?.id ?? newPage(notebook);
+  return open?.id ?? null;
 }
 export function newPage(notebook: number) {
   const n = db.prepare('select who from notebooks where id = ?').get(notebook) as { who: string },
@@ -211,6 +226,7 @@ export function changed(notebook: number, page: number | null) {
   }
   db.prepare('update notebooks set updated = ? where id = ?').run(now, notebook);
   publish({ type: 'book', agent: BOARD, text: 'notebook', ...(page ? { page } : {}) });
+  if (page) titleLater(page);
 }
 
 // ---------------------------------------------------------------- shared
@@ -270,6 +286,7 @@ export function pageOf(p: NotebookPage) {
     notebook: p.notebook,
     kind: p.kind,
     title: p.label,
+    day: p.day,
     archived: !!p.archived,
     sending: p.send_at !== null && !went,
     sent: went ? new Date(p.send_at!).toISOString() : null,
@@ -282,5 +299,6 @@ export function pageOf(p: NotebookPage) {
     groups: n,
     picture: `/api/book/picture?id=${p.id}&v=${encodeURIComponent(p.updated)}`,
     tries: p.tries, // a try's versions page: the group it's for (ink/booktry.ts).
+    tries_note: p.tries_note, // or the old book's note it's for (a call's)
   };
 }

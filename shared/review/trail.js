@@ -5,6 +5,12 @@ import { selector } from './anchor.js';
 const TRAIL_KEY = '__hq_review_trail';
 
 export const here = () => location.pathname + location.search + location.hash;
+// The page as the post-it names it: Home at a site's root (its path alone is a lone "/"), else its title, else its path
+// without the slashes round it.
+export const pageName = () =>
+  location.pathname === '/'
+    ? 'Home'
+    : document.title.trim() || decodeURIComponent(location.pathname).replace(/^\/+|\/+$/g, '');
 
 // r.trail: the list; r.host: review mode's own element, whose taps nothing logs
 export function startTrail(r) {

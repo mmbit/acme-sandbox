@@ -411,7 +411,9 @@ test("records that do what the board asked on a call get a review against its wo
 
 test("a fix round goes on in its author's last session on the branch, whose folders the worker keeps until the pull request is settled", async () => {
   const n = 119, files = ['products/pebblet/app/src/server.ts'];
-  await submit(n, { files, session: 'bolt-1' });
+  // (its model's last reply a moment ago: a warm session, carryover.ts)
+  const usage = { models: { 'claude-opus-5-5': { input: 1, output: 1 } }, lastTurn: Date.now() };
+  await submit(n, { files, session: 'bolt-1', usage });
   const { id: work } = db.prepare("select id from jobs where branch = ? and kind = 'work'").get(`review/${n}`) as { id: number };
   const ended = async (ids: number[]) => ((await worker('ended', { ids })).body as { id: number }[]).map(j => j.id);
   assert.deepEqual(await ended([work]), [], 'kept while the pull request can merge');

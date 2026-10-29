@@ -86,7 +86,11 @@ const server = createServer((req, res) => {
     if (u === '/api/agent/sketch?id=404') { res.statusCode = 404; return res.end('{"error":"not found"}'); }
     if (u.startsWith('/api/agent/sketch?')) return res.end(JSON.stringify({ ...SKETCH, ...(u.endsWith('=14') ? { id: 14, from: 'Ines' } : {}), ...(u.endsWith('=13') ? { kind: 'sheet', url: '/?open=projects' } : {}), picture: { type: 'image/png', data: PNG } }));   // (from)
     // (hq answer.)
-    if (u === '/api/agent/answer') { res.statusCode = JSON.parse(b).note === 404 ? 404 : 200; return res.end(res.statusCode === 200 ? '{"slip":{"id":1}}' : '{"error":"not one of your notes"}'); }
+    if (u === '/api/agent/answer') {
+      const { note, expect } = JSON.parse(b);
+      res.statusCode = note === 404 ? 404 : note === 500 ? 500 : 200;
+      return res.end(JSON.stringify(res.statusCode === 200 ? (expect ? { expect } : { slip: { id: 1 } }) : { error: 'not one of your notes' }));
+    }
     if (u.startsWith('/api/agent/sketches')) return res.end(JSON.stringify({ sketches: u.includes('archived=1') ? [] : [SKETCH, { ...SKETCH, id: 11, label: '', strokes: 1, pictures: 0, sent: null, from: 'Ines' }] }));   // (from)   // (scraps)
     if (u === '/api/agent/item') return res.end(JSON.stringify({ id: 42, call: JSON.parse(b).call ?? 7, kind: JSON.parse(b).kind ?? 'task', owner: JSON.parse(b).owner ?? 'kit', ...(JSON.parse(b).replaces ? { replaced: 9, was: 'handled', cancelled: [11], told: [{ job: 12, message: 30 }], running: [] } : {}) }));
     if (u === '/api/agent/items' || u === '/api/agent/items?call=7') return res.end(JSON.stringify([
@@ -834,8 +838,24 @@ test('hq answer clips an answer onto a note, with a picture read from its file a
   await assert.rejects(hq('answer', '57'), /usage: hq answer <note\|g<group>>/);
   await assert.rejects(hq('answer', '57', 'Yes', '--colour', 'red'), /usage: hq answer <note\|g<group>>/);
   await assert.rejects(hq('answer', '57', 'Yes', '--picture', `${tmp}/none.png`), /can't read/);
-  await assert.rejects(hq('answer', '404', 'Yes'));
   rmSync(`${tmp}/shot.png`);
+});
+
+test('hq answer prints HQ’s refusal reason and exits without claiming the answer landed', async () => {
+  const refused = await run(['answer', '404', 'Yes']);
+  assert.equal(refused.code, 1);
+  assert.equal(refused.err, 'Nothing written: not one of your notes\n');
+  assert.equal(refused.out, '');
+});
+
+test('hq answer confirms announced versions and leaves a server failure unconfirmed', async () => {
+  const announced = await run(['answer', '57', '--expect', '2']);
+  assert.equal(announced.code, 0);
+  assert.equal(announced.out, 'note #57: 2 versions coming.\n');
+  const uncertain = await run(['answer', '500', 'Yes']);
+  assert.equal(uncertain.code, 3);
+  assert.match(uncertain.err, /^Not confirmed:/);
+  assert.equal(uncertain.out, '');
 });
 
 test('on a call (platform/voice): the call token alone, no job, hands on work; say reaches one job by its number', async () => {
@@ -1276,4 +1296,26 @@ test('inbox --hook: disk warnings reach the session as HQ instructions and ackno
   assert.match(output.hookSpecificOutput.additionalContext, /^HQ's worker: clear disposable caches/);
   assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /from a colleague/);
   assert.deepEqual([last().url, last().body], ['/api/agent/inbox-ack', { ids: [], disk: [disk] }]);
+});
+
+test('job --model sends the lighter model the queuer chose, for HQ to check', async () => {
+  await hq('job', 'juno', 'Fix the label', `${tmp}/body.md`, '--model', 'sonnet');
+  assert.deepEqual(last().body, { agent: 'juno', title: 'Fix the label', after: null, prompt: 'Please decide.', model: 'sonnet' });
+});
+
+test('up hands a job on a lighter model up with its note, once it stops; on its own model it refuses and writes nothing', async () => {
+  const up = (lighter: string | undefined, ...args: string[]) => new Promise<{ code: number; out: string }>(resolve =>
+    execFile('bash', [HQ, 'up', ...args], { env: { ...env, ...(lighter && { HQ_LIGHTER: lighter }) } },
+      (e, out, err) => resolve({ code: (e as any)?.code ?? 0, out: out + err })));
+  rmSync(`${tmp}/.hq/up.json`, { force: true });
+  const own = await up(undefined, 'The cause is elsewhere');
+  assert.equal(own.code, 1);
+  assert.match(own.out, /^Not handed up: this job runs on its agent's own model/);
+  assert.equal(existsSync(`${tmp}/.hq/up.json`), false);
+  assert.equal((await up('Opus 5.5')).code, 1, 'a note is needed');
+  const handed = await up('Opus 5.5', 'The margin comes from the grid, not the card: three files.');
+  assert.equal(handed.code, 0, handed.out);
+  assert.match(handed.out, /^Handed up: once you stop, this job goes on on Opus 5\.5/);
+  assert.deepEqual(JSON.parse(readFileSync(`${tmp}/.hq/up.json`, 'utf8')), { note: 'The margin comes from the grid, not the card: three files.' });
+  rmSync(`${tmp}/.hq/up.json`);
 });

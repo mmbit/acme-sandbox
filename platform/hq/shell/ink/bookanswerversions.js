@@ -1,5 +1,5 @@
 // A note tried in a few versions: on its page a small tab, "3 versions →", that turns to theirs; on the versions page
-// the agent's heading ("Lark tries:" and the note's words), the note as it was, then a frame per version side by side
+// the note as it was, then a frame per version side by side
 // and wrapping down, each with its two-word name and a strip to write a reply on, and an empty frame for each still
 // being made that fills in as it lands.
 // The board writes anywhere on the frames: a ring round a version, a tick on it, words under it. What it wrote goes,
@@ -9,13 +9,16 @@
 import { esc } from '../../util.js';
 import { inkOf } from './agentink.js';
 import { SQUIGGLE, inkBox, pathsOf } from './bookanswerart.js';
-import { frameUnder, framesLaid } from './bookanswerpace.js';
+import { frameUnder, framesLaid } from './bookversionframes.js';
 
-// Where the versions start on their page (under its heading), and the paper they wrap within at most
+// Where the versions start on their page, and the paper they wrap within at most. Clear of the tools
+// floating over the paper, so a version is never under them and a ring round one starts on the page: the strip at its
+// left (40 px in, 48 wide: bookstrip.css), the controls at its right edge (12 px in, 48 wide: bookui.js). Two frames
+// across still fit the book beside HQ on an iPad mini (470 px).
 const TOP = 72,
-  LEFT = 24,
+  LEFT = 96,
+  RIGHT = 72,
   WIDEST = 960,
-  RAIL = 52, // (the book's controls float over the paper's right edge)
   CAPTION = 96; // (under a frame: its name, and the strip to write a reply on)
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth'];
 
@@ -26,7 +29,7 @@ export function versionsTab(g) {
   return count || g.tries_page ? { count } : null;
 }
 
-// The versions page under its heading: drawn whole again on every read, its frames kept as they were where nothing changed
+// The versions page: drawn whole again on every read, its frames kept as they were where nothing changed
 // (layer: bookanswers.js's; read: { tries, tried }; parts: its faces (faced: what the face is drawn as), reply strips and
 // the pen on them)
 export function drawVersions(layer, { tried }, parts) {
@@ -37,7 +40,7 @@ export function drawVersions(layer, { tried }, parts) {
     by = versions[0] ?? tried.waiting ?? { by: tried.owner ?? '', name: tried.owner_name ?? 'An agent' };
   const paper = paperOf(layer, () => drawVersions(layer, { tried }, parts));
   if (paper === null) return;
-  const width = Math.min(WIDEST, paper) - LEFT * 2 - RAIL,
+  const width = Math.min(WIDEST, paper) - LEFT - RIGHT,
     { frames, height } = framesLaid(1 + versions.length + empty, width, { caption: CAPTION });
   const key = JSON.stringify([tried, width, parts.faced(by.by)]);
   if (layer.drawn.get('versions')?.key === key) return;
@@ -56,7 +59,7 @@ export function drawVersions(layer, { tried }, parts) {
       emptyHtml(versions.length + i, frames[versions.length + i + 1], parts.faceHtml(by)),
     ),
   ];
-  // (its heading is the page's own: "Lark tries: …", bookpage.js; the replies' ink over the frames, where it was written)
+  // The replies' ink goes over the frames, where it was written.
   const mine = replies.filter(r => versions.some(v => v.id === r.answers));
   el.innerHTML = `<div class="bk-versions-frames" style="height:${height}px">${cells.join(
     '',

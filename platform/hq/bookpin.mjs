@@ -140,10 +140,36 @@ export async function pinScreensStory(c) {
     await c.settled(page, 'folded');
     await showing(page, false, 'a phone: the book opened again put it away');
   });
+  await uprightPin(c);
   await artifactPin(c);
 }
 const DESKTOP = { viewport: { width: 1440, height: 900 }, more: { deviceScaleFactor: 1, hasTouch: false } },
-  PHONE = { viewport: { width: 390, height: 844 }, more: {} };
+  PHONE = { viewport: { width: 390, height: 844 }, more: {} },
+  UPRIGHT_IPAD = { viewport: { width: 744, height: 1133 }, more: {} };
+// On an upright iPad the book opens as the spread; its cover's edge drawn right, it lies beside HQ: there the control
+// summons the pin and puts it away, the book left open.
+async function uprightPin(c) {
+  await onScreen(c, UPRIGHT_IPAD, async page => {
+    await c.settled(page, 'folded');
+    await page.click('#book .bk-lip');
+    await c.settled(page, 'spread');
+    // (the cover's edge drawn right, below its pull tab)
+    const edge = await page.locator('#book [role=separator]').boundingBox(),
+      [x, y] = [edge.x + edge.width / 2, (UPRIGHT_IPAD.viewport.height * 2) / 3];
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x + 400, y, { steps: 14 });
+    await page.waitForTimeout(200); // (held: let go where it is, not a flick)
+    await page.mouse.up();
+    await c.settled(page, 'open');
+    await page.click(PIN_CONTROL);
+    await showing(page, true, "an upright iPad, the book drawn beside HQ: the book's pin control summons it");
+    const book = () => [document.documentElement.dataset.book, document.querySelector('#book.bk-swinging') != null];
+    assert.deepEqual(await page.evaluate(book), ['open', false], '...the book left open, not folding');
+    await page.click(PIN_CONTROL);
+    await showing(page, false, "an upright iPad: the book's pin control puts it away");
+  });
+}
 async function onScreen(c, { viewport, more }, story) {
   const context = await c.hqIn(c.browser, viewport, more),
     page = await context.newPage(),

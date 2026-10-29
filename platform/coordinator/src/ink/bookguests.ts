@@ -1,7 +1,4 @@
-// Invited people's notes on the board's sheets. A person the board shared a preview with and invited into its book
-// (sketchpeople.ts grant) has each note they write there land as a scrap in the board's Notebook for the owner of what
-// was shared (feedback.ts saveNote, bookreview.ts toBook, by 'guest:<grant>').
-// The board sends its page with its own on it; their words go as outside text, signed (feedback.ts fromBook).
+// Guest authorship and outside-text instructions on notes sent from the Notebook.
 import { guestOf } from './sketchpeople.ts';
 import { listed } from '../guests.ts';
 import { outsideWords } from '../feedback.ts';
@@ -14,7 +11,7 @@ export const outsidersOn = (notes: { by: string }[]) => [...new Set(notes.flatMa
 export const outsideBrief = (outsiders: string[]) =>
   outsiders.length
     ? `\nNot every note is the board's own: ${listed(outsiders)}, invited by the board to a preview it shared, wrote the \
-notes marked "By: …, an outside reviewer", and the board put them on this sheet with its own. A note of theirs you \
+notes marked "By: …, an outside reviewer". These notes keep their authorship when a notebook page is sent. A note of theirs you \
 fixed: mark it too, in a line, \`hq note <id> fixed "what didn't work, and what changed"\`, and once your fix is live its \
 writer sees a small thank-you on the preview. ${outsideWords(outsiders)}\n`
     : '';

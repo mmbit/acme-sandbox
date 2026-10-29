@@ -45,6 +45,11 @@ test('no seed: My Notebook with one blank page, current', () => {
   );
   assert.equal(play.route('/api/notebooks/pages', { notebook }).pages.length, 1);
   assert.equal(page, play.route('/api/notebooks/pages', { notebook }).pages[0].id, "a read doesn't make another");
+  assert.equal(
+    play.route('/api/notebooks/pages/groups', { page }).notebook,
+    notebook,
+    "a page's groups say its notebook",
+  );
   assert.throws(() => play.route('/api/notebooks/nothing'), refusal(404, 'not found'));
 });
 
@@ -237,7 +242,7 @@ test('a picture uploaded to an open page is placed in a group; a scrap lands on 
 });
 
 // (as notebookgroups.ts stacks a scrap and types a note with no picture)
-test("a page's first scrap goes under its heading; a note with no picture is its words typed, stacked as a scrap", () => {
+test("a page's first scrap goes near its origin; a note with no picture is its words typed, stacked as a scrap", () => {
   const { post, page } = played();
   const anchor = { v: 1, url: '/gazette', el: null, view: { x: 0, y: 0, w: 1280, h: 800, dpr: 2 }, ink: [] };
   const snip = `data:image/png;base64,${btoa(String.fromCharCode(...PNG))}`;

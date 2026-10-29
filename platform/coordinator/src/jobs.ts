@@ -57,11 +57,13 @@ import * as photos from './photos.ts';
 import * as documents from './documents.ts';
 import * as zips from './zips.ts';
 import * as pictures from './pictures.ts'; // the board's pictures with a card's answer
-import { ended as chatEnded, hear, intercom, parked } from './chat.ts';
+import { ended as chatEnded, hear, parked } from './chat.ts';
+import { isIntercom, quickRunStarted, quickRunTurn } from './quickruns.ts';
 import { jobEnded } from './messages.ts';
 import { oneLine } from './agreements.ts';
 import { finished, cancelled, mine } from './ledger.ts';
 import { recordUsage } from './usage.ts';
+import { carryOver } from './carryover.ts';
 import { recordSeatReading } from './headroom.ts';
 import { checkSeatWarning } from './seatwarning.ts';
 import * as models from './models.ts';
@@ -114,6 +116,8 @@ type Job = {
   is_check: number;
   suspending: string | null;
   stopping: string | null;
+  light: number; // queued on a lighter model (hq job --model)
+  up: string | null; // JSON: its hand-up from it to its agent's own model (handUp)
 };
 
 const now = () => Date.now();
@@ -250,6 +254,7 @@ type NewJob = {
   judges?: string[]; // the files a review judges (review.ts toPanel).
   expedite?: boolean; // the CEO's structural HQ fix: first in line, merged on its checks
   carry?: string; // a commit main took outside a pull request HQ merged, which the job only checks (carries.ts)
+  light?: boolean; // its model is a lighter one its queuer chose (hq job --model)
 };
 
 //
@@ -322,7 +327,7 @@ function insertJob(
   // customers: a tool put a customer's own details in its prompt (handedCustomerData, below)
   const { lastInsertRowid } = db
     .prepare(
-      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      'insert into jobs (created, agent, title, prompt, engine, kind, pr, round, branch, after, sha, queued_by, customers, call, item, downtime, model, effort, stage, step, writes, for_seat, cli, thread, is_check, instead_of, code, engine_only, judges, expedite, carry, light) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     )
     .run(
       new Date().toISOString(),
@@ -356,6 +361,7 @@ function insertJob(
       j.judges ? JSON.stringify(j.judges) : null,
       j.expedite ? 1 : 0,
       j.carry ?? null,
+      j.light && !only ? 1 : 0, // (not where work only one engine does sets its model)
     );
   return Number(lastInsertRowid);
 }
@@ -1457,6 +1463,7 @@ export function claim(
   const inThread = threadorder.claimed(job);
   const moved = moveToSeat(job, seat, engine, cli);
   atWork(job);
+  quickRunStarted(job);
   return claimed(job, token, moved, inThread);
 }
 
@@ -1570,14 +1577,15 @@ function inClaimOrder(
   return admitted;
 }
 
-// Room a pause freed goes to its waiter while it can start, on whichever engine, before anything after it in the base
-// order (spare work too). The intercom has its own slot.
+// A pause reserves its room from the first yield request until its waiter starts, on whichever engine: work after the
+// waiter in the base order (spare work too) can't take the free memory the waiter needs beside the release. The
+// intercom has its own slot.
 function freedRoom(plan: ReturnType<typeof ordering.current>) {
   return (
     db
       .prepare(
         redraws.query(`select j.id, j.kind, j.downtime, ${LANE('j')} board from jobs j where ${ROOM_WAITER}
-        and j.id in (select room_for from jobs where status = 'queued' and room_for is not null)`),
+        and j.id in (select room_for from jobs where status in ('queued', 'running') and room_for is not null)`),
       )
       .all({ now: now(), ...letsParams() }) as Claimable[]
   ).filter(w => plan.eligible(w.id) && seatReadyFor(w.id, now(), null, () => plan));
@@ -1675,35 +1683,49 @@ function claimed(job: Job, token: string, moved: boolean, inThread: ReturnType<t
     language: languageName(), // what the board reads and hears in (language.ts.)
     timeZone: timeZone(), // and the clock its times are on
     stylePrompt: stylePrompt(),
+    lighter: models.lighterChoices(job.engine).map(({ id, name }) => ({ id, name })),
   };
+  const quickRun = quickRunTurn(job);
   // (title: as agents read it, a review step's with its step and round: nameOf.)
   // (archiving: the agent's open pull request that already moves its older profile lines, for the worker's oversized())
   return {
     ...job,
     title: nameOf(job),
     token,
+    // (a quick run's turn, in the fields every worker reads and its run records keep: a reload keeps the deadline)
+    ...(quickRun && { quickReply: true, quickReplyUntil: quickRun.until }),
     // (the title as its prompts say it: with its focus, company.ts titleOf)
     agentInfo: a && { ...a, role: titleOf(a) },
     company,
-    ...(job.kind === 'work' || job.kind === 'chat' ? { inFlight: inFlight(job), archiving: archiving(job.agent) } : {}),
-    resumes: resumes(job),
+    ...(job.kind === 'work' || isIntercom(job) ? { inFlight: inFlight(job), archiving: archiving(job.agent) } : {}),
+    ...carryOver(job), // (resumes or closingReports)
     ...(inThread && { inThread }),
+    ...(found && a && lightRun(job, a.model, found.model)),
   };
 }
 
-// A job on a pull request's branch (a fix round, a touch-up check, the board's notes) goes on in its author's last session
-// there, which the worker keeps while the pull request is open (ended): that job, its session and the Codex seat it ran on
-// (worker.ts carrySession). A job that has run already goes on in its own.
-const resumes = (job: Job) =>
-  job.kind !== 'work' || job.pr === null || job.session
-    ? undefined
-    : db
-        .prepare(
-          `select id job, session,
-  for_seat seat from jobs where kind = 'work' and status = 'done' and agent = ? and coalesce(branch, 'job/' || id) = ?
-  and session is not null and id < ? order by id desc limit 1`,
-        )
-        .get(job.agent, job.branch, job.id);
+// A run on the lighter model its queuer chose (hq job --model) is told so, and how to hand the work up to its agent's
+// own model (lighter: the worker's briefing). The run after a hand-up (handUp) starts a new session in the job's kept
+// clone, with its note (handedUp), until it has a session of its own.
+const ranLight = (job: Job) => job.kind === 'work' && !!job.light && !!job.model;
+function lightRun(job: Job, model: string | null | undefined, own: string | null | undefined) {
+  const lighter =
+    ranLight(job) && model === job.model
+      ? { name: models.choiceName(job.model!), own: models.choiceName(own ?? '') }
+      : undefined;
+  const up = job.up && !job.session ? handUpOf(job.up) : undefined;
+  return {
+    ...(lighter && { lighter }),
+    ...(up && { handedUp: { from: models.choiceName(up.from), note: up.note } }),
+  };
+}
+// A hand-up as the job's history shows it (hq history): from which model, and its note where the job's report shows.
+export function handUpLine(json: string, withNote: boolean) {
+  const up = handUpOf(json);
+  return { from: models.choiceName(up.from), ...(withNote && { note: up.note }) };
+}
+// (jobs.up is written by handUp alone)
+const handUpOf = (json: string) => JSON.parse(json) as { from: string; note: string };
 
 const letsParams = () => {
   const pause = paused();
@@ -1782,8 +1804,13 @@ function pickedModel(job: Job, found: NonNullable<ReturnType<typeof findAgent>>)
     { fallback } = found;
   if (fallback && models.runner(fallback) === runner)
     return { model: fallback.id, effort: readModels()[fallback.engine]?.effort ?? null };
+  // (a lighter model its queuer chose holds under the board's pick too: hq job --model checked it runs on the pick's
+  // seats.)
   if (models.runner(found) === runner)
-    return { model: found.cli ? found.model : (job.model ?? found.model), effort: job.effort ?? found.effort };
+    return {
+      model: found.cli && !job.light ? found.model : (job.model ?? found.model),
+      effort: job.effort ?? found.effort,
+    };
   const own = readModels()[job.engine];
   return { model: own?.model ?? null, effort: own?.effort ?? null };
 }
@@ -2237,8 +2264,9 @@ export function finish(id: number, r: Parameters<typeof finishJob>[1]) {
 // Outcomes a worker reports when a run ends.
 // (gates; tests)
 type RunEnd = {
-  status: 'done' | 'failed' | 'stopped' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'snagged';
+  status: 'done' | 'failed' | 'stopped' | 'limited' | 'parked' | 'interrupted' | 'yielded' | 'snagged' | 'up';
   result?: string;
+  up?: string; // (up: hq up's note, handUp.)
   landing?: { summary: string; result: string }; // (snagged)
   session?: string;
   branch?: string;
@@ -2259,6 +2287,7 @@ type RunEnd = {
   // a task's own profile lines, sent to main on a branch of their own (the worker's profile split).
   profile?: { pr: number; branch: string; sha: string; files: string[] };
   touchup?: unknown;
+  overtime?: boolean; // a quick run the worker stopped at its deadline (quickruns.ts QUICK_RUN_MS)
   // a profile pull request's fix that left nothing for main: the worker withdrew its branch.
   withdrawn?: boolean;
   seat?: string;
@@ -2293,7 +2322,20 @@ function finishJob(id: number, r: RunEnd) {
   // a run that ended well), never the agent's doing. Like a run a restart cut
   // off, the job goes back in the queue, a few runs in a row; then, or an intercom turn (retryChat), it failed.
   if (r.status === 'snagged' && (job.kind === 'chat' || job.attempts >= SNAG_RUNS)) r = { ...r, status: 'failed' };
-  if (job.status === 'running') runEnded(id, r.status);
+  // A hand-up from a run on its agent's own model has nowhere to go: the run failed (hq up refuses it first).
+  if (r.status === 'up' && !ranLight(job))
+    r = {
+      ...r,
+      status: 'failed',
+      result:
+        `${r.result ?? ''}\n\nhq up hands a job on a lighter model up to its agent's own, and this one ran on its own.`.trim(),
+    };
+  if (job.status === 'running')
+    runEnded(
+      id,
+      r.status,
+      r.status === 'interrupted' && typeof r.lostAt === 'string' ? Date.parse(r.lostAt) : undefined,
+    );
   // the run's token use (usage.ts): a bad report never stops the finish
   if (r.usage && job.status === 'running')
     try {
@@ -2321,7 +2363,7 @@ function finishJob(id: number, r: RunEnd) {
   // The board's words are never dropped: a run cut off by a limit or a restart keeps the note it started with (what
   // the board said, a call's transcript) and gets it again, and a failed intercom turn is tried again twice before
   // the CEO starts over (chat.ts).
-  const retryChat = job.kind === 'chat' && r.status === 'failed' && job.attempts < 3;
+  const retryChat = isIntercom(job) && r.status === 'failed' && job.attempts < 3;
   // A task's push makes its branch its thread's (threadorder.ts).
   threadorder.pushed(job, r);
   // attempts counts runs in a row that failed or were abandoned: a run that ends any other way (done, parked, or handed
@@ -2344,7 +2386,8 @@ function finishJob(id: number, r: RunEnd) {
     handBack(job, r, retryChat);
   else if (r.status === 'parked' && r.request) {
     if (!parkOnCard(job, r.request)) return { ok: true };
-  } else {
+  } else if (r.status === 'up') handUp(job, r);
+  else {
     recordEnd(job, r);
     handOn(job, r);
   }
@@ -2357,10 +2400,10 @@ function finishJob(id: number, r: RunEnd) {
 function handBack(job: Job, r: RunEnd, retryChat: boolean) {
   // A limit's hold is its seat's, not the job's: the first seat of its engine with room lets it go (setSeat). One
   // that reported ready with a reading before this finish (after the worker worked out resetAt) lets it go now.
-  // A Claude intercom turn isn't held at all: its slot takes it again on the first seat with room, a draining one too
-  // (the board's reserve, which setSeat doesn't count).
-  const intercomTurn = job.kind === 'chat' && job.engine === 'claude';
-  const heldBy = r.status === 'limited' && !intercomTurn ? (r.seat ?? job.seat) : null;
+  // A Claude turn on the chat slot (the intercom's, a quick run's) isn't held at all: the slot takes it again on the first
+  // seat with room, a draining one too (the board's reserve, which setSeat doesn't count).
+  const chatTurn = job.kind === 'chat' && job.engine === 'claude';
+  const heldBy = r.status === 'limited' && !chatTurn ? (r.seat ?? job.seat) : null;
   const roomElsewhere =
     heldBy !== null &&
     !!db
@@ -2370,7 +2413,7 @@ function handBack(job: Job, r: RunEnd, retryChat: boolean) {
       )
       .get(job.engine, heldBy);
   db.prepare("update jobs set status = 'queued', seat = null, not_before = ?, note = ?, held_by = ? where id = ?").run(
-    retryChat ? now() + 120_000 : roomElsewhere || intercomTurn ? 0 : (r.resetAt ?? 0),
+    retryChat ? now() + 120_000 : roomElsewhere || chatTurn ? 0 : (r.resetAt ?? 0),
     pausedNote(job.note),
     roomElsewhere ? null : heldBy,
     job.id,
@@ -2381,6 +2424,25 @@ function handBack(job: Job, r: RunEnd, retryChat: boolean) {
     'sleeping',
     r.status === 'limited' ? `Out of AI capacity until ${companyTime(r.resetAt ?? 0)}` : 'Paused',
   );
+}
+
+// A run on the lighter model its queuer chose found the work bigger than it looked (hq up): the job goes back in the
+// queue at once, on its agent's own model, its branch and kept clone as they are. Its next run starts a new session there
+// with the run's note in its briefing (lightRun): the other model can't reuse this session's cache, so going on in it
+// would write the whole conversation again. jobs.up keeps the hand-up, and the run ends as 'up' (runs.ended_as), so
+// hand-ups can be counted.
+function handUp(job: Job, r: RunEnd) {
+  const from = job.model!,
+    own = models.choiceName(findAgent(job.agent)?.model ?? 'its own model');
+  db.prepare(
+    "update jobs set status = 'queued', seat = null, not_before = 0, held_by = null, session = null, model = null, light = 0, up = ? where id = ?",
+  ).run(JSON.stringify({ from, note: r.up, at: new Date().toISOString() }), job.id);
+  settle(job, 'idle', `Handed #${job.id} up to ${own}`);
+  publish({
+    type: 'log',
+    agent: job.agent,
+    text: `#${job.id} was bigger than it looked on ${models.choiceName(from)}: handed up to ${own}, on the same branch`,
+  });
 }
 
 // A run parked on a card waits for the board's answer; false when the card was refused, and the job resumes to fix it.
@@ -2415,7 +2477,7 @@ function parkOnCard(job: Job, request: NonNullable<RunEnd['request']>) {
     job.id,
   );
   settle(job, 'waiting', `Waiting for the board: ${request.title}`);
-  if (job.kind === 'chat') parked(job.id);
+  parked(job);
   return true;
 }
 
@@ -2507,7 +2569,7 @@ function handOn(job: Job, r: RunEnd) {
     ); // (settings; gates; lines)
   // (a thread task that ended without a push lets go of a push held for it: review.ts heldForThread)
   if (threadorder.isTask(job) && !(r.status === 'done' && r.pr)) threadTaskEnded(job.thread);
-  if (job.kind === 'chat') chatEnded(job, r.status, r.result);
+  if (job.kind === 'chat') chatEnded(job, r.status, r.result, r.overtime === true);
   finished(job, r.status); // the call ledger: its items, and a call it follows up
   if (r.status === 'failed') failedAfter(job, r.result);
   if (r.status === 'failed' && job.kind === 'work') fixFailed(job); // an author's job on a pull request runs again
@@ -2600,7 +2662,7 @@ const FAILED =
 export const failedNote = (note: string | null) =>
   !note || note === PAUSED ? null : note.startsWith(FAILED) ? note : `${FAILED}\n\n${note}`;
 
-// (windows, whether the seat is paced, the worker's pacedUntil, and whether it runs on credits)
+// (windows, whether the seat is paced, the worker's pacedUntil, and whether it may run on credits past its limits)
 // A reading without a window's reset keeps the last one known. HQ drops a past
 // 5-hour reset and rolls a past weekly one forward (seats.js).
 type Windows = {
@@ -3334,11 +3396,10 @@ function tell(
 ) {
   // (a job parked on another request since isn't this one's to resume: the call becomes a job of its own)
   const job = req.job
-    ? (db
-        .prepare(`select status, kind, request, coalesce(branch, 'job/' || id) branch from jobs where id = ?`)
-        .get(req.job) as { status: string; kind: string; request: number | null; branch: string } | undefined)
+    ? (db.prepare('select id, status, kind, request from jobs where id = ?').get(req.job) as
+        { id: number; status: string; kind: string; request: number | null } | undefined)
     : undefined;
-  if (job?.kind === 'chat' && intercom(req.job!)) {
+  if (job && isIntercom(job)) {
     // (an intercom turn's reply goes to the board: no AUDIENCE line; a quick run's not)
     return hear(
       note,

@@ -1,5 +1,5 @@
 /* The book's pages (bookpages.js): one page filling the paper, its paper and dots drawn wherever it's panned or zoomed
-   (bookview.js sets the dots' size and place), its heading written at its top-left; and the
+   (bookview.js sets the dots' size and place), its send stamp at its top-left; and the
    controls for moving about (bookcontrols.js). (the overview: bookshelf.css.) The book's own look, the same on every HQ look. (was book.css's and booklook.css's head strip, table and row of pages) */
 
 #book .bk-pages {
@@ -14,7 +14,13 @@
   inset: 0;
   overflow: hidden;
   background-color: var(--bk-paper);
-  background-image: var(--bk-dots);
+  /* the paper's dots drawn to the zoom (bookview.js's --bk-scale), and eased out as they shrink (--bk-dots-shown,
+     bookrow.js dotsShown) */
+  background-image: radial-gradient(
+    circle,
+    color-mix(in srgb, var(--bk-dot) calc(var(--bk-dots-shown, 1) * 100%), transparent) calc(1.1px * var(--bk-scale, 1)),
+    transparent calc(1.4px * var(--bk-scale, 1))
+  );
   background-size: 22px 22px;
   touch-action: none;
   user-select: none;
@@ -70,74 +76,14 @@
   position: absolute;
   pointer-events: none;
 }
-/* its heading, as written at the top of a notebook's page, on one line clear of what's written under it: whose page it
-   is in the book's ink with a stroke of gold under it, then the day written
-   out, "Today" quieter beside it; a page with no title has its day as its heading */
-#book .bk-title {
+/* The send stamp sits at the page's origin. Titles stay in the bottom bar. */
+#book .bk-send-stamp {
   position: absolute;
   left: 24px;
   top: 12px;
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
   pointer-events: none;
-  white-space: nowrap;
-  color: var(--bk-night);
-  /* (clear of the controls floating at the paper's right edge, one column or two (--bk-stack, bookui.js), however
-     narrow the book: what doesn't fit trails off.) */
-  max-width: calc(var(--paper-w, 100%) - var(--bk-stack, 52px) - 36px);
-}
-/* (a sent page's stamp keeps its words whole: short of room, it and the day go under the name rather than cut it.) */
-#book .bk-title:has(.bk-stamped) {
-  flex-wrap: wrap;
-  row-gap: 2px;
-}
-#book .bk-title .bk-date {
-  /* (short of room, the day gives way first: the page's name says what it is.) */
-  flex: 0 1000 auto;
-  display: flex;
-  flex-wrap: wrap; /* (a narrow book: "Today" under the day, never the day cut short) */
-  align-items: baseline;
-  column-gap: 8px;
-  min-width: 0;
-}
-#book .bk-title .bk-name,
-#book .bk-title .bk-when {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-#book .bk-title .bk-today {
-  flex: none;
-}
-#book .bk-title .bk-when {
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--bk-muted);
-}
-#book .bk-title .bk-today {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #b5822a;
-}
-#book .bk-title[data-bare] .bk-when {
-  /* (a narrow book writes the day a little smaller, whole.) */
-  font-size: min(22px, max(16px, calc((var(--paper-w, 600px) - 160px) / 11)));
-  line-height: 32px;
   color: var(--bk-night);
 }
-#book .bk-title .bk-name {
-  padding-bottom: 3px;
-  font-size: 26px;
-  font-weight: 700;
-  line-height: 32px;
-  letter-spacing: -0.01em;
-  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 6' preserveAspectRatio='none'%3E%3Cpath d='M1 4.2C20 2.6 42 2.4 63 3.1s38 .9 56-.6' fill='none' stroke='%23e2ad45' stroke-width='2.4' stroke-linecap='round'/%3E%3C/svg%3E")
-    left bottom / 100% 5px no-repeat;
-}
-
 /* a refusal from the store, said on the page where it shows */
 #book .bk-refusal {
   position: absolute;
@@ -183,9 +129,19 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* (a narrow book, an iPad mini's on its side and narrower: the page's name has the room, its place in the notebook is
-   in the notebook's pages, and Send is its plane alone, its label still saying it.) */
+/* (a narrow book, an iPad mini's on its side and narrower: the page's name has a row of its own, all of it, its place
+   in the notebook in the notebook's pages, and Send is its plane alone, its label still saying it.) */
 @container bk-rail (max-width: 600px) {
+  #book .bk-island[data-island='pages'] {
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+  #book .bk-btn.bk-where {
+    order: -1;
+    flex: 1 0 100%;
+    max-width: none;
+    justify-content: center;
+  }
   #book .bk-where small {
     display: none;
   }
@@ -226,4 +182,33 @@
   margin: 0 12px;
   border: 0;
   border-top: 1px solid var(--bk-line);
+}
+#book .bk-page-title {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-bottom: 1px solid var(--bk-line);
+}
+#book .bk-page-title label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+#book .bk-page-title input,
+#book .bk-page-title button {
+  box-sizing: border-box;
+  min-height: 44px;
+  width: 100%;
+  font: inherit;
+  color: var(--bk-ink);
+  background: var(--bk-paper);
+  border: 1px solid var(--bk-line);
+  border-radius: 6px;
+  padding: 8px;
+}
+#book .bk-page-title p {
+  margin: 0;
+}
+#book .bk-page-title input {
+  font-size: 16px;
 }

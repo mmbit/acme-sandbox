@@ -1,10 +1,10 @@
-/* The tool strip down the page's left (bookstrip.js): its island, the tool in use named beside it, a slide along it,
-   and the cog's preferences. Where the strip sits on the page is the book's (--bk-strip-left); its width goes on the
-   book as --bk-strip, for the pages' row and the overview (bookshelf.css). */
+/* The tool strip down the page's right, beside the islands' stack (bookstrip.js): its island, the tool in use named
+   beside it, a slide along it, and the cog's preferences. Its width counts in the stack's, --bk-stack (bookui.js), for
+   what keeps clear of them. */
 #book .bk-strip {
   position: absolute;
   top: calc(12px + var(--sat, 0px));
-  left: var(--bk-strip-left, 40px);
+  right: calc(12px + var(--bk-islands, 44px) + 8px);
   bottom: max(12px, env(safe-area-inset-bottom));
   display: flex;
   flex-direction: column;
@@ -29,7 +29,7 @@
 /* the tool in use, named on the paper beside it: quiet, never in the way of a press */
 #book .bk-now {
   position: absolute;
-  left: calc(100% + 8px);
+  right: calc(100% + 8px);
   transform: translateY(-50%);
   padding: 3px 8px;
   border-radius: 6px;
@@ -46,6 +46,13 @@
 #book .bk-now[hidden],
 #book .bk-now:empty {
   display: none;
+}
+/* (a moment after the pick, gone slowly: bookstrip.js) */
+#book .bk-now.bk-faded {
+  opacity: 0;
+  transition:
+    top 0.14s ease-out,
+    opacity 0.6s ease;
 }
 /* (a tooltip, a card or a slide says it already; and the overview, where nothing's drawn, has its tiles there.) */
 #book:has(> .bk-tip:not([hidden])) .bk-now,
@@ -64,7 +71,7 @@
 /* ---- the cog's preferences: a card on the paper beside the strip */
 #book .bk-prefs {
   position: absolute;
-  left: calc(100% + 8px);
+  right: calc(100% + 8px);
   bottom: 0;
   width: max-content;
   max-width: min(320px, 70vw);
@@ -110,15 +117,15 @@
     min-height: 44px;
   }
 }
-/* a narrow book (a phone's): the pages' row has the foot to itself, and the strip stands above it, near the edge */
-@container bk-rail (max-width: 460px) {
+/* a narrow book (book.css's): the pages' row has the foot to itself, and the strip stands above it, as the stack does. */
+@container bk-rail (max-width: 600px) {
   #book .bk-strip {
-    left: 12px;
-    bottom: 76px;
+    bottom: calc(max(12px, env(safe-area-inset-bottom)) + 100px);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   #book .bk-now,
+  #book .bk-now.bk-faded,
   #book .bk-prefs {
     transition: none;
     animation: none;

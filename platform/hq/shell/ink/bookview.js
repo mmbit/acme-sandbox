@@ -4,9 +4,9 @@
 //
 // book (bookpages.js): { desk, world, views, cur, size, pan, scale, drawn }. The paper's px are CSS px from the desk's
 // top-left; the page's are its own (bookrow.js).
-import { clampPan, clampScale, drawScale, leastScale, pageAt, shownBox, zoomAt } from './bookrow.js';
+import { clampPan, clampScale, dotsShown, drawScale, leastScale, pageAt, shownBox, zoomAt } from './bookrow.js';
 
-// the paper's dot grid, one dot every DOT_PX of the page (book.css's --bk-dots)
+// the paper's dot grid, one dot every DOT_PX of the page (bookdesk.css)
 const DOT_PX = 22;
 // how long a slide to a place or a zoom by the controls takes: quick, eased out
 const SLIDE_MS = 200;
@@ -38,16 +38,19 @@ export function draw(book) {
   const { pan, scale: s } = book,
     desk = book.desk.style;
   book.world.style.transform = `translate3d(${-pan.x * s}px, ${-pan.y * s}px, 0) scale(${s})`;
-  // (the zoom for what keeps its size on screen over the page: a selection's frame.)
-  book.world.style.setProperty('--bk-scale', s);
+  // (the zoom for the dots and for what keeps its size on screen over the page: a selection's frame.)
+  desk.setProperty('--bk-scale', s);
+  desk.setProperty('--bk-dots-shown', dotsShown(s));
   desk.backgroundSize = `${DOT_PX * s}px ${DOT_PX * s}px`;
   desk.backgroundPosition = `${-pan.x * s}px ${-pan.y * s}px`;
   book.drawn ??= drawScale(s);
   book.views.forEach((v, i) => v.show(i === book.cur ? shown(book) : null, book.drawn));
 }
 // The book out of sight (shut past the screen's edge, book.js) or back: its pages paint nothing meanwhile, and what
-// changed is painted as it shows (bookpage.js)
+// changed is painted as it shows (bookpage.js). Back, it's on the hand, so a finger's first touch moves the page and
+// never scribbles on it (the board, call 159).
 export function away(book, on) {
+  if (book.away && !on) book.tools?.use('hand');
   book.away = on;
   for (const v of book.views) v.hold(on);
 }

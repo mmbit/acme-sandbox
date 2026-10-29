@@ -349,10 +349,7 @@ const twoFingerTap = async page => {
   await page.waitForTimeout(150);
 };
 
-// Hung up: the call's page stays in the day unless thrown away, in one tap
-// Hung up, the call's notes page goes in by itself (the store sends and archives it: callnotes.ts): no card asks to
-// keep it or throw it away, and HQ throws nothing away. (was the page's Keep and
-// Throw away card)
+// Hung up, HQ asks nothing about the call's page and deletes nothing (the store sends the page itself: callnotes.ts)
 async function wentIn(s) {
   const { page } = s;
   await page.waitForTimeout(1500); // (the hang-up's notes settled: calldraw.js)

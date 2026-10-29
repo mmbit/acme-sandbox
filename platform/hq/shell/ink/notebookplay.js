@@ -124,7 +124,7 @@ function makeNotebook(s, kind, name) {
 // The page new groups land on: the newest neither sent nor archived, made if there's none
 function currentPage(s, notebook) {
   const open = s.pages
-    .filter(p => p.notebook === notebook && !p.archived && p.send_at === null)
+    .filter(p => p.notebook === notebook && !p.archived && p.send_at === null && !p.tries)
     .sort((a, b) => b.created.localeCompare(a.created) || b.id - a.id);
   return open[0]?.id ?? newPage(s, notebook);
 }
@@ -273,7 +273,12 @@ function listGroups(s, q) {
   const p = pageRow(s, q?.page),
     on = s.groups.filter(g => g.page === p.id && g.deleted === null).sort((a, b) => a.id - b.id);
   const replies = on.filter(g => g.parent !== null);
-  return { page: p.id, groups: on.filter(g => g.parent === null).map(g => groupOf(s, g, replies)) };
+  return {
+    page: p.id,
+    notebook: p.notebook,
+    title: p.label,
+    groups: on.filter(g => g.parent === null).map(g => groupOf(s, g, replies)),
+  };
 }
 // Each open group of a page goes as its own note, in sendMs; a fresh page takes new groups at once
 function sendPage(s, p) {
@@ -288,7 +293,10 @@ function sendPage(s, p) {
     g.status = 'sent';
     s.notes.set(g.note, at);
   }
-  Object.assign(p, { send_at: at, fresh: s.newPage(p.notebook) });
+  p.send_at = at;
+  // (a fresh page only when no other is open, notebooksend.ts)
+  const open = s.pages.some(o => o.notebook === p.notebook && !o.archived && o.send_at === null && !o.tries);
+  p.fresh = open ? null : s.newPage(p.notebook);
   s.changed(p.notebook, p.id);
   return p;
 }
@@ -368,7 +376,7 @@ const pageOf = (s, p) => ({
   ...{ id: p.id, notebook: p.notebook, kind: p.kind, title: p.label, archived: !!p.archived },
   sending: p.send_at !== null && !s.gone(p),
   sent: s.gone(p) ? new Date(p.send_at).toISOString() : null,
-  ...{ created: p.created, updated: p.updated, x: p.x, y: p.y, w: p.w, h: p.h },
+  ...{ created: p.created, updated: p.updated, day: p.created.slice(0, 10), x: p.x, y: p.y, w: p.w, h: p.h },
   groups: s.groups.filter(g => g.page === p.id && g.parent === null && g.deleted === null).length,
   picture: null,
 });

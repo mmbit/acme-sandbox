@@ -48,6 +48,15 @@ export function spendCredits(s: { hasCredits?: boolean; useCredits?: boolean; cr
   return s.credits;
 }
 
+// The credits line of a seat that may run past its plan's limits on them (credits, spendCredits): only such a seat's line
+// in HQ's Seats and the status report calls it. It runs on them only once a window of its plan is full, by its own reading.
+export function creditsNote(s: { util?: number; week?: number; creditsLeft?: number }) {
+  const left = s.creditsLeft === undefined ? '' : ` (${s.creditsLeft.toLocaleString('en-US')} left)`;
+  return (s.util ?? 0) >= 1 || (s.week ?? 0) >= 1
+    ? `on credits past its limits${left}`
+    : `may use credits past its limits${left}`;
+}
+
 type ListHooks<S> = {
   make: (id: string, engine: string) => S; // a seat new to the worker
   start: (seat: S) => void; // its own loop starts (once per seat)

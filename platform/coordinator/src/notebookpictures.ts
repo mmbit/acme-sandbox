@@ -10,13 +10,20 @@ import { BOARD } from './ink/book.ts';
 import { isRefused } from './pagechecks.ts';
 import { DIR, notFound, serveFile, tooBig } from './pagescraps.ts';
 import { pageRow } from './notebook.ts';
+import { BOOK_FULL, noRoomFor } from './ink/sketchpeople.ts';
 import { openPage } from './notebookgroups.ts';
 
 const PICTURE = /^(\d+)-g-[0-9a-f]{8}\.(png|jpg)$/;
 
 // POST /api/notebooks/pictures?page=: one picture as the body (a JPEG or PNG), for a group on that page to place:
 // { file, url }
-export async function uploadPicture(req: IncomingMessage, res: ServerResponse, who = BOARD) {
+export async function uploadPicture(
+  req: IncomingMessage,
+  res: ServerResponse,
+  who = BOARD,
+  stillOpen = () => true,
+  pictureBase = '/api/notebooks/pictures',
+) {
   const page = Number(new URL(req.url ?? '/', 'http://x').searchParams.get('page'));
   if (isRefused(openPage(page, who))) return refuse(req, res, 404, 'no such open page');
   const type = String(req.headers['content-type'] ?? '')
@@ -30,8 +37,12 @@ export async function uploadPicture(req: IncomingMessage, res: ServerResponse, w
   if (!p) return reply(res, 400, { error: 'not a picture we can read' }, true);
   const big = tooBig(p.clean);
   if (big) return reply(res, big[0], { error: big[1] }, true);
+  if (!stillOpen() || isRefused(openPage(page, who)))
+    return reply(res, 403, { error: 'this invitation or page has closed' });
+  // (a guest's book's room, counted with nothing awaited before it's kept, so two bodies ending together can't both fit)
+  if (who !== BOARD && noRoomFor(who, p)) return reply(res, 413, { error: BOOK_FULL });
   const file = keepPicture(page, p);
-  return reply(res, 200, { file, url: pictureUrl(file) });
+  return reply(res, 200, { file, url: `${pictureBase}?file=${encodeURIComponent(file)}` });
 }
 // GET /api/notebooks/pictures?file=: one of a person's group pictures
 export function servePicture(req: IncomingMessage, res: ServerResponse, who: string | null = BOARD) {

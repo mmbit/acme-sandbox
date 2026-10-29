@@ -121,7 +121,7 @@ export function reset(r) {
   pencil.unmark(r);
   pictures.clearPictures(r);
   r.penOn?.cancel();
-  Object.assign(r, { strokes: [], penSeen: false, undoTo: null, exposure: null });
+  Object.assign(r, { strokes: [], inkSteps: [], penSeen: false, undoTo: null, exposure: null });
   r.veil.classList.remove('marked');
   r.undoButton.disabled = true;
   surface.paintInk(r, []);

@@ -1,7 +1,7 @@
 // The pen and fingers on HQ's page, for the Pencil (pencil.js): the pen down, then moved, draws; held still, listens;
 // a quick tap is a click (tap.js); two fingers tapped together undo.
 import { under } from './layer.js';
-import { audioContext, canRecord, startMic, stopMic } from './dictation.js';
+import { audioContext, canRecord, micGranted, startMic, stopMic } from './dictation.js';
 import { reset } from './acts.js';
 import { distance, isTap } from './tap.js';
 import { settleSoon } from './settle.js';
@@ -70,13 +70,15 @@ const penDown = (r, p, begin) => e => {
   if (e.pointerType !== 'pen' || !e.isPrimary || !free(r) || theirs(r, e)) return;
   r.penSeen = true;
   Object.assign(p, { down: e, drawing: false, reach: 0 });
-  // (a pen held this still this long starts a voice note: the device's own hold, prefs.js.)
-  p.timer = setTimeout(() => p.down === e && !p.drawing && hold(r, e, p, begin), holdMs());
+  // (a pen held this still this long starts a voice note: the device's own hold, prefs.js. Off a call, only where the
+  // microphone is already allowed: a pen resting never asks for it, only the mic's tap does (the board, call 158.).)
+  const holds = r.call || !canRecord || micGranted(r);
+  p.timer = setTimeout(() => holds && p.down === e && !p.drawing && hold(r, e, p, begin), holdMs());
   // off a call the mic listens only for a held note (on one, the call hears: callnotes.js): a circle or a tap never
   // starts it, the mic button on its post-it does (the board, call 154). Its
   // audio context is made here, at the pen's touch, a gesture, so Safari lets it run; a paired page's mark goes to the
   // other screen with no mic
-  if (!r.call && r.mode === 'idle' && canRecord && !r.rec && !r.stopping && !across(r)) {
+  if (!r.call && r.mode === 'idle' && canRecord && micGranted(r) && !r.rec && !r.stopping && !across(r)) {
     p.mic = e.pointerId;
     p.ctx = audioContext();
   }
@@ -84,7 +86,7 @@ const penDown = (r, p, begin) => e => {
 // The mic, for the held note this touch began
 const listen = (r, p) => {
   if (!p.ctx) return;
-  startMic(r, p.ctx);
+  startMic(r, p.ctx, true);
   p.ctx = null;
 };
 const penMove = (r, p) => e => {
@@ -192,7 +194,7 @@ function hold(r, e, p, begin) {
     r.mark = { kind: 'pin', x: e.clientX, y: e.clientY, el: under(r, e.clientX, e.clientY), area: null };
     begin(r);
     listen(r, p);
-  } else if (canRecord && !r.call && !r.rec && !r.stopping) r.mic.click();
+  } else if (canRecord && micGranted(r) && !r.call && !r.rec && !r.stopping) startMic(r, audioContext(), true);
 }
 async function letGo(r) {
   const { fresh } = r.holding,

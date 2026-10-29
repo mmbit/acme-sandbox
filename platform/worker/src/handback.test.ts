@@ -43,11 +43,13 @@ test('while a hand-back waits for the coordinator, only the runs not sent yet ar
 test('a run the coordinator failed to take (500) is sent again, and leaves the file once it is taken', async () => {
   const file = newFile();
   const tries: number[] = [];
-  noteHandBacks(file, [{ job: 3, seat: 'claude-1', session: 's-3' }]);
+  const lostAt = '2026-10-28T12:01:30.000Z';
+  noteHandBacks(file, [{ job: 3, seat: 'claude-1', session: 's-3', lostAt }]);
   await handBack(
     file,
     async b => {
       tries.push(Number(b.job));
+      assert.equal(b.lostAt, lostAt, 'the cut time stays through a retry without lost processes');
       if (tries.length === 1) throw new ResponseError('finish', 500);
     },
     log,

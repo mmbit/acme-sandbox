@@ -21,6 +21,7 @@ import { addNote, note, sheetRow, shown } from './booknotes.ts';
 import { type Refused } from '../pagechecks.ts';
 import { DIR, notFound, serveFile } from '../pagescraps.ts';
 import * as artifacts from '../artifacts.ts';
+import { whyMissed } from '../quickruns.ts';
 
 export const SLIP_MAX = 4000,
   LINK_MAX = 500;
@@ -224,7 +225,7 @@ function previewOf(id: string, listed: artifacts.Artifact[]) {
 // ---------------------------------------------------------------- a notebook group's answers
 // The answers on groups by their grp (sent or not), and a group's answer still
 // coming: its quick run's (notebook_groups.asked, bookanswer.ts) at the spot it will take, while it goes and hasn't
-// answered; a try's (tried, booktry.ts) while it goes, its versions' count once the run says (expect).
+// answered, and why none came once it has ended without one (until the thread moves on: bookanswer.ts movedOn); a try's (tried, booktry.ts) while it goes, its versions' count once the run says (expect).
 export const answersOnGroups = (ids: number[], listed = listedOnce()) =>
   ids.length
     ? (
@@ -233,21 +234,39 @@ export const answersOnGroups = (ids: number[], listed = listedOnce()) =>
           .all(...ids) as Slip[]
       ).map(s => slipOf(s, listed))
     : [];
-const going = (job: number | null | undefined) =>
+export const going = (job: number | null | undefined) =>
   !!job && !!db.prepare("select 1 from jobs where id = ? and status in ('queued', 'running')").get(job);
 const byOf = (job: number) => {
   const by = jobAgent(job) ?? ceo();
   return { by, name: findAgent(by)?.name ?? by };
 };
-export function waitingOf(g: {
-  asked?: number | null;
-  asked_spot?: string | null;
-  tried?: number | null;
-  expect?: number | null;
-}) {
-  if (g.asked && going(g.asked) && !db.prepare('select 1 from book_slips where job = ?').get(g.asked))
-    return { ...byOf(g.asked), spot: g.asked_spot ? JSON.parse(g.asked_spot) : null, style: 'text' as const };
+type Asking = { asked?: number | null; asked_spot?: string | null; tried?: number | null; expect?: number | null };
+// The face a group shows for an answer not on it yet: the one coming, else why its ended ask brought none (quickruns.ts
+// whyMissed)
+export function waitingOf(g: Asking) {
+  const coming = comingOf(g);
+  if (coming) return coming;
+  const asked = unanswered(g);
+  return asked && whyMissed(asked) ? askedFace(g, asked) : null;
+}
+// An answer on its way: the group's quick run while it goes and hasn't answered, then its try while it goes
+export function comingOf(g: Asking) {
+  const asked = unanswered(g);
+  if (asked && going(asked)) return askedFace(g, asked);
   if (g.tried && going(g.tried))
     return { ...byOf(g.tried), spot: null, style: 'versions' as const, ...(g.expect ? { count: g.expect } : {}) };
   return null;
+}
+// The group's ask, unless its run has clipped its answer
+const unanswered = (g: Asking) =>
+  g.asked && !db.prepare('select 1 from book_slips where job = ?').get(g.asked) ? g.asked : null;
+// Who answers, at the spot the answer will take, with why it hasn't come where there's a reason
+function askedFace(g: Asking, job: number) {
+  const reason = whyMissed(job);
+  return {
+    ...byOf(job),
+    spot: g.asked_spot ? JSON.parse(g.asked_spot) : null,
+    style: 'text' as const,
+    ...(reason && { reason }),
+  };
 }

@@ -18,11 +18,31 @@ From the status report (`hq report`), the last 7 days:
   crashes, sorts, judges, follow-ups), and failed, stopped or cancelled runs that spent.
 - **The seats** (`hq estimate` with no words): each seat's week used, and its share per agent-hour.
 
+## What sessions read before they start
+
+Every session pays for its start once in full and again on each turn, so context that creeps into it costs every job.
+From the report's "up-front context per kind of job" (or HQ's Numbers, Tokens): each kind's median opening and its
+share of the kind's tokens, against last week's line. A kind whose opening grew by a tenth or more: find what came in.
+
+- The parts every work session loads: the shared memory index (`MEMORY.md` in your home's memory folder; keep it
+  under 16 KB, one line per memory that says when to open it: stage a compaction as the docs-sweep routine says), `AGENTS.md`, the
+  briefing (the worker's `briefing()`, and the brief, open-jobs list and lines it adds), and Claude Code's own system
+  prompt, tools and skills (a new CLI can add some: the ones only a person at a terminal uses go on the worker's off
+  list).
+- The first reads the briefing asks for: profiles over 20 KB are read into every job of their agent.
+- For each part that grew: is it relevant to most of the sessions that read it? What isn't goes, moves to where it's
+  looked up when needed, or is loaded only for the kinds that use it.
+
+**Resumes.** From "resumed runs": how many runs resumed a session, how long they had sat idle and what each wrote
+again. Past an hour idle the prompt cache is gone and a resume re-reads its whole context. Compare it with a fresh
+session that starts from the summary the first session wrote at its end (its closing report, written while warm):
+never have a summary made just before the restart, which re-reads the whole context to write it.
+
 ## The measure
 
 Write one line a week into the company's seat-spend note (its table, newest first): the week's Claude cost, merged
-changes, cost per merged change, the review loop's share, the after-first-round share, and the share that bought no
-change (failed or no-change runs, work redone or cancelled, meta jobs). Cost per merged change and the no-change share
+changes, cost per merged change, the review loop's share, the after-first-round share, a work session's median
+opening, and the share that bought no change (failed or no-change runs, work redone or cancelled, meta jobs). Cost per merged change and the no-change share
 are the two numbers to bring down; a rise in either is the week's first question.
 
 ## Flag waste, fix the cause

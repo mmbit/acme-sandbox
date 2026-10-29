@@ -1,7 +1,7 @@
 // node --test platform/hq/shell/ink/bookscrap.test.js   (a taped picture's size, place and tilt)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { TILT, placeScrap, scrapAt, slid, tiltOf } from './bookscrap.js';
+import { TILT, placeScrap, scrapAt, tiltOf } from './bookscrap.js';
 
 const page = { w: 500, h: 900 },
   view = { x0: 0, y0: 100, x1: 500, y1: 700 };
@@ -54,6 +54,4 @@ test('a press finds the scrap on top, turned as it lies; a moved one keeps its m
   // (the turned one's corner: inside its box unturned, outside it turned 30 degrees)
   assert.equal(scrapAt([turned], [155, 125]), -1);
   assert.equal(scrapAt([turned], [250, 170]), 0);
-  assert.deepEqual(slid(flat, [40, -20], page), { x: 140, y: 80 });
-  assert.deepEqual(slid(flat, [900, -900], page), { x: 400, y: -50 });
 });

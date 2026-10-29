@@ -83,9 +83,22 @@ export function claudeArgs(o: { reviewing: boolean; settings: object; agents?: s
   return ['-p', '--output-format', 'stream-json', '--verbose', '--permission-mode', 'auto',
     ...(o.model ? ['--model', o.model] : []), ...(o.effort ? ['--effort', o.effort] : []),
     ...(compactAt ? ['--autocompact', compactAt] : []),
-    '--settings', JSON.stringify(o.settings),
+    '--settings', JSON.stringify(withoutTerminalOnly(o.settings)),
     ...(o.reviewing ? ['--setting-sources', 'user'] : (o.agents ?? [])),
     ...(o.session ? ['--resume', o.session] : [])];
+}
+
+// Claude Code's built-ins for a person at a terminal, which a job in the background never uses: waking a /loop, cron
+// and remote triggers, phone notifications, an onboarding guide, switching worktrees (a job's clone is the one the
+// worker commits), and the skills that configure the terminal itself. Their descriptions went into every request of
+// every job, about 2,000 tokens a turn (CLI 2.1.293 against a scripted model). A denied tool and a skill set "off"
+// leave the request altogether.
+export const TERMINAL_TOOLS = ['ScheduleWakeup', 'ShareOnboardingGuide', 'CronCreate', 'CronDelete', 'CronList', 'RemoteTrigger',
+  'PushNotification', 'EnterWorktree', 'ExitWorktree'];
+export const TERMINAL_SKILLS = ['update-config', 'keybindings-help', 'fewer-permission-prompts', 'loop', 'schedule', 'plugin-authoring', 'init'];
+function withoutTerminalOnly(settings: { permissions?: { deny?: string[] }; skillOverrides?: Record<string, string> }) {
+  return { ...settings, permissions: { ...settings.permissions, deny: [...(settings.permissions?.deny ?? []), ...TERMINAL_TOOLS] },
+    skillOverrides: { ...Object.fromEntries(TERMINAL_SKILLS.map(s => [s, 'off'])), ...settings.skillOverrides } };
 }
 
 // The Codex CLI arguments for a reviewer asked once more whether its verdict stands (askVerdictAgain, worker.ts). Codex has

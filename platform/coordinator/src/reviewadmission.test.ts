@@ -1,6 +1,7 @@
 // node --test src/reviewadmission.test.ts   (uses a throwaway DATA_DIR)
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { memoryReport } from './memory.fixture.ts';
 import { harness } from './harness.ts';
 
 const h = await harness('review-admission');
@@ -299,17 +300,12 @@ for (const expedited of [false, true])
           slots: { codex: 4 },
           seatRuns: { codex: 4 },
           room: 0,
-          memory: {
+          memory: memoryReport({
             at: Date.now(),
             availableMb: 1600,
-            freeReserveMb: 1500,
-            defaultRunMb: 700,
             totalSlots: 4,
-            heldSlots: 0,
-            heldMb: 0,
-            starting: [],
             runningMb: { [first.id]: 400, [last.id]: 400 },
-          },
+          }),
         },
       });
       for (let beat = 0; beat < 3; beat++)
@@ -343,3 +339,50 @@ for (const expedited of [false, true])
       }
       await h.capacity({ codex: 2 });
     });
+
+test('an idle seat preserves deadline room from the first yield request through the next claim', async () => {
+  h.cancelQueued();
+  await h.capacity({ claude: 15, codex: 15 });
+  const busy = 'claude-busy',
+    idle = 'claude-idle';
+  for (const [seatId, util] of [
+    [busy, 0.6],
+    [idle, 0.03],
+  ] as const)
+    await h.worker('seat', { seat: seatId, engine: 'claude', state: 'ready', util, week: 0.1 });
+  const lower = await h.start({ agent: 'kit', engine: 'claude' }, { seat: busy, util: 0 });
+  const urgent = h.queue({ agent: 'moss', engine: 'claude', thread: h.dueThread({ deadline: Date.now() - 60_000 }) });
+  const small = h.queue({ agent: 'bolt', engine: 'codex', forSeat: seat });
+  await h.worker('room', {
+    jobs: [
+      { job: lower.id, mb: 300 },
+      { job: urgent, mb: 700 },
+      { job: small, mb: 400 },
+    ],
+    capacity: {
+      slots: { claude: 15, codex: 15 },
+      seatRuns: {},
+      room: 15,
+      memory: memoryReport({ at: Date.now(), runningMb: { [lower.id]: 300 } }),
+    },
+  });
+  const yielded = (await h.heartbeat(lower, { short: true })).body;
+  assert.equal(yielded.yield, 'waiting');
+  assert.equal(yielded.immediate, true);
+  assert.equal(
+    await h.claim('codex', { seat, util: 0, room: 500 }),
+    null,
+    'new lower work cannot spend the room needed alongside the pending pause release',
+  );
+  await h.finish(lower, { status: 'yielded', session: 'saved-lower' });
+  const started = (await h.claim('claude', { seat: idle, util: 0, room: 800 }))!;
+  assert.equal(started.id, urgent);
+  await h.finish(started);
+  const resumed = (await h.claim('claude', { seat: busy, util: 0 }))!;
+  assert.equal(resumed.id, lower.id);
+  assert.equal(resumed.session, 'saved-lower');
+  await h.finish(resumed);
+  const next = (await claim())!;
+  assert.equal(next.id, small);
+  await h.finish(next);
+});

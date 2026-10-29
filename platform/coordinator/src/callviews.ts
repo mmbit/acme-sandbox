@@ -12,7 +12,8 @@ import { createGzip } from 'node:zlib';
 import { db } from './db.ts';
 import { timeZone } from './company.ts';
 import { reply } from './uploads.ts';
-import { NOTHING, TOOL_PX, callPlayback, clockOf, mirrors, when } from './watchalong.ts';
+import { NOTHING, TOOL_PX, callPlayback, clockOf, mirrors } from './watchalong.ts';
+import { when } from './watchtimes.ts';
 import type { Moment } from '../../../shared/watchalong/moments.ts';
 
 type Refusal = 404 | [number, string];

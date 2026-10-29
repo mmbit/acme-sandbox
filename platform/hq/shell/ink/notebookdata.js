@@ -3,14 +3,15 @@
 // mock/notebook.json (notebookplay.js), with the same answers and refusals. Every change there is a `book` event with
 // text `notebook` and its page; dev mode's are book:notebook on the document straight away, as events.js passes the
 // store's on.
-import { act, copy, get, refused } from '../data.js';
+import { copy, get, refused } from '../data.js';
+import { notebookRequest } from './bookscope.js';
 import { notebookPlay } from './notebookplay.js';
 import { pagePicture } from './notebookpicture.js';
 
 // GET when there's no body
 export async function ask(dev, path, query = null, body = undefined) {
   const url = query ? `${path}?${new URLSearchParams(query)}` : path;
-  if (!dev) return act(url, body);
+  if (!dev) return notebookRequest(url, body);
   const play = await played();
   try {
     return pictured(copy(play.route(path, new URLSearchParams(query ?? {}), body)));
@@ -45,7 +46,7 @@ export const undoSend = (dev, id) => ask(dev, '/api/notebooks/pages/undo', null,
 
 // ---- a page's groups
 
-// { page, groups }, each group with its box and its children (answers and replies)
+// { page, notebook, title, groups }, each group with its box and its children (answers and replies)
 export const loadGroups = (dev, page) => ask(dev, '/api/notebooks/pages/groups', { page });
 // parts: { ink, texts, pictures } as the store keeps them
 export const createGroup = (dev, page, parts) => ask(dev, '/api/notebooks/groups/create', null, { page, ...parts });
@@ -70,7 +71,7 @@ export const answerAsk = (dev, id, answer, answers) =>
 
 // A picture for a group on a page: { file, url }
 export async function keepPicture(dev, page, blob) {
-  if (!dev) return act(`/api/notebooks/pictures?page=${Number(page)}`, blob);
+  if (!dev) return notebookRequest(`/api/notebooks/pictures?page=${Number(page)}`, blob);
   const kept = await ask(
     dev,
     '/api/notebooks/pictures',

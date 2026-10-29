@@ -11,6 +11,7 @@
 import { createGroup, deleteGroup, editGroup, loadGroups, restoreGroup } from './notebookdata.js';
 import { boxOf as boxOfParts, changesOf, emptyParts, keyOf, sortNew } from './bookgroupmath.js';
 import { grownTo } from './bookrow.js';
+import { nameOf } from './bookhead.js';
 
 // a page is saved this long after its last stroke, so a burst of writing is one save
 const SAVE_MS = 600;
@@ -44,7 +45,7 @@ export const saveAll = book => book.views.forEach(v => v.page.timer && save(book
 export const saved = (book, page) =>
   page.timer || page.failed ? save(book, page) : (page.saving ?? Promise.resolve());
 // Whether a page's own groups are read-only: it's sending or sent
-export const shut = page => !!(page.sending || page.sent);
+export const shut = page => !!(page.sending || page.sent || page.readonly);
 
 async function saveNow(book, page) {
   if (!page.groups || shut(page)) return;
@@ -129,6 +130,7 @@ async function putWords(dev, page) {
 // they held as read (what a save compares against). What was drawn and not yet in a group stays.
 export async function readPage(book, page) {
   const read = await loadGroups(book.dev, page.id);
+  named(book, page, read.title);
   fill(page, read.groups);
   return read;
 }
@@ -142,6 +144,7 @@ export function readAgain(book, page) {
 }
 async function readNow(book, page) {
   const read = await loadGroups(book.dev, page.id);
+  named(book, page, read.title);
   if (unchanged(page, read.groups)) return;
   if (book.tools?.editing?.()) return changed(book, page);
   fill(page, read.groups);
@@ -153,6 +156,12 @@ async function readNow(book, page) {
   view.redraw();
   book.tools?.added?.(view);
   book.groups?.drawn(page);
+}
+export function named(book, page, title) {
+  page.label = title;
+  const view = book.views.find(v => v.page === page);
+  if (view) view.el.ariaLabel = nameOf(page);
+  book.controls?.update();
 }
 // (the page's own saves come back as the store's change too: nothing new in them, nothing's drawn again. Its answers
 // and the agents' cards under it are new too: cards.)

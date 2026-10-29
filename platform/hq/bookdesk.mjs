@@ -24,8 +24,8 @@ const HEAD_PX = 64,
 export function deskStories(c) {
   return {
     'the overview from its button, and a page opened from it': browser => overview(browser, c),
-    "zoom in and out: Ctrl and the wheel, Ctrl and the keys, the foot's % back to 100%, and out to the overview":
-      browser => zoom(browser, c),
+    "zoom in and out: the wheel, Ctrl and the keys, the foot's % back to 100%, and out to the overview": browser =>
+      zoom(browser, c),
     'pan by Space and a drag and by the middle button, any way, the paper never showing an edge': browser =>
       pan(browser, c),
     'New page, and back to the first from the pages’ list': browser => newPage(browser, c),
@@ -124,10 +124,8 @@ async function zoom(browser, c) {
     await page.waitForTimeout(c.settle);
     assert.equal(await percent(page), '125%');
     assert.ok((await inkPixels(page)) > ink, 'the ink drawn bigger');
-    // Ctrl and the wheel, over the paper
-    await page.keyboard.down('Control');
+    // the wheel over the paper (Ctrl and the wheel pick tools: bookstrip.mjs.)
     await page.mouse.wheel(0, -100);
-    await page.keyboard.up('Control');
     await page.waitForTimeout(c.settle);
     assert.ok(parseInt(await percent(page)) > 125, `the wheel zoomed in: ${await percent(page)}`);
     await c.shot('desk-zoomed', page);
@@ -301,7 +299,7 @@ async function onPaper(page) {
   return { data: Buffer.from(b64, 'base64'), w, h };
 }
 // The ink on the paper: how many dark px, away from the heading at its top, the islands at its right and foot, and
-// the tool strip down its left with the tool in use named beside it (bookstrip.js.)
+// the tool strip beside them with the tool in use named beside it (bookstrip.js.)
 export async function inkPixels(page) {
   const { data, w, h } = await onPaper(page),
     paper = await paperBox(page),

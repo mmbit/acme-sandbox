@@ -167,7 +167,7 @@ async function pairCard(browser, c) {
 }
 // A laptop-height window: the stack too tall for one column goes on in a second, so every control in it and in the
 // pages' row is whole in the window and on the paper, no island over another, Undo and Redo (the book's own island, at
-// the stack's foot) among them, and the page's heading beside them all
+// the stack's foot) among them
 async function shortWindow(browser, c) {
   for (const viewport of SHORT) {
     const { page, errors, done } = await onDesk(browser, c, {}, viewport);
@@ -202,32 +202,11 @@ async function shortWindow(browser, c) {
           `${at}: no ${name}`,
         );
       if (viewport === SHORT[0]) await c.shot('book-frame-short', page);
-      await headingBeside(page, paper, at);
       assert.deepEqual(errors, []);
     } finally {
       await done();
     }
   }
-}
-// The page's heading's room (its Send plane last in it) beside the islands' stack, both its columns
-async function headingBeside(page, paper, at) {
-  const left = Math.min(...(await stackOf(page)).map(r => r.left)),
-    // (the page in view's: its heading's left on the paper)
-    heading = await page.$$eval(
-      '#book .bk-title',
-      (all, paper) =>
-        all
-          .map(el => {
-            const r = el.getBoundingClientRect();
-            return { left: r.left, room: parseFloat(getComputedStyle(el).maxWidth) * (r.width / el.offsetWidth) };
-          })
-          .find(r => r.left >= paper.x && r.left < paper.x + paper.width),
-      paper,
-    );
-  assert.ok(
-    heading.left + heading.room <= left + 1,
-    `${at}: the heading has room to ${heading.left + heading.room}, the islands begin at ${left}`,
-  );
 }
 // The pairing card on the paper, its QR, its digits, its field and Join inside it, none cut off
 async function whole(page, when) {

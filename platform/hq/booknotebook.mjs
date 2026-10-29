@@ -1,9 +1,10 @@
 // book-check.mjs's stories of the Notebook's page (shell/ink/bookgroups.js, booksave.js, bookpagesend.js), on the played
 // Notebook seeded as dev mode's (mock/notebook.json: My Notebook's three pages, the first sent with an answer under its
 // scrap):
-//   - an iPad mini, the Pencil and a finger: every group clipped; Delete crumpling it with Undo; a line a group of its
-//     own, the next near it joining it; a scratch-out deleting it; Send, its Undo, sent again, the fresh page turned to,
-//     the sent page stamped with no clips and nothing written on it kept. Recorded with --shots.
+//   - an iPad mini, the Pencil and a finger: every group of two or more things clipped, a lone one not; Delete
+//     crumpling it with Undo; a line a group of its own, the next near it joining it; a scratch-out deleting it; Send,
+//     its Undo, sent again, the fresh page turned to, the sent page stamped with no clips and nothing written on it
+//     kept. Recorded with --shots.
 //   - a desktop, a mouse: the lasso's Group making two groups one, and two words of a group a group of their own;
 //     Move to page… and Undo; a group made on another screen drawn here as the store tells of it; a line added to a
 //     group another screen changed meanwhile, refused (409), kept and saved anew once the page is read again; a save
@@ -15,7 +16,7 @@
 //     within seconds of the store's event, with a picture of what was made and its link, and ticked.
 import assert from 'node:assert/strict';
 import { readFile, rename } from 'node:fs/promises';
-import { clipped, onPaper, pen, stamp, tool, turnTo, until, where } from './booknotebookscreen.mjs';
+import { clipped, held, onPaper, pen, stamp, tool, turnTo, until, where } from './booknotebookscreen.mjs';
 
 const SEED = JSON.parse(await readFile(new URL('./mock/notebook.json', import.meta.url), 'utf8'));
 const MINI = { width: 1133, height: 744 },
@@ -33,7 +34,7 @@ const STAR = 7,
 // c: book-check.mjs's hqIn, base, settled, shot, noErrorsIn, shots (the stills' folder, or null)
 export function notebookStories(c) {
   return {
-    'the Notebook on an iPad mini: clipped groups, Delete and Undo, a line its own group, a scratch-out, Send and its Undo, the sent page stamped':
+    'the Notebook on an iPad mini: groups clipped, lone things not, Delete and Undo, a line its own group, a scratch-out, Send and its Undo, the sent page stamped':
       browser => onMini(browser, c),
     "the Notebook on a desktop: the lasso's Group joining and splitting, Move to page… and Undo, another screen's group drawn, a refused edit kept, a failed save tried again by Send":
       browser => onDesktop(browser, c),
@@ -47,7 +48,7 @@ export function notebookStories(c) {
 async function onMini(browser, c) {
   const { page, play, errors, done } = await open(browser, c, MINI, { hasTouch: true, record: 'notebook-ipad-mini' });
   try {
-    assert.deepEqual(await clipped(page), ids(play, NEWEST), 'every group on the newest page has its clip');
+    assert.deepEqual(await clipped(page), held(groupsOn(play, NEWEST)), 'a clip on each group of two or more');
     await c.shot('notebook-mini-open', page);
     await deleteAndUndo(page, play, c);
     await linesAndScratch(page, play, c);
@@ -60,63 +61,66 @@ async function onMini(browser, c) {
 
 async function deleteAndUndo(page, play, c) {
   // Delete from a clip's menu: gone at once, gone from the store, back with Undo
-  await page.locator(`#book .bk-clip[data-g="${STAR}"]`).tap();
+  await page.locator(`#book .bk-clip[data-g="${WAVE}"]`).tap();
   await page.locator('#book .bk-group-menu').waitFor();
   await c.shot('notebook-mini-menu', page);
   await page.locator('#book .bk-group-menu [data-act=delete]').tap();
-  assert.ok(!(await clipped(page)).includes(STAR), 'the clip goes with its group at once');
+  assert.ok(!(await clipped(page)).includes(WAVE), 'the clip goes with its group at once');
   await page.locator('#toasts .toast', { hasText: 'Deleted' }).waitFor();
-  await until(() => !ids(play, NEWEST).includes(STAR), 'the group deleted in the store');
+  await until(() => !ids(play, NEWEST).includes(WAVE), 'the group deleted in the store');
   await c.shot('notebook-mini-deleted', page);
   await page.locator('#book').getByRole('button', { name: 'Undo' }).first().tap();
-  await until(() => ids(play, NEWEST).includes(STAR), 'Undo restores it in the store');
-  await until(async () => (await clipped(page)).includes(STAR), 'and its clip is back');
+  await until(() => ids(play, NEWEST).includes(WAVE), 'Undo restores it in the store');
+  await until(async () => (await clipped(page)).includes(WAVE), 'and its clip is back');
 }
 
 async function linesAndScratch(page, play, c) {
-  // a line in a clear place: a group of its own; the next, near it and soon after, joins it
+  // a line in a clear place: a group of its own; the next, near it and soon after, joins it, as the words of a line
+  // do. (drawn one after the other, as they're written: a wait on the store between them can put more than the join's
+  // 4 s between their saves on a loaded worker, whose save timers fire late.)
   const before = ids(play, NEWEST);
-  await pen(
-    page,
-    await onPaper(page, [
-      [300, 425],
-      [330, 432],
-      [355, 428],
-    ]),
+  const line = await onPaper(page, [
+    [300, 425],
+    [330, 432],
+    [355, 428],
+  ]);
+  const next = await onPaper(page, [
+    [372, 426],
+    [400, 430],
+    [425, 427],
+  ]);
+  await pen(page, line);
+  await pen(page, next);
+  const made = await until(
+    () => ids(play, NEWEST).find(id => !before.includes(id) && group(play, id).ink.length === 2),
+    'a new group for the line, the next line joining it',
   );
-  const made = await until(() => ids(play, NEWEST).find(id => !before.includes(id)), 'a new group for the line');
-  await pen(
-    page,
-    await onPaper(page, [
-      [372, 426],
-      [400, 430],
-      [425, 427],
-    ]),
-  );
-  await until(() => group(play, made)?.ink.length === 2, 'the next line joins it, as the words of a line do');
   assert.equal(ids(play, NEWEST).length, before.length + 1, 'one group for both lines');
   await until(async () => (await clipped(page)).includes(made), 'the new group has its clip');
   await c.shot('notebook-mini-lines', page);
-  // a scratch-out over it (from its right: its clip is a button of its own): deleted, no ink kept
+  // a scratch-out over it, from its middle (its clip at its left is a button of its own, and the Undo island floats
+  // over its right end): deleted, no ink kept
   const zig = [];
-  for (let i = 0; i < 7; i++) zig.push([i % 2 ? 318 : 440, 418 + i * 3], [380, 419 + i * 3]);
+  for (let i = 0; i < 7; i++) zig.push([380, 419 + i * 3], [i % 2 ? 318 : 440, 418 + i * 3]);
   await pen(page, await onPaper(page, zig));
   await until(() => !ids(play, NEWEST).includes(made), 'the scratch-out deletes the group');
   assert.deepEqual(ids(play, NEWEST), before, 'and leaves no ink of its own');
 }
 
 async function sendAndUndo(page, play, c) {
-  // Send: ten seconds to undo, the fresh page turned to; taken back; sent again and gone
+  // Send: ten seconds to undo, taken back from its toast at once (its few seconds on screen can pass while a loaded
+  // worker turns the page, and a toast sliding in there never holds still for a tap: its own click); sent again, the
+  // fresh page turned to, and gone
   await page.locator('#book').getByRole('button', { name: 'Send' }).tap();
   await until(() => pageOf(play, NEWEST).sending, 'the page sending');
+  await page.locator('#toasts .toast', { hasText: 'Sent' }).locator('.cover').dispatchEvent('click');
+  await until(() => !pageOf(play, NEWEST).sending, 'the send taken back');
+  await turnTo(page, NEWEST);
+  await page.locator('#book').getByRole('button', { name: 'Send' }).tap();
   await until(() => pagesOf(play).find(p => p.id > NEWEST && !p.sending), 'a fresh page made');
   const n = pagesOf(play).length;
   await until(async () => (await where(page)).endsWith(`${n} / ${n}`), 'the fresh page, the last, turned to');
   await c.shot('notebook-mini-sending', page);
-  await page.locator('#toasts .toast', { hasText: 'Sent' }).locator('.cover').tap();
-  await until(() => !pageOf(play, NEWEST).sending, 'the send taken back');
-  await turnTo(page, NEWEST);
-  await page.locator('#book').getByRole('button', { name: 'Send' }).tap();
   await until(() => pageOf(play, NEWEST).sent, 'sent once its ten seconds are over', 14_000);
   await turnTo(page, NEWEST);
   await until(async () => /^Sent /.test(await stamp(page)), 'the sent page stamped');
@@ -192,25 +196,18 @@ async function moveAndUndo(page, play) {
 }
 
 async function otherScreen(page, play) {
-  // another screen makes a group: drawn here once the store tells of it
-  const theirs = play.route(
-    '/api/notebooks/groups/create',
-    {},
-    {
-      page: NEWEST,
-      ink: [
-        {
-          points: [
-            [620, 200, 0.5, 0],
-            [700, 240, 0.5, 40],
-            [760, 210, 0.5, 80],
-          ],
-          size: 3,
-          color: '#2f6bdc',
-        },
-      ],
-    },
-  );
+  // another screen makes a group of two lines (a clip holds them): drawn here once the store tells of it
+  const line = {
+    points: [
+      [620, 200, 0.5, 0],
+      [700, 240, 0.5, 40],
+      [760, 210, 0.5, 80],
+    ],
+    size: 3,
+    color: '#2f6bdc',
+  };
+  const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 60, ...more]) };
+  const theirs = play.route('/api/notebooks/groups/create', {}, { page: NEWEST, ink: [line, under] });
   await until(async () => (await clipped(page)).includes(theirs.id), "another screen's group drawn here");
 }
 
@@ -320,7 +317,9 @@ async function onPhone(browser, c) {
     const undo = page.locator('#book .bk-unreply').first();
     await undo.waitFor();
     await c.shot('notebook-phone-replied', page);
-    await undo.tap();
+    // (its own click, in its seconds: on a loaded machine a tap waits seconds for frames, and review mode's pin at the
+    // foot may be over it till it steps off, dock.js)
+    await undo.dispatchEvent('click');
     await until(() => replies() === had, 'the reply taken back');
     await answered(page, play, c);
     c.noErrorsIn(errors);
@@ -389,8 +388,9 @@ export async function open(browser, c, viewport, { record, folded, ...more }) {
 // ---- the played store
 
 const groupsOn = (play, page) => play.route('/api/notebooks/pages/groups', { page }).groups;
-const ids = (play, page) => groupsOn(play, page).map(g => g.id);
-const group = (play, id) =>
+// (also booknotebookselect.mjs's)
+export const ids = (play, page) => groupsOn(play, page).map(g => g.id);
+export const group = (play, id) =>
   [SENT, SECOND, NEWEST, ...pagesOf(play).map(p => p.id)].flatMap(p => groupsOn(play, p)).find(g => g.id === id);
 const pagesOf = play => play.route('/api/notebooks/pages', { notebook: 1 }).pages;
 const pageOf = (play, id) => pagesOf(play).find(p => p.id === id);

@@ -73,12 +73,16 @@ type PastJob = {
   pr?: { number: number; status: string };
   report?: string;
   report_left_out?: string;
+  up?: { from: string; note?: string } | null; // (its hand-up from a lighter model)
 };
 
-function jobLines({ id, code, title, status, created, pr, report, report_left_out }: PastJob) {
+function jobLines({ id, code, title, status, created, pr, report, report_left_out, up }: PastJob) {
   const pullRequest = present(pr) ? `, PR #${pr.number} ${text(pr.status)}` : '';
   const left = present(report_left_out) ? `(${text(report_left_out)})` : 'no report';
-  return `#${id} ${text(code)} ${text(title)} (${text(status)}${pullRequest}, ${created.slice(0, 10)})\n${text(report ?? left)}\n`;
+  const handedUp = present(up)
+    ? `Handed up from ${text(up.from)}, bigger than it looked${present(up.note) ? `: ${text(up.note)}` : ''}\n`
+    : '';
+  return `#${id} ${text(code)} ${text(title)} (${text(status)}${pullRequest}, ${created.slice(0, 10)})\n${handedUp}${text(report ?? left)}\n`;
 }
 
 type PastRequest = {

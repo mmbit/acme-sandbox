@@ -3,13 +3,13 @@
 // sharp): what the recorded page carries never runs, and its canvas frames are still drawn.
 import { after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { Mirrors, shown } from './mirror.ts';
+import { ANSWER_MS, Mirrors, STEP_MS } from './mirror.ts';
 import type { Asked } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
 
@@ -165,45 +165,6 @@ test(
   },
 );
 
-test("a mirror opens with what the screen still shows: from the last full snapshot, each canvas's latest picture", () => {
-  const png = Buffer.from('picture');
-  const drawn = (at: number, id: number): RecordedEvent => ({
-    type: 3,
-    timestamp: at,
-    data: { source: 9, id, type: 0, commands: [{ property: 'fillRect', args: [0, 0, 10, 10] }] },
-  });
-  const other = (at: number) => ({ ...frame(at, png), data: { ...(frame(at, png).data as object), id: 7 } });
-  const ink = { type: 5, timestamp: 40, data: { tag: 'ink', payload: {} } };
-  const events = [
-    ...page(0),
-    frame(10, png),
-    ...page(20),
-    frame(30, png),
-    ink,
-    drawn(45, 6),
-    other(50),
-    frame(60, png),
-  ];
-  assert.deepEqual(shown(events), [...page(20), ink, drawn(45, 6), other(50), frame(60, png)]);
-  // a clear off the corner, or without area, wipes nothing: the picture before it stays. Each misses the rule by one
-  // condition, so the test fails if any of them changes
-  const clear = (at: number, args: number[]): RecordedEvent => ({
-    type: 3,
-    timestamp: at,
-    data: { source: 9, id: 8, type: 0, commands: [{ property: 'clearRect', args }] },
-  });
-  const before = clear(65, [0, 0, 400, 300]);
-  const partial = [
-    [5, 0, 400, 300],
-    [0, 5, 400, 300],
-    [0, 0, 0, 300],
-    [0, 0, 400, 0],
-  ].map((args, i) => clear(70 + i, args));
-  assert.deepEqual(shown([...page(0), before, ...partial]), [...page(0), before, ...partial]);
-  // (no full snapshot yet: all of it)
-  assert.deepEqual(shown([frame(10, png), frame(20, png)]), [frame(20, png)]);
-});
-
 test(
   "a picture never waits on what the screen doesn't show: a lazy picture below it or in a hidden part",
   { skip, timeout: 30_000 },
@@ -264,10 +225,10 @@ test(
   },
 );
 
-// Chromium's process, gone within a few seconds
+// Chromium's process, gone within a few seconds of its answer's time (ANSWER_MS)
 async function exited(pid: number | undefined) {
   assert.ok(pid);
-  for (let tries = 0; tries < 100; tries++) {
+  for (let tries = 0; tries < (ANSWER_MS + 5_000) / 50; tries++) {
     try {
       process.kill(pid, 0);
     } catch {
@@ -312,7 +273,7 @@ test(
     await assert.rejects(past, /took over/);
     assert.ok(await exited(brokenPid), 'its tab closed, and Chromium with it');
     // a live mirror's step hangs (its page's frames stop once a batch with a change comes): it isn't seen and is gone,
-    // its tab closed, and it opens again from the recording
+    // its tab closed, and it opens again from the recording. Chromium still answers, so the other mirror in it stays.
     const hanging = new Mirrors(
       replay(
         'hanging',
@@ -321,17 +282,94 @@ test(
       () => Promise.resolve(null),
     );
     await hanging.open(1, page(start), NONE);
+    await hanging.open(2, page(start), NONE);
     assert.equal(hanging.seen(1), true);
     const hangingPid = await hanging.pid();
     hanging.feed(1, [{ type: 3, timestamp: start + 10, data: { source: 2 } }]);
     while (hanging.seen(1) !== false) await sleep(100);
     assert.equal(hanging.has(1), false, 'its step ran out of time and closed it');
-    assert.ok(await exited(hangingPid), 'its tab closed, and Chromium with it');
+    await sleep(ANSWER_MS + 1_000); // (past Chromium's answer)
+    assert.equal(hanging.seen(2), true, 'the other mirror in its Chromium is still seen');
+    assert.equal(await hanging.pid(), hangingPid, 'in the same Chromium');
     await hanging.open(1, page(start), NONE);
     assert.equal(hanging.seen(1), true, 'opened again, it is seen');
     await hanging.closeAll();
+    assert.ok(await exited(hangingPid), 'Chromium closes with the last mirror');
   },
 );
+
+test(
+  'a Chromium that stops answering is closed once a step runs out of time, and the next mirror opens in a fresh one',
+  { skip, timeout: 90_000 },
+  async () => {
+    const stopping = new Mirrors(REPLAY, () => Promise.resolve(null));
+    const start = Date.now();
+    await stopping.open(1, page(start), NONE);
+    const pid = await stopping.pid();
+    process.kill(pid!, 'SIGSTOP'); // (as a Chromium whose processes the server's memory pressure froze)
+    stopping.feed(1, [{ type: 3, timestamp: start + 10, data: { source: 2 } }]);
+    while ((await stopping.pid()) === pid) await sleep(100);
+    assert.equal(stopping.seen(1), false);
+    assert.equal(await stopping.pid(), undefined, 'its Chromium is let go');
+    await stopping.open(2, page(start), NONE);
+    assert.equal(stopping.seen(2), true, "the next call's mirror opens");
+    assert.notEqual(await stopping.pid(), pid);
+    assert.ok(await exited(pid), 'the stopped one is killed');
+    await stopping.closeAll();
+  },
+);
+
+test(
+  'a step of a Chromium that went already leaves the fresh one alone: only the Chromium a step ran in closes',
+  { skip, timeout: 90_000 },
+  async () => {
+    const stopping = new Mirrors(REPLAY, () => Promise.resolve(null));
+    const start = Date.now();
+    await stopping.open(1, page(start), NONE);
+    await stopping.open(2, page(start), NONE);
+    const pid = await stopping.pid();
+    process.kill(pid!, 'SIGSTOP');
+    const change = [{ type: 3, timestamp: start + 10, data: { source: 2 } }];
+    stopping.feed(1, change);
+    await sleep(ANSWER_MS + 2_000);
+    // (when mirror 2's step runs out of time: after the stopped one is let go, before it is killed)
+    const late = Date.now() + STEP_MS;
+    stopping.feed(2, change);
+    while ((await stopping.pid()) === pid) await sleep(100);
+    await stopping.open(3, page(start), NONE);
+    const fresh = await stopping.pid();
+    assert.notEqual(fresh, pid);
+    await sleep(late + 1_000 - Date.now());
+    assert.equal(stopping.seen(3), true, "the fresh one's mirror is still seen");
+    assert.equal(await stopping.pid(), fresh, 'the fresh Chromium is still the one');
+    assert.ok(await exited(pid), 'the stopped one is killed');
+    await stopping.closeAll();
+  },
+);
+
+test(
+  'a Chromium that stops answering as it starts is killed once its tab runs out of time',
+  { skip, timeout: 90_000 },
+  async () => {
+    const stopping = new Mirrors(REPLAY, () => Promise.resolve(null));
+    const start = Date.now();
+    const before = new Set(children());
+    const opening = stopping.open(1, page(start), NONE);
+    let pid: number | undefined;
+    while (!(pid = children().find(child => !before.has(child)))) await sleep(5);
+    process.kill(pid, 'SIGSTOP'); // (frozen before it answers launch())
+    await assert.rejects(opening, /took over/);
+    assert.equal(stopping.seen(1), false);
+    assert.ok(await exited(pid), 'the stopped one is killed');
+    await stopping.open(2, page(start), NONE);
+    assert.equal(stopping.seen(2), true, "the next call's mirror opens in a fresh one");
+    await stopping.closeAll();
+  },
+);
+
+// This test process's own child processes
+const children = () =>
+  readFileSync(`/proc/${process.pid}/task/${process.pid}/children`, 'utf8').split(' ').filter(Boolean).map(Number);
 
 // What changes after a live mirror opens is on its screen: a box added (rrweb
 // played every live event as a fast-forward into its virtual DOM, and the screen kept the page as the share found it),

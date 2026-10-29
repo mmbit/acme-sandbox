@@ -20,6 +20,19 @@ export function playwright() {
   }
 }
 
+// Chromium started for a node test. Where Playwright or its Chromium isn't installed (`hq run`'s tests helper has
+// neither) it's undefined, so the test can skip, saying so. Any other failure to start it fails the test.
+export async function launched(options) {
+  let chromium;
+  try {
+    ({ chromium } = playwright());
+  } catch (error) {
+    if (error.code === 'MODULE_NOT_FOUND') return undefined;
+    throw error;
+  }
+  return existsSync(chromium.executablePath()) ? chromium.launch(options) : undefined;
+}
+
 // A page in a context of its own (options as newContext's), with service workers blocked and Google Fonts answered
 // empty, so every run lays out in the same fallback font.
 export async function openPage(browser, options = {}) {

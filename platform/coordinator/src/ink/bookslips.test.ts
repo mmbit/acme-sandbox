@@ -282,8 +282,12 @@ test("words typed in a box on a page are judged, a call's page as any: an answer
   const run = await h.claimJob(asked.job);
   assert.equal(run.agent, 'juno', "the call's agent answers");
   assert.match(run.prompt, /What time is it\?/);
+  const typedAt = (job: number) =>
+    (db.prepare('select typed from book_typed_asks where job = ?').get(job) as { typed: string | null }).typed;
+  assert.equal(typedAt(asked.job), null, 'no answer typed on yet');
   await h.finish(run, { status: 'done', result: 'About twenty to two at night, your time.' });
   for (let i = 0; i < 100 && !typedEvents.length; i++) await new Promise(r => setTimeout(r, 50));
+  assert.ok(typedAt(asked.job), 'the answer typed on: the time it landed, for the status report');
   assert.deepEqual(
     typedEvents.map(e => [e.agent, e.page]),
     [['juno', page.id]],
@@ -315,6 +319,9 @@ test("words typed in a box on a page are judged, a call's page as any: an answer
     await until(() => !!typed());
     const asked = typed();
     assert.equal((db.prepare('select agent from jobs where id = ?').get(asked.job) as { agent: string }).agent, agent);
+    // a run done with no answer types nothing on, so nothing landed (chat.ts hears it as the run finishes)
+    await h.finish(await h.claimJob(asked.job), { status: 'done', result: '' });
+    assert.equal(typedAt(asked.job), null, 'a done run with nothing typed on: no landed answer');
   }
   stop?.();
 });

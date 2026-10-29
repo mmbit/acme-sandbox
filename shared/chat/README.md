@@ -8,7 +8,7 @@ What it says is the company's own: the `fallback` setting.
 
 | File | What it is |
 |---|---|
-| `turn.js` | The turn-taker. Drafts start while the customer may still be writing, are thrown away when a new message arrives, and only read. |
+| `turn.js` | The turn-taker: drafts start while the customer may still write, go when a message comes, and only read. |
 | `turn.test.js` | Its behaviour: `node --test shared/chat/turn.test.js` |
 
 ## Using it
@@ -36,7 +36,9 @@ chat.decline(id);     // "Neither, thanks": every offer under that reply is answ
   customer hears the `fallback`, said like any reply.
 - `fallback` is required: the company's own words for when the model can't be reached. It names the company's way to
   a person (rule 5), one that works without the model, such as a button in the widget.
-- `say({ text, offers, saw })` is called once per turn.
+- `say({ text, offers, saw })` is called once per turn: `offers` are `{ id, tool, input, label }`, `saw` how many
+  customer messages the reply read.
 - `speculate: false` for an expensive model: no draft starts until the customer has stopped.
 - `timings` overrides any of `TIMINGS` (how long typing lasts, when to draft, when the customer has stopped, the
-  retries, an offer's lifetime); `onDraft(e)` reports each draft's life, for a demo.
+  retries, an offer's lifetime); `onDraft({ event, n, saw, mode })` reports each draft's life, for a demo: `start`,
+  `thrown`, `parked`, `held`, `failed`, `said`.

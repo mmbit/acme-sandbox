@@ -925,21 +925,32 @@ test('a re-sync push includes main that landed after the session started, even b
   assert.equal(git('--git-dir', github, 'show', `${pushed.sha}:landed.txt`), 'landed during the session');
 });
 
-test('a new conflict at re-sync push stops before publishing and leaves the merge for the author', async () => {
+test('a conflict that lands during a run still publishes its completed commits', async () => {
   flow.fetchMirror();
   const dir = newJob(1288502, 'landed.txt', 'the agreed edit\n');
   const before = await job.push(dir, 'job/1288502');
+  writeFileSync(`${dir}/landed.txt`, 'the completed fix\n');
+  job.ag(dir, 'add', '-A');
+  job.ag(dir, 'commit', '-qm', 'finish the fix');
+  const completed = job.ag(dir, 'rev-parse', 'HEAD');
   writeFileSync(`${tmp}/seed/landed.txt`, 'a later conflicting edit\n');
   git('-C', `${tmp}/seed`, 'add', '-A');
   git('-C', `${tmp}/seed`, 'commit', '-qm', 'another PR conflicts');
   git('-C', `${tmp}/seed`, 'push', '-q', 'origin', 'HEAD:main');
-  await assert.rejects(() => job.pushUpdated(dir, 'job/1288502'), /landed\.txt/);
-  assert.equal(remoteRef('job/1288502'), before.sha, 'no conflicting push can open a merge check');
-  assert.ok(existsSync(`${dir}/.git/MERGE_HEAD`));
-  assert.equal(job.ag(dir, 'diff', '--name-only', '--diff-filter=U'), 'landed.txt');
+  const published = await job.pushUpdated(dir, 'job/1288502');
+  assert.equal(published.sha, completed);
+  assert.equal(remoteRef('job/1288502'), completed);
+  assert.equal(published.pushedSince?.sha, before.sha);
+  assert.equal(git('--git-dir', github, 'show', `${completed}:landed.txt`), 'the completed fix');
+  assert.equal(job.ag(dir, 'status', '--porcelain'), '');
+  assert.ok(!existsSync(`${dir}/.git/MERGE_HEAD`));
+
+  // The next task resolves and commits the merge before publishing.
+  assert.throws(() => job.ag(dir, 'merge', '-q', '--no-edit', 'origin/main'));
   writeFileSync(`${dir}/landed.txt`, 'both edits resolved\n');
   job.ag(dir, 'add', '-A');
   job.ag(dir, 'commit', '-qm', 'resolve both edits');
   const pushed = await job.pushUpdated(dir, 'job/1288502');
   git('--git-dir', github, 'merge-base', '--is-ancestor', remoteRef('main')!, pushed.sha);
+  assert.equal(git('--git-dir', github, 'show', `${pushed.sha}:landed.txt`), 'both edits resolved');
 });

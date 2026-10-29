@@ -5,7 +5,7 @@
 // (played here). And a scrap's post-it words under it on an open page have a word struck out with the Pencil, saved to
 // its group. (the scrap's words: job #20856)
 import assert from 'node:assert/strict';
-import { freePage, onDesk, savedWhere } from './bookmouse.mjs';
+import { freePage, onDesk, pen, savedWhere } from './bookmouse.mjs';
 
 const MINI = { width: 1133, height: 744 };
 const WORDS = 'Order the teal mugs today';
@@ -34,7 +34,9 @@ export function editStories(c) {
 
 async function withMouse(browser, c) {
   const free = wordsPage(c);
-  const { page, errors, done } = await onDesk(browser, c);
+  // No microphone allowed here. With it, a mouse pressed on the paper and held still is a voice note
+  // (shell/ink/bookinput.js). On a loaded worker Playwright's moves can come that late, and the slice would be lost.
+  const { page, errors, done } = await onDesk(browser, c, { permissions: [] });
   try {
     // a drag along the middle of "teal", from inside the box: struck out, no ink
     await drag(page, along(await wordBox(page, 'teal')));
@@ -266,11 +268,13 @@ async function scrapTyped(browser, c) {
       size: 3,
       color: '#2f6bdc',
     };
-    c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [line] });
+    // (two lines, so their group has a clip to show it's drawn: a scrap or a lone line has none)
+    const under = { ...line, points: line.points.map(([x, y, ...more]) => [x, y + 40, ...more]) };
+    c.notebook.route('/api/notebooks/groups/create', {}, { page: free.id, ink: [line, under] });
     await until(
-      async () => (await page.locator('#book .bk-clip').count()) === 2,
+      async () => (await page.locator('#book .bk-clip').count()) === 1,
       6000,
-      "the other screen's line drawn",
+      "the other screen's lines drawn",
     );
     assert.equal(await field.inputValue(), `${WORDS} soon `, 'the space typed still under the caret');
     c.notebook.route(
@@ -304,9 +308,11 @@ function wordsPage(c) {
   free.texts.push({ x: 160, y: 180, w: 420, text: WORDS, color: '#2a2352' });
   return free;
 }
-// A word's box on screen, in the box of words
-const wordBox = (page, word) =>
-  page.evaluate(word => {
+// A word's box on screen, in the box of words. (once the page is read: the book is open before its page's words are
+// drawn, bookpages.js read)
+async function wordBox(page, word) {
+  await page.waitForFunction(w => document.querySelector('#book .bk-typed-words')?.textContent.includes(w), word);
+  return page.evaluate(word => {
     const words = document.querySelector('#book .bk-typed-words'),
       text = words.firstChild,
       at = text.data.indexOf(word),
@@ -316,6 +322,7 @@ const wordBox = (page, word) =>
     const r = range.getBoundingClientRect();
     return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
   }, word);
+}
 // A word's box on screen, in a scrap's words (a field: measured as the pen's edits measure it)
 const scrapWordBox = (page, word) =>
   page.evaluate(async word => {
@@ -345,25 +352,3 @@ async function drag(page, points) {
   for (const p of points.slice(1)) await page.mouse.move(...p);
   await page.mouse.up();
 }
-// The Pencil along points, as Safari hands it over (bookdraw.mjs's)
-const pen = (page, points) =>
-  page.evaluate(pts => {
-    const at = (kind, [x, y], pressure) =>
-      (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-        new PointerEvent(kind, {
-          pointerId: 7,
-          pointerType: 'pen',
-          isPrimary: true,
-          clientX: x,
-          clientY: y,
-          pressure,
-          buttons: kind === 'pointerup' ? 0 : 1,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    at('pointerdown', pts[0], 0.4);
-    pts.slice(1).forEach(p => at('pointermove', p, 0.5));
-    at('pointerup', pts.at(-1), 0);
-  }, points);

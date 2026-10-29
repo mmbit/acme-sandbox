@@ -35,7 +35,8 @@ document.addEventListener('click', async event => {
   const enroll = button.dataset.guestPasskey === 'enroll';
   const path = enroll ? '/guest/passkeys/enroll' : `${location.pathname.replace(/\/$/, '')}/passkey`;
   button.disabled = true;
-  let status = button.nextElementSibling;
+  let status =
+    button.closest('[data-guest-passkey-prompt]')?.querySelector('[role=status]') ?? button.nextElementSibling;
   if (!status?.matches('[role="status"]')) {
     status = document.createElement('span');
     status.setAttribute('role', 'status');
@@ -58,4 +59,12 @@ document.addEventListener('click', async event => {
   } finally {
     button.disabled = false;
   }
+});
+
+const prompt = document.querySelector('[data-guest-passkey-prompt]');
+if (prompt && sessionStorage.getItem('guest.passkey.dismissed')) prompt.hidden = true;
+document.addEventListener('click', event => {
+  if (!event.target.closest('[data-guest-passkey-dismiss]')) return;
+  event.target.closest('[data-guest-passkey-prompt]').hidden = true;
+  sessionStorage.setItem('guest.passkey.dismissed', '1');
 });

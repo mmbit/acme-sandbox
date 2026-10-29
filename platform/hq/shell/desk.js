@@ -11,6 +11,7 @@ import { endTip, loadRequests, loadLater, snoozeRequest, loadArchive, archivePho
   uploadPhoto, uploadDocument, sendZipChunk, loadZipField, pictureUrl, guestEmail, guestLang, guestRelease, guestRevoke, guestAdd, outboxSend, outboxDiscard, outboxPreview,
   calloutApprove, calloutDecline, calloutNumber,
   loadShares, makeShare, removeFromShare, endShare, setShareCap, loadPeople, setPersonTitle, guestColleagues, loadLanguage, setLanguage } from './data.js';
+import { peopleHtml, wirePeople, refused, dot, sameName } from './people.js';
 import { sfx, hush } from './audio.js';
 import { callAgent, inCall, callInFront, minimiseCall } from './call.js';   // (a call, over whatever is open).
 import * as world from '../world/world.js';
@@ -238,8 +239,9 @@ function loadPin() {
 const coverPin = on => dispatchEvent(new CustomEvent('review:cover', { detail: on }));
 // The book open beside the page (and the viewer over it), asked for an owner's notes: review mode's Open the book, in
 // the viewer's frame or on HQ itself. The frame's page could ask too: it only opens the board's own book, which shows
-// what's there before anything goes. (it opens where the board was: the owners' sheets went with pages sent whole.
-// at: a place in the book to land on, { page, notebook, note } (a card's On the page: book.js's openAt).
+// what's there before anything goes. It opens at the current page, slid to the newest note pinned there, and turns
+// there if it's open already. at: a place in the book to land on instead, { page, notebook, note } (a card's On the
+// page: book.js's openAt).
 export function bookAt(owner, at = null) {
   if (typeof owner !== 'string' || !/^[a-z0-9][a-z0-9-]{0,40}$/.test(owner)) return;
   sfx.blip();
@@ -334,9 +336,9 @@ function wireCap(box, s, redraw) {
   });
 }
 export const shareTitle = kind => ({ notes: 'Outside notes', view: 'View only', tester: 'Testers' })[kind];
-// An open share's line (as HTML): until when, and where its notes go: each one, as it's written, on the board's sheet
-// for the page's owner in its book.
-const intoBook = s => `Their notes go on your sheet for ${s.owner} in your book as they write them.`;
+// An open share's line (as HTML): until when, and where its notes go: each person's on their own page in the round
+// notebook on the board's Shelf, reaching the team when they send it.
+const intoBook = () => 'Each person writes on their own page in the round notebook on your Shelf; their notes reach the team when they send it.';
 export const untilLine = s => esc(s.view ? `Until ${dayTime(s.ends)}. They see it as it is: no notes, nothing to answer.`
   : s.tester && s.pays === 'plan' ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one plan up to ${euros(s.cap)}: nothing charged, nothing recurring. ${intoBook(s)}`
   : s.tester ? `Until ${dayTime(s.ends)}. Each link carries a voucher for one free order up to ${euros(s.cap)}, made and sent for real. ${intoBook(s)}`
@@ -352,7 +354,6 @@ export const shareHtml = s => `${peopleHtml((s?.people ?? []).map(p => ({ ...p, 
 // Reviews last loaded them: the box's Recent, a tap invites one again
 let recent = [];
 export const loadRecent = () => loadPeople(world.dev).then(list => { recent = list; }, () => { /* Recent stays as it was: the box and Reviews work without it */ });
-const sameName = (a, b) => a.toLowerCase() === b.toLowerCase();
 export const noteCount = n => `${+n} ${+n === 1 ? 'note' : 'notes'}`;
 // Send link, Remove, Invite and End now on a share (in the viewer's box, or a share in Reviews): o.redraw(share, what to
 // say, as HTML) draws it again, o.page and o.days() make a new one with the first invite
@@ -897,7 +898,6 @@ function renderLater(el) {
 // stands, Send link and Remove, and Invite under them (people()). With several people on it: a legend in their colours,
 // and whose each mark is.
 // (several people)
-const dot = c => c ? `<i class="gdot" style="background:${esc(c)}"></i>` : '';
 // (an agent's reply with its pictures under it, a tap opens one big: wirePics.)
 const messageHtml = m => `<div class="tm${m.guest ? ' theirs' : ''}"><p class="meta">${dot(m.colour)}<b>${esc(m.who)}</b> · ${esc(ago(m.ts))}</p><p class="body">${esc(m.text).replace(/\n/g, '<br>')}</p>${figuresHtml(m.pictures || [])}</div>`;
 const threadHtml = t => t?.length ? `<div class="thread">${t.map(messageHtml).join('')}</div>` : '';
@@ -920,86 +920,6 @@ function checklistHtml(g) {
   const legend = g.legend ? `<p class="glegend">${g.legend.map(l => `<span>${dot(l.colour)}${esc(l.name)}</span>`).join('')}</p>` : '';
   return `<div class="gprog"><b>${g.done} of ${g.total} done</b><span class="bar"><i style="width:${g.total ? Math.round(100 * g.done / g.total) : 100}%"></i></span></div>
     ${legend}${sections.map(sectionHtml).join('')}`;
-}
-// ---------------------------------------------------------------- inviting people
-// One way to invite outside people, the same on a guest card (a checklist) and a share for outside notes (a preview):
-// who's on it, each with where they stand, Send link (their own link, through the share sheet) and Remove (two taps),
-// and Invite (a name and an address) under them while it's open. Removing one and inviting another is a swap.
-// list: [{ name, address, colour, state, link, lang }] (lang: a guest's, the language their page and code email are in,
-// picked from o.langs, the card's languages: [{ code, own }])
-const langPick = (lang, person, langs = []) => `<select data-lang data-person="${esc(person)}" aria-label="${esc(person)}’s language">${langs.map(l => `<option value="${esc(l.code)}"${lang === l.code ? ' selected' : ''}>${esc(l.own)}</option>`).join('')}</select>`;
-// o.titled: each name with the board's title for them, or a plus on its corner to give one; o.again: Recent, the people
-// to invite again with a tap ({ name, title }).
-const nameHtml = p => {
-  const plus = p.title ? '' : `<button type="button" class="plus" data-title="${esc(p.name)}" aria-label="Give ${esc(p.name)} a title"></button>`;
-  const badge = !p.title ? '' : `<button type="button" class="badge" data-title="${esc(p.name)}" data-was="${esc(p.title)}" aria-label="${esc(p.name)}’s title: ${esc(p.title)}. Change it">${esc(p.title)}</button>`;
-  return `<b class="named">${esc(p.name)}${plus}</b>${badge}`;
-};
-const againHtml = list => list.length ? `<p class="again">${list.map(r => `<button type="button" data-again="${esc(r.name)}">${esc(r.name)}${r.title ? `<small>${esc(r.title)}</small>` : ''}</button>`).join('')}</p>` : '';
-// open: Remove on each, and the Invite form
-function peopleHtml(list, open, o = {}) {
-  // (no switch for their own Sketchbook: every invited person has one, and their notes join the board's book.)
-  const row = p => `<li><div class="person">${dot(p.colour)}${o.titled ? nameHtml(p) : `<b>${esc(p.name)}</b>`} <span class="meta at" data-private>${esc(p.address ?? '')}</span><span class="meta">${esc(p.state)}</span>${p.lang ? `<div class="glang">Their page in ${langPick(p.lang, p.name, o.langs)}</div>` : ''}</div>
-      <div class="acts">${p.link ? `<button type="button" class="go" data-send-link="${esc(p.name)}">Send link</button>` : ''}${open ? `<button type="button" data-remove="${esc(p.name)}">Remove</button>` : ''}</div></li>`;
-  // (Recent atop the form)
-  return `<div class="invites"><ul>${list.map(row).join('') || '<li class="none">Nobody yet.</li>'}</ul>
-    ${open ? `<form class="invite" novalidate>${againHtml(o.again ?? [])}<input name="name" placeholder="Name" aria-label="Their name" autocomplete="off" spellcheck="false" maxlength="60"><input name="email" type="email" data-private placeholder="Email address" aria-label="Their email address" autocomplete="off" spellcheck="false"><button>Invite</button></form>` : ''}
-    <p class="msg" role="status"></p></div>`;
-}
-const refused = err => err.refusal?.error ? `${cap(err.refusal.error)}.` : 'That didn’t go through. Try again.';
-// on: send(name, button, msg), and remove(name) and invite(name, email), which redraw and return what to say (as HTML)
-function wirePeople(el, on) {
-  const box = el.querySelector('.invites'), msg = () => el.querySelector('.invites .msg');
-  if (!box) return;
-  const say = (html, kept) => { if (msg()) msg().innerHTML = html; return kept; };
-  box.querySelectorAll('[data-send-link]').forEach(b => b.onclick = () => on.send(b.dataset.sendLink, b, msg()));
-  // Recent's names, and a name's plus or title
-  box.querySelectorAll('[data-again]').forEach(b => b.onclick = async () => {
-    b.disabled = true; say('Inviting…');
-    try { say(await on.invite(b.dataset.again)); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
-  });
-  box.querySelectorAll('[data-title]').forEach(b => b.onclick = () => titleField(b, on.title, () => say('That didn’t go through. Try again.')));
-  box.querySelectorAll('[data-remove]').forEach(b => b.onclick = async () => {
-    if (!b.dataset.sure) { b.dataset.sure = 1; b.textContent = 'Tap again to remove'; sfx.blip(); return; }
-    b.disabled = true;
-    try { say(await on.remove(b.dataset.remove)); sfx.blip(); } catch (err) { b.disabled = false; say(esc(refused(err))); }
-  });
-  const form = box.querySelector('form.invite');
-  form?.addEventListener('submit', async e => {
-    e.preventDefault();
-    const name = form.elements.name, email = form.elements.email, button = form.querySelector('button');
-    if (!name.value.trim()) { name.focus(); return; }
-    if (!email.value.trim() || !email.checkValidity()) { email.focus(); return; }
-    button.disabled = true; say('Inviting…');
-    const who = name.value.trim(), address = email.value.trim();
-    try { name.value = email.value = ''; name.blur(); email.blur(); say(await on.invite(who, address)); sfx.blip(); }
-    catch (err) { name.value = who; email.value = address; say(esc(refused(err))); }
-    finally { button.disabled = false; }
-  });
-}
-// A name's plus, or its title: a short field in its place on the row (the address steps aside), saved on Enter or on
-// leaving it, empty to take the title off; Escape leaves it as it was
-function titleField(b, save, failed) {
-  const name = b.dataset.title, was = b.dataset.was ?? '', person = b.closest('.person'), spot = b.closest('.named') ?? b;
-  const f = Object.assign(document.createElement('input'), { className: 'titlefield', value: was, maxLength: 40, placeholder: 'Title', autocomplete: 'off', spellcheck: false });
-  f.setAttribute('aria-label', `${name}’s title`);
-  const back = () => { f.remove(); b.hidden = false; person.classList.remove('titling'); };
-  let done = false;
-  const commit = async () => {
-    if (done) return;
-    done = true;
-    const title = f.value.replace(/\s+/g, ' ').trim();
-    if (title === was) return back();
-    f.disabled = true;
-    try { await save(name, title); sfx.blip(); } catch { back(); failed(); }
-  };
-  f.onkeydown = e => {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); done = true; back(); }
-  };
-  f.onblur = commit;
-  b.hidden = true; person.classList.add('titling');
-  spot.after(f); f.focus();
 }
 function guestHtml(r) {
   const g = r.guest, open = g.status === 'open', on = (g.people ?? []).filter(p => !p.withdrawn && !p.revoked);

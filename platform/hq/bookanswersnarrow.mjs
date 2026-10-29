@@ -1,18 +1,21 @@
 // book-check.mjs's answers story on a narrower book (bookanswers.mjs): a note's answer placed beside it on a wide page,
-// drawn at its narrow spot where the book's paper hasn't the room, and a note the board wrote later on that spot.
+// drawn at the narrow spot placed for the paper each book shows where it hasn't the room, and a note the board wrote
+// later on one of its spots.
 import assert from 'node:assert/strict';
 import { freePage } from './bookmouse.mjs';
-import { notebookOn, overlaps, pagePx } from './bookanswersplay.mjs';
+import { notebookOn, onScreen, overlaps, pagePx } from './bookanswersplay.mjs';
 import { inPaper, inStory, written } from './bookanswers.mjs';
-import { ANSWER, answerSpot, downAgain, spotBox } from '../coordinator/src/ink/answerspot.ts';
+import { ANSWER, NARROWER, answerSpot, downAgain, spotBox, spotBoxes } from '../coordinator/src/ink/answerspot.ts';
 
 // A note written on a wide page (the book spread over a desktop), its answer beside it as the store places it there
-// (answerspot.ts, with its narrow spot), opened in the book beside HQ's page on a desktop, an iPad mini upright and a
-// phone: none has the room beside it, so it lies at its narrow spot below the note, clear of every note and inside the
-// paper, never moved over the board's writing. later: the board then wrote a note on one of its spots, on a screen that
-// draws the other ('narrow': on a wide book; 'wide': on a narrower one), and the store moved that spot down clear of it
-// (answerplace.ts spotsClear, as downAgain places it): no screen draws the answer over that note, the book spread wide
-// over a desktop (its wide spot) nor a narrower one.
+// (answerspot.ts, with its narrow spots), opened in the book beside HQ's page on a desktop, an iPad mini upright (the
+// spread, and dragged beside HQ's page at its least) and a phone: none has the room beside it, so it lies below the
+// note at the narrow spot placed for that book's paper (the book beside HQ's, the book at its least, a phone's:
+// answerspot.ts NARROWER; the upright spread's paper is wider than the first), as wide as that paper lets it, clear of
+// every note and left of the controls, never moved over the board's writing. later: the board then wrote a note on one
+// of its spots, on a screen that draws another ('narrow': on a wide book; 'wide': on a narrower one), and the store
+// moved the spots it covers down clear of it (answerplace.ts spotsClear, as downAgain places them): no screen draws the
+// answer over that note, the book spread wide over a desktop (its wide spot) nor a narrower one.
 export async function besideOnNarrower(browser, c, later = null) {
   const p = freePage(c),
     nb = notebookOn(c, p),
@@ -26,24 +29,30 @@ export async function besideOnNarrower(browser, c, later = null) {
   nb.groups.push(note, next);
   if (later) spot = writtenOn(nb, note.box, spot, later);
   note.children = [nb.answer(4410, 'text', text, spot)];
-  const screens = [
-    ['desktop', c.DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }],
-    ['mini-upright', { width: 744, height: 1133 }, {}],
-    ['phone', c.PHONE, { hasTouch: true, isMobile: true }],
-    ...(later === 'wide' ? [['desktop-spread', c.DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }]] : []),
-  ];
+  // (each screen's spot: its wide one, or the narrow one placed for its paper, by NARROWER's order)
+  const spots = chain(spot),
+    screens = [
+      ['desktop', c.DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }, spots[1]],
+      ['mini-upright', { width: 744, height: 1133 }, {}, spots[1]],
+      ['mini-upright-least', { width: 744, height: 1133 }, {}, spots[3]],
+      ['phone', c.PHONE, { hasTouch: true, isMobile: true }, spots[2]],
+      ...(later === 'wide' ? [['desktop-spread', c.DESKTOP, { hasTouch: false, deviceScaleFactor: 1 }, spot]] : []),
+    ];
+  assert.equal(spots.length, 1 + NARROWER.length, 'a narrow spot for each narrower paper');
   try {
-    for (const [size, viewport, options] of screens)
+    for (const [size, viewport, options, shown] of screens)
       await inStory(browser, c, { viewport, nb, made: [], options }, async page => {
-        const shown = size === 'desktop-spread' ? spot : spot.narrow;
-        if (shown === spot) await spread(page, c);
+        if (shown === spot) await kept(page, c, 'wide', { mode: 'spread', book: null }, 'spread');
+        if (size === 'mini-upright-least') await kept(page, c, 'portrait', { mode: 'open', book: 320 }, 'open');
         await written(page, 4410);
         const at = await pagePx(page, '.bk-answer[data-answer="4410"]');
         for (const g of nb.groups) assert.ok(!overlaps(at, g.box), `${size}: the answer clear of note ${g.id}`);
         assert.deepEqual(
           [Math.round(at.x - note.box.x), Math.round(at.y - note.box.y), Math.round(at.w)],
           [shown.dx, shown.dy, shown.w],
-          `${size}: at its ${shown === spot ? 'wide' : 'narrow'} spot`,
+          `${size}: at its ${shown === spot ? 'wide' : 'narrow'} spot for ${JSON.stringify(
+            await onScreen(page, '.bk-answer[data-answer="4410"]').then(o => o.paper),
+          )}`,
         );
         await inPaper(page, 4410);
         await c.shot(`answers-beside-${later ? `later-${later}-` : ''}${size}`, page);
@@ -52,24 +61,29 @@ export async function besideOnNarrower(browser, c, later = null) {
     c.pages.splice(c.pages.indexOf(p), 1);
   }
 }
-// The board's note on the answer's narrow spot (written on a wide book) or its wide one (on a narrower book: left of
-// its controls, clear of the narrow spot it draws), and the spot it covers moved down clear as the store moves it
+// The board's note on the answer's first narrow spot (written on a wide book) or its wide one (on a narrower book: left
+// of its controls, clear of the narrow spots it draws), and the spots it covers moved down clear as the store moves them
 function writtenOn(nb, root, spot, later) {
   const on = spotBox(root, later === 'narrow' ? spot.narrow : spot),
     added = later === 'narrow' ? nb.typed(4402, LATER, on.x, on.y + 10) : nb.typed(4402, LATER, 450, 160);
-  if (later === 'wide') assert.ok(overlaps(added.box, on) && !overlaps(added.box, spotBox(root, spot.narrow)));
+  if (later === 'wide')
+    assert.ok(overlaps(added.box, on) && !spotBoxes(root, spot.narrow).some(b => overlaps(added.box, b)));
   nb.groups.push(added);
-  const taken = nb.groups.map(g => g.box);
-  return later === 'narrow'
-    ? { ...spot, narrow: downAgain(root, spot.narrow, taken) }
-    : { ...downAgain(root, spot, taken), narrow: spot.narrow };
+  const taken = nb.groups.map(g => g.box),
+    again = s => ({
+      ...(overlaps(added.box, spotBox(root, s)) ? downAgain(root, s, taken) : s),
+      ...(s.narrow && { narrow: again(s.narrow) }),
+    });
+  return again(spot);
 }
+// A spot and its narrow ones, widest first
+const chain = s => [s, ...(s.narrow ? chain(s.narrow) : [])];
 const LATER = 'and the logo a little smaller';
-// The book spread over the whole of a desktop, as the board leaves it with its cover's edge dragged left (booklayout.js:
-// remembered per shape), HQ loaded again
-async function spread(page, c) {
-  await page.evaluate(() => localStorage.setItem('hq.book.wide', JSON.stringify({ mode: 'spread', book: null })));
+// The book as the board leaves it with its cover's edge on a shape of screen (booklayout.js: remembered per shape),
+// HQ loaded again: spread over the whole of a desktop, or beside HQ's page at its least on an iPad upright
+async function kept(page, c, shape, state, mode) {
+  await page.evaluate(([key, state]) => localStorage.setItem(key, JSON.stringify(state)), [`hq.book.${shape}`, state]);
   await page.reload();
   await page.waitForSelector('#loading.gone');
-  await c.settled(page, 'spread');
+  await c.settled(page, mode);
 }

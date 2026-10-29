@@ -1,5 +1,6 @@
 // Work handed on as jobs (hq job), and the queue around it: open jobs, adding to one, cancelling one, and sending a
 // stuck pull request back to review.
+import { mkdirSync, writeFileSync } from 'node:fs';
 import * as api from './api.ts';
 import { changeLines, lateLines, missWords, moveWords, threadWords, type Deadline, type Move } from './deadlines.ts';
 import { at } from './estimate.ts';
@@ -33,7 +34,7 @@ export const job = {
   help: `
    hq job [--after <job id> | --after request:<id>]... <agent> "title" [file | -] --code WORD [--downtime] [--when <event>]... [--deliverable <project>/<slug> | --deliverable new:<project> "name" "done when"] [--check]
           [--item <item> | --lands <job>] [--findings <id,id,...>] [--notes <id,id,...>] [--now] [--only <id>]
-          [--by <when | project/slug | none>] --size <90m> [--refs <job,job>] --why "scope comparison"
+          [--by <when | project/slug | none>] [--model <lighter model>] --size <90m> [--refs <job,job>] --why "scope comparison"
                                                      first inspect hq estimate for clean past jobs and judge their scope.
                                                      --size is your estimate of agent time (90m, 2h, 1h30m), --refs names
                                                      the past jobs you leaned on, and --why explains the comparison or
@@ -109,6 +110,14 @@ export const job = {
                                                      so far, and stop. On a call, a job waits for the call to end,
                                                      so what the board adds on it goes into its brief.
                                                      --now (on a call only) starts it at once.
+                                                     --model <lighter model>: a small, fully specified change (a
+                                                     sentence or label the brief quotes, a colour value, a margin it
+                                                     points at, a setting or count) runs on a lighter model of
+                                                     models.yaml's choices (by its id or name: sonnet), for an agent on
+                                                     the claude engine; if it turns out bigger, it hands itself up to the
+                                                     agent's own model (hq up). Anything needing diagnosis, design or
+                                                     judgment, creative work, market research and running the company
+                                                     stay on the agent's own model, the default.
                                                      --only <id>: the task does work only one engine and model do
                                                      (company/org.yaml engineOnly, by its id), so it runs on them
                                                      from the start, whoever it's for.
@@ -130,7 +139,7 @@ export const job = {
     // (--only)
     const { values: review, args: withoutReview } = takeValues(
       given,
-      ['--findings', '--code', '--only', '--notes', '--by', '--size', '--refs', '--why'],
+      ['--findings', '--code', '--only', '--notes', '--by', '--size', '--refs', '--why', '--model'],
       'No job was queued',
     );
     if (review.refs !== undefined && !/^#?[1-9][0-9]*(,#?[1-9][0-9]*)*$/.test(review.refs))
@@ -163,6 +172,7 @@ export const job = {
       ...(review.findings && { findings: review.findings }),
       ...(review.code && { code: review.code }),
       ...(review.only && { only: review.only }),
+      ...(review.model !== undefined && { model: review.model }),
       ...(review.notes && { notes: review.notes.split(',').map(id => Number(id.replace('#', ''))) }),
       ...(review.by && { by: review.by }),
       ...(afterRequest !== null && { afterRequest }),
@@ -258,6 +268,10 @@ function printQueued(
   // (its code after the number, which tools read; none for a step of a task that had none)
   print(`Queued job #${id}${present(queued.code) ? ` ${text(queued.code)}` : ''} for ${agent}: ${title}`);
   if (present(queued.thread)) print(`In deliverable ${text(queued.thread)}.`);
+  if (present(queued.lighter))
+    print(
+      `It runs on ${text(queued.lighter)}, and hands itself up to ${agent}'s own model if it's bigger than it looks.`,
+    );
   if (present(queued.followOn))
     print(
       `Not in ${text(queued.followOn)}: a deliverable is one pull request, and this waits for that deliverable's own ` +
@@ -390,6 +404,34 @@ export const stopJob = {
           ? `#${id} stops within a minute; it ends stopped, its work kept without opening a pull request.`
           : `#${id} is paused: it stops as it starts again, its work kept.`,
     );
+  },
+};
+
+// hq up: a job on the lighter model its queuer chose hands itself up to its agent's own model. The note waits in the
+// job's folder, as hq request's card does, and the worker hands it on as the run ends (the coordinator's jobs.ts handUp).
+// HQ_LIGHTER, the agent's own model's name, is set only on such a run.
+export const up = {
+  help: `
+   hq up "note" | -                                  on a job running on a lighter model (hq job --model) that turns out
+                                                     bigger than it looked: don't force it. The note (- : on stdin) says
+                                                     what you found and did so far; then end your turn. The same job goes
+                                                     on at once on your own model, on its branch and clone, in a new
+                                                     session with your note in its briefing; this run opens no pull request`,
+
+  async run(given: string[]) {
+    const note = (given.length === 1 && given[0] === '-' ? readTextOrStdin('-') : given.join(' ')).trim();
+    if (!note) stop('usage: hq up "what you found and did so far" (or - for the note on stdin)');
+    const own = process.env.HQ_LIGHTER;
+    if (!own)
+      stop(
+        "Not handed up: this job runs on its agent's own model, so there's no model to hand it up to. Finish it, or hand a part of it on with hq job.",
+      );
+    if (api.speaker()) stop("Not handed up: hq up is the lead's, for the whole job. Tell your lead what you found.");
+    const folder = process.env.HQ_JOB_DIR;
+    if (folder === undefined) stop('hq: HQ_JOB_DIR: unbound variable');
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(`${folder}/up.json`, `${JSON.stringify({ note }, null, 2)}\n`);
+    print(`Handed up: once you stop, this job goes on on ${own}, with your note in its briefing. End your turn now.`);
   },
 };
 

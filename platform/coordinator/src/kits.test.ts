@@ -68,11 +68,13 @@ test("one app's numbers carry what a kit adds; its lines are for hq numbers", as
 
 test("the Numbers home carries a kit's own dashboards, each a tile, for HQ's Numbers and hq numbers", async () => {
   const home = await (await fetch(`${HQ}/api/numbers?days=7`, board)).json();
-  assert.deepEqual(home.dashboards.map((d: any) => [d.id, d.tile]), [['wind', '7 days: 3 gusts']], "one per id, and only a plain id, for the days the board's switch asks");
+  // the platform's Tokens dashboard last
+  assert.deepEqual(home.dashboards.map((d: any) => d.id), ['wind', 'tokens'], "one per id, and only a plain id, and the platform's own last");
+  assert.equal(home.dashboards[0].tile, '7 days: 3 gusts', "for the days the board's switch asks");
   assert.equal((await fetch(`${HQ}/api/numbers?days=0`, board)).status, 400);
   assert.equal((await (await agent('numbers')).json()).dashboards[0].name, 'Wind across the shop', "the agents' route");
   const printed = (await h.hq(wren, 'numbers')).out;
-  assert.match(printed, /\n\nWind across the shop \(wind\)\n {2}Gusts: 3 \(calm since\)\n {2}Per day \(newest first, days with something\):\n {4}2026-10-01: 3 Gusts\n {2}Target, Gusts a month: 5 or less, now 3 \(green\)\n$/, 'hq numbers prints it under its list');
+  assert.match(printed, /\n\nWind across the shop \(wind\)\n {2}Gusts: 3 \(calm since\)\n {2}Per day \(newest first, days with something\):\n {4}2026-10-01: 3 Gusts\n {2}Target, Gusts a month: 5 or less, now 3 \(green\)\n\nTokens \(tokens\)/, 'hq numbers prints it under its list');
 });
 
 test("start() starts each kit's part, as the server's start runs it", async () => {

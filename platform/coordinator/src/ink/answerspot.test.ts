@@ -4,10 +4,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   ANSWER,
+  NARROWER,
   NARROWEST,
   answerHeight,
   answerSpot,
   downAgain,
+  spotAgain,
   spotBox,
   spotBoxes,
   type Box,
@@ -21,6 +23,10 @@ const tall = (h: number) => ({ ink: h - answerHeight({}) });
 const spotOf = (h: number, taken: Box[], on = paper) => answerSpot(group, tall(h), taken, on);
 // (a spot without its narrow one)
 const wide = (s: Spot) => ({ dx: s.dx, dy: s.dy, w: s.w, h: s.h });
+// (the room for an answer on paper w wide, from its left: between its inset and its controls)
+const room = (w: number) => Math.min(ANSWER.w, w - ANSWER.rail - ANSWER.inset);
+// (a spot and its narrow ones, widest first)
+const chain = (s: Spot): Spot[] => [s, ...(s.narrow ? chain(s.narrow) : [])];
 const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 test('free paper to the right: it lies beside the group, top-aligned', () => {
@@ -28,12 +34,12 @@ test('free paper to the right: it lies beside the group, top-aligned', () => {
 });
 
 test("the right strip taken by the board's ink: below the group", () => {
-  const beside: Box = { x: 480, y: 180, w: 200, h: 200 };
+  const beside: Box = { x: 600, y: 180, w: 200, h: 200 };
   assert.deepEqual(wide(spotOf(120, [group, beside])), { dx: 0, dy: group.h + ANSWER.gap, w: ANSWER.w, h: 120 });
 });
 
 test('right and below taken: the first free place further down, clear of everything, the page growing', () => {
-  const beside: Box = { x: 480, y: 180, w: 200, h: 200 },
+  const beside: Box = { x: 600, y: 180, w: 200, h: 200 },
     under: Box = { x: 60, y: 300, w: 500, h: 300 };
   const taken = [group, beside, under];
   const spot = spotOf(120, taken),
@@ -44,7 +50,7 @@ test('right and below taken: the first free place further down, clear of everyth
 });
 
 test("a gap between two of the board's groups that fits is taken before the foot", () => {
-  const beside: Box = { x: 480, y: 0, w: 400, h: 2000 },
+  const beside: Box = { x: 600, y: 0, w: 400, h: 2000 },
     under: Box = { x: 60, y: 600, w: 500, h: 300 };
   const spot = spotOf(120, [group, beside, under]);
   assert.equal(spot.dy, group.h + ANSWER.gap, 'room between the group and the next one down');
@@ -60,7 +66,7 @@ test('answers already given are kept clear of too: a second answer goes under th
 });
 
 test('a box in the way, however tall: one jump to the first line past its foot, not a line at a time', () => {
-  const beside: Box = { x: 480, y: 0, w: 400, h: 1e12 },
+  const beside: Box = { x: 600, y: 0, w: 400, h: 1e12 },
     under: Box = { x: 60, y: 300, w: 500, h: 1e12 };
   const started = performance.now();
   const box = spotBox(group, spotOf(120, [group, beside, under]));
@@ -97,15 +103,13 @@ test('a spot past the narrowest paper keeps a narrow spot: below its group there
     first = answerSpot(note, a, [note, next], paper),
     edge = NARROWEST - ANSWER.rail;
   assert.equal(first.dx, note.w + ANSWER.gap, 'beside it on the wide paper');
-  const narrow = spotBox(note, first.narrow!);
-  assert.ok(narrow.y >= note.y + note.h, `below it: ${JSON.stringify(narrow)}`);
-  assert.ok(
-    narrow.x >= ANSWER.strip && narrow.x + narrow.w <= edge,
-    'inside the narrowest paper, right of its tool strip and left of its controls',
-  );
-  assert.equal(narrow.h, answerHeight(a, narrow.w), 'as tall as it is at its width');
-  assert.ok(![note, next].some(g => overlaps(narrow, g)), "clear of the board's groups");
-  // the next answer keeps clear of both, on whichever screen either is drawn
+  const narrowest = spotBox(note, chain(first).at(-1)!);
+  assert.ok(narrowest.y >= note.y + note.h, `below it: ${JSON.stringify(narrowest)}`);
+  assert.ok(narrowest.x >= 0 && narrowest.x + narrowest.w <= edge, 'inside the narrowest paper, left of its controls');
+  assert.equal(narrowest.h, answerHeight(a, narrowest.w), 'as tall as it is at its width');
+  for (const b of spotBoxes(note, first).slice(1))
+    assert.ok(![note, next].some(g => overlaps(b, g)), `clear of the board's groups: ${JSON.stringify(b)}`);
+  // the next answer keeps clear of all of them, on whichever screen either is drawn
   const second = answerSpot(next, a, [note, next, ...spotBoxes(note, first)], paper);
   for (const b of spotBoxes(next, second))
     for (const t of [note, ...spotBoxes(note, first)]) assert.ok(!overlaps(b, t), `${JSON.stringify(b)} clear`);
@@ -113,30 +117,44 @@ test('a spot past the narrowest paper keeps a narrow spot: below its group there
   assert.equal(answerSpot({ ...note, w: 40 }, {}, [], { x: 0, w: NARROWEST }).narrow, undefined);
 });
 
-test('the narrowest paper placed for has room for an answer at its least between the tool strip and the controls', () => {
-  assert.ok(NARROWEST >= ANSWER.narrowest);
-  assert.equal(NARROWEST - ANSWER.rail - ANSWER.strip, ANSWER.least);
+// (an answer at a readable width on every paper wide enough for it, narrower only where the paper is)
+test('one narrow spot for each narrower paper it runs past, widest first, each left of that paper’s controls', () => {
   const note: Box = { x: 40, y: 60, w: 520, h: 80 },
-    narrow = spotBox(note, answerSpot(note, {}, [note], paper).narrow!);
-  assert.deepEqual([narrow.x, narrow.w], [ANSWER.strip, ANSWER.least]);
-});
-test("never under the tool strip at the paper's left: below a group under it, at the strip's right", () => {
-  for (const x of [0, 40, 60, 100]) {
-    const note: Box = { x, y: 60, w: 520, h: 80 },
-      spot = answerSpot(note, { text: 'x'.repeat(90) }, [note], paper);
-    for (const b of spotBoxes(note, spot)) {
-      assert.ok(b.x >= ANSWER.strip, `right of the strip: ${JSON.stringify(b)}`);
-      if (b.y > note.y) assert.ok(b.x <= Math.max(x, ANSWER.strip), "below it: at its x or the strip's right, or in");
-    }
+    spots = chain(answerSpot(note, { text: 'x'.repeat(200) }, [note], paper));
+  assert.equal(spots.length, 1 + NARROWER.length, 'the wide spot, then one a paper');
+  for (const [i, w] of NARROWER.entries()) {
+    const b = spotBox(note, spots[i + 1]);
+    assert.ok(b.x >= ANSWER.inset && b.x + b.w <= w - ANSWER.rail, `inside ${w} px of paper, left of its controls`);
+    assert.equal(b.w, room(w), `as wide as ${w} px of paper allows`);
   }
+  // one that fits a narrower paper already needs no spot for it
+  const small: Box = { x: 0, y: 60, w: 40, h: 40 },
+    fits = chain(answerSpot(small, {}, [small], paper));
+  assert.deepEqual(
+    fits.map(s => s.w),
+    [ANSWER.w, ...NARROWER.filter(w => small.w + ANSWER.gap + ANSWER.w > w - ANSWER.rail).map(w => room(w))],
+  );
+});
+
+test('an answer is written at a readable width: about 42 characters a line, not a column', () => {
+  assert.ok(ANSWER.chars >= 40 && ANSWER.chars <= 60);
+  const note: Box = { x: 40, y: 60, w: 520, h: 80 },
+    beside = chain(answerSpot(note, {}, [note], paper))[1];
+  assert.equal(beside.w, room(NARROWER[0]), "on the book beside HQ's page, as wide as the paper lets it");
+  assert.ok(beside.w >= 0.8 * ANSWER.w, 'no column');
+});
+// (the tool strip sits with the controls at the paper's right: the left is the page's but for a phone's pull tab)
+test("the paper's left is the board's: an answer beside a group there, below one only its inset in", () => {
   const small: Box = { x: 0, y: 60, w: 40, h: 40 };
-  assert.equal(spotBox(small, answerSpot(small, {}, [small], paper)).x, ANSWER.strip, 'beside it: past the strip');
+  assert.equal(spotBox(small, answerSpot(small, {}, [small], paper)).x, small.w + ANSWER.gap);
+  const across: Box = { x: 0, y: 60, w: 1000, h: 40 };
+  assert.equal(spotBox(across, answerSpot(across, {}, [across], paper)).x, ANSWER.inset);
 });
 
 test('a spot the board wrote on later, its narrow one or its wide one: moved down clear of it and the rest, as wide', () => {
   const note: Box = { x: 140, y: 60, w: 520, h: 80 },
     spot = answerSpot(note, { text: 'x'.repeat(90) }, [note], paper);
-  for (const s of [spot.narrow!, spot]) {
+  for (const s of chain(spot)) {
     const was = spotBox(note, s),
       later: Box = { x: was.x - 100, y: was.y + 10, w: 400, h: 60 },
       other: Box = { x: was.x + 20, y: later.y + later.h + ANSWER.gap, w: 200, h: 40 };
@@ -146,8 +164,8 @@ test('a spot the board wrote on later, its narrow one or its wide one: moved dow
   }
 });
 
-test("below a group near the paper's edge: narrowed to the room there, moved in when that's less than its least", () => {
-  const phone = { x: 0, w: 390 },
+test("below a group near the paper's edge: moved in to the left, as wide as the paper left of its controls lets it", () => {
+  const phone = { x: 0, w: NARROWER[1] },
     edge = phone.w - ANSWER.rail;
   for (const x of [60, 200, 300]) {
     const near: Box = { ...group, x },
@@ -155,14 +173,13 @@ test("below a group near the paper's edge: narrowed to the room there, moved in 
       spot = answerSpot(near, a, [near], phone),
       box = spotBox(near, spot);
     assert.ok(
-      box.x >= phone.x && box.x + box.w <= edge,
+      box.x >= phone.x + ANSWER.inset && box.x + box.w <= edge,
       `inside the paper, left of its controls: ${JSON.stringify(box)}`,
     );
-    assert.ok(box.w >= ANSWER.least, 'never narrower than its least');
+    assert.equal(box.w, room(phone.w), 'as wide as the room left of the controls');
     assert.equal(spot.h, answerHeight(a, spot.w), 'its height kept at its width');
     assert.ok(!overlaps(box, near), 'clear of its group');
   }
-  assert.equal(answerSpot({ ...group, x: 120 }, {}, [], phone).w, edge - 120, 'as wide as the room under it');
 });
 
 test("an answer's height at a width: its words wrap to more lines, a picture scales to it", () => {
@@ -176,6 +193,45 @@ test("an answer's height: its words' lines, a picture at its width, a form's fie
   const words = answerHeight({ text: 'x'.repeat(64) });
   assert.equal(words, ANSWER.head + 2 * ANSWER.line + ANSWER.reply);
   assert.equal(answerHeight({ text: 'a\nb' }), ANSWER.head + 2 * ANSWER.line + ANSWER.reply);
-  assert.equal(answerHeight({ text: '', picture: { width: 600, height: 400 } }) - answerHeight({ text: '' }), 200);
+  assert.equal(
+    answerHeight({ text: '', picture: { width: 600, height: 400 } }) - answerHeight({ text: '' }),
+    Math.round((400 * ANSWER.w) / 600),
+  );
   assert.equal(answerHeight({ text: 'Pick', questions: 2 }) - answerHeight({ text: 'Pick' }), 2 * ANSWER.question);
+});
+
+// (the spot HQ draws on paper w wide, as bookanswers.js spotHere walks the chain)
+const drawnOn = (s: Spot, w: number) => {
+  while (s.narrow && group.x + s.dx + s.w > w - ANSWER.rail) s = s.narrow;
+  return s;
+};
+test('a spot kept from before the controls grew: placed again, its spot on every paper left of the controls', () => {
+  // (beside its group on a wide page, its narrow spot below it from page x 100 to 280: under the controls on a phone,
+  // which start at 206)
+  const narrow = { dx: -40, dy: 104, w: 180, h: 200 },
+    old: Spot = { dx: 264, dy: 0, w: 400, h: 120, narrow };
+  const again = spotAgain(group, old, tall(120), [group], paper);
+  assert.deepEqual(wide(again), wide(old), 'the wide spot still fits: kept');
+  assert.deepEqual(wide(drawnOn(again, 473)), narrow, 'and the narrow one where it still fits');
+  for (const w of NARROWER) {
+    const box = spotBox(group, drawnOn(again, w));
+    assert.ok(box.x >= 0 && box.x + box.w <= w - ANSWER.rail, `on ${w} px paper: ${JSON.stringify(box)}`);
+    assert.ok(!overlaps(box, group), 'clear of its group');
+  }
+  assert.deepEqual(spotBox(group, drawnOn(again, 342)), { x: 12, y: 304, w: 194, h: 120 }, 'a phone: a new spot');
+  // (one with no narrow spot, kept between x 100 and 280 under the old rules: one for the phone now)
+  const lone: Spot = { dx: -40, dy: 104, w: 180, h: 200 },
+    placed = spotAgain(group, lone, tall(200), [group], paper);
+  assert.deepEqual(wide(placed), lone, 'kept where it fits');
+  for (const w of NARROWER) {
+    const box = spotBox(group, drawnOn(placed, w));
+    assert.ok(box.x + box.w <= w - ANSWER.rail, `on ${w} px paper: ${JSON.stringify(box)}`);
+  }
+});
+
+test("a kept spot that's no longer clear of the page's boxes is placed again", () => {
+  const old: Spot = { dx: 264, dy: 0, w: 400, h: 120 },
+    beside: Box = { x: 600, y: 180, w: 200, h: 200 };
+  const box = spotBox(group, spotAgain(group, old, tall(120), [group, beside], paper));
+  assert.ok(!overlaps(box, beside) && !overlaps(box, group), JSON.stringify(box));
 });

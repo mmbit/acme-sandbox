@@ -28,6 +28,9 @@ const SCRAP_XY = { min: -24_000, max: 24_000 },
 export type Scrap = { file: string; x: number; y: number; w: number; h: number; tilt: number };
 export const isScrap = (id: number, file: unknown) =>
   typeof file === 'string' && new RegExp(`^${id}-s-[0-9a-f]{8}\\.(png|jpg)$`).test(file);
+// A notebook group's picture on that page (notebookpictures.ts), placed or not.
+export const isGroupPicture = (id: number, file: unknown) =>
+  typeof file === 'string' && new RegExp(`^${id}-g-[0-9a-f]{8}\\.(png|jpg)$`).test(file);
 export const scrapFiles = (id: number) => readdirSync(DIR).filter(f => isScrap(id, f));
 export const full = (id: number) => scrapFiles(id).length >= MAX_SCRAP_FILES;
 // (base: the routes' addresses, HQ's or a person's on the guest desk)

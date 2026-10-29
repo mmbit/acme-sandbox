@@ -14,8 +14,14 @@ const ledger = await import('../ledger.ts');
 const jobs = await import('../jobs.ts');
 const callnotes = await import('./callnotes.ts');
 const { handOver } = await import('../call.ts');
+const { tryNow, onCall } = await import('./booktry.ts');
+const { answerNow } = await import('./bookanswer.ts');
+const { ceo } = await import('../company.ts');
 const { moveGroup, deleteGroup } = await import('../notebookgroups.ts');
+const { currentPage } = await import('../notebook.ts');
 const DIR = `${h.dataDir}/book`;
+const runAgent = (job: number) =>
+  (db.prepare('select agent from jobs where id = ?').get(job) as { agent: string }).agent;
 
 // The board's note on the call: a picture of three changes side by side, red, green and blue thirds
 const third = (background: string) => ({
@@ -57,6 +63,15 @@ async function colourOf(g: any) {
 }
 const pageNow = (id: number) =>
   db.prepare('select label, archived, send_at, fresh, notebook, kind from book_pages where id = ?').get(id) as any;
+test("a call agent's title never replaces one the board typed", async () => {
+  const { call } = await h.liveCall('juno');
+  const page = (await h.board('/api/notebooks/call', { call })).body.page.id;
+  assert.equal((await h.voice('title', { call, title: 'Garden plans' })).status, 200);
+  assert.equal(pageNow(page).label, 'Garden plans');
+  await h.board('/api/notebooks/pages/title', { id: page, title: 'My garden' });
+  assert.equal((await h.voice('title', { call, title: 'New subject' })).status, 200);
+  assert.equal(pageNow(page).label, 'My garden');
+});
 async function until(what: () => unknown, why: string) {
   for (let i = 0; i < 100; i++) {
     if (what()) return;
@@ -64,6 +79,7 @@ async function until(what: () => unknown, why: string) {
   }
   assert.fail(why);
 }
+const wentIn = (page: number) => until(() => pageNow(page)?.send_at != null, 'the page was sent');
 
 test("a call's notes page: open as the call starts, the agent's scraps landing one by one, each its own crop", async () => {
   const { call, token } = await h.liveCall('juno');
@@ -176,9 +192,14 @@ test("a call's notes page: open as the call starts, the agent's scraps landing o
     page,
   );
 
-  // The call ends: the page goes in, each scrap a note on its way to an agent, and it goes to My Notebook's archive
+  // The call ends: the page goes in, each scrap a note on its way to an agent, and it stays among My Notebook's pages
   await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller, move it here, and drop this.'], token });
-  await until(() => pageNow(page).send_at !== null && pageNow(page).archived === 1, 'the page was sent and archived');
+  await wentIn(page);
+  const pagesNow = (await h.board(`/api/notebooks/pages?notebook=${notebook.id}`)).body.pages as any[];
+  assert.ok(
+    pagesNow.some(p => p.id === page),
+    "left among My Notebook's pages, not its archive",
+  );
   const after = await groups(page);
   assert.deepEqual(
     after.map(g => [g.kind, g.by, g.status, !!g.note]),
@@ -212,6 +233,19 @@ test('a call with nothing on its page leaves no page', async () => {
   assert.ok(db.prepare('select 1 from notebooks where id = ?').get(opened.notebook), 'My Notebook stays');
 });
 
+test("a call page with only what the agent recorded goes in, and isn't left as My Notebook's open page", async () => {
+  const { call, token } = await h.liveCall('juno');
+  const opened = (await h.board('/api/notebooks/call', { call })).body;
+  ledger.add(
+    call,
+    { kind: 'task', owner: 'juno', what: 'Make the price smaller', goal: 'A calmer shop', quote: 'make it smaller' },
+    null,
+  );
+  await h.voice('call-end', { agent: 'juno', lines: ['Board: Make the price smaller.'], token });
+  await wentIn(opened.page.id);
+  assert.notEqual(currentPage(opened.notebook), opened.page.id, "not My Notebook's open page");
+});
+
 test('what the agent records on a call with no notes page (a phone call) makes none', async () => {
   const { call, token } = await h.liveCall('juno');
   const item = ledger.add(
@@ -242,25 +276,24 @@ async function scrapped() {
 }
 const THIRD = { x: 0, y: 0, width: 1 / 3, height: 1 };
 
-test('a scrap still being cut as the call ends is refused: the page goes in as it was, then to the archive', async () => {
+test('a scrap still being cut as the call ends is refused: the page goes in as it was', async () => {
   const { call, token, page } = await scrapped();
   const late = callnotes.scrap({ call, from: 'note 1', region: { ...THIRD, x: 1 / 3 }, words: 'Move the basket up' });
   handOver('juno', ['Board: smaller, and move it here.'], 0, token);
   assert.deepEqual(await late, [404, 'This call has ended: its page has gone in.']);
-  await until(() => pageNow(page).archived === 1, 'the page was archived');
+  await wentIn(page);
   assert.deepEqual(
     (await groups(page)).map(g => [g.words, g.status]),
     [['Make the price smaller', 'sent']],
   );
 });
 
-test("a call's page the board changes as it's sent is sent again, and archived once it's sent", async () => {
+test("a call's page the board changes as it's sent is sent again", async () => {
   const { call, page, scrap } = await scrapped();
   const ending = callnotes.ended(call);
   assert.equal((moveGroup({ id: scrap, page, dx: 40 }) as any).id, scrap);
   await ending;
   assert.notEqual(pageNow(page).send_at, null);
-  assert.equal(pageNow(page).archived, 1);
   const [sent] = await groups(page);
   assert.equal(sent.status, 'sent', 'sent as the board left it');
 });
@@ -292,7 +325,7 @@ test("the board's mark no scrap was cut from goes in as its own scrap: nothing i
     snip: `data:image/png;base64,${THREE.toString('base64')}`,
   });
   await h.voice('call-end', { agent: 'juno', lines: ['Board: this is too loud.'], token });
-  await until(() => pageNow(made.id)?.archived === 1, 'the page was archived');
+  await wentIn(made.id);
   const [kept] = await groups(made.id);
   assert.deepEqual(
     [kept.kind, kept.by, kept.words, kept.status, !!kept.note],
@@ -336,7 +369,7 @@ test("at hang-up every note no scrap was cut from, and the board's typed words a
   assert.equal(saved.status, 200, JSON.stringify(saved.body));
 
   await h.voice('call-end', { agent: 'juno', lines: ['Board: smaller, teal, too busy.'], token });
-  await until(() => pageNow(page)?.archived === 1, 'the page was sent and archived');
+  await wentIn(page);
   const after = await groups(page);
   assert.deepEqual(
     after.map(g => [g.kind, g.by, g.words, g.said, g.texts.map((t: any) => t.text), g.pictures.length, g.status]),
@@ -362,7 +395,7 @@ test("a call page with only the board's typed words keeps them", async () => {
   const typed = { x: 40, y: 60, w: 300, text: 'Ring the printer', color: '#2F6BDC' };
   await h.board('/api/book/page/save', { id: page, ink: [], scraps: [], texts: [typed] });
   await h.voice('call-end', { agent: 'juno', lines: ['Board: ring the printer.'], token });
-  await until(() => pageNow(page)?.archived === 1, 'the page was sent and archived, not deleted');
+  await wentIn(page);
   assert.deepEqual(
     (await groups(page)).map(g => [g.kind, g.by, g.texts[0]?.text]),
     [['drawing', 'board', 'Ring the printer']],
@@ -419,23 +452,32 @@ test("a call page the shelf carried into My Notebook is the call's notes page th
   assert.deepEqual([opened.page.id, opened.notebook], [page.id, myNotebook().id]);
   assert.equal((await groups(page.id)).length, drawn, 'its groups as they were');
   await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
-  await until(() => pageNow(page.id)?.archived === 1, 'the page was archived');
+  await wentIn(page.id);
   assert.equal((await groups(page.id)).length, drawn, 'carried once');
   assert.equal(myNotebook().archived, 0, 'My Notebook stays on the shelf');
 });
 
-test("a call's notes page reads like any page, a customer call's too; a call about a card for keys keeps its own", async () => {
-  const sketches = async (token: string, archived = '') =>
-    ((await h.agent(`sketches${archived}`, token)).body.sketches as { id: number }[]).map(p => p.id);
+test("a call's pages read like any page, a customer call's too, but a keys call's pages and its try's versions page stay its agent's", async () => {
+  const sketches = async (token: string) =>
+    ((await h.agent('sketches', token)).body.sketches as { id: number }[]).map(p => p.id);
   const holds = async (job: number) => (await h.worker('customers', { job })).body.customers as boolean;
   const kit = await h.start({ agent: 'kit' });
   const { call, token } = await h.liveCall('juno');
-  db.prepare('update calls set customers = 1 where id = ?').run(call);
+  jobs.readerHanded({ id: 0, agent: 'juno', callId: call }); // (a look-up on the call handed it a customer's details)
   const page = (await h.board('/api/notebooks/call', { call })).body.page.id as number;
-  await h.board('/api/book/note', { page, anchor, words: 'the colours here', said: 'spoken' });
+  const { note: colours } = (
+    await h.board('/api/book/note', { page, anchor, words: 'the colours here', said: 'spoken' })
+  ).body;
+  // a note on its try's versions page gets a quick run like any other note's (the page is nobody's: the CEO's)
+  tryNow({ note: colours.id }, { id: 1, why: 'it asks to see the colours made' });
+  const versions = (db.prepare('select id from book_pages where tries_note = ?').get(colours.id) as { id: number }).id;
+  const question = (await h.board('/api/book/note', { page: versions, anchor, words: 'warmer?', said: 'spoken' })).body
+    .note.id as number;
+  const quick = answerNow({ note: question }, { id: 1, why: 'a question' })!;
+  assert.equal(runAgent(quick), ceo());
   await h.voice('call-end', { agent: 'juno', lines: ['Board: that line.'], token });
-  await until(() => pageNow(page).archived === 1, 'the page was sent and archived');
-  assert.ok((await sketches(kit.token, '?archived=1')).includes(page));
+  await wentIn(page);
+  assert.ok((await sketches(kit.token)).includes(page));
   assert.equal((await h.agent(`sketch?id=${page}`, kit.token)).status, 200);
   assert.equal(await holds(kit.id), false, 'and nothing marked');
 
@@ -448,16 +490,47 @@ test("a call's notes page reads like any page, a customer call's too; a call abo
   }) as {
     id: number;
   };
-  const keys = await h.liveCall('wren');
+  const keys = await h.liveCall('wren', card.id);
   const kept = (await h.board('/api/notebooks/call', { call: keys.call })).body.page.id as number;
-  await h.board('/api/book/note', { page: kept, anchor, words: 'where it goes', said: 'spoken' });
-  await h.voice('call-end', { agent: 'wren', lines: ['Board: done.'], token: keys.token });
-  await until(() => pageNow(kept).archived === 1, 'the page was sent and archived');
-  db.prepare('update calls set request = ? where id = ?').run(card.id, keys.call); // (the call the card was rung about)
-  assert.ok(!(await sketches(kit.token, '?archived=1')).includes(kept));
-  assert.equal((await h.agent(`sketch?id=${kept}`, kit.token)).status, 404);
+  const { note } = (await h.board('/api/book/note', { page: kept, anchor, words: 'where it goes', said: 'spoken' }))
+    .body;
+  // the judge reads the note as asking to see it made: the try's versions page is the call's too
+  tryNow({ note: note.id }, { id: 1, why: 'it asks to see where the key goes' });
+  const tried = db.prepare('select id, call from book_pages where tries_note = ?').get(note.id) as {
+    id: number;
+    call: number | null;
+  };
+  assert.equal(tried.call, keys.call);
+  const asked = (await h.board('/api/book/note', { page: tried.id, anchor, words: 'why this one?', said: 'spoken' }))
+    .body.note.id as number;
+  assert.equal(onCall({ note: asked }), null, 'a note on the versions page gets a quick run, not the line');
+  // the call's agent's quick run answers it, and its words and snip reach no other agent's job, nor its sheet's Send
+  const run = answerNow({ note: asked }, { id: 1, why: 'a question about the version' })!;
+  assert.equal(runAgent(run), 'wren');
+  const holders = db
+    .prepare(
+      "select distinct j.agent from review_notes r join jobs j on j.id = r.job where r.note = 'why this one?' union select agent from jobs where prompt like '%why this one?%'",
+    )
+    .all() as { agent: string }[];
+  assert.deepEqual(
+    holders.map(r => r.agent),
+    ['wren'],
+  );
+  const sheetOwner = db
+    .prepare('select s.owner from book_notes n join book_sheets s on s.id = n.sheet where n.id = ?')
+    .get(asked) as { owner: string | null };
+  assert.equal(sheetOwner.owner, 'wren');
+  // (the voice line names the card it rang about again at hang-up: call.ts handOver)
+  await h.voice('call-end', { agent: 'wren', lines: ['Board: done.'], request: card.id, token: keys.token });
+  await wentIn(kept);
+  const listed = await sketches(kit.token);
+  for (const id of [kept, tried.id]) {
+    assert.ok(!listed.includes(id), `page ${id} isn't listed`);
+    assert.equal((await h.agent(`sketch?id=${id}`, kit.token)).status, 404);
+  }
   const wren = await h.start({ agent: 'wren' });
-  assert.equal((await h.agent(`sketch?id=${kept}`, wren.token)).status, 200, "its own agent's");
+  for (const id of [kept, tried.id])
+    assert.equal((await h.agent(`sketch?id=${id}`, wren.token)).status, 200, "its own agent's");
 });
 
 test("the call engine's split: the watch-along, the screen and the line's drawing and driving read nothing of Ink", () => {

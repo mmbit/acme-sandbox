@@ -2,6 +2,7 @@
 // notebook last changed.
 import { DAYS, MONTHS, esc } from '../../util.js';
 import { lineIcon as svg } from './bookui.js';
+import { word } from './bookscope.js';
 
 // what a notebook's label says it is, under its name (My Notebook says nothing; a call's notes are a page of it.
 const KINDS = { round: 'Review round', invited: 'Invited' };
@@ -9,7 +10,7 @@ const KINDS = { round: 'Review round', invited: 'Invited' };
 export const ICONS = {
   shelf: svg('<path d="M5 4v16M9.5 4v16"/><path d="M13.6 5.3l3.8-1 3.7 14.4-3.8 1z"/><path d="M3 20.2h18"/>'),
   archive: svg(
-    '<rect x="3.5" y="4" width="17" height="4.5" rx="1"/><path d="M5.2 8.5V19a1 1 0 0 0 1 1h11.6a1 1 0 0 0 1-1V8.5M10 12.5h4"/>',
+    '<rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8"/><rect x="9" y="11" width="6" height="3" rx=".5"/>',
   ),
   restore: svg('<path d="M5 11v8a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-8"/><path d="M12 16V4.5M8 8.5l4-4 4 4"/>'),
   add: svg('<path d="M12 5v14M5 12h14"/>'),
@@ -21,9 +22,8 @@ const SENT_MARK =
 
 // A page's tile: its picture (a grown page's top), its stamp once sent, its number and title; its small box archives
 // it or brings it back
-export function pageTile(p, i, { here, drag = false, archived = false }) {
-  // (an untitled page is named as the book names it: bookhead.js nameOf.)
-  const name = p.title || 'Untitled page',
+export function pageTile(p, i, { here, drag = false, archived = false, manage = true }) {
+  const name = p.title || word('Untitled page'),
     said = `${name}${p.sent ? ', sent' : p.sending ? ', sending' : ''}`;
   return `<div class="bk-tile" role="listitem" data-id="${esc(p.id)}"${drag ? ' data-drag' : ''}${
     String(p.id) === String(here) ? ' aria-current="page"' : ''
@@ -31,11 +31,15 @@ export function pageTile(p, i, { here, drag = false, archived = false }) {
     p.picture ? `<img src="${esc(p.picture)}" alt="" draggable="false">` : ''
   }${p.sent || p.sending ? SENT_MARK.replace('bk-stamp', `bk-stamp${p.sent ? '' : ' bk-stamp-wet'}`) : ''}</span><span class="bk-tile-name">${
     archived ? '' : `<small>${i + 1}</small>`
-  }<span>${esc(p.title)}</span></span></button><button type="button" class="bk-tile-act" data-act="${
-    archived ? 'restore' : 'archive'
-  }" aria-label="${archived ? 'Back into the notebook' : 'Archive'}: ${esc(name)}">${
-    archived ? ICONS.restore : ICONS.archive
-  }</button></div>`;
+  }<span>${esc(p.title)}</span></span></button>${
+    manage
+      ? `<button type="button" class="bk-tile-act" data-act="${
+          archived ? 'restore' : 'archive'
+        }" aria-label="${archived ? 'Back into the notebook' : 'Archive'}: ${esc(name)}">${
+          archived ? ICONS.restore : ICONS.archive
+        }</button>`
+      : ''
+  }</div>`;
 }
 
 // A notebook's tile: a small black hardcover, its name on a paper label, what it is under it; the one open in the book

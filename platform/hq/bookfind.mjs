@@ -72,7 +72,8 @@ async function searchable(browser, c, viewport, options = {}) {
   const page = await context.newPage(),
     errors = errorsOf(page);
   await page.goto(`${c.base}/?intro=0`);
-  await page.waitForSelector('#book .bk-clip', { state: 'attached', timeout: 30_000 });
+  // (the newest page's groups drawn: a lone line has no clip)
+  await page.waitForSelector('#book .bk-groups[data-page]', { state: 'attached', timeout: 30_000 });
   return { page, errors, done: () => context.close() };
 }
 function seeded() {

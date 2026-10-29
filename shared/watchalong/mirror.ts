@@ -8,12 +8,15 @@
 //     HQ's own pictures and stylesheets from disk, and a preview's pictures, fonts and stylesheets when the recording
 //     was there and the session may show it), or is refused.
 //   - Pictures are JPEG (PNG when asked), LONG px on their long side, a tap ringed where it was, the pen's ink drawn.
-//   - Every step has STEP_MS: one that fails or runs past it closes its mirror, which opens again from the recording
-//     when next asked for, and until then the session isn't seen (seen), so its page can say so.
+//   - Every step has STEP_MS: one that fails or runs past it closes its own tab. A live session's mirror then opens
+//     again from the recording when next asked for, and isn't seen until then (seen), so its page can say so. Chromium
+//     closes too only when it doesn't answer within ANSWER_MS once a step ran past its time (outOfTime), and the next
+//     mirror opens in a fresh one.
 import { readFileSync } from 'node:fs';
 import { launch, type Answer, type Asked, type Browser, type Tab } from '../chromium/chromium.ts';
 import type { RecordedEvent } from './store.ts';
 import { OWN, type Own } from './mirrorpage.ts';
+import { shown, upTo } from './shown.ts';
 
 export const IDLE_MS = 10 * 60_000;
 // The replay's own files, on an origin that never resolves
@@ -27,6 +30,10 @@ export const LOADING_MS = 1_000; // (exported: the owner's answer takes no longe
 // server.py's hq()), so a later one reaches nobody. A mirror opens with what the screen still shows (shown): the whole
 // recording of a 30-minute share, with HQ's canvas frames (0.5 a second, 40 KB each), takes past 15 s to open.
 export const STEP_MS = 15_000;
+// How long Chromium's own process may take to answer once a step ran past its time. It answers apart from its tabs'
+// pages: under a millisecond with a page that never yields, on the worker at a load of 13. One silent for 5 s has
+// stopped answering, and every later tab of it would hang.
+export const ANSWER_MS = 5_000;
 
 // A tap to ring, a part of the screen (fractions of it, 0 to 1) to zoom into, and the long side in px
 export type Shot = { long: number; ring?: { x: number; y: number }; region?: Region; png?: boolean };
@@ -53,6 +60,7 @@ export class Mirrors {
   // (each as it opens: what comes meanwhile waits for it)
   private mirrors = new Map<number, Promise<Mirror>>();
   private browser: Promise<Browser> | null = null;
+  private launches = new WeakMap<Promise<Browser>, AbortController>(); // (each Chromium's, to kill it while it starts)
   private sweeper: NodeJS.Timeout | null = null;
   private tabs = 0; // open or opening, the past moments' too: Chromium closes when none is left
   // whether a live session's screen reaches its mirror: true once its replay took the recording in, false once a step
@@ -78,7 +86,8 @@ export class Mirrors {
   open(id: number, events: RecordedEvent[], shows: Shows) {
     const had = this.mirrors.get(id);
     if (had) return had.then(() => undefined);
-    const tab = this.opened(shows);
+    const browser = this.launched();
+    const tab = this.opened(browser, shows);
     const opening = timed(
       tab.then(async mirror => {
         addPages(mirror, events);
@@ -86,6 +95,7 @@ export class Mirrors {
         return mirror;
       }),
       'opening',
+      () => this.outOfTime(browser),
     );
     this.mirrors.set(id, opening);
     this.reached.delete(id);
@@ -126,7 +136,8 @@ export class Mirrors {
 
   // The screen at a time on the page's clock, from the events up to it, in a tab of its own
   async at(events: RecordedEvent[], time: number, shot: Shot, shows: Shows) {
-    const tab = this.opened(shows);
+    const browser = this.launched();
+    const tab = this.opened(browser, shows);
     try {
       return await timed(
         tab.then(async mirror => {
@@ -135,6 +146,7 @@ export class Mirrors {
           return picture(mirror, shot);
         }),
         'past moment',
+        () => this.outOfTime(browser),
       );
     } finally {
       // (once open: a tab that opens after its time ran out closes too)
@@ -168,20 +180,21 @@ export class Mirrors {
         .catch(() => undefined);
   }
 
-  // A tab of the replay, ready within STEP_MS (Chromium started for the first), or closed: one made after its time ran
-  // out too
-  private async opened(shows: Shows): Promise<Mirror> {
-    const launching = (this.browser ??= launch().then(browser => {
+  // The Chromium for a new tab, started for the first.
+  private launched() {
+    if (this.browser) return this.browser;
+    const abort = new AbortController();
+    const launching: Promise<Browser> = launch(abort.signal).then(browser => {
       // (stopped on its own: every mirror goes with it, and the next opens a new one)
-      void browser.closed.then(() => {
-        if (this.browser !== launching) return;
-        this.browser = null;
-        for (const id of this.mirrors.keys()) this.reached.set(id, false);
-        this.mirrors.clear();
-        this.tabs = 0;
-      });
+      void browser.closed.then(() => this.dropped(launching));
       return browser;
-    }));
+    });
+    this.launches.set(launching, abort);
+    return (this.browser = launching);
+  }
+
+  // A tab of the replay in this Chromium, ready within STEP_MS, or closed: one made after its time ran out too
+  private async opened(launching: Promise<Browser>, shows: Shows): Promise<Mirror> {
     this.tabs++;
     const loading = new Set<string>(),
       pages = new Set<string>();
@@ -198,13 +211,42 @@ export class Mirrors {
       }),
     );
     try {
-      const tab = await timed(made.then(paged), 'page');
+      const tab = await timed(made.then(paged), 'page', () => this.outOfTime(launching));
       return { tab, browser: launching, loading, pages, shows, used: Date.now(), turn: Promise.resolve(), size: '' };
     } catch (err) {
       void made.then(tab => tab.close()).catch(() => undefined);
       await this.release(launching).catch(() => undefined);
       throw err;
     }
+  }
+
+  // A step past STEP_MS in this Chromium. Its own tab closes (its caller closes it), and a slow page leaves the other
+  // mirrors alone. A Chromium that doesn't answer goes, as every later tab of it would hang. Every mirror goes with it,
+  // and the next opens in a fresh one. One still starting is killed. A Chromium that went already, or that another
+  // step's check closes, is left as it is.
+  private async outOfTime(browser: Promise<Browser>) {
+    // (read at once, before the step's caller closes its tab: closing the last tab lets this Chromium go)
+    if (this.browser !== browser || (await answers(browser))) return;
+    const launch = this.launches.get(browser);
+    if (!launch) return;
+    this.launches.delete(browser);
+    this.dropped(browser);
+    console.error(
+      `Watch-along mirrors: a step ran past ${STEP_MS / 1000} s and their Chromium doesn't answer: it closes`,
+    );
+    launch.abort();
+    void browser.then(chromium => chromium.close()).catch(() => undefined);
+  }
+
+  // Chromium stopped, or is to: every mirror goes with it, not seen until it opens again in a new one. False when it
+  // went already
+  private dropped(browser: Promise<Browser>) {
+    if (this.browser !== browser) return false;
+    this.browser = null;
+    for (const id of this.mirrors.keys()) this.reached.set(id, false);
+    this.mirrors.clear();
+    this.tabs = 0;
+    return true;
   }
 
   private async closeTab(mirror: Mirror) {
@@ -236,7 +278,7 @@ export class Mirrors {
 
   // A live mirror's steps, one at a time, each within STEP_MS
   private inTurn<T>(id: number, opening: Promise<Mirror>, mirror: Mirror, step: () => Promise<T>): Promise<T> {
-    const run = () => timed(step(), 'step');
+    const run = () => timed(step(), 'step', () => this.outOfTime(mirror.browser));
     const turn = mirror.turn.then(run, run);
     mirror.turn = turn.catch(() => undefined);
     turn.catch(async err => {
@@ -257,51 +299,29 @@ export class Mirrors {
   }
 }
 
-// A step, or its failure once it runs past STEP_MS
-function timed<T>(step: Promise<T>, what: string): Promise<T> {
+// A step, or its failure once it runs past STEP_MS (and then outOfTime())
+function timed<T>(step: Promise<T>, what: string, outOfTime: () => Promise<void>): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   const late = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`the mirror's ${what} took over ${STEP_MS / 1000} s`)), STEP_MS);
+    timer = setTimeout(() => {
+      reject(new Error(`the mirror's ${what} took over ${STEP_MS / 1000} s`));
+      void outOfTime();
+    }, STEP_MS);
   });
   return Promise.race([step, late]).finally(() => clearTimeout(timer));
 }
 
-// The events a replay to this time needs: from the full snapshot last taken by then (and the page's size before it)
-export function upTo(events: RecordedEvent[], time: number) {
-  const before = events.filter(event => event.timestamp <= time);
-  const full = before.findLastIndex(event => event.type === FULL_SNAPSHOT);
-  const meta = before.findLastIndex((event, i) => event.type === META && i <= full);
-  return before.slice(Math.max(0, meta));
-}
-const FULL_SNAPSHOT = 2,
-  META = 4;
-
-// The events a live mirror opens with: what the screen still shows, from the full snapshot last taken (upTo), each
-// canvas's pictures but its latest. A picture that starts by wiping its canvas leaves nothing of the ones before it,
-// and each costs the replay a picture to decode. canvas.js wipes with a clearRect from the corner at the canvas's
-// size. That size isn't known here, so any clearRect from the corner with an area counts as a wipe.
-export function shown(events: RecordedEvent[]) {
-  const since = upTo(events, Infinity);
-  const latest = new Map<number, number>();
-  since.forEach((event, i) => {
-    const wiped = wipes(event);
-    if (wiped !== undefined) latest.set(wiped, i);
-  });
-  return since.filter((event, i) => {
-    const wiped = wipes(event);
-    return wiped === undefined || latest.get(wiped) === i;
-  });
-}
-const INCREMENTAL = 3,
-  CANVAS_MUTATION = 9;
-// The canvas a canvas mutation wipes before it draws (its first command a clearRect from the corner), or undefined
-function wipes(event: RecordedEvent) {
-  const data = event.data as { source?: number; id?: number; commands?: { property?: string; args?: unknown[] }[] };
-  if (event.type !== INCREMENTAL || data.source !== CANVAS_MUTATION || typeof data.id !== 'number') return undefined;
-  const [wipe] = data.commands ?? [];
-  const [x, y, width, height] = wipe?.args ?? [];
-  const whole = wipe?.property === 'clearRect' && x === 0 && y === 0 && Number(width) > 0 && Number(height) > 0;
-  return whole ? data.id : undefined;
+// Whether Chromium, started by then, answers within ANSWER_MS
+async function answers(browser: Promise<Browser>) {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<false>(resolve => (timer = setTimeout(() => resolve(false), ANSWER_MS)));
+  const answered = browser
+    .then(chromium => chromium.answered())
+    .then(
+      () => true,
+      () => false,
+    );
+  return Promise.race([answered, late]).finally(() => clearTimeout(timer));
 }
 
 // The origins of the pages these events were on that the mirror may show: the recorded page's addresses, and the page
@@ -316,7 +336,8 @@ function addPages(mirror: Mirror, events: RecordedEvent[]) {
     if (mirror.shows(origin)) mirror.pages.add(origin);
   }
 }
-const CUSTOM = 5;
+const META = 4,
+  CUSTOM = 5;
 
 // The replay as it is now: what it asked for loaded (or LOADING_MS gone), drawn, then taken, its tap ringed
 async function picture(mirror: Mirror, shot: Shot): Promise<Picture | undefined> {

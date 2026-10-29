@@ -40,6 +40,10 @@ const holds = (box, { x, y }, pad) =>
 // How far apart two boxes are (0 when they touch or overlap)
 export const gap = (a, b) =>
   Math.hypot(Math.max(0, a.x - (b.x + b.w), b.x - (a.x + a.w)), Math.max(0, a.y - (b.y + b.h), b.y - (a.y + a.h)));
+// How much of two boxes lies in both (px², 0 when they don't overlap)
+export const overlapOf = (a, b) =>
+  Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) *
+  Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
 const grown = (a, b) => (a ? boxOf({ pictures: [a, b] }) : b);
 
 // Where new elements go. news: [{ kind, el }] in the order they were made, none with a group yet. groups: the page's
@@ -75,9 +79,7 @@ export function scratched(points, groups) {
     most = COVERS;
   for (const g of groups) {
     if (!g.box || !g.box.w || !g.box.h) continue;
-    const w = Math.min(line.x + line.w, g.box.x + g.box.w) - Math.max(line.x, g.box.x),
-      h = Math.min(line.y + line.h, g.box.y + g.box.h) - Math.max(line.y, g.box.y);
-    const share = w > 0 && h > 0 ? (w * h) / (g.box.w * g.box.h) : 0;
+    const share = overlapOf(line, g.box) / (g.box.w * g.box.h);
     if (share >= most) [best, most] = [g, share];
   }
   return best;

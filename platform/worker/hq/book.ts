@@ -2,7 +2,7 @@
 // (hq sketch: the Sketchbook's sketches are its free pages, under the same numbers). And the people the board
 // invited, each with a book of their own: whose a page is (from), and that its picture and label are outside text.
 // hq answer clips an answer onto a note the board sent from its book, or a group of its notebook (bookanswer.ts;
-import { call, getJson, httpCode, isSuccess, post } from './api.ts';
+import { call, change, errorIn, getJson, httpCode, isSuccess } from './api.ts';
 import { readBytes, savePicture } from './files.ts';
 import { minute, oneLine, plural, print, stop, text } from './output.ts';
 
@@ -132,7 +132,8 @@ export const answer = {
       body.patch = patch.toString('utf8');
     }
     if (flags.has('--expect')) body.expect = Number(flags.get('--expect'));
-    await post('answer', body);
+    const answer = await change('answer', { body });
+    if (!isSuccess(answer.status)) stop(`Nothing written: ${errorIn(answer.body, 'HQ refused it')}`);
     const on = grp ? `group ${target}` : `note #${target}`;
     print(
       words || bytes || flags.has('--ink') ? `Answer clipped onto ${on}.` : `${on}: ${body.expect} versions coming.`,

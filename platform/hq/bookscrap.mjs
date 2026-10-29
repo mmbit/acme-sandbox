@@ -5,13 +5,15 @@
 // note a scrap on the Notebook's newest page (groups/scrap: its anchor, words and photo). The book open, it turns there
 // and the scrap shows; shut, it stays shut (it never opens by itself), and the pull tab's one tap opens it at the
 // scrap. In the book its words stay editable (groups/edit, typed) and a pen's line drawn from inside its photo joins it
-// (groups/edit with the ink): one group. The same from an artifact, a preview in HQ's viewer: its post-it's Save goes
-// to the preview's /__review/notes, which the coordinator makes a scrap on the same page. Cancel: the mark gone,
-// nothing saved.
+// (groups/edit with the ink): one group. The same from an artifact, a preview in HQ's viewer: its words said on the iPad
+// and the desktop (HQ recording them, the preview never once asking for the microphone: the board, call 154), typed on
+// the phone; its post-it's Save goes to the preview's /__review/notes, which the coordinator makes a scrap on the same
+// page. Cancel: the mark gone, nothing saved.
 import assert from 'node:assert/strict';
 import { fulfilPart } from '../../shared/review/parts.mjs';
 import { nothingDrawn } from './bookink.mjs';
 import { groupsOf, newestPage, shownScrap, until } from './bookplayed.mjs';
+import { talked, voiceServed } from './bookvoice.mjs';
 
 // ---- the stories
 const IPAD = { name: 'ipad', viewport: { width: 1133, height: 744 }, more: {}, starts: 'open', hand: 'pen' },
@@ -45,11 +47,11 @@ const FLIGHT_MS = 4000;
 // c: book-check's { hqIn, base, reviewJs, settled, penOn, ring, posts, hush, shot, noErrorsIn }
 export function scrapStories(c) {
   return {
-    "the pin flow on an iPad mini: a mark's post-it, Save, a scrap on the newest page, the book open or shut, editable; from an artifact too; Cancel":
+    "the pin flow on an iPad mini: a mark's post-it, Save, a scrap on the newest page, the book open or shut, editable; from an artifact too, its words said; Cancel":
       browser => pinFlow({ ...c, browser }, IPAD),
     "the pin flow on a phone in portrait: a finger's mark, its post-it, Save, the book shut till its tab's tap, editable; from an artifact too; Cancel":
       browser => pinFlow({ ...c, browser }, PHONE),
-    "the pin flow on a desktop: a mouse's mark, its post-it, Save, a scrap on the newest page in the open book, editable; from an artifact too; Cancel":
+    "the pin flow on a desktop: a mouse's mark, its post-it, Save, a scrap on the newest page in the open book, editable; from an artifact too, its words said; Cancel":
       browser => pinFlow({ ...c, browser }, DESKTOP),
   };
 }
@@ -60,7 +62,7 @@ const MIC_REFUSED = /^(Permission policy 'Microphone' check failed|Not allowed t
 async function pinFlow(c, screen) {
   const context = await c.hqIn(c.browser, screen.viewport, screen.more),
     errors = [];
-  await previewServed(c, context);
+  const voice = await previewServed(c, context);
   const page = await context.newPage();
   page.on('pageerror', e => MIC_REFUSED.test(e.stack) || errors.push(e.message));
   try {
@@ -68,7 +70,7 @@ async function pinFlow(c, screen) {
     await page.waitForSelector('#loading.gone');
     await page.waitForSelector('review-mode .fab', { state: 'attached' }); // (away till summoned: job #20358)
     await c.settled(page, screen.starts);
-    const s = { ...c, page, screen, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
+    const s = { ...c, page, screen, voice, play: context.notebook, named: what => `scrap-${screen.name}-${what}` };
     // on HQ: the book as the device starts it (open on an iPad and a desktop, shut on a phone)
     const first = await savedOnHq(s, { spoken: screen.hand === 'pen' });
     await edited(s, first);
@@ -81,7 +83,7 @@ async function pinFlow(c, screen) {
       await savedOnHq(s, { spoken: false, what: 'shut' });
     }
     await cancelled(s);
-    await fromArtifact(s);
+    await fromArtifact(s, { spoken: screen.hand !== 'touch' });
     c.noErrorsIn(errors);
   } catch (e) {
     await c.shot(`scrap-${screen.name}-failed`, page); // (what the board saw as it failed)
@@ -285,7 +287,9 @@ async function cancelled(s) {
 }
 
 // ---- an artifact: a preview in HQ's viewer, review mode running in its frame
+// Returns the board's voice ({ pieces } heard so far: bookvoice.mjs)
 async function previewServed(c, context) {
+  const voice = await voiceServed(c, context);
   await context.route(/\/api\/preview\/link$/, r => r.fulfill({ json: { url: r.request().postDataJSON().url } }));
   await context.route(`${PREVIEW}/**`, r => {
     const path = new URL(r.request().url()).pathname;
@@ -312,11 +316,12 @@ async function previewServed(c, context) {
     if (path.startsWith('/__review/')) return r.fulfill({ json: { show: false } });
     return r.fulfill({ contentType: 'text/html', body: PREVIEW_PAGE });
   });
+  return voice;
 }
-// A mark on the preview: its post-it in the frame, words typed, Save to the preview's notes, the mark gone, and the
-// scrap on the Notebook's newest page, the open book turned to it (shut, opened at it by the tab once the preview's
-// closed)
-async function fromArtifact(s) {
+// A mark on the preview: its post-it in the frame, words said through HQ's microphone (the frame never asking for it)
+// or typed, Save to the preview's notes, the mark gone, and the scrap on the Notebook's newest page, the open book
+// turned to it (shut, opened at it by the tab once the preview's closed)
+async function fromArtifact(s, { spoken }) {
   const { page, screen } = s,
     from = s.posts.length,
     shut = (await bookMode(page)) === 'folded';
@@ -333,11 +338,19 @@ async function fromArtifact(s) {
   await drawn(frame, loop, screen.hand, box);
   const size = { width: Math.round(box.width), height: Math.round(box.height) },
     sheet = await postIt(s, frame, size);
-  await sheet.locator('textarea').fill('Say when it ships');
+  s.voice.pieces = 0;
+  if (spoken) await talked(frame, { pieces: true });
+  else await sheet.locator('textarea').fill('Say when it ships');
   await s.shot(s.named('artifact-postit'), page);
   await sheet.locator('.send').dispatchEvent('click'); // (a tap: no navigation to wait for)
   const sent = await posted(s, from, '/__review/notes', "the artifact's Save goes to its notes");
-  assert.equal(sent.note, 'Say when it ships');
+  assert.deepEqual(
+    { note: sent.note, said: sent.said },
+    spoken ? { note: 'Make this headline shorter', said: 'spoken' } : { note: 'Say when it ships', said: 'typed' },
+    'the words said (or typed) are its words',
+  );
+  if (spoken) assert.ok((await page.evaluate(() => window.micsAsked)) >= 1, 'HQ recorded them');
+  assert.equal(await frame.evaluate(() => window.micsAsked), 0, 'the preview never asked for the microphone');
   assert.ok(sent.element?.ink?.length >= 1, 'with the mark as its ink');
   assert.match(sent.shot ?? '', /^data:image\/(jpeg|png);base64,/, 'and its photo');
   await nothingDrawn(frame, `${screen.name}: the artifact's note saved`, FLIGHT_MS);
@@ -373,19 +386,6 @@ async function posted(s, from, path, what) {
 // ---- for the other stories: a mark on HQ, its post-it saved as the board does (shown, Save tapped), the mark gone
 // from the screen at once (rule zero); the body of the scrap it posted. on: { page, posts }; from: the posts before the
 // mark; what: where, for the asserts
-// The post-it's mic tapped, the words said as they're heard, and tapped again: the mark never started it (the board,
-// call 154). The stand-in voice line's words (book-check.mjs's voiceLine).
-export async function talked(page) {
-  const sheet = page.locator(ui('.sheet')),
-    mic = sheet.locator('.mic'),
-    heard = re => until(async () => re.test(await sheet.locator('textarea').inputValue()), 15_000);
-  await sheet.waitFor({ state: 'visible', timeout: 15_000 });
-  assert.equal(await mic.evaluate(b => b.classList.contains('on')), false, 'the mark started no recording');
-  await mic.click();
-  assert.ok(await heard(/^Make this$/), 'the words come as they’re said, once the mic is tapped');
-  await mic.click();
-  assert.ok(await heard(/shorter$/), 'tapped again, the last words come in');
-}
 export async function savedScrap({ page, posts }, from, what) {
   const sheet = page.locator(ui('.sheet'));
   await sheet.waitFor({ state: 'visible', timeout: 15_000 }); // (its photo first: slow on a loaded worker)

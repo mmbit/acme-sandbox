@@ -23,6 +23,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { KITS_DIR } from './config.ts';
+import * as tokens from './tokens.ts';
 import type { RouteTable } from '../../../shared/routes/routes.ts';
 
 type Route = (req: IncomingMessage, res: ServerResponse, path: string) => unknown;
@@ -77,18 +78,22 @@ export function numbers(r: any) {
   return lines.length ? { ...out, lines } : out;
 }
 
-// the Numbers home with the parts' dashboards, each a tile of its own
+// the Numbers home with the parts' dashboards, each a tile of its own, and the platform's Tokens last (tokens.ts;
 function home(r: any) {
+  const platform = tokens.dashboard(r);
+  return { ...r, dashboards: [...partsDashboards(r, platform.id), platform] };
+}
+function partsDashboards(r: any, taken: string) {
   const dashboards: Dashboard[] = [];
   for (const { name, part } of parts) {
     let made;
     try { made = part.dashboard?.(r); } catch (e) { console.error(`kits/${name}: its dashboard on the Numbers home failed:`, e); }
     for (const d of [made ?? []].flat()) {
-      if (typeof d?.id === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(d.id) && typeof d.name === 'string' && !dashboards.some(x => x.id === d.id)) dashboards.push(d);
+      if (typeof d?.id === 'string' && /^[a-z0-9][a-z0-9-]*$/.test(d.id) && typeof d.name === 'string' && d.id !== taken && !dashboards.some(x => x.id === d.id)) dashboards.push(d);
       else console.error(`kits/${name}: a dashboard needs a new id (lowercase, digits and -) and a name`);
     }
   }
-  return dashboards.length ? { ...r, dashboards } : r;
+  return dashboards;
 }
 for (const { name, part } of parts) if ('home' in part) console.error(`kits/${name}: home() is gone: the Numbers home takes dashboard() (template/kits/README.md)`);
 

@@ -23,6 +23,7 @@
 // It rings from the tap, while the microphone starts, until the line picks up, and the agent's handset clacks then, both
 // in the call's own sound. The agent's little screen is dark while it rings, and switches on at pickup and off at either
 // side's hang-up. On a 320 px phone its three keys share one row, in every look.
+// With an artifact open mid-call on the iPad mini, the agent's face stays drawn on its little screen and in the bubble.
 //   node platform/hq/call-check.mjs <frames.json>          (BROWSER=webkit for Safari's engine)
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -577,6 +578,54 @@ async function switchedOnAndOff() {
 }
 await switchedOnAndOff();
 
+// The agent's face stays on the call's little screen while an artifact is open, on the iPad mini: the call opens one
+// mid-call, and the page's canvases are wiped as iPad Safari does when it's short of memory. Its face is drawn and in
+// view in the big window, in the bubble, and back from the artifact.
+async function faceOverArtifact() {
+  const { context, page, errors } = await callPage({ width: 768, height: 1024 });
+  const site = 'https://game.preview.example.com/';
+  await context.route(`${base}/api/preview/link`, r => r.fulfill({ json: { url: site } }));
+  await context.route(`${site}**`, r => r.fulfill({ contentType: 'text/html', body: '<h1>A game</h1>' }));
+  let line = null;
+  await context.routeWebSocket(/\/voice\/ws$/, ws => ws.onMessage(m => { if (typeof m === 'string' && /"agent"/.test(m)) line = ws; }));
+  // (the face where the board sees it: its opaque pixels, and whether it's the top thing at its middle)
+  const face = where => page.evaluate(async where => {
+    const el = document.querySelector(`${where} > :is(img, canvas, .cb-initial)`);
+    if (!el || !el.width) return null;
+    await el.decode?.();
+    const r = el.getBoundingClientRect(), top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const g = Object.assign(document.createElement('canvas'), { width: el.width, height: el.height }).getContext('2d');
+    g.drawImage(el, 0, 0);
+    const opaque = g.getImageData(0, 0, el.width, el.height).data.filter((v, i) => i % 4 === 3 && v > 0).length;
+    return { opaque, inView: !!top?.closest(where) };
+  }, where);
+  const wipe = () => page.evaluate(() => document.querySelectorAll('canvas').forEach(c => (c.width += 0)));
+  const seen = {};
+  await page.goto(`${base}/?intro=0&open=intercom`);
+  await page.click('#call');
+  while (!line) await page.waitForTimeout(50);
+  line.send(JSON.stringify({ type: 'call', id: 'line', call: 9 }));
+  await page.waitForTimeout(500);
+  await page.evaluate(async site => (await import('/shell/desk.js')).openLink(site), site);
+  await page.waitForSelector('#viewer iframe[src]');
+  await wipe();
+  seen.big = await face('.cf-figure');
+  await page.click('#call-min'); await page.waitForTimeout(500);
+  await wipe();
+  seen.small = await face('.callbubble .cb-face');
+  await page.click('#viewer [data-close]'); await page.waitForTimeout(300);
+  await page.click('.callbubble .cb-face'); await page.waitForSelector('#call-screen', { state: 'visible' }); await page.waitForTimeout(400);
+  seen.back = await face('.cf-figure');
+  await context.close();
+  assert.deepEqual(errors, []);
+  for (const [at, f] of Object.entries(seen)) {
+    assert.ok(f?.opaque > 0, `the agent's face isn't drawn with an artifact open (${at}): ${JSON.stringify(f)}`);
+    assert.ok(f.inView, `the agent's face is out of view with an artifact open (${at})`);
+  }
+  console.log('ok: the agent\'s face stays drawn on the call\'s little screen and in its bubble while an artifact is open on the iPad mini');
+}
+await faceOverArtifact();
+
 // The board's screen is shared only when it says so: minimising the call (its
 // key, before the line picks up too, the backdrop, Escape) starts no watch-along and the bubble shows no eye. The call
 // screen's Show my screen starts one, the bubble's eye shows it, and Stop showing pauses it (Show my screen again).
@@ -878,10 +927,10 @@ await departed();
 // false, the bubble shows no eye and the call screen says the screen isn't reaching the agent (the key still stops it);
 // paused by the board's choice the words go, even as a false lands meanwhile, and shown again it's as last said; once
 // seen, the eye shows and the words go. On a quiet page, with nothing to send, the page still asks (an empty batch) and
-// hears it.
+// hears it. The words name the agent and sit above the transcript, clear of it.
 async function unseenScreen() {
   const { context, page, errors } = await callPage();
-  let line = null, seen = false, posts = 0, hold = null, held = 0, quiet = false, asked = 0;
+  let line = null, agent = null, seen = false, posts = 0, hold = null, held = 0, quiet = false, asked = 0;
   const holding = () => { let release; const promise = new Promise(resolve => (release = resolve)); return { promise, release }; };
   const RECORDER = new URL('../coordinator/node_modules/@rrweb/record/dist/record.js', import.meta.url);
   await context.route(`${base}/shared/watchalong/**`, r => {
@@ -907,19 +956,23 @@ async function unseenScreen() {
     if (typeof m === 'string' && JSON.parse(m).type === 'ping') return ws.send(JSON.stringify({ type: 'pong', late: 0 }));
     if (typeof m !== 'string' || !JSON.parse(m).agent) return;
     line = ws;
+    agent = JSON.parse(m).agent;
     ws.send(JSON.stringify({ type: 'call', id: 'line', call: 9 })); ws.send(JSON.stringify({ type: 'state', state: 'listening' }));
   }));
   const state = () => page.evaluate(() => {
     const eye = document.querySelector('.callbubble .cb-eye'), note = document.querySelector('#call-unshown');
-    return { eye: !!eye && !eye.hidden, note: !note.hidden && note.textContent.trim(), key: document.querySelector('#call-screenshare span').textContent.trim() };
+    const clear = document.querySelector('#call-lines').getBoundingClientRect().top >= note.getBoundingClientRect().bottom;
+    return { eye: !!eye && !eye.hidden, note: !note.hidden && note.textContent.trim(), key: document.querySelector('#call-screenshare span').textContent.trim(), ...(!note.hidden && { clear }) };
   });
   await page.goto(`${base}/?intro=0&open=intercom`);
   await page.click('#call');
   while (!line) await page.waitForTimeout(50);
   await page.waitForTimeout(500);
   await page.click('#call-screenshare');
-  await page.click('#call-min'); // (the bubble, with its eye)
   while (posts < 2) await page.waitForTimeout(100);
+  await page.waitForTimeout(200);
+  const unseenOpen = await state(); // (the call screen open: the words above the transcript)
+  await page.click('#call-min'); // (the bubble, with its eye)
   await page.waitForTimeout(200);
   const unseen = await state();
   // paused while a batch's answer (false) is held, which lands during the pause; shown again before any other answers
@@ -940,13 +993,21 @@ async function unseenScreen() {
   while (posts < after + 2) await page.waitForTimeout(100);
   await page.waitForTimeout(200);
   const reached = await state();
+  // (HQ's world moves on behind the bubble, a new canvas frame every sample: put away, the page has nothing to send)
+  await page.evaluate(() => (document.querySelector('#world').style.display = 'none'));
   quiet = true;
-  for (let tries = 0; !asked && tries < 50; tries++) await page.waitForTimeout(100);
-  await page.waitForTimeout(200);
-  const quietUnseen = await state();
+  // (on the page's own state: under load it acts on the answer seconds after the stand-in sends it)
+  let quietUnseen = await state();
+  for (let tries = 0; (!asked || quietUnseen.eye) && tries < 100; tries++) {
+    await page.waitForTimeout(100);
+    quietUnseen = await state();
+  }
   await context.close();
   assert.deepEqual(errors, []);
-  assert.deepEqual(unseen, { eye: false, note: 'Your screen isn’t reaching Juno right now.', key: 'Stop showing' }, `a share that reaches nobody looked live: ${JSON.stringify(unseen)}`);
+  assert.equal(unseenOpen.clear, true, `the words cover the transcript: ${JSON.stringify(unseenOpen)}`);
+  assert.equal(unseen.eye, false, `a share that reaches nobody looked live: ${JSON.stringify(unseen)}`);
+  assert.ok(String(unseen.note).toLowerCase().includes(agent.toLowerCase()), `a share that reaches nobody didn't say whom it isn't reaching: ${JSON.stringify(unseen)}`);
+  assert.equal(unseen.key, 'Stop showing');
   assert.deepEqual(paused, { eye: false, note: false, key: 'Show my screen' }, `a pause said the screen isn't reaching the agent: ${JSON.stringify(paused)}`);
   assert.deepEqual(resumed, unseen, `shown again, a share that reaches nobody looked live: ${JSON.stringify(resumed)}`);
   assert.deepEqual(reached, { eye: true, note: false, key: 'Stop showing' }, `a share that reaches the agent didn't show as watched: ${JSON.stringify(reached)}`);

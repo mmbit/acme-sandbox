@@ -20,6 +20,7 @@ import * as findings from './findings.ts';
 import * as reviewsources from './reviewsources.ts';
 import * as panel from './panel.ts';
 import * as engineOnly from './engineonly.ts';
+import { runner } from './models.ts';
 import * as decisions from './decisions.ts';
 import * as visualapproval from './visualapproval.ts';
 import * as visual from './visual.ts';
@@ -732,21 +733,27 @@ const ruledSha = (pr: number, round: number) => ((db.prepare("select id, stage, 
 const RETRY_MS = 5 * 60_000;
 type Run = { id: number; agent: string; kind: 'review' | 'consolidate' | 'work'; pr: number; round: number; branch: string; sha: string | null;   // (work.)
   downtime: number; title: string; step: string | null; prompt: string; stage: Stage | null; note: string | null; writes: string | null;
-  for_seat: string | null; cli: string | null; queued_by: string | null; judges: string | null; model: string | null };   // (note; for_seat: a retry stays on its Codex seat; cli: and on its CLI; judges)
+  for_seat: string | null; cli: string | null; queued_by: string | null; judges: string | null; model: string | null; engine: string };   // (note; for_seat: a retry stays on its Codex seat, unless its claim had moved it to its agent's fallback; cli: and on its CLI, the one a security read was made for too; judges)
 const run = (id: number) => db.prepare('select * from jobs where id = ?').get(id) as Run;
 // the run it stands in for gives it the message that run started with (the board's answer, say), if it had one, and
 // with the same words it holds what that run held of a customer's details. It replaces that run (jobs.ts replacements):
 // a failed job's call item goes on with it.
-// A fix follows the PR's current owner. Seat and CLI restrictions belong to the previous agent only.
+// A fix follows the PR's current owner. Seat and CLI restrictions belong to the previous agent only, and not to a work
+// run its claim moved to the agent's fallback (jobs.ts moveToSeat; reviews never fall back): that one is made again on
+// the agent's own model, which the claim moves again while that model's seats are out. A review keeps the CLI it was
+// made with on purpose (a Codex agent's security read: dispatchTriage).
 // (a triage goes to retriage)
 function again(j: Run, delay = RETRY_MS, agent = j.agent) {
-  const sameAgent = agent === j.agent;
+  const own = findAgent(agent);
+  // (only the claim moves a work run off its agent's own runner: hq job sets no CLI)
+  const moved = j.kind === 'work' && !!own && runner(j) !== runner(own);
+  const keeps = agent === j.agent && !moved;
   const reason = reviewrefusals.reason(db, j.id);
   const prompt = j.prompt + (j.kind === 'consolidate' ? visualapproval.reviewStep(j.round, j.stage) : '') + (reason ? `\n\nYour previous answer (job #${j.id}) was refused: ${reason}\n` : '');
   const { id } = j.stage === 'triage' ? retriage(j, prompt.slice(j.prompt.length)) : createJob({ agent, kind: j.kind, pr: j.pr, round: j.round, branch: j.branch, sha: j.sha ?? undefined, insteadOf: j.id, queuedBy: j.queued_by ?? undefined,
     downtime: !!j.downtime, stage: j.stage ?? undefined, step: j.step ?? undefined, title: j.title, prompt, customers: holdsCustomerData(j.id),
-    writes: j.writes ? JSON.parse(j.writes) : undefined, forSeat: sameAgent ? j.for_seat : null, cli: sameAgent ? j.cli ?? undefined : undefined,
-    model: sameAgent ? j.model ?? undefined : undefined, judges: j.judges ? JSON.parse(j.judges) : undefined });   // (judges)
+    writes: j.writes ? JSON.parse(j.writes) : undefined, forSeat: keeps ? j.for_seat : null, cli: keeps ? j.cli ?? undefined : undefined,
+    model: keeps ? j.model ?? undefined : undefined, judges: j.judges ? JSON.parse(j.judges) : undefined });   // (judges)
   reviewinbox.copyTask(j.id, id);
   reviewsources.copy(j.id, id);
   retests.copy(j.id, id);

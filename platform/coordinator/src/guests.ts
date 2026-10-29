@@ -524,7 +524,7 @@ function readdress(g: Guest, address: string) {
 const holders: ((guest: string) => boolean)[] = [];
 export const addHolder = (holds: (guest: string) => boolean) => { holders.push(holds); };
 // What another module gives every guest the board (or a guest it lets) invites, once they're invited at their address,
-// or given one on their card (sketchpeople.ts: a book of their own).
+// such as their permanent ink identity (sketchpeople.ts).
 const welcomes: ((guest: string) => void)[] = [];
 export const addWelcome = (welcome: (guest: string) => void) => { welcomes.push(welcome); };
 // A guest nothing opens for any more: every request they were on withdrawn from or kept past its time, and nothing of
@@ -912,6 +912,8 @@ const day = (ts: string, lang: Lang) => {
 const when = (ts: string, lang: Lang) => pageFormats().moment(Date.parse(ts), lang, { short: true });
 export const SCRIPT = readFileSync(new URL('./guest.js', import.meta.url), 'utf8');
 
+export const passkeyCss = `.passkey-prompt{margin:24px 0;padding:20px 24px;border:1px solid var(--line,#ccc);border-radius:var(--radius,14px);background:var(--card,#fff);font-size:.9rem}.passkey-prompt b{font-size:1rem}.passkey-prompt p{margin:8px 0 14px;color:var(--muted,#666);line-height:1.5}.passkey-prompt>div{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px}.passkey-prompt button{min-height:44px}.passkey-prompt [role=status]{display:block;margin-top:8px}.passkey-prompt[hidden]{display:none!important}`;
+
 // The company's logo atop a guest's page, light and dark, its size the page's style's (logoCss) (a room's page too:
 export function logoHtml() {
   const b = brand(),
@@ -924,7 +926,7 @@ export function logoHtml() {
 export const logoCss = (at: string, l: Look = look()) =>
   `${at} img{height:${l.logoHeight}px;width:auto${l.pixelated ? ';image-rendering:pixelated' : ''}}`;
 function html(res: ServerResponse, status: number, lang: Lang, body: string, pct = 0, headers: Record<string, string> = {}, legend: Legend = []) {
-  const n = names().name, l = look(), css = style(l, pct, legend);
+  const n = names().name, l = look(), css = style(l, pct, legend) + passkeyCss;
   // same-origin, not no-referrer: the link (its token) never goes to another site, and a browser still sends the page's
   // own Origin with its forms (no-referrer makes it "null", which server.ts refuses)
   res.writeHead(status, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store', 'referrer-policy': 'same-origin',
@@ -979,8 +981,18 @@ async function form(req: IncomingMessage) {
 
 const codeHash = (name: string, code: string) => sign(`code:${name.toLowerCase()}:${code}`);
 const passkeyWords = { en: ['Use a passkey', 'Save a passkey'], nl: ['Passkey gebruiken', 'Passkey opslaan'], de: ['Passkey verwenden', 'Passkey speichern'] };
-export const passkeyButton = (name: string, lang: Lang, enroll = true) => enroll && guestkeys.has(name) ? ''
-  : `<p><button type="button" class="soft" data-guest-passkey="${enroll ? 'enroll' : 'login'}">${passkeyWords[lang][enroll ? 1 : 0]}</button></p>`;
+const passkeyPrompt = {
+  en: ['An easier way back', 'Save a passkey to open your invitation without an email code.', 'Not now'],
+  nl: ['Makkelijk terugkomen', 'Sla een passkey op om je uitnodiging zonder e-mailcode te openen.', 'Niet nu'],
+  de: ['Einfach wiederkommen', 'Speichere einen Passkey, um deine Einladung ohne E-Mail-Code zu öffnen.', 'Nicht jetzt'],
+};
+export const passkeyButton = (name: string, lang: Lang, enroll = true) => {
+  if (enroll && guestkeys.has(name)) return '';
+  const button = `<button type="button" class="soft" data-guest-passkey="${enroll ? 'enroll' : 'login'}">${passkeyWords[lang][enroll ? 1 : 0]}</button>`;
+  if (!enroll) return `<p>${button}</p>`;
+  const [title, text, dismiss] = passkeyPrompt[lang];
+  return `<aside class="passkey-prompt" data-guest-passkey-prompt aria-label="${title}"><b>${title}</b><p>${text}</p><div>${button}<button type="button" class="link" data-guest-passkey-dismiss>${dismiss}</button></div><span role="status"></span></aside>`;
+};
 function verifyPage(res: ServerResponse, url: string, g: Guest, o: { code?: boolean; error?: string; test?: { subject: string; text: string } } = {}, status = 200) {
   const lang = langOf(g), t = COPY[lang], who = `<b>${esc(masked(g.email!))}</b>`;
   html(res, status, lang, `<div class="card"><h1>${o.code ? t.codeTitle : t.verifyTitle}</h1>
@@ -1150,6 +1162,7 @@ export type Room = {
   path: string;
   opens: (guest: string) => boolean;
   label: (lang: Lang) => string;
+  link?: (guest: string, door: string) => string | null;
   serve: (req: IncomingMessage, res: ServerResponse, guest: string, rest: string) => unknown;
 };
 const rooms: Room[] = [];
@@ -1207,8 +1220,8 @@ function doorPage(req: IncomingMessage, res: ServerResponse, url: string, d: Doo
   // (and a button to each room the guest has, roomsFor)
   const aside = w.aside ? `<div class="aside"><b>${esc(w.aside.title)}</b><ul>${w.aside.lines.map(l => `<li>${esc(l)}</li>`).join('')}</ul></div>` : '';
   html(res, status, lang, `<div class="card"><h1>${esc(w.title)}</h1>${error ? `<p class="alert" role="alert">${esc(error)}</p>` : ''}
-${passkeyButton(g.name, lang)}<div class="intro">${esc(w.text)}</div>${steps}${aside}${w.small ? `<p class="meta small">${esc(w.small)}</p>` : ''}
-<p class="acts"><a class="button" href="${url}/go">${esc(w.button)}</a>${talk ? `<a class="button" href="${url}/talk">${esc(talk.button)}</a>` : ''}${roomsFor(g).map(r => `<a class="button soft" href="/guest/${r.path}/">${esc(r.label(lang))}</a>`).join('')}</p></div>
+<div class="intro">${esc(w.text)}</div>${steps}${aside}${w.small ? `<p class="meta small">${esc(w.small)}</p>` : ''}
+<p class="acts"><a class="button" href="${url}/go">${esc(w.button)}</a>${talk ? `<a class="button" href="${url}/talk">${esc(talk.button)}</a>` : ''}${roomsFor(g).map(r => `<a class="button soft" href="${r.link?.(g.name, sha256(url.slice('/guest/'.length))) ?? `/guest/${r.path}/`}">${esc(r.label(lang))}</a>`).join('')}</p></div>${passkeyButton(g.name, lang)}
 <p class="note">${esc(COPY[lang].footer(names().name))}</p>`);
 }
 

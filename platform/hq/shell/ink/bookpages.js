@@ -1,31 +1,29 @@
 // The pages inside the book: one page fills the book's paper, endless (its paper and dots drawn wherever it's panned or
-// zoomed, bookview.js), its heading written at its top-left; a notebook's pages one after another in its order (My
+// zoomed, bookview.js), its title in the bottom bar; a notebook's pages one after another in its order (My
 // Notebook's when the book opens), changed from the pages control or the overview with a turn of the leaf
 // (bookflip.js), never by panning past an edge; the pen writing, the page growing to hold what's on it, and the place
 // it was left, per screen shape. A page's content is its groups (knowledge/notes/platform/notebook.md): what's drawn
 // goes into them as it's saved (booksave.js), each shows its paperclip and its answers (bookgroups.js), and a page is
 // sent whole (bookpagesend.js). Every screen showing a page reads it again when the store says it changed (book:notebook,
-// events.js). (a notebook's pages, its groups)
-//
-// Moving about the page is bookpan.js; the overview bookzoom.js; the controls bookcontrols.js; one page's ink
+// events.js). Moving about the page is bookpan.js; the overview bookzoom.js; the controls bookcontrols.js; one page's ink
 // bookpage.js; writing bookwrite.js; the maths bookrow.js; saving booksave.js; the store's routes notebookdata.js; the
 // mouse's tools booktools.js, asked in this order on a press on the paper: a pan (bookpan.js), then book.tools.press(e), then ink.
 import { pen } from '/__review/ink.js';
 import { store } from '../../util.js';
+import { word } from './bookscope.js';
 import { createPage, loadPages, loadShelf } from './notebookdata.js';
 import { changed, readAgain, readPage, said, saveAll, shut } from './booksave.js';
 import { pageView } from './bookpage.js';
 import { panning } from './bookpan.js';
 import { mountFar } from './bookpagesfar.js';
-import { headOf } from './bookhead.js';
 import { mountTape } from './booktape.js';
 import { mountGroups } from './bookgroups.js';
-import { mountDogEar } from './bookdogear.js';
 import { sendShown, stamped } from './bookpagesend.js';
 import { mountControls } from './bookcontrols.js';
 import { turn } from './bookflip.js';
 import { actualSize, at, away, draw, halt, setView, shown, slideTo, viewOf, zoomBy } from './bookview.js';
 import { placeIn, scrapBoxOf, grownTo, showsBox } from './bookrow.js';
+import { recordOf, summaryOf } from './bookrecords.js';
 import { stepList, undo, redo } from './bookedit.js';
 import { INK, drawable, dried, endLostLines } from './bookwrite.js';
 
@@ -35,9 +33,9 @@ const HTML = `<div class="bk-pages">
 
 // paper: the book's paper, empty. dev: on mock data. shape(): the screen's shape ('landscape' | 'portrait' | 'narrow'
 // | 'wide'), for the place remembered. undo() takes back the book's last step; page() is the page shown (its summary).
-export function mountPages(paper, { dev, shape }) {
+export function mountPages(paper, { dev, shape, scope = null, calls = null }) {
   paper.innerHTML = HTML;
-  const book = bookOf(paper, { dev, shape });
+  const book = bookOf(paper, { dev, shape, scope, calls });
   book.steps = stepList(book);
   // (what the mouse's tools and the pages' parts ask of the page: booktools.js, booktape.js)
   Object.assign(book, {
@@ -61,7 +59,7 @@ export function mountPages(paper, { dev, shape }) {
   endLostLines(book);
   mountTape(book, paper, { lay, inView, current }); // (pictures taped in.)
   book.groups = mountGroups(book, groupHooks(book));
-  mountDogEar(book); // (a page shared by its corner)
+  if (!scope) import('./bookdogear.js').then(m => m.mountDogEar(book)); // (a page shared by its corner)
   book.zoom = mountFar(book, paper, { goTo, openNotebook }); // (the overview.)
   book.controls = mountControls(book, controlsOf(book));
   // (the mouse's tools, once they're there: booktools.js)
@@ -73,18 +71,22 @@ export function mountPages(paper, { dev, shape }) {
   // (back in front, or a note written the old way here, which the store carries onto the current page: the pages again)
   document.addEventListener('visibilitychange', () => (document.hidden ? saveAll(book) : pagesAgain(book)));
   document.addEventListener('pencil:note', () => pagesAgain(book));
-  const place = store.get(placeKey(book), null);
-  openNotebook(book, place?.notebook, place);
-  return {
-    undo: book.undo,
-    redo: () => stepped(book, redo),
-    page: () => shownPage(book),
-    show: id => show(book, id),
-    find: at => find(book, at),
-    made: id => made(book, id),
-    away: on => away(book, on),
-  };
+  const place = store.get(placeKey(book), null) ?? (scope ? { notebook: scope.notebook, page: scope.page } : null);
+  book.opened = openNotebook(book, place?.notebook, place);
+  return asked(book);
 }
+// What the book asks of its pages (book.js, booknewest.js)
+const asked = book => ({
+  undo: book.undo,
+  redo: () => stepped(book, redo),
+  page: () => shownPage(book),
+  show: id => show(book, id),
+  find: at => find(book, at),
+  made: id => made(book, id),
+  dev: book.dev,
+  opened: book.opened, // (the notebook remembered, open)
+  away: on => away(book, on),
+});
 // A page made outside the book (a call's, a scrap's on a fresh current page): the notebook's pages read again and that
 // page turned to, once however many tell of it
 function made(book, id) {
@@ -106,7 +108,9 @@ function storeChanged(book, id) {
 }
 
 // The book's state as it opens on the paper
-const bookOf = (paper, { dev, shape }) => ({
+const bookOf = (paper, { dev, shape, scope, calls }) => ({
+  scope,
+  calls,
   dev,
   shape,
   paper,
@@ -137,9 +141,11 @@ async function openNotebook(book, id = null, place = null) {
   saveAll(book);
   let read;
   try {
-    const asked = id ?? (await loadShelf(book.dev)).shelf[0]?.id;
+    const asked = book.scope?.notebook ?? id ?? (await loadShelf(book.dev)).shelf[0]?.id;
     read = await loadPages(book.dev, asked).catch(e =>
-      e.status === 404 && id ? loadShelf(book.dev).then(s => loadPages(book.dev, s.shelf[0].id)) : Promise.reject(e),
+      e.status === 404 && id && !book.scope
+        ? loadShelf(book.dev).then(s => loadPages(book.dev, s.shelf[0].id))
+        : Promise.reject(e),
     );
     // (a notebook with no page open: its new one, the current page)
     if (!read.pages.length) {
@@ -147,7 +153,7 @@ async function openNotebook(book, id = null, place = null) {
       read = await loadPages(book.dev, read.notebook.id);
     }
   } catch (e) {
-    book.lost.textContent = `${e.message} Tap to try again.`;
+    book.lost.textContent = word('{error} Tap to try again.', { error: e.message });
     book.lost.onclick = () => openNotebook(book, id, place);
     return void (book.lost.hidden = false);
   }
@@ -189,23 +195,15 @@ async function pagesAgain(book) {
   book.controls?.update();
   book.zoom.again();
 }
-// The newest page neither sent nor archived: where new things land (the current page)
-const newest = book =>
-  book.views
-    .map(v => v.page)
-    .filter(p => !shut(p))
-    .sort((a, b) => b.created.localeCompare(a.created))[0]?.id ?? book.views.at(-1)?.page.id;
+// The newest page neither sent, archived nor a try's versions page: where new things land (notebook.ts currentPage)
+const newest = book => newestOf(book.views.map(v => v.page));
+// (of a notebook's pages as the store lists them: booknewest.js)
+export const newestOf = pages =>
+  pages.filter(p => !shut(p) && !p.tries && !p.tries_note).sort((a, b) => b.created.localeCompare(a.created))[0]?.id ??
+  pages.at(-1)?.id;
 // A page as the book keeps it while it shows: its summary, and its groups' ink, pictures and typed words once read
-const recordOf = p => ({ ...summaryOf(p), ink: null, scraps: [], texts: [], groups: null, gone: new Map(), error: '' });
-// (what the store says of a page: its day the one it was made on, its title its label; its groups' count left out, as
-// a page read keeps its groups there)
-const summaryOf = ({ groups: _count, ...p }) => ({ ...p, label: p.title ?? '', day: localDay(p.created) });
-const localDay = at => {
-  const d = new Date(at);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-};
 function viewFor(book, page) {
-  const v = pageView(page, headOf(page, localDay(new Date())), book.away);
+  const v = pageView(page, book.away);
   v.el.hidden = true;
   book.world.append(v.el);
   v.place();
@@ -312,7 +310,7 @@ function resized(book) {
   lay(book);
   goTo(book, place);
 }
-const placeKey = book => `book.place.${book.shape()}`;
+const placeKey = book => `book.place.${book.scope ? `guest.${book.scope.notebook}.` : ''}${book.shape()}`;
 function remember(book) {
   const v = viewOf(book);
   if (!v) return;
@@ -334,7 +332,6 @@ function shownPage(book) {
   return { id, notebook, day, kind, label, w, h };
 }
 // Undo or Redo (bookedit.js): what's being typed kept and a selection let go first, so the step meets the page as it is
-// (redo job #19243)
 function stepped(book, act) {
   book.tools?.settle();
   return act(book);

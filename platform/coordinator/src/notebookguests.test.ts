@@ -3,10 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { tmpdir } from 'node:os';
 import sharp from 'sharp';
+import { mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { harness } from './harness.ts';
 
 const h = await harness('notebookguests', { env: { CADDY_HOST: '127.0.0.1' } });
-const { ORIGIN } = await import('./config.ts');
+const { ORIGIN, PREVIEW } = await import('./config.ts');
 const rounds = await import('./notebookrounds.ts');
 const guestbooks = await import('./notebookguests.ts');
 const sheets = await import('./ink/booksheets.ts');
@@ -54,7 +56,33 @@ async function signIn(link: string) {
   };
 }
 
+let reviewCount = 0;
 const create = async (kind: string, names: string[], days = 7) => {
+  if (kind === 'round' && days < 1) {
+    return (
+      guestbooks.createNotebook({
+        kind,
+        days,
+        name: 'Expiring review',
+        people: names.map(name => ({ name, email: `${name.toLowerCase()}@example.org` })),
+      }) as any
+    ).notebook;
+  }
+  if (kind === 'round') {
+    const folder = `round-${++reviewCount}`;
+    mkdirSync(join(h.repo, 'products/_cycles', folder), { recursive: true });
+    let share;
+    for (const name of names) {
+      const created = await h.board('/api/review/shares', {
+        ...(share ? { id: share.id } : { page: `https://cycles${PREVIEW}/${folder}/`, days: Math.max(1, days) }),
+        name,
+        email: `${name.toLowerCase()}@example.org`,
+      });
+      assert.equal(created.status, 200, JSON.stringify(created.body));
+      share = created.body;
+    }
+    return (await h.board('/api/notebooks/guests/list')).body.notebooks.at(-1);
+  }
   const created = await h.board('/api/notebooks/guests', {
     kind,
     days,
@@ -65,6 +93,32 @@ const create = async (kind: string, names: string[], days = 7) => {
   return created.body.notebook;
 };
 const note = (page: number, text: string) => ({ page, texts: [{ x: 40, y: 40, w: 500, text, color: '#292722' }] });
+
+test('the guest invite makes one permanent named notebook and resolves a known person without an email', async () => {
+  const guests = await import('./guests.ts');
+  guests.invite('Nora', 'nora@example.org');
+  const before = (await h.board('/api/notebooks')).body.shelf.length;
+  const made = await h.board('/api/notebooks/guests', { people: [{ name: 'Nora' }], days: 1, colleagues: true });
+  assert.equal(made.status, 200);
+  const book = made.body.notebook;
+  assert.equal(book.name, 'Nora');
+  assert.ok((await h.board('/api/review/people')).body.some((person: any) => person.name === 'Nora'));
+  assert.equal(book.kind, 'invited');
+  assert.equal(book.ends, null);
+  assert.equal(book.colleagues, false);
+  assert.equal(book.people.length, 1);
+  assert.equal((await h.board('/api/notebooks')).body.shelf.length, before + 1);
+  const guest = await signIn(book.people[0].link);
+  assert.equal((await guest(`${api}/list`)).status, 200);
+  assert.equal(
+    (await h.board('/api/notebooks/guests', { kind: 'round', name: 'Wrong door', people: [{ name: 'Nora' }] })).status,
+    400,
+  );
+  assert.equal((await h.board('/api/notebooks/guests', { people: [{ name: 'Unknown' }] })).status, 400);
+  assert.equal((await h.board('/api/notebooks/guests', { people: [{ name: 'Nora' }, { name: 'Ada' }] })).status, 400);
+  await h.board('/api/notebooks/guests/revoke', { notebook: book.id });
+  assert.equal((await guest(`${api}/list`)).status, 403);
+});
 
 test('the notebook door and room use the signed-in guest language', async () => {
   const guests = await import('./guests.ts');
@@ -120,12 +174,14 @@ test('notebook room refusals identify their reason for every guest language', as
       sections: [{ items: [{ kind: 'info', title: 'Welcome' }] }],
     });
     assert.ok(!Array.isArray(written));
-    const created = await h.board('/api/notebooks/guests', {
-      kind: 'round',
-      name: 'Colleague review',
-      colleagues: true,
-      people: [{ name, email: `${name.toLowerCase()}@studio.example` }],
-    });
+    const created = {
+      body: guestbooks.createNotebook({
+        kind: 'round',
+        name: 'Colleague review',
+        colleagues: true,
+        people: [{ name, email: `${name.toLowerCase()}@studio.example` }],
+      }) as any,
+    };
     const book = created.body.notebook;
     const guest = await signIn(book.people[0].link);
     const page = book.pages[0].id;
@@ -186,6 +242,49 @@ test('notebook room refusals identify their reason for every guest language', as
   await h.finish(job);
 });
 
+test('Reviews makes one round on the shelf, while view-only shares make none and removal closes notebook access', async () => {
+  const round = await create('round', ['Oona', 'Petra']);
+  const shelf = (await h.board('/api/notebooks')).body.shelf;
+  assert.equal(shelf.filter((book: any) => book.id === round.id).length, 1);
+  assert.equal(round.people.length, 2);
+  const shares = (await h.board('/api/review/shares')).body;
+  const share = shares.find((item: any) => item.people.some((person: any) => person.name === 'Oona'));
+  const guest = await signIn(round.people[0].link);
+  assert.equal((await h.board('/api/review/shares/remove', { id: share.id, name: 'Oona' })).status, 200);
+  assert.equal((await guest(`${api}/groups?page=${round.people[0].page}`)).status, 403);
+  await h.board('/api/review/shares/remove', { id: share.id, name: 'Petra' });
+  assert.equal(
+    (await h.board('/api/review/shares', { id: share.id, name: 'Oona', email: 'oona@corrected.example' })).status,
+    200,
+  );
+  const corrected = (await h.board(`/api/notebooks/guests/list?notebook=${round.id}`)).body.notebooks[0];
+  assert.equal(corrected.state, 'open');
+  assert.equal(corrected.archived, false);
+  const returning = await signIn(corrected.people.find((person: any) => person.name === 'Oona').link);
+  assert.equal((await returning(`${api}/create`, note(round.people[0].page, 'A new review note'))).status, 200);
+  await h.board('/api/review/shares/remove', { id: share.id, name: 'Oona' });
+  assert.equal(
+    (await h.board('/api/review/shares', { id: share.id, name: 'Oona', email: 'oona@other.example' })).status,
+    409,
+  );
+  const before = (await h.board('/api/notebooks/guests/list')).body.notebooks.length;
+  assert.equal(
+    (
+      await h.board('/api/review/shares', {
+        page: `https://${share.host}${share.prefix}`,
+        view: true,
+        days: 3,
+        name: 'Rosa',
+        email: 'rosa@example.org',
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await h.board('/api/notebooks/guests/list')).body.notebooks.length, before);
+  assert.equal((await h.board('/api/review/shares/end', { id: share.id })).status, 200);
+  assert.ok((await h.board('/api/notebooks')).body.archive.some((book: any) => book.id === round.id));
+});
+
 test('two guest pages stay private, reopen during a round, close with undo and queue one deck', async () => {
   const round = await create('round', ['Ada', 'Bela']);
   assert.equal(round.pages.length, 2);
@@ -201,7 +300,7 @@ test('two guest pages stay private, reopen during a round, close with undo and q
   assert.equal((await ada(`${api}/create`, note(second, 'Not mine'))).status, 404);
   assert.equal((await ada(`${api}/picture?id=${second}`)).status, 404);
   assert.equal((await fetch(h.base + `${api}/list`)).status, 401);
-  assert.equal((await ada('/guest/notebooks/notebookpen.js')).status, 200);
+  assert.equal((await ada('/guest/notebooks/shell/ink/bookwrite.js')).status, 200);
   assert.equal((await ada('/__review/ink.js')).status, 200);
   const drawn = await ada(`${api}/create`, note(first, 'Make this clear'));
   assert.equal(drawn.status, 200);
@@ -304,12 +403,14 @@ test('a permanent invite sends pages and reads answers while the board watches, 
 });
 
 test('colleague invitations require the board switch and company domain, and stop at three', async () => {
-  const created = await h.board('/api/notebooks/guests', {
-    kind: 'round',
-    name: 'Company review',
-    colleagues: true,
-    people: [{ name: 'Dina', email: 'dina@studio.example' }],
-  });
+  const created = {
+    body: guestbooks.createNotebook({
+      kind: 'round',
+      name: 'Company review',
+      colleagues: true,
+      people: [{ name: 'Dina', email: 'dina@studio.example' }],
+    }) as any,
+  };
   const book = created.body.notebook;
   const dina = await signIn(book.people[0].link);
   assert.deepEqual((await dina(`${api}/list`)).body.notebooks.at(-1).invites, { domain: 'studio.example', left: 3 });
@@ -363,7 +464,7 @@ for (const [state, name] of [
   ['expired', 'Petra'],
   ['closed', 'Rina'],
 ]) {
-  test(`the Sketchbook room excludes guest notebook pages while ${state}`, async context => {
+  test(`the retired Sketchbook cannot reach notebook pages while ${state}`, async context => {
     const kind = state === 'open' || state === 'revoked' ? 'invited' : 'round';
     const notebook = await create(kind, [name], 1 / 24);
     const guest = await signIn(notebook.people[0].link);
@@ -384,8 +485,7 @@ for (const [state, name] of [
     );
     assert.equal(uploaded.status, 200);
     assert.equal((await guest(`${api}/picture?id=${page}`)).status, 200);
-    const sketch = await guest('/guest/sketchbook/api/create', { w: 800, h: 600 });
-    assert.equal(sketch.status, 200);
+    assert.ok((await guest('/guest/sketchbook/api/create', { w: 800, h: 600 })).status >= 400);
     if (kind === 'invited') assert.equal((await guest(`${api}/pages/create`, { notebook: notebook.id })).status, 200);
     if (state === 'revoked') await h.board('/api/notebooks/guests/revoke', { notebook: notebook.id });
     if (state === 'expired') {
@@ -399,21 +499,9 @@ for (const [state, name] of [
       assert.ok(rounds.roundOf(notebook.id)!.closed);
     }
     await assertOutsideSketchbook(guest, page, uploaded.json.file, png);
-    assert.deepEqual(
-      (await guest('/guest/sketchbook/api/list')).body.sketches.map((p: any) => p.id),
-      [sketch.body.id],
-    );
+    assert.ok((await guest('/guest/sketchbook/api/list')).status >= 400);
     const shelf = (await h.board('/api/sketches')).body.guests.find((g: any) => g.name === name);
-    assert.deepEqual(
-      shelf.sketches.map((p: any) => p.id),
-      [sketch.body.id],
-    );
-    const ordinary = sketch.body.id;
-    assert.equal((await guest('/guest/sketchbook/api/save', { id: ordinary, ink: [stroke], scraps: [] })).status, 200);
-    assert.equal((await guest(`/guest/sketchbook/api/ink?id=${ordinary}`)).body.ink.length, 1);
-    const scrap = await guest(`/guest/sketchbook/api/scrap?id=${ordinary}`, png, 'image/png');
-    assert.equal(scrap.status, 200);
-    assert.equal((await guest(`/guest/sketchbook/api/scrap?id=${ordinary}&file=${scrap.body.file}`)).status, 200);
+    assert.deepEqual(shelf.sketches, []);
   });
 }
 
@@ -427,10 +515,10 @@ async function assertOutsideSketchbook(
   const before = h.db.prepare('select * from book_pages where id = ?').get(page);
   const { scrapFiles } = await import('./pagescraps.ts');
   const files = scrapFiles(page);
-  assert.ok(!(await guest(`${base}/list`)).body.sketches.some((p: any) => p.id === page));
+  assert.ok((await guest(`${base}/list`)).status >= 400);
   for (const path of [`ink?id=${page}`, `picture?id=${page}`, `scrap?id=${page}&file=${file}`])
-    assert.equal((await guest(`${base}/${path}`)).status, 404, path);
-  assert.equal((await guest(`${base}/scrap?id=${page}`, png, 'image/png')).status, 404);
+    assert.ok((await guest(`${base}/${path}`)).status >= 400, path);
+  assert.ok((await guest(`${base}/scrap?id=${page}`, png, 'image/png')).status >= 400);
   for (const [action, fields] of Object.entries({
     save: { ink: [stroke], scraps: [] },
     label: { label: 'Rewrite this' },
@@ -438,7 +526,7 @@ async function assertOutsideSketchbook(
     send: {},
     delete: {},
   }))
-    assert.equal((await guest(`${base}/${action}`, { id: page, ...fields })).status, 404, action);
+    assert.ok((await guest(`${base}/${action}`, { id: page, ...fields })).status >= 400, action);
   assert.deepEqual(h.db.prepare('select * from book_pages where id = ?').get(page), before);
   assert.deepEqual(scrapFiles(page), files);
 }

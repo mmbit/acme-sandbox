@@ -108,7 +108,8 @@ export type SeatNow = {
   weekResets: number | null;
   // the share of a window it stops at
   stop: number;
-  // runs on credits past its limits in the worker (worker/src/downtime.ts). The play does not use this flag.
+  // may run on credits past its stop level and limits (worker/src/seatlist.ts spendCredits): the play keeps it available
+  // there (playseats.ts). Not that it runs on them now: its windows say that.
   credits?: boolean;
 };
 export type Size = { agent_ms: number };

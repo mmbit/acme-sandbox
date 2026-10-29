@@ -7,11 +7,11 @@ is its browser side in HQ. The coordinator's side is `platform/coordinator/src/i
 mode's (`shared/review/`), and the ink's one outline is `shared/review/ink.js`.
 
 The Sketchbook is one part of Ink, and the only name the board sees. In code it is the book (`book*`): the paper on
-the right of HQ's screen, its rail, pages, tools, sheets and Search. The pages also have a shelf of their own, HQ's
-Sketchbook app and an invited person's on the guest desk (`sketch*`).
+the right of HQ's screen, its rail, pages, tools, sheets and Search. The pages also have a shelf of their own in HQ's
+Sketchbook app (`sketch*`). Invited people use the same Notebook shell with scoped pages.
 
 - `book.js` opens the book beside HQ's page. `bookpages.js`, `bookpage.js` and `booksave.js` draw and keep its pages,
-  `bookgroups.js` a page's groups with their paperclips and the answers under them, `bookpagesend.js` a page's Send,
+  `bookgroups.js` a page's groups, a paperclip on each of two or more things, and the answers under them, `bookpagesend.js` a page's Send,
   `bookrail.js` Undo and Redo, `bookshelf*.js` the overview and the Shelf, `booksearch*.js` Search. `notebook*.js` read
   and write the Notebook's routes (`notebookdata.js`), and play them in dev mode and book-check (`notebookplay*.js`).
   (the Notebook's groups and the sheets gone)
@@ -20,9 +20,8 @@ Sketchbook app and an invited person's on the guest desk (`sketch*`).
   the strip the board writes its reply on, and a note's versions. `bookshelfopen.js` lists the open forms and questions
   in the overview.
 - On a versions page the board's pen writes anywhere on the frames (a finger only on a version): once it rests, what it
-  wrote goes as a reply on the version it's on (`bookanswerpace.js` `frameUnder`: where, never what shape), and a pick
-  gets its stamp.
-- `sketch*.js` hold the Sketchbook app's shelf and pages (`sketchbook.js` in HQ, `sketchguest.js` on the guest desk).
+  wrote goes as a reply on the version it's on (`bookversionframes.js` `frameUnder`: where, never what shape), and a pick gets its stamp.
+- `sketch*.js` hold HQ's Sketchbook app's shelf and pages (`sketchbook.js`).
 - `calldraw.js` is the Pencil on a call, with the call's agent on the same page, and the call's notes page opened as
   it's picked up.
 - `pair.js` shows a one-time sign-in code for another device. Notebook content syncs through its model.
@@ -35,7 +34,6 @@ and slides it into view clear of the controls; `bookgroupbox.js` says where the 
 pull tab's tap opens the book at it.
 
 The book's routes keep their addresses (`/api/book/…`, `/api/sketches/…`): they are the Sketchbook's.
-
 
 ## Guest notebooks
 

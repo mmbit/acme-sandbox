@@ -109,12 +109,14 @@ import * as booksheets from './ink/booksheets.ts';   // and its sheets going out
 import * as bookreads from './ink/bookreads.ts';   // and the agents' and calls' reads of its pages
 import * as bookslips from './ink/bookslips.ts';   // and the answers clipped onto its notes
 import * as bookcalls from './ink/bookcalls.ts';   // and calls' pages
+import { spotsOnStart } from './ink/answerplace.ts';
 import * as booksearch from './ink/booksearch.ts';   // and its Search.
 import './ink/bookreview.ts';   // and review mode's notes on previews, the ones that waited moved in at start
 import * as booktyped from './ink/booktyped.ts';   // and a question typed on its page, answered under it
 import * as sketchbook from './ink/sketchbook.ts';   // and the Sketchbook, its free pages
 import * as notebookguests from './notebookguests.ts';
 import * as notebookguestroom from './notebookguestroom.ts';
+import { syncOpenReviews } from './notebookreviews.ts';
 import * as notebook from './notebook.ts';   // the Notebook: notebooks and their pages
 import * as notebookgroups from './notebookgroups.ts';   // and the groups on its pages
 import { createScrap } from './notebookscraps.ts';   // a scrap stacked on one
@@ -472,7 +474,7 @@ const api: Record<string, BoardRoute> = {
   // rows, for their size.).
   'GET /api/notebooks/guests': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
   'GET /api/notebooks/guests/list': (q, s, b) => notebookguests.listNotebooks(undefined, Number(b.notebook) || undefined),
-  'POST /api/notebooks/guests': (q, s, b) => refusal(notebookguests.createNotebook(b)),
+  'POST /api/notebooks/guests': (q, s, b) => refusal(notebookguests.createInvitedNotebook(b)),
   'POST /api/notebooks/guests/revoke': (q, s, b) => refusal(notebookguests.revokeNotebook(b)),
   'GET /api/notebooks/guests/pages': (q, s, b) => refusal(notebookguests.listPages(b)),
   'GET /api/notebooks/guests/groups': (q, s, b) => refusal(notebookguestroom.listBoardGroups(b)),
@@ -793,7 +795,18 @@ function jobPlacement(b: any, me: Me, origin: Exclude<ReturnType<typeof jobOrigi
   // hq job --only: work only one engine does, by its rule's id (engineonly.ts).
   if (b.only != null && !engineOnly.byId(b.only))
     return new Refused(400, `--only names a rule of company/org.yaml engineOnly: ${engineOnly.rules().map(rule => rule.id).join(', ') || 'it has none'}`);
-  return { thread, window, byCall: itemDue !== undefined, target, timed, untimed, source, fix, named, release };
+  const lighter = lighterModel(b, origin.hire);
+  if (lighter instanceof Refused) return lighter;
+  return { thread, window, byCall: itemDue !== undefined, target, timed, untimed, source, fix, named, release, lighter };
+}
+// hq job --model: a small, fully specified job on a lighter model, its queuer's judgment from its scope (models.ts
+// lighterChoice). Work only one engine does runs on its rule's model, and a colleague being hired on their own.
+function lighterModel(b: any, hire: boolean) {
+  if (b.model == null) return undefined;
+  if (b.only != null) return new Refused(400, '--only runs the work on its rule\'s engine and model: queue it without --model');
+  if (hire) return new Refused(409, `${b.agent} is being hired: their work runs on their own model, so queue it without --model`);
+  const choice = models.lighterChoice(String(b.agent), String(b.model));
+  return typeof choice === 'string' ? new Refused(400, choice) : choice;
 }
 
 // A plan change (redraws.ts writePlan) that a Refused thrown in it rolls back whole, answered with that refusal.
@@ -992,12 +1005,13 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const held = notes && holds.placeRefusal({ thread: placement.target, after: Number(b.after) || null, card: origin.card ?? null });
     if (held) throw new Refused(409, held);
     const { title, brief, hire, from, failedJobId, landingSource, landingBrief, card, when } = origin;
-    const { thread, window, byCall, target, timed, untimed, source, fix, named, release } = placement;
+    const { thread, window, byCall, target, timed, untimed, source, fix, named, release, lighter } = placement;
     const earlier = moves.before();
     const job = jobs.createJob({ agent: String(b.agent), title, ...thread, check: b.check === true, only: b.only ?? undefined,
       prompt: `${brief || title}${notes ? `\n\n${notes.text}` : ''}${fix ? `\n\n${reviewinbox.instructions(fix)}` : ''}${from?.words ? `\n\n${from.words}` : ''}${landingBrief}\n\n(Assigned by ${me.agent}${me.call ? ', on a call with the board' : ''}.)`,  // (notes)
       after: Number(b.after) || undefined, queuedBy: me.agent, size, engine: hire ? hiring.HIRING : undefined,
       downtime: b.downtime === true, call: from?.call, item: from?.item, insteadOf: failedJobId, code: named?.code, expedite: b.expedite === true,
+      ...(lighter && { model: lighter.id, light: true }),   // (hq job --model)
       ...(fix && { branch: fix.branch, round: fix.round, stage: fix.stage, insteadOf: fix.replaces }) });
     if (fix) reviewinbox.recordTask(job.id, fix);
     notes?.take(job.id);
@@ -1021,7 +1035,7 @@ const agentApi: Record<string, (b: any, me: Me) => unknown> = {
     const promised = given && windows.set(windowOn, given, byCall ? ledger.callAgent(from!.call) : me.agent);
     const kept = windowOn && !promised ? { deadline: new Date(windowOn.deadline!).toISOString() } : {};
     const ask = untimed ? askedForTime(me, { id: job.id, agent: String(b.agent), title }, untimed, from) : source ? servesOther(job.id) : {};
-    const due = { ...promised && { deadline: promised.deadline }, ...kept, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier) };
+    const due = { ...promised && { deadline: promised.deadline }, ...kept, ...ask, ...untilEnd.length && { untilCall: me.callId }, ...shownThread(job.id), ...followOn, ...pauses.heldBy(job.id), ...moves.since(earlier), ...lighter && { lighter: lighter.name } };
     return b.item != null ? { ...job, ...due, ...ledger.handedOut(from!.item, job.id, me.call ? null : me.id) } : { ...job, ...due };
   }),
   // hq thread list, and hq project say: a project's threads and its owner's sentence (projects.ts), as the speaker (a
@@ -2091,6 +2105,7 @@ server.on('upgrade', (req, socket, head) => {
 if (import.meta.main) server.listen(PORT, () => {  // tests import app without starting the server
   jobs.liftPlainKeyCards();
   feedback.markOutsideJobs();
+  syncOpenReviews();
   companyOnce(); // the company's own one-offs (company/migrations.sql), before the schedule can queue any work
   // and one that reaches the checkout later runs within a minute, not at the next restart.
   // A one-off that fails (it needs a deploy's new code) is rolled back and tried again at the next minute.
@@ -2106,6 +2121,7 @@ if (import.meta.main) server.listen(PORT, () => {  // tests import app without s
   ledger.startSweep(); // calls whose follow-up failed get another (3 at most), then an alert
   watchalong.startSweep(); // recordings past their days
   bookcalls.startSweep(); // call pages nobody wrote on, once their walk-through ended or call is gone
+  spotsOnStart(); // answers' spots kept from before the controls grew, placed again for them
   watchGazette(); // new posts: a toast in HQ, the unread count, a push
   onair.watchOnAir(); // new episodes: a push
   studio.watch(); // the photo studio's waiting photos, once its key is in.

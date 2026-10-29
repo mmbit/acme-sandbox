@@ -5,11 +5,22 @@
 // taking every step back and Redo making them again. Each asserts what the board sees (pixels on the book's paper) and
 // what the store keeps (the page saved).
 import assert from 'node:assert/strict';
-import { colourIn, freePage, line, onDesk, paperBox, pasteGreen, pick, savedWhere, GREEN } from './bookmouse.mjs';
+import {
+  colourIn,
+  freePage,
+  line,
+  onDesk,
+  paperBox,
+  pasteGreen,
+  pen,
+  pick,
+  savedWhere,
+  GREEN,
+  MINI,
+} from './bookmouse.mjs';
 
 const NIGHT = [42, 35, 82],
   PAPER = [255, 250, 240];
-const MINI = { width: 1133, height: 744 };
 
 // c: book-check.mjs's played store and helpers (bookmouse.mjs's)
 export function drawStories(c) {
@@ -183,14 +194,12 @@ async function cutsAndPastes(page, c, free, box) {
 
 async function pencil(browser, c) {
   const free = freePage(c);
-  const context = await c.hqIn(browser, MINI, { hasTouch: true });
-  const page = await context.newPage(),
-    errors = [];
-  page.on('pageerror', e => errors.push(e.message));
+  const { page, errors, done } = await onDesk(browser, c, {
+    viewport: MINI,
+    hasTouch: true,
+    deviceScaleFactor: 2,
+  });
   try {
-    await page.goto(`${c.base}/?intro=0`);
-    await page.waitForSelector('#book .bk-desk', { timeout: 30_000 });
-    await c.settled(page, 'open');
     // (right of the tool strip down the paper's left)
     const box = await paperBox(page),
       at = [box.x + 140, box.y + 180];
@@ -201,7 +210,7 @@ async function pencil(browser, c) {
       [],
     );
   } finally {
-    await context.close();
+    await done();
   }
 }
 // With the Pencil: a line, erased through, and a shape. Returns the page as saved then.
@@ -324,25 +333,3 @@ async function tap(page, name) {
     .first();
   if ((await b.getAttribute('aria-pressed')) !== 'true') await b.tap();
 }
-// The Pencil along points, as Safari hands it over (book-check.mjs's penOn)
-const pen = (page, points) =>
-  page.evaluate(pts => {
-    const at = (kind, [x, y], pressure) =>
-      (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
-        new PointerEvent(kind, {
-          pointerId: 7,
-          pointerType: 'pen',
-          isPrimary: true,
-          clientX: x,
-          clientY: y,
-          pressure,
-          buttons: kind === 'pointerup' ? 0 : 1,
-          bubbles: true,
-          composed: true,
-          cancelable: true,
-        }),
-      );
-    at('pointerdown', pts[0], 0.4);
-    pts.slice(1).forEach(p => at('pointermove', p, 0.5));
-    at('pointerup', pts.at(-1), 0);
-  }, points);

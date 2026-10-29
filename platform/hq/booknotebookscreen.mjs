@@ -8,6 +8,9 @@ export const clipped = page =>
     const shown = [...document.querySelectorAll('#book .bk-page')].filter(p => !p.hidden);
     return shown.flatMap(p => [...p.querySelectorAll('.bk-clip')].map(c => Number(c.dataset.g))).sort((a, b) => a - b);
   });
+// The groups of two or more things, which have a clip, by group
+export const held = groups =>
+  groups.filter(g => (g.ink?.length ?? 0) + (g.texts?.length ?? 0) + (g.pictures?.length ?? 0) > 1).map(g => g.id);
 export const where = page => page.locator('#book .bk-where').textContent();
 export const stamp = page =>
   page.evaluate(() => {
@@ -50,9 +53,12 @@ export async function pen(page, points, mouse = null) {
     for (const p of points.slice(1)) await mouse.move(...p, { steps: 4 });
     return mouse.up();
   }
+  // (the whole line goes to where it touched down, as the page's pointer capture sends a real pen's: a line ending
+  // under the Undo island over the paper's right edge is still the page's. A made-up pointer can't be captured.)
   await page.evaluate(pts => {
+    const under = document.elementFromPoint(...pts[0]) ?? document.body;
     const at = (kind, [x, y], pressure) =>
-      (document.elementFromPoint(x, y) ?? document.body).dispatchEvent(
+      under.dispatchEvent(
         new PointerEvent(kind, {
           ...{ pointerId: 7, pointerType: 'pen', isPrimary: true, clientX: x, clientY: y, pressure },
           ...{ buttons: kind === 'pointerup' ? 0 : 1, bubbles: true, composed: true, cancelable: true },
@@ -71,7 +77,8 @@ export async function pen(page, points, mouse = null) {
     at('pointerup', steps.at(-1), 0);
   }, points);
 }
-export async function until(read, what, ms = 6000) {
+// (long enough for a loaded worker, where the page's timers come seconds late: its 600 ms save took over 6 s)
+export async function until(read, what, ms = 30_000) {
   for (const end = Date.now() + ms; Date.now() < end; await new Promise(r => setTimeout(r, 100))) {
     const v = await read();
     if (v) return v;

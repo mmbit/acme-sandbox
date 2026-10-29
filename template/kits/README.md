@@ -60,7 +60,7 @@ every one but `id` and `name` optional:
   tile: '3 today',                     // the line under the tile's name: short, plain
   figures: [{ label: 'Things', value: 3, unit: 'EUR' | '%' | 'kg', sub: 'a short line under it' }],   // the first is the big one; value null: a dash
   daily: { title: 'Per day', sub: '…', columns: [{ key: 'n', label: 'Things', unit }], rows: [{ day: 'YYYY-MM-DD', n: 3 }] },  // every day of r: a chart of the first column, the table of all
-  bars: [{ title: 'By kind', sub: '…', rows: [{ label: 'Red', value: 2, unit }] }],                   // with each one's share
+  bars: [{ title: 'By kind', sub: '…', share: false, rows: [{ label: 'Red', value: 2, unit }] }],     // with each one's share, unless share: false (a median, a rate)
   targets: [{ label: 'Things a day', goal: 2, unit, lower: false, value: 3, mark: 'green' | 'amber' | 'none' }],
 }
 ```

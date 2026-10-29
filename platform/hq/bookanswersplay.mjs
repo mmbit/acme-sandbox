@@ -1,6 +1,26 @@
 // The played Notebook for book-check's answers stories (bookanswers.mjs): a
 // page's groups and their children, the open list and HQ's feed routed over book-check's store; HQ opened on it; an
-// element of the answers' layer measured in its page's px; a stroke as Safari hands a pen's over; the four symbols.
+// element of the answers' layer measured in its page's px; a stroke as Safari hands a pen's over; the four symbols; a
+// note tried in versions.
+import { freePage } from './bookmouse.mjs';
+import { answerSpot } from '../coordinator/src/ink/answerspot.ts';
+
+// How long a story waits on what the feed brings (a face, an answer, a reply drawn) or the pen writes in: HQ reads its
+// page again only once the feed's event reaches it, and on a loaded machine under the 3D scene that read comes seconds
+// late, not missing. A bound for something broken, never a pace: a story waits on the state itself.
+export const FEED_MS = 20_000;
+// The paper a desktop's book spread wide shows, as the store places answers for it (answerspot.ts)
+const WIDE = { x: 0, w: 1200 };
+// Where the store places an answer holding a (answerspot.ts Contents) on group g: clear of the page's groups, beside it
+// on a wide book, with its narrow spot (right of the tool strip) where the book is narrower
+export const placed = (nb, g, a) =>
+  answerSpot(
+    g.box,
+    a,
+    nb.groups.map(x => x.box),
+    WIDE,
+  );
+
 // ---- the played Notebook: a page's groups and their children, the open list, and HQ's feed
 export function notebookOn(c, page) {
   const ceo = c.org.company.ceo,
@@ -91,12 +111,18 @@ export async function opened(browser, c, viewport, nb, options = {}, more = {}) 
   await page.goto(`${c.base}/?intro=0`);
   await page.waitForSelector('#loading.gone');
   await c.settled(page, 'open');
-  // (a phone's book starts folded: its lip opens it)
-  if ((await page.evaluate(() => document.documentElement.dataset.book)) !== 'open') {
-    await page.click('#book .bk-lip');
-    await c.settled(page, 'open');
+  // (a phone's book starts folded, an iPad's upright too: its lip opens it as the spread. The lip's own
+  // click, in the page: on a loaded worker Playwright's waits on it for longer than its timeout; then the book open,
+  // however late its swing.)
+  if ((await page.evaluate(() => document.documentElement.dataset.book)) === 'folded') {
+    await page.evaluate(() => document.querySelector('#book .bk-lip').click());
+    await page.waitForFunction(
+      () => document.documentElement.dataset.book !== 'folded' && !document.querySelector('#book.bk-swinging'),
+      null,
+      { timeout: 60_000 },
+    );
   }
-  await page.waitForSelector('#book .bk-answers', { state: 'attached', timeout: 10_000 });
+  await page.waitForSelector('#book .bk-answers', { state: 'attached', timeout: 60_000 });
   return { page, errors, done: () => context.close() };
 }
 export const layer = page => page.locator('#book .bk-answers');
@@ -186,3 +212,42 @@ export const SYMBOLS = {
     [x + s * 0.5, y + s * 0.75],
   ],
 };
+
+// (a version's frame: an 8 × 6 picture, as the try run shoots them)
+const RED =
+  'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAgAAAAGCAIAAABxZ0isAAAAEUlEQVR4nGN4ZmODFTEMpAQAW3NBof5buBkAAAAASUVORK5CYII=';
+// A board's note tried in versions: its page (p), its versions page made after it (tries, the one the book opens on),
+// the played Notebook on them, the note, a version made, and the store's routes listing the pages (bookanswers.mjs and
+// bookpicks.mjs, out of bookanswers.mjs)
+export function triedNote(c) {
+  const p = freePage(c),
+    tries = freePage(c),
+    nb = notebookOn(c, p),
+    warmer = nb.typed(4400, 'warmer?', 60, 60);
+  Object.assign(tries, { label: `${nb.name} tries: warmer?`, tries: warmer.id });
+  warmer.tries_page = tries.id;
+  const version = (id, name, picture = RED) =>
+    nb.answer(id, 'version', `${name}, as it would look`, null, { version: name, picture });
+  nb.groups.push(warmer);
+  // (made a minute apart in order, the versions page last: the book lands on the newest.)
+  const tile = (x, i) => ({
+    id: x.id,
+    title: x.label || 'Free page',
+    tries: x.tries ?? null,
+    sent: null,
+    sending: false,
+    archived: false,
+    groups: 0,
+    created: new Date(Date.UTC(2026, 0, 1, 9, i)).toISOString(),
+  });
+  const listed = () => ({
+    notebook: { id: 1, name: 'My Notebook', kind: 'mine', archived: false },
+    pages: c.pages.map(tile),
+    archived: [],
+  });
+  const more = {
+    '/api/notebooks': () => ({ shelf: [listed().notebook], archive: [] }),
+    '/api/notebooks/pages': listed,
+  };
+  return { p, tries, nb, warmer, version, more };
+}

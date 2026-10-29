@@ -18,6 +18,11 @@ const WAIT_MS = 120_000;
 export const READS_A_DAY = 300;
 
 db.exec('create table if not exists handwriting_reads (day text primary key, reads integer not null)');
+// An invited person's readings (the guest notebook's pen) are counted apart from the board's, each person's own
+// GUEST_READS_A_DAY, so no guest spends the board's day.
+export const GUEST_READS_A_DAY = 50;
+db.exec(`create table if not exists guest_handwriting_reads (day text not null, who text not null, reads integer not null,
+  primary key (day, who))`);
 
 export const SCHEMA = {
   type: 'object',
@@ -44,9 +49,24 @@ export type Read = { writing: boolean; words: string };
 
 // POST /api/book/read { ink }: the words in the board's ink (a PNG or JPEG data URL), { writing, words }, once the model
 // has read it. 429 past the day's readings, 504 when no answer came in time, 502 when the model's answers were no use.
-export async function read(b: any): Promise<Read | Refused> {
+// guest: an invited person's ('guest:<grant>'), counted on their own allowance.
+export async function read(b: any, guest: string | null = null): Promise<Read | Refused> {
   const pic = dataUrlPicture(b?.ink);
   if (isRefused(pic)) return pic;
+  if (guest) {
+    const day = companyDay(Date.now());
+    const { reads } = (db
+      .prepare('select reads from guest_handwriting_reads where day = ? and who = ?')
+      .get(day, guest) as { reads: number }) ?? { reads: 0 };
+    if (reads >= GUEST_READS_A_DAY)
+      return [429, `handwriting is read ${GUEST_READS_A_DAY} times a day for you, and today's are used`];
+    db.prepare(
+      `insert into guest_handwriting_reads (day, who, reads) values (?, ?, 1)
+      on conflict (day, who) do update set reads = reads + 1`,
+    ).run(day, guest);
+    db.prepare('delete from guest_handwriting_reads where day < ?').run(companyDay(Date.now() - 7 * 864e5));
+    return ask(pic);
+  }
   return readPicture(pic);
 }
 // A picture of ink read, as the board's request reads it: the writing on a sheet page going with its notes reads this
@@ -62,6 +82,10 @@ export async function readPicture(pic: { type: string; clean: Buffer }): Promise
     'insert into handwriting_reads (day, reads) values (?, 1) on conflict (day) do update set reads = reads + 1',
   ).run(day);
   db.prepare('delete from handwriting_reads where day < ?').run(companyDay(Date.now() - 7 * 864e5));
+  return ask(pic);
+}
+// The small model's reading of a picture of ink, already counted
+function ask(pic: { type: string; clean: Buffer }): Promise<Read | Refused> {
   const image = { type: 'image', source: { type: 'base64', media_type: pic.type, data: pic.clean.toString('base64') } };
   return smallCall({
     name: 'the handwriting reader',

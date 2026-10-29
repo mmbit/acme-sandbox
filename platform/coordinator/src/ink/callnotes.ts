@@ -11,7 +11,7 @@
 //   - A page brought to the call by its folded corner (bookshare.js) is its first scrap, in front of both.
 //   - The call ended: what the board wrote the old book's way on the page (a mark before the page was the notes page)
 //     and the notes no scrap was cut from become groups (notebookcarry.ts), the page is sent as any page is
-//     (notebooksend.ts: each group to its agent), and once it's sent it goes to My Notebook's archive. A page with
+//     (notebooksend.ts: each group to its agent), and stays among My Notebook's pages like any sent page. A page with
 //     nothing on it goes.
 // The call engine (the watch-along, the line's driving and drawing) knows nothing of this page: Ink reads the engine
 // here, through its routes, and the engine never reads Ink.
@@ -22,6 +22,8 @@ import { companyTime } from '../company.ts';
 import { findAgent } from '../jobs.ts';
 import { DIR } from '../pagescraps.ts';
 import * as watchalong from '../watchalong.ts';
+import { regionOf } from '../region.ts';
+import type { Region } from '../../../../shared/watchalong/mirror.ts';
 import { BOARD, COLUMNS, row, summary, type Page } from './book.ts';
 import { pictureOf } from './bookpicture.ts';
 import { changed, endOf, newPage, ownNotebook, pageOf, pageRow, shut, type NotebookPage } from '../notebook.ts';
@@ -178,13 +180,6 @@ async function cutOf(call: number, from: string, region: Region) {
     note: null,
   };
 }
-type Region = { x: number; y: number; width: number; height: number };
-function regionOf(v: any): Region | null {
-  const keys = ['x', 'y', 'width', 'height'] as const;
-  if (!v || typeof v !== 'object' || !keys.every(k => typeof v[k] === 'number' && v[k] >= 0 && v[k] <= 1)) return null;
-  const r = { x: v.x, y: v.y, width: v.width, height: v.height };
-  return r.width > 0 && r.height > 0 && r.x + r.width <= 1.0001 && r.y + r.height <= 1.0001 ? r : null;
-}
 // A region of a picture (fractions), at least a pixel each way
 export async function cropped(picture: Buffer, r: Region) {
   const { width, height } = pictureSize(picture)!;
@@ -212,7 +207,8 @@ export function title(b: any) {
   if (!t || t.split(' ').length > 8)
     return [400, 'title: a few words (at most 8) naming what the call is about'] as Refused;
   const p = pageFor(call)!;
-  db.prepare('update book_pages set label = ? where id = ?').run(t, p.id);
+  if (p.title_by === 'board') return { ok: "The board's title stays on the call's page." };
+  db.prepare("update book_pages set label = ?, title_by = 'agent' where id = ?").run(t, p.id);
   changed(p.notebook, p.id);
   return { ok: `The call's page is titled “${t}”.` };
 }
@@ -229,7 +225,7 @@ export function noted(call: number, item: { kind: string; owner: string; what: s
   stackWords(p, c.agent, text, {});
 }
 
-// The call has ended (call.ts handOver, ledger.ts sweep): its page sent and archived, or gone if nothing is on it
+// The call has ended (call.ts handOver, ledger.ts sweep): its page sent, staying where it is, or gone if nothing is on it
 export async function ended(call: number) {
   const p = db
     .prepare(
@@ -271,11 +267,12 @@ export async function ended(call: number) {
   const open = db
     .prepare("select 1 from notebook_groups where page = ? and parent is null and deleted is null and status = 'open'")
     .get(p.id);
+  // (only the agent's typed notes on it: nothing to send, so it goes in as it is, not left as My Notebook's open page)
   if (open) await send(call, p.id);
+  else db.prepare('update book_pages set send_at = ? where id = ?').run(Date.now(), p.id);
   // (the fresh page a send makes: My Notebook's own current page stays its current one)
   const fresh = pageRow(p.id, BOARD)!.fresh;
   if (fresh) db.prepare('delete from book_pages where id = ?').run(fresh);
-  db.prepare('update book_pages set archived = 1 where id = ?').run(p.id);
   changed(p.notebook, p.id);
 }
 // The call's page sent, again while the board changes it in the Notebook as it goes; any other refusal leaves it open on

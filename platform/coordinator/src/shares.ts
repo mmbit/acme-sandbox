@@ -10,8 +10,8 @@
 //     gets it. A linked host they open has no session yet: the preview's sign-in sends them to the guest desk (guests.ts
 //     onward), whose own session hands them on to it the same way (onward).
 //   - Every request is checked against these tables, so the board's End, a removal and the end date stop it at once.
-//   - Each person has a Sketchbook of their own (sketchpeople.ts), and each note they pin goes on the board's open sheet
-//     for the owner of what was shared, signed (feedback.ts saveNote), until the board ends the share or its date passes.
+//   - Each reviewer has one private page in the share's Notebook. Notes pinned on the preview become scraps on that
+//     page, signed with the guest's identity (feedback.ts saveNote), until the share ends or its date passes.
 //     A view-only share (view) takes none: its people see the pages as they are, without review mode.
 //   - A tester invite (tester) is a share of the shop's preview door for notes whose people may each order once, for real:
 //     each gets a voucher of their own, shown on their door, that pays one basket there up to the board's amount (payments.ts testerVoucher).

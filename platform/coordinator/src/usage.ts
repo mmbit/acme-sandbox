@@ -8,6 +8,7 @@
 // or a session that never saved) and is stored whole. A run cut off by a worker restart reports nothing; its tokens show
 // up in the session's next run, if the engine saved them.
 import { db, once } from './db.ts';
+import { runStart } from './agenttime.ts';
 
 const FIELDS = ['input', 'cacheWrite', 'cacheRead', 'output', 'cost'] as const;
 type Tokens = Record<(typeof FIELDS)[number], number>;
@@ -42,14 +43,23 @@ const addedTo = (now: Totals, before?: Totals) => {
 export function recordUsage(r: { job: number; engine: string; seat?: string | null; session?: string | null; usage: unknown }) {
   const now = totalsOf(r.usage);
   if (!now) return;
+  const resumed = (r.usage as any).resumed === true;
   // (the session's latest report, not only this job's)
-  const prev = (r.usage as any).resumed === true && r.session ? db.prepare(
-    'select totals from usage where session = ? order by id desc limit 1').get(r.session) as { totals: string } | undefined : undefined;
+  const prev = resumed && r.session ? db.prepare(
+    'select totals, ts from usage where session = ? order by id desc limit 1').get(r.session) as { totals: string; ts: string } | undefined : undefined;
   const a = addedTo(now, prev && JSON.parse(prev.totals));
-  db.prepare(`insert into usage (job, ts, engine, seat, session, models, input, cache_write, cache_read, output, cost, totals)
-    values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(r.job, new Date().toISOString(), r.engine, r.seat ?? null, r.session ?? null,
-    a.models, a.input, a.cache_write, a.cache_read, a.output, a.cost, JSON.stringify(now));
+  const main = mainOf(r.usage), started = runStart(r.job);
+  const idle = prev && started ? Math.max(0, Date.parse(started) - Date.parse(prev.ts)) : null;
+  db.prepare(`insert into usage (job, ts, engine, seat, session, models, input, cache_write, cache_read, output, cost, totals,
+    opening, opening_written, turns, resumed, idle_ms, last_turn) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(r.job,
+    new Date().toISOString(), r.engine, r.seat ?? null, r.session ?? null, a.models, a.input, a.cache_write, a.cache_read,
+    a.output, a.cost, JSON.stringify(now), main.opening, main.openingWritten, main.turns, resumed ? 1 : 0, idle, main.lastTurn);
 }
+
+// The run's main thread as the worker measured it (its spent.ts): whole token counts, or null where it measured none
+const whole = (v: unknown) => Number.isSafeInteger(v) && (v as number) >= 0 ? v as number : null;
+const mainOf = (u: any) => ({ opening: whole(u.opening), openingWritten: whole(u.openingWritten), turns: whole(u.turns),
+  lastTurn: whole(u.lastTurn) === null ? null : new Date(u.lastTurn).toISOString() });   // (lastTurn)
 
 // Rows from before the base was the session's: a carried session's first run in a job holds the whole session. Each run
 // whose session has an earlier report from another job becomes what it added to it, by the same rule. Worked out from

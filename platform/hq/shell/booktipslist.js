@@ -1,7 +1,8 @@
 // What the tips book (booktips.js) shows: the book's hidden things, one tip a page, in four parts. Each tip says what
 // the book does today, in a line or two, over a scene of it (booktipscene.js), and names the code it describes (from):
 // a change to that behaviour changes its tip here in the same pull request, a new hidden thing adds one, and a thing
-// taken out takes its tip with it. The tips book shows only what's built. (every tip checked against the book:
+// taken out takes its tip with it. The tips book shows only what's built. (the call's tip naming
+// the Select carry)
 import { MOD } from './ink/bookui.js';
 import * as draw from './booktipscene.js';
 
@@ -134,8 +135,9 @@ export const TIPS = [
   },
   {
     part: 'Gestures',
-    title: 'Drag to move the page, pinch to zoom',
-    words: `A finger moves the page, two pinch to zoom. With a mouse: scroll, or hold Space and drag. ${MOD} and scroll zooms.`,
+    // (the wheel zooms, Ctrl's picks a tool)
+    title: 'Drag to move the page, pinch or scroll to zoom',
+    words: `A finger moves the page, two pinch to zoom. With a mouse: hold Space and drag, scroll to zoom, ${MOD} and scroll for the next tool.`,
     from: 'platform/hq/shell/ink/bookpan.js',
     scene: draw.scene(
       draw.moved(
@@ -200,7 +202,7 @@ export const TIPS = [
     title: 'Circle a version to choose it',
     words:
       'When an agent tries a few versions, circle or tick the one you like on its versions page: it’s stamped THIS ONE and the agent is told which.',
-    from: 'platform/hq/shell/ink/bookanswerpace.js',
+    from: 'platform/hq/shell/ink/bookversionframes.js',
     scene: draw.scene(
       draw.bookPage(),
       ...[0, 1, 2].map(i => `<rect class="tb-photo" x="${34 + i * 60}" y="40" width="52" height="40" rx="2"/>`),
@@ -236,7 +238,7 @@ export const TIPS = [
     part: 'Controls',
     title: 'Drag a page onto a call to show it',
     words:
-      'On a call, drag a page by its corner, or a picture from your desktop, onto the agent’s call window. Click the call first and a paste goes to the call, not the book.',
+      'On a call, drag a page by its corner, a picture on a page picked with Select, or a picture from your desktop, onto the agent’s call window. Click the call first and a paste goes to the call, not the book.',
     from: 'platform/hq/shell/calldrop.js',
     scene: draw.scene(
       draw.hqPage(8, 10, 110, 130),

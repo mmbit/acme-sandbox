@@ -8,6 +8,9 @@ import { jobDirs, own } from './slots.ts';
 
 // The job whose session it goes on in, that session as the job saved it, and the Codex seat it ran on
 export type Resumes = { job: number; session: string; seat: string | null };
+// Or, once that session has gone cold, the author's done jobs on the branch with their closing reports, oldest first
+// (the coordinator's carryover.ts)
+export type ClosingReports = { reports: { job: number; report: string }[] };
 
 // How Claude names a project's folder: the project's path, with a dash for each character but a letter or digit
 export const project = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-');
@@ -46,4 +49,18 @@ export function carrySession(work: string, job: Carried, seat: { id: string; cli
     return copied.trim() ? session : null;
   }
   return null;
+}
+
+// A job whose author's session went cold starts a fresh session. Its briefing gets, beside its brief, what the author
+// wrote at the end of each job on the branch, and the branch's own commits (`git log`, one line each).
+export function closingLines(closing: ClosingReports, log: string) {
+  const reports = closing.reports.map(r => `Job #${r.job}'s closing report:\n\n${r.report.trim()}`).join('\n\n');
+  return `This job goes on with work already on this branch, in a new session: the session that did that work ended over
+an hour ago. What its author wrote as each job on the branch ended, and the branch's commits, are below. Start from
+them and the code, rather than redoing what's there.
+
+${reports}
+
+The branch's commits since main, newest first:
+${log.trim() || '(none)'}`;
 }

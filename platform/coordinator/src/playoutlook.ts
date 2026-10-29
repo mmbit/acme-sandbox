@@ -30,7 +30,8 @@ export function outlook(play: Play, row: QueuedJob, horizonDays: number): Outloo
     done: run.done,
     merged,
     left_ms: run.remainingMs,
-    waits,
+    // (each wait once: a job's planned review rounds carry its own stalls, so the chain repeats them)
+    waits: [...new Map(waits.map(w => [JSON.stringify(w), w])).values()],
     cards,
   };
 }

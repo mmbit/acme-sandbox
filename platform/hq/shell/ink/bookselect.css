@@ -108,11 +108,15 @@
   }
 }
 
-/* ---- the bar: Cut, Copy, Duplicate, Delete under the frame (over it when the paper has no room under it) */
+/* ---- the bar: Cut, Copy, Duplicate, Delete under the frame (over it when the paper has no room under it), in more rows
+   when the paper is narrower than it (bookselect.js framed) */
 .bk-sel-bar {
   position: absolute;
   z-index: 7;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  width: max-content;
   gap: 2px;
   padding: 4px;
   border-radius: 12px;
@@ -162,9 +166,7 @@
   cursor: default;
 }
 #book .bk-desk[data-tool='select'][data-pick],
-#book .bk-desk[data-tool='select'][data-over],
-#book .bk-desk[data-tool='select'] .bk-typed:not([data-editing]),
-#book .bk-desk[data-tool='select'] .bk-typed-grip {
+#book .bk-desk[data-tool='select'] .bk-typed:not([data-editing]) {
   cursor: move;
 }
 #book .bk-desk[data-drag='move'],

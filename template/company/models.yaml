@@ -5,6 +5,9 @@ claude:
   model: claude-opus-5-5     # full model id or an alias the Claude Code CLI accepts
   effort: high               # low | medium | high | xhigh | max
   autocompact: auto          # tokens (100000 to 1000000) at which a job's conversation is compacted, or auto: Claude Code's own
+  # lighter: [claude-sonnet-5-5]   # models of choices below a small, fully specified job can run on (hq job --model),
+  #                                # handing itself up to the agent's own model if it's bigger; none: no --model
+  #
 codex:
   model: null                # null = Codex's own default
   effort: high               # minimal | low | medium | high | xhigh

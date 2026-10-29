@@ -1,8 +1,12 @@
 """Every function in the Python source on stdin, as JSON for the size limits (sizes.ts): its name (Class.method,
-outer.inner), the line of its def, the first line of its decorators and its last line."""
+outer.inner), the line of its def, the first line of its decorators and its last line. Source Python can't parse exits
+with UNREADABLE and its error alone, so the gates can tell it from this script's own failures.
+"""
 import ast
 import json
 import sys
+
+UNREADABLE = 3
 
 
 def spans(node, prefix, found):
@@ -18,4 +22,9 @@ def spans(node, prefix, found):
     return found
 
 
-print(json.dumps(spans(ast.parse(sys.stdin.read()), '', [])))
+try:
+    tree = ast.parse(sys.stdin.read())
+except SyntaxError as err:
+    print(f'{type(err).__name__}: {err}', file=sys.stderr)
+    sys.exit(UNREADABLE)
+print(json.dumps(spans(tree, '', [])))

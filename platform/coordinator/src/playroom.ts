@@ -8,6 +8,14 @@ import * as capacity from './playseats.ts';
 import * as reviewroom from './reviewroom.ts';
 import type { Play, Run } from './simulation.ts';
 
+export function activeReservations(play: Play, seats: capacity.Moment) {
+  return new Map(
+    [...play.roomFor].filter(([waiter]) =>
+      seats.seats.some(seat => capacity.takes(seat, waiter.row, waiter.order, seats)),
+    ),
+  );
+}
+
 // A full room cannot start another run during this moment. If no claim can pause work either, their order has no
 // effect. Hold them together, using empty seats only to distinguish queue waits from unavailable seats.
 export function holdFullRoom(
@@ -17,6 +25,7 @@ export function holdFullRoom(
   seats: capacity.Moment,
   busy: Map<string, number>,
   room: memory.Room,
+  reservations: Map<Run, capacity.Seat>,
 ) {
   if (!memory.full(room)) return false;
   const limits = play.snapshot.seatRuns ?? {};
@@ -29,7 +38,8 @@ export function holdFullRoom(
     const { seat, roomSeat } = choose(run.row, run.order);
     if ('id' in roomSeat) {
       const resource = reviewroom.reviewCapped(run.row, seat) ? roomSeat : 'memory';
-      if (roomVictims(play, run, running, seats.now, resource, roomSeat, room).victims.length) return false;
+      if (roomVictims(play, run, running, seats.now, resource, roomSeat, room, reservations).victims.length)
+        return false;
       run.nextHold = run.queueWait;
     } else run.nextHold = roomSeat;
   }
@@ -55,8 +65,9 @@ export function makeRoom(
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
   room: memory.Room,
+  reservations: Map<Run, capacity.Seat>,
 ) {
-  const { victims, needsReview } = roomVictims(play, waiting, running, now, resource, seat, room);
+  const { victims, needsReview } = roomVictims(play, waiting, running, now, resource, seat, room, reservations);
   if (!victims.length) return false;
   const pauseMs = deadlinePressure(waiting.order, now) ? DEADLINE_PAUSE_MS : PAUSE_MS;
   for (const victim of victims) {
@@ -64,10 +75,11 @@ export function makeRoom(
     run.left = Math.max(0, run.ends - now) + pauseMs;
     run.readyAt = now + pauseMs;
     run.state = 'pausing';
-    run.roomFor = { waiter: waiting, seat };
     run.reviewSeat = needsReview && typeof resource !== 'string' ? seat.id : null;
     run.ends = now + pauseMs;
   }
+  play.roomFor.set(waiting, seat);
+  reservations.set(waiting, seat);
   waiting.readyAt = now + pauseMs;
   return true;
 }
@@ -80,6 +92,7 @@ function roomVictims(
   resource: 'memory' | 'engine' | capacity.Seat,
   seat: capacity.Seat,
   room: memory.Room,
+  reservations: Map<Run, capacity.Seat>,
 ) {
   const limit = play.snapshot.seatRuns?.[seat.engine] ?? Infinity;
   const needsReview = reviewroom.needsRoom(waiting.standing, reviewOccupants(running, seat.id), limit);
@@ -103,7 +116,7 @@ function roomVictims(
       );
       return victim && play.runs.get(victim.id);
     },
-    selected => fitsAfterPauses(play, waiting, running, seat, room, selected),
+    selected => fitsAfterPauses(play, waiting, running, seat, room, selected, reservations),
   );
   return { victims: victims.map(r => r.standing), needsReview };
 }
@@ -115,10 +128,9 @@ function fitsAfterPauses(
   seat: capacity.Seat,
   room: memory.Room,
   selected: Run[],
+  reservations: Map<Run, capacity.Seat>,
 ) {
   const pausing = running.filter(r => r.state === 'pausing');
-  const reservations = new Map(pausing.map(r => [r.roomFor!.waiter, r.roomFor!.seat]));
-  reservations.delete(waiting);
   const released = [...pausing, ...selected];
   const remaining = running.filter(r => !released.includes(r));
   const available = memory.afterPauses(
@@ -128,6 +140,7 @@ function fitsAfterPauses(
   let onEngine = remaining.filter(r => r.row.engine === waiting.row.engine).length;
   let onSeat = remaining.filter(r => r.seat?.id === seat.id).length;
   for (const [waiter, reservedSeat] of reservations) {
+    if (waiter === waiting) continue;
     memory.join(available, waiter.row);
     if (waiter.row.engine === waiting.row.engine) onEngine++;
     if (reservedSeat.id === seat.id) onSeat++;

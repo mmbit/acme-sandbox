@@ -1,5 +1,4 @@
-// One page of the book: its heading written at 0,0 (its day, and whose it is: "For Lark", a call's, a free page's
-// label), its pictures and dry ink any way from there, and a refusal said quietly on it. The paper and its dots under it are the
+// One page of the book: its pictures and dry ink, its send stamp and a refusal said quietly on it. The paper and its dots under it are the
 // book's (bookpages.js draws them where the page shows), so the page itself has no edge.
 //
 // The dry ink is drawn in square tiles (bookrow.js TILE_PX on screen) for the zoom it shows at, and only near what the
@@ -7,32 +6,27 @@
 // draws. (tiles both ways at the zoom; were strips at 1:1)
 import { draw } from '/__review/ink.js';
 import { drawScrap } from './sketchscraps.js';
-import { picture, esc } from '../../util.js';
+import { picture } from '../../util.js';
 import { around, boxOf, pageBox, scrapBoxOf, tileSide, tilesIn } from './bookrow.js';
 import { mountAnswers } from './bookanswers.js';
+import { nameOf } from './bookhead.js';
 
 // what's kept drawn beyond what the paper shows, as a share of it on every side: enough to pan into without a gap
 const KEEP = 0.5;
 
 // The page record (bookpages.js): { id (null while it waits blank), kind ('free' | 'sheet' | 'call' | 'guest'), owner,
 // label, x, y, w, h (its box: bookrow.js), ink (null until read), scraps: [{ file, url, x, y, w, h, tilt }], texts, error }.
-// head: { title, day, today, colour } its heading's words (bookhead.js headOf). held: the book out of sight as it's made.
-export function pageView(page, head, held = false) {
+// held: the book out of sight as it's made.
+export function pageView(page, held = false) {
   const el = document.createElement('div');
   el.className = 'bk-page';
   el.dataset.kind = page.kind;
-  // (a page with a title is a region by it, "For Kit", to whoever reads the book aloud.)
-  if (head.title) Object.assign(el, { role: 'region', ariaLabel: head.title });
-  // (a heading has a place beside its title for its stamp once the page is sent, bookpagesend.js.)
+  // Every page is a named region for whoever reads the book aloud.
+  Object.assign(el, { role: 'region', ariaLabel: nameOf(page) });
+  // The title belongs in the bar. The canvas keeps only its send stamp.
   const stamp = page.kind === 'guest' ? '' : '<span class="bk-send" data-slot="stamp"></span>';
-  // (the heading, as written in a notebook: whose page it is and its stamp, then its day, today's marked; a page with
-  // no title, its day and its stamp.)
-  const today = head.today ? '<small class="bk-today">Today</small>' : '';
-  const colour = head.colour ? ` style="color:${esc(head.colour)}"` : '',
-    date = `<span class="bk-date"><b class="bk-when"${colour}>${esc(head.day)}</b>${today}</span>`,
-    title = head.title ? `<span class="bk-name">${esc(head.title)}</span>${stamp}${date}` : `${date}${stamp}`;
   // (the agents' answers over the page, .bk-answers: bookanswers.js.)
-  el.innerHTML = `<div class="bk-title"${head.title ? '' : ' data-bare'}>${title}</div><div class="bk-answers" data-slot="answers"></div><p class="bk-refusal" role="status" hidden></p>`;
+  el.innerHTML = `<div class="bk-send-stamp">${stamp}</div><div class="bk-answers" data-slot="answers"></div><p class="bk-refusal" role="status" hidden></p>`;
   const refusal = el.querySelector('.bk-refusal'),
     tiles = inkTiles(el, page, held);
   refusal.textContent = page.error;

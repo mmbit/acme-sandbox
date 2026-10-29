@@ -5,7 +5,7 @@
 // anywhere else nothing goes. With the call on, the page carried onto the call's window, a picture file dropped there,
 // and a paste once the board pressed in it all go to Juno, the window lit as they come, and the book takes none; a
 // picture taped on the page, picked with Select and carried onto the window or its bubble, goes too, and stays taped
-// where it was. (the call's window; the taped picture) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
+// where it was. (the call's window; the taped picture, held still) Tapped, the corner opens the same three as a menu, its keys going round it and Escape
 // putting it away. Things deleted crumple over the paper, already gone underneath: the store has them gone at once, a
 // press goes through the crumple, and it's over within half a second.
 import assert from 'node:assert/strict';
@@ -13,6 +13,8 @@ import { playLine } from './bookcall.mjs';
 import { freePage, line, paperBox, pick, savedWhere, tool, until } from './bookmouse.mjs';
 
 const DESKTOP = { width: 1440, height: 900 };
+// longer than a native drag's light lasts (calldrop.js LIT_MS, 300 ms), so a light that goes out is caught
+const HELD_STILL_MS = 650;
 
 // c: book-check.mjs's { hqIn, base, store, pages, shot, settled, noErrorsIn, SNIP }
 export function shareStories(c) {
@@ -138,7 +140,7 @@ async function ontoTheCall(c, s) {
   assert.equal(taped, 0, 'the book took none of them');
 }
 // A picture taped on the page, picked with Select and carried onto the call's window, then onto its bubble: each time
-// it goes to Juno, the place lit under it, and lands back where it was taped
+// it goes to Juno, the place lit under it while it's held there, and lands back where it was taped
 async function tapedOntoTheCall(c, s, free) {
   const { page } = s,
     box = await paperBox(page);
@@ -147,29 +149,11 @@ async function tapedOntoTheCall(c, s, free) {
   await page.keyboard.press('Control+a');
   const frame = page.locator('#book .bk-sel');
   await frame.waitFor({ timeout: 3000 });
-  for (const [n, at, where] of [
-    [6, '#call-layer .device', 'the call’s window'],
-    [7, '.callbubble', 'the call’s bubble'],
-  ]) {
-    if (n === 7) await minimised(page);
-    const from = await frame.boundingBox(),
-      target = page.locator(at),
-      to = await target.boundingBox();
-    // (the light goes soon after the last move: whether it came on at all, kept as it does)
-    await target.evaluate(el => {
-      window.__lit = false;
-      new MutationObserver(() => el.hasAttribute('data-drop') && (window.__lit = true)).observe(el, {
-        attributes: true,
-      });
-    });
-    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
-    assert.ok(await page.evaluate(() => window.__lit), `${where} lit under the picture`);
-    if (n === 6) await c.shot('taped-onto-call', page);
-    await page.mouse.up();
-    await shownOnCall(s, n, `the taped picture carried onto ${where}`);
-  }
+  await carryTaped(page, frame, '#call-layer .device', () => c.shot('taped-onto-call', page));
+  await shownOnCall(s, 6, 'the taped picture carried onto the call’s window');
+  await minimised(page);
+  await carryTaped(page, frame, '.callbubble');
+  await shownOnCall(s, 7, 'the taped picture carried onto the call’s bubble');
   await page.waitForTimeout(800);
   assert.deepEqual(
     free.scraps.map(({ x, y, w, h }) => ({ x, y, w, h })),
@@ -177,6 +161,21 @@ async function tapedOntoTheCall(c, s, free) {
     'the picture still taped where it was',
   );
   assert.equal(await page.locator('#book .bk-sel-lifted').count(), 0, 'nothing left lifted');
+}
+// The picked things carried by their frame onto a place (a selector) and let go there: lit under them, still lit once
+// they've been held still a while
+async function carryTaped(page, frame, at, held = async () => {}) {
+  const from = await frame.boundingBox(),
+    target = page.locator(at),
+    to = await target.boundingBox();
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 12 });
+  assert.equal(await target.getAttribute('data-drop'), '', `${at} lit under the picture`);
+  await page.waitForTimeout(HELD_STILL_MS);
+  assert.equal(await target.getAttribute('data-drop'), '', `${at} still lit, the picture held still over it`);
+  await held();
+  await page.mouse.up();
 }
 // The call minimised (the played store has no call's notes page: the card saying so put away first), its bubble
 // still in its corner

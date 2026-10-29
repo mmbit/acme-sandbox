@@ -1,6 +1,6 @@
 // The select tool's maths (bookselect.js), as plain numbers: whether a drag was a lasso or a box, what a loop takes in,
-// the thing on top under a point, the selection's bounds, and things moved and scaled about a corner. No DOM, so node
-// tests it (bookselectmath.test.js).
+// the thing on top under a point and the rest of its group, the selection's bounds, and things moved and scaled about
+// a corner. No DOM, so node tests it (bookselectmath.test.js).
 //
 // Everything is in its page's px. A stroke is ink.js's { color, size, alpha, fill, points: [[x, y, p, t]] }, a picture
 // sketchscraps.js's { x, y, w, h, tilt }, a box of typed words booktexts.js's { x, y, w, text, color }, whose box on the
@@ -73,6 +73,14 @@ export function topAt(at, { ink, scraps, texts }, boxOfText, near) {
   return k >= 0 ? { kind: 'scraps', item: scraps[k] } : null;
 }
 export const within = (b, [x, y]) => x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1;
+// A thing on a page with the rest of its group ({ ink, scraps, texts }): everything on the page with its group's id
+// (el.g, booksave.js), or the thing alone when it has none yet (not saved) or the page has no groups
+export function groupOf(page, { kind, item }) {
+  const g = item.g;
+  if (g === undefined || !page.groups?.has(g)) return { [kind]: [item] };
+  const of = k => (page[k] ?? []).filter(x => x.g === g);
+  return { ink: of('ink'), scraps: of('scraps'), texts: of('texts') };
+}
 // Whether a point is on a stroke's line (within its half width and near), or inside a filled one
 function onStroke(s, p, near) {
   const reach = s.size / 2 + near,
@@ -118,7 +126,7 @@ export function scrapBox(s) {
 
 // A change of place: every point p goes to anchor + (p - anchor) × k + d. { k: 1, ax: 0, ay: 0 } is a plain move.
 export const moveBy = (dx, dy) => ({ k: 1, ax: 0, ay: 0, dx, dy });
-const mapped = ({ k, ax, ay, dx, dy }, x, y) => [ax + (x - ax) * k + dx, ay + (y - ay) * k + dy];
+export const mapped = ({ k, ax, ay, dx, dy }, x, y) => [ax + (x - ax) * k + dx, ay + (y - ay) * k + dy];
 // A box moved and scaled
 export function mapBox(tr, b) {
   const [x0, y0] = mapped(tr, b.x0, b.y0),

@@ -63,8 +63,8 @@ const shares = await import('./shares.ts');
 const jobs = await import('./jobs.ts');
 const booknotes = await import('./ink/booknotes.ts');
 const booksheets = await import('./ink/booksheets.ts');
-const notebooksend = await import('./notebooksend.ts');
-const sketchPeople = await import('./ink/sketchpeople.ts');
+const guestbooks = await import('./notebookguests.ts');
+const sketchpeople = await import('./ink/sketchpeople.ts');
 (await import('./storage.ts')).FLOOR.bytes = 0; // (screenshots are kept whatever this machine's disk has free)
 const server = createServer(app).listen(0);
 after(() => server.close());
@@ -184,30 +184,24 @@ const pinNote = (ps: string, host: string, page: string, note = 'The button is h
     },
   });
 const jobsCount = () => (db.prepare('select count(*) n from jobs').get() as { n: number }).n;
-// The notes a person wrote waiting in the board's book: scraps in its My Notebook (ink/bookreview.ts), their words
-// on the post-it or typed on the page
+// The board reads retained review groups even after the invitation has ended.
 const bookNotesOf = (name: string) =>
-  (
-    db
-      .prepare(
-        `select g.* from notebook_groups g join book_pages p on p.id = g.page join notebooks b on b.id = p.notebook
-        where b.who = 'board' and b.kind = 'mine' and g.status = 'open' and g.deleted is null and g.by like 'guest:%'
-        order by g.id`,
-      )
-      .all() as any[]
-  )
-    .map(g => ({
-      id: g.id,
-      owner: g.owner,
-      words:
-        g.words ||
-        JSON.parse(g.texts)
-          .map((t: any) => t.text)
-          .join('\n'),
-      anchor: JSON.parse(g.anchor),
-      guest: sketchPeople.guestOf(g.by),
-    }))
-    .filter(n => n.guest?.name === name);
+  guestbooks.listNotebooks().notebooks.flatMap(n =>
+    n
+      .people!.filter(person => person.name === name)
+      .flatMap(person => {
+        const listed = guestbooks.listGroups({ page: person.page });
+        assert.ok(typeof listed !== 'number');
+        return listed.groups.map(group => {
+          const typed = group.texts as { text: string }[];
+          return {
+            ...group,
+            words: group.words || typed.map(text => text.text).join(''),
+            guest: sketchpeople.guestOf(group.by),
+          };
+        });
+      }),
+  );
 // Each test starts with no share open: one a page's scope has open takes the board's next invite there
 beforeEach(() => {
   const now = new Date().toISOString();
@@ -350,7 +344,7 @@ test('a deck’s share opens the demos its pages link to, handed on by the guest
     cookie: 's=board-session',
   });
   assert.match(boardLogin.headers.location, /^https:\/\/hello\.preview\.company\.test\/__preview\?c=/);
-  // ...on the board's sheet for the demo's owner
+  // ...on the reviewer's Notebook page
   assert.deepEqual(
     bookNotesOf('Lee').map((n: any) => n.words),
     ['The button is hard to find'],
@@ -459,13 +453,14 @@ for (const d of DOORS)
     feedback.endShare({ id: tester.id });
   });
 
-test('an outsider’s notes go on the board’s sheet for the owner, signed, and nothing of the old way answers', async () => {
+test('an outsider’s notes stay on their Notebook page, signed, and nothing of the old way answers', async () => {
   const share = await makeShare(`https://${HELLO}/`, 'Robin', 'robin@example.org', 1);
   const { ps, g } = await signIn(share.link);
   const pinned = await pinNote(ps, HELLO, `https://${HELLO}/basket?x=1#t=secret`, 'The basket hides the total');
   assert.equal(pinned.status, 200, pinned.text);
   const [hers] = bookNotesOf('Robin');
   assert.equal(hers.words, 'The basket hides the total');
+  assert.ok(hers.anchor);
   assert.equal(hers.anchor.url, `https://${HELLO}/basket?x=1#t=…`);
   assert.equal((db.prepare("select count(*) n from review_notes where status = 'outside'").get() as any).n, 0);
   assert.equal((await pinNote(ps, HELLO, `https://${CYCLES}/2026-03-01-deck/`)).status, 403); // a page this link doesn't open
@@ -493,7 +488,7 @@ test('End stops the link everywhere at once, and queues nothing', async () => {
   const row = ended.json();
   assert.ok(row.ended && !row.people[0].link);
   assert.equal(row.owner, 'Bolt');
-  assert.equal(jobsCount(), had, 'her note is on the board’s sheet, which the board sends');
+  assert.equal(jobsCount(), had, 'her note waits on her Notebook page until she sends it');
   assert.deepEqual(
     bookNotesOf('Kim').map((n: any) => n.words),
     ['The price is hidden'],
@@ -723,7 +718,7 @@ test('several people on one share: each on a link of their own, the board remove
       ['Joris', true],
     ],
   );
-  // Joris removed: their link, check and notes stop at once; their note stays on the board's sheet, theirs
+  // Joris removed: their link, check and notes stop at once. The board can still read their page.
   const removed = await board('/api/review/shares/remove', { id: sam.id, name: 'Joris' });
   assert.equal(removed.status, 200, removed.text);
   assert.deepEqual(
@@ -772,33 +767,19 @@ test('the board’s share box remembers who it shared with for three weeks, by n
   assert.equal(stranger.status, 400);
   // her notes reach their reader with the title, and how to read it; never her own door or tool
   const fenna = await signIn(again.link);
-  // the invite gave her a Sketchbook of her own, a button on her door's page, with no switch; a company shuts it with
-  // guest: { sketchbook: false }, or leaves it to HQ's own Sketchbook's setting
-  assert.match((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/">Your Notebook</);
-  const brandFile = `${repo}/company/brand.yaml`,
-    brandBefore = readFileSync(brandFile, 'utf8');
-  const withBrand = async (extra: string) => {
-    writeFileSync(brandFile, `${brandBefore}\n${extra}\n`);
-    return (await call(fenna.path, { cookie: fenna.g })).text;
-  };
-  assert.match(await withBrand('computer: { sketchbook: false }\nguest: { sketchbook: true }'), /Your Notebook/);
-  assert.doesNotMatch(await withBrand('computer: { sketchbook: false }'), /Your Notebook/);
-  assert.doesNotMatch(await withBrand('guest: { sketchbook: false }'), /Your Notebook/);
-  assert.equal((await call('/guest/sketchbook/api/list', { cookie: fenna.g })).status, 403, 'shut, not only unlisted');
-  writeFileSync(brandFile, brandBefore);
+  assert.doesNotMatch((await call(fenna.path, { cookie: fenna.g })).text, /href="\/guest\/sketchbook\/"/);
+  assert.ok((await call('/guest/sketchbook/api/list', { cookie: fenna.g })).status >= 400);
   assert.doesNotMatch(fenna.landed.text + (await call(fenna.path, { cookie: fenna.g })).text, /UX specialist/);
-  // (on the board's sheet, sent from its book)
   assert.equal((await pinNote(fenna.ps, HELLO, `https://${HELLO}/`, 'The steps feel cramped')).status, 200);
   const [hers] = bookNotesOf('Fenna');
-  await notebooksend.sendGuestNotes({ owner: hers.owner });
+  const handed = await guestbooks.act('send', { id: hers.page }, 'Fenna');
+  assert.ok(typeof handed !== 'number' && !Array.isArray(handed));
   booksheets.deliverDue(Date.now() + booknotes.SEND_MS + 1000);
-  const sent = db
-    .prepare(
-      'select s.job, n.review from notebook_groups g join book_notes n on n.id = g.note join book_sheets s on s.id = n.sheet where g.id = ?',
-    )
-    .get(hers.id) as { job: number; review: number };
-  const job = db.prepare('select prompt from jobs where id = ?').get(sent.job) as any;
-  const review = sent.review;
+  const note = bookNotesOf('Fenna').find(group => group.id === hers.id)!.note!;
+  const review = (db.prepare('select review from book_notes where id = ?').get(note) as { review: number }).review;
+  const job = db
+    .prepare('select j.prompt from jobs j join review_notes n on n.job = j.id where n.id = ?')
+    .get(review) as { prompt: string };
   assert.match(
     job.prompt,
     /By: Fenna \(fenna@example\.org; the board's title for them: UX specialist\), an outside reviewer/,

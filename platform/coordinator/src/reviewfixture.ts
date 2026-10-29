@@ -167,6 +167,7 @@ export async function completeTriage(
   pr: number,
   agents?: string[],
   looker: string | null = null,
+  security: string[] = [], // (the reviewers given the security read)
 ) {
   const queued = h.db
     .prepare(
@@ -194,7 +195,7 @@ export async function completeTriage(
         reason: 'Read this scenario',
         files: JSON.parse(row.files),
         domain: 'general',
-        security: false,
+        security: security.includes(agent),
       })),
       looker,
       exceptions: triage

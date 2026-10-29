@@ -38,6 +38,7 @@ export function mountDogEar(book) {
     if (ear.hidden) corner.targets.hide();
   };
   for (const type of ['book:turn', 'book:wrote']) document.addEventListener(type, follow);
+  follow(); // (mounted late, after the first page's turn)
   ear.addEventListener('pointerdown', e => held(corner, e));
   ear.addEventListener('click', e => e.detail === 0 && menu(corner)); // (a key's press)
 }

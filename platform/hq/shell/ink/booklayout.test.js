@@ -32,11 +32,20 @@ test('folded, on every shape: the page takes the whole screen, the book none of 
   }
 });
 
-test('portrait and half a split screen start folded; portrait opens beside the page, which narrows', () => {
+// (beside HQ's page an upright iPad mini's book is 325 px: an answer there would be a column of 17 characters)
+test('portrait and half a split screen start folded; portrait opens as the spread, over HQ at its whole width', () => {
   for (const size of [MINI_PORTRAIT, HALF]) assert.equal(initial(shapeOf(...size)).mode, 'folded');
   const l = layout(...MINI_PORTRAIT, { mode: 'open', book: null });
-  assert.equal(l.mode, 'open');
-  assert.deepEqual(widths(l), [407, 12, 325]);
+  assert.equal(l.mode, 'spread');
+  assert.equal(l.book, MINI_PORTRAIT[0] - EDGE);
+  assert.equal(l.page, MINI_PORTRAIT[0]);
+  assert.equal(l.room, 0);
+});
+
+test("in portrait the cover's edge drawn right still lays the book beside the page, at the width it was let go", () => {
+  const beside = released(...MINI_PORTRAIT, { mode: 'open', book: null }, 400);
+  assert.deepEqual(beside, { mode: 'open', book: 332 });
+  assert.deepEqual(widths(layout(...MINI_PORTRAIT, beside)), [400, EDGE, 332]);
 });
 
 // (HQ's page never under 320 beside the book)

@@ -8,6 +8,7 @@
 import { record } from '../voice.js';
 import { transcribe, loadLanguage } from '../data.js';
 import { sfx } from '../audio.js';
+import { word } from './bookscope.js';
 
 // a message (nothing heard, the microphone blocked) shows this long
 const SAID_MS = 2200;
@@ -20,11 +21,20 @@ export function listen(book, down) {
   if (!at) return null;
   const desk = book.desk.getBoundingClientRect(),
     right = book.at(desk.right - 16, down.clientY)?.x ?? at.x + 360;
-  lang ??= loadLanguage(book.dev).then(
-    l => l?.lang || 'en',
-    () => 'en',
-  );
-  const v = { parts: [], pending: [], failed: false, done: false, el: slip(down) };
+  lang ??= book.scope
+    ? Promise.resolve(document.documentElement.lang)
+    : loadLanguage(book.dev).then(
+        l => l?.lang || 'en',
+        () => 'en',
+      );
+  const v = {
+    parts: [],
+    pending: [],
+    failed: false,
+    done: false,
+    el: slip(down),
+    transcribe: (clip, code) => transcribe(clip, code, book.scope ? `${book.scope.api}/voice` : undefined),
+  };
   sfx.micOn();
   lang.then(code => !v.done && recording(v, code));
   // let go: the words land
@@ -63,7 +73,7 @@ function recording(v, code) {
     onSegment: clip => {
       const i = v.parts.push('') - 1;
       v.pending.push(
-        transcribe(clip, code).then(
+        v.transcribe(clip, code).then(
           text => {
             v.parts[i] = text;
             shown(v);
@@ -76,7 +86,7 @@ function recording(v, code) {
   v.rec.ready.catch(err => {
     if (v.done) return;
     v.stop();
-    say(v, err?.name === 'NotAllowedError' ? 'The microphone is blocked here' : 'The microphone didn’t start');
+    say(v, word(err?.name === 'NotAllowedError' ? 'The microphone is blocked here' : 'The microphone didn’t start'));
   });
   pulse(v);
 }
@@ -93,13 +103,13 @@ async function landed(book, v, at, right) {
   await Promise.all(v.pending);
   if ((!words(v) || v.failed) && clip && v.code) {
     try {
-      v.parts = [await transcribe(clip, v.code)];
+      v.parts = [await v.transcribe(clip, v.code)];
     } catch {
-      return say(v, 'The transcriber isn’t available right now');
+      return say(v, word('The transcriber isn’t available right now'));
     }
   }
   const text = words(v);
-  if (!text) return say(v, 'No words came through');
+  if (!text) return say(v, word('No words came through'));
   v.el.remove();
   book.tools?.put?.(at, text, right);
 }

@@ -2,7 +2,7 @@
 // bookselectclip.js, booktape.js; Ink's folder), with Chromium's own pen events
 // (trusted: their clicks and capture are the browser's): a quick tap on a box of words or a picture is a click, never a
 // dot, while bare paper keeps its dot; a select box taken off the screen's edge and back still selecting; a picture
-// taped in moved and scaled at once; Copy then Paste; a box of words moved by its grip with nothing drawn, the
+// taped in drawn on and scaled by its frame at once; Copy then Paste; a box of words moved by Select with nothing drawn, the
 // handwriting beside it keeping its focus, a letter deleted and a space put in without a keyboard, and new boxes in a
 // row. Each asserts what the board sees and what the store keeps.
 import assert from 'node:assert/strict';
@@ -19,10 +19,10 @@ export function penStories(c) {
       browser => taps(browser, c),
     "with the Pencil: a select box taken off the screen's edge and back still selects": browser =>
       offTheEdge(browser, c),
-    'with the Pencil: a picture taped in moves and scales at once, the pen tool still in hand': browser =>
-      picture(browser, c),
+    'with the Pencil: a picture taped in is drawn on and scales by its frame at once, the pen tool still in hand':
+      browser => picture(browser, c),
     'with the Pencil: Copy, then Paste from the bar and from a tap on the paper': browser => copyPaste(browser, c),
-    'with the Pencil: a box of words moved by its grip draws nothing, handwriting beside it keeps it, letters fixed, new boxes add':
+    'with the Pencil: a box of words moved by Select draws nothing, handwriting beside it keeps it, letters fixed, new boxes add':
       browser => boxes(browser, c),
   };
 }
@@ -99,8 +99,8 @@ async function offTheEdge(browser, c) {
   }
 }
 
-// A picture pasted with the pen tool on: picked as it lands, the Pencil carries it by its middle and scales it by a
-// corner, and nothing is drawn
+// A picture pasted with the pen tool on: picked as it lands, the Pencil draws across its middle (only Select moves
+// things) and scales it by its frame's corner
 async function picture(browser, c) {
   const free = freePage(c);
   const { page, pen, errors, done } = await onMini(browser, c);
@@ -108,13 +108,13 @@ async function picture(browser, c) {
     await tool(page, 'Pen');
     const at = await tapedIn(page, c, free),
       was = stored(c, free).scraps[0];
-    await pen.stroke(path(at, [at[0] + 90, at[1] + 60]));
-    const moved = await savedWhere(c, free.id, p => p.scraps[0].x !== was.x);
-    assert.ok(Math.abs(moved.scraps[0].x - was.x - 90) < 4, `carried 90 px across: ${moved.scraps[0].x - was.x}`);
     const corner = middleOf(await page.locator('#book .bk-sel-handle[data-corner="2"]').boundingBox());
     await pen.stroke(path(corner, [corner[0] + 80, corner[1] + 60]));
-    const scaled = await savedWhere(c, free.id, p => p.scraps[0].w > moved.scraps[0].w);
-    assert.equal(scaled.ink.length, 0, 'nothing drawn');
+    const scaled = await savedWhere(c, free.id, p => p.scraps[0].w > was.w);
+    assert.equal(scaled.ink.length, 0, 'nothing drawn by its corner');
+    await pen.stroke(path([at[0] - 40, at[1]], [at[0] + 40, at[1] + 10]));
+    const drawn = await savedWhere(c, free.id, p => p.ink.length === 1);
+    assert.deepEqual([drawn.scraps[0].x, drawn.scraps[0].y], [scaled.scraps[0].x, scaled.scraps[0].y], 'never moved');
     await c.shot('book-pen-picture', page);
     assert.deepEqual(errors, []);
   } finally {
@@ -187,12 +187,13 @@ async function boxes(browser, c) {
     await page.keyboard.press('Escape');
     const typed = await savedWhere(c, free.id, p => p.texts.length === 3);
     assert.deepEqual(typed.texts.map(t => t.text).sort(), ['one more please', 'three', 'two']);
-    // the Pencil on the first box's grip carries it down and right; nothing drawn
-    const grip = middleOf(await page.locator('#book .bk-typed-grip').first().boundingBox());
-    await pen.stroke(path(grip, [grip[0] + 140, grip[1] + 80]));
+    // Select, and the Pencil on the first box carries it down and right; nothing drawn
+    await tool(page, 'Select');
+    const box = middleOf(await page.locator('#book .bk-typed').filter({ hasText: 'one more please' }).boundingBox());
+    await pen.stroke(path(box, [box[0] + 140, box[1] + 80]));
     const oneMore = p => p.texts.find(t => t.text === 'one more please'),
       moved = await savedWhere(c, free.id, p => oneMore(p).x !== oneMore(typed).x);
-    assert.equal(moved.ink.length, 0, 'moving a box by its grip draws nothing');
+    assert.equal(moved.ink.length, 0, 'moving a box with Select draws nothing');
     await c.shot('book-pen-boxes', page);
     assert.deepEqual(errors, []);
   } finally {

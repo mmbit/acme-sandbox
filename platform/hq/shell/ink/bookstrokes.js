@@ -4,6 +4,8 @@
 //
 // A stroke is ink.js's { color, size, alpha?, fill?, points: [[x, y, pressure, t], ...] } in its page's px. A shape's
 // line is even: every point at SHAPE_P, which ink.js draws exactly `size` wide.
+// (review mode's eraser reaches by the same distances)
+import { fromSegment, segmentsApart } from '/__review/eraser.js';
 
 export const SHAPES = ['ellipse', 'rect', 'line', 'arrow'];
 export const SHAPE_P = 0.58;
@@ -134,7 +136,7 @@ function touches(s, a, b, r) {
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i],
       q = pts[i + 1] ?? p;
-    if (segments(p, q, a, b) < r + radius(s.size, p[2])) return true;
+    if (segmentsApart(p, q, a, b) < r + radius(s.size, p[2])) return true;
   }
   return false;
 }
@@ -149,7 +151,7 @@ function closer(s, a, b, r) {
     const p = pts[i - 1],
       q = pts[i],
       len = Math.hypot(q[0] - p[0], q[1] - p[1]);
-    if (len > step && segments(p, q, a, b) < near) {
+    if (len > step && segmentsApart(p, q, a, b) < near) {
       const n = Math.ceil(len / step);
       for (let k = 1; k < n; k++) {
         const t = k / n;
@@ -188,20 +190,6 @@ function grow(box, by) {
   box.y1 = Math.max(box.y1, by.y1);
 }
 const meets = (p, q) => p.x0 <= q.x1 && q.x0 <= p.x1 && p.y0 <= q.y1 && q.y0 <= p.y1;
-// A point's distance from the segment a–b
-export function fromSegment([x, y], a, b) {
-  const dx = b[0] - a[0],
-    dy = b[1] - a[1],
-    len = dx * dx + dy * dy;
-  const t = len ? Math.max(0, Math.min(1, ((x - a[0]) * dx + (y - a[1]) * dy) / len)) : 0;
-  return Math.hypot(x - (a[0] + t * dx), y - (a[1] + t * dy));
-}
-// The least distance between two segments (0 when they cross)
-function segments(p, q, a, b) {
-  const side = (o, u, v) => Math.sign((u[0] - o[0]) * (v[1] - o[1]) - (u[1] - o[1]) * (v[0] - o[0]));
-  if (side(p, q, a) * side(p, q, b) < 0 && side(a, b, p) * side(a, b, q) < 0) return 0;
-  return Math.min(fromSegment(p, a, b), fromSegment(q, a, b), fromSegment(a, p, q), fromSegment(b, p, q));
-}
 // Whether a point is inside a closed run of points (even-odd)
 export function inside(pts, [x, y]) {
   let yes = false;

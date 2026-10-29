@@ -27,6 +27,12 @@ Lines are a circle's mark to the note, its picture and whoever reads it (The pen
 - the trail: the last 50 clicks, scrolls, page loads and route changes in that tab;
 - the page path and the viewport (size, scroll position, pixel ratio, browser).
 
+**A canvas in the screenshot**: each `<canvas>` the screenshot copies hears `snapshot:draw` on itself first (it
+doesn't bubble), in the same task as the copy. A WebGL canvas without `preserveDrawingBuffer` reads blank outside the
+frame that drew it, so its owner listens on the canvas and draws its last frame again there, unchanged: it steps no
+camera, animation or simulation, and counts no frame (a frame rate or a timing measure). HQ's Holo deck does. A 2D
+canvas keeps its pixels and needs nothing.
+
 **On HQ itself** the board always has the same tool, on any of HQ's screens. The coordinator serves it there only
 behind the board's sign-in. Each note is a scrap on the newest page of the board's Notebook, for the agent whose work
 it's on (what's drawn on names them, `data-owner`), else the CEO, as a preview's are for its owner (The flow, below);
@@ -59,13 +65,14 @@ modules beside it, one concern each: `tool.js` puts them together (the shared st
 imports it, `acts.js` what a part asks of the parts above it (put the note away, shut the menu...), which tool.js
 hands in as it loads, so the imports form no circle, `dock.js` the pin, `menu.js` its menu, `surface.js` the page
 while it's marked (pen and finger), `mark.js` what a mark keeps, `postit.js` the note's sheet and its polaroid (in the look of a scrap torn from HQ's book, its paper and indigo, on every page),
-`pictures.js` the pictures added, `dictation.js` the mic, `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
+`pictures.js` the pictures added, `dictation.js` the mic (with `micallowed.js`, whether it's allowed, which HQ's own
+recorder shares), `snapshot.js` (with `copy.js`, `flow.js`, `inline.js` and `faces.js`)
 the screenshot, `trail.js` the trail, `layer.js` the layer over popups, `pencil.js`, `pentouch.js`, `tap.js`, `settle.js`, `lift.js`, `gestures.js`, `marks.js`, `markpage.js`, `markfollow.js` and `written.js` the Pencil on HQ
 and the mark being made (below), `penwords.js`, `penedit.js` and `postitpen.js` words edited with the pen (below),
 `slip.js` the answers on notes, `paper.js` the book's paper, `prefs.js` Ink's preferences on this device, `base.js` what
 they share. The coordinator serves
 each at `/__review/<name>.js` behind the same gate as the real `review.js`; only `anchor.js`, `frame.js`, `ink.js` with
-`inklive.js` and `inkshape.js` (which it imports), `paper.js` and `tap.js` are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
+`inklive.js` and `inkshape.js` (which it imports), `paper.js`, `tap.js` and `micallowed.js` are open on every host. Its UI lives in a closed shadow root, so product styles can't touch it, and it never logs or
 photographs itself. `frame.js` frames a note's screenshot on its mark (the circle, or the pinned element and the pin's
 head), for review mode's polaroid and HQ's note thumbnails alike; `anchor.js` finds a mark's element again on any width
 (`node --test shared/review/frame.test.js shared/review/anchor.test.js`).
@@ -102,8 +109,10 @@ alone, so the imports form no circle.
   lines can follow while it's open, open as drawn. The screenshot is the page at the first mark; every line is drawn on
   it, in the polaroid as it comes and in what goes with the note.
 - **The strip**, over the page while it's marked: five inks (red, black, blue, green and a see-through highlighter,
-  remembered on the device) and undo (Cmd or Ctrl+Z too). Undoing the first mark goes back to tapping or drawing, the
-  words kept.
+  remembered on the device), the eraser (every line its pass touches goes, measured as HQ's book measures it:
+  `eraser.js`) and undo (Cmd or Ctrl+Z too), which takes back the last line or the last pass of the eraser. Undoing the first mark goes back to tapping or drawing, the words kept. The page
+  refuses a pen's touch moves so it never scrolls under the pen, but never on review mode's own controls: on an iPad a
+  touch whose move is refused is no tap, and the Pencil's taps on the strip pressed nothing.
 - **The mic button starts the mic**, where the browser records, on a computer and a tablet alike: a mark never does
   (the board changed its mind on recording at the mark: call 154). In HQ's
   viewer the page's frame has no microphone, so a tap there asks HQ, which records on its own page and sends the words
@@ -118,10 +127,17 @@ alone, so the imports form no circle.
   elsewhere, Escape) puts in what was written before it closed, and its pad takes no more strokes. On a touch screen a
   field the pen edits is read-only while it holds words, so Apple's Scribble never takes the Pencil there: a finger, a
   tap or Tab gives it back to the keyboard (`node --test shared/review/penedit.test.js`).
+- **Handwriting on the post-it** (Scribble): the iPad looks for a field in a box round the pen's start, and stops at the
+  first thing over it whose box fills that box, clipped or not. So nothing over the words' field takes a touch (the
+  polaroid's framed screenshot is far wider than the photo), and the Pencil's handwriting brings no keyboard
+  (`inputmode="none"` until a finger's press on the field). Under its head the post-it names the page: Home at a site's
+  root, else its title.
 
 `pen-check.mjs` runs it held like an iPad mini: a pen's tap, a pen's line opening a note, a palm, the inks and undo, the
 lines and the screenshot with them on the note, the pin dragged by its menu's handle, the mic tapped with live words
-from a stand-in line and the clip when it's down, a mouse's lines; `--shots dir` adds HQ in each look.
+from a stand-in line and the clip when it's down, a mouse's lines; the Pencil's taps on the strip, the eraser and undo
+with the pen and a mouse, nothing over the post-it's writing area and the home page named; `--shots dir` adds HQ in
+each look.
 
 ## The Pencil on HQ
 

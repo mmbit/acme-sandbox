@@ -129,3 +129,26 @@ test('stored rows that hold a carried session whole: each becomes what its run a
   assert.deepEqual(stored(), after);
   assert.deepEqual(rows(other), before);
 });
+
+test("a run's up-front context, its turns and, resumed, how long its session sat idle", async () => {
+  const id = await running();
+  const main = { opening: 52_003, openingWritten: 40_000, turns: 12 };
+  await finish(id, { status: 'limited', session: 's7', usage: { models: { [SONNET]: t(1000, 0.5) }, cost: 0.5, resumed: false, ...main } });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  await again(id);
+  await finish(id, { status: 'done', session: 's7', usage: { models: { [SONNET]: t(1500, 0.7) }, cost: 0.7, resumed: true,
+    opening: 61_000, openingWritten: 61_000, turns: 3 } });
+  const stored = h.db.prepare('select opening, opening_written, turns, resumed, idle_ms from usage where job = ? order by id').all(id)
+    .map(r => ({ ...r }));
+  assert.deepEqual(stored[0], { opening: 52_003, opening_written: 40_000, turns: 12, resumed: 0, idle_ms: null });
+  assert.deepEqual({ ...stored[1], idle_ms: undefined }, { opening: 61_000, opening_written: 61_000, turns: 3, resumed: 1, idle_ms: undefined });
+  assert.ok((stored[1].idle_ms as number) >= 60, `idle ${stored[1].idle_ms} ms`);
+});
+
+test('a run the worker measured no main thread for (Codex) keeps those empty', async () => {
+  const id = await running('codex-1', 'codex');
+  await finish(id, { status: 'done', session: 'c3', usage: { resumed: false, opening: 'lots', turns: -1,
+    models: { 'gpt-5.5': { input: 700, cacheWrite: 0, cacheRead: 300, output: 50 } } } });
+  assert.deepEqual({ ...h.db.prepare('select opening, opening_written, turns from usage where job = ?').get(id) },
+    { opening: null, opening_written: null, turns: null });
+});

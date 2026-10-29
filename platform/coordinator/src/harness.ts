@@ -323,9 +323,9 @@ export async function harness(
   };
 }
 
-// Waits for what goes on after a route has answered (GitHub's merge, an email the service holds): until `ready()` holds,
-// or the test fails naming what it waited for, rather than hang.
+// Waits for what goes on after a route has answered (GitHub's merge, an email the service holds): until `ready()` holds
+// (or what it returns resolves to), or the test fails naming what it waited for, rather than hang.
 export async function until(ready: () => unknown, what: string, ms = 5_000) {
-  for (const stop = Date.now() + ms; !ready(); await new Promise(r => setTimeout(r, 2)))
+  for (const stop = Date.now() + ms; !(await ready()); await new Promise(r => setTimeout(r, 2)))
     if (Date.now() > stop) throw new Error(`Still waiting after ${ms / 1000} s: ${what}`);
 }

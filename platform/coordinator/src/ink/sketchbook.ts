@@ -1,6 +1,5 @@
-// The Sketchbook (HQ's sketchbook app, and an invited person's own on the guest desk: sketchpeople.ts openRoom) on the
-// book: a sketch is a free page (book.ts), under the same number, read and written through the book's own functions at
-// the Sketchbook's addresses and in its shape. HQ draws a sketch's picture as it saves; the book draws its own
+// HQ's Sketchbook app on the book: a sketch is a free page (book.ts), read and written through the book's functions
+// at the Sketchbook's addresses and in its shape. HQ draws a sketch's picture as it saves; the book draws its own
 // (bookrender.ts), so a save's picture is left aside.
 //   - Send puts a copy of the page's picture on the intercom as a line from the board (chat.ts say), a picture of its own
 //     (pictures.ts), so the line stays whole once the page is deleted; an invited person's is their own line
@@ -14,11 +13,10 @@ import * as chat from '../chat.ts';
 import * as pictures from '../pictures.ts';
 import * as book from './book.ts';
 import { BOARD, type Page } from './book.ts';
-import { pictureOf, servePicture } from './bookpicture.ts';
-import { isRefused, SAVE_MAX, type Refused } from '../pagechecks.ts';
+import { pictureOf } from './bookpicture.ts';
+import { isRefused, type Refused } from '../pagechecks.ts';
 import { DIR, MAX_SCRAPS, type Scrap } from '../pagescraps.ts';
-import { books, openRoom, sendAsGuest } from './sketchpeople.ts';
-import { managedPage } from '../notebookguests.ts';
+import { books, sendAsGuest } from './sketchpeople.ts';
 
 // HQ's addresses for the board's routes
 const HQ_BASE = '/api/sketches';
@@ -62,25 +60,6 @@ export async function sendSketch(id: number, who = BOARD) {
   db.prepare('update book_pages set sent = ? where id = ?').run(sent, p.id);
   return { sent, line: pictures.lineOf(copy), picture: copy };
 }
-
-// An invited person's page on the guest desk: the same, for their own book at its addresses
-openRoom({
-  hasSketch: (id, who) => !!book.row(id, who) && !managedPage(id),
-  list: (who, base) => ({ sketches: listed(who).map(p => sketchOf(p, base)) }),
-  get: getSketch,
-  picture: servePicture,
-  scrap: book.serveScrap,
-  upload: book.uploadScrap,
-  acts: {
-    'POST create': createSketch,
-    'POST save': saveSketch,
-    'POST label': labelSketch,
-    'POST archive': archiveSketch,
-    'POST delete': (b, who) => book.deletePage(Number(b?.id), who),
-    'POST send': (b, who) => sendSketch(Number(b?.id), who),
-  },
-  saveMax: SAVE_MAX,
-});
 
 // ---------------------------------------------------------------- the sketches before the book, folded in
 // Once, at the server's start: every sketch (the Sketchbook's old table) becomes a free page under its own number, its
